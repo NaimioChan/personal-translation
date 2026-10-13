@@ -13,7 +13,17 @@
 ```
 personal-translation
 ├─ AGENTS.md
-└─ example-library
-   └─ save-the-translated-docs-there
+├─ assets
+│  ├─ doc.js
+│  ├─ libraries.js
+│  ├─ settings.js
+│  └─ theme.css
+├─ index.html
+├─ README.md
+└─ _skeleton
+   ├─ index.html
+   ├─ nav.js
+   ├─ page.html
+   └─ README.md
 
 ```
