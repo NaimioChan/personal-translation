@@ -1,0 +1,8 @@
+/* 文档库清单：目录页读这个文件渲染列表。
+   每完成一个文档库，在这里加一条，然后刷新 index.html 即可。
+   字段：dir 库文件夹名（必填）、title 库标题（必填）、desc 一句话说明、
+        source 原文地址、updated 译文最后更新日期、pages 页面数。 */
+window.PT_LIBRARIES = [
+  // { dir: 'example-library', title: '示例文档库', desc: '一句话说明这个库收了什么文档。',
+  //   source: 'https://example.com/docs', updated: '2026-10-13', pages: 3 }
+];
