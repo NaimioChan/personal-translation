@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>如何在 GNU/Linux 上设置读取 HID 设备所需的权限 - Pd 文档中文译本</title>
+<meta name="description" content="通过 udev 规则修改输入设备权限，让 Pd 的 [hid] 对象无需 root 权限即可读取鼠标、键盘和摇杆。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>如何在 GNU/Linux 上设置读取 HID 设备所需的权限？</h1>
+    <p>Pd-extended 的 [hid] 对象让你可以访问鼠标、键盘、游戏摇杆之类的人机接口设备（HID）。不过在大多数 Linux 发行版中，这些设备的设置使得 Pd 无法直接读取它们，除非你以 root 身份运行 Pd。</p>
+    <p>以 root 身份运行非系统进程被认为是安全风险，所以另一种办法是修改输入设备的权限，让 pd 能够读取它们。</p>
+    <p><small>本指南在 Ubuntu 9.10 Karmic 上测试过。请为更新的版本更新内容并补充附录。</small></p>
+    <p>解决办法是写一条 udev 规则来开放权限。<a href="http://en.wikipedia.org/wiki/Udev">Udev</a> 是一个系统守护进程，它根据一组规则，在设备增删时在 /dev 中创建设备树。</p>
+    <p>按照 <a href="http://demo.dersbach.ch/cgi-bin/dwww/usr/share/doc/udev/README.Debian.gz">Debian udev 规则命名规范</a>，在 /etc/udev/rules.d/85-pure-data.rules 中创建我们为 pd 写的规则：</p>
+    <pre>
+
+    sudo mkdir -p /etc/udev/rules.d
+
+    sudo gedit /etc/udev/rules.d/85-pure-data.rules
+
+    </pre>
+    <p>注意：这是 Debian/Ubuntu 中的位置。请查看你的发行版把 udev 规则放在哪里。</p>
+    <p>现在把下面的规则加入 /etc/udev/rules.d/85-pure-data.rules：</p>
+    <pre>
+
+    #
+
+    #	pure data udev 规则
+
+    #
+
+    #	把我放到 "/etc/udev/rules.d" 里，我的命名基于 debian udev 规则格式
+
+    #
+
+    #	"add" 动作对应设备插入，用设备属性来匹配设备
+
+    #
+
+    #	"remove" 动作使用 ENV 变量来匹配，因为设备的 SYSFS 节点已经消失
+
+    #	因而属性也已被删除
+
+    #
+
+    #	规则构建使用：
+
+    #	- udevadm info -a -p $(udevadm info -q path -n /dev/*device*) : 属性
+
+    #	- sudo udevadm monitor --env /dev/*device* : 事件和环境变量
+
+    #
+
+    #	文档是你的朋友：http://reactivated.net/writing_udev_rules.html
+
+    #
+
+    ################################################################################################
+
+    #	输入设备
+
+    #
+
+    SUBSYSTEM=="input", MODE="666"
+
+    </pre>
+    <p>注意：每条 udev 规则<b>必须</b>写在一行里。只用空格，不要用制表符。以 `#` 开头的行是注释。</p>
+    <p>这条规则把输入设备的权限设为 666。重启机器后，HID 对象应该就能打开它们了。</p>
+    <h3>更多安全性</h3>
+    <p>把输入设备设为 666 也给了别人读取你键盘和鼠标输入的机会。如果你觉得这是安全风险，可以把 <code>MODE="666"</code> 换成下面的内容：</p>
+    <pre>
+
+    GROUP="input", MODE="660"
+
+    </pre>
+    <p>然后创建一个 "input" 组，并把你自己加入其中：</p>
+    <pre>
+
+    sudo groupadd -f input
+
+    sudo gpasswd -a YOURUSERNAME input
+
+    </pre>
+    <p>这会把所有输入设备加入 input 组，只有你加入该组的用户才能读取它们。重启机器使规则生效。</p>
+    <h3>检查</h3>
+    <p>检查输入设备的权限：</p>
+    <pre>
+
+    $ ls -al /dev/input/
+
+    total 0
+
+    drwxr-xr-x  3 root root     220 2010-06-10 22:00 .
+
+    drwxr-xr-x 16 root root    3640 2010-06-10 22:00 ..
+
+    drwxr-xr-x  2 root root     100 2010-06-10 22:00 by-path
+
+    crw-rw----  1 root input 13, 64 2010-06-10 22:00 event0
+
+    crw-rw----  1 root input 13, 65 2010-06-10 22:00 event1
+
+    crw-rw----  1 root input 13, 66 2010-06-10 22:00 event2
+
+    crw-rw----  1 root input 13, 67 2010-06-10 22:00 event3
+
+    crw-rw----  1 root input 13, 68 2010-06-10 22:00 event4
+
+    crw-rw----  1 root input 13, 63 2010-06-10 22:00 mice
+
+    crw-rw----  1 root input 13, 32 2010-06-10 22:00 mouse0
+
+    crw-rw----  1 root input 13, 33 2010-06-10 22:00 mouse1
+
+    </pre>
+    <p>这里我用了更安全的方式，可以看到 event 和 mouse 设备对用户和组都标记为 rw。</p>
+    <h2>注意</h2>
+    <p>如果规则似乎不起作用，可以运行 udev 测试，看它是否被读取以及有没有报错。用一个输入设备来运行测试：</p>
+    <pre>sudo udevadm test /dev/input/event0</pre>
+    <p>关于如何编写更详细的规则，参见 <a href="http://reactivated.net/writing_udev_rules.html">udev 教程</a>。其实掌握了以后相当简单。主要是用下面的命令，在插入或移除目标设备时取得可用来匹配该设备的属性列表，然后用它们创建新规则：</p>
+    <pre>udevadm info -a -p $(udevadm info -q path -n /dev/*your device*)</pre>
+    <h3>链接</h3>
+    <ul>
+    <li><a href="http://reactivated.net/writing_udev_rules.html">Udev 教程</a></li>
+    <li><a href="http://sourceforge.net/apps/mediawiki/gizmod/index.php?title=HOWTO_-_Setting_Input_Device_Permissions_-_Creating_a_udev_Rule">设置输入设备权限</a></li>
+    </ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://puredata.info/docs/faq/how-can-i-set-permissions-so-hid-can-read-devices-in-gnu-linux" rel="noreferrer noopener">puredata.info/docs/faq/how-can-i-set-permissions-so-hid-can-read-devices-in-gnu-linux</a> · 译文更新于 2026-10-14</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

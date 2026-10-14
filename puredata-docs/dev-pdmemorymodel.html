@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pure Data 内存模型 - Pd 文档中文译本</title>
+<meta name="description" content="Pd 内存模型：DSP 概述、重新分块与调度结构、采样率与调用频率的换算，以及 block~ 对象的状态。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Pure Data 内存模型</h1>
+    <p><strong>本页仍在编写中，目的是描述 Pd 如何处理 DSP 所需的内存。</strong></p>
+    <h3 id="head-f5cbdf6bfb51439be085b5c6b7460a7c91eabc3c-22">内容</h3>
+    <ol type="1">
+      <li>
+        <p>DSP 概述</p>
+      </li>
+      <li>
+        <p>重新分块</p>
+      </li>
+      <li>
+        <p>排序</p>
+      </li>
+    </ol>
+    <h3 id="head-56f2be06b1ee9c1e853bf428cfcefaa2d3b92de9-22">1. DSP 概述</h3>
+    <p><strong>数字信号处理（DSP）</strong>可以理解为：把一串在离散时间域上表示某个信号的数字，用某种算法作用于它们，从而变换成另一组数字。得到的结果结构既可以表示对输入信号的显式操作，也可以表示关于输入信号性质的任何其他信息结构。</p>
+    <p>有限信号表示为对不超过某个数 <em>N</em> 的所有自然数都有定义的序列：<em><strong>x</strong>=x(1), ... , x(N)</em>。每个信号 <em><strong>x</strong></em> 都关联一个<strong>采样率</strong> <em>R</em> Hz，也就是说采样 <em>x(n)</em> 以每秒 <em>R</em> 个采样的固定速率出现。这对应相邻两个采样之间固定的 <em>1/R</em> 秒间隔。</p>
+    <p>对 <em><strong>x</strong></em> 的操作产生输出信号 <em><strong>y</strong></em>。输出信号的采样率不必与输入信号相同。事实上，我们可以按某些规则对某个信号做上采样或下采样，从而得到采样率不同的输出信号。</p>
+    <p>当我们考虑产生可听信号的实时 DSP 时，输出信号也必须关联一个采样率。最简单的情形是输入与输出信号的采样率相同，都为 <em>R</em>。在这种情况下，每一个输出采样总是与一个输入采样相对应，从一个采样 <em>x(n)</em> 到达，到输出采样 <em>y(n)</em> 可用之间的时间，就是输入与输出信号之间的<strong>延迟</strong>。出于实时的要求，输入与输出采样之间的延迟应当足够小，使输出出现在与输入相同的「感知时刻」。这通常意味着 50ms 或更小的延迟。</p>
+    <p>输出信号的采样率也决定了可用的最长计算时间，因为下一个采样必须在前一个采样可用之后最多 <em>1/R</em> 秒内准备就绪以供播放。</p>
+    <p>计算可以逐个采样进行，也可以在一段称为<strong>块</strong>的采样序列上进行。如果我们定义块大小为 <em>B</em> 个采样，就意味着在开始处理之前先累积 <em>B</em> 个采样，计算完成后再返回 <em>B</em> 个采样。如果（输入与输出）采样率为 <em>R</em>，那么可用于计算整个 <em>B</em> 个采样块的时间是 <em>B/R</em> 秒。</p>
+    <p>此外，数字处理中还有另一种常见结构，即允许块以某个因子 <em>o</em> 重叠。如果 <em>o</em> = 2，那么第一个块的后半部分就对应第二个块的前半部分。</p>
+    <h3 id="head-3eec12cae60ecaea230639479941fe319708a7b8-22">2. 重新分块</h3>
+    <p>每个 Pd 画布都可以有自己的块大小、块重叠以及上/下采样配置。从一个画布流向另一个画布的信号可能需要调整，以适配不同画布的配置。取决于某个子画布与其容器画布配置之间的关系，子画布上的 DSP 计算会以容器画布的整数倍或整数分之一的频率进行。</p>
+    <p>重新分块/切换。</p>
+    <p>在带有重新分块信号的画布内部，DSP 调度具有以下结构：</p>
+    <ol type="1">
+      <li>
+        <p>入口与出口的前导代码。</p>
+      </li>
+      <li>
+        <p>块前导。</p>
+      </li>
+      <li>
+        <p>子画布中的对象，包括入口和出口。</p>
+      </li>
+      <li>
+        <p>块后记。</p>
+      </li>
+      <li>
+        <p>出口的后记代码。</p>
+      </li>
+    </ol>
+    <p>画布内部的采样率是相对于其父画布的采样率定义的：</p>
+    <pre>srate = parent_srate * realoverlap * upsample / downsample;
+</pre>
+    <p>画布 DSP 例程组的调用频率由下式给出</p>
+    <pre>frequency = (parent_vecsize * realoverlap * upsample)
+            / (vecsize * downsample);
+</pre>
+    <h3 id="head-a638aa8bcfca46b161e7456624b0708fb9dce272-22">零散的笔记</h3>
+    <p>来自 Pd 源代码：</p>
+    <pre>/* "block~ 对象维护其所在画布的 DSP 计算，以容器画布调用频率的整数倍
+或整数分之一的频率来调用它。block~ 的创建参数指定块大小和重叠量。
+Block~ 本身不做任何 "dsp" 计算，但它会在画布的单位生成器之前和之后
+加入前导与后记代码。
+
+子画布完全不必有 block~；如果没有，它里面的 ugen 就直接放入列表，
+不带任何前导或后记代码。
+
+Block~ 可以以 switch~ 的形式使用，这时它还起到打开和关闭子画布的作用。
+因此，子画布的总体调度顺序是：
+
+  1.  入口与出口的前导代码 (1)
+  2.  块前导 (2)
+  3.  子画布中的对象，包括入口和出口 (2)
+  4.  块后记 (2)
+  5.  出口的后记代码 (2)
+
+其中 (1) 表示「如果重新分块」，(2) 表示「如果重新分块或被切换」。
+
+如果我们被重新分块，入口前导和出口后记代码负责重叠与缓冲，以应对
+向量大小的变化。如果我们被切换但没有重新分块，就不需要入口前导，
+而输出后记只在块被关闭时运行；这种情况下，后记代码只是把零拷贝到
+所有信号出口。
+</pre>
+    <h4 id="head-50dd1caa1af0c700680bbda07e36ab2579838ca6-22">block~ 对象状态</h4>
+    <ul>
+      <li>
+        <p>这个块中音频信号的大小。</p>
+      </li>
+      <li>
+        <p>实际要计算的采样数。</p>
+      </li>
+      <li>
+        <p>窗口重叠因子。</p>
+      </li>
+      <li>
+        <p>从 0 到 period-1；为零时我们运行这个块。</p>
+      </li>
+      <li>
+        <p>容器画布的整数分之一。</p>
+      </li>
+      <li>
+        <p>容器画布的整数倍。</p>
+      </li>
+      <li>
+        <p>父块调用我们的次数。</p>
+      </li>
+      <li>
+        <p>DSP 链中代码的起始。</p>
+      </li>
+      <li>
+        <p>这个块的 dspchain 长度。</p>
+      </li>
+      <li>
+        <p>后记的长度。</p>
+      </li>
+      <li>
+        <p>如果作为 switch 使用则为真。</p>
+      </li>
+      <li>
+        <p>如果已开启则为真。</p>
+      </li>
+      <li>
+        <p>如果入口和出口正在重新分块则为真。</p>
+      </li>
+      <li>
+        <p>上采样因子。</p>
+      </li>
+      <li>
+        <p>下采样因子。</p>
+      </li>
+      <li>
+        <p>就在这个块之后停止（用于一次性触发）。</p>
+      </li>
+    </ul>
+    <p>d_ugen 例程</p>
+    <p>vinlet_dspprolog voutlet_dspprolog voutlet_dspepilog</p>
+    <p>struct _block</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://puredata.info/docs/developer/PdMemoryModel" rel="noreferrer noopener">puredata.info/docs/developer/PdMemoryModel</a> · 译文更新于 2026-10-14</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
