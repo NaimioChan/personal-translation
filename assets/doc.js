@@ -47,6 +47,35 @@
       nav.appendChild(lib);
     }
 
+    // ---------- 目录搜索 ----------
+    // 即时过滤侧栏条目（页面条目 + 当前页的小节链接）。
+    var searchBox = document.createElement('div');
+    searchBox.className = 'toc-search';
+    searchBox.style.position = 'sticky';
+    searchBox.style.top = '0';
+    searchBox.style.zIndex = '2';
+    searchBox.style.background = 'var(--bg)';
+    searchBox.style.padding = '2px 0 6px';
+
+    var searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.className = 'filter';
+    searchInput.setAttribute('aria-label', '搜索目录');
+    searchInput.placeholder = '搜索目录';
+    searchInput.style.marginBottom = '0';
+    searchInput.style.fontSize = '.9em';
+    searchInput.style.padding = '.4em .6em';
+    searchBox.appendChild(searchInput);
+
+    var searchInfo = document.createElement('div');
+    searchInfo.style.fontSize = '.8em';
+    searchInfo.style.color = 'var(--fg-faint)';
+    searchInfo.style.padding = '4px 2px 0';
+    searchInfo.hidden = true;
+    searchBox.appendChild(searchInfo);
+
+    nav.appendChild(searchBox);
+
     var byHref = Object.create(null);
     pages.forEach(function (p) { byHref[p.href] = p; });
 
@@ -110,6 +139,62 @@
       nav.appendChild(ol);
     }
     aside.appendChild(nav);
+
+    // ---------- 搜索过滤 ----------
+    var pageItems = [].slice.call(nav.querySelectorAll('.toc-pages > li'));
+    var sectionBoxes = [].slice.call(nav.querySelectorAll('details.toc-section'));
+    sectionBoxes.forEach(function (box) {
+      box.setAttribute('data-open-default', box.open ? '1' : '0');
+    });
+
+    var noHit = document.createElement('p');
+    noHit.className = 'toc-search-empty';
+    noHit.textContent = '无匹配词条';
+    noHit.hidden = true;
+    noHit.style.fontSize = '.85em';
+    noHit.style.color = 'var(--fg-muted)';
+    noHit.style.padding = '4px 2px';
+    nav.appendChild(noHit);
+
+    function filterToc() {
+      var q = searchInput.value.trim().toLowerCase();
+      var shown = 0;
+      pageItems.forEach(function (li) {
+        var hit = !q || (li.textContent || '').toLowerCase().indexOf(q) >= 0;
+        li.style.display = hit ? '' : 'none';
+        if (hit) shown++;
+      });
+      sectionBoxes.forEach(function (box) {
+        var any = [].slice.call(box.querySelectorAll('.toc-pages > li')).some(function (li) {
+          return li.style.display !== 'none';
+        });
+        box.style.display = any ? '' : 'none';
+        if (q) { if (any) box.open = true; }
+        else { box.open = box.getAttribute('data-open-default') === '1'; }
+      });
+      noHit.hidden = !(q && shown === 0);
+      if (q && shown > 0) {
+        searchInfo.textContent = '匹配 ' + shown + ' 项';
+        searchInfo.hidden = false;
+      } else {
+        searchInfo.hidden = true;
+      }
+    }
+
+    searchInput.addEventListener('input', filterToc);
+    searchInput.addEventListener('search', filterToc);
+    document.addEventListener('keydown', function (e) {
+      var tag = (e.target && e.target.tagName) || '';
+      if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) {
+        e.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+      } else if (e.key === 'Escape' && document.activeElement === searchInput) {
+        searchInput.value = '';
+        filterToc();
+        searchInput.blur();
+      }
+    });
 
     // 窄屏：点目录跳转后收起抽屉
     aside.addEventListener('click', function (e) {

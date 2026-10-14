@@ -12,5 +12,13 @@ window.PT_LIBRARIES = [
   { dir: 'puredata-docs', title: 'Pure Data 文档',
     desc: 'puredata.info 文档章节的中文译本。',
     source: 'https://puredata.info/docs',
-    updated: '2026-10-14', pages: 229 }
+    updated: '2026-10-14', pages: 229 },
+  { dir: 'plugdata-docs', title: 'plugdata 文档',
+    desc: 'plugdata 官方文档的中文译本。',
+    source: 'https://plugdata.org/docs.html',
+    updated: '2026-10-14', pages: 7 },
+  { dir: 'plugdata-reference', title: 'plugdata 对象参考',
+    desc: 'plugdata 官方对象参考的中文译本。',
+    source: 'https://plugdata.org/reference.html',
+    updated: '2026-10-14', pages: 1654 }
 ];
