@@ -31,6 +31,12 @@
 
 `<head>` 里引 `../assets/theme.css` 和 `../assets/settings.js`，`<html>` 上保留 `data-theme` / `data-font` 两个属性（默认值，用户设置会覆盖）。
 
+## 目录搜索
+
+侧栏顶部有一条搜索栏，由 `assets/doc.js` 生成，页面与模板里不需要写任何标记：输入关键词即时过滤侧栏条目
+（页面标题，以及当前页的 `h2`/`h3` 小节链接），命中条目所在的分组自动展开、整组无命中的分组隐藏，
+清空后恢复原来的分组展开状态。快捷键：`/` 聚焦搜索框，`Esc` 清空并失焦。
+
 ## 正文写法
 
 - 直接写 HTML：`h1`~`h4`、`p`、`ul`/`ol`、`pre><code`、`table`、`blockquote`、`hr`、`strong`/`em`。
