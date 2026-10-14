@@ -47,35 +47,68 @@
       nav.appendChild(lib);
     }
 
-    var ol = document.createElement('ol');
-    ol.className = 'toc-pages';
-    pages.forEach(function (p, idx) {
+    var byHref = Object.create(null);
+    pages.forEach(function (p) { byHref[p.href] = p; });
+
+    function pageItem(href) {
+      var p = byHref[href] || { href: href };
       var li = document.createElement('li');
       var a = document.createElement('a');
       a.href = p.href;
       a.textContent = p.title || p.href;
       li.appendChild(a);
 
-      if (idx === hereIndex && heads.length) {
+      if (sameFile(p.href, here)) {
         li.className = 'current';
-        var sub = document.createElement('ol');
-        sub.className = 'toc-subs';
-        heads.forEach(function (h) {
-          var sli = document.createElement('li');
-          var sa = document.createElement('a');
-          sa.href = '#' + h.id;
-          sa.textContent = h.textContent;
-          if (h.tagName === 'H3') sa.style.paddingLeft = '1.1em';
-          sli.appendChild(sa);
-          sub.appendChild(sli);
-        });
-        li.appendChild(sub);
-      } else if (idx === hereIndex) {
-        li.className = 'current';
+        if (heads.length) {
+          var sub = document.createElement('ol');
+          sub.className = 'toc-subs';
+          heads.forEach(function (h) {
+            var sli = document.createElement('li');
+            var sa = document.createElement('a');
+            sa.href = '#' + h.id;
+            sa.textContent = h.textContent;
+            if (h.tagName === 'H3') sa.style.paddingLeft = '1.1em';
+            sli.appendChild(sa);
+            sub.appendChild(sli);
+          });
+          li.appendChild(sub);
+        }
       }
-      ol.appendChild(li);
-    });
-    nav.appendChild(ol);
+      return li;
+    }
+
+    if (Object.prototype.toString.call(doc.sections) === '[object Array]' && doc.sections.length) {
+      // 分组侧栏：每章一个可折叠块，当前页所在章默认展开
+      doc.sections.forEach(function (sec) {
+        var box = document.createElement('details');
+        box.className = 'toc-section';
+        var sum = document.createElement('summary');
+        sum.textContent = sec.title || '';
+        sum.style.cursor = 'pointer';
+        sum.style.fontWeight = '600';
+        sum.style.fontSize = '.92em';
+        sum.style.margin = '.75em 0 .25em';
+        sum.style.color = 'var(--fg-muted)';
+        box.appendChild(sum);
+
+        var ol = document.createElement('ol');
+        ol.className = 'toc-pages';
+        var open = false;
+        (sec.pages || []).forEach(function (href) {
+          ol.appendChild(pageItem(href));
+          if (sameFile(href, here)) open = true;
+        });
+        box.appendChild(ol);
+        if (open) box.open = true;
+        nav.appendChild(box);
+      });
+    } else {
+      var ol = document.createElement('ol');
+      ol.className = 'toc-pages';
+      pages.forEach(function (p) { ol.appendChild(pageItem(p.href)); });
+      nav.appendChild(ol);
+    }
     aside.appendChild(nav);
 
     // 窄屏：点目录跳转后收起抽屉

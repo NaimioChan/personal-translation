@@ -29,7 +29,7 @@
 <script src="../assets/doc.js"></script>
 ```
 
-`<head>` 里引 `../assets/theme.css` 和 `../assets/settings.js`，`<html>` 上保留 `data-theme` / `data-width` / `data-font` 三个属性（默认值，用户设置会覆盖）。
+`<head>` 里引 `../assets/theme.css` 和 `../assets/settings.js`，`<html>` 上保留 `data-theme` / `data-font` 两个属性（默认值，用户设置会覆盖）。
 
 ## 正文写法
 
@@ -44,5 +44,4 @@
 
 - 当前配色：Anthropic 护眼亮色（默认）、标准 HTML 亮色、GitHub 暗色、Catppuccin Mocha 暗色
 - 字号 14px ~ 22px
-- 行宽 窄 / 标准 / 宽（跟随字号缩放）
 - 字体 跟随主题 / 无衬线 / 衬线（标准 HTML 主题默认衬线）
