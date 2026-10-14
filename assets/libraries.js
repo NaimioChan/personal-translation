@@ -6,11 +6,11 @@ window.PT_LIBRARIES = [
   // { dir: 'example-library', title: '示例文档库', desc: '一句话说明这个库收了什么文档。',
   //   source: 'https://example.com/docs', updated: '2026-10-13', pages: 3 }
   { dir: 'maxon-autograph', title: 'Maxon Autograph 帮助文档',
-    desc: 'Maxon Autograph 官方英文文档的中文译本，全站各章节。',
+    desc: 'Maxon Autograph 官方英文文档的中文译本。',
     source: 'https://help.maxon.net/ag/en-us/',
     updated: '2026-10-14', pages: 388 },
-  { dir: 'puredata-docs', title: 'Pure Data 文档中文译本',
-    desc: 'puredata.info 文档章节的中文译本：入门、FAQ、教程、手册、样式指南、GUI 插件、开发者文档、工作坊等。',
+  { dir: 'puredata-docs', title: 'Pure Data 文档',
+    desc: 'puredata.info 文档章节的中文译本。',
     source: 'https://puredata.info/docs',
     updated: '2026-10-14', pages: 229 }
 ];
