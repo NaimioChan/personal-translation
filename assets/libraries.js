@@ -21,8 +21,8 @@ window.PT_LIBRARIES = [
     desc: 'plugdata 官方对象参考的中文译本。',
     source: 'https://plugdata.org/reference.html',
     updated: '2026-10-14', pages: 1654 },
-                    { dir: 'cycling74-reference', title: 'Max 对象与操作符参考',
+                                                { dir: 'cycling74-reference', title: 'Max 对象与操作符参考',
     desc: 'Cycling \'74 官方对象与操作符参考的中文译本。',
     source: 'https://docs.cycling74.com/reference/',
-    updated: '2026-10-14', pages: 1818 }
+    updated: '2026-10-15', pages: 1818 }
 ];

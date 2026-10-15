@@ -5,7 +5,7 @@ window.PT_DOC = {
   title: "Max 对象与操作符参考",
   home: '../index.html',
   source: "https://docs.cycling74.com/reference/",
-  updated: "2026-10-14",
+  updated: "2026-10-15",
   pages: [
   {
     "href": "index.html",
