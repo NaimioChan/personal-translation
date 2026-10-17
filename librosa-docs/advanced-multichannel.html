@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多声道 - librosa 中文文档</title>
+<meta name="description" content="多声道（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="multi-channel"></span><span id="dimensions"></span><span id="examples"></span><span id="documentation"></span><span id="exceptions"></span><span id="advanced-uses-and-caveats"></span>
+
+<h1>多声道</h1>
+
+<p>本节概述 <em>librosa</em> 如何处理多声道信号。
+一句话总结：在 librosa 0.8 之前只支持单声道输入的大多数函数，现在无需任何改动即可支持多声道音频。</p>
+
+<h2>维度</h2>
+
+<p>讨论多声道之前，先回顾单声道（monaural）信号的处理方式。
+Librosa 把一切信号及其派生数据都作为 <a href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><code>numpy.ndarray</code></a>（N 维数组）对象处理。
+默认情况下，librosa 加载多声道信号时会把所有通道平均，得到单声道混音。
+结果对象是形状为 <code>(N_samples,)</code> 的一维数组，表示样本值的时间序列。
+后续处理通常会得到时间序列的更高维变换，例如短时傅里叶变换（<code>librosa.stft</code>）得到形状为 <code>(N_frequencies, N_frames)</code> 的二维数组。
+注意第二（末尾）个维度对应信号中的帧数，与长度成正比；第一个维度对应每一帧上测得的频率（或更一般地，特征）数量。</p>
+
+<p>处理多声道信号时，我们可以通过在调用 <code>librosa.load</code> 时指定 <code>mono=False</code> 跳过默认的降混步骤，如下：</p>
+
+<pre><code>import librosa
+
+# Get the "high-quality" multi-channel version of
+# an example track
+filename = librosa.ex('trumpet', hq=True)
+
+# Load as multi-channel data
+y_stereo, sr = librosa.load(filename, mono=False)</code></pre>
+
+<p>此时结果对象有两个维度而不是一个，形状为 <code>y_stereo.shape ==
+(N_channels, N_samples)</code>。
+这样，可以用 <code>y_stereo[0]</code> 访问第一个通道，用 <code>y_stereo[1]</code> 访问第二个通道；若通道多于两个，依此类推。</p>
+
+<p>Librosa 按以下通用模式表示数据：</p>
+
+<blockquote>
+<ul>
+  <li><p>末尾维度对应时间（样本、帧等）</p></li>
+  <li><p>前导维度可对应通道</p></li>
+  <li><p>中间维度对应「特征」（或频率、谐波等）。</p></li>
+</ul>
+</blockquote>
+
+<p>该模式的设计目标是：切出单个通道时索引方式保持<em>一致</em>。
+下面的示例对此做了演示。</p>
+
+<h2>示例</h2>
+
+<p>第一个示例：对上面加载的立体声示例信号计算短时傅里叶变换。
+做法与信号为单声道时完全相同，即：</p>
+
+<pre><code>D_stereo = librosa.stft(y_stereo)</code></pre>
+
+<p>所得 STFT 的形状为 <code>D_stereo.shape == (N_channels, N_frequencies, N_frames)</code>。
+切片 <code>D_stereo[0]</code> 对应第一个通道 <code>y_stereo[0]</code> 的 STFT，<code>D_stereo[1]</code> 是第二个通道 <code>y_stereo[1]</code> 的 STFT，依此类推。</p>
+
+<p>再看一个更进阶的示例：我们可以用 <a href="api-librosa-interp-harmonics.html#librosa.interp_harmonics" title="librosa.interp_harmonics"><code>librosa.interp_harmonics</code></a> 构造多声道谐波频谱图：</p>
+
+<pre><code>S_stereo = np.abs(D_stereo)
+
+# Get the default Fourier frequencies
+freqs = librosa.fft_frequencies(sr=sr)
+
+# We'll interpolate the first five harmonics of each frequency
+harmonics = [1, 2, 3, 4, 5]
+
+S_harmonics = librosa.interp_harmonics(S_stereo, freqs=freqs, h_range=harmonics)</code></pre>
+
+<p>结果对象现在有四个维度：<code>S_harmonics.shape == (N_channels,
+N_harmonics, N_frequencies, N_frames)</code>。
+如上所述，前导维度对应通道，末尾维度对应时间（帧），中间维度对应派生特征。
+这样，索引某个通道（例如用 <code>S_harmonics[1]</code> 取第二个通道）即可得到由该通道导出的整个特征数组，输出形状为 <code>(N_harmonics, N_frequencies, N_frames)</code>。</p>
+
+<h2>文档</h2>
+
+<p>阅读库文档时，你可能会遇到像 <a href="api-librosa-stft.html#librosa.stft" title="librosa.stft"><code>librosa.stft</code></a> 这样把输入信号参数描述为：</p>
+
+<pre><code>y : np.ndarray [shape=(..., n)], real-valued</code></pre>
+
+<p>这里的 “…” 类似于 Python 的 <em>Ellipsis</em> 对象，在此上下文中充当「0 个或多个维度」的占位符。
+这类似于 numpy 用 <em>Ellipsis</em> 在 <a href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><code>numpy.ndarray</code></a> 对象中跳过可变数量的维度。
+例如，要从上面的多声道谐波频谱图中切出单独一帧 <code>n</code>，可以写成：</p>
+
+<pre><code>S[:, :, :, n]</code></pre>
+
+<p>或者：</p>
+
+<pre><code>S[..., n]</code></pre>
+
+<p>后者通常更可取，因为它能推广到任意多个前导维度。</p>
+
+<p>凡是把函数描述为接受含 “…” 的形状时，含义是：除非另有说明，输出会保留这些（任意多个）前导维度。</p>
+
+<p>有些函数接受 <code>axis=</code> 参数，用于指定运算所沿的目标轴。
+一般约定是，<code>axis=-1</code>（最后一个轴）通常对应「时间」（或样本、帧），而 <code>axis=-2</code>（倒数第二个轴）通常对应「频率」或其他派生特征。</p>
+
+<h2>例外</h2>
+
+<p>并非 librosa 中所有函数都能自然地推广到多声道数据，不过大多数可以。
+同样，有些函数虽然可以推广，但方式可能与你预期的不符。
+本节简要说明多声道支持受限之处。</p>
+
+<p>输出为稀疏形式（即帧索引）的<strong>检测器</strong>，例如节拍跟踪（<a href="api-beat.html#module-librosa.beat" title="librosa.beat"><code>librosa.beat</code></a>）和起始点检测（<a href="api-librosa-onset-onset-detect.html#librosa.onset.onset_detect" title="librosa.onset.onset_detect"><code>librosa.onset.onset_detect</code></a>），不支持多声道输入。
+这是因为各通道的输出事件数可能不同，因而无法一致地存入 <a href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><code>numpy.ndarray</code></a> 输出对象。</p>
+
+<p>起始点与节拍检测<strong>仅在</strong>提供 <em>sparse=False</em> 参数时<strong>才能</strong>处理多声道输入，此时输出的检测结果会编码为（稠密）布尔数组，而不是稀疏的帧索引或时间戳。</p>
+
+<p>由 <a href="api-librosa-segment-recurrence-matrix.html#librosa.segment.recurrence_matrix" title="librosa.segment.recurrence_matrix"><code>librosa.segment.recurrence_matrix</code></a> 计算的自相似矩阵与交叉相似矩阵<strong>对多声道支持有限</strong>。
+这是因为输出对象可能是稀疏数据结构（如 <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csr_array.html#scipy.sparse.csr_array" title="(in SciPy v1.18.0)"><code>scipy.sparse.csr_array</code></a>），无法推广到多于两个维度。
+这些函数仍接受多声道输入，但在比较不同时间步的特征时会压平前导维度（通道）。
+若需要各通道独立的相似矩阵，建议逐通道分别处理。</p>
+
+<p><strong>分解与序列对齐</strong>和相似矩阵一样支持有限。
+谐波-打击源分离（<a href="api-librosa-decompose-hpss.html#librosa.decompose.hpss" title="librosa.decompose.hpss"><code>librosa.decompose.hpss</code></a>）可以完全接受多声道输入并独立处理，但其他分解函数（<a href="api-librosa-decompose-nn-filter.html#librosa.decompose.nn_filter" title="librosa.decompose.nn_filter"><code>librosa.decompose.nn_filter</code></a> 与 <a href="api-librosa-decompose-decompose.html#librosa.decompose.decompose" title="librosa.decompose.decompose"><code>librosa.decompose.decompose</code></a>）对多声道输入的处理方式有所限制。
+<em>librosa.decompose.dtw</em> 与 <em>librosa.decompose.rqa</em> 等序列对齐函数的工作方式与相似矩阵函数类似，会把前导维度视为额外的「特征」维度，并在对齐前予以压平。</p>
+
+<p><strong>显示</strong>函数对多声道支持有限。
+<a href="api-librosa-display-waveshow.html#librosa.display.waveshow" title="librosa.display.waveshow"><code>librosa.display.waveshow</code></a> 可接受单声道或 2 声道输入，但第二个通道仅在缩小到包络模式时才会用到。
+<a href="api-librosa-display-specshow.html#librosa.display.specshow" title="librosa.display.specshow"><code>librosa.display.specshow</code></a> 不接受多声道输入。</p>
+
+<h2>进阶用法与注意事项</h2>
+
+<p>librosa 对多声道的支持相当<em>灵活</em>。
+特别是，你可以把通道组织在两个或更多维度上，尽管单一声道维度是最常见的用法。
+例如，若要同时处理一批长度相同的立体声录音，可以把这些信号收集到形状为 <code>y.shape =
+(N_tracks, N_channels, N_samples)</code> 的数组中。
+此时任何派生数据（如上面示例中的频谱图）都会有两个前导维度，第一个对应音轨，第二个对应音轨内的通道。
+理论上可以使用任意多个前导维度，但应谨慎以尽量减少内存占用。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/multichannel.html" rel="noreferrer noopener">librosa.org/doc/latest/multichannel.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

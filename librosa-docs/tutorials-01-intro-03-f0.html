@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>基频 - librosa 中文文档</title>
+<meta name="description" content="基频（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="fundamental-frequency"></span><span id="sphx-glr-auto-tutorials-01-intro-03-f0-py"></span><span id="tutorial-f0"></span><span id="id1"></span><span id="f0-estimation-with-yin"></span><span id="f0-estimation-with-pyin"></span><span id="summary"></span><span id="sphx-glr-download-auto-tutorials-01-intro-03-f0-py"></span>
+
+<h1>基频</h1>
+
+<p>本节演示如何从录音中提取基频（f0）。</p>
+
+<h2>基频</h2>
+
+<p>傅里叶变换使我们能把任何时域信号表示为一组频率明确的纯正弦波之组合。如果信号在经过某段有限时间后精确重复自身——这段时间称为<em>基周期</em>，记作 <em>t0</em>——我们就说它具有<em>基频</em>，通常记作 <em>f0 = 1/t0</em>。</p>
+
+<p>离散傅里叶变换隐含假设所有信号在信号时长结束后重复，因此信号长度本身就是一个平凡的周期。使 <em>t0</em> 成为<em>基</em>周期的是：它是信号中最<em>短</em>的重复周期。</p>
+
+<p>信号的基频（如果存在的话，也可能不存在！）与我们感知到的<em>音高</em>密切相关，至少在一次只演奏一个音符的信号中如此；估计基频往往是旋律分析等任务的第一步。</p>
+
+<p>与上一节讨论的傅里叶变换一样，上面给出的基周期与基频定义对于频率内容随时间变化的实际应用来说过于严格。同样，我们会放宽这一限制，专注于频率内容可能平稳的短时区域，通常结果为每个时间步给出一个 <em>f0</em> 估计。</p>
+
+<p>这里我们演示两种常用的单音信号基频估计算法。注意它们不适用于复音信号，对于<em>多 f0 分析</em>或<em>和弦识别</em>，其他方法可能更合适。</p>
+
+<h2>用 yin 估计 f0</h2>
+
+<p>我们继续用上一节的小号示例。这段录音包含独奏小号演奏的一小段音符序列，中间有几处静音。</p>
+
+<pre><code>import librosa
+import matplotlib.pyplot as plt
+from IPython.display import Audio, HTML
+
+# Load the signal
+y, sr = librosa.loadx("trumpet")
+HTML(librosa.util.example_info("trumpet", html=True))</code></pre>
+
+<p><strong>solo trumpet 06</strong></p>
+
+<p><strong>By:</strong> Mihai Sorohan | <strong>License:</strong> <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a><strong>Source:</strong> <a href="https://freesound.org/s/77711/">https://freesound.org/s/77711/</a></p>
+
+<details><summary>说明</summary>
+<p>摘自 Mihai Sorohan 的 "Jazz Trumpet Loops Pack in F 90 bpm"<br>该包中所有片段均为 F 调，多为 Blues 与 Dorian 音阶，全部为立体声 acidized .wav 格式，16 位，44.1 kHz 采样率，90 bpm。<br><br>所用设备：<br>- 小号 Bb Amati ATR213<br>- 麦克风 Oktava MK 319<br>- 前置放大器 Art Tube MP Project Series<br>- 声卡 M-Audio Delta Audiophile 192<br></p>
+</details>
+<br>
+<p>创建一个用于试听的显示对象</p>
+
+<pre><code>Audio(url=librosa.example("trumpet", url=True))</code></pre>
+
+<p><audio controls src="https://librosa.org/data/audio/sorohanro_-_solo-trumpet-06.ogg"></audio></p>
+<br>
+<p>我们先使用的方法称为 <em>yin</em>。它的基本做法是把输入信号 <em>y</em> 切分成短帧，计算每帧与自身的相关，并找出能产生强相关的时间滞后偏移。</p>
+
+<blockquote>
+
+<p><strong>注意</strong></p>
+<p>具体实现方式有许多细微之处与细节。如果想深入了解，请参阅 <a href="api-librosa-yin.html#librosa.yin" title="librosa.yin"><code>librosa.yin</code></a> 文档与原始文献：</p>
+
+<pre><code>De Cheveigné, Alain, and Hideki Kawahara.
+"YIN, a fundamental frequency estimator for speech and music."
+The Journal of the Acoustical Society of America 111.4 (2002): 1917-1930.</code></pre>
+</blockquote>
+
+<p>调用 <em>yin</em> 时，需要提供信号与采样率，以及要考虑的频率范围上下界。如果关注的是有音高的声音，人耳听觉大致覆盖 30 Hz 到 20 KHz。既然知道所处理的是小号，就可以大幅收窄这个范围，因为小号音符通常在 F#3（约 185 Hz）与 C6（约 1047 Hz）之间。为了留出一点余量，可以再放宽一些，把最低与最高频率分别设为 150 HZ 与 1100 Hz。</p>
+
+<pre><code>f0 = librosa.yin(y=y, sr=sr, fmin=150, fmax=1100)</code></pre>
+
+<p>上面代码的输出是一个 ndarray <em>f0</em>，包含对输入信号 <em>y</em> 每个时间步的基频估计，按标准的 512 采样跳距（约 23ms）测得。</p>
+
+<p>我们可以把这一 f0 估计叠加在频谱图上，看看效果如何。</p>
+
+<pre><code>fig, ax = plt.subplots()
+
+stft = librosa.stft(y)
+
+times = librosa.times_like(f0)
+
+librosa.display.specshow(stft, vscale="dBFS",
+                         x_axis="time", y_axis="log", ax=ax)
+hl = librosa.display.highlight(ax=ax, alpha=0.8, linewidth=4)
+ax.plot(times, f0, label="yin f0 estimate", path_effects=hl)
+ax.legend(loc="upper right")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_03-f0_001.png" alt="03 f0">
+<p>从上图可以看到，yin 方法在跟踪小号音高方面做得还可以，但远称不上完美。yin 方法有几处具体不足值得注意：</p>
+
+<ol>
+  <li><p>它假设每一帧都有基频。这一假设在静音区域（例如上面信号的末尾）不成立，导致行为不稳定。</p></li>
+  <li><p>它几乎不约束 f0 估计的连续性，导致估计值出现突然跳变（例如音符之间）。</p></li>
+</ol>
+
+<p>这两点不足由工具箱中的下一个方法 <em>pyin</em> 解决。</p>
+
+<h2>用 pyin 估计 f0</h2>
+
+<p><em>pyin</em> 算法（即<em>概率化 yin</em>）从两方面扩展了 <em>yin</em> 算法：</p>
+
+<blockquote>
+<ol>
+  <li><p><em>pyin</em> 使用马尔可夫链对时间上的连续性建模。</p></li>
+  <li><ul>
+<li><em>pyin</em> 可以估计每一帧<em>是否</em>具有基频：<p>有基频的帧称为<em>浊音</em>帧，没有基频的帧称为<em>清音</em>帧。</p></li>
+</ul></li>
+</ol>
+</blockquote>
+
+<p><em>pyin</em> 方法比 <em>yin</em> 略复杂，不过许多参数是相同的，例如最低与最高频率。它的返回值包括基频估计 <em>f0</em>、表示每帧是浊音还是清音的 True/False 数组 <em>voiced_flag</em>，以及给出每帧为浊音的概率的数组 <em>voiced_probs</em>。被判为清音的帧，其 <em>f0</em> 值默认为 <code>np.nan</code>。</p>
+
+<pre><code>pyin_f0, voiced_flag, voiced_probs = librosa.pyin(y=y, sr=sr, fmin=150, fmax=1100)
+
+fig, ax = plt.subplots()
+librosa.display.specshow(stft, vscale="dBFS",
+                         x_axis="time", y_axis="log", ax=ax)
+hl = librosa.display.highlight(ax=ax, alpha=0.8, linewidth=4)
+ax.plot(times, pyin_f0, label="pyin f0 estimate", path_effects=hl)
+ax.legend(loc="upper right")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_03-f0_002.png" alt="03 f0">
+<p><em>pyin</em> 的估计更贴近小号的音高，音符之间没有突然跳变，也不会在静音区域估计 <em>f0</em>。</p>
+
+<h2>小结</h2>
+
+<p>本节介绍了音高与基频的概念。上面介绍的 <em>f0</em> 估计方法（yin 与 pyin）很适合具有清晰、突出单音声源的信号。然而它们不适用于分析复调或和声信号，这将在下一节讨论。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/auto_tutorials/01-intro/03-f0.html" rel="noreferrer noopener">librosa.org/doc/latest/auto_tutorials/01-intro/03-f0.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>拉普拉斯分割 - librosa 中文文档</title>
+<meta name="description" content="拉普拉斯分割（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script><script>
+window.MathJax = { tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] }, svg: { fontCache: 'global' } };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="laplacian-segmentation"></span><span id="sphx-glr-auto-tutorials-03-advanced-plot-segmentation-py"></span><span id="id1"></span><span id="tutorial-segmentation-laplacian"></span><span id="summary"></span><span id="sphx-glr-download-auto-tutorials-03-advanced-plot-segmentation-py"></span>
+
+<h1>拉普拉斯分割</h1>
+
+<p>本笔记本实现了 <a href="https://zenodo.org/record/1415778">McFee and Ellis, 2014</a> <a href="#id2">[1]</a> 中的拉普拉斯分割方法，
+并做了少量稳定性改进。</p>
+
+<p>在整个示例中，我们会按编号引用论文中的公式，建议对照原文阅读。</p>
+
+<p id="id2">[1] Brian McFee &amp; Dan Ellis. (2014).
+Analyzing Song Structure with Spectral Clustering.
+Proceedings of the 15th International Society for Music Information Retrieval Conference, 405–410. <a href="https://doi.org/10.5281/zenodo.1415778">https://doi.org/10.5281/zenodo.1415778</a></p>
+
+<pre><code># Code source: Brian McFee
+# License: ISC</code></pre>
+
+<ul>
+<li>导入：<ul>
+  <li><p>numpy 用于基础功能</p></li>
+  <li><p>scipy 用于图拉普拉斯</p></li>
+  <li><p>matplotlib 用于可视化</p></li>
+  <li><p>sklearn.cluster 用于 K-Means</p></li>
+  <li><p>IPython.display 用于渲染元数据</p></li>
+</ul></li>
+</ul>
+
+<pre><code>import numpy as np
+import scipy
+import matplotlib.pyplot as plt
+from IPython.display import HTML
+
+import sklearn.cluster
+
+import librosa</code></pre>
+
+<p>首先加载一首歌</p>
+
+<pre><code>y, sr = librosa.loadx("fishin")
+HTML(librosa.util.example_info("fishin", html=True))</code></pre>
+
+<p><strong>Let's Go Fishin'</strong></p>
+
+<p><strong>By:</strong> Karissa Hobbs | <strong>License:</strong> <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC-BY-NC-SA-4.0</a><strong>Source:</strong> <a href="https://freemusicarchive.org/music/Karissa_Hobbs/Age_of_Flowers/09_Lets_Go_Fishin/">https://freemusicarchive.org/music/Karissa_Hobbs/Age_of_Flowers/09_Lets_Go_Fishin/</a></p>
+
+<details><summary>Description</summary>
+<p>一首有人声的流行／民谣歌曲。</p>
+</details>
+<br>
+<p>接下来计算并绘制对数功率 CQT</p>
+
+<pre><code>BINS_PER_OCTAVE = 12 * 3
+N_OCTAVES = 7
+C = librosa.amplitude_to_db(np.abs(librosa.cqt(y=y, sr=sr,
+                                        bins_per_octave=BINS_PER_OCTAVE,
+                                        n_bins=N_OCTAVES * BINS_PER_OCTAVE)),
+                            ref=np.max)
+
+fig, ax = plt.subplots()
+librosa.display.specshow(C, y_axis="cqt_hz", sr=sr,
+                         bins_per_octave=BINS_PER_OCTAVE,
+                         x_axis="time", ax=ax)</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_segmentation_001.png" alt="plot segmentation">
+<p>为降低维度，我们把 CQT 与节拍同步</p>
+
+<pre><code>tempo, beats = librosa.beat.beat_track(y=y, sr=sr, trim=False)
+Csync = librosa.util.sync(C, beats, aggregate=np.median)
+
+# For plotting purposes, we'll need the timing of the beats
+# we fix_frames to include non-beat frames 0 and C.shape[1] (final frame)
+beat_times = librosa.frames_to_time(librosa.util.fix_frames(beats,
+                                                            x_min=0),
+                                    sr=sr)
+
+fig, ax = plt.subplots()
+librosa.display.specshow(Csync, bins_per_octave=BINS_PER_OCTAVE, sr=sr,
+                         y_axis="cqt_hz", x_axis="time",
+                         x_coords=beat_times, ax=ax)</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_segmentation_002.png" alt="plot segmentation">
+<p>用节拍同步的 CQT 构建加权递归矩阵（公式 1）
+width=3 阻止同一小节内的连接
+这里的 mode=’affinity’ 实现了 S_rep（对应公式 8 之后）</p>
+
+<p>我们还会用一些时间延迟嵌入来减少虚假链接。</p>
+
+<pre><code>Csync_stack = librosa.feature.stack_memory(Csync, n_steps=3, delay=1)
+R = librosa.segment.recurrence_matrix(Csync_stack, width=3, mode="affinity",
+                                      sym=True)
+
+# Enhance diagonals with a median filter (Equation 2)
+df = librosa.segment.timelag_filter(scipy.ndimage.median_filter)
+Rf = df(R, size=(1, 7))</code></pre>
+
+<p>现在用 mfcc 相似度构建序列矩阵（S_loc）</p>
+
+<blockquote>
+<p><span class="math">\(R_\text{path}[i, i\pm 1] = \exp(-\|C_i - C_{i\pm 1}\|^2 / \sigma^2)\)</span></p>
+</blockquote>
+
+<p>这里把 <span class="math">\(\sigma\)</span> 取为相邻节拍之间距离的中位数。
+我们用 <code>librosa.feature.delta</code> 计算相邻节拍之间的距离。</p>
+
+<pre><code>mfcc = librosa.feature.mfcc(y=y, sr=sr)
+Msync = librosa.util.sync(mfcc, beats)
+
+path_distance = np.sum(librosa.feature.delta(Msync, axis=1)**2, axis=0)[1:]
+sigma = np.median(path_distance)
+path_sim = np.exp(-path_distance / sigma)
+
+R_path = np.diag(path_sim, k=1) + np.diag(path_sim, k=-1)</code></pre>
+
+<p>然后计算平衡组合（公式 6、7、9）</p>
+
+<pre><code>deg_path = np.sum(R_path, axis=1)
+deg_rec = np.sum(Rf, axis=1)
+
+mu = deg_path.dot(deg_path + deg_rec) / np.sum((deg_path + deg_rec)**2)
+
+A = mu * Rf + (1 - mu) * R_path</code></pre>
+
+<p>绘制得到的图（图 1，左与中）</p>
+
+<pre><code>fig, ax = plt.subplots(ncols=3, sharex=True, sharey=True, figsize=(10, 4))
+librosa.display.multiplot("specshow", Rf, R_path, A,
+                          titles=["Recurrence similarity", "Path similarity", "Combined graph"],
+                          cmap="gray_r",
+                          y_axis="time", x_axis="s",
+                          y_coords=beat_times, x_coords=beat_times,
+                          axes=ax)</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_segmentation_003.png" alt="Recurrence similarity, Path similarity, Combined graph">
+<p>现在计算归一化拉普拉斯（公式 10）</p>
+
+<pre><code>L = scipy.sparse.csgraph.laplacian(A, normed=True)
+
+# and its spectral decomposition
+evals, evecs = scipy.linalg.eigh(L)
+
+# We can clean this up further with a median filter.
+# This can help smooth over small discontinuities
+evecs = scipy.ndimage.median_filter(evecs, size=(9, 1))
+
+# cumulative normalization is needed for symmetric normalize laplacian eigenvectors
+Cnorm = np.cumsum(evecs**2, axis=1)**0.5
+
+# If we want k clusters, use the first k normalized eigenvectors.
+# Fun exercise: see how the segmentation changes as you vary k
+
+k = 5
+
+X = evecs[:, :k] / Cnorm[:, k-1:k]</code></pre>
+
+<p>现在可以把得到的表示连同递归矩阵一起画出来，
+看看结构成分如何与重复模式对应。</p>
+
+<p>每个结构成分是一个归一化特征向量，其维度等于节拍数。这些结构成分的集合可作为
+描述每个节拍的特征，再对其聚类即可识别出段落。</p>
+
+<pre><code>fig, ax = plt.subplots(nrows=2, sharex=True, figsize=(6, 8),
+                       layout="compressed",
+                       gridspec_kw={"height_ratios": [1, 4]})
+librosa.display.specshow(Rf, cmap="gray_r", y_axis="time", x_axis="time",
+                         y_coords=beat_times, x_coords=beat_times, ax=ax[1])
+ax[1].set(ylabel="Recurrence similarity")
+
+librosa.display.specshow(X.T,
+                         x_axis="time",
+                         x_coords=beat_times, ax=ax[0])
+ax[0].set(yticks=np.arange(k), yticklabels=[f"Component {i+1}" for i in range(k)])
+ax[0].set(title="Structure components")
+ax[0].label_outer()</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_segmentation_004.png" alt="Structure components">
+<p>用这 k 个成分把节拍聚类成段落（算法 1）</p>
+
+<pre><code>KM = sklearn.cluster.KMeans(n_clusters=k, n_init="auto", random_state=0)
+
+seg_ids = KM.fit_predict(X)</code></pre>
+
+<p>现在每个节拍都有了段落 id，可以找出段落 id 发生变化的位置作为边界。</p>
+
+<pre><code>bound_beats = 1 + np.flatnonzero(seg_ids[:-1] != seg_ids[1:])
+
+# Count beat 0 as a boundary
+bound_beats = librosa.util.fix_frames(bound_beats, x_min=0)
+
+# Compute the segment label for each boundary
+bound_segs = list(seg_ids[bound_beats])
+
+# Convert beat indices to frames
+bound_frames = beats[bound_beats]
+
+# Make sure we cover to the end of the track
+bound_frames = librosa.util.fix_frames(bound_frames,
+                                       x_min=None,
+                                       x_max=C.shape[1]-1)</code></pre>
+
+<p>把最终的分割结果连同 CQT 和结构成分一起画出来。
+可以用 mir_eval 的标注显示功能为我们生成色块。
+我们把频谱图绘制成灰度图，这样各段落的配色就清晰可见。</p>
+
+<pre><code>import itertools
+import mir_eval.display
+
+bound_times = librosa.frames_to_time(bound_frames)
+freqs = librosa.cqt_frequencies(n_bins=C.shape[0],
+                                fmin=librosa.note_to_hz("C1"),
+                                bins_per_octave=BINS_PER_OCTAVE)
+
+fig, ax = plt.subplots(figsize=(8, 5), nrows=2, gridspec_kw={"height_ratios": [1, 4]},
+                       layout="compressed")
+librosa.display.specshow(X.T, x_axis="time", x_coords=beat_times, ax=ax[0])
+ax[0].set(yticks=np.arange(k), yticklabels=[f"#{i+1}" for i in range(k)])
+ax[0].set(title="Structure components")
+ax[0].label_outer()
+librosa.display.specshow(C, y_axis="cqt_hz", sr=sr,
+                         bins_per_octave=BINS_PER_OCTAVE,
+                         cmap="gray_r",
+                         x_axis="time", ax=ax[1])
+
+# Convert boundary times to a set of intervals
+intervals = np.asarray(list(itertools.pairwise(bound_times)))
+mir_eval.display.segments(intervals, bound_segs, ax=ax[1], alpha=0.5)
+fig.legend(loc="outside lower center", title="Segment ID", ncols=k)</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_segmentation_005.png" alt="Structure components">
+
+<h2>小结</h2>
+
+<p>在上面的最终图中，可以看到每个着色区域都对应一段在整个歌曲中反复出现的独立模式。
+应当能看出，段落边界（颜色随时间的变化）与结构成分的变化（上方面板）相对应。
+注意段落 id 的取值（0、1、2、…）是 K-Means 的簇编号，
+基本上是任意的，与段落实际出现的时间顺序无关。
+不过，区域的重复模式与分组方式仍然清晰，可以用来快速了解歌曲的结构。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/auto_tutorials/03-advanced/plot_segmentation.html" rel="noreferrer noopener">librosa.org/doc/latest/auto_tutorials/03-advanced/plot_segmentation.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PCEN 流式处理 - librosa 中文文档</title>
+<meta name="description" content="PCEN 流式处理（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="pcen-streaming"></span><span id="sphx-glr-auto-tutorials-03-advanced-plot-pcen-stream-py"></span><span id="sphx-glr-download-auto-tutorials-03-advanced-plot-pcen-stream-py"></span>
+
+<h1>PCEN 流式处理</h1>
+
+<p>本 notebook 演示如何配合 <a href="api-librosa-pcen.html#librosa.pcen" title="librosa.pcen"><code>librosa.pcen</code></a>
+使用流式 IO，对频谱图逐步进行动态逐通道能量归一化。</p>
+
+<p>这在处理大到无法一次加载的长音频文件时很有用，或者在从录音设备流式读取数据时很有用。</p>
+
+<p>它还演示了如何为分块短时傅里叶变换使用预分配的输出缓冲区。这样在处理音频流时能略微提升速度并减少内存占用。</p>
+
+<p>本例需要 numpy 与 matplotlib</p>
+
+<pre><code>import numpy as np
+import matplotlib.pyplot as plt
+from IPython.display import HTML
+
+import librosa</code></pre>
+
+<p>首先，从一个想要流式处理的音频文件开始</p>
+
+<pre><code>filename = librosa.ex("humpback")
+HTML(librosa.util.example_info("humpback", html=True))</code></pre>
+
+<p><strong>Glacier Bay</strong></p>
+
+<p><strong>By:</strong> Recorded by NPS - Chris Gabriele | <strong>License:</strong> <a href="https://creativecommons.org/publicdomain/mark/1.0/">CC-PDM-1.0</a><strong>Source:</strong> <a href="https://www.nps.gov/glba/learn/nature/soundclips.htm">https://www.nps.gov/glba/learn/nature/soundclips.htm</a></p>
+
+<strong>Corpus:</strong> Sounds recorded in Glacier Bay
+
+<details><summary>Description</summary>
+<p>2020 humpback whale song recorded at Glacier Bay National Park and Preserve, 2020/11/16.<br><br>Archive: https://web.archive.org/web/20220626001629/https://www.nps.gov/media/video/view.htm?id=D3F232B5-04F0-4545-9485-9A2F889ED152<br></p>
+</details>
+<br>
+<p>接下来，设置分块读取器，使其每次处理一小段音频。</p>
+
+<pre><code># We'll generate 64 frames at a time, each frame having 2048 samples
+# and 75% overlap.
+#
+
+n_fft = 2048
+hop_length = 512
+
+# fill_value pads out the last frame with zeros so that we have a
+# full frame at the end of the signal, even if the signal doesn't
+# divide evenly into full frames.
+sr = librosa.get_samplerate(filename)
+
+stream = librosa.stream(filename, block_length=16,
+                        frame_length=n_fft,
+                        hop_length=hop_length,
+                        mono=True,
+                        sr=sr,
+                        fill_value=0)</code></pre>
+
+<p>在这个例子中，我们会在每个块上计算 PCEN，求该块沿频率方向的最大响应，并把结果存入列表。</p>
+
+<pre><code># Make an array to store the frequency-averaged PCEN values
+pcen_blocks = []
+
+# Initialize the PCEN filter delays to steady state
+zi = None
+
+# Create a handle for storing the block STFT outputs
+# After the first block has been processed, we can reuse
+# this buffer instead of allocating a new one for each block.
+D = None
+
+for y_block in stream:
+    # Compute the STFT (without padding, so center=False)
+    D = librosa.stft(y_block, n_fft=n_fft, hop_length=hop_length,
+                     center=False, out=D)
+
+    # Compute PCEN on the magnitude spectrum, using initial delays
+    # returned from our previous call (if any)
+    # store the final delays for use as zi in the next iteration
+    P, zi = librosa.pcen(np.abs(D), sr=sr, hop_length=hop_length,
+                         zi=zi, return_zf=True)
+
+    # Compute the max PCEN over frequency, and append it to our list
+    pcen_blocks.extend(np.max(P, axis=0))
+
+# Cast to a numpy array for use downstream
+pcen_blocks = np.asarray(pcen_blocks)</code></pre>
+
+<p>作为对照，看看如果对整个频谱做 PCEN 而不分块处理会是什么结果</p>
+
+<pre><code>y, sr = librosa.load(filename, sr=sr)
+
+# Keep the same parameters as before
+D = librosa.stft(y, n_fft=n_fft, hop_length=hop_length, center=False)
+
+# Compute pcen on the magnitude spectrum.
+# We don't need to worry about initial and final filter delays if
+# we're doing everything in one go.
+P = librosa.pcen(np.abs(D), sr=sr, hop_length=hop_length)
+
+pcen_full = np.max(P, axis=0)</code></pre>
+
+<p>绘制 PCEN 频谱以及得到的幅度曲线</p>
+
+<pre><code># First, plot the spectrum
+fig, ax = plt.subplots(nrows=2, sharex=True)
+librosa.display.specshow(P, sr=sr, hop_length=hop_length,
+                         x_axis="time", y_axis="log", ax=ax[0])
+ax[0].set(title="PCEN spectrum")
+ax[0].label_outer()
+
+# Now we'll plot the pcen curves
+times = librosa.times_like(pcen_full, sr=sr, hop_length=hop_length)
+ax[1].plot(times, pcen_full, linewidth=3, alpha=0.25, label="Full signal PCEN")
+times = librosa.times_like(pcen_blocks, sr=sr, hop_length=hop_length)
+ax[1].plot(times, pcen_blocks, linestyle=":", label="Block-wise PCEN")
+ax[1].legend()
+
+# Zoom in to a short patch to see the fine details
+ax[1].set(xlim=[30, 40])</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_pcen_stream_001.png" alt="PCEN spectrum">
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/auto_tutorials/03-advanced/plot_pcen_stream.html" rel="noreferrer noopener">librosa.org/doc/latest/auto_tutorials/03-advanced/plot_pcen_stream.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

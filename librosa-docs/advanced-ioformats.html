@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>进阶 I/O 用例 - librosa 中文文档</title>
+<meta name="description" content="进阶 I/O 用例（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="advanced-i-o-use-cases"></span><span id="ioformats"></span><span id="read-specific-formats"></span><span id="blockwise-reading"></span><span id="read-file-like-objects"></span><span id="write-out-audio-files"></span>
+
+<h1>进阶 I/O 用例</h1>
+
+<p>本节介绍超出 <em>librosa</em> 当前所提供 I/O 功能的进阶输入输出用例。</p>
+
+<h2>读取特定格式</h2>
+
+<p><em>librosa</em> 使用 <a href="https://python-soundfile.readthedocs.io/en/latest/">soundfile</a> 读取音频。
+<a href="https://python-soundfile.readthedocs.io/en/latest/index.html#module-soundfile" title="(in python-soundfile)"><code>soundfile</code></a> 支持的编解码器列表见 <em>libsndfile</em> <a href="https://libsndfile.github.io/libsndfile/">文档</a>。</p>
+
+<blockquote>
+
+<p><strong>注意</strong></p>
+<p>soundfile 的安装说明见 <a href="https://python-soundfile.readthedocs.io/en/latest/">此处</a>。</p>
+</blockquote>
+
+<p>Librosa 的 load 函数面向常见情形：把一段（录音片段的）完整内容加载到内存中；但有些应用需要更大的灵活性。
+这类情况下，我们建议直接使用 <a href="https://python-soundfile.readthedocs.io/en/latest/index.html#module-soundfile" title="(in python-soundfile)"><code>soundfile</code></a>。
+用 <a href="https://python-soundfile.readthedocs.io/en/latest/index.html#module-soundfile" title="(in python-soundfile)"><code>soundfile</code></a> 读取音频文件的方式与 <em>librosa</em> 类似。一个重要的区别是读取的数据形状为 <em>(nb_samples, nb_channels)</em>，而在 <code>librosa.core.load</code> 中为 <em>(nb_channels, nb_samples)</em>。此外信号默认不会被重采样到 22050 Hz，因此在 <em>librosa</em> 中做后续处理前需要转置并重采样。下面的示例等价于 <em>librosa.load(librosa.util.ex(‘trumpet’))</em>：</p>
+
+<pre><code>1import librosa
+2import soundfile as sf
+3
+4# Get example audio file
+5filename = librosa.ex('trumpet')
+6
+7data, samplerate = sf.read(filename, dtype='float32')
+8data = data.T
+9data_22k = librosa.resample(data, samplerate, 22050)</code></pre>
+
+<h2>分块读取</h2>
+
+<p>对于很长的音频信号，不把整个音频文件加载进内存可能更有益。Librosa 0.7 引入了流式接口，可用于依次处理短的音频片段。 <a href="api-librosa-stream.html#librosa.stream" title="librosa.stream"><code>librosa.stream</code></a> 把输入文件切分成音频<em>块</em>，每块对应给定的<em>帧</em>数，可按如下示例迭代：</p>
+
+<pre><code> 1import librosa
+ 2
+ 3sr = librosa.get_samplerate('/path/to/file.wav')
+ 4
+ 5# Set the frame parameters to be equivalent to the librosa defaults
+ 6# in the file's native sampling rate
+ 7frame_length = (2048 * sr) // 22050
+ 8hop_length = (512 * sr) // 22050
+ 9
+10# Stream the data, working on 128 frames at a time
+11stream = librosa.stream('path/to/file.wav',
+12                        block_length=128,
+13                        frame_length=frame_length,
+14                        hop_length=hop_length)
+15
+16chromas = []
+17for y in stream:
+18   chroma_block = librosa.feature.chroma_stft(y=y, sr=sr,
+19                                              n_fft=frame_length,
+20                                              hop_length=hop_length,
+21                                              center=False)
+22   chromas.append(chromas)</code></pre>
+
+<p>在这个示例中，每个音频片段 <code>y</code> 都包含相当于 128 帧的样本，
+更具体地说，<code>len(y) == frame_length + (block_length - 1) * hop_length</code>。
+每个片段 <code>y</code> 与随后的片段重叠 <code>frame_length - hop_length</code>
+个样本，这保证了流式处理的结果与把整个序列一次性处理的结果等价（前提是禁用填充与居中）。</p>
+
+<p>流式接口的更多细节参见 <a href="api-librosa-stream.html#librosa.stream" title="librosa.stream"><code>librosa.stream</code></a>。</p>
+
+<h2>读取类文件对象</h2>
+
+<p>若要从类文件对象（也称<em>虚拟文件</em>）读取音频，同样可以使用 <a href="https://python-soundfile.readthedocs.io/en/latest/index.html#module-soundfile" title="(in python-soundfile)"><code>soundfile</code></a>。 只要底层编解码器受 <a href="https://python-soundfile.readthedocs.io/en/latest/index.html#module-soundfile" title="(in python-soundfile)"><code>soundfile</code></a> 支持，<a href="api-librosa-load.html#librosa.load" title="librosa.load"><code>librosa.load</code></a> 与 <a href="api-librosa-stream.html#librosa.stream" title="librosa.stream"><code>librosa.stream</code></a> 也同样适用。</p>
+
+<p>例如：从 zip 压缩包中读取文件：</p>
+
+<pre><code>1import zipfile as zf
+2import soundfile as sf
+3import io
+4
+5with zf.ZipFile('test.zip') as myzip:
+6    with myzip.open('stereo_file.wav') as myfile:
+7        tmp = io.BytesIO(myfile.read())
+8        data, samplerate = sf.read(tmp)</code></pre>
+
+<p>从 URL 下载并读取：</p>
+
+<pre><code>1import io
+2import urllib.request
+3import soundfile as sf
+4
+5url = "https://librosa.org/data/audio/snare-accelerate.ogg"
+6
+7with urllib.request.urlopen(url) as response:
+8    data, samplerate = sf.read(io.BytesIO(response.read()))</code></pre>
+
+<h2>写出音频文件</h2>
+
+<p><a href="https://python-soundfile.readthedocs.io/en/latest/">soundfile</a> 提供了输出功能，可直接用于 numpy 数组形式的音频缓冲区：</p>
+
+<pre><code> 1import numpy as np
+ 2import soundfile as sf
+ 3
+ 4rate = 44100
+ 5data = np.random.uniform(-1, 1, size=(rate * 10, 2))
+ 6
+ 7# Write out audio as 24bit PCM WAV
+ 8sf.write('stereo_file.wav', data, samplerate, subtype='PCM_24')
+ 9
+10# Write out audio as 24bit Flac
+11sf.write('stereo_file.flac', data, samplerate, format='flac', subtype='PCM_24')
+12
+13# Write out audio as 16bit OGG
+14sf.write('stereo_file.ogg', data, samplerate, format='ogg', subtype='vorbis')</code></pre>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/ioformats.html" rel="noreferrer noopener">librosa.org/doc/latest/ioformats.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

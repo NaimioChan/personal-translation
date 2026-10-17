@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>和声与色度 - librosa 中文文档</title>
+<meta name="description" content="和声与色度（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="harmony-and-chroma"></span><span id="sphx-glr-auto-tutorials-01-intro-04-harmony-py"></span><span id="frequencies-and-harmonics"></span><span id="tutorial-intro-harmony"></span><span id="constant-q-spectrum"></span><span id="a-more-complex-example"></span><span id="chroma"></span><span id="summary"></span><span id="sphx-glr-download-auto-tutorials-01-intro-04-harmony-py"></span>
+
+<h1>和声与色度</h1>
+
+<p>本节介绍用于分析音频录音中谐波内容的工具。</p>
+
+<h2>频率与谐波</h2>
+
+<p>上一节中，我们看到了如何识别单音信号的基频（f0）。基频通常就是我们把一个声音当成「音高」来识别的那个频率。
+然而声音往往比单一的频率复杂得多。
+大多数有意思的声音都包含能量和许多相关频率，对于乐器（包括人声）而言，这些频率通常体现为基频的<em>谐波</em>。
+对于频率 <em>f</em>，第 <em>n</em> 次谐波（<em>n = 1, 2, 3, …</em>）就是频率
+<em>n*f</em>。</p>
+
+<pre><code>import librosa
+import numpy as np
+import matplotlib.pyplot as plt
+from IPython.display import HTML
+
+y, sr = librosa.loadx("trumpet")
+HTML(librosa.util.example_info("trumpet", html=True))</code></pre>
+
+<p><strong>solo trumpet 06</strong></p>
+
+<p><strong>By:</strong> Mihai Sorohan | <strong>License:</strong> <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a><strong>Source:</strong> <a href="https://freesound.org/s/77711/">https://freesound.org/s/77711/</a></p>
+
+<details><summary>描述</summary>
+<p>Part of "Jazz Trumpet Loops Pack in F 90 bpm" by Mihai Sorohan<br>All parts in this pack are in F, mostly Blues and Dorian scale and all are in stereo acidized .wav format, 16 bit, 44.1 khz sample rate, 90 bpm.<br><br>Gear used:<br>- trumpet Bb Amati ATR213<br>- microphone Oktava MK 319<br>- preamp Art Tube MP Project Series<br>- soundcard M-Audio Delta Audiophile 192<br></p>
+</details>
+<br>
+<pre><code>S = np.abs(librosa.stft(y))
+fig, ax = plt.subplots()
+img = librosa.display.specshow(S, vscale="dBFS",
+                               x_axis="time", y_axis="log", ax=ax)
+librosa.display.colorbar_db(img, label="dBFS")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_04-harmony_001.png" alt="04 harmony">
+<p>在上面的小号示例中，我们可以观察到一个重复的竖直图案。
+如果在 <em>f0</em> 处有能量（颜色较亮），例如信号开头附近约 620 Hz 处，那么在频率为其两倍（约 1240 Hz）、三倍
+（1860 Hz）等等的位置也有能量。
+能量在基频各次谐波上的这种分布，构成了乐器的音色。</p>
+
+<h2>常数 Q 谱</h2>
+
+<p>到目前为止，我们一直依赖短时傅里叶变换（STFT）来分析信号随时间变化的频率内容。
+对于谐波内容分析，STFT 有几个局限：</p>
+
+<blockquote>
+<ol>
+  <li><p>频率集合在 0 到 <em>sr/2</em> 之间<strong>线性</strong>分布。
+ 这本身并不<em>错</em>，但它与谐波的概念并不直接对应，因为谐波是<strong>几何</strong>分布的。</p></li>
+  <li><p>帧长对所有频率都是固定的（<em>n_fft</em>）。这意味着低频在帧内只会完成少数几个周期，
+ 而高频则会完成很多个周期。结果是对低频的分辨能力相对较差，而这在分析音乐信号时可能很重要。</p></li>
+</ol>
+</blockquote>
+
+<p>常数 Q 变换（CQT）正是为了解决这些问题而提出的。
+其基本思想与 STFT 相当接近，都是把信号切成小块，再与一组固定频率的参考正弦波进行比较。
+区别在于：1）频率采用几何间隔选取，
+因此第 <em>n`th frequency is given as `2**(n / bins_per_octave) * f_min</em>（<em>f_min &gt; 0</em> 为最小分析频率）；2）CQT 不在各频率上固定帧的时长，而是在各频率上固定所完成的周期数，并允许帧长变化（同时仍以给定的索引为中心）。</p>
+
+<p>在 librosa 中计算信号的 CQT 可以用下面的代码：</p>
+
+<pre><code>C = librosa.cqt(y=y, sr=sr)</code></pre>
+
+<p>默认情况下，CQT 每八度使用 12 个频带，最小频率为 C1
+（约 32.7 Hz），并跨越 7 个八度，覆盖 32.7（C1）到 3951（B7）的范围。</p>
+
+<p>我们可以像 STFT 那样通过 <em>specshow</em> 函数来可视化 CQT，但要注意 <em>y_axis</em> 参数现在不同了：</p>
+
+<pre><code>fig, ax = plt.subplots()
+img = librosa.display.specshow(C, vscale="dBFS",
+                               x_axis="time", y_axis="cqt_hz",
+                               ax=ax)
+librosa.display.colorbar_db(img, label="dBFS")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_04-harmony_002.png" alt="04 harmony">
+<p>上图应当与 STFT 的可视化看起来有些相似，有两点不同：</p>
+
+<blockquote>
+<ol>
+  <li><p>频率分辨率更低：现在只有 84 个频率，而不是
+ 1025 个。</p></li>
+  <li><p>频率范围更低：图在约 4 KHz 处结束，而不是 STFT 中的 11 KHz。</p></li>
+</ol>
+</blockquote>
+
+<p>这两点都可以通过设置 CQT 的参数来调整。
+例如，要使用比默认 12 更多的每八度频带数，可以设置
+<em>bins_per_octave=36</em>。这里支持任何正整数，不过通常取十二的奇数倍比较合适，这样可以在提高分辨率的同时保持与 12TET / A440 体系的对齐。</p>
+
+<p>注意，当你增加每八度频带数时，也必须相应地增加<em>频带总数</em>。所以如果我们从每八度 12 个频带增加到 36 个频带，也就应该从 84 个频带增加到 252 个频带，以保持相同的频率范围。
+你只需改变 <em>n_bins</em> 参数，就能扩展或收缩频率范围。</p>
+
+<p>我们来创建一个新的 CQT，具有更高的频率分辨率和略高的频率范围。</p>
+
+<pre><code>C = librosa.cqt(y=y, sr=sr,
+                bins_per_octave=12 * 3,  # writing it this way makes the octave division clear
+                n_bins=12 * 3 * 8)       # this makes it clear that we have 8 octaves now</code></pre>
+
+<p>我们也可以像之前那样可视化，但需要告诉 <em>specshow</em> 使用正确的每八度频带数。
+（关于在 <em>specshow</em> 中配置频率范围的更多信息，请参阅<a href="tutorials-02-display-03-axes.html#tutorial-display-axes">频率范围</a>。）</p>
+
+<pre><code>fig, ax = plt.subplots()
+img = librosa.display.specshow(C, vscale="dBFS",
+                               x_axis="time", y_axis="cqt_hz",
+                               bins_per_octave=12 * 3,
+                               ax=ax)
+librosa.display.colorbar_db(img, label="dBFS")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_04-harmony_003.png" alt="04 harmony">
+<p>从视觉上看，CQT 图现在应当与我们最初看到的 STFT 图非常相似。
+然而在数值上，它们是相当不同的对象：</p>
+
+<pre><code>print(f"STFT shape={S.shape}")
+print(f"CQT shape={C.shape}")</code></pre>
+
+<pre><code>STFT shape=(1025, 230)
+CQT shape=(288, 230)</code></pre>
+
+<p>除了表示更紧凑之外，在提取谐波相关的频率内容时，CQT 也比 STFT 更便于使用。</p>
+
+<h2>一个更复杂的例子</h2>
+
+<p>上面的小号例子是单音的：只有一个声源，任意时刻至多有一个音符在响
+（尽管每个音符在<em>多个频率</em>上都会有能量）。</p>
+
+<p>现在我们来看一个稍微复杂些的例子，其中涉及多个乐器和同时发声的音符。</p>
+
+<pre><code>from IPython.display import Audio
+
+y, sr = librosa.loadx("sweetwaltz", duration=15)
+HTML(librosa.util.example_info("sweetwaltz", html=True))</code></pre>
+
+<p><strong>Sweet Waltz</strong></p>
+
+<p><strong>By:</strong> setuniman | <strong>License:</strong> <a href="https://creativecommons.org/licenses/by-nc/4.0/">CC-BY-NC-4.0</a><strong>Source:</strong> <a href="https://freesound.org/people/Setuniman/sounds/147793/">https://freesound.org/people/Setuniman/sounds/147793/</a></p>
+
+<details><summary>描述</summary>
+<p>Steady change between two naive major phrases beginning with wooden timbre is gradually layered by flute and organ colours. Made with synths.<br></p>
+</details>
+<br>
+<pre><code>Audio(url=librosa.example("sweetwaltz", url=True))</code></pre>
+
+<p><audio controls src="https://librosa.org/data/audio/147793__setuniman__sweet-waltz-0i-22mi.ogg"></audio></p>
+<br>
+<p>和之前一样，我们可以计算并可视化这个例子的 CQT。</p>
+
+<pre><code>C = librosa.cqt(y=y, sr=sr,
+                bins_per_octave=12*3,
+                n_bins=12*3*8)
+
+fig, ax = plt.subplots()
+img = librosa.display.specshow(C, vscale="dBFS",
+                               x_axis="time",
+                               y_axis="cqt_hz",
+                               bins_per_octave=12*3,
+                               ax=ax)
+librosa.display.colorbar_db(img, label="dBFS")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_04-harmony_004.png" alt="04 harmony">
+
+<h2>色度</h2>
+
+<p>到这里，要把音符（基频）与谐波区分开来就困难得多了，而且一般来说有更多信息需要理清。</p>
+
+<p>当我们分析录音的谐波内容时，往往并不关心确切的频率和音高，而是关心<em>音级</em>，即把音高归约到一个八度之内。
+这正是<em>色度</em>表示想要捕捉的东西，它们一般通过把时频表示（在这里是 CQT）中与每个音级对应的所有频率上的信息聚合起来实现。
+例如，C 音级会从 32.7、65.4、130.8、261.6 等频率收集能量。
+C♯ 音级则会从 34.6、69.3、138.6、277.2 等频率收集能量，这个模式对从 C 到 B 的所有音级依次重复。</p>
+
+<p>librosa 实现了若干种构造色度表示的方法，这里我们演示基于 CQT 的方法。
+默认情况下，它会使用每八度 36 个频带、跨越 7 个八度的 CQT。</p>
+
+<pre><code>chroma = librosa.feature.chroma_cqt(y=y, sr=sr)</code></pre>
+
+<p>sphinx_gallery_thumbnail_number = 5
+我们同样可以用 <em>specshow</em> 来可视化，这次把 <em>y_axis</em> 模式设为 <em>chroma</em>。
+我们会把它画在上面 CQT 图的下方，便于直接对比两者。</p>
+
+<pre><code>fig, ax = plt.subplots(nrows=2, sharex=True, height_ratios=(3, 1))
+imgcqt = librosa.display.specshow(C, vscale="dBFS",
+                                  x_axis="time",
+                                  y_axis="cqt_hz",
+                                  bins_per_octave=12*3,
+                                  ax=ax[0])
+librosa.display.colorbar_db(imgcqt, label="dBFS")
+ax[0].label_outer()  # only show x-axis labels on the bottom plot
+imgchroma = librosa.display.specshow(chroma,
+                                     x_axis="time",
+                                     y_axis="chroma",
+                                     ax=ax[1])
+fig.colorbar(imgchroma, ax=ax[1], aspect=20/3)  # aspect compensates for the 3:1 height ratio of these plots</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_04-harmony_005.png" alt="04 harmony">
+<p>色度的每一行对应一个音级，其数值对应在该音级内检测到的相对能量多少。
+注意这些数值现在被归一化到 [0, 1] 区间，这样做是为了对响度变化有一定的稳健性。</p>
+
+<p>与 f0 估计不同，任意时刻都可能有多个音级同时活跃。
+因此色度特征常用作自动和弦估计的特征表示，其中每个时间步被映射为诸如 <em>F:maj</em> 或 <em>D:min</em> 的和弦标签。
+虽然可以用模板匹配来构建一个基本的和弦估计方法
+（参见 <a href="api-librosa-sequence-viterbi-discriminative.html#librosa.sequence.viterbi_discriminative" title="librosa.sequence.viterbi_discriminative"><code>librosa.sequence.viterbi_discriminative</code></a> 中的例子），但现代方法一般都
+涉及有监督机器学习，超出了 librosa 的范围。</p>
+
+<h2>小结</h2>
+
+<p>本节介绍了常数 Q 变换和色度表示，作为表示音乐信号中谐波内容的手段。
+不过上面描述的方法都相当基础，借助更高级的预处理和后处理技巧，有很多改进的余地。
+如果你想进一步了解如何设计有效的色度表示，可以看看<a href="tutorials-03-advanced-plot-chroma.html#plot-advanced-chroma">增强色度</a>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/auto_tutorials/01-intro/04-harmony.html" rel="noreferrer noopener">librosa.org/doc/latest/auto_tutorials/01-intro/04-harmony.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

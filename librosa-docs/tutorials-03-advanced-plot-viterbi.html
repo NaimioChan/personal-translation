@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>维特比解码 - librosa 中文文档</title>
+<meta name="description" content="维特比解码（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script><script>
+window.MathJax = { tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] }, svg: { fontCache: 'global' } };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="viterbi-decoding"></span><span id="sphx-glr-auto-tutorials-03-advanced-plot-viterbi-py"></span><span id="sphx-glr-download-auto-tutorials-03-advanced-plot-viterbi-py"></span>
+
+<h1>维特比解码</h1>
+
+<p>本笔记本演示如何用维特比解码对逐帧状态预测施加时间平滑。</p>
+
+<p>我们的示例问题是静音/非静音检测。</p>
+
+<pre><code># Code source: Brian McFee
+# License: ISC
+
+# Standard imports
+import numpy as np
+import matplotlib.pyplot as plt
+import librosa
+from IPython.display import HTML</code></pre>
+
+<p>加载一段示例信号</p>
+
+<pre><code>y, sr = librosa.loadx("trumpet")
+HTML(librosa.util.example_info("trumpet", html=True))</code></pre>
+
+<p><strong>solo trumpet 06</strong></p>
+
+<p><strong>By:</strong> Mihai Sorohan | <strong>License:</strong> <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a><strong>Source:</strong> <a href="https://freesound.org/s/77711/">https://freesound.org/s/77711/</a></p>
+
+<details><summary>说明</summary>
+<p>摘自 Mihai Sorohan 的 "Jazz Trumpet Loops Pack in F 90 bpm"<br>该包中所有片段均为 F 调，多为 Blues 与 Dorian 音阶，全部为立体声 acidized .wav 格式，16 位，44.1 kHz 采样率，90 bpm。<br><br>所用设备：<br>- 小号 Bb Amati ATR213<br>- 麦克风 Oktava MK 319<br>- 前置放大器 Art Tube MP Project Series<br>- 声卡 M-Audio Delta Audiophile 192<br></p>
+</details>
+<br>
+<p>然后计算频谱图的幅度与相位</p>
+
+<pre><code>S_full, phase = librosa.magphase(librosa.stft(y))</code></pre>
+
+<p>绘制频谱</p>
+
+<pre><code>fig, ax = plt.subplots()
+img = librosa.display.specshow(S_full, vscale="dBFS",
+                               y_axis="log", x_axis="time", sr=sr, ax=ax)
+librosa.display.colorbar_db(img)</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_viterbi_001.png" alt="plot viterbi">
+<p>可以看到，这段录音中既有静音段，也有非静音段。</p>
+
+<pre><code># As a first step, we can plot the root-mean-square (RMS) curve
+rms = librosa.feature.rms(y=y)[0]
+
+times = librosa.frames_to_time(np.arange(len(rms)))
+
+fig, ax = plt.subplots()
+ax.plot(times, rms)
+ax.axhline(0.02, color="r", alpha=0.5)
+ax.set(xlabel="Time", ylabel="RMS")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_viterbi_002.png" alt="plot viterbi">
+<p>0.02 处的红线表示静音检测的合理阈值。
+然而 RMS 曲线偶尔会短暂低于该阈值，
+我们希望检测器不要把这些短暂的下陷算作静音。
+这正是维特比算法派上用场的地方！</p>
+
+<p>第一步，我们通过 logistic 映射把原始 RMS 分数
+转换为似然（概率）</p>
+
+<blockquote>
+<p><span class="math">\(P[V=1 | x] = \frac{\exp(x - \tau)}{1 + \exp(x - \tau)}\)</span></p>
+</blockquote>
+
+<p>其中 <span class="math">\(x\)</span> 表示 RMS 值，<span class="math">\(\tau=0.02\)</span> 是我们的阈值。
+变量 <span class="math">\(V\)</span> 表示信号是非静音（1）还是静音（0）。</p>
+
+<p>我们用 RMS 的标准差做归一化，以扩展概率向量的取值范围</p>
+
+<pre><code>r_normalized = (rms - 0.02) / np.std(rms)
+p = np.exp(r_normalized) / (1 + np.exp(r_normalized))</code></pre>
+
+<p>可以绘制概率随时间变化的曲线：</p>
+
+<pre><code>fig, ax = plt.subplots()
+ax.plot(times, p, label="P[V=1|x]")
+ax.axhline(0.5, color="r", alpha=0.5, label="Decision threshold")
+ax.set(xlabel="Time")
+ax.legend()</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_viterbi_003.png" alt="plot viterbi">
+<p>它看起来与第一张图很像，只是判决阈值移到了 0.5。
+简单的静音检测器会独立地判定每一帧，与相邻帧无关，
+结果如下：</p>
+
+<pre><code>fig, ax = plt.subplots(nrows=2, sharex=True)
+librosa.display.specshow(S_full, vscale="dBFS",
+                         y_axis="log", x_axis="time", sr=sr, ax=ax[0])
+ax[0].label_outer()
+ax[1].step(times, p&gt;=0.5, label="Non-silent")
+ax[1].set(ylim=[0, 1.05])
+ax[1].legend()</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_viterbi_004.png" alt="plot viterbi">
+<p>用维特比算法可以做得更好。
+我们用状态 0 表示静音，状态 1 表示非静音。
+假设静音帧之后是静音或非静音的概率相同，而非静音之后
+更可能是非静音。
+这通过构建自环转移矩阵来实现，
+其中 <em>transition[i, j]</em> 表示下一帧从状态 <em>i</em>
+转移到状态 <em>j</em> 的概率。</p>
+
+<pre><code>transition = librosa.sequence.transition_loop(2, [0.5, 0.6])
+print(transition)</code></pre>
+
+<pre><code>[[0.5 0.5]
+ [0.4 0.6]]</code></pre>
+
+<p>我们的变量 <em>p</em> 只表示非静音的概率，
+所以还需要把它的补值作为静音的概率计算出来。</p>
+
+<pre><code>full_p = np.vstack([1 - p, p])
+print(full_p)</code></pre>
+
+<pre><code>[[0.226 0.142 0.1   0.082 0.089 0.098 0.116 0.159 0.153 0.106 0.074 0.054
+  0.055 0.077 0.116 0.16  0.189 0.213 0.211 0.195 0.204 0.226 0.271 0.3
+  0.172 0.098 0.067 0.058 0.079 0.134 0.203 0.245 0.286 0.279 0.269 0.279
+  0.309 0.299 0.196 0.128 0.079 0.058 0.076 0.117 0.203 0.245 0.234 0.186
+  0.135 0.146 0.127 0.128 0.152 0.174 0.216 0.274 0.336 0.435 0.484 0.257
+  0.174 0.169 0.153 0.199 0.279 0.271 0.286 0.317 0.319 0.332 0.355 0.362
+  0.351 0.318 0.299 0.292 0.301 0.33  0.361 0.404 0.453 0.491 0.543 0.57
+  0.571 0.527 0.254 0.147 0.099 0.072 0.075 0.086 0.103 0.147 0.217 0.327
+  0.519 0.555 0.562 0.538 0.377 0.257 0.19  0.141 0.115 0.108 0.107 0.131
+  0.167 0.199 0.21  0.181 0.165 0.166 0.176 0.188 0.206 0.218 0.236 0.252
+  0.258 0.265 0.276 0.286 0.303 0.322 0.339 0.366 0.405 0.446 0.5   0.549
+  0.566 0.571 0.572 0.573 0.574 0.575 0.576 0.577 0.579 0.58  0.581 0.582
+  0.582 0.584 0.585 0.586 0.586 0.586 0.586 0.586 0.587 0.587 0.587 0.587
+  0.587 0.588 0.588 0.588 0.588 0.588 0.589 0.589 0.589 0.589 0.589 0.589
+  0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589
+  0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589
+  0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589
+  0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589
+  0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589 0.589
+  0.589 0.589]
+ [0.774 0.858 0.9   0.918 0.911 0.902 0.884 0.841 0.847 0.894 0.926 0.946
+  0.945 0.923 0.884 0.84  0.811 0.787 0.789 0.805 0.796 0.774 0.729 0.7
+  0.828 0.902 0.933 0.942 0.921 0.866 0.797 0.755 0.714 0.721 0.731 0.721
+  0.691 0.701 0.804 0.872 0.921 0.942 0.924 0.883 0.797 0.755 0.766 0.814
+  0.865 0.854 0.873 0.872 0.848 0.826 0.784 0.726 0.664 0.565 0.516 0.743
+  0.826 0.831 0.847 0.801 0.721 0.729 0.714 0.683 0.681 0.668 0.645 0.638
+  0.649 0.682 0.701 0.708 0.699 0.67  0.639 0.596 0.547 0.509 0.457 0.43
+  0.429 0.473 0.746 0.853 0.901 0.928 0.925 0.914 0.897 0.853 0.783 0.673
+  0.481 0.445 0.438 0.462 0.623 0.743 0.81  0.859 0.885 0.892 0.893 0.869
+  0.833 0.801 0.79  0.819 0.835 0.834 0.824 0.812 0.794 0.782 0.764 0.748
+  0.742 0.735 0.724 0.714 0.697 0.678 0.661 0.634 0.595 0.554 0.5   0.451
+  0.434 0.429 0.428 0.427 0.426 0.425 0.424 0.423 0.421 0.42  0.419 0.418
+  0.418 0.416 0.415 0.414 0.414 0.414 0.414 0.414 0.413 0.413 0.413 0.413
+  0.413 0.412 0.412 0.412 0.412 0.412 0.411 0.411 0.411 0.411 0.411 0.411
+  0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411
+  0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411
+  0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411
+  0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411
+  0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411 0.411
+  0.411 0.411]]</code></pre>
+
+<p>现在可以解码了！
+这里使用 <em>viterbi_discriminative</em>，因为输入是
+以数据为条件的状态似然（本例中的数据是 rms）。</p>
+
+<pre><code>states = librosa.sequence.viterbi_discriminative(full_p, transition)
+
+fig, ax = plt.subplots(nrows=2, sharex=True)
+librosa.display.specshow(S_full, vscale="dBFS",
+                         y_axis="log", x_axis="time", sr=sr, ax=ax[0])
+ax[0].label_outer()
+ax[1].step(times, p&gt;=0.5, label="Frame-wise")
+ax[1].step(times, states, linestyle="--", color="orange", label="Viterbi")
+ax[1].set(ylim=[0, 1.05])
+ax[1].legend()</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_viterbi_005.png" alt="plot viterbi">
+<p>可以看到维特比输出的状态变化次数比逐帧预测更少，
+而且对能量的瞬时下陷不那么敏感。
+这直接由转移矩阵控制。
+自转移概率越高，解码器越不容易切换状态。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/auto_tutorials/03-advanced/plot_viterbi.html" rel="noreferrer noopener">librosa.org/doc/latest/auto_tutorials/03-advanced/plot_viterbi.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
