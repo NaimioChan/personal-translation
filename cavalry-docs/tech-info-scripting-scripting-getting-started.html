@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>脚本入门 - Cavalry 官方文档</title>
+<meta name="description" content="Cavalry 官方文档《脚本入门》的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20fill='%23FAF9F5'/%3E%3Crect%20x='2.75'%20y='1.75'%20width='10.5'%20height='12.5'%20fill='none'%20stroke='%23D97757'%20stroke-width='1.5'/%3E%3Cpath%20d='M5.25%205.25h5.5M5.25%208h5.5M5.25%2010.75h3'%20stroke='%23D97757'%20stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>脚本入门</h1>
+<h2 id="introduction">简介</h2>
+<p>Cavalry 中的 <strong>JavaScript</strong> 可以访问场景中的图层和数据，因此可以编写脚本来执行自定义工作流程。这包括创建图层、设置属性、建立<a href="getting-started-key-concepts-connections.html">连接</a>以及更多内容。</p>
+<p>最简单的入门方式是查看 <code>Create &gt; Demo Scenes &gt; JavaScript</code> 菜单中的示例。</p>
+<p>下面是一个示例脚本，它会创建一个<a href="nodes-shapes-text-shape.html">文本图形</a>并为其制作动画。将此脚本复制粘贴到<a href="user-interface-menus-window-menu-javascript-editor.html">JavaScript 编辑器</a>的标签页中，然后点击 <code>Run Script</code> 按钮即可运行。</p>
+<pre><code class="language-js">// Get the height of the composition (we're going to drop the text from the top)
+var height = api.get(api.getActiveComp(), "resolution.y");
+// The time difference between the first and last letters dropping
+var timeOffset = 20;
+
+// Make a text shape
+var textShapeId = api.create("textShape", "Bouncy Text");
+// Set some attributes on the text layer
+// The attributes are set via a dictionary of (key, value) pairs
+// This means many attributes can be set at once.
+api.set(textShapeId, {"horizontalAlignment": 1,
+                      "fontSize": 120,
+                      "font.style": "Black",
+                      "verticalAlignment": 1,
+                      "material.materialColor": "#ff24e0",
+                      "autoWidth": true,
+                      "autoHeight": true});
+
+// Get the bounding box of the text layer
+var bbox = api.getBoundingBox(textShapeId, true);
+// How far to we need to move the text shape to get it 'offscreen'
+var distToEdge = bbox.y * -1 + height * .5;
+
+// Get the start frame of the text shape (this could just be 0, but we're getting the in frame just to show off)
+var startFrame = api.getInFrame(textShapeId);
+// Set the end frame
+var endFrame = startFrame+40;
+
+// Create a Sub-Mesh layer which will power the 'per character' animation.
+var subMeshId = api.create("subMesh", "Bounce In Animator");
+// Set some keyframes, and set magic easing
+api.keyframe(subMeshId, startFrame, {"shapePosition.y": distToEdge});
+api.keyframe(subMeshId, endFrame, {"shapePosition.y": 0});
+api.magicEasing(subMeshId, "shapePosition.y", startFrame, "BounceOut");
+// Connect the Sub-Mesh to the Text layer's Deformers Attribute
+api.connect(subMeshId, "id", textShapeId, "deformers");
+// Parent the Sub-Mesh to the Text.
+api.parent(subMeshId, textShapeId);
+
+// Create a Stagger - this will be used to create the time offset
+var staggerId = api.create("stagger", "Bounce In Stagger");
+// Set the minimum/ maximum attributes on the Stagger
+api.set(staggerId, {"minimum": -timeOffset, "maximum": 0});
+// Flip the Graph on the Stagger so that the first letter bounces in first (by default the last letter would go first).
+api.flipGraph(staggerId, "graph", "vertical");
+// Connect the Stagger to the Sub-Mesh
+api.connect(staggerId, "id", subMeshId, "shapeTimeOffset");
+// Parent the Stagger to the Text
+api.parent(staggerId, textShapeId);
+// Start playback
+api.play();</code></pre><a href="tech-info-scripting-example-scripts.html">示例脚本→</a>
+<h2 id="installing-ui-scripts">安装 UI 脚本</h2>
+<p>要安装<a href="tech-info-scripting-script-uis.html">UI 脚本</a>，请前往 <code>Help &gt; Show Scripts Folder</code>，然后将脚本文件拖入该文件夹。允许使用嵌套文件夹，它们会显示为子菜单。保存到该文件夹的脚本会立即出现在 <code>Window &gt; Scripts</code> 菜单中，无需重启 Cavalry。</p>
+<h2 id="cavalry-scenes">Cavalry 场景</h2>
+<p>每个 Cavalry 场景都由若干图层树组成。其中有一个资源树，包含场景中的所有资源图层；除此之外，Cavalry 中的每个合成都有自己的图层树。可以用 JavaScript 遍历这些树，从而访问 Cavalry 中（几乎）每个图层。每棵树都可以由任意数量、任意层级的图层组成。</p>
+<h2 id="accessing-layers-and-attributes">访问图层与属性</h2>
+<p>要访问合成中的图层和属性，需要用到它们的 <code>LayerId</code> 和/或 <code>AttributeId</code>。</p>
+<h3 id="layer-ids">图层 Id</h3>
+<p>要获取 <code>layerId</code>（编写脚本时可用于访问<strong>图层</strong>），请在<a href="user-interface-menus-window-menu-attribute-editor.html">属性编辑器</a>、<a href="user-interface-menus-window-menu-scene-window.html">场景窗口</a>或<a href="user-interface-menus-window-menu-viewport.html">视口</a>中右键点击该图层，然后从上下文菜单中选择 <code>Copy Layer Id</code>。</p>
+<h3 id="layer-type">图层类型</h3>
+<p><code>layerType</code> 是 <code>layerId</code> 的一部分，因此可以按上述方式获取。<code>layerType</code> 是 <code>layerId</code> 中位于 <code>#</code> 之前的部分。例如，如果 <code>layerId</code> 是 <strong>basicShape#1</strong>，那么 <code>layerType</code> 就是 <strong>basicShape</strong>。</p>
+<h3 id="attribute-ids">属性 Id</h3>
+<p>要获取 <code>attrId</code>（编写脚本时可用于访问<strong>属性</strong>），请在<a href="user-interface-menus-window-menu-attribute-editor.html">属性编辑器</a>中右键点击某个<strong>属性</strong>，然后从上下文菜单中选择 <code>Copy Scripting Path</code>。例如：</p>
+<ol>
+<li>创建一个<a href="nodes-shapes-basic-shape.html">基础图形</a>。</li>
+<li>在属性编辑器中，右键点击 <code>Position</code> 属性。</li>
+<li>从上下文菜单中选择 <code>Copy Scripting Path</code>。</li> </ol>
+<p>这会将 <code>position</code> 复制到剪贴板，随后即可在脚本中作为参数使用：</p>
+<pre><code class="language-js">api.get("basicShape#1", "position");</code></pre>
+<h2 id="modules">模块</h2>
+<p>JavaScript 可用于多个位置，Cavalry 提供了 4 个模块，用于访问场景中的数据。此外还提供了许多便捷方法，让处理这些数据更加容易。请注意，Cavalry 提供的 JavaScript 模块并非在所有位置都可用。</p>
+<h3 id="api-module"><a href="tech-info-scripting-api-module.html">API 模块</a></h3>
+<ul>
+<li>仅在<a href="user-interface-menus-window-menu-javascript-editor.html">JavaScript 编辑器</a>中可用。</li>
+<li>它提供对场景和文件系统的编辑访问权限。</li>
+<li>该模块的前缀是 <code>api</code>。</li> </ul>
+<h3 id="context-module"><a href="tech-info-scripting-context-module.html">上下文模块</a></h3>
+<ul>
+<li>可在<a href="nodes-general-javascript-layers.html">JavaScript 图层</a>中使用。</li>
+<li>它提供与计算<a href="nodes-utilities-javascript-utility.html">JavaScript 工具</a>输出相关的方法。</li>
+<li>该模块的前缀是 <code>ctx</code>。</li> </ul>
+<h3 id="cavalry-module"><a href="tech-info-scripting-cavalry-module.html">Cavalry 模块</a></h3>
+<ul>
+<li>可在<a href="nodes-general-javascript-layers.html">JavaScript 图层</a>和<a href="user-interface-menus-window-menu-javascript-editor.html">JavaScript 编辑器</a>中使用。</li>
+<li>它提供实用方法和类，用于处理和创建可供其他地方使用的数据。</li>
+<li>该模块的前缀是 <code>cavalry</code>。</li> </ul>
+<h3 id="deformer-module"><a href="tech-info-scripting-deformer-module.html">变形器模块</a></h3>
+<ul>
+<li>仅对<a href="nodes-behaviours-javascript-deformer.html">JavaScript 变形器</a>可用。</li>
+<li>该模块的前缀是 <code>def</code>。</li> </ul>
+<h2 id="logging">日志</h2>
+<p>使用 <code>console.&lt;method&gt;()</code> 将消息写入 Cavalry 的<a href="user-interface-menus-window-menu-javascript-console.html">JavaScript 控制台</a>。下面的方法可用于打印特定上下文的消息，这些消息带有不同颜色的强调色，便于快速识别。</p>
+<pre><code class="language-js">console.log("This is a test."); // Typically used in testing (green).
+console.info("Confirming this happened as expected."); // Confirm when something expected has happened (green).
+console.warn("Just to let you know..."); // Warn a user when they've done something unexpected (yellow).
+console.error("Something went wrong."); // Flag when something has gone wrong (red).
+console.debug("I am a developer."); // Print a message to Terminal/Cmd Prompt.</code></pre>
+<h2 id="glossary">术语表</h2>
+<p>许多成员函数可以将参数作为输入，并且/或者会返回不同类型的值：</p>
+<ul>
+<li><code>int</code>：整数是不带小数点的数字。例如 <code>4</code>。</li>
+<li><code>number</code>：带小数位的数字。例如 <code>4.153</code>。</li>
+<li><code>string</code>：字符串可以包含字母数字字符和符号，应使用双引号包裹。例如</li>
+<li><code>"string"</code>。</li>
+<li><code>bool</code>：布尔值可以是 <code>true</code> 或 <code>false</code>。</li>
+<li><code>array</code>：数组是项目的列表。例如 <code>["one", "two", "three"]</code> 或 <code>[1, 2, 3]</code>。</li>
+<li><code>object</code>：对象是属性的集合（一个名称（或键）和一个值）。例如 <code>{width:10, height:10}</code>。</li> </ul>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://cavalry.studio/docs/tech-info/scripting/scripting-getting-started/" rel="noreferrer noopener">cavalry.studio/docs/tech-info/scripting/scripting-getting-started/</a> · 译文更新于 2026-10-17</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
