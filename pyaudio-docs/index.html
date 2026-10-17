@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyAudio 文档 - PyAudio 文档中文译本</title>
+<meta name="description" content="PyAudio 文档中文译本：阻塞与回调两种模式的音频 I/O 示例、PyAudio 与 PyAudio.Stream 类参考，以及 macOS 专用的 PaMacCoreStreamInfo。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1 id="pyaudio-documentation">PyAudio 文档</h1>
+
+    <div class="contents topic" id="contents">
+      <p class="topic-title first"><a name="contents">目录</a></p>
+      <ul class="simple">
+        <li><a class="reference internal" href="#pyaudio-documentation">PyAudio 文档</a>
+          <ul>
+            <li><a class="reference internal" href="#module-pyaudio">简介</a>
+              <ul>
+                <li><a class="reference internal" href="#example-blocking-mode-audio-i-o">示例：阻塞模式音频 I/O</a></li>
+                <li><a class="reference internal" href="#example-callback-mode-audio-i-o">示例：回调模式音频 I/O</a></li>
+                <li><a class="reference internal" href="#overview">概览</a></li>
+                <li><a class="reference internal" href="#details">详情</a></li>
+              </ul>
+            </li>
+            <li><a class="reference internal" href="#class-pyaudio">PyAudio 类</a></li>
+            <li><a class="reference internal" href="#class-pyaudio-stream">PyAudio.Stream 类</a></li>
+            <li><a class="reference internal" href="#platform-specific">平台相关</a></li>
+          </ul>
+        </li>
+        <li><a class="reference internal" href="#indices-and-tables">索引与表格</a></li>
+      </ul>
+    </div>
+
+    <h2 id="module-pyaudio">简介</h2>
+
+    <p>PyAudio 为跨平台音频 I/O 库 PortAudio 提供 Python 绑定。借助 PyAudio，你可以轻松地用 Python 在各种平台上播放和录制音频。</p>
+
+    <h3 id="example-blocking-mode-audio-i-o">示例：阻塞模式音频 I/O</h3>
+
+<pre><code>"""PyAudio Example: Play a wave file."""
+
+import wave
+import sys
+
+import pyaudio
+
+
+CHUNK = 1024
+
+if len(sys.argv) &lt; 2:
+    print(f'Plays a wave file. Usage: {sys.argv[0]} filename.wav')
+    sys.exit(-1)
+
+with wave.open(sys.argv[1], 'rb') as wf:
+    # Instantiate PyAudio and initialize PortAudio system resources (1)
+    p = pyaudio.PyAudio()
+
+    # Open stream (2)
+    stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
+                    channels=wf.getnchannels(),
+                    rate=wf.getframerate(),
+                    output=True)
+
+    # Play samples from the wave file (3)
+    while len(data := wf.readframes(CHUNK)):  # Requires Python 3.8+ for :=
+        stream.write(data)
+
+    # Close stream (4)
+    stream.close()
+
+    # Release PortAudio system resources (5)
+    p.terminate()
+</code></pre>
+
+    <p>要使用 PyAudio，首先用 <a href="#pyaudio.PyAudio"><code>pyaudio.PyAudio()</code></a> 实例化 PyAudio（1），它会为 PortAudio 获取系统资源。</p>
+
+    <p>要录制或播放音频，用 <a href="#pyaudio.PyAudio.open"><code>pyaudio.PyAudio.open()</code></a>（2）在目标设备上按所需的音频参数打开一个流。它会建立一个 <a href="#pyaudio.PyAudio.Stream"><code>pyaudio.PyAudio.Stream</code></a> 来播放或录制音频。</p>
+
+    <p>用 <a href="#pyaudio.PyAudio.Stream.write"><code>pyaudio.PyAudio.Stream.write()</code></a> 向流写入音频数据来播放音频，或用 <a href="#pyaudio.PyAudio.Stream.read"><code>pyaudio.PyAudio.Stream.read()</code></a> 从流中读取音频数据。（3）</p>
+
+    <p>注意，在“阻塞模式”下，每次 <a href="#pyaudio.PyAudio.Stream.write"><code>pyaudio.PyAudio.Stream.write()</code></a> 或 <a href="#pyaudio.PyAudio.Stream.read"><code>pyaudio.PyAudio.Stream.read()</code></a> 都会阻塞，直到所有帧播放或录制完毕。另一种方式是下文介绍的“回调模式”，由 PyAudio 调用一个用户定义的函数，用来处理录制到的音频或生成要输出的音频。</p>
+
+    <p>用 <a href="#pyaudio.PyAudio.Stream.close"><code>pyaudio.PyAudio.Stream.close()</code></a> 关闭流。（4）</p>
+
+    <p>最后，用 <a href="#pyaudio.PyAudio.terminate"><code>pyaudio.PyAudio.terminate()</code></a> 终止 PortAudio 会话并释放系统资源。（5）</p>
+
+    <h3 id="example-callback-mode-audio-i-o">示例：回调模式音频 I/O</h3>
+
+<pre><code>"""PyAudio Example: Play a wave file (callback version)."""
+
+import wave
+import time
+import sys
+
+import pyaudio
+
+
+if len(sys.argv) &lt; 2:
+    print(f'Plays a wave file. Usage: {sys.argv[0]} filename.wav')
+    sys.exit(-1)
+
+with wave.open(sys.argv[1], 'rb') as wf:
+    # Define callback for playback (1)
+    def callback(in_data, frame_count, time_info, status):
+        data = wf.readframes(frame_count)
+        # If len(data) is less than requested frame_count, PyAudio automatically
+        # assumes the stream is finished, and the stream stops.
+        return (data, pyaudio.paContinue)
+
+    # Instantiate PyAudio and initialize PortAudio system resources (2)
+    p = pyaudio.PyAudio()
+
+    # Open stream using callback (3)
+    stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
+                    channels=wf.getnchannels(),
+                    rate=wf.getframerate(),
+                    output=True,
+                    stream_callback=callback)
+
+    # Wait for stream to finish (4)
+    while stream.is_active():
+        time.sleep(0.1)
+
+    # Close the stream (5)
+    stream.close()
+
+    # Release PortAudio system resources (6)
+    p.terminate()
+</code></pre>
+
+    <p>在回调模式下，每当需要新的音频数据用于播放，或者有新的录制音频数据可用时，PyAudio 都会调用一个用户定义的回调函数（1）。PyAudio 在单独的线程中调用该回调函数。回调函数必须具有如下签名 <code>callback(&lt;input_data&gt;, &lt;frame_count&gt;, &lt;time_info&gt;, &lt;status_flag&gt;)</code>。它必须返回一个元组，其中包含要输出的 <code>frame_count</code> 帧音频数据（用于输出流），以及一个标志，表示是否还有更多预期要播放或录制的帧。（对于仅输入的流，返回值中的音频数据部分会被忽略。）</p>
+
+    <p>流一经打开（3），音频流就开始处理，它会反复调用回调函数，直到该函数返回 <a href="#pyaudio.paComplete"><code>pyaudio.paComplete</code></a> 或 <a href="#pyaudio.paAbort"><code>pyaudio.paAbort</code></a>，或者直到调用 <code>pyaudio.PyAudio.Stream.stop</code> 或 <a href="#pyaudio.PyAudio.Stream.close"><code>pyaudio.PyAudio.Stream.close</code></a>。注意，如果回调返回的帧数少于 <code>frame_count</code> 参数（2），流会在这些帧播放完毕后自动关闭。</p>
+
+    <p>为了让流保持活动，主线程必须保持存活，例如通过休眠（4）来做到。在上面的示例中，整个波形文件读完之后，<code>wf.readframes(frame_count)</code> 最终会返回少于请求数量的帧。流将停止，while 循环（4）随之结束。</p>
+
+    <h3 id="overview">概览</h3>
+
+    <dl class="simple">
+      <dt><strong>类</strong></dt><dd><p><a href="#pyaudio.PyAudio"><code>PyAudio</code></a>、<a href="#pyaudio.PyAudio.Stream"><code>PyAudio.Stream</code></a></p></dd>
+    </dl>
+    <dl class="simple">
+      <dt><strong>宿主相关类</strong></dt><dd><p><a href="#pyaudio.PaMacCoreStreamInfo"><code>PaMacCoreStreamInfo</code></a></p></dd>
+    </dl>
+    <dl class="simple">
+      <dt><strong>流转换便捷函数</strong></dt><dd><p><a href="#pyaudio.get_sample_size"><code>get_sample_size()</code></a>、<a href="#pyaudio.get_format_from_width"><code>get_format_from_width()</code></a></p></dd>
+      <dt><strong>PortAudio 版本</strong></dt><dd><p><a href="#pyaudio.get_portaudio_version"><code>get_portaudio_version()</code></a>、<a href="#pyaudio.get_portaudio_version_text"><code>get_portaudio_version_text()</code></a></p></dd>
+    </dl>
+    <dl class="simple" id="pasampleformat">
+      <dt><strong>PortAudio 采样格式</strong></dt><dd><p><a href="#pyaudio.paFloat32"><code>paFloat32</code></a>、<a href="#pyaudio.paInt32"><code>paInt32</code></a>、<a href="#pyaudio.paInt24"><code>paInt24</code></a>、<a href="#pyaudio.paInt16"><code>paInt16</code></a>、<a href="#pyaudio.paInt8"><code>paInt8</code></a>、<a href="#pyaudio.paUInt8"><code>paUInt8</code></a>、<a href="#pyaudio.paCustomFormat"><code>paCustomFormat</code></a></p></dd>
+    </dl>
+    <dl class="simple" id="pahostapi">
+      <dt><strong>PortAudio 宿主 API</strong></dt><dd><p><a href="#pyaudio.paInDevelopment"><code>paInDevelopment</code></a>、<a href="#pyaudio.paDirectSound"><code>paDirectSound</code></a>、<a href="#pyaudio.paMME"><code>paMME</code></a>、<a href="#pyaudio.paASIO"><code>paASIO</code></a>、<a href="#pyaudio.paSoundManager"><code>paSoundManager</code></a>、<a href="#pyaudio.paCoreAudio"><code>paCoreAudio</code></a>、<a href="#pyaudio.paOSS"><code>paOSS</code></a>、<a href="#pyaudio.paALSA"><code>paALSA</code></a>、<a href="#pyaudio.paAL"><code>paAL</code></a>、<a href="#pyaudio.paBeOS"><code>paBeOS</code></a>、<a href="#pyaudio.paWDMKS"><code>paWDMKS</code></a>、<a href="#pyaudio.paJACK"><code>paJACK</code></a>、<a href="#pyaudio.paWASAPI"><code>paWASAPI</code></a>、<a href="#pyaudio.paNoDevice"><code>paNoDevice</code></a></p></dd>
+    </dl>
+    <dl class="simple" id="paerrorcode">
+      <dt><strong>PortAudio 错误码</strong></dt><dd><p><code>paNoError</code>、<code>paNotInitialized</code>、<code>paUnanticipatedHostError</code>、<code>paInvalidChannelCount</code>、<code>paInvalidSampleRate</code>、<code>paInvalidDevice</code>、<code>paInvalidFlag</code>、<code>paSampleFormatNotSupported</code>、<code>paBadIODeviceCombination</code>、<code>paInsufficientMemory</code>、<code>paBufferTooBig</code>、<code>paBufferTooSmall</code>、<code>paNullCallback</code>、<code>paBadStreamPtr</code>、<code>paTimedOut</code>、<code>paInternalError</code>、<code>paDeviceUnavailable</code>、<code>paIncompatibleHostApiSpecificStreamInfo</code>、<code>paStreamIsStopped</code>、<code>paStreamIsNotStopped</code>、<code>paInputOverflowed</code>、<code>paOutputUnderflowed</code>、<code>paHostApiNotFound</code>、<code>paInvalidHostApi</code>、<code>paCanNotReadFromACallbackStream</code>、<code>paCanNotWriteToACallbackStream</code>、<code>paCanNotReadFromAnOutputOnlyStream</code>、<code>paCanNotWriteToAnInputOnlyStream</code>、<code>paIncompatibleStreamHostApi</code></p></dd>
+    </dl>
+    <dl class="simple" id="pacallbackreturncodes">
+      <dt><strong>PortAudio 回调返回码</strong></dt><dd><p><a href="#pyaudio.paContinue"><code>paContinue</code></a>、<a href="#pyaudio.paComplete"><code>paComplete</code></a>、<a href="#pyaudio.paAbort"><code>paAbort</code></a></p></dd>
+    </dl>
+    <dl class="simple" id="pacallbackflags">
+      <dt><strong>PortAudio 回调标志</strong></dt><dd><p><a href="#pyaudio.paInputUnderflow"><code>paInputUnderflow</code></a>、<a href="#pyaudio.paInputOverflow"><code>paInputOverflow</code></a>、<a href="#pyaudio.paOutputUnderflow"><code>paOutputUnderflow</code></a>、<a href="#pyaudio.paOutputOverflow"><code>paOutputOverflow</code></a>、<a href="#pyaudio.paPrimingOutput"><code>paPrimingOutput</code></a></p></dd>
+    </dl>
+
+    <h3 id="details">详情</h3>
+
+    <dl class="py function">
+      <dt id="pyaudio.get_format_from_width"><code>pyaudio.get_format_from_width(width, unsigned=True)</code></dt>
+      <dd>
+        <p>返回指定的 <em>width</em> 对应的 PortAudio 格式常量。</p>
+        <dl class="field-list">
+          <dt>参数</dt>
+          <dd><ul class="simple">
+            <li><p><strong>width</strong> – 期望的采样宽度，以字节为单位（1、2、3 或 4）</p></li>
+            <li><p><strong>unsigned</strong> – 当宽度为 1 字节时，指定有符号还是无符号格式。</p></li>
+          </ul></dd>
+          <dt>抛出</dt>
+          <dd><p><strong>ValueError</strong> – <em>width</em> 无效时</p></dd>
+          <dt>返回类型</dt>
+          <dd><p>一个 <a href="#pasampleformat">PortAudio 采样格式</a>常量</p></dd>
+        </dl>
+      </dd>
+    </dl>
+
+    <dl class="py function">
+      <dt id="pyaudio.get_portaudio_version"><code>pyaudio.get_portaudio_version()</code></dt>
+      <dd>
+        <p>返回 portaudio 版本。</p>
+        <dl class="field-list">
+          <dt>返回类型</dt><dd><p>int</p></dd>
+        </dl>
+      </dd>
+    </dl>
+
+    <dl class="py function">
+      <dt id="pyaudio.get_portaudio_version_text"><code>pyaudio.get_portaudio_version_text()</code></dt>
+      <dd>
+        <p>以文本字符串的形式返回 PortAudio 版本。</p>
+        <dl class="field-list">
+          <dt>返回类型</dt><dd><p>string</p></dd>
+        </dl>
+      </dd>
+    </dl>
+
+    <dl class="py function">
+      <dt id="pyaudio.get_sample_size"><code>pyaudio.get_sample_size(format)</code></dt>
+      <dd>
+        <p>返回指定的采样 <em>format</em> 的大小（以字节为单位）。</p>
+        <dl class="field-list">
+          <dt>参数</dt>
+          <dd><p><strong>format</strong> – 一个 <a href="#pasampleformat">PortAudio 采样格式</a>常量。</p></dd>
+          <dt>抛出</dt>
+          <dd><p><strong>ValueError</strong> – 指定的 <em>format</em> 无效时。</p></dd>
+          <dt>返回类型</dt><dd><p>integer</p></dd>
+        </dl>
+      </dd>
+    </dl>
+
+    <dl class="py data">
+      <dt id="pyaudio.paAL"><code>pyaudio.paAL = 9</code></dt>
+      <dd><p>Open Audio Library</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paALSA"><code>pyaudio.paALSA = 8</code></dt>
+      <dd><p>高级 Linux 声音架构（仅 Linux）</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paASIO"><code>pyaudio.paASIO = 3</code></dt>
+      <dd><p>Steinberg 音频流输入/输出</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paAbort"><code>pyaudio.paAbort = 2</code></dt>
+      <dd><p>发生错误，停止播放/录制</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paBeOS"><code>pyaudio.paBeOS = 10</code></dt>
+      <dd><p>BeOS 声音系统</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paComplete"><code>pyaudio.paComplete = 1</code></dt>
+      <dd><p>这是最后一块音频数据</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paContinue"><code>pyaudio.paContinue = 0</code></dt>
+      <dd><p>还有更多音频数据要送来</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paCoreAudio"><code>pyaudio.paCoreAudio = 5</code></dt>
+      <dd><p>CoreAudio（仅 OSX）</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paCustomFormat"><code>pyaudio.paCustomFormat = 65536</code></dt>
+      <dd><p>自定义数据格式</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paDirectSound"><code>pyaudio.paDirectSound = 1</code></dt>
+      <dd><p>DirectSound（仅 Windows）</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paFloat32"><code>pyaudio.paFloat32 = 1</code></dt>
+      <dd><p>32 位浮点数</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paInDevelopment"><code>pyaudio.paInDevelopment = 0</code></dt>
+      <dd><p>仍在开发中</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paInputOverflow"><code>pyaudio.paInputOverflow = 2</code></dt>
+      <dd><p>输入缓冲区溢出</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paInputUnderflow"><code>pyaudio.paInputUnderflow = 1</code></dt>
+      <dd><p>输入缓冲区下溢</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paInt16"><code>pyaudio.paInt16 = 8</code></dt>
+      <dd><p>16 位整数</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paInt24"><code>pyaudio.paInt24 = 4</code></dt>
+      <dd><p>24 位整数</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paInt32"><code>pyaudio.paInt32 = 2</code></dt>
+      <dd><p>32 位整数</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paInt8"><code>pyaudio.paInt8 = 16</code></dt>
+      <dd><p>8 位整数</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paJACK"><code>pyaudio.paJACK = 12</code></dt>
+      <dd><p>JACK Audio Connection Kit</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paMME"><code>pyaudio.paMME = 2</code></dt>
+      <dd><p>多媒体扩展（仅 Windows）</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paNoDevice"><code>pyaudio.paNoDevice = -1</code></dt>
+      <dd><p>实际上不是一个音频设备</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paOSS"><code>pyaudio.paOSS = 7</code></dt>
+      <dd><p>Open Sound System（仅 Linux）</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paOutputOverflow"><code>pyaudio.paOutputOverflow = 8</code></dt>
+      <dd><p>输出缓冲区溢出</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paOutputUnderflow"><code>pyaudio.paOutputUnderflow = 4</code></dt>
+      <dd><p>输出缓冲区下溢</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paPrimingOutput"><code>pyaudio.paPrimingOutput = 16</code></dt>
+      <dd><p>只是在预热，还没有开始播放</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paSoundManager"><code>pyaudio.paSoundManager = 4</code></dt>
+      <dd><p>SoundManager（仅 OSX）</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paUInt8"><code>pyaudio.paUInt8 = 32</code></dt>
+      <dd><p>8 位无符号整数</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paWASAPI"><code>pyaudio.paWASAPI = 13</code></dt>
+      <dd><p>Windows Vista 音频栈架构</p></dd>
+    </dl>
+    <dl class="py data">
+      <dt id="pyaudio.paWDMKS"><code>pyaudio.paWDMKS = 11</code></dt>
+      <dd><p>Windows 驱动程序模型（仅 Windows）</p></dd>
+    </dl>
+
+    <h2 id="class-pyaudio">PyAudio 类</h2>
+
+    <dl class="py class">
+      <dt id="pyaudio.PyAudio"><code>class pyaudio.PyAudio</code></dt>
+      <dd>
+        <p>PortAudio 的 Python 接口。</p>
+        <dl class="simple">
+          <dt>提供以下方法：</dt><dd><ul class="simple">
+            <li><p>初始化和终止 PortAudio</p></li>
+            <li><p>打开和关闭流</p></li>
+            <li><p>查询和检查可用的 PortAudio 宿主 API</p></li>
+            <li><p>查询和检查可用的 PortAudio 音频设备。</p></li>
+          </ul></dd>
+          <dt><strong>流管理</strong></dt><dd><p><a href="#pyaudio.PyAudio.open"><code>open()</code></a>、<a href="#pyaudio.PyAudio.close"><code>close()</code></a></p></dd>
+          <dt><strong>宿主 API</strong></dt><dd><p><a href="#pyaudio.PyAudio.get_host_api_count"><code>get_host_api_count()</code></a>、<a href="#pyaudio.PyAudio.get_default_host_api_info"><code>get_default_host_api_info()</code></a>、<a href="#pyaudio.PyAudio.get_host_api_info_by_type"><code>get_host_api_info_by_type()</code></a>、<a href="#pyaudio.PyAudio.get_host_api_info_by_index"><code>get_host_api_info_by_index()</code></a>、<a href="#pyaudio.PyAudio.get_device_info_by_host_api_device_index"><code>get_device_info_by_host_api_device_index()</code></a></p></dd>
+          <dt><strong>设备 API</strong></dt><dd><p><a href="#pyaudio.PyAudio.get_device_count"><code>get_device_count()</code></a>、<a href="#pyaudio.PyAudio.is_format_supported"><code>is_format_supported()</code></a>、<a href="#pyaudio.PyAudio.get_default_input_device_info"><code>get_default_input_device_info()</code></a>、<a href="#pyaudio.PyAudio.get_default_output_device_info"><code>get_default_output_device_info()</code></a>、<a href="#pyaudio.PyAudio.get_device_info_by_index"><code>get_device_info_by_index()</code></a></p></dd>
+          <dt><strong>流格式转换</strong></dt><dd><p><a href="#pyaudio.get_sample_size"><code>get_sample_size()</code></a>、<a href="#pyaudio.get_format_from_width"><code>get_format_from_width()</code></a></p></dd>
+        </dl>
+
+        <p><strong>详情</strong></p>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.__init__"><code>__init__()</code></dt>
+          <dd><p>初始化 PortAudio。</p></dd>
+        </dl>
+
+        <dl class="py attribute">
+          <dt id="pyaudio.PyAudio.__weakref__"><code>__weakref__</code></dt>
+          <dd><p>对象的弱引用列表（如果定义了的话）</p></dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.close"><code>close(stream)</code></dt>
+          <dd>
+            <p>关闭一个流。请改用 <a href="#pyaudio.PyAudio.Stream.close"><code>PyAudio.Stream.close()</code></a>。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><p><strong>stream</strong> – <a href="#pyaudio.PyAudio.Stream"><code>PyAudio.Stream</code></a> 对象的一个实例。</p></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>ValueError</strong> – 流不存在时。</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_default_host_api_info"><code>get_default_host_api_info()</code></dt>
+          <dd>
+            <p>返回一个包含默认宿主 API 参数的字典。</p>
+            <p>字典的键对应 PortAudio 的 <code>PaHostApiInfo</code> 结构体的数据字段。</p>
+            <dl class="field-list">
+              <dt>抛出</dt>
+              <dd><p><strong>IOError</strong> – 没有可用的默认输入设备时</p></dd>
+              <dt>返回类型</dt><dd><p>dict</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_default_input_device_info"><code>get_default_input_device_info()</code></dt>
+          <dd>
+            <p>以字典形式返回默认输入设备的参数。</p>
+            <p>字典的键对应 PortAudio 的 <code>PaDeviceInfo</code> 结构体的数据字段。</p>
+            <dl class="field-list">
+              <dt>抛出</dt>
+              <dd><p><strong>IOError</strong> – 没有可用的默认输入设备。</p></dd>
+              <dt>返回类型</dt><dd><p>dict</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_default_output_device_info"><code>get_default_output_device_info()</code></dt>
+          <dd>
+            <p>以字典形式返回默认输出设备的参数。</p>
+            <p>字典的键对应 PortAudio 的 <code>PaDeviceInfo</code> 结构体的数据字段。</p>
+            <dl class="field-list">
+              <dt>抛出</dt>
+              <dd><p><strong>IOError</strong> – 没有可用的默认输出设备。</p></dd>
+              <dt>返回类型</dt><dd><p>dict</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_device_count"><code>get_device_count()</code></dt>
+          <dd>
+            <p>返回 PortAudio 宿主 API 的数量。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>integer</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_device_info_by_host_api_device_index"><code>get_device_info_by_host_api_device_index(host_api_index, host_api_device_index)</code></dt>
+          <dd>
+            <p>返回一个字典，其中包含给定宿主 API 第 n 个设备的设备参数。字典的键对应 PortAudio 的 <code>PaDeviceInfo</code> 结构体的数据字段。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><ul class="simple">
+                <li><p><strong>host_api_index</strong> – 宿主 API 的索引号</p></li>
+                <li><p><strong>host_api_device_index</strong> – 宿主 API 的第 n 个设备</p></li>
+              </ul></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>IOError</strong> – 索引无效时</p></dd>
+              <dt>返回类型</dt><dd><p>dict</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_device_info_by_index"><code>get_device_info_by_index(device_index)</code></dt>
+          <dd>
+            <p>以字典形式返回 <em>device_index</em> 指定的设备的参数。字典的键对应 PortAudio 的 <code>PaDeviceInfo</code> 结构体的数据字段。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><p><strong>device_index</strong> – 设备索引</p></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>IOError</strong> – <em>device_index</em> 无效。</p></dd>
+              <dt>返回类型</dt><dd><p>dict</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_format_from_width"><code>get_format_from_width(width, unsigned=True)</code></dt>
+          <dd>
+            <p>返回指定的 <em>width</em> 对应的 PortAudio 格式常量。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><ul class="simple">
+                <li><p><strong>width</strong> – 期望的采样宽度，以字节为单位（1、2、3 或 4）</p></li>
+                <li><p><strong>unsigned</strong> – 当宽度为 1 字节时，指定有符号还是无符号格式。</p></li>
+              </ul></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>ValueError</strong> – <em>width</em> 无效时</p></dd>
+              <dt>返回类型</dt>
+              <dd><p>一个 <a href="#pasampleformat">PortAudio 采样格式</a>常量。</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_host_api_count"><code>get_host_api_count()</code></dt>
+          <dd>
+            <p>返回可用的 PortAudio 宿主 API 的数量。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>integer</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_host_api_info_by_index"><code>get_host_api_info_by_index(host_api_index)</code></dt>
+          <dd>
+            <p>返回一个字典，其中包含 <em>host_api_index</em> 指定的宿主 API 的参数。字典的键对应 PortAudio 的 <code>PaHostApiInfo</code> 结构体的数据字段。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><p><strong>host_api_index</strong> – 宿主 API 索引</p></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>IOError</strong> – <em>host_api_index</em> 无效时</p></dd>
+              <dt>返回类型</dt><dd><p>dict</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_host_api_info_by_type"><code>get_host_api_info_by_type(host_api_type)</code></dt>
+          <dd>
+            <p>返回一个字典，其中包含 <em>host_api_type</em> 指定的宿主 API 的参数。字典的键对应 PortAudio 的 <code>PaHostApiInfo</code> 结构体的数据字段。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><p><strong>host_api_type</strong> – 期望的 <a href="#pahostapi">PortAudio 宿主 API</a></p></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>IOError</strong> – <em>host_api_type</em> 无效时</p></dd>
+              <dt>返回类型</dt><dd><p>dict</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.get_sample_size"><code>get_sample_size(format)</code></dt>
+          <dd>
+            <p>返回指定的采样 <em>format</em>（一个 <a href="#pasampleformat">PortAudio 采样格式</a>常量）的大小（以字节为单位）。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><p><strong>format</strong> – 一个 <a href="#pasampleformat">PortAudio 采样格式</a>常量。</p></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>ValueError</strong> – 指定的 <em>format</em> 无效。</p></dd>
+              <dt>返回类型</dt><dd><p>integer</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.is_format_supported"><code>is_format_supported(rate, input_device=None, input_channels=None, input_format=None, output_device=None, output_channels=None, output_format=None)</code></dt>
+          <dd>
+            <p>检查指定的设备配置是否受支持。</p>
+            <p>配置受支持时返回 True，否则抛出 ValueError。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><ul class="simple">
+                <li><p><strong>rate</strong> – 指定期望的采样率（以 Hz 为单位）</p></li>
+                <li><p><strong>input_device</strong> – 输入设备索引。对于半双工、仅输出的流，指定为 <code>None</code>（默认值）。</p></li>
+                <li><p><strong>input_channels</strong> – 期望的输入声道数。未指定 <em>input_device</em>（或为 <code>None</code>）时忽略。</p></li>
+                <li><p><strong>input_format</strong> – 本模块中定义的 PortAudio 采样格式常量</p></li>
+                <li><p><strong>output_device</strong> – 输出设备索引。对于半双工、仅输入的流，指定为 <code>None</code>（默认值）。</p></li>
+                <li><p><strong>output_channels</strong> – 期望的输出声道数。未指定 <em>input_device</em>（或为 <code>None</code>）时忽略。</p></li>
+                <li><p><strong>output_format</strong> – <a href="#pasampleformat">PortAudio 采样格式</a>常量。</p></li>
+              </ul></dd>
+              <dt>返回类型</dt><dd><p>bool</p></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>ValueError</strong> – 一个元组，内容为（错误字符串，<a href="#paerrorcode">PortAudio 错误码</a>）。</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.open"><code>open(*args, **kwargs)</code></dt>
+          <dd>
+            <p>打开一个新的流。</p>
+            <p>参数的细节见 <a href="#pyaudio.PyAudio.Stream.__init__"><code>PyAudio.Stream.__init__()</code></a> 的构造函数说明。</p>
+            <dl class="field-list">
+              <dt>返回</dt>
+              <dd><p>一个新的 <a href="#pyaudio.PyAudio.Stream"><code>PyAudio.Stream</code></a></p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.terminate"><code>terminate()</code></dt>
+          <dd>
+            <p>终止 PortAudio。</p>
+            <dl class="field-list">
+              <dt>注意</dt>
+              <dd><p>这个对象的每个实例都要调用本方法，才能释放 PortAudio 资源。</p></dd>
+            </dl>
+          </dd>
+        </dl>
+      </dd>
+    </dl>
+
+    <h2 id="class-pyaudio-stream">PyAudio.Stream 类</h2>
+
+    <dl class="py class">
+      <dt id="pyaudio.PyAudio.Stream"><code>class pyaudio.PyAudio.Stream(PA_manager, rate, channels, format, input=False, output=False, input_device_index=None, output_device_index=None, frames_per_buffer=0, start=True, input_host_api_specific_stream_info=None, output_host_api_specific_stream_info=None, stream_callback=None)</code></dt>
+      <dd>
+        <p>PortAudio 流包装器。请用 <code>PyAudio.open()</code> 实例化。</p>
+        <dl class="simple">
+          <dt><strong>打开与关闭</strong></dt><dd><p><a href="#pyaudio.PyAudio.Stream.__init__"><code>__init__()</code></a>、<a href="#pyaudio.PyAudio.Stream.close"><code>close()</code></a></p></dd>
+          <dt><strong>流信息</strong></dt><dd><p><a href="#pyaudio.PyAudio.Stream.get_input_latency"><code>get_input_latency()</code></a>、<a href="#pyaudio.PyAudio.Stream.get_output_latency"><code>get_output_latency()</code></a>、<a href="#pyaudio.PyAudio.Stream.get_time"><code>get_time()</code></a>、<a href="#pyaudio.PyAudio.Stream.get_cpu_load"><code>get_cpu_load()</code></a></p></dd>
+          <dt><strong>流管理</strong></dt><dd><p><a href="#pyaudio.PyAudio.Stream.start_stream"><code>start_stream()</code></a>、<a href="#pyaudio.PyAudio.Stream.stop_stream"><code>stop_stream()</code></a>、<a href="#pyaudio.PyAudio.Stream.is_active"><code>is_active()</code></a>、<a href="#pyaudio.PyAudio.Stream.is_stopped"><code>is_stopped()</code></a></p></dd>
+          <dt><strong>输入输出</strong></dt><dd><p><a href="#pyaudio.PyAudio.Stream.write"><code>write()</code></a>、<a href="#pyaudio.PyAudio.Stream.read"><code>read()</code></a>、<a href="#pyaudio.PyAudio.Stream.get_read_available"><code>get_read_available()</code></a>、<a href="#pyaudio.PyAudio.Stream.get_write_available"><code>get_write_available()</code></a></p></dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.__init__"><code>__init__(PA_manager, rate, channels, format, input=False, output=False, input_device_index=None, output_device_index=None, frames_per_buffer=0, start=True, input_host_api_specific_stream_info=None, output_host_api_specific_stream_info=None, stream_callback=None)</code></dt>
+          <dd>
+            <p>初始化一个音频流。</p>
+            <p>不要直接调用。请用 <code>PyAudio.open()</code>。</p>
+            <p>一个流可以是输入流、输出流，或两者兼具。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><ul class="simple">
+                <li><p><strong>PA_manager</strong> – 对管理它的 <code>PyAudio</code> 实例的引用</p></li>
+                <li><p><strong>rate</strong> – 采样率</p></li>
+                <li><p><strong>channels</strong> – 声道数</p></li>
+                <li><p><strong>format</strong> – 采样大小与格式。见 <a href="#pasampleformat">PortAudio 采样格式</a>。</p></li>
+                <li><p><strong>input</strong> – 指定这是否是一个输入流。默认值为 <code>False</code>。</p></li>
+                <li><p><strong>output</strong> – 指定这是否是一个输出流。默认值为 <code>False</code>。</p></li>
+                <li><p><strong>input_device_index</strong> – 要使用的输入设备索引。不指定（或为 <code>None</code>）时使用默认设备。<em>input</em> 为 <code>False</code> 时忽略。</p></li>
+                <li><p><strong>output_device_index</strong> – 要使用的输出设备索引。不指定（或为 <code>None</code>）时使用默认设备。<em>output</em> 为 <code>False</code> 时忽略。</p></li>
+                <li><p><strong>frames_per_buffer</strong> – 指定每个缓冲区中的帧数。</p></li>
+                <li><p><strong>start</strong> – 立即启动流的运行。默认值为 <code>True</code>。一般来说，没有理由把它设为 <code>False</code>。</p></li>
+                <li><p><strong>input_host_api_specific_stream_info</strong> – 为输入指定一个宿主 API 专用的流信息数据结构。见 <code>PaMacCoreStreamInfo</code>。</p></li>
+                <li><p><strong>output_host_api_specific_stream_info</strong> – 为输出指定一个宿主 API 专用的流信息数据结构。见 <code>PaMacCoreStreamInfo</code>。</p></li>
+                <li>
+                  <p><strong>stream_callback</strong> – 为<em>非阻塞</em>（回调）操作指定一个回调函数。默认值为 <code>None</code>，表示采用<em>阻塞</em>操作（即 <code>PyAudio.Stream.read()</code> 和 <code>PyAudio.Stream.write()</code>）。要使用非阻塞操作，需要指定符合如下签名的回调：</p>
+<pre><code>callback(in_data,      # input data if input=True; else None
+         frame_count,  # number of frames
+         time_info,    # dictionary
+         status_flags) # PaCallbackFlags
+</code></pre>
+                  <p><code>time_info</code> 是一个字典，包含以下键：<code>input_buffer_adc_time</code>、<code>current_time</code> 和 <code>output_buffer_dac_time</code>；它们的含义见 PortAudio 文档。<code>status_flags</code> 是 <a href="#pacallbackflags">PortAudio 回调标志</a>之一。</p>
+                  <p>回调必须返回一个元组：</p>
+<pre><code>(out_data, flag)
+</code></pre>
+                  <p>当 <code>output=True</code> 时，<code>out_data</code> 是一个字节数组，其长度应为（<code>frame_count * channels * bytes-per-channel</code>）；当 <code>output=False</code> 时为 <code>None</code>。<code>flag</code> 必须是 <code>paContinue</code>、<code>paComplete</code> 或 <code>paAbort</code> 之一（属于 <a href="#pacallbackreturncodes">PortAudio 回调返回码</a>）。当 <code>output=True</code> 且 <code>out_data</code> 包含的帧数不足 <code>frame_count</code> 时，<code>flag</code> 会被视为 <code>paComplete</code>。</p>
+                  <p><strong>注意：</strong><code>stream_callback</code> 是在另一个线程（相对于主线程）中调用的。<code>stream_callback</code> 中发生的异常将会：</p>
+                  <ol class="arabic simple">
+                    <li><p>在标准错误上打印回溯，便于调试，</p></li>
+                    <li><p>把这个异常加入队列，让它在（某个时刻）于主线程中抛出，并且</p></li>
+                    <li><p>向 PortAudio 返回 <em>paAbort</em> 以停止流。</p></li>
+                  </ol>
+                  <p><strong>注意：</strong>使用非阻塞操作时，不要调用 <code>PyAudio.Stream.read()</code> 或 <code>PyAudio.Stream.write()</code>。</p>
+                  <p><strong>参见：</strong>PortAudio 的回调签名，其中有更多细节：<a href="http://portaudio.com/docs/v19-doxydocs/portaudio_8h.html#a8a60fb2a5ec9cbade3f54a9c978e2710" rel="noreferrer noopener">http://portaudio.com/docs/v19-doxydocs/portaudio_8h.html#a8a60fb2a5ec9cbade3f54a9c978e2710</a></p>
+                </li>
+              </ul></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>ValueError</strong> – 输入和输出都没有设为 True。</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py attribute">
+          <dt id="pyaudio.PyAudio.Stream.__weakref__"><code>__weakref__</code></dt>
+          <dd><p>对象的弱引用列表（如果定义了的话）</p></dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.close"><code>close()</code></dt>
+          <dd><p>关闭流。</p></dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.get_cpu_load"><code>get_cpu_load()</code></dt>
+          <dd>
+            <p>返回 CPU 负载。使用阻塞 API 时始终为 0.0。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>float</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.get_input_latency"><code>get_input_latency()</code></dt>
+          <dd>
+            <p>返回输入延迟。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>float</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.get_output_latency"><code>get_output_latency()</code></dt>
+          <dd>
+            <p>返回输出延迟。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>float</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.get_read_available"><code>get_read_available()</code></dt>
+          <dd>
+            <p>返回无需等待即可读取的帧数。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>integer</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.get_time"><code>get_time()</code></dt>
+          <dd>
+            <p>返回流时间。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>float</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.get_write_available"><code>get_write_available()</code></dt>
+          <dd>
+            <p>返回无需等待即可写入的帧数。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>integer</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.is_active"><code>is_active()</code></dt>
+          <dd>
+            <p>返回流是否处于活动状态。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>bool</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.is_stopped"><code>is_stopped()</code></dt>
+          <dd>
+            <p>返回流是否已停止。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>bool</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.read"><code>read(num_frames, exception_on_overflow=True)</code></dt>
+          <dd>
+            <p>从流中读取采样。</p>
+            <p>使用非阻塞模式时不要调用。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><ul class="simple">
+                <li><p><strong>num_frames</strong> – 要读取的帧数。</p></li>
+                <li><p><strong>exception_on_overflow</strong> – 指定在输入缓冲区溢出时是抛出 IOError 异常还是静默忽略。默认值为 True。</p></li>
+              </ul></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>IOError</strong> – 流不是输入流，或者读取操作未成功时。</p></dd>
+              <dt>返回类型</dt><dd><p>bytes</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.start_stream"><code>start_stream()</code></dt>
+          <dd><p>启动流。</p></dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.stop_stream"><code>stop_stream()</code></dt>
+          <dd><p>停止流。</p></dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PyAudio.Stream.write"><code>write(frames, num_frames=None, exception_on_underflow=False)</code></dt>
+          <dd>
+            <p>向流写入采样用于播放。</p>
+            <p>使用非阻塞模式时不要调用。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><ul class="simple">
+                <li><p><strong>frames</strong> – 数据帧。</p></li>
+                <li><p><strong>num_frames</strong> – 要写入的帧数。默认值为 None，此时该值会自动计算。</p></li>
+                <li><p><strong>exception_on_underflow</strong> – 指定在缓冲区下溢时是抛出 IOError 异常还是静默忽略。默认值为 False，以获得更好的性能，在较慢的平台上尤其如此。</p></li>
+              </ul></dd>
+              <dt>抛出</dt>
+              <dd><p><strong>IOError</strong> – 流不是输出流，或者写入操作未成功时。</p></dd>
+              <dt>返回类型</dt><dd><p><em>None</em></p></dd>
+            </dl>
+          </dd>
+        </dl>
+      </dd>
+    </dl>
+
+    <h2 id="platform-specific">平台相关</h2>
+
+    <h3 id="class-pamaccorestreaminfo">PaMacCoreStreamInfo 类</h3>
+
+    <dl class="py class">
+      <dt id="pyaudio.PaMacCoreStreamInfo"><code>class pyaudio.PaMacCoreStreamInfo(flags=None, channel_map=None)</code></dt>
+      <dd>
+        <p>用于 macOS 专有设置的 PortAudio 宿主 API 专用流信息。</p>
+        <p>要配置 macOS 专有设置，实例化这个类，并把它作为参数传给 <a href="#pyaudio.PyAudio.open"><code>PyAudio.open()</code></a> 的 <code>input_host_api_specific_stream_info</code> 或 <code>output_host_api_specific_stream_info</code>。（见 <a href="#pyaudio.PyAudio.Stream.__init__"><code>PyAudio.Stream.__init__()</code></a>。）</p>
+        <dl class="field-list">
+          <dt>注意</dt>
+          <dd><p>仅限 macOS。</p></dd>
+        </dl>
+        <dl class="simple" id="pamaccoreflags">
+          <dt><strong>PortAudio Mac Core 标志</strong></dt><dd><p><code>paMacCoreChangeDeviceParameters</code>、<code>paMacCoreFailIfConversionRequired</code>、<code>paMacCoreConversionQualityMin</code>、<code>paMacCoreConversionQualityMedium</code>、<code>paMacCoreConversionQualityLow</code>、<code>paMacCoreConversionQualityHigh</code>、<code>paMacCoreConversionQualityMax</code>、<code>paMacCorePlayNice</code>、<code>paMacCorePro</code>、<code>paMacCoreMinimizeCPUButPlayNice</code>、<code>paMacCoreMinimizeCPU</code></p></dd>
+        </dl>
+
+        <dl class="py attribute">
+          <dt id="pyaudio.PaMacCoreStreamInfo.flags"><code>flags</code></dt>
+          <dd>
+            <p>传给构造函数的 flags。</p>
+            <dl class="field-list">
+              <dt>类型</dt><dd><p><a href="#pamaccoreflags">PortAudio Mac Core 标志</a></p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py attribute">
+          <dt id="pyaudio.PaMacCoreStreamInfo.channel_map"><code>channel_map</code></dt>
+          <dd>
+            <p>传给构造函数的 channel_map</p>
+            <dl class="field-list">
+              <dt>类型</dt><dd><p>元组，未指定时为 None</p></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PaMacCoreStreamInfo.__init__"><code>__init__(flags=None, channel_map=None)</code></dt>
+          <dd>
+            <p>用 macOS 设置标志和 channel_map 初始化。</p>
+            <p>这些参数的更多细节见 PortAudio 文档。</p>
+            <dl class="field-list">
+              <dt>参数</dt>
+              <dd><ul class="simple">
+                <li><p><strong>flags</strong> – 按位或组合在一起的 <a href="#pamaccoreflags">PortAudio Mac Core 标志</a>。</p></li>
+                <li><p><strong>channel_map</strong> – 描述声道映射的数组。用法见 PortAudio 文档。</p></li>
+              </ul></dd>
+            </dl>
+          </dd>
+        </dl>
+
+        <dl class="py attribute">
+          <dt id="pyaudio.PaMacCoreStreamInfo.__weakref__"><code>__weakref__</code></dt>
+          <dd><p>对象的弱引用列表（如果定义了的话）</p></dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PaMacCoreStreamInfo.get_channel_map"><code>get_channel_map()</code></dt>
+          <dd>
+            <p>返回实例化时设置的声道映射。已弃用。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>元组或 None</p></dd>
+            </dl>
+            <div class="deprecated">
+              <p><span class="versionmodified deprecated">自 0.2.13 起弃用：</span>请改用 <a href="#pyaudio.PaMacCoreStreamInfo.channel_map"><code>channel_map</code></a> 属性。</p>
+            </div>
+          </dd>
+        </dl>
+
+        <dl class="py method">
+          <dt id="pyaudio.PaMacCoreStreamInfo.get_flags"><code>get_flags()</code></dt>
+          <dd>
+            <p>返回实例化时设置的标志。已弃用。</p>
+            <dl class="field-list">
+              <dt>返回类型</dt><dd><p>integer</p></dd>
+            </dl>
+            <div class="deprecated">
+              <p><span class="versionmodified deprecated">自 0.2.13 起弃用：</span>请改用 <a href="#pyaudio.PaMacCoreStreamInfo.flags"><code>flags</code></a> 属性。</p>
+            </div>
+          </dd>
+        </dl>
+      </dd>
+    </dl>
+
+    <h2 id="indices-and-tables">索引与表格</h2>
+
+    <ul class="simple">
+      <li><p><a href="genindex.html">索引</a></p></li>
+      <li><p><a href="https://people.csail.mit.edu/hubert/pyaudio/docs/search.html" rel="noreferrer noopener">搜索页</a></p></li>
+    </ul>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://people.csail.mit.edu/hubert/pyaudio/docs/index.html" rel="noreferrer noopener">people.csail.mit.edu/hubert/pyaudio/docs/index.html</a> · 译文更新于 2026-10-17</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
