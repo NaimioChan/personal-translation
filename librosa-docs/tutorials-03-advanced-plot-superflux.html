@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Superflux 起始点 - librosa 中文文档</title>
+<meta name="description" content="Superflux 起始点（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="superflux-onsets"></span><span id="sphx-glr-auto-tutorials-03-advanced-plot-superflux-py"></span><span id="id1"></span><span id="sphx-glr-download-auto-tutorials-03-advanced-plot-superflux-py"></span>
+
+<h1>Superflux 起始点</h1>
+
+<p>本 notebook 演示如何用 librosa 复现 <a href="https://www.dafx.de/paper-archive/2013/papers/09.dafx2013_submission_12.pdf">Boeck 与 Widmer 2013 年</a> <a href="#id2">[1]</a> 的 Superflux 起始点检测算法。</p>
+
+<p>该算法在存在颤音时能提升起始点检测的准确率。</p>
+
+<p id="id2">[1] Böck, Sebastian, and Gerhard Widmer.
+Maximum filter vibrato suppression for onset detection.
+In Proc. of the 16th Int. Conf. on Digital Audio Effects (DAFx).
+Maynooth, Ireland (Sept 2013), vol. 7, p. 4. 2013.</p>
+
+<pre><code># Code source: Brian McFee
+# License: ISC</code></pre>
+
+<p>本例需要 numpy 与 matplotlib</p>
+
+<pre><code>import numpy as np
+import matplotlib.pyplot as plt
+from IPython.display import Audio, HTML
+import librosa</code></pre>
+
+<p>该方法对较长的信号同样适用，只是结果不太容易可视化。</p>
+
+<pre><code>y, sr = librosa.loadx("trumpet", sr=44100)
+HTML(librosa.util.example_info("trumpet", html=True))</code></pre>
+
+<p><strong>solo trumpet 06</strong></p>
+
+<p><strong>By:</strong> Mihai Sorohan | <strong>License:</strong> <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a><strong>Source:</strong> <a href="https://freesound.org/s/77711/">https://freesound.org/s/77711/</a></p>
+
+<details><summary>说明</summary>
+<p>摘自 Mihai Sorohan 的 "Jazz Trumpet Loops Pack in F 90 bpm"<br>该包中所有片段均为 F 调，多为 Blues 与 Dorian 音阶，全部为立体声 acidized .wav 格式，16 位，44.1 kHz 采样率，90 bpm。<br><br>所用设备：<br>- 小号 Bb Amati ATR213<br>- 麦克风 Oktava MK 319<br>- 前置放大器 Art Tube MP Project Series<br>- 声卡 M-Audio Delta Audiophile 192<br></p>
+</details>
+<br>
+<pre><code>Audio(url=librosa.example("trumpet", url=True))</code></pre>
+
+<p><audio controls src="https://librosa.org/data/audio/sorohanro_-_solo-trumpet-06.ogg"></audio></p>
+<br>
+<p>这些参数直接取自论文</p>
+
+<pre><code>n_fft = 1024
+hop_length = int(librosa.time_to_samples(1./200, sr=sr))
+lag = 2
+n_mels = 138
+fmin = 27.5
+fmax = 16000.
+max_size = 3</code></pre>
+
+<p>论文使用的是对数频率表示，为简单起见，我们改用 mel 频谱图。</p>
+
+<pre><code>S = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=n_fft,
+                                   hop_length=hop_length,
+                                   fmin=fmin,
+                                   fmax=fmax,
+                                   n_mels=n_mels)
+
+fig, ax = plt.subplots()
+librosa.display.specshow(S, vscale="dBFS[power]",
+                         y_axis="mel", x_axis="time", sr=sr,
+                         hop_length=hop_length, fmin=fmin, fmax=fmax, ax=ax)</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_superflux_001.png" alt="plot superflux">
+<p>接下来用 librosa 的默认值计算起始强度包络与起始事件。</p>
+
+<pre><code>odf_default = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
+onset_default = librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop_length,
+                                           units="time")</code></pre>
+
+<p>再用 superflux 方法做同样的计算</p>
+
+<pre><code>odf_sf = librosa.onset.onset_strength(S=librosa.power_to_db(S, ref=np.max),
+                                      sr=sr,
+                                      hop_length=hop_length,
+                                      lag=lag, max_size=max_size)
+
+onset_sf = librosa.onset.onset_detect(onset_envelope=odf_sf,
+                                      sr=sr,
+                                      hop_length=hop_length,
+                                      units="time")</code></pre>
+
+<p>仔细观察可以发现，默认的起始点检测器（上面的子图）在颤音强烈的区域出现了若干误报，例如约 0.62s 或 1.80s 处。</p>
+
+<p>superflux 方法（中间的图）受颤音影响较小，在这些位置没有检测到起始事件。</p>
+
+<pre><code>fig, ax = plt.subplots(nrows=3, sharex=True)
+
+frame_time = librosa.frames_to_time(np.arange(len(odf_default)),
+                                    sr=sr,
+                                    hop_length=hop_length)
+
+librosa.display.specshow(S, vscale="dBFS[power]",
+                         y_axis="mel", x_axis="time", sr=sr,
+                         hop_length=hop_length, fmin=fmin, fmax=fmax, ax=ax[2])
+ax[2].set(xlim=[0, 5.0])
+
+ax[0].plot(frame_time, odf_default, label="Spectral flux")
+ax[0].vlines(onset_default, 0, odf_default.max(), color="r", label="Onsets")
+ax[0].legend()
+ax[0].label_outer()
+
+ax[1].plot(frame_time, odf_sf, color="g", label="Superflux")
+ax[1].vlines(onset_sf, 0, odf_sf.max(), color="r", label="Onsets")
+ax[1].legend()
+ax[0].label_outer()</code></pre>
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_superflux_002.png" alt="plot superflux">
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/auto_tutorials/03-advanced/plot_superflux.html" rel="noreferrer noopener">librosa.org/doc/latest/auto_tutorials/03-advanced/plot_superflux.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

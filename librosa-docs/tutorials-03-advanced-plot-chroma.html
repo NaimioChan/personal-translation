@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>增强色度特征与色度变体 - librosa 中文文档</title>
+<meta name="description" content="增强色度特征与色度变体（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="enhanced-chroma-and-chroma-variants"></span><span id="sphx-glr-auto-tutorials-03-advanced-plot-chroma-py"></span><span id="enhanced-chroma"></span><span id="plot-advanced-chroma"></span><span id="id1"></span><span id="chroma-variants"></span><span id="id3"></span><span id="sphx-glr-download-auto-tutorials-03-advanced-plot-chroma-py"></span>
+
+<h1>增强色度特征与色度变体</h1>
+
+<p>本 notebook 演示多种增强色度特征的技术，并介绍 librosa 中实现的色度变体。</p>
+
+<h2>增强色度特征</h2>
+
+<p>在 librosa 色度函数的默认参数设置之外，我们还施加以下增强：</p>
+
+<blockquote>
+<ol>
+  <li><p>谐波-打击-残差源分离，以消除瞬态。</p></li>
+  <li><p>最近邻平滑，以消除经过音和稀疏噪声。这受到 <a href="https://zenodo.org/record/1417557">Cho and Bello, 2011</a> <a href="#id2">[1]</a> 中基于重现的平滑技术的启发。</p></li>
+  <li><p>局部中值滤波，以抑制残留的不连续。</p></li>
+</ol>
+</blockquote>
+
+<p id="id2">[1] Taemin Cho &amp; Juan Pablo Bello. (2011).
+A Feature Smoothing Method for Chord Recognition Using Recurrence Plots.
+Proceedings of the 12th International Society for Music Information Retrieval Conference, 651–656.  <a href="https://doi.org/10.5281/zenodo.1417557">https://doi.org/10.5281/zenodo.1417557</a></p>
+
+<p>代码来源：Brian McFee
+许可：ISC
+sphinx_gallery_thumbnail_number = 5</p>
+
+<pre><code>import numpy as np
+import scipy
+import matplotlib.pyplot as plt
+from IPython.display import Audio, HTML
+
+import librosa</code></pre>
+
+<p>我们使用一段同时包含谐波、旋律与打击乐元素的曲目</p>
+
+<pre><code>y, sr = librosa.loadx("fishin")
+HTML(librosa.util.example_info("fishin", html=True))</code></pre>
+
+<p><strong>Let's Go Fishin'</strong></p>
+
+<p><strong>By:</strong> Karissa Hobbs | <strong>License:</strong> <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC-BY-NC-SA-4.0</a><strong>Source:</strong> <a href="https://freemusicarchive.org/music/Karissa_Hobbs/Age_of_Flowers/09_Lets_Go_Fishin/">https://freemusicarchive.org/music/Karissa_Hobbs/Age_of_Flowers/09_Lets_Go_Fishin/</a></p>
+
+<details><summary>Description</summary>
+<p>一首有人声的流行／民谣歌曲。</p>
+</details>
+<br>
+<pre><code>Audio(url=librosa.example("fishin", url=True))</code></pre>
+
+<p><audio controls src="https://librosa.org/data/audio/Karissa_Hobbs_-_Lets_Go_Fishin.ogg"></audio></p>
+<br>
+<p>首先，绘制原始色度</p>
+
+<pre><code>chroma_orig = librosa.feature.chroma_cqt(y=y, sr=sr)
+
+# For display purposes, let's zoom in on a 15-second chunk from the middle of the song
+idx = tuple([slice(None), slice(*list(librosa.time_to_frames([45, 60])))])
+
+# And for comparison, we'll show the CQT matrix as well.
+C = np.abs(librosa.cqt(y=y, sr=sr, bins_per_octave=12*3, n_bins=7*12*3))
+
+fig, ax = plt.subplots(nrows=2, sharex=True)
+img1 = librosa.display.specshow(C[idx], vscale="dBFS",
+                                y_axis="cqt_note", x_axis="time", bins_per_octave=12*3,
+                                ax=ax[0])
+librosa.display.colorbar_db(img1, ax=ax[0])
+ax[0].label_outer()
+
+img2 = librosa.display.specshow(chroma_orig[idx], y_axis="chroma", x_axis="time", ax=ax[1])
+fig.colorbar(img2, ax=[ax[1]])
+ax[1].set(ylabel="Default chroma")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_chroma_001.png" alt="plot chroma">
+<p>如果把音频信号的谐波成分分离出来，效果会更好。这里我们用较大的 margin 来把谐波与打击成分分开：</p>
+
+<pre><code>y_harm = librosa.effects.harmonic(y=y, margin=8)
+chroma_harm = librosa.feature.chroma_cqt(y=y_harm, sr=sr)
+
+fig, ax = plt.subplots(nrows=2, sharex=True, sharey=True)
+librosa.display.specshow(chroma_orig[idx], y_axis="chroma", x_axis="time", ax=ax[0])
+ax[0].set(ylabel="Default chroma")
+ax[0].label_outer()
+
+librosa.display.specshow(chroma_harm[idx], y_axis="chroma", x_axis="time", ax=ax[1])
+ax[1].set(ylabel="Harmonic")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_chroma_002.png" alt="plot chroma">
+<p>不过其中仍有一些噪声。我们可以用非局部滤波把它清理掉。这会有效地去除特征中任何稀疏的加性噪声。</p>
+
+<pre><code>chroma_filter = np.minimum(chroma_harm,
+                           librosa.decompose.nn_filter(chroma_harm,
+                                                       aggregate=np.median,
+                                                       metric="cosine"))
+
+fig, ax = plt.subplots(nrows=2, sharex=True, sharey=True)
+librosa.display.specshow(chroma_harm[idx], y_axis="chroma", x_axis="time", ax=ax[0])
+ax[0].set(ylabel="Harmonic")
+ax[0].label_outer()
+
+librosa.display.specshow(chroma_filter[idx], y_axis="chroma", x_axis="time", ax=ax[1])
+ax[1].set(ylabel="Non-local")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_chroma_003.png" alt="plot chroma">
+<p>使用水平中值滤波器可以抑制局部的不连续和瞬态。</p>
+
+<pre><code>chroma_smooth = scipy.ndimage.median_filter(chroma_filter, size=(1, 9))
+
+fig, ax = plt.subplots(nrows=2, sharex=True, sharey=True)
+librosa.display.specshow(chroma_filter[idx], y_axis="chroma", x_axis="time", ax=ax[0])
+ax[0].set(ylabel="Non-local")
+ax[0].label_outer()
+
+librosa.display.specshow(chroma_smooth[idx], y_axis="chroma", x_axis="time", ax=ax[1])
+ax[1].set(ylabel="Median-filtered")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_chroma_004.png" alt="plot chroma">
+<p>最后对 CQT、原始色谱图以及滤波结果做一次比较。</p>
+
+<pre><code>fig, ax = plt.subplots(nrows=3, sharex=True)
+librosa.display.specshow(C[idx], vscale="dBFS",
+                         y_axis="cqt_note", x_axis="time",
+                         bins_per_octave=12*3, ax=ax[0])
+ax[0].set(ylabel="CQT")
+ax[0].label_outer()
+librosa.display.specshow(chroma_orig[idx], y_axis="chroma", x_axis="time", ax=ax[1])
+ax[1].set(ylabel="Default chroma")
+ax[1].label_outer()
+librosa.display.specshow(chroma_smooth[idx], y_axis="chroma", x_axis="time", ax=ax[2])
+ax[2].set(ylabel="Processed")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_chroma_005.png" alt="plot chroma">
+
+<h2>色度变体</h2>
+
+<p>librosa 中实现了三种色度变体：<em>chroma_stft</em>、<em>chroma_cqt</em> 和 <em>chroma_cens</em>。<em>chroma_stft</em> 与 <em>chroma_cqt</em> 是绘制色度的两种替代方式。<em>chroma_stft</em> 对输入音频做短时傅里叶变换，并把每个 STFT bin 映射到色度；<em>chroma_cqt</em> 使用常数 Q 变换，把每个 cq-bin 映射到色度。</p>
+
+<p>色谱图的 STFT 方法与 CQT 方法的比较。</p>
+
+<pre><code>chromagram_stft = librosa.feature.chroma_stft(y=y, sr=sr)
+chromagram_cqt = librosa.feature.chroma_cqt(y=y, sr=sr)
+
+fig, ax = plt.subplots(nrows=2, sharex=True, sharey=True)
+librosa.display.specshow(chromagram_stft[idx], y_axis="chroma", x_axis="time", ax=ax[0])
+ax[0].set(ylabel="STFT")
+ax[0].label_outer()
+
+librosa.display.specshow(chromagram_cqt[idx], y_axis="chroma", x_axis="time", ax=ax[1])
+ax[1].set(ylabel="CQT")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_chroma_006.png" alt="plot chroma">
+<p>CENS 特征（<em>chroma_cens</em>）是 <a href="https://zenodo.org/record/1416032">Müller and Ewart, 2011</a> <a href="#id4">[2]</a> 中提出的色度特征变体，它对常数 Q 色谱图做额外的后处理，从而得到对动态和音色不变的特征。</p>
+
+<p>因此，CENS 特征适用于音频匹配与检索之类的应用。</p>
+
+<ul>
+<li>以下步骤是对色谱图做的额外处理，均在 <em>chroma_cens</em> 中实现：<ol>
+  <li><p>对每个色度向量做 L1 归一化</p></li>
+  <li><p>基于“类对数”幅度阈值对幅度做量化</p></li>
+  <li><p>用滑动窗平滑（可选参数）</p></li>
+  <li><p>降采样（未实现）</p></li>
+</ol></li>
+</ul>
+
+<p id="id4">[2] Meinard Müller &amp; Sebastian Ewert. (2011).
+Chroma Toolbox: Matlab Implementations for Extracting Variants of Chroma-Based Audio Features.
+Proceedings of the 12th International Society for Music Information Retrieval Conference, 215–220.
+<a href="https://doi.org/10.5281/zenodo.1416032">https://doi.org/10.5281/zenodo.1416032</a></p>
+
+<p>原始常数 Q 色谱图与 CENS 特征的比较。</p>
+
+<pre><code>chromagram_cens = librosa.feature.chroma_cens(y=y, sr=sr)
+
+fig, ax = plt.subplots(nrows=2, sharex=True, sharey=True)
+librosa.display.specshow(chromagram_cqt[idx], y_axis="chroma", x_axis="time", ax=ax[0])
+ax[0].set(ylabel="Orig")
+
+librosa.display.specshow(chromagram_cens[idx], y_axis="chroma", x_axis="time", ax=ax[1])
+ax[1].set(ylabel="CENS")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_plot_chroma_007.png" alt="plot chroma">
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/auto_tutorials/03-advanced/plot_chroma.html" rel="noreferrer noopener">librosa.org/doc/latest/auto_tutorials/03-advanced/plot_chroma.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

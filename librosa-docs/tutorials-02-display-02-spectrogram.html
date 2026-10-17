@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>可视化时频内容 - librosa 中文文档</title>
+<meta name="description" content="可视化时频内容（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="visualizing-time-frequency-content"></span><span id="sphx-glr-auto-tutorials-02-display-02-spectrogram-py"></span><span id="spectrograms"></span><span id="tutorial-display-spectrogram"></span><span id="specshow-basics"></span><span id="controlling-specshow"></span><span id="summary-and-tips"></span><span id="sphx-glr-download-auto-tutorials-02-display-02-spectrogram-py"></span>
+
+<h1>可视化时频内容</h1>
+
+<p>本节介绍 <a href="api-librosa-display-specshow.html#librosa.display.specshow" title="librosa.display.specshow"><code>librosa.display.specshow</code></a>，这是可视化频谱图类数据的主要函数。</p>
+
+<h2>频谱图</h2>
+
+<p>本教程<a href="tutorials-01-intro-02-frequency.html#tutorial-intro-frequency">前面的章节</a>演示了短时傅里叶变换（STFT）的基本用法，它可用于可视化信号频率内容随时间的变化。这类可视化称为<strong>频谱图</strong>，你可能此前已经接触过这个概念。频谱图虽然可以当作<em>图像</em>来理解，并用 <a href="https://matplotlib.org/stable/index.html#module-matplotlib" title="(in Matplotlib v3.11.1)"><code>matplotlib</code></a> 的通用图像显示函数（例如 <a href="https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.imshow.html#matplotlib.pyplot.imshow" title="(in Matplotlib v3.11.1)"><code>matplotlib.pyplot.imshow</code></a>）来显示，但其中有不少细节容易出错，要处理好需要费些功夫。</p>
+
+<p>举个例子，我们先计算一个 STFT，然后直接用 <em>imshow</em> 显示。首先设置导入并加载示例文件。</p>
+
+<pre><code>import numpy as np
+import librosa
+import matplotlib.pyplot as plt
+from IPython.display import HTML
+
+y, sr = librosa.loadx("trumpet")
+HTML(librosa.util.example_info("trumpet", html=True))</code></pre>
+
+<p><strong>solo trumpet 06</strong></p>
+
+<p><strong>By:</strong> Mihai Sorohan | <strong>License:</strong> <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a><strong>Source:</strong> <a href="https://freesound.org/s/77711/">https://freesound.org/s/77711/</a></p>
+
+<details><summary>说明</summary>
+<p>摘自 Mihai Sorohan 的 "Jazz Trumpet Loops Pack in F 90 bpm"<br>该包中所有片段均为 F 调，多为 Blues 与 Dorian 音阶，全部为立体声 acidized .wav 格式，16 位，44.1 kHz 采样率，90 bpm。<br><br>所用设备：<br>- 小号 Bb Amati ATR213<br>- 麦克风 Oktava MK 319<br>- 前置放大器 Art Tube MP Project Series<br>- 声卡 M-Audio Delta Audiophile 192<br></p>
+</details>
+<br>
+<p>现在可以计算 STFT、创建图形并调用 <em>imshow</em>。注意，调用 <em>imshow</em> 时必须把 <em>stft</em> 数组从复数转换为实数，否则会因类型不匹配而报错。</p>
+
+<pre><code>stft = librosa.stft(y)
+print(f"stft shape={stft.shape}")
+fig, ax = plt.subplots()
+ax.imshow(np.abs(stft))</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_02-spectrogram_001.png" alt="02 spectrogram">
+<pre><code>stft shape=(1025, 230)</code></pre>
+
+<p>这里立刻能看出几个问题：</p>
+
+<blockquote>
+<ol>
+  <li><p>宽高比在水平方向上被压缩了。</p></li>
+  <li><p>坐标轴没有标注。</p></li>
+  <li><p>对应频率的纵轴是倒过来的。</p></li>
+  <li><p>图像偏暗，难以辨认。</p></li>
+</ol>
+</blockquote>
+
+<p>以上每一点都只需花一点功夫就能修正，但这往往会产生大量重复的样板代码，在每张图之间反复复制。</p>
+
+<p>librosa 的 display 模块提供了一小组函数，能让绘制频谱图简单得多。</p>
+
+<h2>specshow 基础</h2>
+
+<p>librosa 中用于频谱图显示的核心函数是 <a href="api-librosa-display-specshow.html#librosa.display.specshow" title="librosa.display.specshow"><code>librosa.display.specshow</code></a>。如果去读这个函数的文档，可能会觉得有点繁琐，因为它为不同种类的频谱图实现了大量显示选项。</p>
+
+<p>在逐一介绍所有选项之前，先快速修正示例中的频谱图显示。</p>
+
+<pre><code>fig, ax = plt.subplots()
+librosa.display.specshow(stft, x_axis="time", y_axis="hz", vscale="dB")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_02-spectrogram_002.png" alt="02 spectrogram">
+<ul>
+<li>按顺序逐个说明参数：<ul>
+  <li><p><em>x_axis</em> 设为 <em>‘time’</em>。在背后，specshow 会使用 <a href="api-librosa-frames-to-time.html#librosa.frames_to_time" title="librosa.frames_to_time"><code>librosa.frames_to_time</code></a> 计算帧索引（<em>stft</em> 的列）与时间之间的转换，并替我们标注好绘图。这里依赖默认的采样率和跳距参数（<em>sr=22050</em> 与 <em>hop_length=512</em>），它们可以按需设置。</p></li>
+  <li><p><em>y_axis</em> 做类似的工作，只是它使用 <a href="api-librosa-fft-frequencies.html#librosa.fft_frequencies" title="librosa.fft_frequencies"><code>librosa.fft_frequencies</code></a> 计算行索引到频率（以 Hz 计）的映射。同样，这里依赖默认的帧长度 <em>n_fft=2048</em> 和采样率，二者可以在 <em>specshow</em> 中按需设置。</p></li>
+  <li><p><em>vscale</em> 负责数据的<em>数值缩放</em>。这里使用分贝刻度，它会自动把复数 <em>stft</em> 值转换为幅度（通过 <em>np.abs</em>），再用 <a href="api-librosa-amplitude-to-db.html#librosa.amplitude_to_db" title="librosa.amplitude_to_db"><code>librosa.amplitude_to_db</code></a> 对其进行缩放。关于颜色映射如何工作的更多信息，参见<a href="tutorials-02-display-04-colors.html#tutorial-display-colors">有效使用颜色</a>一节。</p></li>
+</ul></li>
+</ul>
+
+<p><em>specshow</em> 还会设置方向和宽高比，使结果看起来像我们通常期望的频谱图显示。</p>
+
+<p>再进一步，还可以给这张图加上颜色条，让数值更容易解读。</p>
+
+<pre><code>fig, ax = plt.subplots()
+img = librosa.display.specshow(stft, x_axis="time", y_axis="hz", vscale="dB")
+librosa.display.colorbar_db(img)</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_02-spectrogram_003.png" alt="02 spectrogram">
+<p>上面的例子作为频谱内容的可视化已经相当好用。不过它并不适合所有使用场景，这正是 <em>specshow</em> 的灵活性派上用场的地方。</p>
+
+<p>音乐频谱图显示中的一个常见问题是，傅里叶分析假设频率是线性间隔的（<em>0, sr/n_fft, 2*sr/n_fft, …, sr/2</em>），而人对频率和音高的感知往往用<em>几何</em>方式表示更合适。从视觉上看，上图在 <em>(4000 Hz, 8000 Hz)</em> 上占用的纵向空间是 <em>(2000 Hz, 4000 Hz)</em> 的两倍，尽管两者都只代表一个八度。实际中，这会使 1KHz 以下的频率显示变得模糊——音符的基频常常落在这一范围——它们会被视觉压缩，难以分辨。</p>
+
+<p>通常用对纵轴施加对数变换来解决。但傅里叶分析在这里有一个问题：最小频率是 0，而 <em>log(0) → -∞</em>，这意味着极低频率会占据无限的纵向空间。<em>specshow</em> 通过对坐标轴采用<em>半对数</em>变换来近似处理：65 Hz 以下频率线性表示，高于该频率则对数表示。把 <em>y_axis=’log’</em> 即可启用对数频率显示：</p>
+
+<pre><code>fig, ax = plt.subplots()
+img = librosa.display.specshow(stft, x_axis="time", y_axis="log", vscale="dB")
+librosa.display.colorbar_db(img)</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_02-spectrogram_004.png" alt="02 spectrogram">
+<p>重要的是，绘图的底层坐标轴仍然以自然单位（秒、Hz）表示，只有<em>视觉</em>输出被变换。这样一来，叠加其他绘图元素（如基频轮廓或时间标记）或把坐标轴与其他图关联起来都很简单，如下例所示。</p>
+
+<pre><code>fig, ax = plt.subplots(nrows=2, sharex=True, height_ratios=[4, 1])
+img = librosa.display.specshow(stft, x_axis="time", y_axis="log", vscale="dB", ax=ax[0])
+librosa.display.colorbar_db(img)
+
+ax[0].axhline(librosa.note_to_hz("F4"), label="Frequency F4", color="C3")
+ax[0].axvline(3.0, label="Time 3.0 seconds", color="C1", linestyle="--")
+ax[0].legend(loc="upper right")
+ax[0].label_outer()
+librosa.display.waveshow(y=y, sr=sr, ax=ax[1])
+ax[1].axvline(3.0, label="Time 3.0 seconds", color="C1", linestyle="--")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_02-spectrogram_005.png" alt="02 spectrogram">
+<p>注意在 <em>waveshow</em> 和 <em>specshow</em> 中，都可以用 <em>ax=</em> 参数指定在哪个坐标轴上绘制。</p>
+
+<h2>控制 <em>specshow</em></h2>
+
+<p>到目前为止，我们只用了默认设置和有限的几个参数来绘制一张基础但可读的频谱图。</p>
+
+<p>接下来看看如何使用自定义参数并改变图表的样式。首先，以更高的采样率加载示例，并做高分辨率分析。</p>
+
+<pre><code># Use the native sampling rate of the example by setting sr=None
+y, sr = librosa.loadx("trumpet", sr=None)
+
+# Use larger frames (4096 samples) to account for the higher sampling rate
+# Use a smaller hop length to get a higher time resolution in the stft
+stft = librosa.stft(y, n_fft=4096, hop_length=256)
+print(f"stft shape={stft.shape}")</code></pre>
+
+<pre><code>stft shape=(2049, 919)</code></pre>
+
+<p>现在可以把分析参数传给 <em>specshow</em>，让它正确构造坐标轴。顺便还可以通过设置 <em>top_db</em> 改变分贝缩放的阈值（默认是 80，这里设为 60 以抑制低幅度噪声）。最后，可以用 <em>cmap_seq=</em> 为顺序数据选择不同的颜色映射。这里使用白底黑字的颜色映射，适合印刷介质。</p>
+
+<pre><code>fig, ax = plt.subplots()
+img = librosa.display.specshow(stft, x_axis="time", y_axis="log", vscale="dB",
+                               sr=sr, hop_length=256, top_db=60,
+                               cmap_seq="gray_r")
+librosa.display.colorbar_db(img)</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_02-spectrogram_006.png" alt="02 spectrogram">
+
+<h2>小结与提示</h2>
+
+<p>对于 <em>specshow</em> 提供的功能，我们其实只触及了皮毛，本教程后续章节会深入细节。</p>
+
+<ul>
+<li>有几点值得牢记：<ul>
+  <li><p>最重要的参数是 <em>x_axis</em> 和 <em>y_axis</em>。其余大多数参数都是为了支持不同坐标轴缩放的单位转换。</p></li>
+  <li><p>这里的方向并没有什么特殊之处：任何坐标轴都可以是时间轴或频率轴。这使得绘制横向频谱图、时间-时间图、频率-频率图等都很容易。<a href="tutorials-02-display-05-nonspectral.html#tutorial-display-nonspectral">非频谱</a>数据可视化一节给出了一些例子。</p></li>
+  <li><p>底层的显示对象由 <a href="https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.pcolormesh.html#matplotlib.pyplot.pcolormesh" title="(in Matplotlib v3.11.1)"><code>matplotlib.pyplot.pcolormesh</code></a> 生成。<em>pcolormesh</em> 能接受的任何参数也都可以传给 <em>specshow</em>。</p></li>
+</ul></li>
+</ul>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/auto_tutorials/02-display/02-spectrogram.html" rel="noreferrer noopener">librosa.org/doc/latest/auto_tutorials/02-display/02-spectrogram.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

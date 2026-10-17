@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>频率与时频分析 - librosa 中文文档</title>
+<meta name="description" content="频率与时频分析（librosa 1.0.0 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<span id="frequency-and-time-frequency-analysis"></span><span id="sphx-glr-auto-tutorials-01-intro-02-frequency-py"></span><span id="fourier-analysis"></span><span id="tutorial-intro-frequency"></span><span id="time-varying-analysis"></span><span id="spectrograms"></span><span id="summary"></span><span id="sphx-glr-download-auto-tutorials-01-intro-02-frequency-py"></span>
+
+<h1>频率与时频分析</h1>
+
+<p>本节演示如何计算并可视化音频信号的频率内容，以及如何计算频谱图以观察频率内容随时间的变化。</p>
+
+<h2>傅里叶分析</h2>
+
+<p>上一节中，我们了解了如何加载音频信号并绘制其波形。这是信号的时域表示：我们看到气压（对模拟录音而言是电压）如何随时间变化。分析信号的另一种方式是考察它的<em>频率内容</em>。这通过傅里叶变换完成，它把信号分解为不同频率正弦波之和。傅里叶变换不把信号表示为随时间的采样值序列，而是表示为一组正弦波，每个正弦波都有特定的幅度与相位偏移，它们叠加起来构成原信号。</p>
+
+<p>离散傅里叶变换（DFT）由 <a href="https://numpy.org/doc/stable/reference/index.html#module-numpy" title="(in NumPy v2.5)"><code>numpy</code></a> 或 <a href="https://docs.scipy.org/doc/scipy/index.html#module-scipy" title="(in SciPy v1.18.0)"><code>scipy</code></a> 中实现的快速傅里叶变换算法（FFT）计算：</p>
+
+<pre><code>import numpy as np
+import librosa
+from IPython.display import HTML
+
+y, sr = librosa.loadx("trumpet")
+
+HTML(librosa.util.example_info("trumpet", html=True))</code></pre>
+
+<p><strong>solo trumpet 06</strong></p>
+
+<p><strong>By:</strong> Mihai Sorohan | <strong>License:</strong> <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a><strong>Source:</strong> <a href="https://freesound.org/s/77711/">https://freesound.org/s/77711/</a></p>
+
+<details><summary>说明</summary>
+<p>摘自 Mihai Sorohan 的 "Jazz Trumpet Loops Pack in F 90 bpm"<br>该包中所有片段均为 F 调，多为 Blues 与 Dorian 音阶，全部为立体声 acidized .wav 格式，16 位，44.1 kHz 采样率，90 bpm。<br><br>所用设备：<br>- 小号 Bb Amati ATR213<br>- 麦克风 Oktava MK 319<br>- 前置放大器 Art Tube MP Project Series<br>- 声卡 M-Audio Delta Audiophile 192<br></p>
+</details>
+<br>
+<pre><code>y_dft = np.fft.fft(y)</code></pre>
+
+<p>DFT 的结果是一个复值数组，长度与输入信号相同。复数的模给出每个频率正弦波的幅度，辐角给出相位偏移。</p>
+
+<pre><code>print("Time-domain shape: ", y.shape)
+print("DFT shape: ", y_dft.shape)
+print("DFT data type: ", y_dft.dtype)</code></pre>
+
+<pre><code>Time-domain shape:  (117601,)
+DFT shape:  (117601,)
+DFT data type:  complex64</code></pre>
+
+<p>一般来说，DFT 产生的频率个数总是与输入信号的采样数相同。DFT 测得的频率覆盖 <em>[-sr/2, +sr/2]</em> Hz 的范围。我们可以绘制傅里叶变换的幅度来展示信号的频率内容。要正确绘制，需要知道 DFT 计算中用到哪些频率。这由 <em>np.fft.fftfreq</em> 函数提供。该函数以 DFT 的长度以及采样周期（采样率的倒数）为参数，返回与 DFT 输出相对应的频率数组。</p>
+
+<pre><code>frequencies = np.fft.fftfreq(len(y), d=1 / sr)</code></pre>
+
+<p>现在可以把傅里叶变换的幅度对频率作图，看看信号里有什么内容。我们把时域信号画在频率图上方以便对照。</p>
+
+<pre><code>import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(nrows=2)
+librosa.display.waveshow(y, sr=sr, ax=ax[0])
+ax[0].set(title="Time-domain")
+ax[1].plot(frequencies, np.abs(y_dft), color="C1")
+ax[1].set(title="Frequency domain",
+          xlabel="Frequency (Hz)",
+          ylabel="Magnitude")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_02-frequency_001.png" alt="Time-domain, Frequency domain">
+<p>频率域图中有几点值得注意：</p>
+
+<blockquote>
+<ol>
+  <li><p>频率范围从 -11025 到 +11025 Hz。</p></li>
+  <li><p>图围绕 0 Hz 对称。</p></li>
+  <li><p>图中没有任何信息表明某个频率在信号的<em>何处</em>出现：幅度是在整个信号上聚合得到的。</p></li>
+</ol>
+</blockquote>
+
+<p>如果你初次接触，“负频率”这个概念可能令人困惑。不深入技术细节地说，当输入信号是实值（数字音频录音即是如此）时，表示信号所需的全部信息都包含在非负频率范围内。这就是频率域幅度图在水平方向上对称的原因。</p>
+
+<p>处理音频信号时，通常只考虑非负频率，以至于大多数 FFT 实现都提供了只测量这些频率的简化函数。这通常称为 <em>rfft</em>（实数输入 FFT）。不要混淆：<em>rfft</em> 函数的输出仍然是复值的，只是不计算负频率成分。</p>
+
+<pre><code>y_rfft = np.fft.rfft(y)
+frequencies_rfft = np.fft.rfftfreq(len(y), d=1 / sr)
+
+fig, ax = plt.subplots()
+ax.plot(frequencies_rfft, np.abs(y_rfft), color="C1")
+ax.set(title="Frequency domain (non-negative frequencies)",
+       xlabel="Frequency (Hz)",
+       ylabel="Magnitude")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_02-frequency_002.png" alt="Frequency domain (non-negative frequencies)">
+<p><em>rfft</em> 的结果中频率个数约为完整 DFT 的一半，且频率都是非负的：</p>
+
+<pre><code>print("Full FFT shape: ", y_dft.shape)
+print("Full FFT data type: ", y_dft.dtype)
+print("RFFT shape: ", y_rfft.shape)
+print("RFFT data type: ", y_rfft.dtype)
+print("Frequencies: ", frequencies_rfft)</code></pre>
+
+<pre><code>Full FFT shape:  (117601,)
+Full FFT data type:  complex64
+RFFT shape:  (58801,)
+RFFT data type:  complex64
+Frequencies:  [    0.        0.187     0.375 ... 11024.531 11024.719 11024.906]</code></pre>
+
+<h2>时变分析</h2>
+
+<p>上面第三点值得进一步探讨。对于大多数有意思的音频信号，与每个可听频率相关的能量并非始终不变。相反，某个特定频率的幅度会在某些时刻较高（例如该频率上有一个音符正在发声），在其他时刻则较低。</p>
+
+<p>DFT 确实编码了表示与重构数字信号所需的全部信息，但这并不意味着得到的表示必然直观或易于直接解读。</p>
+
+<p>这时<em>时变表示</em>的思路就有了用处。与其一次分析整个信号，通常更有效的做法是把信号切成短片段（通常称为<em>帧</em>）分别分析。做法有很多，最常用的一种称为<em>短时傅里叶变换</em>（STFT）。</p>
+
+<p>librosa 通过 <a href="api-librosa-stft.html#librosa.stft" title="librosa.stft"><code>librosa.stft</code></a> 函数实现：</p>
+
+<pre><code>stft = librosa.stft(y)</code></pre>
+
+<p><a href="api-librosa-stft.html#librosa.stft" title="librosa.stft"><code>librosa.stft</code></a> 函数的输出现在是一个二维数组。第一维对应频率，第二维对应帧索引。</p>
+
+<pre><code>print(stft.shape)</code></pre>
+
+<pre><code>(1025, 230)</code></pre>
+
+<p>默认情况下，<a href="api-librosa-stft.html#librosa.stft" title="librosa.stft"><code>librosa.stft</code></a> 使用 <em>n_fft=2048</em> 个采样的帧长，以及 512 个采样的跳距。这意味着 <em>stft</em> 数组的每一列对应输入信号的一个 2048 采样窗，相邻列之间偏移 512 个采样。在默认采样率 22050 Hz 下换算为时间，即帧长 93 ms、跳距 23 ms。随后每帧用 DFT 分析（使用 <em>np.fft.rfft</em>），得到 <em>n_fft // 2 + 1 = 1025</em> 个频率。具体测得的频率可以像上面那样用 <em>np.fft.rfftfreq</em> 函数计算，也可以使用 <a href="api-librosa-fft-frequencies.html#librosa.fft_frequencies" title="librosa.fft_frequencies"><code>librosa.fft_frequencies</code></a> 函数：</p>
+
+<pre><code>frequencies_stft = librosa.fft_frequencies(sr=sr, n_fft=2048)
+print(frequencies_stft)</code></pre>
+
+<pre><code>[    0.       10.767    21.533 ... 11003.467 11014.233 11025.   ]</code></pre>
+
+<p>按照一般惯例，librosa 中数组的尾部维度对应时间（以采样或帧为单位）。因此 <em>stft[:, t]</em> 是信号在第 <em>t</em> 帧的频率内容，而 <em>stft[f, :]</em> 是频率 <em>f</em> 的时间演变。要在帧索引与时间之间转换，librosa 提供了 <a href="api-librosa-frames-to-time.html#librosa.frames_to_time" title="librosa.frames_to_time"><code>librosa.frames_to_time</code></a> 函数：</p>
+
+<pre><code>frame_times = librosa.frames_to_time(np.arange(stft.shape[1]), sr=sr, hop_length=512)
+print(frame_times)</code></pre>
+
+<pre><code>[0.    0.023 0.046 0.07  0.093 0.116 0.139 0.163 0.186 0.209 0.232 0.255
+ 0.279 0.302 0.325 0.348 0.372 0.395 0.418 0.441 0.464 0.488 0.511 0.534
+ 0.557 0.58  0.604 0.627 0.65  0.673 0.697 0.72  0.743 0.766 0.789 0.813
+ 0.836 0.859 0.882 0.906 0.929 0.952 0.975 0.998 1.022 1.045 1.068 1.091
+ 1.115 1.138 1.161 1.184 1.207 1.231 1.254 1.277 1.3   1.324 1.347 1.37
+ 1.393 1.416 1.44  1.463 1.486 1.509 1.533 1.556 1.579 1.602 1.625 1.649
+ 1.672 1.695 1.718 1.741 1.765 1.788 1.811 1.834 1.858 1.881 1.904 1.927
+ 1.95  1.974 1.997 2.02  2.043 2.067 2.09  2.113 2.136 2.159 2.183 2.206
+ 2.229 2.252 2.276 2.299 2.322 2.345 2.368 2.392 2.415 2.438 2.461 2.485
+ 2.508 2.531 2.554 2.577 2.601 2.624 2.647 2.67  2.694 2.717 2.74  2.763
+ 2.786 2.81  2.833 2.856 2.879 2.902 2.926 2.949 2.972 2.995 3.019 3.042
+ 3.065 3.088 3.111 3.135 3.158 3.181 3.204 3.228 3.251 3.274 3.297 3.32
+ 3.344 3.367 3.39  3.413 3.437 3.46  3.483 3.506 3.529 3.553 3.576 3.599
+ 3.622 3.646 3.669 3.692 3.715 3.738 3.762 3.785 3.808 3.831 3.855 3.878
+ 3.901 3.924 3.947 3.971 3.994 4.017 4.04  4.063 4.087 4.11  4.133 4.156
+ 4.18  4.203 4.226 4.249 4.272 4.296 4.319 4.342 4.365 4.389 4.412 4.435
+ 4.458 4.481 4.505 4.528 4.551 4.574 4.598 4.621 4.644 4.667 4.69  4.714
+ 4.737 4.76  4.783 4.807 4.83  4.853 4.876 4.899 4.923 4.946 4.969 4.992
+ 5.016 5.039 5.062 5.085 5.108 5.132 5.155 5.178 5.201 5.224 5.248 5.271
+ 5.294 5.317]</code></pre>
+
+<p><a href="api-librosa-frames-to-time.html#librosa.frames_to_time" title="librosa.frames_to_time"><code>librosa.frames_to_time</code></a> 函数可以给定采样率与跳距，把单个数值或数值数组从<em>帧</em>单位转换为<em>时间</em>单位。上面这个计算——为给定数组中的每个帧索引求时间值——太常见了，因此 librosa 提供了辅助函数 <a href="api-librosa-times-like.html#librosa.times_like" title="librosa.times_like"><code>librosa.times_like</code></a> 一步完成：</p>
+
+<pre><code>frame_times = librosa.times_like(stft, sr=sr, hop_length=512)
+print(frame_times)</code></pre>
+
+<pre><code>[0.    0.023 0.046 0.07  0.093 0.116 0.139 0.163 0.186 0.209 0.232 0.255
+ 0.279 0.302 0.325 0.348 0.372 0.395 0.418 0.441 0.464 0.488 0.511 0.534
+ 0.557 0.58  0.604 0.627 0.65  0.673 0.697 0.72  0.743 0.766 0.789 0.813
+ 0.836 0.859 0.882 0.906 0.929 0.952 0.975 0.998 1.022 1.045 1.068 1.091
+ 1.115 1.138 1.161 1.184 1.207 1.231 1.254 1.277 1.3   1.324 1.347 1.37
+ 1.393 1.416 1.44  1.463 1.486 1.509 1.533 1.556 1.579 1.602 1.625 1.649
+ 1.672 1.695 1.718 1.741 1.765 1.788 1.811 1.834 1.858 1.881 1.904 1.927
+ 1.95  1.974 1.997 2.02  2.043 2.067 2.09  2.113 2.136 2.159 2.183 2.206
+ 2.229 2.252 2.276 2.299 2.322 2.345 2.368 2.392 2.415 2.438 2.461 2.485
+ 2.508 2.531 2.554 2.577 2.601 2.624 2.647 2.67  2.694 2.717 2.74  2.763
+ 2.786 2.81  2.833 2.856 2.879 2.902 2.926 2.949 2.972 2.995 3.019 3.042
+ 3.065 3.088 3.111 3.135 3.158 3.181 3.204 3.228 3.251 3.274 3.297 3.32
+ 3.344 3.367 3.39  3.413 3.437 3.46  3.483 3.506 3.529 3.553 3.576 3.599
+ 3.622 3.646 3.669 3.692 3.715 3.738 3.762 3.785 3.808 3.831 3.855 3.878
+ 3.901 3.924 3.947 3.971 3.994 4.017 4.04  4.063 4.087 4.11  4.133 4.156
+ 4.18  4.203 4.226 4.249 4.272 4.296 4.319 4.342 4.365 4.389 4.412 4.435
+ 4.458 4.481 4.505 4.528 4.551 4.574 4.598 4.621 4.644 4.667 4.69  4.714
+ 4.737 4.76  4.783 4.807 4.83  4.853 4.876 4.899 4.923 4.946 4.969 4.992
+ 5.016 5.039 5.062 5.085 5.108 5.132 5.155 5.178 5.201 5.224 5.248 5.271
+ 5.294 5.317]</code></pre>
+
+<h2>频谱图</h2>
+
+<p>正如上一节所见，音频数据作为一串数字难以理解，但可视化后就容易多了。<em>stft</em> 这类时频表示也是如此。可视化音频信号时频内容最常见的方法，是把 STFT 的幅度画成二维图像，横轴对应时间，纵轴对应频率，每个像素的颜色对应该时间与频率处 STFT 的幅度。这称为<em>频谱图</em>。</p>
+
+<p>librosa 提供了 <a href="api-librosa-display-specshow.html#librosa.display.specshow" title="librosa.display.specshow"><code>librosa.display.specshow</code></a> 函数来绘制频谱图。我们来画出前面加载的小号信号的频谱图，并附上它的波形以便对照。</p>
+
+<pre><code>fig, ax = plt.subplots(nrows=2, sharex=True)
+img = librosa.display.specshow(stft, vscale="dBFS",
+                               sr=sr, hop_length=512, x_axis="time", y_axis="hz", ax=ax[0])
+librosa.display.colorbar_db(img, label="dBFS")
+ax[0].set(title="Spectrogram")
+ax[0].label_outer()
+librosa.display.waveshow(y, sr=sr, ax=ax[1])
+ax[1].set(title="Time-domain")</code></pre>
+
+<img src="https://librosa.org/doc/latest/_images/sphx_glr_02-frequency_003.png" alt="Spectrogram, Time-domain">
+<blockquote>
+
+<p><strong>注意</strong></p>
+<p><em>vscale=’dBFS’</em> 参数用于把频谱图的颜色按相对于满刻度的分贝数（dBFS）缩放，即所有值都相对于频谱图中的最大值来缩放。</p>
+</blockquote>
+
+<p>为便于对照，音频嵌入在下方。听一听这个示例，试着跟上上面的波形图与频谱图。</p>
+
+<pre><code>from IPython.display import Audio
+Audio(url=librosa.example("trumpet", url=True))</code></pre>
+
+<p><audio controls src="https://librosa.org/data/audio/sorohanro_-_solo-trumpet-06.ogg"></audio></p>
+<br>
+<ul>
+<li>这个例子中有几点需要注意：<ol>
+  <li><p>只绘制了 STFT 的<em>幅度</em>。相位信息通常不做可视化。这由 <em>np.abs(stft)</em> 完成，正如上面绘制信号频率内容时那样。</p></li>
+  <li><p>幅度用 <a href="api-librosa-amplitude-to-db.html#librosa.amplitude_to_db" title="librosa.amplitude_to_db"><code>librosa.amplitude_to_db</code></a> 函数转换为分贝，使图在视觉上更易解读。</p></li>
+</ol></li>
+</ul>
+
+<p>与上面的波形图不同，频谱图展示了信号的频率内容如何随时间变化，对应小号上吹奏的不同音符。重要的是，即使对于这样一个简单的单音信号，频谱图也揭示了波形中不明显的许多复杂性，例如谐波结构（正在发声的基频整数倍处的能量）。</p>
+
+<h2>小结</h2>
+
+<p>本节中，我们了解了如何计算音频信号的傅里叶变换以分析其频率内容。也了解了如何计算频谱图以可视化信号频率内容随时间的变化。</p>
+
+<p>STFT 这类时频表示是 librosa 提供的许多分析工具的核心，并用于后续章节中的许多示例。</p>
+
+<p>关于如何可视化频谱图数据的更多细节，请参阅显示教程的 <a href="tutorials-02-display-02-spectrogram.html#tutorial-display-spectrogram">频谱图</a> 一节。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://librosa.org/doc/latest/auto_tutorials/01-intro/02-frequency.html" rel="noreferrer noopener">librosa.org/doc/latest/auto_tutorials/01-intro/02-frequency.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

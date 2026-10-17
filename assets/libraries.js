@@ -36,5 +36,9 @@ window.PT_LIBRARIES = [
   { dir: 'pyaudio-docs', title: 'PyAudio 文档',
     desc: 'PyAudio 官方文档的中文译本。',
     source: 'https://people.csail.mit.edu/hubert/pyaudio/docs/',
-    updated: '2026-10-17', pages: 3 }
+    updated: '2026-10-17', pages: 3 },
+  { dir: 'librosa-docs', title: 'librosa 文档',
+    desc: 'librosa 官方文档的中文译本。',
+    source: 'https://librosa.org/doc/latest/index.html',
+    updated: '2026-10-18', pages: 312 }
 ];
