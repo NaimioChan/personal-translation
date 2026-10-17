@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>枚举与查询 PortAudio 设备 - PortAudio 文档</title>
+<meta name="description" content="枚举与查询 PortAudio 设备（PortAudio V19 API 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>枚举与查询 PortAudio 设备</h1>
+<h2 id="tut_query1">查询设备</h2>
+
+<p>像本教程前面那样使用默认设备通常就够了，但有时你需要从系统中可用设备的列表里明确选择设备。要看一个可运行的示例，请查看 PortAudio 源代码 tests/ 目录中的 <a href="pa__devs_8c.html">pa_devs.c</a>。为此，你需要先初始化 PortAudio 并查询设备数量：</p>
+
+<pre><code>int numDevices;
+ 
+numDevices = Pa_GetDeviceCount();
+if( numDevices &lt; 0 )
+{
+    printf( &quot;ERROR: Pa_CountDevices returned 0x%x\n&quot;, numDevices );
+    err = numDevices;
+    goto error;
+}</code></pre>
+<p>如果你想获取每个设备的信息，只需像下面这样循环遍历：</p>
+
+<pre><code>const   PaDeviceInfo *deviceInfo;
+ 
+for( i=0; i&lt;numDevices; i++ )
+{
+    deviceInfo = Pa_GetDeviceInfo( i );
+    ...
+}</code></pre>
+<p>Pa_DeviceInfo 结构体包含大量信息，例如设备名称、与设备关联的默认延迟等等。该结构体具有以下字段：</p>
+
+<pre><code>int     structVersion
+const char *    name
+PaHostApiIndex  hostApi
+int     maxInputChannels
+int     maxOutputChannels
+PaTime  defaultLowInputLatency
+PaTime  defaultLowOutputLatency
+PaTime  defaultHighInputLatency
+PaTime  defaultHighOutputLatency
+double  defaultSampleRate</code></pre>
+<p>你可能会注意到，仅凭这些信息无法判断某个采样率是否受支持。这是因为有些设备支持一定范围的采样率，有些设备支持一组采样率，还有一些设备支持某些采样率与声道数的组合而不支持另一些。为解决这个问题，PortAudio 提供了一个函数，用于按给定格式测试某个设备：</p>
+
+<pre><code>const PaStreamParameters *inputParameters;
+const PaStreamParameters *outputParameters;
+double desiredSampleRate;
+...
+PaError err;
+ 
+err = Pa_IsFormatSupported( inputParameters, outputParameters, desiredSampleRate );
+if( err == paFormatIsSupported )
+{
+   printf( &quot;Hooray!\n&quot;);
+}
+else
+{
+   printf(&quot;Too Bad.\n&quot;);
+}</code></pre>
+<p>稍后将演示如何填写 inputParameters 和 outputParameters 字段。</p>
+
+<p>当你找到喜欢的配置，或者想直接试一试的配置之后，就可以填写 <a href="structPaStreamParameters.html">PaStreamParameters</a> 结构体并调用 Pa_OpenStream 来打开流：</p>
+
+<pre><code>double srate = ... ;
+PaStream *stream;
+unsigned long framesPerBuffer = ... ; //could be paFramesPerBufferUnspecified, in which case PortAudio will do its best to manage it for you, but, on some platforms, the framesPerBuffer will change in each call to the callback
+PaStreamParameters outputParameters;
+PaStreamParameters inputParameters;
+ 
+bzero( &amp;inputParameters, sizeof( inputParameters ) ); //not necessary if you are filling in all the fields
+inputParameters.channelCount = inChan;
+inputParameters.device = inDevNum;
+inputParameters.hostApiSpecificStreamInfo = NULL;
+inputParameters.sampleFormat = paFloat32;
+inputParameters.suggestedLatency = Pa_GetDeviceInfo(inDevNum)-&gt;defaultLowInputLatency ;
+inputParameters.hostApiSpecificStreamInfo = NULL; //See you specific host&#39;s API docs for info on using this field
+ 
+ 
+bzero( &amp;outputParameters, sizeof( outputParameters ) ); //not necessary if you are filling in all the fields
+outputParameters.channelCount = outChan;
+outputParameters.device = outDevNum;
+outputParameters.hostApiSpecificStreamInfo = NULL;
+outputParameters.sampleFormat = paFloat32;
+outputParameters.suggestedLatency = Pa_GetDeviceInfo(outDevNum)-&gt;defaultLowOutputLatency ;
+outputParameters.hostApiSpecificStreamInfo = NULL; //See you specific host&#39;s API docs for info on using this field
+ 
+err = Pa_OpenStream(
+                &amp;stream,
+                &amp;inputParameters,
+                &amp;outputParameters,
+                srate,
+                framesPerBuffer,
+                paNoFlag, //flags that can be used to define dither, clip settings and more
+                portAudioCallback, //your callback function
+                (void *)this ); //data to be passed to callback. In C++, it is frequently (void *)this
+//don&#39;t forget to check errors!</code></pre>
+<p>上一页：<a href="utility_functions.html">工具函数</a> | 下一页：<a href="blocking_read_write.html">阻塞读写函数</a></p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://files.portaudio.com/docs/v19-doxydocs/querying_devices.html" rel="noreferrer noopener">files.portaudio.com/docs/v19-doxydocs/querying_devices.html</a> · 译文更新于 2026-10-17</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

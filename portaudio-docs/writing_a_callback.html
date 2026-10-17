@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>编写回调函数 - PortAudio 文档</title>
+<meta name="description" content="编写回调函数（PortAudio V19 API 文档中文译本）。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>编写回调函数</h1>
+<p>要编写使用 PortAudio 的程序，必须包含 "portaudio.h" 头文件。你可能想读一读 "portaudio.h"，因为它完整描述了 PortAudio 的函数与常量。或者你也可以浏览 [<a href="http://www.portaudio.com/docs/v19-doxydocs/portaudio_8h.html">http://www.portaudio.com/docs/v19-doxydocs/portaudio_8h.html</a> "portaudio.h" Doxygen 页面]</p>
+<pre><code>#include &quot;portaudio.h&quot;</code></pre>
+<p>下一步是编写你自己的“回调”函数。“回调”是一个由 PortAudio 引擎在它已捕获到音频数据时、或需要更多音频数据用于输出时调用的函数。</p>
+
+<p>开始之前，必须认识到回调是个敏感的地方。这是因为某些系统在专用线程或中断处理程序中执行回调，它很少与你代码的其他部分得到相同的待遇。在大多数现代系统上，在回调中进行不被允许的调用不会导致崩溃，但如果你希望代码产生没有杂音的音频，就必须确保避免使用那些执行时间可能无上限的函数调用。这些调用具体是哪些取决于你的平台，但几乎肯定包括：内存分配与释放、I/O（包括文件 I/O 以及控制台 I/O，例如 printf()）、上下文切换（例如 exec() 或 yield()）、互斥量操作，以及其他任何可能依赖操作系统的操作。如果你认为短小的临界区是安全的，请先去了解优先级反转。Windows 和 Mac OS 的调度器没有实时安全的优先级反转防护。其他平台需要特殊的互斥量标志。此外，除文档中明确允许的情形外，在回调中调用任何 PortAudio API 函数都不安全。</p>
+
+<p>你的回调函数必须返回 int，并接受下面这个类型定义中指定的确切参数：</p>
+
+<pre><code>typedef int PaStreamCallback( const void *input,
+                                      void *output,
+                                      unsigned long frameCount,
+                                      const PaStreamCallbackTimeInfo* timeInfo,
+                                      PaStreamCallbackFlags statusFlags,
+                                      void *userData ) ;</code></pre>
+<p>下面是来自测试文件 "patests/patest_saw.c" 的一个示例回调函数。它计算简单的左右锯齿波信号，并写入输出缓冲区。注意，在这个示例中信号是 float 数据类型。信号必须介于 -1.0 与 +1.0 之间。你也可以使用 16 位整数或其他在设置时指定的格式，但 float 最易于处理。你可以通过 PortAudio 传递指向自定义数据结构的指针，它会以 userData 的形式出现。</p>
+
+<pre><code>typedef struct
+{
+    float left_phase;
+    float right_phase;
+}   
+paTestData;
+ 
+/* This routine will be called by the PortAudio engine when audio is needed.
+ * It may be called at interrupt level on some machines so don&#39;t do anything
+ * that could mess up the system like calling malloc() or free().
+*/ 
+static int patestCallback( const void *inputBuffer, void *outputBuffer,
+                           unsigned long framesPerBuffer,
+                           const PaStreamCallbackTimeInfo* timeInfo,
+                           PaStreamCallbackFlags statusFlags,
+                           void *userData )
+{
+    /* Cast data passed through stream to our structure. */
+    paTestData *data = (paTestData*)userData; 
+    float *out = (float*)outputBuffer;
+    unsigned int i;
+    (void) inputBuffer; /* Prevent unused variable warning. */
+    
+    for( i=0; i&lt;framesPerBuffer; i++ )
+    {
+        *out++ = data-&gt;left_phase;  /* left */
+        *out++ = data-&gt;right_phase;  /* right */
+        /* Generate simple sawtooth phaser that ranges between -1.0 and 1.0. */
+        data-&gt;left_phase += 0.01f;
+        /* When signal reaches top, drop back down. */
+        if( data-&gt;left_phase &gt;= 1.0f ) data-&gt;left_phase -= 2.0f;
+        /* higher pitch so we can distinguish left and right. */
+        data-&gt;right_phase += 0.03f;
+        if( data-&gt;right_phase &gt;= 1.0f ) data-&gt;right_phase -= 2.0f;
+    }
+    return 0;
+}</code></pre>
+<p>上一页：<a href="tutorial_start.html">PortAudio 教程</a> | 下一页：<a href="initializing_portaudio.html">初始化 PortAudio</a></p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://files.portaudio.com/docs/v19-doxydocs/writing_a_callback.html" rel="noreferrer noopener">files.portaudio.com/docs/v19-doxydocs/writing_a_callback.html</a> · 译文更新于 2026-10-17</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

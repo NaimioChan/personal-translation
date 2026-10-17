@@ -5,6 +5,10 @@
 window.PT_LIBRARIES = [
   // { dir: 'example-library', title: '示例文档库', desc: '一句话说明这个库收了什么文档。',
   //   source: 'https://example.com/docs', updated: '2026-10-13', pages: 3 }
+  { dir: 'portaudio-docs', title: 'PortAudio 文档',
+    desc: 'PortAudio V19 API 文档的中文译本。',
+    source: 'https://files.portaudio.com/docs/v19-doxydocs/',
+    updated: '2026-10-17', pages: 93 },
   { dir: 'cavalry-docs', title: 'Cavalry 官方文档',
     desc: 'Cavalry 官方文档的中文译本。',
     source: 'https://cavalry.studio/docs/',
