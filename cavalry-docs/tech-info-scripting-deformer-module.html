@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>变形器模块 - Cavalry 官方文档</title>
+<meta name="description" content="Cavalry 官方文档《变形器模块》的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20fill='%23FAF9F5'/%3E%3Crect%20x='2.75'%20y='1.75'%20width='10.5'%20height='12.5'%20fill='none'%20stroke='%23D97757'%20stroke-width='1.5'/%3E%3Cpath%20d='M5.25%205.25h5.5M5.25%208h5.5M5.25%2010.75h3'%20stroke='%23D97757'%20stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>变形器模块</h1>
+<h2 id="introduction">简介</h2>
+<p>以下内容<strong>仅</strong>对 <a href="nodes-behaviours-javascript-deformer.html">JavaScript 变形器</a> 可用。此模块中的所有内容都在 <code>def</code> 命名空间中，因此方法需要以 <code>def.</code> 为前缀。</p>
+<h2 id="member-functions">成员函数</h2>
+<h3 id="hierarchy-based-access">基于层级的访问</h3>
+<p>基于层级的方法可访问完整的网格树。这是首选方式，因为它能正确处理嵌套组与复杂层级。</p>
+<h4 id="getrootmesh">getRootMesh() → cavalry.Mesh</h4>
+<p>返回正在变形的图形的根 <a href="tech-info-scripting-cavalry-module.html#mesh-class">cavalry.Mesh</a>。用它访问完整的网格层级以进行修改。</p>
+<pre><code class="language-js">var root = def.getRootMesh();
+// Traverse and modify the mesh hierarchy
+def.setRootMesh(root);</code></pre>
+<h4 id="setrootmesh">setRootMesh(mesh:cavalry.Mesh)</h4>
+<p>修改完成后将根网格设置回去。必须调用此方法才能应用对网格层级所做的更改。</p>
+<pre><code class="language-js">// Helper function to recursively visit all meshes
+function visitAllMeshes(mesh, func) {
+    for (var i = 0; i &lt; mesh.childMeshCount(); i++) {
+        var child = mesh.getChildMeshAtIndex(i);
+        visitAllMeshes(child, func);
+        mesh.setChildMeshAtIndex(i, child);
+    }
+    func(mesh);
+}
+
+function deformMesh(mesh) {
+    var pathCount = mesh.count();
+    for (var p = 0; p &lt; pathCount; p++) {
+        var path = mesh.getPathAtIndex(p);
+        var pd = path.pathData();
+
+        for (var idx = 0; idx &lt; pd.length; idx++) {
+            // Move each point along its normal
+            pd[idx].point.x += pd[idx].normal.x * amount;
+            pd[idx].point.y += pd[idx].normal.y * amount;
+        }
+
+        path.setPathData(pd);
+        mesh.setPathAtIndex(p, path);
+    }
+}
+
+var root = def.getRootMesh();
+visitAllMeshes(root, deformMesh);
+def.setRootMesh(root);</code></pre>
+<h3 id="falloffs">衰减</h3>
+<h4 id="getfalloffatpoint">getFalloffAtPoint(x:number, y:number) → number</h4>
+<p>返回指定位置处合并后的衰减值（0-1）。其中包含变形器的 Strength 设置以及任何已连接的衰减图形。坐标应位于局部网格空间。</p>
+<pre><code class="language-js">function deformMesh(mesh) {
+    var pathCount = mesh.count();
+    for (var p = 0; p &lt; pathCount; p++) {
+        var path = mesh.getPathAtIndex(p);
+        var pd = path.pathData();
+
+        for (var idx = 0; idx &lt; pd.length; idx++) {
+            var pt = pd[idx].point;
+            var normal = pd[idx].normal;
+
+            // Get falloff at this point (includes Strength)
+            var falloff = def.getFalloffAtPoint(pt.x, pt.y);
+            if (falloff &lt;= 0) continue;
+
+            pd[idx].point.x += normal.x * amount * falloff;
+            pd[idx].point.y += normal.y * amount * falloff;
+        }
+
+        path.setPathData(pd);
+        mesh.setPathAtIndex(p, path);
+    }
+}</code></pre>
+<h3 id="bounding-box-and-points">边界框与点</h3>
+<h4 id="getboundingbox">getBoundingBox() → {x:number, y:number, width:number, height:number, centre:{x:number, y:number}, left:number, right:number, top:number, bottom:number}</h4>
+<p>返回一个对象，包含所选内容边界框的详细信息。</p>
+<h4 id="getpoints">getPoints() → array[points]</h4>
+<p>返回图形每个点的位置数组。之后可遍历这些位置来操作它们。</p>
+<pre><code class="language-js">// Connect the Deformer to a Shape's Deformers attribute and hit 'Return'.
+var points = def.getPoints();
+console.log(JSON.stringify(points));</code></pre>
+<h4 id="setpoints">setPoints(array[points])</h4>
+<p>设置图形每个点的位置。</p>
+<pre><code class="language-js">// A simple sine wave deformer
+var points = def.getPoints();
+var bbox = def.getBoundingBox();
+var maxX = bbox.x+bbox.width;
+var frequency = 10;
+var amplitude = 50;
+
+for (let pt of points) {
+    let normX = cavalry.norm(pt.x, bbox.x, maxX);
+    pt.y += Math.sin((normX+n0*.1)*frequency)*amplitude;
+}
+
+def.setPoints(points);</code></pre>
+<h3 id="depth-based-access">基于深度的访问</h3>
+<p>基于深度的方法可访问层级中特定层级的网格。</p>
+<h4 id="meshdepth">meshDepth</h4>
+<p>网格树的深度（<a href="user-interface-menus-window-menu-mesh-explorer.html">网格浏览器</a>中显示的最大编号）。这是一个属性/变量，而非方法。</p>
+<h4 id="meshcountatdepth">meshCountAtDepth(depth:int) → int</h4>
+<p>返回给定深度处的网格数量。</p>
+<h4 id="getmeshesatdepth">getMeshesAtDepth(depth:int) → [cavalry.Mesh]</h4>
+<p>返回 <a href="tech-info-scripting-cavalry-module.html#mesh-class">cavalry.Mesh</a> 对象数组。</p>
+<h4 id="setmeshesatdepth">setMeshesAtDepth(depth:int, [cavalry.Mesh])</h4>
+<p>用 <a href="tech-info-scripting-cavalry-module.html#mesh-class">cavalry.Mesh</a> 替换给定深度处的网格。这不会移除任何未被替换的网格。</p>
+<h4 id="getmeshatdepthatindex">getMeshAtDepthAtIndex(depth:int, index:int) → cavalry.Mesh</h4>
+<p>返回给定深度与索引处的网格。</p>
+<h4 id="setmeshatdepthatindex">setMeshAtDepthAtIndex(depth:int, index:int, mesh:cavalry.Mesh)</h4>
+<p>替换给定深度与索引处的网格。</p>
+<h4 id="settransformatdepthatindex">setTransformAtDepthAtIndex(depth:int, index:int, position:object, rotation:double, scale:object)</h4>
+<p>设置给定深度与索引处网格的位置。Position 与 Scale 是包含 x 和 y 值的可选对象（例如 <code>{"x":20, "y": 5}</code>）。</p>
+<h4 id="cleartransformatdepthatindex">clearTransformAtDepthAtIndex(depth:int, index:int)</h4>
+<p>重置给定深度与索引处网格的变换。</p>
+<h4 id="centrepivotatdepthatindex">centrePivotAtDepthAtIndex(depth:int, index:int)</h4>
+<p>将给定深度与索引处网格的轴心居中。</p>
+<h4 id="setmaterialatdepthatindex">setMaterialAtDepthAtIndex(depth:int, index:int, material:cavalry.Material)</h4>
+<p>设置给定深度与索引处网格的 Material 对象。</p>
+<h4 id="highestdepthwithpath">highestDepthWithPath() → int</h4>
+<p>返回网格中包含路径的最高深度。</p>
+<h2 id="examples">示例</h2>
+<h3 id="replace-a-child-mesh-with-another-mesh">用另一个网格替换子网格。</h3>
+<ol>
+<li>创建一个<a href="nodes-shapes-text-shape.html">文本图形</a>。</li>
+<li>在<a href="user-interface-menus-window-menu-attribute-editor.html">属性编辑器</a>中，点击文本图形 <strong>Deformers</strong> 属性上的 <code>+</code> 按钮，然后选择 <a href="nodes-behaviours-javascript-deformer.html">JavaScript 变形器</a>。</li>
+<li>点击 JavaScript Deformer 界面底部的 <code>+</code> 按钮，然后选择 'Add Layer'。</li>
+<li>创建一个<a href="nodes-shapes-basic-shape-star.html">星形图形</a>。</li>
+<li>将星形的 <strong>Radius</strong> 设为 <code>30</code>。</li>
+<li>连接 <code>starShape.id</code>→<code>javaScriptDeformer.array.1</code><code>n1</code> 数组 Id（在步骤 3 中创建）。</li>
+<li>将 JavaScript Deformer 的 <strong>Expression</strong> 替换为：
+<pre><code class="language-js"> var meshes = def.getMeshesAtDepth(3);
+ var replaceIndex = n0;
+ if (meshes.length &gt; replaceIndex) {
+     let currentMesh = def.getMeshAtDepthAtIndex(3, replaceIndex);
+     let bbox = currentMesh.getBoundingBox();
+     let path = n1.path;
+     def.setMeshAtDepthAtIndex(3,replaceIndex, path);
+     def.setTransformAtDepthAtIndex(3,replaceIndex, bbox.centre);
+ }</code></pre></li>
+<li>更改 JavaScript Deformer 的 <code>n0</code> 值。</li> </ol>
+<h3 id="replace-a-child-mesh-with-a-custom-path">用自定义路径替换子网格。</h3>
+<ol>
+<li>创建一个<a href="nodes-shapes-text-shape.html">文本图形</a>。</li>
+<li>在<a href="user-interface-menus-window-menu-attribute-editor.html">属性编辑器</a>中，点击文本图形 <strong>Deformers</strong> 属性上的 <code>+</code> 按钮，然后选择 <a href="nodes-behaviours-javascript-deformer.html">JavaScript 变形器</a>。</li>
+<li>将 JavaScript Deformer 的 <strong>Expression</strong> 替换为：
+<pre><code class="language-js"> var meshes = def.getMeshesAtDepth(3);
+ var replaceIndex = n0;
+ if (meshes.length &gt; replaceIndex) {
+     var path = new cavalry.Path()
+     var newMesh = new cavalry.Mesh();
+     var material = new cavalry.Material();
+     material.fillColor = "#ff24e0";
+     material.stroke = true;
+     material.strokeColor = "#000000";
+     material.strokeWidth = 2;
+     let bbox = meshes[replaceIndex].getBoundingBox();
+     path.addEllipse(bbox.centre.x,bbox.centre.y,30,80);
+     newMesh.addPath(path, material);
+     def.setMeshAtDepthAtIndex(3,replaceIndex,newMesh);
+ }</code></pre></li>
+<li>更改 JavaScript Deformer 的 <code>n0</code> 值。</li> </ol>
+<h3 id="modify-a-child-mesh-at-a-depth-and-index">修改指定深度与索引处的子网格。</h3>
+<ol>
+<li>创建一个<a href="nodes-shapes-text-shape.html">文本图形</a>。</li>
+<li>在<a href="user-interface-menus-window-menu-attribute-editor.html">属性编辑器</a>中，点击文本图形 <strong>Deformers</strong> 属性上的 <code>+</code> 按钮，然后选择 <a href="nodes-behaviours-javascript-deformer.html">JavaScript 变形器</a>。</li>
+<li>点击 <strong>JavaScript Deformer</strong> 底部的 <code>+</code> 按钮，然后选择 'Add Int'。</li>
+<li>将 JavaScript Deformer 的 <strong>Expression</strong> 替换为：
+<pre><code class="language-js"> var meshes = def.getMeshesAtDepth(3);
+ var replaceIndex = n1;
+ if (meshes.length &gt; 3) {
+     var material = new cavalry.Material();
+     material.fillColor = "#ff24e0";
+     material.stroke = true;
+     material.strokeColor = "#000000";
+     material.strokeWidth = 2;
+     def.setMaterialAtDepthAtIndex(3,replaceIndex,material);
+     def.centrePivotAtDepthAtIndex(3,replaceIndex)
+     def.setTransformAtDepthAtIndex(3,replaceIndex, {}, n0, {"x": 0.8, "y": 0.8});
+ }</code></pre></li>
+<li>更改 JavaScript Deformer 的 <code>n0</code> 和 <code>n1</code> 值。</li> </ol>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://cavalry.studio/docs/tech-info/scripting/deformer-module/" rel="noreferrer noopener">cavalry.studio/docs/tech-info/scripting/deformer-module/</a> · 译文更新于 2026-10-17</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
