@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>浮点转整数 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：浮点转整数">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>浮点转整数</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Peter Schoffhauzer</li>
+<li><strong>创建时间：</strong>2007-02-19 10:03:07</li>
+</ul>
+<blockquote class="note">
+<p>fld x/fistp i 指令可用于把浮点数快速转换为整数。默认情况下，数字会舍入到最近的整数。然而，有时我们需要的不是这个。</p>
+<p>FPU 控制字的第 12 与第 11 位决定 FPU 的舍入方式。四种舍入状态是：</p>
+<p>00 = 就近舍入（默认）<br>01 = 向下舍入（朝 -infinity）<br>10 = 向上舍入（朝 +infinity）<br>11 = 向零截断</p>
+<p>状态字通过 fldcw/fstcw 指令加载/存储。按需设置舍入模式后，float2int() 函数会一直使用该舍入模式，直到控制模式被重置。ceil() 与 floor() 函数对每条指令都设置舍入模式，非常慢。因此，在处理一个块之前先设置舍入模式（向下或向上），再使用 float2int()，要快得多。</p>
+<p>参考：Raymond Filiatreault 的 SIMPLY FPU<br><a href="http://www.website.masmforum.com/tutorials/fptute/index.html" rel="noreferrer noopener">http://www.website.masmforum.com/tutorials/fptute/index.html</a></p>
+<p>MSVC（大概其他编译器也是）在 &lt;float.h&gt; 中定义了修改 FPU 控制字的函数：_control87/_controlfp。等效指令为：</p>
+<p>_controlfp(_RC_CHOP, _MCW_RC); // 设置舍入模式为截断<br>_controlfp(_RC_UP    _MCW_RC); // 设置舍入模式为向上（ceil）<br>_controlfp(_RC_DOWN, _MCW_RC); // 设置舍入模式为向下（floor）<br>_controlfp(_RC_NEAR, _MCW_RC); // 设置舍入模式为就近（默认）</p>
+<p>注意 FPU 舍入模式也会影响其他计算，所以同样的代码可能给出不同结果。</p>
+<p>另外，在支持 SSE 指令的平台上（大概所有现代 CPU 都支持），可以用 cvtss2si、cvttss2si、cvtps2pi 或 cvttps2pi 指令把单精度浮点数截断或舍入为整数。这里不详细讨论，但我提供了 truncateSSE 函数，它总是把单精度浮点数截断为整数，无论当前舍入模式如何。</p>
+<p>（另外我认为 SSE 的舍入模式可能与 FPU 控制字中设置的舍入模式不同，但我至今没有测试过。）</p>
+</blockquote>
+<pre><code>#ifndef __FPU_ROUNDING_H_
+#define __FPU_ROUNDING_H_
+
+static short control_word;
+static short control_word2;
+
+// 按当前舍入模式将浮点数舍入为整数 
+inline int float2int(float x) {
+	int i;
+	__asm {
+		fld x
+		fistp i
+	}
+	return i;
+}
+
+// 设置舍入模式为就近舍入
+inline void set_round2near() {
+	__asm  	{
+		fstcw	control_word		// 保存 FPU 控制字 
+		mov 	dx, word ptr [control_word]
+ 		and		dx,0xf9ff			// 就近舍入（默认）
+		mov		control_word2, dx
+		fldcw	control_word2		// 加载修改后的控制字 
+	}
+}
+
+// 设置舍入模式为向下舍入
+inline void set_round_down() {
+	__asm  {
+		fstcw	control_word		// 保存 FPU 控制字 
+		mov 	dx, word ptr [control_word]
+ 		or		dx,0x0400			// 向 -inf 舍入
+		and		dx,0xf7ff			
+		mov		control_word2, dx
+		fldcw	control_word2		// 加载修改后的控制字 
+	}
+}
+
+// 设置舍入模式为向上舍入
+inline void set_round_up() {
+	__asm  {
+		fstcw	control_word		// 保存 FPU 控制字 
+		mov 	dx, word ptr [control_word]
+ 		or		dx,0x0800			// 向 +inf 舍入
+		and		dx,0xfbff			
+		mov		control_word2, dx
+		fldcw	control_word2		// 加载修改后的控制字 
+	}
+}
+
+// 设置舍入模式为截断
+inline void set_truncate() {
+	__asm  {
+		fstcw	control_word		// 保存 FPU 控制字 
+		mov 	dx, word ptr [control_word]
+ 		or		dx,0x0c00			// 舍入：截断
+		mov		control_word2, dx
+		fldcw	control_word2		// 加载修改后的控制字 
+	}
+}
+
+// 恢复原始舍入模式
+inline void restore_cw() {
+	__asm fldcw	control_word
+}
+
+// 使用 SSE 截断为整数
+inline long truncateSSE(float x) {
+	__asm cvttss2si eax,x
+}
+
+#endif</code></pre>
+<h2>评论</h2>
+<p><strong>2007-12-30 02:01:18</strong> · moc.liamtoh@kcuncorj</p>
+<pre><code>I've seen a lot of talk about using the function lrintf() when converting from float to int, regarding bypassing some 'slow' opcodes in what standard compilers put in for something like:
+
+int myint = (int) myfloat;
+
+in otherwords the following code would be faster:
+int myint = lrintf(myfloat);
+
+this lrintf function is available on GNU C/C++</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/246-float-to-integer-conversion.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/246-float-to-integer-conversion.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

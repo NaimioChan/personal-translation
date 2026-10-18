@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UniVox Univibe 仿真器 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：UniVox Univibe 仿真器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>UniVox Univibe 仿真器</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>moc.liamg@libojyr</li>
+<li><strong>类型：</strong>4 个级联全通滤波器与光耦近似</li>
+<li><strong>创建时间：</strong>2010-09-09 07:52:24</li>
+</ul>
+<blockquote class="note">
+<p>这是一个类及其成员函数，用于实现通过双线性变换得到的 UniVibe 全通滤波器级“Vibe”。这个滤波器被调制时会发生一些独特的事情，所以滤波器系数的计算有点复杂，它基于在电路分析中代数解耦的一阶滤波器级之和。第二部分是用于调制滤波器的 Vactrol 的近似模型，包括其时间响应，希望借此重现调制形状。很可能有更高效的方式来重建 LFO 形状，也许用查找表最好。把计算保留在代码里，可以让其他人修改和改进算法。</p>
+<p>注意，这段代码块的 “out” 函数中没有实现干湿混合。最初这放在调用例程里，但如果你把它当作独立函数使用，可能想给输入信号加上求和，因为这是 Vibe 上“合唱”模式的重要部分。现在的代码只代表颤音（warble）模式。</p>
+<p>这是 Rakarrack 吉他效果程序中的一个模块。它是 GPL 的，请给予应有的署名并保持自由。你可以查看 sourceforge.net/projects/rakarrack 上的原始源码，找到任何被省略的部分，更精确地了解它在 Linux 上如何与 JACK 配合实现。</p>
+</blockquote>
+<pre><code>/*
+  Copyright (C) 2008-2010 Ryan Billing
+  Author: Ryan Billing
+
+
+ This program is free software; you can redistribute it and/or modify
+ it under the terms of version 2 of the GNU General Public License
+ as published by the Free Software Foundation.
+
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License (version 2) for more details.
+
+ You should have received a copy of the GNU General Public License
+ (version2)  along with this program; if not, write to the Free Software
+ Foundation,
+ Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+
+*/
+
+class Vibe
+{
+
+public:
+
+  Vibe (float * efxoutl_, float * efxoutr_);
+  ~Vibe ();
+//注意：为清晰起见并节省篇幅，
+//其中部分函数未粘贴于下
+  void out (float * smpsl, float * smpsr);
+  void setvolume(int value);
+  void setpanning(int value);
+  void setpreset (int npreset);
+  void changepar (int npar, int value);
+  int getpar (int npar);
+  void cleanup ();
+
+  float outvolume;
+  float *efxoutl;
+  float *efxoutr;
+
+
+private:
+  int Pwidth;
+  int Pfb;
+  int Plrcross;
+  int Pdepth;
+  int Ppanning;
+  int Pvolume;
+   //上面所有 int 都是参数，需通过相应的函数来修改。
+
+  float fwidth;
+  float fdepth;
+  float rpanning, lpanning; 
+  float flrcross, fcross;
+  float fb;
+  EffectLFO lfo; //EffectLFO 是一个对象，每次调用时计算 LFO 的下一个采样值
+
+  float Ra, Rb, b, dTC, dRCl, dRCr, lampTC, ilampTC, minTC, alphal, alphar, stepl, stepr, oldstepl, oldstepr;
+  float fbr, fbl;
+  float dalphal, dalphar;
+  float lstep,rstep;
+  float cperiod;
+  float gl, oldgl;
+  float gr, oldgr; 
+
+  class fparams {
+  public:
+  float x1;
+  float y1;
+  //滤波器系数
+  float n0;
+  float n1;
+  float d0;
+  float d1; 
+  } vc[8], vcvo[8], ecvc[8], vevo[8], bootstrap[8];
+
+  float vibefilter(float data, fparams *ftype, int stage); 
+  void init_vibes();
+  void modulate(float ldrl, float ldrr);
+  float bjt_shape(float data);
+
+float R1;
+float Rv;
+float C2;
+float C1[8];
+float beta;  //晶体管正向增益。
+float gain, k;
+float oldcvolt[8] ;
+float en1[8], en0[8], ed1[8], ed0[8];
+float cn1[8], cn0[8], cd1[8], cd0[8];
+float ecn1[8], ecn0[8], ecd1[8], ecd0[8];
+float on1[8], on0[8], od1[8], od0[8];
+
+   class FPreset *Fpre;
+
+
+};
+
+
+Vibe::Vibe (float * efxoutl_, float * efxoutr_)
+{
+  efxoutl = efxoutl_;
+  efxoutr = efxoutr_;
+
+//摆幅是在实机上测得的：10K 至 250k。  
+//有报告称 400K 在“低端”（高阻）听感更好 
+//由于时间响应，Rb 需要被驱动得更远。
+//对多数 LFO 频率，终点电阻最大约为 10k。
+//再把低端稍微压低一点，纯属好玩
+Ra = 500000.0f;  //Cds 光敏元件暗态电阻。
+Ra = logf(Ra);		//这样做是为了清晰 
+Rb = 600.0f;         //Cds 光敏元件满照度
+b = exp(Ra/logf(Rb)) - CNST_E;
+dTC = 0.085f;
+dRCl = dTC;
+dRCr = dTC;   //右 &amp; 左声道动态时间常数
+minTC = logf(0.005f/dTC);
+//cSAMPLE_RATE 即 1/SAMPLE_RATE
+alphal = 1.0f - cSAMPLE_RATE/(dRCl + cSAMPLE_RATE);
+alphar = alphal;
+dalphal = dalphar = alphal;
+lampTC = cSAMPLE_RATE/(0.02 + cSAMPLE_RATE);  //估计为 10ms
+ilampTC = 1.0f - lampTC;
+lstep = 0.0f;
+rstep = 0.0f;
+Pdepth = 127;
+Ppanning = 64;
+lpanning = 1.0f;
+rpanning = 1.0f;
+fdepth = 1.0f;  
+oldgl = 0.0f;
+oldgr = 0.0f;
+gl = 0.0f;
+gr = 0.0f;
+for(int jj = 0; jj&lt;8; jj++) oldcvolt[jj] = 0.0f;
+cperiod = 1.0f/fPERIOD;
+
+init_vibes();
+cleanup();
+
+}
+
+Vibe::~Vibe ()
+{
+}
+
+
+void
+Vibe::cleanup ()
+{
+//顺手清理一些东西
+
+};
+
+void
+Vibe::out (float *smpsl, float *smpsr)
+{
+
+  int i,j;
+  float lfol, lfor, xl, xr, fxl, fxr;
+  float vbe,vin;
+  float cvolt, ocvolt, evolt, input;
+  float emitterfb = 0.0f;
+  float outl, outr;
+
+  input = cvolt = ocvolt = evolt = 0.0f;
+
+  lfo.effectlfoout (&amp;lfol, &amp;lfor);
+
+  lfol = fdepth + lfol*fwidth;
+  lfor = fdepth + lfor*fwidth;   
+
+   if (lfol &gt; 1.0f)
+    lfol = 1.0f;
+  else if (lfol &lt; 0.0f)
+    lfol = 0.0f;
+  if (lfor &gt; 1.0f)
+    lfor = 1.0f;
+  else if (lfor &lt; 0.0f)
+    lfor = 0.0f;  
+
+    lfor = 2.0f - 2.0f/(lfor + 1.0f);   // 
+    lfol = 2.0f - 2.0f/(lfol + 1.0f); //用典型曲线模拟灯泡的开启/关闭特性 
+
+  for (i = 0; i &lt; PERIOD; i++)
+    {
+    //左灯
+     gl = lfol*lampTC + oldgl*ilampTC; 
+     oldgl = gl;  
+    //右灯
+     gr = lfor*lampTC + oldgr*ilampTC; 
+     oldgr = gr;   
+
+    //左 Cds   
+    stepl = gl*alphal + dalphal*oldstepl;
+    oldstepl = stepl;
+    dRCl = dTC*expf(stepl*minTC);
+    alphal = cSAMPLE_RATE/(dRCl + cSAMPLE_RATE);  
+    dalphal = 1.0f - cSAMPLE_RATE/(0.5f*dRCl + cSAMPLE_RATE);     //不同的起音 &amp; 释放特性
+    xl = CNST_E + stepl*b;
+    fxl = expf(Ra/logf(xl));   
+
+    //右 Cds   
+    stepr = gr*alphar + dalphar*oldstepr;
+    oldstepr = stepr;
+    dRCr = dTC*expf(stepr*minTC);
+    alphar = cSAMPLE_RATE/(dRCr + cSAMPLE_RATE);  
+    dalphar = 1.0f - cSAMPLE_RATE/(0.5f*dRCr + cSAMPLE_RATE);      //不同的起音 &amp; 释放特性
+    xr = CNST_E + stepr*b;
+    fxr = expf(Ra/logf(xr));
+
+    if(i%16 == 0)  modulate(fxl, fxr);   
+
+    //左声道  
+
+   input = bjt_shape(fbl + smpsl[i]);  
+
+
+    emitterfb = 25.0f/fxl;     
+    for(j=0;j&lt;4;j++) //4 级移相
+    {
+   cvolt = vibefilter(input,ecvc,j) + vibefilter(input + emitterfb*oldcvolt[j],vc,j);
+   ocvolt = vibefilter(cvolt,vcvo,j);
+   oldcvolt[j] = ocvolt;
+   evolt = vibefilter(input, vevo,j);
+
+   input = bjt_shape(ocvolt + evolt);
+    }
+    fbl = fb*ocvolt;
+    outl = lpanning*input;    
+
+    //右声道
+
+    input = bjt_shape(fbr + smpsr[i]);    
+
+    emitterfb = 25.0f/fxr;     
+    for(j=4;j&lt;8;j++) //4 级移相
+    {
+   cvolt = vibefilter(input,ecvc,j) + vibefilter(input + emitterfb*oldcvolt[j],vc,j);
+   ocvolt = vibefilter(cvolt,vcvo,j);
+   oldcvolt[j] = ocvolt;
+   evolt = vibefilter(input, vevo,j);
+
+   input = bjt_shape(ocvolt + evolt);
+    }
+
+    fbr = fb*ocvolt;
+    outr = rpanning*input;  
+
+    efxoutl[i] = outl*fcross + outr*flrcross;
+    efxoutr[i] = outr*fcross + outl*flrcross;
+
+    };
+
+};
+
+float 
+Vibe::vibefilter(float data, fparams *ftype, int stage)
+{
+float y0 = 0.0f;
+y0 = data*ftype[stage].n0 + ftype[stage].x1*ftype[stage].n1 - ftype[stage].y1*ftype[stage].d1;
+ftype[stage].y1 = y0 + DENORMAL_GUARD;
+ftype[stage].x1 = data; 
+return y0;
+};
+
+float 
+Vibe::bjt_shape(float data)
+{
+float vbe, vout;
+float vin = 7.5f*(1.0f + data);
+if(vin&lt;0.0f) vin = 0.0f;
+if(vin&gt;15.0f) vin = 15.0f;
+vbe = 0.8f - 0.8f/(vin + 1.0f);  //非常粗略、简化的 bjt 导通过程模拟
+vout = vin - vbe;
+vout = vout*0.1333333333f -0.90588f;  //一些魔数，用于把增益归一到 1 &amp; 消除直流
+return vout;
+}
+
+void
+Vibe::init_vibes()
+{
+k = 2.0f*fSAMPLE_RATE;
+float tmpgain = 1.0f;
+ R1 = 4700.0f;
+ Rv = 4700.0f;
+ C2 = 1e-6f;
+ beta = 150.0f;  //晶体管正向增益。
+ gain = -beta/(beta + 1.0f); 
+
+//Univibe 电容值 0.015uF、0.22uF、470pF 和 0.0047uF
+C1[0] = 0.015e-6f;
+C1[1] = 0.22e-6f;
+C1[2] = 470e-12f;
+C1[3] = 0.0047e-6f;
+C1[4] = 0.015e-6f;
+C1[5] = 0.22e-6f;
+C1[6] = 470e-12f;
+C1[7] = 0.0047e-6f;
+
+for(int i =0; i&lt;8; i++)
+{
+//Vo/Ve 由发射极驱动
+en1[i] = k*R1*C1[i];
+en0[i] = 1.0f;
+ed1[i] = k*(R1 + Rv)*C1[i];
+ed0[i] = 1.0f + C1[i]/C2;
+
+// Vc~=Ve/(Ic*Re*alpha^2) 由电流输入得到的集电极电压。  
+//此处输出代表集电极上的电压
+
+cn1[i] = k*gain*Rv*C1[i];
+cn0[i] = gain*(1.0f + C1[i]/C2);
+cd1[i] = k*(R1 + Rv)*C1[i];
+cd0[i] = 1.0f + C1[i]/C2;
+
+//发射极负载经无源滤波网络产生的贡献
+ecn1[i] = k*gain*R1*(R1 + Rv)*C1[i]*C2/(Rv*(C2 + C1[i]));
+ecn0[i] = 0.0f;
+ecd1[i] = k*(R1 + Rv)*C1[i]*C2/(C2 + C1[i]);
+ecd0[i] = 1.0f;
+
+// %表示 Vo/Vc，即输出与集电极电压之比
+on1[i] = k*Rv*C2;
+on0[i] = 1.0f;
+od1[i] = k*Rv*C2;
+od0[i] = 1.0f + C2/C1[i];
+
+//%双线性变换相关内容
+tmpgain =  1.0f/(cd1[i] + cd0[i]);
+vc[i].n1 = tmpgain*(cn0[i] - cn1[i]);
+vc[i].n0 = tmpgain*(cn1[i] + cn0[i]);
+vc[i].d1 = tmpgain*(cd0[i] - cd1[i]);
+vc[i].d0 = 1.0f;
+
+tmpgain =  1.0f/(ecd1[i] + ecd0[i]);
+ecvc[i].n1 = tmpgain*(ecn0[i] - ecn1[i]);
+ecvc[i].n0 = tmpgain*(ecn1[i] + ecn0[i]);
+ecvc[i].d1 = tmpgain*(ecd0[i] - ecd1[i]);
+ecvc[i].d0 = 1.0f;
+
+tmpgain =  1.0f/(od1[i] + od0[i]);
+vcvo[i].n1 = tmpgain*(on0[i] - on1[i]);
+vcvo[i].n0 = tmpgain*(on1[i] + on0[i]);
+vcvo[i].d1 = tmpgain*(od0[i] - od1[i]);
+vcvo[i].d0 = 1.0f;
+
+tmpgain =  1.0f/(ed1[i] + ed0[i]);
+vevo[i].n1 = tmpgain*(en0[i] - en1[i]);
+vevo[i].n0 = tmpgain*(en1[i] + en0[i]);
+vevo[i].d1 = tmpgain*(ed0[i] - ed1[i]);
+vevo[i].d0 = 1.0f;
+
+// bootstrap[i].n1
+// bootstrap[i].n0
+// bootstrap[i].d1
+}
+
+
+};
+
+void
+Vibe::modulate(float ldrl, float ldrr)
+{
+float tmpgain;
+float R1pRv;
+float C2pC1;
+Rv = 4700.0f + ldrl;
+R1pRv = R1 + Rv;
+
+
+for(int i =0; i&lt;8; i++)
+{
+if(i==4) {
+Rv = 4700.0f + ldrr;
+R1pRv = R1 + Rv;
+}
+
+C2pC1 = C2 + C1[i];
+//Vo/Ve 由发射极驱动
+ed1[i] = k*(R1pRv)*C1[i];
+//ed1[i] = R1pRv*kC1[i];
+
+// Vc~=Ve/(Ic*Re*alpha^2) 由电流输入得到的集电极电压。  
+//此处输出代表集电极上的电压
+cn1[i] = k*gain*Rv*C1[i];
+//cn1[i] = kgainCl[i]*Rv;
+//cd1[i] = (R1pRv)*C1[i];
+cd1[i]=ed1[i];
+
+//发射极负载经无源滤波网络产生的贡献
+ecn1[i] = k*gain*R1*cd1[i]*C2/(Rv*(C2pC1));
+//ecn1[i] = iC2pC1[i]*kgainR1C2*cd1[i]/Rv;
+ecd1[i] = k*cd1[i]*C2/(C2pC1);
+//ecd1[i] = iC2pC1[i]*k*cd1[i]*C2/(C2pC1);
+
+// %表示 Vo/Vc，即输出与集电极电压之比
+on1[i] = k*Rv*C2;
+od1[i] = on1[i];
+
+//%双线性变换相关内容
+tmpgain =  1.0f/(cd1[i] + cd0[i]);
+vc[i].n1 = tmpgain*(cn0[i] - cn1[i]);
+vc[i].n0 = tmpgain*(cn1[i] + cn0[i]);
+vc[i].d1 = tmpgain*(cd0[i] - cd1[i]);
+
+tmpgain =  1.0f/(ecd1[i] + ecd0[i]);
+ecvc[i].n1 = tmpgain*(ecn0[i] - ecn1[i]);
+ecvc[i].n0 = tmpgain*(ecn1[i] + ecn0[i]);
+ecvc[i].d1 = tmpgain*(ecd0[i] - ecd1[i]);
+ecvc[i].d0 = 1.0f;
+
+tmpgain =  1.0f/(od1[i] + od0[i]);
+vcvo[i].n1 = tmpgain*(on0[i] - on1[i]);
+vcvo[i].n0 = tmpgain*(on1[i] + on0[i]);
+vcvo[i].d1 = tmpgain*(od0[i] - od1[i]);
+
+tmpgain =  1.0f/(ed1[i] + ed0[i]);
+vevo[i].n1 = tmpgain*(en0[i] - en1[i]);
+vevo[i].n0 = tmpgain*(en1[i] + en0[i]);
+vevo[i].d1 = tmpgain*(ed0[i] - ed1[i]);
+
+}
+
+
+};</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Effects/277-univox-univibe-emulator.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Effects/277-univox-univibe-emulator.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

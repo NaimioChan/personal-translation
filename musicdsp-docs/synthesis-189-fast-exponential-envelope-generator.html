@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>快速指数包络发生器 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：快速指数包络发生器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>快速指数包络发生器</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Christian Schoenebeck</li>
+<li><strong>创建时间：</strong>2005-03-03 14:44:11</li>
+</ul>
+<blockquote class="note">
+<p>朴素的做法是为包络的每个点调用一次 exp()。不幸的是，exp() 对大多数 CPU 来说都是相当重的函数，所以这里给出一种数值上快得多的指数包络计算方法（基准测试中测得的性能提升：在 Intel P4 上约 100 倍，编译选项 gcc -O3 --fast-math -march=i686 -mcpu=i686）。</p>
+<p>注意：levelEnd 不能取 0.0。你必须使用一个合适的、非常小的值（例如 0.001 应该就足够小了）。</p>
+</blockquote>
+<pre><code>const float sampleRate = 44100;
+float coeff;
+float currentLevel;
+
+void init(float levelBegin, float levelEnd, float releaseTime) {
+    currentLevel = levelBegin;
+    coeff = (log(levelEnd) - log(levelBegin)) /
+            (releaseTime * sampleRate);
+}
+
+inline void calculateEnvelope(int samplePoints) {
+    for (int i = 0; i &lt; samplePoints; i++) {
+        currentLevel += coeff * currentLevel;
+        // 在此处对 'currentLevel' 做处理
+        ...
+    }
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2005-03-03 21:16:41</strong> · moc.erawknuhc@knuhcnezitic</p>
+<pre><code>is there a typo in the runtime equation? or am i missing something in the implementation? </code></pre>
+<p><strong>2005-03-04 15:13:56</strong> · schoenebeck (@) software ( minus ) engineering.org</p>
+<pre><code>Why should there be a typo?
+
+Here is my benchmark code btw:
+http://stud.fh-heilbronn.de/~cschoene/studienarbeit/benchmarks/exp.cpp</code></pre>
+<p><strong>2005-03-04 16:20:41</strong> · moc.erawknuhc@knuhcnezitic</p>
+<pre><code>ok, i think i get it. this can only work on blocks of samples, right? not per-sample calc?
+
+i was confused because i could not find the input sample(s) in the runtime code. but now i see that the equation does not take an input; it merely generates a defined envelope accross the number of samples. my bad.</code></pre>
+<p><strong>2005-03-04 19:16:29</strong> · schoenebeck (@) software ( minus ) engineering.org</p>
+<pre><code>Well, the code above is only meant to show the principle. Of course you
+would adjust it for your application. The question if you are calculating
+on a per-sample basis or applying the envelope to a block of samples
+within a tight loop doesn't really matter; it would just mean an
+adjustment of the interface of the execution code, which is trivial.</code></pre>
+<p><strong>2005-03-05 10:26:44</strong> · ten.ooleem@ooleem</p>
+<pre><code>This is not working for long envelopes because of numerical accury problems. Try calculating is over 10 seconds @ 192KHz to see what I mean: it drifts.
+I have an equivalent system that permits to have linear to log and to exp curves with a simple parameter. I may submit it one of these days...
+
+Sebastien Metrot
+--
+http://www.usbsounds.com</code></pre>
+<p><strong>2005-03-05 13:48:12</strong> · schoenebeck (@) software ( minus ) engineering.org</p>
+<pre><code>No, here is a test app which shows the introduced drift:
+http://stud.fh-heilbronn.de/~cschoene/studienarbeit/benchmarks/expaccuracy.cpp
+
+Even with an envelope duration of 30s, which is really quite long, a sample
+rate of 192kHz and single-precision floating point calculation I get this
+result:
+
+Calculated sample points: 5764846
+Demanded duration: 30.000000 s
+Actual duration: 30.025240 s
+
+So the envelope just drifts about 25ms for that long envelope!</code></pre>
+<p><strong>2005-03-09 11:44:31</strong> · ten.ooleem@ooleem</p>
+<pre><code>I believe you are seeing unrealistic results with this test because on x86 the fpu's internal format is 80bits and your compiler probably optimises this cases quite easily. Try doing the same test, calculating the same envelope, but by breaking the calculation in blocks of 256 or 512 samples at a time and then storing in memory the temp values for the next block. In this case you may see diferent results and a much bigger drift (that's my experience with the same algo).
+Anyway my algo is a bit diferent as it permits to change the curent type with a parameter, this makes the formula looks like 
+value = value * coef + contant;
+May be this leads to more calculation errors :).</code></pre>
+<p><strong>2005-03-09 13:33:43</strong> · schoenebeck (@) software ( minus ) engineering.org</p>
+<pre><code>And again... no! :)
+
+Replace the C equation by:
+
+    asm volatile (
+        "movss %1,%%xmm0      # load coeff\n\t"
+        "movss %2,%%xmm1      # load currentLevel\n\t"
+        "mulss %%xmm1,%%xmm0  # coeff *= currentLevel\n\t"
+        "addss %%xmm0,%%xmm1  # currentLevel += coeff * currentLevel\n\t"
+        "movss %%xmm1,%0      # store currentLevel\n\t"
+        : "=m" (currentLevel) /* %0 */
+        : "m" (coeff),        /* %1 */
+          "m" (currentLevel)  /* %2 */
+    );
+
+This is a SSE1 assembly implementation. The SSE registers are only 32 bit
+large by guarantee. And this is the result I get:
+
+Calculated sample points: 5764845
+Demanded duration: 30.000000 s
+Actual duration: 30.025234 s
+
+So this result differs just 1 sample point from the x86 FPU solution! So
+believe me, this numerical solution is safe!
+
+(Of course the assembly code above is NOT meant as optimization, it's just
+to demonstrate the accuracy even for 32 bit / single precision FP
+calculation)</code></pre>
+<p><strong>2005-03-23 22:42:06</strong> · m (at) mindplay (dot) dk</p>
+<pre><code>in my tests, the following code produced the exact same results, and saves one operation (the addition) per sample - so it should be faster:
+
+const float sampleRate = 44100;
+float coeff;
+float currentLevel;
+
+void init(float levelBegin, float levelEnd, float releaseTime) {
+    currentLevel = levelBegin;
+    coeff = exp(log(levelEnd)) /
+            (releaseTime * sampleRate);
+}
+
+inline void calculateEnvelope(int samplePoints) {
+    for (int i = 0; i &lt; samplePoints; i++) {
+        currentLevel *= coeff;
+        // do something with 'currentLevel' here
+        ...
+    }
+}
+
+...
+
+Also, assuming that your startLevel is 1.0, to calculate an appropriate endLevel, you can use something like:
+
+endLevel = 10 ^ dB/20;
+
+where dB is your endLevel in decibels (and must be a negative value of course) - for amplitude envelopes, -90 dB should be a suitable level for "near inaudible"...</code></pre>
+<p><strong>2005-03-31 14:45:51</strong> · schoenebeck (@) software ( minus ) engineering.org</p>
+<pre><code>              Sorry, you are right of course; that simplification of the execution
+equation works here because we are calculating all points with linear
+discretization. But you will agree that your init() function is not good,
+because exp(log(x)) == x and it's not generalized at all. Usually you might
+have more than one exp segment in your EG and maybe even have an exp attack
+segment. So we arrive at the following solution:
+
+const float sampleRate = 44100;
+float coeff;
+float currentLevel;
+
+void init(float levelBegin, float levelEnd, float releaseTime) {
+    currentLevel = levelBegin;
+    coeff = 1.0f + (log(levelEnd) - log(levelBegin)) /
+                   (releaseTime * sampleRate);
+}
+
+inline void calculateEnvelope(int samplePoints) {
+    for (int i = 0; i &lt; samplePoints; i++) {
+        currentLevel *= coeff;
+        // do something with 'currentLevel' here
+        ...
+    }
+}
+
+You can use a dB conversion for both startLevel and endLevel of course.</code></pre>
+<p><strong>2006-03-10 01:53:44</strong> · na</p>
+<pre><code>i would say that calculation of coeff is still wrong. It should be :
+coeff = pow( levelEnd / levelBegin, 1 / N );</code></pre>
+<p><strong>2006-03-10 02:23:29</strong> · na[ eldar # starman # ee]</p>
+<pre><code>or coeff = exp(log(levelEnd/levelBegin) /
+            (releaseTime * sampleRate) );
+not sure but it looks computationally more expensive</code></pre>
+<p><strong>2006-11-26 15:44:04</strong> · hc.xmg@.i.l.e</p>
+<pre><code>what's about?
+coeff = 1.0f + (log(levelEnd) - log(levelBegin)) /
+                   (releaseTime * sampleRate - 1);</code></pre>
+<p><strong>2006-11-26 15:55:12</strong> · hc.xmg@.i.l.e</p>
+<pre><code>sorry for the double post. and i'm now almost sure, that it should be:
+coeff = 1.0f + (log(levelEnd) - log(levelBegin)) /
+                   (releaseTime * sampleRate + 1);</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Synthesis/189-fast-exponential-envelope-generator.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Synthesis/189-fast-exponential-envelope-generator.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

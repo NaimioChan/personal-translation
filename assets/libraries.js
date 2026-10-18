@@ -40,5 +40,9 @@ window.PT_LIBRARIES = [
   { dir: 'librosa-docs', title: 'librosa 文档',
     desc: 'librosa 官方文档的中文译本。',
     source: 'https://librosa.org/doc/latest/index.html',
-    updated: '2026-10-18', pages: 312 }
+    updated: '2026-10-18', pages: 312 },
+  { dir: 'musicdsp-docs', title: 'musicdsp.org 文档',
+    desc: 'musicdsp.org 算法、想法与代码片段存档的中文译本。',
+    source: 'https://www.musicdsp.org/en/latest/index.html',
+    updated: '2026-10-18', pages: 262 }
 ];

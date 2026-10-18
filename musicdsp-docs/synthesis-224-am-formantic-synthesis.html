@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AM 共振峰合成 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：AM 共振峰合成">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>AM 共振峰合成</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Paul Sernine</li>
+<li><strong>创建时间：</strong>2006-07-05 20:14:14</li>
+</ul>
+<blockquote class="note">
+<p>这是 Doc Rochebois 的又一篇教程。<br>它不用滤波器、也不用颗粒来做共振峰合成，而是用“双载波幅度调制”对共振峰波形做移调。只需当心相位关系，避免干涉。DX7 的一些音色也用过同样的技巧，但相位干涉是个问题。这里 Thierry Rochebois 使用余弦相位的波形来避开它。</p>
+<p>各种共振峰波形被预先计算并放入波表，对应不同的共振峰宽度。<br>运行时使用许多（这里是 4 个）这样的实例，并用双载波对它们移调（以保持信号的谐波性）。</p>
+<p>这是教程代码，可以在很多方面优化。<br>玩得开心</p>
+<p>Paul</p>
+</blockquote>
+<pre><code>// FormantsAM.cpp
+
+// Thierry Rochebois 的“双幅度调制共振峰合成”
+
+// 基于 Thierry Rochebois 的教程。
+// 注释由 Paul Sernine 撰写。
+
+// 信号的频谱成分通过叠加幅度调制的共振峰波形获得。
+// 幅度调制使共振峰波形在频谱上发生偏移。
+// 在不破坏谐波结构的前提下实现连续频谱偏移，
+// 需使用交叉淡化的双载波（基频的整数倍）。
+// 为避免不需要的干涉伪影，相位关系必须
+// 为“余弦型”。
+
+// 输出为 44100Hz、16 位立体声 PCM 文件。
+
+#include &lt;math.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+//在 x 属于 [-1,1] 时近似 cos(pi*x)。
+inline float fast_cos(const float x)
+{
+  float x2=x*x;
+  return 1+x2*(-4+2*x2);
+}
+
+//表的长度
+#define L_TABLE (256+1) //表中的最后一项与第一项相同（以避免取模）
+//最大共振峰宽度
+#define I_MAX 64
+//共振峰表
+float TF[L_TABLE*I_MAX];
+
+//宽度为 I 的共振峰函数（用于填充共振峰表）
+float fonc_formant(float p,const float I)
+{
+  float a=0.5f;
+  int hmax=int(10*I)&gt;L_TABLE/2?L_TABLE/2:int(10*I);
+  float phi=0.0f;
+  for(int h=1;h&lt;hmax;h++)
+  {
+    phi+=3.14159265359f*p;
+    float hann=0.5f+0.5f*fast_cos(h*(1.0f/hmax));
+    float gaussienne=0.85f*exp(-h*h/(I*I));
+    float jupe=0.15f;
+    float harmonique=cosf(phi);
+    a+=hann*(gaussienne+jupe)*harmonique;
+   }
+  return a;
+}
+
+//用函数 fonc_formant 初始化表 TF。
+void init_formant(void)
+{ float coef=2.0f/(L_TABLE-1);
+  for(int I=0;I&lt;I_MAX;I++)
+    for(int P=0;P&lt;L_TABLE;P++)
+      TF[P+I*L_TABLE]=fonc_formant(-1+P*coef,float(I));
+}
+
+//本函数借助表 TF
+// 模拟函数 fonc_formant，
+// 并完成双线性插值
+float formant(float p,float i)
+{
+  i=i&lt;0?0:i&gt;I_MAX-2?I_MAX-2:i;    // 宽度限制
+	float P=(L_TABLE-1)*(p+1)*0.5f; // 相位归一化
+	int P0=(int)P; 	float fP=P-P0;  // 整数与小数
+	int I0=(int)i; 	float fI=i-I0;  // 相位 (p) 与宽度 (i) 的整数和小数部分。
+	int i00=P0+L_TABLE*I0; 	int i10=i00+L_TABLE;
+	//双线性插值。
+	return (1-fI)*(TF[i00] + fP*(TF[i00+1]-TF[i00]))
+        +    fI*(TF[i10] + fP*(TF[i10+1]-TF[i10]));
+}
+
+// 双载波。
+// h：位置（浮点谐波次数）
+// p：相位
+float porteuse(const float h,const float p)
+{
+  float h0=floor(h);  //整数与
+  float hf=h-h0;      //谐波次数的小数部分。
+  // 取模，把 p*h0 和 p*(h0+1) 折回 [-1,1]
+  float phi0=fmodf(p* h0   +1+1000,2.0f)-1.0f;
+  float phi1=fmodf(p*(h0+1)+1+1000,2.0f)-1.0f;
+  // 两个载波。
+  float Porteuse0=fast_cos(phi0);  float Porteuse1=fast_cos(phi1);
+  // 在两个载波之间交叉淡化。
+  return Porteuse0+hf*(Porteuse1-Porteuse0);
+}
+int main()
+{
+  //各种法语元音的共振峰表（可自行添加）
+  float F1[]={  730,  200,  400,  250,  190,  350,  550,  550,  450};
+  float A1[]={ 1.0f, 0.5f, 1.0f, 1.0f, 0.7f, 1.0f, 1.0f, 0.3f, 1.0f};
+  float F2[]={ 1090, 2100,  900, 1700,  800, 1900, 1600,  850, 1100};
+  float A2[]={ 2.0f, 0.5f, 0.7f, 0.7f,0.35f, 0.3f, 0.5f, 1.0f, 0.7f};
+  float F3[]={ 2440, 3100, 2300, 2100, 2000, 2500, 2250, 1900, 1500};
+  float A3[]={ 0.3f,0.15f, 0.2f, 0.4f, 0.1f, 0.3f, 0.7f, 0.2f, 0.2f};
+  float F4[]={ 3400, 4700, 3000, 3300, 3400, 3700, 3200, 3000, 3000};
+  float A4[]={ 0.2f, 0.1f, 0.2f, 0.3f, 0.1f, 0.1f, 0.3f, 0.2f, 0.3f};
+
+  float f0,dp0,p0=0.0f;
+  int F=7; //当前共振峰预设的编号
+  float f1,f2,f3,f4,a1,a2,a3,a4;
+  f1=f2=f3=f4=100.0f;a1=a2=a3=a4=0.0f;
+
+  init_formant();
+  FILE *f=fopen("sortie.pcm","wb");
+  for(int ns=0;ns&lt;10*44100;ns++)
+  {
+    if(0==(ns%11025)){F++;F%=8;} //共振峰切换
+    f0=12*powf(2.0f,4-4*ns/(10*44100.0f)); //扫频
+    f0*=(1.0f+0.01f*sinf(ns*0.0015f));        //颤音
+    dp0=f0*(1/22050.0f);
+    float un_f0=1.0f/f0;
+    p0+=dp0;  //相位增量
+    p0-=2*(p0&gt;1);
+    { //命令的平滑处理。
+      float r=0.001f;
+      f1+=r*(F1[F]-f1);f2+=r*(F2[F]-f2);f3+=r*(F3[F]-f3);f4+=r*(F4[F]-f4);
+      a1+=r*(A1[F]-a1);a2+=r*(A2[F]-a2);a3+=r*(A3[F]-a3);a4+=r*(A4[F]-a4);
+    }
+
+    //f0/fn 系数代表 -3dB/oct 的频谱包络
+    float out=
+           a1*(f0/f1)*formant(p0,100*un_f0)*porteuse(f1*un_f0,p0)
+     +0.7f*a2*(f0/f2)*formant(p0,120*un_f0)*porteuse(f2*un_f0,p0)
+     +     a3*(f0/f3)*formant(p0,150*un_f0)*porteuse(f3*un_f0,p0)
+     +     a4*(f0/f4)*formant(p0,300*un_f0)*porteuse(f4*un_f0,p0);
+
+    short s=short(15000.0f*out);
+    fwrite(&amp;s,2,1,f);fwrite(&amp;s,2,1,f); //raw PCM 立体声文件
+  }
+  fclose(f);
+  return 0;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2007-04-24 12:04:12</strong> · Baltazar</p>
+<pre><code>Quite interesting and efficient for an algo that does not use any filter ;-)              </code></pre>
+<p><strong>2007-08-14 11:30:14</strong> · phoenix-69</p>
+<pre><code>Very funny sound !</code></pre>
+<p><strong>2008-08-19 20:51:30</strong> · Wait.</p>
+<pre><code>What header files are you including?</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Synthesis/224-am-formantic-synthesis.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Synthesis/224-am-formantic-synthesis.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>非规格化数防止器 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：非规格化数防止器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>非规格化数防止器</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>eb.tenyks@didid</li>
+<li><strong>创建时间：</strong>2006-08-05 16:37:20</li>
+</ul>
+<blockquote class="note">
+<p>因为我仍然看到有人给信号加噪声或偏移来避免缓慢的非规格化，所以这里给出一段代码，改为把（接近）极小的数清零。</p>
+<p>为什么清零更好？因为完全静音的号好过一点偏移或噪声。宿主或效果器可以检测静音信号，并以安全的方式选择不处理它们。<br>再加上，加偏移或噪声能消除大量非规格化，但仍有残留。<br>另外，截断正是 DAZ（Denormals Are Zero）SSE 标志所做的事。</p>
+<p>这段代码使用整数比较和一条 CMOV，所以需要 Pentium Pro 或更高。没必要做 SSE 版本，因为如果你有 SSE 代码，大概已经在用 DAZ 标志了（但我建议插件不要乱动 SSE 标志，因为宿主很可能已经打开了 DAZ）。这是给 FPU 代码用的。应该比糟糕的 FPU 比较快得多。</p>
+<p>Den_Thres 是你的阈值，它本身不能是非规格化数（那没有意义）。函数是 Delphi 的，如果你想移植，只需确保 EAX 是缓冲区、EDX 是长度（Delphi 寄存器调用约定——与 C++ 不同）。</p>
+</blockquote>
+<pre><code>const  Den_Thres:Single=1/$1000000;
+
+procedure PrevFPUDen_Buffer(Buffer:Pointer;Length:Integer);
+asm
+    PUSH  ESI
+    PUSH  EDI
+    PUSH  EBX
+
+    MOV   ECX,EDX
+    LEA   EDI,[EAX+4*ECX]
+    NEG   ECX
+    MOV   EDX,Den_Thres
+    SHL   EDX,1
+    XOR   ESI,ESI
+
+    @Loop:
+    MOV   EAX,[EDI+4*ECX]
+    LEA   EBX,[EAX*2]
+    CMP   EBX,EDX
+    CMOVB EAX,ESI
+    MOV   [EDI+4*ECX],EAX
+
+    INC   ECX
+    JNZ   @Loop
+
+    POP   EBX
+    POP   EDI
+    POP   ESI
+End;</code></pre>
+<h2>评论</h2>
+<p><strong>2006-08-14 05:36:29</strong> · uh.etle.fni@yfoocs</p>
+<pre><code>You can zero out denormals by adding and subtracting a small number. 
+
+void kill_denormal_by_quantization(float &amp;val)
+{
+  static const float anti_denormal = 1e-18;
+  val += anti_denormal;
+  val -= anti_denormal;
+}
+
+Reference: Laurent de Soras' great article on denormal numbers:
+ldesoras.free.fr/doc/articles/denormal-en.pdf
+
+I tend to add DC because it is faster than quantization. A slight DC offset (0.000000000000000001) won't hurt. That's -360 decibels...              </code></pre>
+<p><strong>2006-08-14 09:20:43</strong> · gol</p>
+<pre><code>&gt;&gt;You can zero out denormals by adding and subtracting a small number 
+
+But with drawbacks as explained in his paper.
+
+As for the speed, not sure which is the faster. Especially since the FPU speed is too manufacturer-dependant (read: it's crap in pentiums), and mine is using integer. 
+
+&gt;&gt;A slight DC offset (0.000000000000000001) won't hurt
+
+As I wrote, it really does.. hurt the sequencer, that can't detect pure silence and optimize things accordingly. A host can detect near-silence, but it can't know which offset value YOU chose, so may use a lower threshold.</code></pre>
+<p><strong>2006-08-14 09:33:35</strong> · gol</p>
+<pre><code>Btw, I happen to see I had already posted this code, probably years ago, doh!
+
+Anyway this version gives more explanation. 
+
+And here's more: 
+The LEA EBX,[EAX*2] is to get rid of the sign bit.
+And the integer comparison of float values can be done providing both are the same sign (I'm not quite sure it works on denormals, but we don't care, since they're the ones we want to zero out, so our threshold won't be denormalized). </code></pre>
+<p><strong>2010-03-10 13:29:06</strong> · moc.liamg@sisehtnysorpitna</p>
+<pre><code>You could also add input noise and assure output samples are reset to 0 if they're below a certain treshold, slightly higher than your noise volume. That ensures hosts can do proper tail detection and it's cheap.</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/233-denormalization-preventer.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/233-denormalization-preventer.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

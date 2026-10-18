@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>三阶样条插值 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：三阶样条插值">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>三阶样条插值</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Dave from Muon Software, originally from Josh Scholar</li>
+<li><strong>创建时间：</strong>2002-01-17 03:14:54</li>
+</ul>
+<blockquote class="note">
+<p>（摘自 Joshua Scholar 关于样条插值的一般性讨论……）<br>根据采样理论，完美的插值可以这样得到：把每个样本替换为以该样本为中心的 sinc 函数，在目标奈奎斯特频率上振铃，然后在每个目标点把所有来自源中每个点的 sinc 函数贡献相加。<br>Sinc 函数的振铃衰减得非常慢，所以每个目标样本都需要来自一大片邻域源样本的贡献。幸运的是，根据定义 sinc 函数是带限的，所以一旦源信号针对目标奈奎斯特频率做了预滤波，并相对目标奈奎斯特频率有合理的过采样，普通插值技术就相当有效，尽管如果没过采样它们会相当没用。</p>
+<p>我们想要的插值例程至少应具备以下特性：</p>
+<p>1. 显然它要连续。但由于对信号做有限差分（我不太了解真正的微分）相当于一个每倍频程只衰减约 6 dB 的低频衰减器，高阶导数的连续性也很重要。</p>
+<p>2. 它必须足够“硬”，以便在过采样漏掉峰值时找到它们。这就是我所说的 sinc 函数有限带宽与过采样结合使插值成为可能所起的作用。</p>
+<p>我读过一些关于样条的论文，但大多数样条内容与图形学有关，使用控制点描述，与我们要做的插值完全无关。读这些东西时，我很快得出结论：</p>
+<p>1. 样条只是由多项式组成的分段函数，设计成在过渡点具有某种高阶连续性。</p>
+<p>2. 样条高度任意，因为你可以在每个过渡点选择任意导数（任意阶）。当然，你指定的阶数越高，多项式阶数就越高。</p>
+<p>3. 我对多项式的了解已经足够构造任何样条。一条穿过 'n' 个点、在 'm[1]' 个点指定一阶导数、在 'm[2]' 个点指定二阶导数等的多项式，将是 n-1+m[1]+m[2]…… 阶多项式。</p>
+<p>构造三阶样条的一种方法（诚然对构造更高阶样条没有帮助）是在两条抛物线之间做线性插值。在每个点（称为结点）上，有一条穿过该点、前一点和后一点的抛物线。在每个点之间，对各个点的多项式做线性插值。这也许能帮你想象样条。</p>
+<p>作为起点，我为每个结点使用穿过 5 个点的多项式，并用 MuPad（一个类似 Mathematica 的免费程序）推导出一条穿过两个点（结点）的多项式，使它在每个点上具有与穿过周围 5 个点的四阶多项式相同的前两阶导数。我的直觉是，基于穿过 3 个点的多项式，邻域不够大，无法获得良好的连续性。测试时我发现，基于 5 点多边形的效果远好于基于 3 点的，而 7 点的效果几乎和 3 点一样差。5 点似乎是个甜点。</p>
+<p>不过，我本可以把导数设为几乎任意值——基于穿过周围点的多项式来取值只是一个猜测。</p>
+<p>我读到过，采样理论的数学对 sinc 函数有另一种解释：你可以通过构造一条穿过每个点、阶数与点数相同的多项式来上采样，这会给出与 sinc 函数插值相同的答案（但只有点数无限多时才完美收敛）。你现在大概头都晕了——提这一点的唯一目的是指出，完美插值的“硬度”恰好等同于一条穿过目标点、阶数与目标点数相同的多项式。</p>
+</blockquote>
+<pre><code>//在 L0 与 H0 之间插值，取前一点（L1）与后一点（H1）
+points into account
+inline float ThirdInterp(const float x,const float L1,const float L0,const
+float H0,const float H1)
+{
+    return
+    L0 +
+    .5f*
+    x*(H0-L1 +
+       x*(H0 + L0*(-2) + L1 +
+          x*( (H0 - L0)*9 + (L1 - H1)*3 +
+             x*((L0 - H0)*15 + (H1 -  L1)*5 +
+                x*((H0 - L0)*6 + (L1 - H1)*2 )))));
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2002-05-21 06:14:20</strong> · moc.a@a</p>
+<pre><code>What is x ?</code></pre>
+<p><strong>2002-06-09 19:45:59</strong> · yahoo.co.uk@sewar_ekim</p>
+<pre><code>The samples being interpolated represent the wave amplitude at a particular instant of time, T - an impulse train. So each sample is the amplitude at T=0,1,2,3 etc.
+
+The purpose of interpolation is to determine the amplitude, a, for an arbitrary t, where t is any real number:
+
+   p1      p0  a   n0      n1
+   :       :   :   :       :
+   0-------1---t---2-------3------&gt; T
+           :   :
+           :   : 
+           &lt;-x-&gt;
+
+x = t - T(p0)
+
+- 
+myk</code></pre>
+<p><strong>2002-06-09 19:53:03</strong> · yahoo.co.uk@sewar_ekim</p>
+<pre><code>Dang! My nice diagram had its spacing stolen, and it now makes no sense!
+
+p1, p0, n0, n1 are supposed to line up with 0,1,2,3 respectively. a is supposed to line up with the t. And finally, &lt;-x-&gt; spans between 1 and t.
+
+- 
+myk</code></pre>
+<p><strong>2002-09-16 02:34:30</strong> · lc.arret@assenacf</p>
+<pre><code>1.- What is 5f ?
+
+2.- How I can test this procedure?.
+
+Thank you</code></pre>
+<p><strong>2003-04-15 10:59:26</strong> · moc.oohay@SIHT_EVOMER_ralohcshsoj</p>
+<pre><code>This is years later. but just in case anyone has the same problem as fcanessa...  In C or C++ you can append an 'f' to a number to make it single precision, so .5f is the same as .5</code></pre>
+<p><strong>2012-07-10 13:51:17</strong> · ac.cisum-mutnauq@noidc</p>
+<pre><code>About that thing you've said "5 point seems to be the sweet spot". Well, it might depends on the sampling rate.</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/62-3rd-order-spline-interpollation.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/62-3rd-order-spline-interpollation.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

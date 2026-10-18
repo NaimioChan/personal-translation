@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>状态变量滤波器（Chamberlin 版本） - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：状态变量滤波器（Chamberlin 版本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>状态变量滤波器（Chamberlin 版本）</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Hal Chamberlin, "Musical Applications of Microprocessors," 2nd Ed, Hayden Book Company 1985. pp 490-492.</li>
+<li><strong>创建时间：</strong>2003-04-14 18:33:53</li>
+</ul>
+<pre><code>//输入/输出
+	I - input sample
+	L - lowpass output sample
+	B - bandpass output sample
+	H - highpass output sample
+	N - notch output sample
+	F1 - Frequency control parameter
+	Q1 - Q control parameter
+	D1 - delay associated with bandpass output
+	D2 - delay associated with low-pass output
+
+// 参数：
+	Q1 = 1/Q 
+	// 其中 Q1 从 2 变到 0，即 Q 从 .5 变到无穷大
+
+	// 简单的频率调谐，在 Nyquist 附近存在误差
+	// F 是滤波器的中心频率，Fs 是采样率
+	F1 = 2*pi*F/Fs
+
+	// 理想调谐：
+	F1 = 2 * sin( pi * F / Fs )
+
+// 算法
+	// 循环
+	L = D2 + F1 * D1
+	H = I - L - Q1*D1
+	B = F1 * H + D1
+	N = H + L
+
+	// 存储延迟
+	D1 = B
+	D2 = L
+
+	// 输出
+	L,H,B,N</code></pre>
+<h2>评论</h2>
+<p><strong>2005-03-21 00:08:03</strong> · ed.luosfosruoivas@naitsirhC</p>
+<pre><code>Object Pascal Implementation
+----------------------------
+-denormal fixed
+-not optimized
+
+
+
+unit SVFUnit;
+
+interface
+
+type
+  TFrequencyTuningMethod= (ftmSimple, ftmIdeal);
+  TSVF = class
+  private
+    fQ1,fQ  : Single;
+    fF1,fF  : Single;
+    fFS     : Single;
+    fD1,fD2 : Single;
+    fFTM    : TFrequencyTuningMethod;
+    procedure SetFrequency(v:Single);
+    procedure SetQ(v:Single);
+  public
+    constructor Create;
+    destructor Destroy; override;
+    procedure Process(const I : Single; var L,B,N,H: Single);
+    property Frequency: Single read fF write SetFrequency;
+    property SampleRate: Single read fFS write fFS;
+    property Q: Single read fQ write SetQ;
+    property FrequencyTuningMethod: TFrequencyTuningMethod read fFTM write fFTM;
+  end;
+
+implementation
+
+uses sysutils;
+
+const kDenorm = 1.0e-24;
+
+constructor TSVF.Create;
+begin
+ inherited;
+ fQ1:=1;
+ fF1:=1000;
+ fFS:=44100;
+ fFTM:=ftmIdeal;
+end;
+
+destructor TSVF.Destroy;
+begin
+ inherited;
+end;
+
+procedure TSVF.SetFrequency(v:Single);
+begin
+ if fFS&lt;=0 then raise exception.create('Sample Rate Error!');
+ if v&lt;&gt;fF then
+  begin
+   fF:=v;
+   case fFTM of
+    ftmSimple:
+     begin
+      // simple frequency tuning with error towards nyquist
+      // F is the filter's center frequency, and Fs is the sampling rate
+      fF1:=2*pi*fF/fFS;
+     end;
+    ftmIdeal:
+     begin
+      // ideal tuning:
+     fF1:=2*sin(pi*fF/fFS);
+     end;
+   end;
+  end;
+end;
+
+procedure TSVF.SetQ(v:Single);
+begin
+ if v&lt;&gt;fQ then
+  begin
+   if v&gt;=0.5
+    then fQ:=v
+    else fQ:=0.5;
+   fQ1:=1/fQ;
+  end;
+end;
+
+procedure TSVF.Process(const I : Single; var L,B,N,H: Single);
+begin
+ L:=fD2+fF1*fD1-kDenorm;
+ H:=I-L-fQ1*fD1;
+ B:=fF1*H+fD1;
+ N:=H+L;
+ // store delays
+ fD1:=B;
+ fD2:=kDenorm+L;
+end;
+
+end.</code></pre>
+<p><strong>2005-03-21 14:32:24</strong> · ed.luosfosruoivas@naitsirhC</p>
+<pre><code>Ups, there are still denormal bugs in it...
+(zu früh gefreut...)              </code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Filters/142-state-variable-filter-chamberlin-version.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Filters/142-state-variable-filter-chamberlin-version.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

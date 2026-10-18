@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Butterworth 优化 C++ 类 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：Butterworth 优化 C++ 类">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Butterworth 优化 C++ 类</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>neotec</li>
+<li><strong>类型：</strong>24dB 谐振低通</li>
+<li><strong>创建时间：</strong>2007-01-20 22:41:06</li>
+</ul>
+<blockquote class="note">
+<p>这与 “Zxform” 发布的那份（filters004.txt）完全相同。唯一的区别是，这个版本经过了优化。</p>
+<p>参数：<br>Cutoff [0.f -&gt; Nyquist.f]<br>Resonance [0.f -&gt; 1.f]</p>
+<p>代码中定义了一些最小值和最大值，让它在各种情况下都好听。这个类用在我的一些 VST 插件里，工作良好，执行很快。</p>
+</blockquote>
+<pre><code>// FilterButterworth24db.h
+
+#pragma once
+
+class CFilterButterworth24db
+{
+public:
+	CFilterButterworth24db(void);
+	~CFilterButterworth24db(void);
+	void SetSampleRate(float fs);
+	void Set(float cutoff, float q);
+	float Run(float input);
+
+private:
+	float t0, t1, t2, t3;
+	float coef0, coef1, coef2, coef3;
+	float history1, history2, history3, history4;
+	float gain;
+	float min_cutoff, max_cutoff;
+};
+
+// FilterButterworth24db.cpp
+
+#include &lt;math.h&gt;
+
+#define BUDDA_Q_SCALE 6.f
+
+#include "FilterButterworth24db.h"
+
+CFilterButterworth24db::CFilterButterworth24db(void)
+{
+	this-&gt;history1 = 0.f;
+	this-&gt;history2 = 0.f;
+	this-&gt;history3 = 0.f;
+	this-&gt;history4 = 0.f;
+
+	this-&gt;SetSampleRate(44100.f);
+	this-&gt;Set(22050.f, 0.0);
+}
+
+CFilterButterworth24db::~CFilterButterworth24db(void)
+{
+}
+
+void CFilterButterworth24db::SetSampleRate(float fs)
+{
+	float pi = 4.f * atanf(1.f);
+
+	this-&gt;t0 = 4.f * fs * fs;
+	this-&gt;t1 = 8.f * fs * fs;
+	this-&gt;t2 = 2.f * fs;
+	this-&gt;t3 = pi / fs;
+
+	this-&gt;min_cutoff = fs * 0.01f;
+	this-&gt;max_cutoff = fs * 0.45f;
+}
+
+void CFilterButterworth24db::Set(float cutoff, float q)
+{
+	if (cutoff &lt; this-&gt;min_cutoff)
+		cutoff = this-&gt;min_cutoff;
+	else if(cutoff &gt; this-&gt;max_cutoff)
+		cutoff = this-&gt;max_cutoff;
+
+	if(q &lt; 0.f)
+		q = 0.f;
+	else if(q &gt; 1.f)
+		q = 1.f;
+
+	float wp = this-&gt;t2 * tanf(this-&gt;t3 * cutoff);
+	float bd, bd_tmp, b1, b2;
+
+	q *= BUDDA_Q_SCALE;
+	q += 1.f;
+
+	b1 = (0.765367f / q) / wp;
+	b2 = 1.f / (wp * wp);
+
+	bd_tmp = this-&gt;t0 * b2 + 1.f;
+
+	bd = 1.f / (bd_tmp + this-&gt;t2 * b1);
+
+	this-&gt;gain = bd * 0.5f;
+
+	this-&gt;coef2 = (2.f - this-&gt;t1 * b2);
+
+	this-&gt;coef0 = this-&gt;coef2 * bd;
+	this-&gt;coef1 = (bd_tmp - this-&gt;t2 * b1) * bd;
+
+	b1 = (1.847759f / q) / wp;
+
+	bd = 1.f / (bd_tmp + this-&gt;t2 * b1);
+
+	this-&gt;gain *= bd;
+	this-&gt;coef2 *= bd;
+	this-&gt;coef3 = (bd_tmp - this-&gt;t2 * b1) * bd;
+}
+
+float CFilterButterworth24db::Run(float input)
+{
+	float output = input * this-&gt;gain;
+	float new_hist;
+
+	output -= this-&gt;history1 * this-&gt;coef0;
+	new_hist = output - this-&gt;history2 * this-&gt;coef1;
+
+	output = new_hist + this-&gt;history1 * 2.f;
+	output += this-&gt;history2;
+
+	this-&gt;history2 = this-&gt;history1;
+	this-&gt;history1 = new_hist;
+
+	output -= this-&gt;history3 * this-&gt;coef2;
+	new_hist = output - this-&gt;history4 * this-&gt;coef3;
+
+	output = new_hist + this-&gt;history3 * 2.f;
+	output += this-&gt;history4;
+
+	this-&gt;history4 = this-&gt;history3;
+	this-&gt;history3 = new_hist;
+
+	return output;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2007-01-22 18:38:23</strong> · moc.oohay@bob</p>
+<pre><code>This sounds really nice, especially with resonance. Although it becomes unstable below 4K (at 44100 s/r), which explains why the min_cutoff value has been set quite high. Would using doubles help stabilise it?
+Also, I can't figure out how to get a high pass out of this, can anybody help?
+Cheers.</code></pre>
+<p><strong>2007-01-22 19:54:21</strong> · neotec</p>
+<pre><code>I have checked the peak output of this filter and especially for low frequences ... there is a simple fix, which makes it sound better with low frequences: change the line in Set(...) that reads 'this-&gt;gain = bd * 0.5f;' to 'this-&gt;gain = bd;'</code></pre>
+<p><strong>2007-01-22 22:27:11</strong> · moc.oohay@bob</p>
+<pre><code>Thanks for the quick reply. I've tried your change and it's made a slight tonal difference here, but the tests were not particularly scientific. I've discovered more detail in the problem, and it's one that has been commented on with other filters: If I sweep the filter quickly up or down the low frequencies it blows out really badly, even with zero Q. I'm new to filter math, so excuse my ignorance if this is a common thing with Butterworth.</code></pre>
+<p><strong>2007-01-23 12:54:03</strong> · neotec</p>
+<pre><code>Yep ... this filter reacts very extreme on fast cutoff changes. I've added a function to my VST Synthesizer, which 'fades' the cutoff value from actual value to the desired one in about 0.05 seconds. My modulation envelopes do have similar restrictions concerning speed.</code></pre>
+<p><strong>2007-01-23 16:35:51</strong> · neotec</p>
+<pre><code>If you want to know how this filter sounds, visit the kvraudio forum, and search here: "KVR Forum » Instruments" for "Cetone VST Plugins".</code></pre>
+<p><strong>2007-01-29 21:57:52</strong> · moc.erehwon@ydobon</p>
+<pre><code>I'm wondering about that tanh in the "Set."
+
+Could replace with a pade appromimation, maybe. What is the range of inputs going into it?
+
+In other words, how small and big does this get?...
+
+this-&gt;t3 * cutoff</code></pre>
+<p><strong>2007-01-29 22:06:28</strong> · moc.dniftnacuoyerehwemos@tsaot</p>
+<pre><code>Possible small optimization. It depends on how smart your compiler is, but sections like this...
+
+    output = new_hist + this-&gt;history3 * 2.f;
+    output += this-&gt;history4;
+
+can be changed to this to change the multiply to an addition:
+
+output = this-&gt;history3;
+output += output+new_Hist+this-&gt;history4;</code></pre>
+<p><strong>2007-01-30 03:05:05</strong> · moc.dniftnacuoyerehwemos@tsaot</p>
+<pre><code>While I'm at it, one of these divisions can easily be switched to a multiply...
+
+ b1 = (1.847759f / q) / wp;
+
+b1=(1.847759f/(q*wp);</code></pre>
+<p><strong>2007-02-04 19:32:55</strong> · moc.oohay@bob</p>
+<pre><code>Four times oversampling removes the problems with fast cut-off sweeps at low values.
+This filter has the same shape as a normal biquad filter, with a more pronounced resonance boost.</code></pre>
+<p><strong>2008-01-12 20:42:34</strong> · gro.lortnocdnim@gro.psdcisum</p>
+<pre><code>Why would oversampling solve the problem? If you over-sample, the poles have to reach even further into the relative frequencies, and stability would become more of a problem AFAICT.</code></pre>
+<p><strong>2008-01-21 14:58:55</strong> · moc.oohay@bob</p>
+<pre><code>It just seems to. If you 4X over-sample, then it gives it a 4X chance to recover from each sweep change, presuming you're not changing the filter cut-off at 4X also.</code></pre>
+<p><strong>2008-01-25 14:46:31</strong> · erehwon.ku.oc.snosrapsd@psdcisum</p>
+<pre><code>thing is with 4X oversampling on this is that you'll be reducing precision on omega (wp here), and so should probably shift to double rather than float to help accuracy.</code></pre>
+<p><strong>2013-04-24 02:48:07</strong> · moc.liam@ttocs</p>
+<pre><code>Did anyone figure out how to get a high pass out of this?
+
+Thanks!</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Filters/243-butterworth-optimized-c-class.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Filters/243-butterworth-optimized-c-class.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>32 位浮点的快速符号函数 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：32 位浮点的快速符号函数">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>32 位浮点的快速符号函数</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Peter Schoffhauzer</li>
+<li><strong>创建时间：</strong>2007-05-14 10:15:43</li>
+</ul>
+<blockquote class="note">
+<p>通过检查符号位快速给出 32 位浮点数符号的函数。有两个版本，一个以 float 返回值，另一个返回 int。</p>
+<p>_nozero 版本更快，但对零会给出错误的 1 或 -1（取决于该数中设置的符号位）。int 版本应该比存档中 Tobybear 的版本快，因为这个版本没有加法，只有位操作。</p>
+</blockquote>
+<pre><code>/*------------------------------------------------------------------------------------
+   fast sign, returns float
+------------------------------------------------------------------------------------*/
+
+// 正浮点数返回 1.0f，负浮点数返回 -1.0f
+// 输入为零时不可用（可能返回 1.0f 或 -1.0f），但速度更快 
+inline float fast_sign_nozero(float f) {
+    float r = 1.0f;
+    (int&amp;)r |= ((int&amp;)f &amp; 0x80000000); // 屏蔽 f 中的符号位，必要时在 r 中置位
+    return r;
+}
+
+// 正浮点数返回 1.0f，负浮点数返回 -1.0f，零返回 0.0f
+inline float fast_sign(float f) {
+    if (((int&amp;)f &amp; 0x7FFFFFFF)==0) return 0.f; // 检查指数 &amp; 尾数位：输入是否为零？
+    else {
+        float r = 1.0f;
+        (int&amp;)r |= ((int&amp;)f &amp; 0x80000000); // 屏蔽 f 中的符号位，必要时在 r 中置位
+        return r;
+    }
+}
+
+/*------------------------------------------------------------------------------------
+   fast sign, returns int
+------------------------------------------------------------------------------------*/
+
+// 正浮点数返回 1，负浮点数返回 -1
+// 输入为 0.0f 时不可用（可能返回 1 或 -1），但速度更快 
+inline int fast_sign_int_nozero(float f) {
+      return (signed((int&amp;)f &amp; 0x80000000) &gt;&gt; 31 ) | 1;
+}
+
+// 正浮点数返回 1，负浮点数返回 -1，0.0f 返回 0
+inline int fast_sign_int(float f) {
+    if (((int&amp;)f &amp; 0x7FFFFFFF)==0) return 0; // 检查指数 &amp; 尾数位：输入是否为零？
+    return (signed((int&amp;)f &amp; 0x80000000) &gt;&gt; 31 ) | 1;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2007-05-15 16:49:02</strong> · uh.etle.fni@yfoocs</p>
+<pre><code>Now consider when you want to multiply a number by the sign of another:
+
+  if (a&gt;0.f) b = b; 
+    else b = -b;
+
+This involves 1) a comparison, 2) a branch, 3) an inversion (multiply or bit flip) in one branch. Another method for calculating the same:
+
+  b *= fast_sign_nozero_(a);
+
+This involves 1) a bitwise and, 2) a bitwise or 3) and a multiply. Using only bit operations, the branch and/or multiply can be totally eliminated:
+
+// equivalent to dest *= sgn(source)
+inline void mul_sign(float &amp;dest, float &amp;source) {
+	(int&amp;)dest &amp;= 0x7FFFFFFF; // clear sign bit 
+	(int&amp;)dest |= ((int&amp;)dest ^ (int&amp;)source) &amp; 0x80000000f; // set sign bit if necessary
+}
+
+This function has only three bitwise operations, which should be very fast. Usage:
+
+  mul_sign(b,a); // b = b*sign(a)
+
+The speed increase with all these functions greatly depends on the predictability of the branches. If the branch is highly predictable (a lot of positive numbers, then a lot of negative numbers, without mixing them), then an if/else solution is pretty fast. If the branch is unpredictable (random numbers, or audio similar to white noise) then bit operations should perform significantly better on today's most CPUs with multi-level pipelines.
+
+-- Peter Schoffhauzer        </code></pre>
+<p><strong>2007-07-01 19:14:04</strong> · uh.etle.fni@yfoocs</p>
+<pre><code>Sorry, there is a bug in the above code. Correctly:
+
+// equivalent to dest *= sgn(source)
+inline void mul_sign_nozero(float &amp;dest, float const &amp;source) {
+	int sign_mask = ((int&amp;)dest ^ (int&amp;)source) &amp; 0x80000000; // XOR and mask
+	(int&amp;)dest &amp;= 0x7FFFFFFF; // clear sign bit
+	(int&amp;)dest |= sign_mask; // set sign bit if necessary
+}</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/249-fast-sign-for-32-bit-floats.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/249-fast-sign-for-32-bit-floats.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

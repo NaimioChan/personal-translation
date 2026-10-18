@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>压缩器 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：压缩器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>压缩器</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>ur.liam@cnihsalf</li>
+<li><strong>类型：</strong>硬拐点压缩器，带 RMS 前瞻包络计算与可调起音/释音</li>
+<li><strong>创建时间：</strong>2004-05-26 16:02:59</li>
+</ul>
+<blockquote class="note">
+<p>RMS 是估计*音乐*信号能量的真正方法，<br>我们的耳朵也是这样工作的。</p>
+<p>为了让一切都跑起来，<br>第一次可以试试这些值（就这样，例程接受百分比和毫秒）：</p>
+<p>threshold = 50%<br>slope = 50%<br>RMS window width = 1 ms<br>lookahead = 3 ms<br>attack time = 0.1 ms<br>release time = 300 ms</p>
+<p>把 RMS 计算循环改成“运行求和”（把和保持在“窗口”内——每一步加入最新的样本并减去最旧的样本），可以显著提高这段代码的速度。</p>
+</blockquote>
+<pre><code>void compress
+    (
+        float*  wav_in,     // 信号
+        int     n,          // N 个样本
+        double  threshold,  // 阈值（百分比）
+        double  slope,      // 斜率角度（百分比）
+        int     sr,         // 采样率（样本/秒）
+        double  tla,        // 前视（ms）
+        double  twnd,       // 窗口时间（ms）
+        double  tatt,       // 起音时间（ms）
+        double  trel        // 释放时间（ms）
+    )
+{
+    typedef float   stereodata[2];
+    stereodata*     wav = (stereodata*) wav_in; // 我们的立体声信号
+    threshold *= 0.01;          // 阈值转为单位值（0...1）
+    slope *= 0.01;              // 斜率转为单位值
+    tla *= 1e-3;                // 前视时间换算为秒
+    twnd *= 1e-3;               // 窗口时间换算为秒
+    tatt *= 1e-3;               // 起音时间换算为秒
+    trel *= 1e-3;               // 释放时间换算为秒
+
+    // 起音与释放的“每样本衰减”
+    double  att = (tatt == 0.0) ? (0.0) : exp (-1.0 / (sr * tatt));
+    double  rel = (trel == 0.0) ? (0.0) : exp (-1.0 / (sr * trel));
+
+    // 包络
+    double  env = 0.0;
+
+    // 相对前视窗起点的样本偏移
+    int     lhsmp = (int) (sr * tla);
+
+    // 前视窗内的样本数
+    int     nrms = (int) (sr * twnd);
+
+    // 对每个样本……
+    for (int i = 0; i &lt; n; ++i)
+    {
+        // 现在计算 RMS
+        double  summ = 0;
+
+        // 对窗口内的每个样本
+        for (int j = 0; j &lt; nrms; ++j)
+        {
+            int     lki = i + j + lhsmp;
+            double  smp;
+
+            // 是否在信号范围内？
+            // 若在范围内则转为单声道
+            if (lki &lt; n)
+                smp = 0.5 * wav[lki][0] + 0.5 * wav[lki][1];
+            else
+                smp = 0.0;      // 超出范围时 smp 取 0
+
+            summ += smp * smp;  // 求平方……
+        }
+
+        double  rms = sqrt (summ / nrms);   // 均方根
+
+        // 动态选择：起音还是释放？
+        double  theta = rms &gt; env ? att : rel;
+
+        // 用电容平滑、提取包络……
+        // 注意 pIV 的非规格化数故障
+        env = (1.0 - theta) * rms + theta * env;
+
+        // 最简单的硬拐点 1:N 压缩器
+        double  gain = 1.0;
+        if (env &gt; threshold)
+            gain = gain - (env - threshold) * slope;
+
+        // 结果——两个经硬拐点压缩的声道……
+        float  leftchannel = wav[i][0] * gain;
+        float  rightchannel = wav[i][1] * gain;
+    }
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2004-06-10 21:31:18</strong> · moc.regnimmu@psd-cisum</p>
+<pre><code>My comments:
+
+A rectangular window is not physical. It would make more physical sense, and be a lot cheaper, to
+use a 1-pole low pass filter to do the RMS averaging. A 1-pole filter means you can lose the bounds
+checks in the RMS calculation.
+
+It does not make sense to convert to mono before squaring, you should square each channel
+separately and then add them together to get the total signal power.
+
+You might also consider whether you even need any filtering other than the attack/release filter.
+You could modify the attack/release rates appropriately, place the sqrt after the attack/release,
+and lose the rms averager entirely.
+
+I don't think your compressor actually approaches a linear slope in the decibel domain. You need
+a gain law more like
+
+double gain = exp(max(0.0,log(env)-log(thresh))*slope);
+
+Sincerely,
+     Frederick Umminger</code></pre>
+<p><strong>2004-07-30 05:31:36</strong> · moc.liamg@noteex</p>
+<pre><code>To sum up (and maybe augment) the RMS calculation method, this question and answer may be of use...
+
+**********
+
+music-dsp@shoko.calarts.edu writes:
+I am looking at gain processing algorithms. I haven't found much in the way of reference material on
+this, any pointers? In the level detection code, if one is doing peak detection, how many samples
+does one generally average over (if at all)? What kind of window size for RMS level detection?
+Is the RMS level detection generally the same algo. as peak, but with a bigger window?
+
+The peak detector can be easily implemented as a one-pole low pass, you just have modify it,
+so that it tracks the peaks and gently falls down afterwards. RMS detection is done squaring
+the input signal, averaging with a lowpass and taking the root afterwards.
+
+Hope this helps.
+
+Kind regards
+
+Steffan Diedrichsen
+
+DSP developer
+
+emagic GmbH 
+
+**********
+
+I found the thread by searching old [music-dsp] forum posts. Hope it helps.</code></pre>
+<p><strong>2006-11-07 01:52:17</strong> · gro.esabnaeco@euarg</p>
+<pre><code>How would you use a 1-pole lowpass filter to do RMS averaging? How do you pick a coefficient to use?</code></pre>
+<p><strong>2006-11-09 01:19:41</strong> · uh.etle.fni@yfoocs</p>
+<pre><code>Use x = exp(-1/d), where d is the time constant in samples. A 1 pole IIR filter has an infinite
+impulse response, so instead of window width, this coeff determines the time when the impulse
+response reaches 36.8% of the original value.
+
+Coeffs:
+a0 = 1.0-x;
+b1 = -x;
+
+Loop:
+out = a0*in - b1*tmp;
+tmp = out;
+
+-- peter schoffhauzer</code></pre>
+<p><strong>2008-11-20 08:30:28</strong> · moc.361@oatuxt</p>
+<pre><code>I am looking at gain processing algorithms£º
+There are too such sentences : 
+double att = (tatt == 0.0) ? (0.0) : exp (-1.0 / (sr * tatt));
+double rel = (trel == 0.0) ? (0.0) : exp (-1.0 / (sr * trel)); 
+
+can you tell me something about the exp (-1.0 / (sr * tatt))? 
+
+New day ~~
+thanks </code></pre>
+<p><strong>2010-04-28 15:12:47</strong> · moc.liamg@enin.kap</p>
+<pre><code>This is a useful reference, however the RMS calculations are pretty dodgy. Firstly there is a
+bug where is calculates the number of samples to use:
+
+int sr, // sample rate (smp/sec)
+...
+double twnd, // window time (ms)
+...
+// samples count in lookahead window
+int nrms = (int) (sr * twnd);
+
+The units are mixed when calculating the number of samples in the RMS window. The window time needs
+to be converted to seconds before multiplying by the sample rate.
+
+As others have mentioned the RMS calculation is also really expensive, and in my tests I found it
+was pretty innacurate unless you use a LOT of samples (you basically need a (sample rate)/2 window
+of samples in your RMS calculation to accurately measure the power of all frequencies). 
+
+I ended up using the 1 pole low pass filter approach suggested here, and it is a good cheap
+approximation of power. I did, however, end up mulitplying it by root(2) (the RMS of a sine wave,
+which seemed like a reasonable normalisation factor) in order to get it between 0 and 1, which is
+a more useful range.
+
+Another slightly more accurate way to caculate the RMS without iterating over and entire window
+for each sample is to keep a running total of the squared sums of samples.
+
+for( i = 0; i &lt; NumSamples; ++i )
+{
+  NewSample = Sample[i];
+  OldSample = Sample[i - RMSWindowSize];
+
+  SquaredSum = SquaredSum + NewSample * NewSample;
+  SquaredSum = SquaredSum - OldSample * OldSample;
+
+  RMS = sqrt( SquaredSum / RMSWindowSize );
+
+  // etc...
+}
+
+Calculating the power in the signal is definately the awkward part of this DSP!</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Effects/169-compressor.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Effects/169-compressor.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

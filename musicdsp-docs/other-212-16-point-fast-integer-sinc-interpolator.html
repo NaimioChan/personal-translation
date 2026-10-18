@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16 点快速整数 Sinc 插值器 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：16 点快速整数 Sinc 插值器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>16 点快速整数 Sinc 插值器</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>moc.liamg@tramum</li>
+<li><strong>创建时间：</strong>2005-11-15 22:28:31</li>
+</ul>
+<blockquote class="note">
+<p>这是为仅用 32 位累加器进行高质量快速上采样而设计的。<br>音质非常好。概念上，它把输入信号重采样 32768 倍，再用最近邻取到所需采样率。因此降采样会产生混叠。</p>
+<p>提供的 Sinc 表是 Blackman-Harris 加窗的，并带轻微低通。表项为 16 位，且做了 16 倍线性过采样。自己制作表应该很容易。</p>
+<p>提供的代码是 Java。转成 C/MMX 等应该相当简单。</p>
+<p>记住，插值器需要待插值样本前后各若干样本，所以你不能一次性重采样传入的整个输入缓冲区。</p>
+<p>玩得开心，<br>Martin</p>
+</blockquote>
+<pre><code>public class SincResampler {
+	private final int FP_SHIFT = 15;
+	private final int FP_ONE = 1 &lt;&lt; FP_SHIFT;
+	private final int FP_MASK = FP_ONE - 1;
+
+
+	private final int POINT_SHIFT = 4; // 16 个点
+
+	private final int OVER_SHIFT = 4; // 16 倍过采样
+
+	private final short[] table = {
+
+		 0, -7,  27, -71,  142, -227,  299,  32439,   299,  -227,  142,  -71,  27,  -7,  0,  0,
+
+		 0,  0,  -5,  36, -142,  450, -1439, 32224,  2302,  -974,  455, -190,  64, -15,  2,  0,
+
+		 0,  6, -33, 128, -391, 1042, -2894, 31584,  4540, -1765,  786, -318, 105, -25,  3,  0,
+
+		 0, 10, -55, 204, -597, 1533, -4056, 30535,  6977, -2573, 1121, -449, 148, -36,  5,  0,
+
+		-1, 13, -71, 261, -757, 1916, -4922, 29105,  9568, -3366, 1448, -578, 191, -47,  7,  0,
+
+		-1, 15, -81, 300, -870, 2185, -5498, 27328, 12263, -4109, 1749, -698, 232, -58,  9,  0,
+
+		-1, 15, -86, 322, -936, 2343, -5800, 25249, 15006, -4765, 2011, -802, 269, -68, 10,  0,
+
+		-1, 15, -87, 328, -957, 2394, -5849, 22920, 17738, -5298, 2215, -885, 299, -77, 12,  0,
+
+		 0, 14, -83, 319, -938, 2347, -5671, 20396, 20396, -5671, 2347, -938, 319, -83, 14,  0,
+
+		 0, 12, -77, 299, -885, 2215, -5298, 17738, 22920, -5849, 2394, -957, 328, -87, 15, -1,
+
+		 0, 10, -68, 269, -802, 2011, -4765, 15006, 25249, -5800, 2343, -936, 322, -86, 15, -1,
+
+		 0,  9, -58, 232, -698, 1749, -4109, 12263, 27328, -5498, 2185, -870, 300, -81, 15, -1,
+
+		 0,  7, -47, 191, -578, 1448, -3366,  9568, 29105, -4922, 1916, -757, 261, -71, 13, -1,
+
+		 0,  5, -36, 148, -449, 1121, -2573,  6977, 30535, -4056, 1533, -597, 204, -55, 10,  0,
+
+		 0,  3, -25, 105, -318,  786, -1765,  4540, 31584, -2894, 1042, -391, 128, -33,  6,  0,
+
+		 0,  2, -15,  64, -190,  455,  -974,  2302, 32224, -1439,  450, -142,  36,  -5,  0,  0,
+
+		 0,  0,  -7,  27,  -71,  142,  -227,   299, 32439,   299, -227,  142, -71,  27, -7,  0
+
+	};
+
+
+
+	/*
+
+	private final int POINT_SHIFT = 1; // 2 points
+
+	private final int OVER_SHIFT = 0; // 1x oversampling
+
+	private final short[] table = {	
+
+		32767,     0,
+
+		0    , 32767
+
+	};
+
+	*/
+
+
+
+	private final int POINTS = 1 &lt;&lt; POINT_SHIFT;
+
+	private final int INTERP_SHIFT = FP_SHIFT - OVER_SHIFT;
+
+	private final int INTERP_BITMASK = ( 1 &lt;&lt; INTERP_SHIFT ) - 1;
+
+
+	/*
+		input - 输入样本数组
+		inputPos - 样本位置（至少为 POINTS/2 + 1，即 7）
+		inputFrac - 小数样本位置（ 0 &lt;= inputFrac &lt; FP_ONE ）
+		step - 每个输出样本对应的输入样本数 * FP_ONE
+		lAmp - 左声道输出幅度（ 1.0 = FP_ONE ）
+		lBuf - 左声道输出缓冲区
+		rAmp - 右声道输出幅度（ 1.0 = FP_ONE ）
+		rBuf - 右声道输出缓冲区	
+		pos - 输出缓冲区中的偏移
+		count - 要产生的输出样本数
+	*/
+
+	public void resample( short[] input, int inputPos, int inputFrac, int step,
+
+			int lAmp, int[] lBuf, int rAmp, int[] rBuf, int pos, int count ) {
+
+		for( int p = 0; p &lt; count; p++ ) {
+
+			int tabidx1 = ( inputFrac &gt;&gt; INTERP_SHIFT ) &lt;&lt; POINT_SHIFT;
+
+			int tabidx2 = tabidx1 + POINTS;
+
+			int bufidx = inputPos - POINTS/2 + 1;
+
+			int a1 = 0, a2 = 0;
+
+			for( int t = 0; t &lt; POINTS; t++ ) {
+
+				a1 += table[ tabidx1++ ] * input[ bufidx ] &gt;&gt; 15;
+
+				a2 += table[ tabidx2++ ] * input[ bufidx ] &gt;&gt; 15;
+
+				bufidx++;
+
+			}
+
+			int out = a1 + ( ( a2 - a1 ) * ( inputFrac &amp; INTERP_BITMASK ) &gt;&gt; INTERP_SHIFT );
+
+			lBuf[ pos ] += out * lAmp &gt;&gt; FP_SHIFT;
+
+			rBuf[ pos ] += out * rAmp &gt;&gt; FP_SHIFT;
+
+			pos++;
+
+			inputFrac += step;
+
+
+			inputPos += inputFrac &gt;&gt; FP_SHIFT;
+
+			inputFrac &amp;= FP_MASK;
+
+		}
+
+	}
+
+}</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/212-16-point-fast-integer-sinc-interpolator.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/212-16-point-fast-integer-sinc-interpolator.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

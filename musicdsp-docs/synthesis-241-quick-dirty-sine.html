@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>快速粗糙正弦 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：快速粗糙正弦">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>快速粗糙正弦</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>MisterToast</li>
+<li><strong>类型：</strong>正弦波合成</li>
+<li><strong>创建时间：</strong>2007-01-08 10:50:10</li>
+</ul>
+<blockquote class="note">
+<p>这只是概念验证（但代码能用——我已经把它放进自己的合成器了）。</p>
+<p>注意 x 的输入范围必须是 0&lt;x&lt;=4096。如果你想缩放到别的范围（比如 0&lt;x&lt;=2*M_PI），就在调用处做；或者自己算一下，把常数正确缩放。</p>
+<p>这里的噪声不多，偶尔有些小峰。当信号在 -20dB 时，最差的噪声大约在 -90dB。</p>
+<p>为了速度，可以全部改用浮点，差别不大。那个取负也很容易去掉。还有几个技巧能进一步提速——我在代码里优先考虑的是清晰。</p>
+<p>结果会略微不到 -1&lt;x&lt;1，峰值大约在 0.999。</p>
+<p>这东西从哪来的？我在试验去掉那些占用大量内存的波形表。加上 Hamming 抗振铃代码之后，我的所有波形看起来都足够平滑，可以用曲线近似。于是我从正弦开始，把表数据导入 Excel，再丢进曲线拟合程序。</p>
+<p>这对合成器来说足够了。噪声低到你可以轻松接受。非常适合内存紧张的场景。我最终的代码会更难懂一些，因为我会把曲线分段，对小段分别做拟合。</p>
+</blockquote>
+<pre><code>float xSin(double x)
+{
+	//x 被缩放到 0&lt;=x&lt;4096
+	const double A=-0.015959964859;
+	const double B=217.68468676;
+	const double C=0.000028716332164;
+	const double D=-0.0030591066066;
+	const double E=-7.3316892871734489e-005;
+	double y;
+
+	bool negate=false;
+	if (x&gt;2048)
+	{
+		negate=true;
+		x-=2048;
+	}
+	if (x&gt;1024)
+		x=2048-x;
+	if (negate)
+		y=-((A+x)/(B+C*x*x)+D*x-E);
+	else
+		y=(A+x)/(B+C*x*x)+D*x-E;
+	return (float)y;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2007-01-08 18:39:26</strong> · moc.dniftnacuoyerehwemos@tsaot</p>
+<pre><code>Improved version:
+
+float xSin(double x)
+{
+	//x is scaled 0&lt;=x&lt;4096
+	const double A=-0.40319426317E-08;
+	const double B=0.21683205691E+03;
+	const double C=0.28463350538E-04;
+	const double D=-0.30774648337E-02;
+	double y;
+
+	bool negate=false;
+	if (x&gt;2048)
+	{
+		negate=true;
+		x-=2048;
+	}
+	if (x&gt;1024)
+		x=2048-x;
+	y=(A+x)/(B+C*x*x)+D*x;
+	if (negate)
+		return (float)(-y);
+	else
+		return (float)y;
+}</code></pre>
+<p><strong>2007-04-15 23:54:56</strong> · ten.zo@1otniped</p>
+<pre><code>%This is Matlab code. you can convert it to C
+%All it take to make a high quality sine
+%wave is 1 multiply and one subtract.
+%You first have to initialize the 2 unit delays
+% and the coefficient
+
+Fs = 48000;      %Sample rate
+oscfreq = 1000.0; %Oscillator frequency in Hz
+c1 = 2 * cos(2 * pi * oscfreq / Fs);
+%Initialize the unit delays
+d1 = sin(2 * pi * oscfreq / Fs);   
+d2 = 0;
+%Initialization done here is the oscillator loop
+% which generates a sinewave
+for j=1:100
+   output = d1;        %This is the sine value   
+   fprintf(1, '%f\n', output);
+   %one multiply and one subtract is all it takes 
+   d0 = d1 * c1 - d2;
+   d2 = d1;   %Shift the unit delays
+   d1 = d0;   
+end            </code></pre>
+<p><strong>2008-02-09 20:54:10</strong> · moc.liamg@iratuusala.osuuj</p>
+<pre><code>Hi,
+
+Can I use this code in a GPL2 or GPL3 licensed program (a soft synth project called Snarl)? In other words, will you grant permission for me to re-license your code? And what name should I write down as copyright holder in the headers?
+
+Thanks,
+Juuso Alasuutari</code></pre>
+<p><strong>2009-06-23 03:12:13</strong> · by moc.dniftnacuoyerehwemos@tsaot</p>
+<pre><code>Juuso,
+
+Absolutely!
+
+Toast</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Synthesis/241-quick-dirty-sine.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Synthesis/241-quick-dirty-sine.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>带限 PWM 发生器 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：带限 PWM 发生器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>带限 PWM 发生器</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>rf.liamtoh@57eninres_luap</li>
+<li><strong>类型：</strong>PWM 发生器</li>
+<li><strong>创建时间：</strong>2006-05-11 19:09:04</li>
+</ul>
+<blockquote class="note">
+<p>这是我愚人节玩笑的去混淆并加注释版本。它基于 Thierry Rochebois 的教程代码，我只是翻译并加了注释。</p>
+<p>此致，</p>
+<p>Paul Sernine。</p>
+</blockquote>
+<pre><code>// SelfPMpwm.cpp
+
+// 抗混叠 PWM 振荡器
+
+// 基于 Thierry Rochebois（98）的教程代码。
+// 其本身受 Norio Tomisawa（81）的美国专利 4249447 启发。
+// 注释由 P.Sernine（06）添加/翻译。
+
+// 本程序生成 44100Hz 的裸 PCM 单声道 wave 文件。
+// 它基于 Tomisawa 的自相位调制正弦波发生器。
+// Rochebois 用一个公共相位累加器驱动两个半 Tomisawa 振荡器。
+// 每个半 Tomisawa 振荡器产生一个频带受限的锯齿波
+// （频带限制程度取决于反馈系数 B）。
+// 这些半振荡器按所需脉冲宽度做相位偏移，
+// 最后合并得到 PW 信号。
+// 注意：抗“游移”滤波器是良好实现
+// Tomisawa 方法的关键特性。
+#include &lt;math.h&gt;
+#include &lt;stdio.h&gt;
+const float pi=3.14159265359f;
+int main()
+{
+  float freq,dphi; //!&lt; 频率（Hz）和相位增量（rad/sample）
+  float dphif=0;   //!&lt; 经滤波（抗咔哒声）的相位增量
+  float phi=-pi;   //!&lt; 相位
+  float Y0=0,Y1=0; //!&lt; 反馈记忆
+  float PW=pi;     //!&lt; 脉宽 ]0,2pi[
+  float B=2.3f;    //!&lt; 反馈系数
+  FILE *f=fopen("SelfPMpwm.pcm","wb");
+  // 音序（'a'=mi=E）
+  // 如偏好其他旋律可自行修改。
+  static char seq[]="aiakahiafahadfaiakahiahafahadf"; //!&lt; 音序
+  int note=sizeof(seq)-2;  //!&lt; 音序中的音符编号
+  int octave=0;     //!&lt; 八度编号
+  float env,envf=0; //!&lt; 包络与滤波后的包络
+  for(int ns=0;ns&lt;8*(sizeof(seq)-1)*44100/6;ns++)
+  {
+//waveform control --------------------------------------------------
+    //频率
+    //freq=27.5f*powf(2.0f,8*ns/(8*30*44100.0f/6)); //sweep
+    freq=27.5f*powf(2.0f,octave+(seq[note]-'a'-5)/12.0f);
+    //freq*=(1.0f+0.01f*sinf(ns*0.0015f));        //vibrato
+    dphi=freq*(pi/22050.0f);   // 相位增量
+    dphif+=0.1f*(dphi-dphif);
+    //音符与包络触发
+    if((ns%(44100/6))==0)
+    {
+      note++;
+      if(note&gt;=(sizeof(seq)-1))// 音序循环
+      {
+        note=0;
+        octave++;
+      }
+      env=1; //包络设置
+      //PW=pi*(0.4+0.5f*(rand()%1000)/1000.0f); //random PW
+    }
+    env*=0.9998f;              // 指数包络
+    envf+=0.1f*(env-envf);     // 去咔哒声包络
+    B=1.0f;                    // 反馈系数
+    //试试这个，可得到不错的贝斯音色：
+    //B*=envf*envf;              // 反馈由包络控制
+    B*=2.3f*(1-0.0001f*freq);  // 反馈限制
+    if(B&lt;0)
+      B=0;
+
+//waveform generation -----------------------------------------------
+    //公共相位
+    phi+=dphif;                 // 相位增量
+    if(phi&gt;=pi)
+      phi-=2*pi;               // 相位回绕
+
+    // "phase"    半 Tomisawa 发生器 0
+    // B*Y0 -&gt; 自相位调制
+    float out0=cosf(phi+B*Y0); // 半输出 0
+    Y0=0.5f*(out0+Y0);         // 防振荡滤波器
+
+    // "phase+PW" 半 Tomisawa 发生器 1
+    // B*Y1 -&gt; 自相位调制
+    // PW   -&gt; 相位偏移
+    float out1=cosf(phi+B*Y1+PW); // 半输出 1
+    Y1=0.5f*(out1+Y1);            // 防振荡滤波器
+
+    // 合成、包络与输出
+    short s=short(15000.0f*(out0-out1)*envf);
+    fwrite(&amp;s,2,1,f);          // 文件输出
+  }
+  fclose(f);
+  return 0;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2006-05-23 09:31:44</strong> · ---</p>
+<pre><code>Did anyone try this?
+
+How is the antialiasing compared to applying phaserror between two oscs in zerocross, one aliasing
+the other not (but pitcherror).
+
+Best Regards,
+Arif Ove Karlsen.</code></pre>
+<p><strong>2010-02-04 08:37:45</strong> · ude.notecnirp.inmula@esornep</p>
+<pre><code>The implementation certainly produces aliased waveforms -- they are glaring on a spectrogram
+at -60dB and faint at -30dB.  But it is a remarkably efficient algorithm. The aliasing can be
+mitigated somewhat by using a smaller feedback coefficient.</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Effects/221-band-limited-pwm-generator.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Effects/221-band-limited-pwm-generator.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

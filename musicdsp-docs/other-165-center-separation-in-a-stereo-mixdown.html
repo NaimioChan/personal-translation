@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>立体声缩混中的中置分离 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：立体声缩混中的中置分离">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>立体声缩混中的中置分离</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Thiburce BELAVENTURE</li>
+<li><strong>创建时间：</strong>2004-02-14 15:14:09</li>
+</ul>
+<blockquote class="note">
+<p>一年前，我发现了一个在立体声缩混中分离或去除中置的小技巧。</p>
+<p>我的方法使用时频表示（FFT）。我在左右声道之间（对每个频点）使用 min 函数来构造伪中置。我施加相位校正，再从左右信号中减去这个信号。</p>
+<p>之后，我们可以在处理（或不处理）后重新混合它们，输出立体声信号。</p>
+<p>这个算法（我叫它 “TBIsolator”）并不完美，但结果很好，比相位技巧（L 减 R……）更好。我知道它在数学上并不正确，但作为中置的估计，精确匹配非常难做到。所以，它没那么糟（听听结果就知道了）。</p>
+<p>我的实现使用 4096 的 FFT 尺寸，采用重叠相加法（因子 2）。FFT 尺寸更小时，声音会更脏；FFT 尺寸为 16384 时，中置会带有太多高频（我没研究为什么会这样）。</p>
+<p>我只贴出 TBIsolator 代码（FFT 引擎的实现见本站的 FFTReal）。</p>
+<p>pIns 与 pOuts 缓冲区使用 FFTReal 类的表示方式（0 到 N/2-1：实部，N/2 到 N-1：虚部）。</p>
+<p>祝你和 TBIsolator 算法玩得开心！希望你喜欢；如果你改进了它，请联系我（这是我的孩子……）。</p>
+<p>附：下面的函数未优化。</p>
+</blockquote>
+<pre><code>/* ============================================================= */
+/* nFFTSize 必须是 2 的幂                                 */
+/* ============================================================= */
+/* 用法示例：                                               */
+/* - 抑制中置：fAmpL = 1.f, fAmpC = 0.f, fAmpR = 1.f */
+/* - 仅保留中置：fAmpL = 0.f, fAmpC = 1.f, fAmpR = 0.f */
+/* ============================================================= */
+
+void processTBIsolator(float *pIns[2], float *pOuts[2], long nFFTSize, float fAmpL, float fAmpC, float fAmpR)
+{
+	float fModL, fModR;
+	float fRealL, fRealC, fRealR;
+	float fImagL, fImagC, fImagR;
+	double u;
+
+	for ( long i = 0, j = nFFTSize / 2; i &lt; nFFTSize / 2; i++ )
+	{
+		fModL = pIns[0][i] * pIns[0][i] + pIns[0][j] * pIns[0][j];
+		fModR = pIns[1][i] * pIns[1][i] + pIns[1][j] * pIns[1][j];
+
+		// 复数取最小值
+		if ( fModL &gt; fModR )
+		{
+			fRealC = fRealR;
+			fImagC = fImagR;
+		}
+		else
+		{
+			fRealC = fRealL;
+			fImagC = fImagL;
+		}
+
+		// 相位校正...
+		u = fabs(atan2(pIns[0][j], pIns[0][i]) - atan2(pIns[1][j], pIns[1][i])) / 3.141592653589;
+
+		if ( u &gt;= 1 ) u -= 1.;
+
+		u = pow(1 - u*u*u, 24);
+
+		fRealC *= (float) u;
+		fImagC *= (float) u;
+
+		// 中置提取...
+		fRealL = pIns[0][i] - fRealC;
+		fImagL = pIns[0][j] - fImagC;
+
+		fRealR = pIns[1][i] - fRealC;
+		fImagR = pIns[1][j] - fImagC;
+
+		// 可以在这里做一些处理...
+
+		pOuts[0][i] = fRealL * fAmpL + fRealC * fAmpC;
+		pOuts[0][j] = fImagL * fAmpL + fImagC * fAmpC;
+
+		pOuts[1][i] = fRealR * fAmpR + fRealC * fAmpC;
+		pOuts[1][j] = fImagR * fAmpR + fImagC * fAmpC;
+	}
+}</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/165-center-separation-in-a-stereo-mixdown.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/165-center-separation-in-a-stereo-mixdown.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

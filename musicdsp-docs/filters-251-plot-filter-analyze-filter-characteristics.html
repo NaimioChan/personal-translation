@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>绘图滤波器（分析滤波器特性） - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：绘图滤波器（分析滤波器特性）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>绘图滤波器（分析滤波器特性）</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>ku.oc.oohay@895rennacs</li>
+<li><strong>类型：</strong>测试</li>
+<li><strong>创建时间：</strong>2007-11-26 14:05:40</li>
+</ul>
+<blockquote class="note">
+<p>作为一个新手，而且数学背景非常非常少，我想看看这里发布的所有滤波器都在做什么，好对这里发生的事情有点感觉。于是我利用从这个网站学到的东西，写了一个小小的滤波器测试程序。希望它对你有用。</p>
+</blockquote>
+<pre><code>//
+// plotFilter.cpp
+//
+// 简单的测试程序，用于把某个滤波器的特性
+// 以文本形式绘制到 stdout。很适合观察滤波器在各种
+// 条件（cutoff/resonance/samplerate 等）下的表现。
+//
+// 应可在任何支持 C++ 的平台上运行，稍作改动后
+// 也能用于 C。它只打印文本，不涉及任何图形
+// 相关的东西。
+//
+// 滤波器输入与输出应在 -1 到 1 之间（浮点）
+//
+// 输出是用对数刻度绘制的图形（以文本形式）
+// （所以图中一半的高度就是人耳能听到的一半）。
+// 如果不喜欢纵向输出，打印出来把纸转过来就行 :-)
+//
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;float.h&gt;
+#include &lt;math.h&gt;
+
+#define myPI 3.1415926535897932384626433832795
+
+#define FP double
+#define DWORD unsigned long
+#define CUTOFF       5000
+#define SAMPLERATE  48000
+
+// 取足够多的采样，以便对 20Hz 频率测试 2 次
+#define TESTSAMPLES (SAMPLERATE/20) * 2
+
+//
+// 任何滤波器都可以测试，只要其输出
+// 在 -1 到 1 之间（浮点）。这个滤波器
+// 可以替换成任何你想测试的
+// 滤波器。
+//
+class Filter {
+	FP sdm1;	// 采样数据减 1
+	FP a0;		// 当前采样的乘数因子
+	FP b1;		// sdm1 的乘法因子
+public:
+	Filter (void) {
+		sdm1 = 0;
+		// 无滤波时初始化
+		a0   = 1;
+		b1   = 0;
+	}
+	void init(FP freq, FP samplerate) {
+		FP x;
+		x = exp(-2.0 * myPI * freq / samplerate);
+		sdm1 = 0;
+		a0   = 1.0 - x;
+		b1   = -x;
+	}
+	FP getSample(FP sample) {
+		FP out;
+		out = (a0 * sample) - (b1 * sdm1);
+		sdm1 = out;
+		return out;
+	}
+};
+
+int
+main(void)
+{
+	DWORD  freq;
+	DWORD  spos;
+	double sIn;
+	double sOut;
+	double tIn;
+	double tOut;
+	double dB;
+	DWORD  tmp;
+
+	// 定义测试滤波器
+	Filter filter;
+
+	printf("                  9bB     6dB            3dB                         0dB\n");
+	printf(" freq    dB        |       |              |                           | \n");
+
+	// 测试频率 20 - 20020，步长 100 Hz
+	for (freq=20; freq&lt;20020; freq+=100) {
+
+		// （重新）初始化滤波器
+		filter.init(CUTOFF, SAMPLERATE);
+
+		// 在此让滤波器自行处理
+		tIn = tOut = 0;
+		for (spos=0; spos&lt;TESTSAMPLES; spos++) {
+			sIn  = sin((2 * myPI * spos * freq) / SAMPLERATE);
+			sOut = filter.getSample(sIn);
+			if ((sOut&gt;1) || (sOut&lt;-1)) {
+				// 若滤波器不合格，停止测试
+				printf("Error! Clipping!\n");
+				return(1);
+			}
+			if (sIn &gt;0) tIn  += sIn;
+			if (sIn &lt;0) tIn  -= sIn;
+			if (sOut&gt;0) tOut += sOut;
+			if (sOut&lt;0) tOut -= sOut;
+		}
+
+		// 分析结果
+		dB = 20*log(tIn/tOut);
+		printf("%5d %5.1f ", freq, dB);
+		tmp = (DWORD)(60.0/pow(2, (dB/3)));
+		while (tmp) {
+			putchar('#');
+			tmp--;
+		}
+		putchar('\n');
+	}
+	return 0;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2008-01-01 20:45:13</strong> · niels m.</p>
+<pre><code>You need to change the log() to log10() to get the correct answer in dB's.
+
+You can also replace the if(sIn &gt;0) .. -= sOut; by:
+
+tIn += sIn*sIn;
+tOut += sOut*sOut;
+
+this will measure signal power instead of amplitude. If you do this, you also need to change 20*log10() to 10*log10().
+
+Nice and useful tool for exploring filters. Thanks!</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Filters/251-plot-filter-analyze-filter-characteristics.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Filters/251-plot-filter-analyze-filter-characteristics.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

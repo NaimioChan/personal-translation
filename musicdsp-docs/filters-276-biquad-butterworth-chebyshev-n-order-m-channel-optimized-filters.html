@@ -1,0 +1,2558 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biquad、Butterworth、Chebyshev N 阶 M 通道优化滤波器 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：Biquad、Butterworth、Chebyshev N 阶 M 通道优化滤波器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Biquad、Butterworth、Chebyshev N 阶 M 通道优化滤波器</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>moc.oohay@nniveht</li>
+<li><strong>类型：</strong>低通、高通、带通、带阻、搁架、陷波、提升</li>
+<li><strong>创建时间：</strong>2009-11-16 08:46:34</li>
+</ul>
+<pre><code>/*
+
+"A Collection of Useful C++ Classes for Digital Signal Processing"
+By Vincent Falco
+
+Please direct all comments to either the music-dsp mailing list or
+the DSP and Plug-in Development forum:
+
+	http://music.columbia.edu/cmc/music-dsp/
+
+	http://www.kvraudio.com/forum/viewforum.php?f=33
+	http://www.kvraudio.com/forum/
+
+Support is provided for performing N-order Dsp floating point filter
+operations on M-channel data with a caller specified floating point type.
+The implementation breaks a high order IIR filter down into a series of
+cascaded second order stages. Tests conclude that numerical stability is
+maintained even at higher orders. For example the Butterworth low pass
+filter is stable at up to 53 poles.
+
+Processing functions are provided to use either Direct Form I or Direct
+Form II of the filter transfer function. Direct Form II is slightly faster
+but can cause discontinuities in the output if filter parameters are changed
+during processing. Direct Form I is slightly slower, but maintains fidelity
+even when parameters are changed during processing.
+
+To support fast parameter changes, filters provide two functions for
+adjusting parameters. A high accuracy Setup() function, and a faster
+form called SetupFast() that uses approximations for trigonometric
+functions. The approximations work quite well and should be suitable for
+most applications.
+
+Channels are stored in an interleaved format with M samples per frame
+arranged contiguously. A single class instance can process all M channels
+simultaneously in an efficient manner. A 'skip' parameter causes the
+processing function to advance by skip additional samples in the destination
+buffer in between every frame. Through manipulation of the skip paramter it
+is possible to exclude channels from processing (for example, only processing
+the left half of stereo interleaved data). For multichannel data which is
+not interleaved, it will be necessary to instantiate multiple instance of
+the filter and set skip=0.
+
+There are a few other utility classes and functions included that may prove useful.
+
+Classes:
+
+Complex
+CascadeStages
+	Biquad
+		BiquadLowPass
+		BiquadHighPass
+		BiquadBandPass1
+		BiquadBandPass2
+		BiquadBandStop
+		BiquadAllPass
+		BiquadPeakEq
+		BiquadLowShelf
+		BiquadHighShelf
+	PoleFilter
+		Butterworth
+			ButterLowPass
+			ButterHighPass
+			ButterBandPass
+			ButterBandStop
+		Chebyshev1
+			Cheby1LowPass
+			Cheby1HighPass
+			Cheby1BandPass
+			Cheby1BandStop
+		Chebyshev2
+			Cheby2LowPass
+			Cheby2HighPass
+			Cheby2BandPass
+			Cheby2BandStop
+EnvelopeFollower
+AutoLimiter
+
+Functions:
+
+	zero()
+	copy()
+	mix()
+	scale()
+
+	interleave()
+	deinterleave()
+
+Order for PoleFilter derived classes is specified in the number of poles,
+except for band pass and band stop filters, for which the number of pole pairs
+is specified.
+
+For some filters there are two versions of Setup(), the one called
+SetupFast() uses approximations to trigonometric functions for speed.
+This is an option if you are doing frequent parameter changes to the filter.
+
+There is an example function at the bottom that shows how to use the classes.
+
+Filter ideas are based on a java applet (http://www.falstad.com/dfilter/)
+developed by Paul Falstad.
+
+All of this code was written by the author Vincent Falco except where marked.
+
+--------------------------------------------------------------------------------
+
+License: MIT License (http://www.opensource.org/licenses/mit-license.php)
+Copyright (c) 2009 by Vincent Falco
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+ *
+ */
+/*
+	待办事项：
+
+	- 为 Butterworth、Chebyshev 和 Elliptic 增加搁架、峰值、全通类型。
+
+		Biquad 已有这些版本，我希望其他类型也有。
+		如果高阶滤波器能带一个用于共振的 "Q" 参数就更好了，
+		但我不指望奇迹，那需要重新分配极点和零点。
+		不过要是哪里有相关论文或代码……
+		我可以把它加进去。
+
+	- 非正规数的测试与修复
+
+		我想知道非正规数是否会成为问题。如果是，最好有一个
+		能复现非正规数问题的小函数。这样我就能在
+		各种条件下测试修复效果。我会把这个函数作为
+		"单元测试"对象放进头文件，方便任何人验证其
+		正确性。不过我还有点摸不着头绪。
+
+	- 针对 stages=1、channels={1,2} 的优化模板特化
+
+		有些明显的优化我留到 "最后" 再做。
+		在代码定稿之前我不想动手。
+
+	- 针对 SSE 及其他特殊指令的优化模板特化
+
+	- 用于快速改参数的优化三角函数
+
+	- 基于椭圆曲线的滤波器系数
+
+	- 更多用于操作样本缓冲区的工具函数
+
+	- 需要 pow( 10, x ) 的快速版本
+*/
+
+#ifndef __DSP_FILTER__
+#define __DSP_FILTER__
+
+#include &lt;cmath&gt;
+#include &lt;cfloat&gt;
+#include &lt;assert.h&gt;
+#include &lt;memory.h&gt;
+#include &lt;stdlib.h&gt;
+
+//#define DSP_USE_STD_COMPLEX
+
+#ifdef DSP_USE_STD_COMPLEX
+#include &lt;complex&gt;
+#endif
+
+#define DSP_SSE3_OPTIMIZED
+
+#ifdef DSP_SSE3_OPTIMIZED
+	//#include &lt;xmmintrin.h&gt;
+	//#include &lt;emmintrin.h&gt;
+	#include &lt;pmmintrin.h&gt;
+#endif
+
+namespace Dsp
+{
+	//--------------------------------------------------------------------------
+	// 警告：这里有模板
+	//--------------------------------------------------------------------------
+
+	//--------------------------------------------------------------------------
+	//
+	//	配置
+	//
+	//--------------------------------------------------------------------------
+
+	// 无论滤波器处理的样本类型是什么（例如
+	// float 或 double），所有计算都用 double（或
+	// 更高精度）进行，以保证稳定性与精度。此项控制计算所用的
+	// 底层类型：
+	typedef double CalcT;
+
+	typedef int		Int32;	// 必须为 32 位
+	typedef __int64 Int64;	// 必须为 64 位
+
+	// 用于防止出现非正规数。 
+	const CalcT vsa=1.0 / 4294967295.0; // 当 CalcT 为 float 时
+
+	// 这些常量非常重要，所以我另存了一份。若你提高了
+	// CalcT 的精度，务必为它们补上更多有效数字。
+	const CalcT kPi		=3.1415926535897932384626433832795;
+	const CalcT kPi_2	=1.57079632679489661923;
+	const CalcT kLn2    =0.693147180559945309417;
+	const CalcT kLn10	=2.30258509299404568402;
+
+	//--------------------------------------------------------------------------
+
+	// &lt;math.h&gt; 中缺少的一些函数
+	template&lt;typename T&gt;
+	inline T acosh( T x )
+	{
+		return log( x+::sqrt(x*x-1) );
+	}
+
+	//--------------------------------------------------------------------------
+	//
+	//	快速三角函数
+	//
+	//--------------------------------------------------------------------------
+
+	// 给定角度下正弦与余弦的三种近似。
+	// 例程越快，误差越大。
+	// 来源 http://lab.polygonal.de/2007/07/18/fast-and-accurate-sinecosine-approximation/
+
+	// 为最大极点稳定性而调校。r 必须在 0..pi 范围内
+	// 该近似在较大角度下明显失效。
+	// 仅作教学用途收录。
+	inline void fastestsincos( CalcT r, CalcT *sn, CalcT *cs )
+	{
+		const CalcT c=0.70710678118654752440; // sqrt(2)/2
+		CalcT v=(2-4*c)*r*r+c;
+		if(r&lt;kPi_2)
+		{
+			*sn=v+r; *cs=v-r;
+		}
+		else
+		{
+			*sn=r+v; *cs=r-v;
+		}
+	}
+
+	// 精度低于 ::fastsincos()，但仍可用
+	inline void fastersincos( CalcT x, CalcT *sn, CalcT *cs )
+	{
+		//始终将输入角度折算到 -PI..PI
+		if		(x &lt; -kPi) x += 2*kPi;
+		else if (x &gt;  kPi) x -= 2*kPi;
+		//计算正弦
+		if (x &lt; 0)	*sn = 1.27323954 * x + 0.405284735 * x * x;
+		else		*sn = 1.27323954 * x - 0.405284735 * x * x;
+		//计算余弦：sin(x + PI/2) = cos(x)
+		x += kPi_2;
+		if (x &gt; kPi ) x -= 2*kPi;
+		if (x &lt; 0)	*cs = 1.27323954 * x + 0.405284735 * x * x;
+		else		*cs = 1.27323954 * x - 0.405284735 * x * x;
+	}
+
+	// 比 ::fastersincos() 慢，但仍快于
+	// sin()，且在这些例程中精度最高。
+	inline void fastsincos( CalcT x, CalcT *sn, CalcT *cs )
+	{
+		CalcT s, c;
+		//始终将输入角度折算到 -PI..PI
+			 if (x &lt; -kPi) x += 2*kPi;
+		else if (x &gt;  kPi) x -= 2*kPi;
+		//计算正弦
+		if (x &lt; 0)
+		{
+			s = 1.27323954 * x + .405284735 * x * x;
+			if (s &lt; 0)	s = .225 * (s * -s - s) + s;
+			else		s = .225 * (s *  s - s) + s;
+		}
+		else
+		{
+			s = 1.27323954 * x - 0.405284735 * x * x;
+			if (s &lt; 0)	s = .225 * (s * -s - s) + s;
+			else		s = .225 * (s *  s - s) + s;
+		}
+		*sn=s;
+		//计算余弦：sin(x + PI/2) = cos(x)
+		x += kPi_2;
+		if (x &gt; kPi ) x -= 2*kPi;
+		if (x &lt; 0)
+		{
+			c = 1.27323954 * x + 0.405284735 * x * x;
+			if (c &lt; 0)	c = .225 * (c * -c - c) + c;
+			else		c = .225 * (c *  c - c) + c;
+		}
+		else
+		{
+			c = 1.27323954 * x - 0.405284735 * x * x;
+			if (c &lt; 0)	c = .225 * (c * -c - c) + c;
+			else		c = .225 * (c *  c - c) + c;
+		}
+		*cs=c;
+	}
+
+	// sqrt() 的更快近似
+	//	来源 http://ilab.usc.edu/wiki/index.php/Fast_Square_Root
+	//	例程越快，近似误差越大。
+
+	// 以 2 为底的对数近似
+	// 比 sqrt() 快 5 倍
+
+	inline float fastsqrt1( float x )  
+	{
+		union { Int32 i; float x; } u;
+		u.x = x;
+		u.i = (Int32(1)&lt;&lt;29) + (u.i &gt;&gt; 1) - (Int32(1)&lt;&lt;22); 
+		return u.x;
+	}
+
+	inline double fastsqrt1( double x )  
+	{
+		union { Int64 i; double x; } u;
+		u.x = x;
+		u.i = (Int64(1)&lt;&lt;61) + (u.i &gt;&gt; 1) - (Int64(1)&lt;&lt;51); 
+		return u.x;
+	}
+
+	// 以 2 为底的对数近似，多一步巴比伦迭代
+	// 比 sqrt() 快 2 倍
+
+	inline float fastsqrt2( float x )  
+	{
+		float v=fastsqrt1( x );
+		v = 0.5f * (v + x/v); // 一步巴比伦迭代
+		return v;
+	}
+
+	inline double fastsqrt2(const double x)  
+	{
+		double v=fastsqrt1( x );
+		v = 0.5f * (v + x/v); // 一步巴比伦迭代
+		return v;
+	}
+
+	// 以 2 为底的对数近似，多两步巴比伦迭代
+	// 比 sqrt() 快 50%
+
+	inline float fastsqrt3( float x )  
+	{
+		float v=fastsqrt1( x );
+		v =		   v + x/v;
+		v = 0.25f* v + x/v; // 两步巴比伦迭代
+		return v;
+	}
+
+	inline double fastsqrt3(const double x)  
+	{
+		double v=fastsqrt1( x );
+		v =		   v + x/v;
+		v = 0.25 * v + x/v; // 两步巴比伦迭代
+		return v;
+	}
+
+	//--------------------------------------------------------------------------
+	//
+	//	复数
+	//
+	//--------------------------------------------------------------------------
+
+#ifdef DSP_USE_STD_COMPLEX
+
+	template&lt;typename T&gt;
+	inline std::complex&lt;T&gt; polar( const T &amp;m, const T &amp;a )
+	{
+		return std::polar( m, a );
+	}
+
+	template&lt;typename T&gt;
+	inline T norm( const std::complex&lt;T&gt; &amp;c )
+	{
+		return std::norm( c );
+	}
+
+	template&lt;typename T&gt;
+	inline T abs( const std::complex&lt;T&gt; &amp;c )
+	{
+		return std::abs(c);
+	}
+
+	template&lt;typename T, typename To&gt;
+	inline std::complex&lt;T&gt; addmul( const std::complex&lt;T&gt; &amp;c, T v, const std::complex&lt;To&gt; &amp;c1 )
+	{
+		return std::complex&lt;T&gt;( c.real()+v*c1.real(), c.imag()+v*c1.imag() );
+	}
+
+	template&lt;typename T&gt;
+	inline T arg( const std::complex&lt;T&gt; &amp;c )
+	{
+		return std::arg( c );
+	}
+
+	template&lt;typename T&gt;
+	inline std::complex&lt;T&gt; recip( const std::complex&lt;T&gt; &amp;c )
+	{
+		T n=1.0/Dsp::norm(c);
+		return std::complex&lt;T&gt;( n*c.real(), n*c.imag() );
+	}
+	template&lt;typename T&gt;
+	inline std::complex&lt;T&gt; sqrt( const std::complex&lt;T&gt; &amp;c )
+	{
+		return std::sqrt( c );
+	}
+
+	typedef std::complex&lt;CalcT&gt; Complex;
+
+#else
+
+	//--------------------------------------------------------------------------
+
+	// 多备几个轮子总没错，万一有一个瘪了。
+
+	template&lt;typename T&gt;
+	struct ComplexT
+	{
+		ComplexT();
+		ComplexT( T r_, T i_=0 );
+
+		template&lt;typename To&gt;
+		ComplexT( const ComplexT&lt;To&gt; &amp;c );
+
+		T			imag		( void ) const;
+		T			real		( void ) const;
+
+		ComplexT &amp;	neg			( void );
+		ComplexT &amp;	conj		( void );
+
+		template&lt;typename To&gt;
+		ComplexT &amp;	add			( const ComplexT&lt;To&gt; &amp;c );
+		template&lt;typename To&gt;
+		ComplexT &amp;	sub			( const ComplexT&lt;To&gt; &amp;c );
+		template&lt;typename To&gt;
+		ComplexT &amp;	mul			( const ComplexT&lt;To&gt; &amp;c );
+		template&lt;typename To&gt;
+		ComplexT &amp;	div			( const ComplexT&lt;To&gt; &amp;c );
+		template&lt;typename To&gt;
+		ComplexT &amp;	addmul		( T v, const ComplexT&lt;To&gt; &amp;c );
+
+		ComplexT	operator-	( void ) const;
+
+		ComplexT	operator+	( T v ) const;
+		ComplexT	operator-	( T v ) const;
+		ComplexT	operator*	( T v ) const;
+		ComplexT	operator/	( T v ) const;
+
+		ComplexT &amp;	operator+=	( T v );
+		ComplexT &amp;	operator-=	( T v );
+		ComplexT &amp;	operator*=	( T v );
+		ComplexT &amp;	operator/=	( T v );
+
+		template&lt;typename To&gt;
+		ComplexT	operator+	( const ComplexT&lt;To&gt; &amp;c ) const;
+		template&lt;typename To&gt;
+		ComplexT	operator-	( const ComplexT&lt;To&gt; &amp;c ) const;
+		template&lt;typename To&gt;
+		ComplexT	operator*	( const ComplexT&lt;To&gt; &amp;c ) const;
+		template&lt;typename To&gt;
+		ComplexT	operator/	( const ComplexT&lt;To&gt; &amp;c ) const;
+
+		template&lt;typename To&gt;
+		ComplexT &amp;	operator+=	( const ComplexT&lt;To&gt; &amp;c );
+		template&lt;typename To&gt;
+		ComplexT &amp;	operator-=	( const ComplexT&lt;To&gt; &amp;c );
+		template&lt;typename To&gt;
+		ComplexT &amp;	operator*=	( const ComplexT&lt;To&gt; &amp;c );
+		template&lt;typename To&gt;
+		ComplexT &amp;	operator/=	( const ComplexT&lt;To&gt; &amp;c );
+
+	private:
+		ComplexT &amp;	add			( T v );
+		ComplexT &amp;	sub			( T v );
+		ComplexT &amp;	mul			( T c, T d );
+		ComplexT &amp;	mul			( T v );
+		ComplexT &amp;	div			( T v );
+
+		T r;
+		T i;
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt;::ComplexT()
+	{
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt;::ComplexT( T r_, T i_ )
+	{
+		r=r_;
+		i=i_;
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt;::ComplexT( const ComplexT&lt;To&gt; &amp;c )
+	{
+		r=c.r;
+		i=c.i;
+	}
+
+	template&lt;typename T&gt;
+	inline T ComplexT&lt;T&gt;::imag( void ) const
+	{
+		return i;
+	}
+
+	template&lt;typename T&gt;
+	inline T ComplexT&lt;T&gt;::real( void ) const
+	{
+		return r;
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::neg( void )
+	{
+		r=-r;
+		i=-i;
+		return *this;
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::conj( void )
+	{
+		i=-i;
+		return *this;
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::add( T v )
+	{
+		r+=v;
+		return *this;
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::sub( T v )
+	{
+		r-=v;
+		return *this;
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::mul( T c, T d )
+	{
+		T ac=r*c;
+		T bd=i*d;
+		// 必须先处理 i
+		i=(r+i)*(c+d)-(ac+bd);
+		r=ac-bd;
+		return *this;
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::mul( T v )
+	{
+		r*=v;
+		i*=v;
+		return *this;
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::div( T v )
+	{
+		r/=v;
+		i/=v;
+		return *this;
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::add( const ComplexT&lt;To&gt; &amp;c )
+	{
+		r+=c.r;
+		i+=c.i;
+		return *this;
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::sub( const ComplexT&lt;To&gt; &amp;c )
+	{
+		r-=c.r;
+		i-=c.i;
+		return *this;
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::mul( const ComplexT&lt;To&gt; &amp;c )
+	{
+		return mul( c.r, c.i );
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::div( const ComplexT&lt;To&gt; &amp;c )
+	{
+		T s=1.0/norm(c);
+		return mul( c.r*s, -c.i*s );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; ComplexT&lt;T&gt;::operator-( void ) const
+	{
+		return ComplexT&lt;T&gt;(*this).neg();
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; ComplexT&lt;T&gt;::operator+( T v ) const
+	{
+		return ComplexT&lt;T&gt;(*this).add( v );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; ComplexT&lt;T&gt;::operator-( T v ) const
+	{
+		return ComplexT&lt;T&gt;(*this).sub( v );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; ComplexT&lt;T&gt;::operator*( T v ) const
+	{
+		return ComplexT&lt;T&gt;(*this).mul( v );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; ComplexT&lt;T&gt;::operator/( T v ) const
+	{
+		return ComplexT&lt;T&gt;(*this).div( v );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::operator+=( T v )
+	{
+		return add( v );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::operator-=( T v )
+	{
+		return sub( v );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::operator*=( T v )
+	{
+		return mul( v );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::operator/=( T v )
+	{
+		return div( v );
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; ComplexT&lt;T&gt;::operator+( const ComplexT&lt;To&gt; &amp;c ) const
+	{
+		return ComplexT&lt;T&gt;(*this).add(c);
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; ComplexT&lt;T&gt;::operator-( const ComplexT&lt;To&gt; &amp;c ) const
+	{
+		return ComplexT&lt;T&gt;(*this).sub(c);
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; ComplexT&lt;T&gt;::operator*( const ComplexT&lt;To&gt; &amp;c ) const
+	{
+		return ComplexT&lt;T&gt;(*this).mul(c);
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; ComplexT&lt;T&gt;::operator/( const ComplexT&lt;To&gt; &amp;c ) const
+	{
+		return ComplexT&lt;T&gt;(*this).div(c);
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::operator+=( const ComplexT&lt;To&gt; &amp;c )
+	{
+		return add( c );
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::operator-=( const ComplexT&lt;To&gt; &amp;c )
+	{
+		return sub( c );
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::operator*=( const ComplexT&lt;To&gt; &amp;c )
+	{
+		return mul( c );
+	}
+
+	template&lt;typename T&gt;
+	template&lt;typename To&gt;
+	inline ComplexT&lt;T&gt; &amp;ComplexT&lt;T&gt;::operator/=( const ComplexT&lt;To&gt; &amp;c )
+	{
+		return div( c );
+	}
+
+	//--------------------------------------------------------------------------
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; polar( const T &amp;m, const T &amp;a )
+	{
+		return ComplexT&lt;T&gt;( m*cos(a), m*sin(a) );
+	}
+
+	template&lt;typename T&gt;
+	inline T norm( const ComplexT&lt;T&gt; &amp;c )
+	{
+		return c.real()*c.real()+c.imag()*c.imag();
+	}
+
+	template&lt;typename T&gt;
+	inline T abs( const ComplexT&lt;T&gt; &amp;c )
+	{
+		return ::sqrt( c.real()*c.real()+c.imag()*c.imag() );
+	}
+
+	template&lt;typename T, typename To&gt;
+	inline ComplexT&lt;T&gt; addmul( const ComplexT&lt;T&gt; &amp;c, T v, const ComplexT&lt;To&gt; &amp;c1 )
+	{
+		return ComplexT&lt;T&gt;( c.real()+v*c1.real(), c.imag()+v*c1.imag() );
+	}
+
+	template&lt;typename T&gt;
+	inline T arg( const ComplexT&lt;T&gt; &amp;c )
+	{
+		return atan2( c.imag(), c.real() );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; recip( const ComplexT&lt;T&gt; &amp;c )
+	{
+		T n=1.0/norm(c);
+		return ComplexT&lt;T&gt;( n*c.real(), -n*c.imag() );
+	}
+
+	template&lt;typename T&gt;
+	inline ComplexT&lt;T&gt; sqrt( const ComplexT&lt;T&gt; &amp;c )
+	{
+		return polar( ::sqrt(abs(c)), arg(c)*0.5 );
+	}
+
+	//--------------------------------------------------------------------------
+
+	typedef ComplexT&lt;CalcT&gt; Complex;
+
+#endif
+
+	//--------------------------------------------------------------------------
+	//
+	//	数值分析
+	//
+	//--------------------------------------------------------------------------
+
+	// Brent 法的实现来自
+	// John D. Cook（http://www.johndcook.com/）
+
+	// Minimize 的返回值是函数 f 的最小值。
+	// f 取得最小值的位置通过变量 minLoc 返回。
+	// 记法与实现基于 Richard Brent 著作第 5 章
+	// 《Algorithms for Minimization Without Derivatives》。
+
+	template&lt;class TFunction&gt;
+	CalcT BrentMinimize
+	(
+		TFunction&amp; f,	// [in] 待最小化的目标函数
+		CalcT leftEnd,	// [in] 包围区间的较小值
+		CalcT rightEnd,	// [in] 包围区间的较大值
+		CalcT epsilon,	// [in] 停止容差
+		CalcT&amp; minLoc	// [out] 最小值位置
+	)
+	{
+		CalcT d, e, m, p, q, r, tol, t2, u, v, w, fu, fv, fw, fx;
+		static const CalcT c = 0.5*(3.0 - ::sqrt(5.0));
+		static const CalcT SQRT_DBL_EPSILON = ::sqrt(DBL_EPSILON);
+
+		CalcT&amp; a = leftEnd; CalcT&amp; b = rightEnd; CalcT&amp; x = minLoc;
+
+		v = w = x = a + c*(b - a); d = e = 0.0;
+		fv = fw = fx = f(x);
+		int counter = 0;
+	loop:
+		counter++;
+		m = 0.5*(a + b);
+		tol = SQRT_DBL_EPSILON*::fabs(x) + epsilon; t2 = 2.0*tol;
+		// 检查停止条件
+		if (::fabs(x - m) &gt; t2 - 0.5*(b - a))
+		{
+			p = q = r = 0.0;
+			if (::fabs(e) &gt; tol)
+			{
+				// 拟合抛物线
+				r = (x - w)*(fx - fv);
+				q = (x - v)*(fx - fw);
+				p = (x - v)*q - (x - w)*r;
+				q = 2.0*(q - r);
+				(q &gt; 0.0) ? p = -p : q = -q;
+				r = e; e = d;
+			}
+			if (::fabs(p) &lt; ::fabs(0.5*q*r) &amp;&amp; p &lt; q*(a - x) &amp;&amp; p &lt; q*(b - x))
+			{
+				// 一步抛物线插值
+				d = p/q;
+				u = x + d;
+				// f 的求值点不能离 a 或 b 太近
+				if (u - a &lt; t2 || b - u &lt; t2)
+					d = (x &lt; m) ? tol : -tol;
+			}
+			else
+			{
+				// 一步黄金分割
+				e = (x &lt; m) ? b : a;
+				e -= x;
+				d = c*e;
+			}
+			// f 的求值点不能离 x 太近
+			if (::fabs(d) &gt;= tol)
+				u = x + d;
+			else if (d &gt; 0.0)
+				u = x + tol;
+			else
+				u = x - tol;
+			fu = f(u);
+			// 更新 a、b、v、w 和 x
+			if (fu &lt;= fx)
+			{
+				(u &lt; x) ? b = x : a = x;
+				v = w; fv = fw; 
+				w = x; fw = fx; 
+				x = u; fx = fu;
+			}
+			else
+			{
+				(u &lt; x) ? a = u : b = u;
+				if (fu &lt;= fw || w == x)
+				{
+					v = w; fv = fw; 
+					w = u; fw = fu;
+				}
+				else if (fu &lt;= fv || v == x || v == w)
+				{
+					v = u; fv = fu;
+				}
+			}
+			goto loop;  // 是的，就是那个令人畏惧的 goto 语句。但这段代码
+						// 此处忠实于 Brent 的原始伪代码。
+		}
+		return  fx;
+	}
+
+	//--------------------------------------------------------------------------
+	//
+	//	无限脉冲响应滤波器
+	//
+	//--------------------------------------------------------------------------
+
+	// 使用多个二阶节实现的 IIR 滤波器。
+
+	class CascadeFilter
+	{
+	public:
+		// 使用直接 I 型原地处理数据
+		// 每帧之后加入 skip。
+		// 滤波器参数频繁变化时，直接 I 型更合适。
+		// 不过它稍慢一些。
+		template&lt;typename T&gt;
+		void ProcessI( size_t frames, T *dest, int skip=0 );
+
+		// 使用直接 II 型原地处理数据
+		// 每帧之后加入 skip。
+		// 直接 II 型比直接 I 型稍快，
+		// 但在运行中改变滤波器参数可能
+		// 导致输出出现不连续。它最适合
+		// 参数只设置一次的滤波器。
+		template&lt;typename T&gt;
+		void ProcessII( size_t frames, T *dest, int skip=0 );
+
+		// 便捷函数，仅调用 ProcessI。
+		// 可随意更改其实现。
+		template&lt;typename T&gt;
+		void Process( size_t frames, T *dest, int skip=0 );
+
+		// 确定角频率处的响应（0&lt;=w&lt;=kPi）
+		Complex	Response( CalcT w );
+
+		// 清空历史缓冲区。
+		void Clear( void );
+
+	protected:
+		struct Hist;
+		struct Stage;
+
+		// for m_nchan==2
+#ifdef DSP_SSE3_OPTIMIZED
+		template&lt;typename T&gt;
+		void ProcessISSEStageStereo( size_t frames, T *dest, Stage *stage, Hist *h, int skip );
+
+		template&lt;typename T&gt;
+		void ProcessISSEStereo( size_t frames, T *dest, int skip );
+#endif
+
+	protected:
+		void Reset		( void );
+		void Normalize	( CalcT scale );
+		void SetAStage	( CalcT x1, CalcT x2 );
+		void SetBStage	( CalcT x0, CalcT x1, CalcT x2 );
+		void SetStage	( CalcT a1, CalcT a2, CalcT b0, CalcT b1, CalcT b2 );
+
+	protected:
+		struct Hist
+		{
+			CalcT v[4];
+		};
+
+		struct Stage
+		{
+			CalcT a[3];	// a[0] 未使用
+			CalcT b[3];
+			void Reset( void );
+		};
+
+		struct ResponseFunctor
+		{
+			CascadeFilter *m_filter;
+			CalcT operator()( CalcT w );
+			ResponseFunctor( CascadeFilter *filter );
+		};
+
+		int		m_nchan;
+		int		m_nstage;
+		Stage *	m_stagep;
+		Hist *	m_histp;
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;typename T&gt;
+	void CascadeFilter::ProcessI( size_t frames, T *dest, int skip )
+	{
+#ifdef DSP_SSE3_OPTIMIZED
+		if( m_nchan==2 )
+			ProcessISSEStereo( frames, dest, skip );
+		else
+#endif
+		while( frames-- )
+		{
+			Hist *h=m_histp;
+			for( int j=m_nchan;j;j-- )
+			{
+				CalcT in=CalcT(*dest);
+				Stage *s=m_stagep;
+				for( int i=m_nstage;i;i--,h++,s++ )
+				{
+					CalcT out;
+					out=s-&gt;b[0]*in		+ s-&gt;b[1]*h-&gt;v[0] + s-&gt;b[2]*h-&gt;v[1] +
+						s-&gt;a[1]*h-&gt;v[2] + s-&gt;a[2]*h-&gt;v[3];
+					h-&gt;v[1]=h-&gt;v[0]; h-&gt;v[0]=in;
+					h-&gt;v[3]=h-&gt;v[2]; h-&gt;v[2]=out;
+					in=out;
+				}
+				*dest++=T(in);
+			}
+			dest+=skip;
+		}
+	}
+
+	// 好的编译器即使对一般情况也能生成优化代码。
+	// 想让它更快，唯一的办法是
+	// 用汇编或专用指令实现。像这样：
+
+#ifdef DSP_SSE3_OPTIMIZED
+	// 所有 SSE 优化都假定 CalcT 为 double
+	template&lt;typename T&gt;
+	inline void CascadeFilter::ProcessISSEStageStereo(
+		size_t frames, T *dest, Stage *s, Hist *h, int skip )
+	{
+		assert( m_nchan==2 );
+
+#if 1
+		CalcT b0=s-&gt;b[0];
+
+		__m128d m0=_mm_loadu_pd( &amp;s-&gt;a[1] );	// a1 , a2
+		__m128d m1=_mm_loadu_pd( &amp;s-&gt;b[1] );	// b1 , b2
+		__m128d m2=_mm_loadu_pd( &amp;h[0].v[0] );	// h-&gt;v[0] , h-&gt;v[1]
+		__m128d m3=_mm_loadu_pd( &amp;h[0].v[2] );	// h-&gt;v[2] , h-&gt;v[3]
+		__m128d m4=_mm_loadu_pd( &amp;h[1].v[0] );	// h-&gt;v[0] , h-&gt;v[1]
+		__m128d m5=_mm_loadu_pd( &amp;h[1].v[2] );	// h-&gt;v[2] , h-&gt;v[3]
+
+		while( frames-- )
+		{
+			CalcT in, b0in, out;
+
+			__m128d m6;
+			__m128d m7;
+
+			in=CalcT(*dest);
+			b0in=b0*in;
+
+			m6=_mm_mul_pd ( m1, m2 );	// b1*h-&gt;v[0] , b2*h-&gt;v[1]
+			m7=_mm_mul_pd ( m0, m3 );	// a1*h-&gt;v[2] , a2*h-&gt;v[3]
+			m6=_mm_add_pd ( m6, m7 );	// b1*h-&gt;v[0] + a1*h-&gt;v[2], b2*h-&gt;v[1] + a2*h-&gt;v[3]
+			m7=_mm_load_sd( &amp;b0in );	// b0*in , 0
+			m6=_mm_add_sd ( m6, m7 );	// b1*h-&gt;v[0] + a1*h-&gt;v[2] + in*b0 , b2*h-&gt;v[1] + a2*h-&gt;v[3] + 0
+			m6=_mm_hadd_pd( m6, m7 );	// b1*h-&gt;v[0] + a1*h-&gt;v[2] + in*b0 + b2*h-&gt;v[1] + a2*h-&gt;v[3], in*b0
+			   _mm_store_sd( &amp;out, m6 );
+			m6=_mm_loadh_pd( m6, &amp;in );	// out , in
+			m2=_mm_shuffle_pd( m6, m2, _MM_SHUFFLE2( 0, 1 ) ); // h-&gt;v[0]=in , h-&gt;v[1]=h-&gt;v[0]
+			m3=_mm_shuffle_pd( m6, m3, _MM_SHUFFLE2( 0, 0 ) ); // h-&gt;v[2]=out, h-&gt;v[3]=h-&gt;v[2]
+
+			*dest++=T(out);
+
+			in=CalcT(*dest);
+			b0in=b0*in;
+
+			m6=_mm_mul_pd ( m1, m4 );	// b1*h-&gt;v[0] , b2*h-&gt;v[1]
+			m7=_mm_mul_pd ( m0, m5 );	// a1*h-&gt;v[2] , a2*h-&gt;v[3]
+			m6=_mm_add_pd ( m6, m7 );	// b1*h-&gt;v[0] + a1*h-&gt;v[2], b2*h-&gt;v[1] + a2*h-&gt;v[3]
+			m7=_mm_load_sd( &amp;b0in );	// b0*in , 0
+			m6=_mm_add_sd ( m6, m7 );	// b1*h-&gt;v[0] + a1*h-&gt;v[2] + in*b0 , b2*h-&gt;v[1] + a2*h-&gt;v[3] + 0
+			m6=_mm_hadd_pd( m6, m7 );	// b1*h-&gt;v[0] + a1*h-&gt;v[2] + in*b0 + b2*h-&gt;v[1] + a2*h-&gt;v[3], in*b0
+			   _mm_store_sd( &amp;out, m6 );
+			m6=_mm_loadh_pd( m6, &amp;in );	// out , in
+			m4=_mm_shuffle_pd( m6, m4, _MM_SHUFFLE2( 0, 1 ) ); // h-&gt;v[0]=in , h-&gt;v[1]=h-&gt;v[0]
+			m5=_mm_shuffle_pd( m6, m5, _MM_SHUFFLE2( 0, 0 ) ); // h-&gt;v[2]=out, h-&gt;v[3]=h-&gt;v[2]
+
+			*dest++=T(out);
+
+			dest+=skip;
+		}
+
+		// 将历史值从寄存器移回状态
+		_mm_storeu_pd( &amp;h[0].v[0], m2 );
+		_mm_storeu_pd( &amp;h[0].v[2], m3 );
+		_mm_storeu_pd( &amp;h[1].v[0], m4 );
+		_mm_storeu_pd( &amp;h[1].v[2], m5 );
+
+#else
+		// 汇编代码据此建模的模板特化版本
+		CalcT a1=s-&gt;a[1];
+		CalcT a2=s-&gt;a[2];
+		CalcT b0=s-&gt;b[0];
+		CalcT b1=s-&gt;b[1];
+		CalcT b2=s-&gt;b[2];
+		while( frames-- )
+		{
+			CalcT in, out;
+
+			in=CalcT(*dest);
+			out=b0*in+b1*h[0].v[0]+b2*h[0].v[1] +a1*h[0].v[2]+a2*h[0].v[3];
+			h[0].v[1]=h[0].v[0]; h[0].v[0]=in;
+			h[0].v[3]=h[0].v[2]; h[0].v[2]=out;
+			in=out;
+			*dest++=T(in);
+
+			in=CalcT(*dest);
+			out=b0*in+b1*h[1].v[0]+b2*h[1].v[1] +a1*h[1].v[2]+a2*h[1].v[3];
+			h[1].v[1]=h[1].v[0]; h[1].v[0]=in;
+			h[1].v[3]=h[1].v[2]; h[1].v[2]=out;
+			in=out;
+			*dest++=T(in);
+
+			dest+=skip;
+		}
+#endif
+	}
+
+	// 注意这里可能有精度损失。与 Process...() 的
+	// 原始版本不同，我们把每个节应用到全部输入数据上。
+	// 由于底层类型 T 可能是 float，此函数的结果
+	// 可能与未优化版本不同。不过它快得多。
+	template&lt;typename T&gt;
+	void CascadeFilter::ProcessISSEStereo( size_t frames, T *dest, int skip )
+	{
+		assert( m_nchan==2 );
+		Stage *s=m_stagep;
+		Hist *h=m_histp;
+		for( int i=m_nstage;i;i--,h+=2,s++ )
+		{
+			ProcessISSEStageStereo( frames, dest, s, h, skip );
+		}
+	}
+
+#endif
+
+	template&lt;typename T&gt;
+	void CascadeFilter::ProcessII( size_t frames, T *dest, int skip )
+	{
+		while( frames-- )
+		{
+			Hist *h=m_histp;
+			for( int j=m_nchan;j;j-- )
+			{
+				CalcT in=CalcT(*dest);
+				Stage *s=m_stagep;
+				for( int i=m_nstage;i;i--,h++,s++ )
+				{
+					CalcT d2=h-&gt;v[2]=h-&gt;v[1];
+					CalcT d1=h-&gt;v[1]=h-&gt;v[0];
+					CalcT d0=h-&gt;v[0]=
+						in+s-&gt;a[1]*d1 + s-&gt;a[2]*d2;
+						in=s-&gt;b[0]*d0 + s-&gt;b[1]*d1 + s-&gt;b[2]*d2;
+				}
+				*dest++=T(in);
+			}
+			dest+=skip;
+		}
+	}
+
+	template&lt;typename T&gt;
+	inline void CascadeFilter::Process( size_t frames, T *dest, int skip )
+	{
+		ProcessI( frames, dest, skip );
+	}
+
+	inline Complex CascadeFilter::Response( CalcT w )
+	{
+		Complex ch( 1 );
+		Complex cbot( 1 );
+		Complex czn1=polar( 1., -w );
+		Complex czn2=polar( 1., -2*w );
+
+		Stage *s=m_stagep;
+		for( int i=m_nstage;i;i-- )
+		{
+			Complex ct( s-&gt;b[0] );
+			Complex cb( 1 );
+			ct=addmul( ct,  s-&gt;b[1], czn1 );
+			cb=addmul( cb, -s-&gt;a[1], czn1 );
+			ct=addmul( ct,  s-&gt;b[2], czn2 );
+			cb=addmul( cb, -s-&gt;a[2], czn2 );
+			ch*=ct;
+			cbot*=cb;
+			s++;
+		}
+
+		return ch/cbot;
+	}
+
+	inline void CascadeFilter::Clear( void )
+	{
+		::memset( m_histp, 0, m_nstage*m_nchan*sizeof(m_histp[0]) );
+	}
+
+	inline void CascadeFilter::Stage::Reset( void )
+	{
+				a[1]=0; a[2]=0;
+		b[0]=1; b[1]=0; b[2]=0;
+	}
+
+	inline void CascadeFilter::Reset( void )
+	{
+		Stage *s=m_stagep;
+		for( int i=m_nstage;i;i--,s++ )
+			s-&gt;Reset();
+	}
+
+	// 将缩放因子应用到各级系数。
+	inline void CascadeFilter::Normalize( CalcT scale )
+	{
+		// 我们把归一化全部放进第一个
+		// 节。理论上把它分摊开可能更好，
+		// 以保持数值精度。
+		Stage *s=m_stagep;
+		s-&gt;b[0]*=scale; s-&gt;b[1]*=scale; s-&gt;b[2]*=scale;
+	}
+
+	inline void CascadeFilter::SetAStage( CalcT x1, CalcT x2 )
+	{
+		Stage *s=m_stagep;
+		for( int i=m_nstage;i;i-- )
+		{
+			if( s-&gt;a[1]==0 &amp;&amp; s-&gt;a[2]==0 )
+			{
+				s-&gt;a[1]=x1;
+				s-&gt;a[2]=x2;
+				s=0;
+				break;
+			}
+			if( s-&gt;a[2]==0 &amp;&amp; x2==0 )
+			{
+				s-&gt;a[2]=-s-&gt;a[1]*x1;
+				s-&gt;a[1]+=x1;
+				s=0;
+				break;
+			}
+			s++;
+		}
+		assert( s==0 );
+	}
+
+	inline void CascadeFilter::SetBStage( CalcT x0, CalcT x1, CalcT x2 )
+	{
+		Stage *s=m_stagep;
+		for( int i=m_nstage;i;i-- )
+		{
+			if( s-&gt;b[1]==0 &amp;&amp; s-&gt;b[2]==0 )
+			{
+				s-&gt;b[0]=x0;
+				s-&gt;b[1]=x1;
+				s-&gt;b[2]=x2;
+				s=0;
+				break;
+			}
+			if( s-&gt;b[2]==0 &amp;&amp; x2==0 )
+			{
+				// (b0 + z b1)(x0 + z x1) = (b0 x0 + (b1 x0+b0 x1) z + b1 x1 z^2)
+				s-&gt;b[2]=s-&gt;b[1]*x1;
+				s-&gt;b[1]=s-&gt;b[1]*x0+s-&gt;b[0]*x1;
+				s-&gt;b[0]*=x0;
+				s=0;
+				break;
+			}
+			s++;
+		}
+		assert( s==0 );
+	}
+
+	// 针对双二阶的优化版本
+	inline void CascadeFilter::SetStage(
+		CalcT a1, CalcT a2, CalcT b0, CalcT b1, CalcT b2 )
+	{
+		assert( m_nstage==1 );
+		Stage *s=&amp;m_stagep[0];
+					s-&gt;a[1]=a1; s-&gt;a[2]=a2;
+		s-&gt;b[0]=b0; s-&gt;b[1]=b1; s-&gt;b[2]=b2;
+	}
+
+	inline CalcT CascadeFilter::ResponseFunctor::operator()( CalcT w )
+	{
+		return -Dsp::abs(m_filter-&gt;Response( w ));
+	}
+
+	inline CascadeFilter::ResponseFunctor::ResponseFunctor( CascadeFilter *filter )
+	{
+		m_filter=filter;
+	}
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int stages, int channels&gt;
+	class CascadeStages : public CascadeFilter
+	{
+	public:
+		CascadeStages();
+
+	private:
+		Hist	m_hist	[stages*channels];
+		Stage	m_stage	[stages];
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int stages, int channels&gt;
+	CascadeStages&lt;stages, channels&gt;::CascadeStages( void )
+	{
+		m_nchan=channels;
+		m_nstage=stages;
+		m_stagep=m_stage;
+		m_histp=m_hist;
+		Clear();
+	}
+
+	//--------------------------------------------------------------------------
+	//
+	//	双二阶 IIR 滤波器
+	//
+	//--------------------------------------------------------------------------
+
+	// 公式来自 http://www.musicdsp.org/files/Audio-EQ-Cookbook.txt
+	template&lt;int channels&gt;
+	class Biquad : public CascadeStages&lt;1, channels&gt;
+	{
+	protected:
+		void Setup( const CalcT a[3], const CalcT b[3] );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	inline void Biquad&lt;channels&gt;::Setup( const CalcT a[3], const CalcT b[3] )
+	{
+		Reset();
+		// 变换双二阶系数
+		CalcT ra0=1/a[0];
+		SetAStage( -a[1]*ra0, -a[2]*ra0 );
+		SetBStage(  b[0]*ra0,  b[1]*ra0, b[2]*ra0 );
+	}
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	class BiquadLowPass : public Biquad&lt;channels&gt;
+	{
+	public:
+		void Setup			( CalcT normFreq, CalcT q );
+		void SetupFast		( CalcT normFreq, CalcT q );
+	protected:
+		void SetupCommon	( CalcT sn, CalcT cs, CalcT q );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	inline void BiquadLowPass&lt;channels&gt;::SetupCommon( CalcT sn, CalcT cs, CalcT q  )
+	{
+		CalcT alph = sn / ( 2 * q );
+		CalcT a0 =  1 / ( 1 + alph );
+		CalcT b1 =  1 - cs;
+		CalcT b0 = a0 * b1 * 0.5;
+		CalcT a1 =  2 * cs;
+		CalcT a2 = alph - 1;
+		SetStage( a1*a0, a2*a0, b0, b1*a0, b0 );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadLowPass&lt;channels&gt;::Setup( CalcT normFreq, CalcT q  )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT cs = cos(w0);
+		CalcT sn = sin(w0);
+		SetupCommon( sn, cs, q );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadLowPass&lt;channels&gt;::SetupFast( CalcT normFreq, CalcT q  )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT sn, cs;
+		fastsincos( w0, &amp;sn, &amp;cs );
+		SetupCommon( sn, cs, q );
+	}
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	class BiquadHighPass : public Biquad&lt;channels&gt;
+	{
+	public:
+		void Setup			( CalcT normFreq, CalcT q );
+		void SetupFast		( CalcT normFreq, CalcT q );
+	protected:
+		void SetupCommon	( CalcT sn, CalcT cs, CalcT q );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	inline void BiquadHighPass&lt;channels&gt;::SetupCommon( CalcT sn, CalcT cs, CalcT q  )
+	{
+		CalcT alph = sn / ( 2 * q );
+		CalcT a0 = -1 / ( 1 + alph );
+		CalcT b1 = -( 1 + cs );
+		CalcT b0 = a0 * b1 * -0.5;
+		CalcT a1 = -2 * cs;
+		CalcT a2 =  1 - alph;
+		SetStage( a1*a0, a2*a0, b0, b1*a0, b0 );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadHighPass&lt;channels&gt;::Setup( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT cs = cos(w0);
+		CalcT sn = sin(w0);
+		SetupCommon( sn, cs, q );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadHighPass&lt;channels&gt;::SetupFast( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT sn, cs;
+		fastsincos( w0, &amp;sn, &amp;cs );
+		SetupCommon( sn, cs, q );
+	}
+
+	//--------------------------------------------------------------------------
+
+	// 裙边增益恒定，峰值增益 = Q
+	template&lt;int channels&gt;
+	class BiquadBandPass1 : public Biquad&lt;channels&gt;
+	{
+	public:
+		void Setup			( CalcT normFreq, CalcT q );
+		void SetupFast		( CalcT normFreq, CalcT q );
+	protected:
+		void SetupCommon	( CalcT sn, CalcT cs, CalcT q );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	inline void BiquadBandPass1&lt;channels&gt;::SetupCommon( CalcT sn, CalcT cs, CalcT q  )
+	{
+		CalcT alph = sn / ( 2 * q );
+		CalcT a0 = -1 / ( 1 + alph );
+		CalcT b0 = a0 * ( sn * -0.5 );
+		CalcT a1 = -2 * cs;
+		CalcT a2 =  1 - alph;
+		SetStage( a1*a0, a2*a0, b0, 0, -b0 );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadBandPass1&lt;channels&gt;::Setup( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT cs = cos(w0);
+		CalcT sn = sin(w0);
+		SetupCommon( sn, cs, q );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadBandPass1&lt;channels&gt;::SetupFast( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT sn, cs;
+		fastsincos( w0, &amp;sn, &amp;cs );
+		SetupCommon( sn, cs, q );
+	}
+
+	//--------------------------------------------------------------------------
+
+	// 峰值增益恒为 0dB
+	template&lt;int channels&gt;
+	class BiquadBandPass2 : public Biquad&lt;channels&gt;
+	{
+	public:
+		void Setup			( CalcT normFreq, CalcT q );
+		void SetupFast		( CalcT normFreq, CalcT q );
+	protected:
+		void SetupCommon	( CalcT sn, CalcT cs, CalcT q );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	inline void BiquadBandPass2&lt;channels&gt;::SetupCommon( CalcT sn, CalcT cs, CalcT q  )
+	{
+		CalcT alph = sn / ( 2 * q );
+		CalcT b0 = -alph;
+		CalcT b2 =  alph;
+		CalcT a0 = -1 / ( 1 + alph );
+		CalcT a1 = -2 * cs;
+		CalcT a2 =  1 - alph;
+		SetStage( a1*a0, a2*a0, b0*a0, 0, b2*a0 );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadBandPass2&lt;channels&gt;::Setup( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT cs = cos(w0);
+		CalcT sn = sin(w0);
+		SetupCommon( sn, cs, q );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadBandPass2&lt;channels&gt;::SetupFast( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT sn, cs;
+		fastsincos( w0, &amp;sn, &amp;cs );
+		SetupCommon( sn, cs, q );
+	}
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	class BiquadBandStop : public Biquad&lt;channels&gt;
+	{
+	public:
+		void Setup			( CalcT normFreq, CalcT q );
+		void SetupFast		( CalcT normFreq, CalcT q );
+	protected:
+		void SetupCommon	( CalcT sn, CalcT cs, CalcT q );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	inline void BiquadBandStop&lt;channels&gt;::SetupCommon( CalcT sn, CalcT cs, CalcT q  )
+	{
+		CalcT alph = sn / ( 2 * q );
+		CalcT a0 = 1 / ( 1 + alph );
+		CalcT b1 = a0 * ( -2 * cs );
+		CalcT a2 = alph - 1;
+		SetStage( -b1, a2*a0, a0, b1, a0 );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadBandStop&lt;channels&gt;::Setup( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT cs = cos(w0);
+		CalcT sn = sin(w0);
+		SetupCommon( sn, cs, q );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadBandStop&lt;channels&gt;::SetupFast( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT sn, cs;
+		fastsincos( w0, &amp;sn, &amp;cs );
+		SetupCommon( sn, cs, q );
+	}
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	class BiquadAllPass: public Biquad&lt;channels&gt;
+	{
+	public:
+		void Setup			( CalcT normFreq, CalcT q );
+		void SetupFast		( CalcT normFreq, CalcT q );
+	protected:
+		void SetupCommon	( CalcT sn, CalcT cs, CalcT q );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	void BiquadAllPass&lt;channels&gt;::SetupCommon( CalcT sn, CalcT cs, CalcT q  )
+	{
+		CalcT alph = sn / ( 2 * q );
+		CalcT b2 =  1 + alph;
+		CalcT a0 =  1 / b2;
+		CalcT b0 =( 1 - alph ) * a0;
+		CalcT b1 = -2 * cs * a0;
+		SetStage( -b1, -b0, b0, b1, b2*a0 );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadAllPass&lt;channels&gt;::Setup( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT cs = cos(w0);
+		CalcT sn = sin(w0);
+		SetupCommon( sn, cs, q );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadAllPass&lt;channels&gt;::SetupFast( CalcT normFreq, CalcT q )
+	{
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT sn, cs;
+		fastsincos( w0, &amp;sn, &amp;cs );
+		SetupCommon( sn, cs, q );
+	}
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	class BiquadPeakEq: public Biquad&lt;channels&gt;
+	{
+	public:
+		void Setup			( CalcT normFreq, CalcT dB, CalcT bandWidth );
+		void SetupFast		( CalcT normFreq, CalcT dB, CalcT bandWidth );
+	protected:
+		void SetupCommon	( CalcT sn, CalcT cs, CalcT alph, CalcT A );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	inline void BiquadPeakEq&lt;channels&gt;::SetupCommon(
+		CalcT sn, CalcT cs, CalcT alph, CalcT A )
+	{
+		CalcT t=alph*A;
+		CalcT b0 =  1 - t;
+		CalcT b2 =  1 + t;
+		t=alph/A;
+		CalcT a0 =  1 / ( 1 + t );
+		CalcT a2 =  t - 1;
+		CalcT b1 = a0 * ( -2 * cs );
+		CalcT a1 = -b1;
+
+		SetStage( a1, a2*a0, b0*a0, b1, b2*a0 );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadPeakEq&lt;channels&gt;::Setup( CalcT normFreq, CalcT dB, CalcT bandWidth )
+	{
+		CalcT A  = pow( 10, dB/40 );
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT cs = cos(w0);
+		CalcT sn = sin(w0);
+		CalcT alph = sn * sinh( kLn2/2 * bandWidth * w0/sn );
+		SetupCommon( sn, cs, alph, A );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadPeakEq&lt;channels&gt;::SetupFast( CalcT normFreq, CalcT dB, CalcT bandWidth )
+	{
+		CalcT A  = pow( 10, dB/40 );
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT sn, cs;
+		fastsincos( w0, &amp;sn, &amp;cs );
+		CalcT alph = sn * sinh( kLn2/2 * bandWidth * w0/sn );
+		SetupCommon( sn, cs, alph, A );
+	}
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	class BiquadLowShelf : public Biquad&lt;channels&gt;
+	{
+	public:
+		void Setup			( CalcT normFreq, CalcT dB, CalcT shelfSlope=1.0 );
+		void SetupFast		( CalcT normFreq, CalcT dB, CalcT shelfSlope=1.0 );
+	protected:
+		void SetupCommon	( CalcT cs, CalcT A, CalcT sa );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	inline void BiquadLowShelf&lt;channels&gt;::SetupCommon(
+		CalcT cs, CalcT A, CalcT sa )
+	{
+		CalcT An	= A-1;
+		CalcT Ap	= A+1;
+		CalcT Ancs	= An*cs;
+		CalcT Apcs	= Ap*cs;
+		CalcT b0 =	   A * (Ap - Ancs + sa );
+		CalcT b2 =	   A * (Ap - Ancs - sa );
+		CalcT b1 = 2 * A * (An - Apcs);
+		CalcT a2 =    sa - (Ap + Ancs);
+		CalcT a0 =	   1 / (Ap + Ancs + sa );
+		CalcT a1 = 2 *	   (An + Apcs);
+		SetStage( a1*a0, a2*a0, b0*a0, b1*a0, b2*a0 );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadLowShelf&lt;channels&gt;::Setup( CalcT normFreq, CalcT dB, CalcT shelfSlope )
+	{
+		CalcT A  = pow( 10, dB/40 );
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT cs = cos(w0);
+		CalcT sn = sin(w0);
+		CalcT al = sn / 2 * ::sqrt( (A + 1/A) * (1/shelfSlope - 1) + 2 );
+		CalcT sa =		2 * ::sqrt( A ) * al;
+		SetupCommon( cs, A, sa );
+	}
+
+	// 这里还可以进一步优化
+	template&lt;int channels&gt;
+	void BiquadLowShelf&lt;channels&gt;::SetupFast( CalcT normFreq, CalcT dB, CalcT shelfSlope )
+	{
+		CalcT A  = pow( 10, dB/40 );
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT sn, cs;
+		fastsincos( w0, &amp;sn, &amp;cs );
+		CalcT al = sn / 2 * fastsqrt1( (A + 1/A) * (1/shelfSlope - 1) + 2 );
+		CalcT sa =		2 * fastsqrt1( A ) * al;
+		SetupCommon( cs, A, sa );
+	}
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	class BiquadHighShelf : public Biquad&lt;channels&gt;
+	{
+	public:
+		void Setup			( CalcT normFreq, CalcT dB, CalcT shelfSlope=1.0 );
+		void SetupFast		( CalcT normFreq, CalcT dB, CalcT shelfSlope=1.0 );
+	protected:
+		void SetupCommon	( CalcT cs, CalcT A, CalcT sa );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int channels&gt;
+	void BiquadHighShelf&lt;channels&gt;::SetupCommon(
+		CalcT cs, CalcT A, CalcT sa )
+	{
+		CalcT An	= A-1;
+		CalcT Ap	= A+1;
+		CalcT Ancs	= An*cs;
+		CalcT Apcs	= Ap*cs;
+		CalcT b0 =		A * (Ap + Ancs + sa );
+		CalcT b1 = -2 * A * (An + Apcs);
+		CalcT b2 =		A * (Ap + Ancs - sa );
+		CalcT a0 =			(Ap - Ancs + sa );
+		CalcT a2 =			 Ancs + sa - Ap;
+		CalcT a1 = -2	*	(An - Apcs);
+		SetStage( a1/a0, a2/a0, b0/a0, b1/a0, b2/a0 );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadHighShelf&lt;channels&gt;::Setup( CalcT normFreq, CalcT dB, CalcT shelfSlope )
+	{
+		CalcT A  = pow( 10, dB/40 );
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT cs = cos(w0);
+		CalcT sn = sin(w0);
+
+		CalcT alph = sn / 2 * ::sqrt( (A + 1/A) * (1/shelfSlope - 1) + 2 );
+		CalcT sa   =	  2 * ::sqrt( A ) * alph;
+		SetupCommon( cs, A, sa );
+	}
+
+	template&lt;int channels&gt;
+	void BiquadHighShelf&lt;channels&gt;::SetupFast( CalcT normFreq, CalcT dB, CalcT shelfSlope )
+	{
+		CalcT A  = pow( 10, dB/40 );
+		CalcT w0 = 2 * kPi * normFreq;
+		CalcT sn, cs;
+		fastsincos( w0, &amp;sn, &amp;cs );
+
+		CalcT alph = sn / 2 * fastsqrt1( (A + 1/A) * (1/shelfSlope - 1) + 2 );
+		CalcT sa   =	  2 * fastsqrt1( A ) * alph;
+		SetupCommon( cs, A, sa );
+	}
+
+	//--------------------------------------------------------------------------
+	//
+	//	通用 N 极点 IIR 滤波器
+	//
+	//--------------------------------------------------------------------------
+
+	template&lt;int stages, int channels&gt;
+	class PoleFilter : public CascadeStages&lt;stages, channels&gt;
+	{
+	public:
+		PoleFilter();
+
+		virtual int		CountPoles			( void )=0;
+		virtual int		CountZeroes			( void )=0;
+
+		virtual Complex	GetPole				( int i )=0;
+		virtual Complex	GetZero				( int i )=0;
+
+	protected:
+		virtual Complex GetSPole			( int i, CalcT wc )=0;
+
+	protected:
+		// 确定在通带内获得
+		// 单位增益系数的方法。
+		enum Hint
+		{
+			// 不进行归一化
+			hintNone,
+			// 用 Brent 方法寻找最大值
+			hintBrent,
+			// 使用给定频率处的响应
+			hintPassband
+		};
+
+		Complex	BilinearTransform	( const Complex &amp;c );
+		Complex	BandStopTransform	( int i, const Complex &amp;c );
+		Complex	BandPassTransform	( int i, const Complex &amp;c );
+		Complex	GetBandStopPole		( int i );
+		Complex	GetBandStopZero		( int i );
+		Complex	GetBandPassPole		( int i );
+		Complex	GetBandPassZero		( int i );
+		void	Normalize			( void );
+		void	Prepare				( void );
+
+		virtual void	BrentHint	( CalcT *w0, CalcT *w1 );
+		virtual CalcT	PassbandHint( void );
+
+	protected:
+		Hint	m_hint;
+		int		m_n;
+		CalcT	m_wc;
+		CalcT	m_wc2;
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int stages, int channels&gt;
+	inline PoleFilter&lt;stages, channels&gt;::PoleFilter( void )
+	{
+		m_hint=hintNone;
+	}
+
+	template&lt;int stages, int channels&gt;
+	inline Complex PoleFilter&lt;stages, channels&gt;::BilinearTransform( const Complex &amp;c )
+	{
+		return (c+1.)/(-c+1.);
+	}
+
+	template&lt;int stages, int channels&gt;
+	inline Complex PoleFilter&lt;stages, channels&gt;::BandStopTransform( int i, const Complex &amp;c )
+	{
+		CalcT a=cos((m_wc+m_wc2)*.5) /
+				cos((m_wc-m_wc2)*.5);
+		CalcT b=tan((m_wc-m_wc2)*.5);
+	    Complex c2(0);
+	    c2=addmul( c2, 4*(b*b+a*a-1), c );
+	    c2+=8*(b*b-a*a+1);
+	    c2*=c;
+	    c2+=4*(a*a+b*b-1);
+		c2=Dsp::sqrt( c2 );
+	    c2*=((i&amp;1)==0)?.5:-.5;
+	    c2+=a;
+	    c2=addmul( c2, -a, c );
+	    Complex c3( b+1 );
+	    c3=addmul( c3, b-1, c );
+		return c2/c3;
+	}
+
+	template&lt;int stages, int channels&gt;
+	inline Complex PoleFilter&lt;stages, channels&gt;::BandPassTransform( int i, const Complex &amp;c )
+	{
+		CalcT a=  cos((m_wc+m_wc2)*0.5)/
+				  cos((m_wc-m_wc2)*0.5);
+		CalcT b=1/tan((m_wc-m_wc2)*0.5);
+		Complex c2(0);
+	    c2=addmul( c2, 4*(b*b*(a*a-1)+1), c );
+	    c2+=8*(b*b*(a*a-1)-1);
+	    c2*=c;
+	    c2+=4*(b*b*(a*a-1)+1);
+		c2=Dsp::sqrt( c2 );
+	    if ((i &amp; 1) == 0)
+			c2=-c2;
+	    c2=addmul( c2, 2*a*b, c );
+	    c2+=2*a*b;
+	    Complex c3(0);
+	    c3=addmul( c3, 2*(b-1), c );
+	    c3+=2*(1+b);
+	    return c2/c3;
+	}
+
+	template&lt;int stages, int channels&gt;
+	Complex PoleFilter&lt;stages, channels&gt;::GetBandStopPole( int i )
+	{
+		Complex c=GetSPole( i/2, kPi_2 );
+		c=BilinearTransform( c );
+		c=BandStopTransform( i, c );
+		return c;
+	}
+
+	template&lt;int stages, int channels&gt;
+	Complex PoleFilter&lt;stages, channels&gt;::GetBandStopZero( int i )
+	{
+		return BandStopTransform( i, Complex( -1 ) );
+	}
+
+	template&lt;int stages, int channels&gt;
+	Complex PoleFilter&lt;stages, channels&gt;::GetBandPassPole( int i )
+	{
+		Complex c=GetSPole( i/2, kPi_2 );
+		c=BilinearTransform( c );
+		c=BandPassTransform( i, c );
+		return c;
+	}
+
+	template&lt;int stages, int channels&gt;
+	Complex PoleFilter&lt;stages, channels&gt;::GetBandPassZero( int i )
+	{
+		return Complex( (i&gt;=m_n)?1:-1 );
+	}
+
+	template&lt;int stages, int channels&gt;
+	void PoleFilter&lt;stages, channels&gt;::Normalize( void )
+	{
+		switch( m_hint )
+		{
+		default:
+		case hintNone:
+			break;
+
+		case hintPassband:
+			{
+				CalcT w=PassbandHint();
+				ResponseFunctor f(this);
+				CalcT mag=-f(w);
+				CascadeStages::Normalize( 1/mag );
+			}
+			break;
+
+		case hintBrent:
+			{
+				ResponseFunctor f(this);
+				CalcT w0, w1, wmin, mag;
+				BrentHint( &amp;w0, &amp;w1 );
+				mag=-BrentMinimize( f, w0, w1, 1e-4, wmin );
+				CascadeStages::Normalize( 1/mag );
+			}
+			break;
+		}
+	}
+
+	template&lt;int stages, int channels&gt;
+	void PoleFilter&lt;stages, channels&gt;::Prepare( void )
+	{
+		if( m_wc2&lt;1e-8 )
+			m_wc2=1e-8;
+		if( m_wc &gt;kPi-1e-8 )
+			m_wc =kPi-1e-8;
+
+		Reset();
+
+		Complex c;
+		int poles=CountPoles();
+		for( int i=0;i&lt;poles;i++ )
+		{
+			c=GetPole( i );
+			if( ::abs(c.imag())&lt;1e-6 )
+				c=Complex( c.real(), 0 );
+			if( c.imag()==0 )
+				SetAStage( c.real(), 0 );
+			else if( c.imag()&gt;0 )
+				SetAStage( 2*c.real(), -Dsp::norm(c) );
+		}
+
+		int zeroes=CountZeroes();
+		for( int i=0;i&lt;zeroes;i++ )
+		{
+			c=GetZero( i );
+			if( ::abs(c.imag())&lt;1e-6 )
+				c=Complex( c.real(), 0 );
+			if( c.imag()==0 )
+				SetBStage( -c.real(), 1, 0 );
+			else if( c.imag()&gt;0 )
+				SetBStage( Dsp::norm(c), -2*c.real(), 1 );
+		}
+
+		Normalize();
+	}
+
+	template&lt;int stages, int channels&gt;
+	void PoleFilter&lt;stages, channels&gt;::BrentHint( CalcT *w0, CalcT *w1 )
+	{
+		// 最好不要执行到这里
+		*w0=1e-4;
+		*w1=kPi-1e-4;
+	}
+
+	template&lt;int stages, int channels&gt;
+	CalcT PoleFilter&lt;stages, channels&gt;::PassbandHint( void )
+	{
+		// 不应到达此处
+		assert( 0 );
+		return kPi_2;
+	}
+
+	//--------------------------------------------------------------------------
+	//
+	//	巴特沃斯响应 IIR 滤波器
+	//
+	//--------------------------------------------------------------------------
+
+	// 巴特沃斯滤波器响应特性。
+	// 通带内幅度响应最大平坦，
+	// 代价是滚降比其他类型更平缓。
+	template&lt;int poles, int channels&gt;
+	class Butterworth : public PoleFilter&lt;int((poles+1)/2), channels&gt;
+	{
+	public:
+		Butterworth();
+
+		// cutoffFreq = freq / sampleRate
+		void			Setup			( CalcT cutoffFreq );
+
+		virtual int		CountPoles		( void );
+		virtual int		CountZeroes		( void );
+		virtual Complex	GetPole			( int i );
+
+	protected:
+				Complex GetSPole		( int i, CalcT wc );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int poles, int channels&gt;
+	Butterworth&lt;poles, channels&gt;::Butterworth( void )
+	{
+		m_hint=hintPassband;
+	}
+
+	template&lt;int poles, int channels&gt;
+	void Butterworth&lt;poles, channels&gt;::Setup( CalcT cutoffFreq )
+	{
+		m_n=poles;
+		m_wc=2*kPi*cutoffFreq;
+		Prepare();
+	}
+
+	template&lt;int poles, int channels&gt;
+	int Butterworth&lt;poles, channels&gt;::CountPoles( void )
+	{
+		return poles;
+	}
+
+	template&lt;int poles, int channels&gt;
+	int Butterworth&lt;poles, channels&gt;::CountZeroes( void )
+	{
+		return poles;
+	}
+
+	template&lt;int poles, int channels&gt;
+	Complex Butterworth&lt;poles, channels&gt;::GetPole( int i )
+	{
+		return BilinearTransform( GetSPole( i, m_wc ) );
+	}
+
+	template&lt;int poles, int channels&gt;
+	Complex Butterworth&lt;poles, channels&gt;::GetSPole( int i, CalcT wc )
+	{
+		return polar( tan(wc*0.5), kPi_2+(2*i+1)*kPi/(2*m_n) );
+	}
+
+	//--------------------------------------------------------------------------
+
+	// 低通巴特沃斯滤波器
+	// 最多 53 个极点仍稳定（频率最小为 Nyquist 的 0.13%）
+	template&lt;int poles, int channels&gt;
+	class ButterLowPass : public Butterworth&lt;poles, channels&gt;
+	{
+	public:
+		Complex GetZero			( int i );
+
+	protected:
+		CalcT	PassbandHint	( void );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int poles, int channels&gt;
+	Complex ButterLowPass&lt;poles, channels&gt;::GetZero( int i )
+	{
+		return Complex( -1 );
+	}
+
+	template&lt;int poles, int channels&gt;
+	CalcT ButterLowPass&lt;poles, channels&gt;::PassbandHint( void )
+	{
+		return 0;
+	}
+
+	//--------------------------------------------------------------------------
+
+	// 高通巴特沃斯滤波器
+	// 通带内幅度响应最大平坦。
+	// 最多 110 个极点仍稳定（频率最大为 Nyquist 的 97%）
+	template&lt;int poles, int channels&gt;
+	class ButterHighPass : public Butterworth&lt;poles, channels&gt;
+	{
+	public:
+		Complex GetZero( int i );
+
+	protected:
+		CalcT	PassbandHint	( void );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int poles, int channels&gt;
+	Complex ButterHighPass&lt;poles, channels&gt;::GetZero( int i )
+	{
+		return Complex( 1 );
+	}
+
+	template&lt;int poles, int channels&gt;
+	CalcT ButterHighPass&lt;poles, channels&gt;::PassbandHint( void )
+	{
+		return kPi;
+	}
+
+	//--------------------------------------------------------------------------
+
+	// 带通巴特沃斯滤波器
+	// 最多 80 对仍稳定
+	template&lt;int pairs, int channels&gt;
+	class ButterBandPass : public Butterworth&lt;pairs*2, channels&gt;
+	{
+	public:
+		// centerFreq = freq / sampleRate
+		// normWidth  = freqWidth / sampleRate
+		void			Setup			( CalcT centerFreq, CalcT normWidth );
+
+		virtual int		CountPoles		( void );
+		virtual int		CountZeroes		( void );
+		virtual Complex GetPole			( int i );
+		virtual Complex GetZero			( int i );
+
+	protected:
+		CalcT	PassbandHint	( void );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int pairs, int channels&gt;
+	void ButterBandPass&lt;pairs, channels&gt;::Setup( CalcT centerFreq, CalcT normWidth )
+	{
+		m_n=pairs;
+		CalcT angularWidth=2*kPi*normWidth;
+		m_wc2=2*kPi*centerFreq-(angularWidth/2);
+		m_wc =m_wc2+angularWidth;
+		Prepare();
+	}
+
+	template&lt;int pairs, int channels&gt;
+	int ButterBandPass&lt;pairs, channels&gt;::CountPoles( void )
+	{
+		return pairs*2;
+	}
+
+	template&lt;int pairs, int channels&gt;
+	int ButterBandPass&lt;pairs, channels&gt;::CountZeroes( void )
+	{
+		return pairs*2;
+	}
+
+	template&lt;int pairs, int channels&gt;
+	Complex ButterBandPass&lt;pairs, channels&gt;::GetPole( int i )
+	{
+		return GetBandPassPole( i );
+	}
+
+	template&lt;int pairs, int channels&gt;
+	Complex ButterBandPass&lt;pairs, channels&gt;::GetZero( int i )
+	{
+		return GetBandPassZero( i );
+	}
+
+	template&lt;int poles, int channels&gt;
+	CalcT ButterBandPass&lt;poles, channels&gt;::PassbandHint( void )
+	{
+		return (m_wc+m_wc2)/2;
+	}
+
+	//--------------------------------------------------------------------------
+
+	// 带阻巴特沃斯滤波器
+	// 最多 109 对仍稳定
+	template&lt;int pairs, int channels&gt;
+	class ButterBandStop : public Butterworth&lt;pairs*2, channels&gt;
+	{
+	public:
+		// centerFreq = freq / sampleRate
+		// normWidth  = freqWidth / sampleRate
+		void	Setup			( CalcT centerFreq, CalcT normWidth );
+
+		virtual int		CountPoles		( void );
+		virtual int		CountZeroes		( void );
+		virtual Complex GetPole			( int i );
+		virtual Complex GetZero			( int i );
+
+	protected:
+		CalcT	PassbandHint	( void );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int pairs, int channels&gt;
+	void ButterBandStop&lt;pairs, channels&gt;::Setup( CalcT centerFreq, CalcT normWidth )
+	{
+		m_n=pairs;
+		CalcT angularWidth=2*kPi*normWidth;
+		m_wc2=2*kPi*centerFreq-(angularWidth/2);
+		m_wc =m_wc2+angularWidth;
+		Prepare();
+	}
+
+	template&lt;int pairs, int channels&gt;
+	int ButterBandStop&lt;pairs, channels&gt;::CountPoles( void )
+	{
+		return pairs*2;
+	}
+
+	template&lt;int pairs, int channels&gt;
+	int ButterBandStop&lt;pairs, channels&gt;::CountZeroes( void )
+	{
+		return pairs*2;
+	}
+
+	template&lt;int pairs, int channels&gt;
+	Complex ButterBandStop&lt;pairs, channels&gt;::GetPole( int i )
+	{
+		return GetBandStopPole( i );
+	}
+
+	template&lt;int pairs, int channels&gt;
+	Complex ButterBandStop&lt;pairs, channels&gt;::GetZero( int i )
+	{
+		return GetBandStopZero( i );
+	}
+
+	template&lt;int poles, int channels&gt;
+	CalcT ButterBandStop&lt;poles, channels&gt;::PassbandHint( void )
+	{
+		if( (m_wc+m_wc2)/2&lt;kPi_2 )
+			return kPi;
+		else
+			return 0;
+	}
+
+	//--------------------------------------------------------------------------
+	//
+	//	切比雪夫响应 IIR 滤波器
+	//
+	//--------------------------------------------------------------------------
+
+	// I 型切比雪夫滤波器特性。
+	// 实际响应与理想响应之间的误差最小，
+	// 代价是通带内可自定义大小的纹波。
+	template&lt;int poles, int channels&gt;
+	class Chebyshev1 : public PoleFilter&lt;int((poles+1)/2), channels&gt;
+	{
+	public:
+						Chebyshev1();
+
+		// cutoffFreq = freq / sampleRate
+		virtual	void	Setup			( CalcT cutoffFreq, CalcT rippleDb );
+
+		virtual int		CountPoles		( void );
+		virtual int		CountZeroes		( void );
+		virtual Complex	GetPole			( int i );
+		virtual Complex	GetZero			( int i );
+
+	protected:
+		void			SetupCommon		( CalcT rippleDb );
+		virtual	Complex GetSPole		( int i, CalcT wc );
+
+	protected:
+		CalcT	m_sgn;
+		CalcT	m_eps;
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int poles, int channels&gt;
+	Chebyshev1&lt;poles, channels&gt;::Chebyshev1()
+	{
+		m_hint=hintBrent;
+	}
+
+	template&lt;int poles, int channels&gt;
+	void Chebyshev1&lt;poles, channels&gt;::Setup( CalcT cutoffFreq, CalcT rippleDb )
+	{
+		m_n=poles;
+		m_wc=2*kPi*cutoffFreq;
+		SetupCommon( rippleDb );
+	}
+
+	template&lt;int poles, int channels&gt;
+	void Chebyshev1&lt;poles, channels&gt;::SetupCommon( CalcT rippleDb )
+	{
+		m_eps=::sqrt( 1/::exp( -rippleDb*0.1*kLn10 )-1 );
+		Prepare();
+		// 把纹波底部移到 0dB 增益
+		//CascadeStages::Normalize( pow( 10, rippleDb/20.0 ) );
+	}
+
+	template&lt;int poles, int channels&gt;
+	int	Chebyshev1&lt;poles, channels&gt;::CountPoles( void )
+	{
+		return poles;
+	}
+
+	template&lt;int poles, int channels&gt;
+	int Chebyshev1&lt;poles, channels&gt;::CountZeroes( void )
+	{
+		return poles;
+	}
+
+	template&lt;int poles, int channels&gt;
+	Complex Chebyshev1&lt;poles, channels&gt;::GetPole( int i )
+	{
+		return BilinearTransform( GetSPole( i, m_wc ) )*m_sgn;
+	}
+
+	template&lt;int poles, int channels&gt;
+	Complex Chebyshev1&lt;poles, channels&gt;::GetZero( int i )
+	{
+		return Complex( -m_sgn );
+	}
+
+	template&lt;int poles, int channels&gt;
+	Complex Chebyshev1&lt;poles, channels&gt;::GetSPole( int i, CalcT wc )
+	{
+		int n		= m_n;
+		CalcT ni	= 1.0/n;
+		CalcT alpha	= 1/m_eps+::sqrt(1+1/(m_eps*m_eps));
+		CalcT pn	= pow( alpha,  ni );
+		CalcT nn	= pow( alpha, -ni );
+		CalcT a		= 0.5*( pn - nn );
+		CalcT b		= 0.5*( pn + nn );
+		CalcT theta = kPi_2 + (2*i+1) * kPi/(2*n);
+		Complex c	= polar( tan( 0.5*(m_sgn==-1?(kPi-wc):wc) ), theta );
+		return Complex( a*c.real(), b*c.imag() );
+	}
+
+	//--------------------------------------------------------------------------
+
+	// 低通切比雪夫 I 型滤波器
+	template&lt;int poles, int channels&gt;
+	class Cheby1LowPass : public Chebyshev1&lt;poles, channels&gt;
+	{
+	public:
+				Cheby1LowPass();
+
+		void	Setup			( CalcT cutoffFreq, CalcT rippleDb );
+
+	protected:
+		CalcT	PassbandHint	( void );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int poles, int channels&gt;
+	Cheby1LowPass&lt;poles, channels&gt;::Cheby1LowPass()
+	{
+		m_sgn=1;
+		m_hint=hintPassband;
+	}
+
+	template&lt;int poles, int channels&gt;
+	void Cheby1LowPass&lt;poles, channels&gt;::Setup( CalcT cutoffFreq, CalcT rippleDb )
+	{
+		Chebyshev1::Setup( cutoffFreq, rippleDb );
+		// 把纹波峰值下移到 0dB
+		if( !(poles&amp;1) )
+			CascadeStages::Normalize( pow( 10, -rippleDb/20.0 ) );
+	}
+
+	template&lt;int poles, int channels&gt;
+	CalcT Cheby1LowPass&lt;poles, channels&gt;::PassbandHint( void )
+	{
+		return 0;
+	}
+
+	//--------------------------------------------------------------------------
+
+	// 高通切比雪夫 I 型滤波器
+	template&lt;int poles, int channels&gt;
+	class Cheby1HighPass : public Chebyshev1&lt;poles, channels&gt;
+	{
+	public:
+		Cheby1HighPass();
+
+		void	Setup			( CalcT cutoffFreq, CalcT rippleDb );
+
+	protected:
+		CalcT	PassbandHint	( void );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int poles, int channels&gt;
+	Cheby1HighPass&lt;poles, channels&gt;::Cheby1HighPass()
+	{
+		m_sgn=-1;
+		m_hint=hintPassband;
+	}
+
+	template&lt;int poles, int channels&gt;
+	void Cheby1HighPass&lt;poles, channels&gt;::Setup( CalcT cutoffFreq, CalcT rippleDb )
+	{
+		Chebyshev1::Setup( cutoffFreq, rippleDb );
+		// 把纹波峰值下移到 0dB
+		if( !(poles&amp;1) )
+			CascadeStages::Normalize( pow( 10, -rippleDb/20.0 ) );
+	}
+
+	template&lt;int poles, int channels&gt;
+	CalcT Cheby1HighPass&lt;poles, channels&gt;::PassbandHint( void )
+	{
+		return kPi;
+	}
+
+	//--------------------------------------------------------------------------
+
+	// 带通切比雪夫 I 型滤波器
+	template&lt;int pairs, int channels&gt;
+	class Cheby1BandPass : public Chebyshev1&lt;pairs*2, channels&gt;
+	{
+	public:
+		Cheby1BandPass();
+
+		void	Setup			( CalcT centerFreq, CalcT normWidth, CalcT rippleDb );
+
+		int		CountPoles		( void );
+		int		CountZeroes		( void );
+		Complex	GetPole			( int i );
+		Complex	GetZero			( int i );
+
+	protected:
+		void	BrentHint		( CalcT *w0, CalcT *w1 );
+		//CalcT	PassbandHint	( void );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int pairs, int channels&gt;
+	Cheby1BandPass&lt;pairs, channels&gt;::Cheby1BandPass()
+	{
+		m_sgn=1;
+		m_hint=hintBrent;
+	}
+
+	template&lt;int pairs, int channels&gt;
+	void Cheby1BandPass&lt;pairs, channels&gt;::Setup( CalcT centerFreq, CalcT normWidth, CalcT rippleDb )
+	{
+		m_n=pairs;
+		CalcT angularWidth=2*kPi*normWidth;
+		m_wc2=2*kPi*centerFreq-(angularWidth/2);
+		m_wc =m_wc2+angularWidth;
+		SetupCommon( rippleDb );
+	}
+
+	template&lt;int pairs, int channels&gt;
+	int Cheby1BandPass&lt;pairs, channels&gt;::CountPoles( void )
+	{
+		return pairs*2;
+	}
+
+	template&lt;int pairs, int channels&gt;
+	int Cheby1BandPass&lt;pairs, channels&gt;::CountZeroes( void )
+	{
+		return pairs*2;
+	}
+
+	template&lt;int pairs, int channels&gt;
+	Complex	Cheby1BandPass&lt;pairs, channels&gt;::GetPole( int i )
+	{
+		return GetBandPassPole( i );
+	}
+
+	template&lt;int pairs, int channels&gt;
+	Complex	Cheby1BandPass&lt;pairs, channels&gt;::GetZero( int i )
+	{
+		return GetBandPassZero( i );
+	}
+
+	template&lt;int poles, int channels&gt;
+	void Cheby1BandPass&lt;poles, channels&gt;::BrentHint( CalcT *w0, CalcT *w1 )
+	{
+		CalcT d=1e-4*(m_wc-m_wc2)/2;
+		*w0=m_wc2+d;
+		*w1=m_wc-d;
+	}
+
+	/*
+	// 遗憾的是，这在频率极端处不起作用
+	// 也许可以对中心点做逆预畸变，以确保
+	// 它在双线性变换和带通变换后保持原位。
+	template&lt;int poles, int channels&gt;
+	CalcT Cheby1BandPass&lt;poles, channels&gt;::PassbandHint( void )
+	{
+		return (m_wc+m_wc2)/2;
+	}
+	*/
+
+	//--------------------------------------------------------------------------
+
+	// 带阻切比雪夫 I 型滤波器
+	template&lt;int pairs, int channels&gt;
+	class Cheby1BandStop : public Chebyshev1&lt;pairs*2, channels&gt;
+	{
+	public:
+		Cheby1BandStop();
+
+		void	Setup			( CalcT centerFreq, CalcT normWidth, CalcT rippleDb );
+
+		int		CountPoles		( void );
+		int		CountZeroes		( void );
+		Complex	GetPole			( int i );
+		Complex	GetZero			( int i );
+
+	protected:
+		void	BrentHint		( CalcT *w0, CalcT *w1 );
+		CalcT	PassbandHint	( void );
+	};
+
+	//--------------------------------------------------------------------------
+
+	template&lt;int pairs, int channels&gt;
+	Cheby1BandStop&lt;pairs, channels&gt;::Cheby1BandStop()
+	{
+		m_sgn=1;
+		m_hint=hintPassband;
+	}
+
+	template&lt;int pairs, int channels&gt;</code></pre>
+<h2>评论</h2>
+<p><strong>2010-06-18 10:53:04</strong> · ten.nozirev@nuSL</p>
+<pre><code>These codes are just what I am looking for.  Too bad they are incomplete as posted here.  Could someone direct me to a complete version?</code></pre>
+<p><strong>2011-02-03 16:37:34</strong> · moc.tenalpderyrgna@nrobkcah</p>
+<pre><code>I *think* this is the project homepage:
+http://code.google.com/p/dspfilterscpp/
+although I haven't downloaded anything to verify it is and that the code is complete.              </code></pre>
+<p><strong>2012-05-06 01:26:08</strong> · moc.liamg@oclaf.einniv</p>
+<pre><code>The project is here:
+https://github.com/vinniefalco/DSPFilters.git              </code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Filters/276-biquad-butterworth-chebyshev-n-order-m-channel-optimized-filters.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Filters/276-biquad-butterworth-chebyshev-n-order-m-channel-optimized-filters.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

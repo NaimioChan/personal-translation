@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Matlab 时域冲激响应求逆/除法器 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：Matlab 时域冲激响应求逆/除法器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Matlab 时域冲激响应求逆/除法器</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>moc.sdohtemenacra@enacra</li>
+<li><strong>创建时间：</strong>2005-01-19 22:27:15</li>
+</ul>
+<blockquote class="note">
+<p>用于在时域求冲激响应之逆、或求两个冲激响应之商（传递函数）的 Matlab 代码。主要的 teoplitz 函数同时提供 .m 文件与供 Matlab MEX 编译的 .c 文件。后者快得多。</p>
+</blockquote>
+<pre><code>function inv=invimplms(den,n,d)
+% syntax inv=invimplms(den,n,d)
+%         den - denominator impulse
+%         n   - length of result
+%         d   - delay of result
+%         inv - inverse impulse response of length n with delay d
+%
+% Levinson-Durbin algorithm from Proakis and Manolokis p.865
+%
+% Author: Bob Cain, May 1, 2001 arcane[AT]arcanemethods[DOT]com
+
+	m=xcorr(den,n-1);
+	m=m(n:end);
+	b=[den(d+1:-1:1);zeros(n-d-1,1)];
+	inv=toepsolve(m,b);
+
+
+
+function quo=divimplms(num,den,n,d)
+%Syntax quo=divimplms(num,den,n,d)
+%       num - numerator impulse
+%       den - denominator impulse
+%       n   - length of result
+%       d   - delay of result
+%		quo - quotient impulse response of length n delayed by d
+%
+% Levinson-Durbin algorithm from Proakis and Manolokis p.865
+%
+% Author: Bob Cain, May 1, 2001 arcane@arcanemethods.com
+
+	m=xcorr(den,n-1);
+	m=m(n:end);
+	b=xcorr([zeros(d,1);num],den,n-1);
+	b=b(n:-1:1);
+	quo=toepsolve(m,b);
+
+
+function hinv=toepsolve(r,q)
+% Solve Toeplitz system of equations.
+%    Solves R*hinv = q, where R is the symmetric Toeplitz matrix
+%    whos first column is r
+%    Assumes all inputs are real
+%    Inputs:  
+%       r - first column of Toeplitz matrix, length n
+%       q - rhs vector, length n
+%    Outputs:
+%       hinv - length n solution
+%
+%   Algorithm from Roberts &amp; Mullis, p.233
+%
+%   Author: T. Krauss, Sept 10, 1997
+%
+%   Modified: R. Cain, Dec 16, 2004 to remove a pair of transposes
+%             that caused errors.
+
+	n=length(q);
+	a=zeros(n+1,2);
+	a(1,1)=1;
+
+	hinv=zeros(n,1);
+	hinv(1)=q(1)/r(1);
+
+	alpha=r(1);
+	c=1;
+	d=2;
+
+	for k=1:n-1,
+	   a(k+1,c)=0;
+	   a(1,d)=1;
+	   beta=0;
+	   j=1:k;
+	   beta=sum(r(k+2-j).*a(j,c))/alpha;
+	   a(j+1,d)=a(j+1,c)-beta*a(k+1-j,c);
+	   alpha=alpha*(1-beta^2);
+	   hinv(k+1,1)=(q(k+1)-sum(r(k+2-j).*hinv(j,1)))/alpha;
+	   hinv(j)=hinv(j)+a(k+2-j,d)*hinv(k+1);
+	   temp=c;
+	   c=d;
+	   d=temp;
+	end
+
+
+-----What follows is the .c version of toepsolve--------
+
+#include &lt;math.h&gt;
+#include "mex.h"
+
+/*  function hinv = toepsolve(r,q);
+ *  TOEPSOLVE  求解 Toeplitz 方程组。
+ *    求解 R*hinv = q，其中 R 是对称 Toeplitz 矩阵，
+ *    其第一列为 r
+ *    假定所有输入均为实数
+ *    输入：  
+ *       r - Toeplitz 矩阵的第一列，长度为 n
+ *       q - 右端向量，长度为 n
+ *    输出：
+ *       hinv - 长度为 n 的解
+ *
+ *   算法出自 Roberts &amp; Mullis, p.233
+ *
+ *   作者：T. Krauss，1997 年 9 月 10 日
+ *
+ *   修改：R. Cain，2004 年 12 月 16 日，将原本为 a 分配
+ *             n×n 矩阵改为使用 n×2 的循环
+ *             缓冲区，并更贴近 .m 函数的写法。
+ */
+void mexFunction(
+    int nlhs,
+    mxArray *plhs[],
+    int nrhs,
+    const mxArray *prhs[]
+)
+{
+   double (*a)[2],*hinv,alpha,beta;
+   int c,d,temp,j,k;
+
+   double eps = mxGetEps();
+   int n = (mxGetN(prhs[0])&gt;=mxGetM(prhs[0])) ? mxGetN(prhs[0]) : mxGetM(prhs[0]) ;
+   double *r = mxGetPr(prhs[0]);
+   double *q = mxGetPr(prhs[1]);
+
+   a = (double (*)[2])mxCalloc((n+1)*2,sizeof(double));
+   if (a == NULL) {
+       mexErrMsgTxt("Sorry, failed to allocate buffer.");
+   }
+   a[0][0]=1.0;
+
+   plhs[0] = mxCreateDoubleMatrix(n,1,0);
+   hinv = mxGetPr(plhs[0]);
+   hinv[0] = q[0]/r[0];
+
+   alpha=r[0];
+   c=0;
+   d=1;
+
+   for (k = 1; k &lt; n; k++) {
+       a[k][c] = 0;
+       a[0][d] = 1.0;
+       beta = 0.0;
+       for (j = 1; j &lt;= k; j++) {
+           beta += r[k+1-j]*a[j-1][c];
+       }
+       beta /= alpha;
+       for (j = 1; j &lt;= k; j++) {
+           a[j][d] = a[j][c] - beta*a[k-j][c];
+       }
+       alpha *= (1 - beta*beta);
+       hinv[k] = q[k];
+       for (j = 1; j &lt;= k; j++) {
+           hinv[k] -= r[k+1-j]*hinv[j-1];
+       }
+       hinv[k] /= alpha;
+       for (j = 1; j &lt;= k; j++) {
+           hinv[j-1] += a[k+1-j][d]*hinv[k];
+       }
+	   temp=c;
+	   c=d;
+	   d=temp;
+   } /* 对 k 循环 */
+
+   mxFree(a);
+
+   return;
+}</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/188-matlab-time-domain-impulse-response-inverter-divider.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/188-matlab-time-domain-impulse-response-inverter-divider.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

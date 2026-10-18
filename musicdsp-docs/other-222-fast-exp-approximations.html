@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>快速 exp() 近似 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：快速 exp() 近似">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>快速 exp() 近似</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>uh.etle.fni@yfoocs</li>
+<li><strong>类型：</strong>泰勒级数近似</li>
+<li><strong>创建时间：</strong>2006-05-26 04:54:44</li>
+</ul>
+<blockquote class="note">
+<p>我需要在 -3.14..3.14 范围内快速的 exp() 近似，于是基于 Fuzzpilz 发布在存档中的 tanh() 代码做了一些近似。应该相当直接，但也许有人会觉得有用。</p>
+<p>函数名中递增的数字表示精度递增。-1..1 范围内的最大误差：<br>fastexp3: 0.05      (1.8%)<br>fastexp4: 0.01      (0.36%)<br>fastexp5: 0.0016152 (0.59%)<br>fastexp6: 0.0002263 (0.0083%)<br>fastexp7: 0.0000279 (0.001%)<br>fastexp8: 0.0000031 (0.00011%)<br>fastexp9: 0.0000003 (0.000011%)</p>
+<p>-3.14..3.14 范围内的最大误差：<br>fastexp3: 8.8742 (38.4%)<br>fastexp4: 4.8237 (20.8%)<br>fastexp5: 2.28   (9.8%)<br>fastexp6: 0.9488 (4.1%)<br>fastexp7: 0.3516 (1.5%)<br>fastexp8: 0.1172 (0.5%)<br>fastexp9: 0.0355 (0.15%)</p>
+<p>这些是用泰勒级数做的，例如 fastexp4 来自：<br>exp(x) = 1 + x + x^2/2 + x^3/6 + x^4/24 + ...<br>= (24 + 24x + x^2*12 + x^3*4 + x^4) / 24<br>（使用 Horner 方案：）<br>= (24 + x * (24 + x * (12 + x * (4 + x)))) * 0.041666666f</p>
+</blockquote>
+<pre><code>inline float fastexp3(float x) { 
+    return (6+x*(6+x*(3+x)))*0.16666666f; 
+}
+
+inline float fastexp4(float x) {
+    return (24+x*(24+x*(12+x*(4+x))))*0.041666666f;
+}
+
+inline float fastexp5(float x) {
+    return (120+x*(120+x*(60+x*(20+x*(5+x)))))*0.0083333333f;
+}
+
+inline float fastexp6(float x) {
+    return 720+x*(720+x*(360+x*(120+x*(30+x*(6+x))))))*0.0013888888f;
+}
+
+inline float fastexp7(float x) {
+    return (5040+x*(5040+x*(2520+x*(840+x*(210+x*(42+x*(7+x)))))))*0.00019841269f;
+}
+
+inline float fastexp8(float x) {
+    return (40320+x*(40320+x*(20160+x*(6720+x*(1680+x*(336+x*(56+x*(8+x))))))))*2.4801587301e-5;
+}
+
+inline float fastexp9(float x) {
+  return (362880+x*(362880+x*(181440+x*(60480+x*(15120+x*(3024+x*(504+x*(72+x*(9+x)))))))))*2.75573192e-6;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2006-07-03 00:40:15</strong> · uh.etle.fni@yfoocs</p>
+<pre><code>These series converge fast only near zero. But there is an identity:
+
+ exp(x) = exp(a) * exp(x-a)
+
+So, if you want a relatively fast polynomial approximation for exp(x) for 0 to ~7.5, you can use:
+
+// max error in the 0 .. 7.5 range: ~0.45%
+inline float fastexp(float const &amp;x)
+{
+  if (x&lt;2.5)
+      return 2.7182818f * fastexp5(x-1.f); 
+  else if (x&lt;5) 
+      return 33.115452f * fastexp5(x-3.5f); 
+  else 
+      return 403.42879f * fastexp5(x-6.f); 
+}
+
+where 2.7182.. = exp(1), 33.1154.. = exp(3.5) and 403.428.. = exp(6). I chose these values because fastexp5 has a maximum error of 0.45% between -1 - 1.5 (using fastexp6, the maximum error is 0.09%).
+
+Using the identity
+
+  pow(a,x) = exp(x * log(a))
+
+you can use any base, for example to get 2^x:
+
+// max error in the 0-10.58 range: ~0.45%
+inline float fastpow2(float const &amp;x)
+{
+  float const log_two = 0.6931472f;
+  return fastexp(x * log_two);
+}
+
+These functions are about 3x faster than exp().
+
+-- Peter Schoffhauzer</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/222-fast-exp-approximations.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/222-fast-exp-approximations.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
