@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用自相关发生器的直接粉红噪声合成 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：使用自相关发生器的直接粉红噪声合成">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>使用自相关发生器的直接粉红噪声合成</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>RidgeRat &lt;ten.knilhtrae@6741emmartl&gt;</li>
+<li><strong>类型：</strong>16 位定点</li>
+<li><strong>创建时间：</strong>2007-02-11 20:15:42</li>
+</ul>
+<blockquote class="note">
+<p>规范的 C++ 类，系统依赖极少，但你必须自己提供均匀随机数发生器。准确范围略超过 9 个倍频程，超出后性能平缓下降。在范围内相对理想 1/f 曲线的估计偏差为 +-0.25 dB。已缩放到适配有符号 16 位范围。</p>
+</blockquote>
+<pre><code>// 使用自相关生成器方法的粉红噪声类。
+// 该方法由 Larry Trammell “the RidgeRat” 提出并描述 --
+// 见 http://home.earthlink.net/~ltrammell/tech/newpink.htm
+// 无任何使用限制。
+//
+// ------------------------------------------------------------------
+//
+// 这是一个规范的 16 位定点实现，
+// 生成器基于 32 位算术。仅有少数系统依赖：
+// -- 需要 'malloc' 分配器以支持 operator new 
+//
+//   -- 依赖 'size_t' 的定义
+//   -- 假定 32 位二进制补码算术
+//   -- 假定 long int 为 32 位、short int 为 16 位
+//   -- 假定有符号右移会传播符号位
+//   它需要一个独立的 URand 类， 
+//
+// 在 [1,65535] 区间上提供均匀 16 位随机数。
+// 该类须提供查询与设置当前种子、
+// 建立打乱的初始种子、
+// 以及求取均匀随机值的方法。 
+// 
+//
+// ----------- header -----------------------------------------------
+// pinkgen.h
+
+#ifndef  _pinkgen_h_
+#define  _pinkgen_h_  1
+
+#include  &lt;stddef.h&gt;
+#include  &lt;alloc.h&gt;
+
+// 必须由你提供均匀随机数生成器类。
+#ifndef  _URand_h_
+#include  "URand.h"
+#endif
+
+class PinkNoise {
+  private:
+    // 系数（固定）
+    static long int const pA[5];
+    static short int const pPSUM[5];
+
+    // 内部粉红噪声生成器状态
+    long int   contrib[5];   // 各级贡献
+    long int   accum;        // 合成后的生成器
+    void       internal_clear( );           
+
+    // 包含一个 UNoise 组件
+    URand     ugen;
+
+  public:
+    PinkNoise( );
+    PinkNoise( PinkNoise &amp; );
+    ~PinkNoise( );
+    void *  operator new( size_t );
+    void  pinkclear( );
+    short int  pinkrand( );
+} ;
+#endif
+
+// ----------- implementation ---------------------------------------
+// pinkgen.cpp
+
+#include  "pinkgen.h"
+
+// 静态类数据
+long int const PinkNoise::pA[5] = 
+    { 14055, 12759, 10733, 12273, 15716 };
+short int const PinkNoise::pPSUM[5] =
+    { 22347, 27917, 29523, 29942, 30007 };
+
+// 将生成器清零到零状态。
+void   PinkNoise::pinkclear( )
+{
+    int  i;
+    for  (i=0; i&lt;5; ++i)  { contrib[i]=0L; }
+    accum = 0L;
+}
+
+// 私有：清零生成器，
+// 并打乱内部均匀分布生成器的种子。
+void   PinkNoise::internal_clear( )
+{
+    pinkclear();
+    ugen.seed(0);    // 随机化种子！
+}
+
+// 构造函数。确保初始状态已清零，
+// 且均匀分布生成器已打乱。
+PinkNoise::PinkNoise( )
+{
+    internal_clear();
+}
+
+// 拷贝构造函数。保留源对象的生成器状态，
+// 包括均匀分布生成器的种子。
+PinkNoise::PinkNoise( PinkNoise &amp; Source )
+{
+    int  i;
+    for (i=0; i&lt;5; ++i)  contrib[i]=Source.contrib[i];
+    accum = Source.accum;
+    ugen.seed( Source.ugen.seed( ) );
+}
+
+// operator new。仅获取所需的对象存储空间。
+void *   PinkNoise::operator new( size_t size )
+{
+    return   malloc(size);
+}
+
+// 析构函数。无需特殊操作。
+PinkNoise::~PinkNoise( )  { /* NIL */ }
+
+// 仅为编码方便而保留的产物
+#define   UPDATE_CONTRIB(n)  \
+     {                                   \
+       accum -= contrib[n];              \
+       contrib[n] = (long)randv * pA[n]; \
+       accum += contrib[n];              \
+       break;                            \
+     }                                   
+
+// 计算下一个随机粉红噪声值，CPU 负载均匀。
+short int   PinkNoise::pinkrand( )
+{
+    short int  randu = ugen.urand() &amp; 0x7fff;     // U[0,32767]
+    short int  randv = (short int) ugen.urand();  // U[-32768,32767]
+
+    // 结构化块，最多执行一次更新
+    while (1) 
+    {
+      if (randu &lt; pPSUM[0]) UPDATE_CONTRIB(0);
+      if (randu &lt; pPSUM[1]) UPDATE_CONTRIB(1);
+      if (randu &lt; pPSUM[2]) UPDATE_CONTRIB(2);
+      if (randu &lt; pPSUM[3]) UPDATE_CONTRIB(3);
+      if (randu &lt; pPSUM[4]) UPDATE_CONTRIB(4);
+      break;
+    }
+    return (short int) (accum &gt;&gt; 16);
+}
+
+// ----------- application   -------------------------------
+
+short int    pink_signal[1024];
+
+void   example(void)
+{
+    PinkNoise    pinkgen;
+    int  i;
+    for  (i=0; i&lt;1024; ++i)   pink_signal[i] = pinkgen.pinkrand();
+}</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Synthesis/244-direct-pink-noise-synthesis-with-auto-correlated-generator.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Synthesis/244-direct-pink-noise-synthesis-with-auto-correlated-generator.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

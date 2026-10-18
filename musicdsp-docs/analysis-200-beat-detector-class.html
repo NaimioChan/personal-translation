@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>节拍检测器类 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：节拍检测器类">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>节拍检测器类</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>rf.eerf@retsaMPSD</li>
+<li><strong>创建时间：</strong>2005-05-12 14:35:52</li>
+</ul>
+<blockquote class="note">
+<p>这个类是为一个 VST 插件设计的。基本上就是一个二阶低通滤波器，后接包络检测器（感谢 Bram），再送入施密特触发器。每次检测到节拍时，上升沿检测器输出一个单样本脉冲。代码本身就说明了问题……<br>注意：该类使用固定的比较电平，你可能需要修改它。</p>
+</blockquote>
+<pre><code>// ***** BEATDETECTOR.H *****
+#ifndef BeatDetectorH
+#define BeatDetectorH
+
+class TBeatDetector
+{
+private:
+  float KBeatFilter;        // 滤波器系数
+  float Filter1Out, Filter2Out;
+  float BeatRelease;        // 释放时间系数
+  float PeakEnv;            // 峰值包络跟随器
+  bool BeatTrigger;         // 施密特触发器输出
+  bool PrevBeatPulse;       // 上升沿记忆
+public:
+  bool BeatPulse;           // 节拍检测器输出
+
+  TBeatDetector();
+  ~TBeatDetector();
+  virtual void setSampleRate(float SampleRate);
+  virtual void AudioProcess (float input);
+};
+#endif
+
+
+// ***** BEATDETECTOR.CPP *****
+#include "BeatDetector.h"
+#include "math.h"
+
+#define FREQ_LP_BEAT 150.0f    // 低通滤波器频率
+#define T_FILTER 1.0f/(2.0f*M_PI*FREQ_LP_BEAT)  // 低通滤波器时间常数
+#define BEAT_RTIME 0.02f  // 包络检测器的释放时间（秒）
+
+TBeatDetector::TBeatDetector()
+// 节拍检测器构造函数
+{
+  Filter1Out=0.0;
+  Filter2Out=0.0;
+  PeakEnv=0.0;
+  BeatTrigger=false;
+  PrevBeatPulse=false;
+  setSampleRate(44100);
+}
+
+TBeatDetector::~TBeatDetector()
+{
+  // 没有需要特别处理的事……
+}
+
+void TBeatDetector::setSampleRate (float sampleRate)
+// 计算所有与采样频率相关的系数
+{
+  KBeatFilter=1.0/(sampleRate*T_FILTER);
+  BeatRelease=(float)exp(-1.0f/(sampleRate*BEAT_RTIME));
+}
+
+void TBeatDetector::AudioProcess (float input)
+// 处理输入信号
+{
+  float EnvIn;
+
+  // 第 1 步：二阶低通滤波器（由两个一阶 RC 滤波器构成）
+  Filter1Out=Filter1Out+(KBeatFilter*(input-Filter1Out));
+  Filter2Out=Filter2Out+(KBeatFilter*(Filter1Out-Filter2Out));
+
+  // 第 2 步：峰值检测器
+  EnvIn=fabs(Filter2Out);
+  if (EnvIn&gt;PeakEnv) PeakEnv=EnvIn;  // 起音时间为 0
+  else
+  {
+    PeakEnv*=BeatRelease;
+    PeakEnv+=(1.0f-BeatRelease)*EnvIn;
+  }
+
+  // 第 3 步：施密特触发器
+  if (!BeatTrigger)
+  {
+    if (PeakEnv&gt;0.3) BeatTrigger=true;
+  }
+  else
+  {
+    if (PeakEnv&lt;0.15) BeatTrigger=false;
+  }
+
+  // 第 4 步：上升沿检测器
+  BeatPulse=false;
+  if ((BeatTrigger)&amp;&amp;(!PrevBeatPulse))
+    BeatPulse=true;
+  PrevBeatPulse=BeatTrigger;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2005-05-18 22:59:08</strong> · moc.yddaht@yddaht</p>
+<pre><code>// Nice work!
+//Here's a Delphi and freepascal version:             
+unit beattrigger;
+
+interface
+
+type
+TBeatDetector = class
+private
+  KBeatFilter,               // Filter coefficient
+  Filter1Out,
+  Filter2Out,
+  BeatRelease,               // Release time coefficient
+  PeakEnv:single;            // Peak enveloppe follower
+  BeatTrigger,               // Schmitt trigger output
+  PrevBeatPulse:Boolean;     // Rising edge memory
+public
+  BeatPulse:Boolean;            // Beat detector output
+  constructor Create;
+  procedure setSampleRate(SampleRate:single);
+  procedure AudioProcess (input:single);
+end;
+
+function fabs(value:single):Single;
+
+implementation
+
+
+const
+ FREQ_LP_BEAT = 150.0;                    // Low Pass filter frequency
+ T_FILTER = 1.0/(2.0 * PI*FREQ_LP_BEAT);  // Low Pass filter time constant
+ BEAT_RTIME = 0.02;   // Release time of enveloppe detector in second
+
+constructor TBeatDetector.create;
+// Beat detector constructor
+begin
+  inherited;
+  Filter1Out:=0.0;
+  Filter2Out:=0.0;
+  PeakEnv:=0.0;
+  BeatTrigger:=false;
+  PrevBeatPulse:=false;
+  setSampleRate(44100);
+end;
+
+
+procedure TBeatDetector.setSampleRate (sampleRate:single);
+// Compute all sample frequency related coeffs
+begin
+  KBeatFilter:=1.0/(sampleRate*T_FILTER);
+  BeatRelease:= exp(-1.0/(sampleRate*BEAT_RTIME));
+end;
+
+function fabs(value:single):Single;
+asm
+ fld value
+ fabs
+ fwait
+end;
+
+procedure  TBeatDetector.AudioProcess (input:single);
+var
+ EnvIn:Single;
+// Process incoming signal
+begin
+  // Step 1 : 2nd order low pass filter (made of two 1st order RC filter)
+  Filter1Out:=Filter1Out+(KBeatFilter*(input-Filter1Out));
+  Filter2Out:=Filter2Out+(KBeatFilter*(Filter1Out-Filter2Out));
+  // Step 2 : peak detector
+  EnvIn:=fabs(Filter2Out);
+  if EnvIn&gt;PeakEnv then PeakEnv:=EnvIn  // Attack time = 0
+  else
+  begin
+    PeakEnv:=PeakEnv*BeatRelease;
+    PeakEnv:=PeakEnv+(1.0-BeatRelease)*EnvIn;
+  end;
+  // Step 3 : Schmitt trigger
+  if not BeatTrigger then
+  begin
+    if PeakEnv&gt;0.3 then BeatTrigger:=true;
+  end
+  else
+  begin
+    if PeakEnv&lt;0.15 then BeatTrigger:=false;
+  end;
+
+  // Step 4 : rising edge detector
+  BeatPulse:=false;
+  if (BeatTrigger = true ) and( not PrevBeatPulse) then
+    BeatPulse:=true;
+  PrevBeatPulse:=BeatTrigger;
+end;
+
+end.</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Analysis/200-beat-detector-class.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Analysis/200-beat-detector-class.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

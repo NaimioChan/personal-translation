@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>生成 minblep 表的 Matlab/octave 代码 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：生成 minblep 表的 Matlab/octave 代码">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>生成 minblep 表的 Matlab/octave 代码</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>ude.drofnats.amrcc@lfd</li>
+<li><strong>创建时间：</strong>2005-11-15 22:27:53</li>
+</ul>
+<blockquote class="note">
+<p>我测试这段代码时，每个函数都放在单独的文件里运行……所以如果你想把它当作一个文件整体运行，可能要做些调整（endfunction 语句？）。</p>
+<p>玩得开心！</p>
+<p>附：Daniel Werner 有一个 C++ 版本，在这里：<br><a href="http://www.experimentalscene.com/?type=2&amp;id=1" rel="noreferrer noopener">http://www.experimentalscene.com/?type=2&amp;id=1</a><br>不确定它的输出和我的版本是否不同。<br>（例如 minphase 计算中没有做阈值处理）</p>
+</blockquote>
+<pre><code>% 用于生成频带受限合成所需 minblep 表的 Octave/Matlab 代码
+%% 原始 minblep 技术由 Eli Brandt 描述：
+%% http://www.cs.cmu.edu/~eli/L/icmc01/hardsync.html
+
+% (c) David Lowenfels 2004
+% you may use this code freely to generate your tables,
+% but please send me a free copy of the software that you 
+% make with it, or at least send me an email to say hello
+% and put my name in the software credits :)
+% (IIRC: mps and clipdb functions are from Julius Smith)
+
+% 用法：
+%  fc = 扩张因子
+%  Nzc = 过零点数
+%  omega = 过采样因子
+%  thresh = 最小相位计算所用的 dB 阈值
+
+mbtable = minblep( fc, Nzc, omega, thresh );
+mblen = length( mbtable );
+save -binary mbtable.mat mbtable ktable nzc mblen;
+
+*********************************************
+function [out] = minblep( fc, Nzc, omega, thresh )
+
+out = filter( 1, [1 -1], minblip( fc, Nzc, omega, thresh ) );
+
+len = length( out );
+normal = mean( out( floor(len*0.7):len ) )
+out = out / normal; %% 归一化
+
+%% 现在截断，使其在合适的相位周期结束以获得最小不连续
+thresh = 1e-6;
+for i = len:-1:len-1000
+%  pause
+  a = out(i) - thresh - 1;
+	b = out(i-1) - thresh - 1;
+%	i
+	if(  (abs(a) &lt; thresh) &amp; (a &gt; b) )
+	  break;
+	endif
+endfor
+
+%out = out';
+out = out(1:i);
+
+
+*********************************************
+
+
+function [out] = minblip( fc, Nzc, omega, thresh )
+if (nargin &lt; 4 )
+  thresh = -100;
+end
+if (nargin &lt; 3 )
+  omega = 64;
+end
+if (nargin &lt; 2 )
+  Nzc = 16;
+end
+if (nargin &lt; 1 )
+  fc = 0.9;
+end
+
+blip = sinctable( omega, Nzc, fc );
+%% length(blip) 必须为 nextpow2！（当 fc &lt; 1 时）
+
+mag = fft( blip );
+out = real( ifft( mps( mag, thresh ) ) );
+
+*********************************************
+
+function [sm] = mps(s, thresh) 
+% [sm] = mps(s)
+% 由复频谱 s 生成最小相位频谱 sm 
+
+if (nargin &lt; 2 )
+  thresh = -100;
+endif
+
+s = clipdb(s, thresh);
+sm = exp( fft( fold( ifft( log( s )))));
+
+*********************************************
+function [clipped] = clipdb(s,cutoff)
+% [clipped] = clipdb(s,cutoff)
+% 将 s 的幅度裁剪到其最大值 + cutoff（dB）处。
+% 例如：clip(s,-100) 确保 s 的最小幅度
+% 不会比其最大幅度低 100dB 以上。
+% 若 s 为零，则不做任何处理。
+
+as = abs(s);
+mas = max(as(:));
+if mas==0, return; end
+if cutoff &gt;= 0, return; end
+thresh = mas*10^(cutoff/20); % dB 转线性
+toosmall = find(as &lt; thresh);
+clipped = s;
+clipped(toosmall) = thresh;
+*********************************************
+
+function [out, phase] = sinctable( omega, Nzc, fc )
+
+if (nargin &lt; 3 )
+  fc = 1.0 %% 截止频率
+end %if
+if (nargin &lt; 2 )
+  Nzc = 16  %% 过零点数
+end %if
+if (nargin &lt; 1 )
+  omega = 64 %% 过采样因子
+end %if
+
+Nzc = Nzc / fc %% 这可使两端更平坦。
+
+phase = linspace( -Nzc, Nzc, Nzc*omega*2 );
+
+%sinc = sin( pi * fc * phase) ./ (pi * fc * phase);
+
+num = sin( pi*fc*phase );
+den = pi*fc*phase;
+
+len = length( phase );
+sinc = zeros( len, 1 );
+
+%sinc = num ./ den;
+
+for i=1:len
+  if ( den(i) ~= 0 )
+    sinc(i) = num(i) / den(i);
+	else
+    sinc(i) = 1;
+  end
+end %for
+
+out = sinc;
+window = blackman( len );
+out = out .* window;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Synthesis/211-matlab-octave-code-for-minblep-table-generation.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Synthesis/211-matlab-octave-code-for-minblep-table-generation.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

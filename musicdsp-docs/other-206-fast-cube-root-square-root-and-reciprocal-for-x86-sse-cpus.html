@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>x86/SSE CPU 的快速立方根、平方根与倒数 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：x86/SSE CPU 的快速立方根、平方根与倒数">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>x86/SSE CPU 的快速立方根、平方根与倒数</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>moc.noicratse@ajelak</li>
+<li><strong>创建时间：</strong>2005-05-29 18:36:40</li>
+</ul>
+<blockquote class="note">
+<p>所有这些方法都用 SSE 指令或位操作技巧得到立方根、平方根或倒数的粗略近似，再用一步或多步 Newton-Raphson 近似加以精化。</p>
+<p>每个函数的名字都表明其近似精度水平，注释则描述它相对常规版本的性能。</p>
+</blockquote>
+<pre><code>// 这些函数以不同的精度近似倒数、平方根和 
+// 立方根，速度远快于直接使用 1/x、sqrtf(x)、 
+// 以及 powf( x, 1.0f/3.0f ) 的方法。 
+// 全部需要支持 SSE 的 CPU &amp; OS。
+// 与 powf() 方案不同，立方根还能正确处理
+// 负数输入。  
+
+#define REALLY_INLINE __forceinline
+
+// Pentium M 上约 34 个时钟周期，powf 约 360 个 
+REALLY_INLINE float cuberoot_sse_8bits( float x )
+{
+	float z;
+	static const float three = 3.0f;
+	_asm
+	{
+		mov		eax, x				// x 的位表示
+		movss	xmm2, x				// x2: x
+		movss	xmm1, three			// x1: 3
+		// 用整数运算实现的魔数浮点立方根。
+		// 指数被除以三，方式是让 
+		// 余数位被挤入规格化尾数的 
+		// 高位。 
+		mov		ecx, eax			// x 的副本
+		and		eax, 0x7FFFFFFF		// x 的指数 &amp; 尾数，偏置 127 表示
+		sub     eax, 0x3F800000		// x 的指数 &amp; 尾数，二进制补码表示
+		sar     eax, 10				// 
+		imul    eax, 341			// 341/1024 ~= .333
+		add		eax, 0x3F800000		// 转回偏置 127 表示
+		and     eax, 0x7FFFFFFF		// 重新掩码
+		and		ecx, 0x80000000		// 原符号与尾数
+		or      eax, ecx			// 掩码后的新指数，以及原符号与尾数
+		mov		z, eax				// 
+
+		// 用 SSE 精化第一次近似
+		movss	xmm0, z				;// x0: z
+		movss	xmm3, xmm0			;// x3: z
+		mulss	xmm3, xmm0			;// x3: z*z
+		movss	xmm4, xmm3			;// x4: z*z
+		mulss   xmm3, xmm1			;// x3: 3*z*z
+		rcpss	xmm3, xmm3			;// x3: ~ 1/(3*z*z)
+		mulss   xmm4, xmm0			;// x4: z*z*z
+		subss	xmm4, xmm2			;// x4: z*z*z-x
+		mulss	xmm4, xmm3			;// x4: (z*z*z-x) / (3*z*z)
+		subss	xmm0, xmm4			;// x0：z' 精度约 0.3% 以内
+		movss	z, xmm0
+	}
+
+	return z;
+}
+
+// Pentium M 上约 60 个时钟周期，powf 约 360 个
+REALLY_INLINE float cuberoot_sse_16bits( float x )
+{
+	float z;
+	static const float three = 3.0f;
+	_asm
+	{
+		mov		eax, x				// x 的位表示
+		movss	xmm2, x				// x2: x
+		movss	xmm1, three			// x1: 3
+		// 用整数运算实现的魔数浮点立方根。
+		// 指数被除以三，方式是让 
+		// 余数位被挤入规格化尾数的 
+		// 高位。 
+		mov		ecx, eax			// x 的副本
+		and		eax, 0x7FFFFFFF		// x 的指数 &amp; 尾数，偏置 127 表示
+		sub     eax, 0x3F800000		// x 的指数 &amp; 尾数，二进制补码表示
+		sar     eax, 10				// 
+		imul    eax, 341			// 341/1024 ~= .333
+		add		eax, 0x3F800000		// 转回偏置 127 表示
+		and     eax, 0x7FFFFFFF		// 重新掩码
+		and		ecx, 0x80000000		// 原符号与尾数
+		or      eax, ecx			// 掩码后的新指数，以及原符号与尾数
+		mov		z, eax				// 
+
+		// 用 SSE 精化第一次近似
+		movss	xmm0, z				;// x0: z
+		movss	xmm3, xmm0			;// x3: z
+		mulss	xmm3, xmm0			;// x3: z*z
+		movss	xmm4, xmm3			;// x4: z*z
+		mulss   xmm3, xmm1			;// x3: 3*z*z
+		rcpss	xmm3, xmm3			;// x3: ~ 1/(3*z*z)
+		mulss   xmm4, xmm0			;// x4: z*z*z
+		subss	xmm4, xmm2			;// x4: z*z*z-x
+		mulss	xmm4, xmm3			;// x4: (z*z*z-x) / (3*z*z)
+		subss	xmm0, xmm4			;// x0：z' 精度约 0.3% 以内
+
+		movss	xmm3, xmm0			;// x3: z
+		mulss	xmm3, xmm0			;// x3: z*z
+		movss	xmm4, xmm3			;// x4: z*z
+		mulss   xmm3, xmm1			;// x3: 3*z*z
+		rcpss	xmm3, xmm3			;// x3: ~ 1/(3*z*z)
+		mulss   xmm4, xmm0			;// x4: z*z*z
+		subss	xmm4, xmm2			;// x4: z*z*z-x
+		mulss	xmm4, xmm3			;// x4: (z*z*z-x) / (3*z*z)
+		subss	xmm0, xmm4			;// x0：z'' 精度约 0.001% 以内
+
+		movss	z, xmm0
+	}
+
+	return z;
+}
+
+// Pentium M 上约 77 个时钟周期，powf 约 360 个
+REALLY_INLINE float cuberoot_sse_22bits( float x )
+{
+	float z;
+	static const float three = 3.0f;
+	_asm
+	{
+		mov		eax, x				// x 的位表示
+		movss	xmm2, x				// x2: x
+		movss	xmm1, three			// x1: 3
+		// 用整数运算实现的魔数浮点立方根。
+		// 指数被除以三，方式是让 
+		// 余数位被挤入规格化尾数的 
+		// 高位。 
+		mov		ecx, eax			// x 的副本
+		and		eax, 0x7FFFFFFF		// x 的指数 &amp; 尾数，偏置 127 表示
+		sub     eax, 0x3F800000		// x 的指数 &amp; 尾数，二进制补码表示
+		sar     eax, 10				// 
+		imul    eax, 341			// 341/1024 ~= .333
+		add		eax, 0x3F800000		// 转回偏置 127 表示
+		and     eax, 0x7FFFFFFF		// 重新掩码
+		and		ecx, 0x80000000		// 原符号与尾数
+		or      eax, ecx			// 掩码后的新指数，以及原符号与尾数
+		mov		z, eax				// 
+
+		// 用 SSE 精化第一次近似
+		movss	xmm0, z				// x0: z
+		movss	xmm3, xmm0			// x3: z
+		mulss	xmm3, xmm0			// x3: z*z
+		movss	xmm4, xmm3			// x4: z*z
+		mulss   xmm3, xmm1			// x3: 3*z*z
+		rcpss	xmm3, xmm3			// x3: ~ 1/(3*z*z)
+		mulss   xmm4, xmm0			// x4: z*z*z
+		subss	xmm4, xmm2			// x4: z*z*z-x
+		mulss	xmm4, xmm3			// x4: (z*z*z-x) / (3*z*z)
+		subss	xmm0, xmm4			// x0：z' 精度约 0.3% 以内
+
+		movss	xmm3, xmm0			// x3: z
+		mulss	xmm3, xmm0			// x3: z*z
+		movss	xmm4, xmm3			// x4: z*z
+		mulss   xmm3, xmm1			// x3: 3*z*z
+		rcpss	xmm3, xmm3			// x3: ~ 1/(3*z*z)
+		mulss   xmm4, xmm0			// x4: z*z*z
+		subss	xmm4, xmm2			// x4: z*z*z-x
+		mulss	xmm4, xmm3			// x4: (z*z*z-x) / (3*z*z)
+		subss	xmm0, xmm4			// x0：z'' 精度约 0.001% 以内
+
+		movss	xmm3, xmm0			// x3: z
+		mulss	xmm3, xmm0			// x3: z*z
+		movss	xmm4, xmm3			// x4: z*z
+		mulss   xmm3, xmm1			// x3: 3*z*z
+		rcpss	xmm3, xmm3			// x3: ~ 1/(3*z*z)
+		mulss   xmm4, xmm0			// x4: z*z*z
+		subss	xmm4, xmm2			// x4: z*z*z-x
+		mulss	xmm4, xmm3			// x4: (z*z*z-x) / (3*z*z)
+		subss	xmm0, xmm4			// x0：z''' 精度约 0.000012% 以内
+
+		movss	z, xmm0
+	}
+
+	return z;
+}
+
+// Pentium M 上约 6 个时钟周期，单精度 sqrtf 约 24 个
+REALLY_INLINE float squareroot_sse_11bits( float x )
+{
+	float z;
+	_asm
+	{
+		rsqrtss xmm0, x
+		rcpss	xmm0, xmm0
+		movss	z, xmm0			// z ~= sqrt(x) to 0.038%
+	}
+	return z;
+}
+
+// Pentium M 上约 19 个时钟周期，单精度 sqrtf 约 24 个
+REALLY_INLINE float squareroot_sse_22bits( float x )
+{
+	static float half = 0.5f;
+	float z;
+	_asm
+	{
+ 		movss	xmm1, x			// x1: x 
+		rsqrtss xmm2, xmm1		// x2: ~1/sqrt(x) = 1/z
+		rcpss	xmm0, xmm2		// x0: z == ~sqrt(x) to 0.05%
+
+		movss	xmm4, xmm0		// x4: z
+		movss	xmm3, half
+ 		mulss	xmm4, xmm4		// x4: z*z
+		mulss	xmm2, xmm3		// x2: 1 / 2z
+		subss	xmm4, xmm1		// x4: z*z-x
+		mulss	xmm4, xmm2		// x4: (z*z-x)/2z
+		subss	xmm0, xmm4		// x0: z' to 0.000015%
+
+		movss	z, xmm0		   
+	}
+	return z;
+}
+
+// Pentium M 上约 12 个时钟周期，单精度除法约 16 个
+REALLY_INLINE float reciprocal_sse_22bits( float x )
+{
+	float z;
+	_asm
+	{
+		rcpss	xmm0, x			// x0: z ~= 1/x
+		movss	xmm2, x			// x2: x
+		movss	xmm1, xmm0		// x1: z ~= 1/x
+		addss	xmm0, xmm0		// x0: 2z
+		mulss	xmm1, xmm1		// x1: z^2
+		mulss	xmm1, xmm2		// x1: xz^2
+		subss	xmm0, xmm1		// x0: z' ~= 1/x to 0.000012%
+
+		movss	z, xmm0		   
+	}
+	return z;
+}</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/206-fast-cube-root-square-root-and-reciprocal-for-x86-sse-cpus.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/206-fast-cube-root-square-root-and-reciprocal-for-x86-sse-cpus.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

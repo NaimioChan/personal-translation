@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>相位调制与频率调制 II - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：相位调制与频率调制 II">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>相位调制与频率调制 II</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>James McCartney</li>
+<li><strong>创建时间：</strong>2003-12-01 08:24:26</li>
+</ul>
+<blockquote class="note">
+<p>在数字振荡器中，FM 与 PM 的区别在于：FM 在相位积分之前加到频率上，而 PM 在相位积分之后加到相位上。相位积分是指把振荡器的旧相位与当前频率（弧度/采样）相加，得到振荡器的新相位。要获得与 FM 相同的波形，等效的 PM 调制器是 FM 调制器的积分。由于正弦波的积分是反相余弦波，这不成问题。在包含多个分音的调制器中，等效 PM 调制器的各分音相对幅度会不同。例如方波的积分是三角波；它们的谐波成分相同，但各分音的相对幅度不同。这些差异无关紧要，因为我们并不是要精确重现 FM，而是要重现真实（或非真实）的乐器。</p>
+<p>PM 更好的原因是：PM 与 FM 中都可能在 0 Hz 处产生非零能量，在 FM 中，如果 FM 波再次用作调制器，这会造成音高偏移；而在 PM 中，直流分量只会产生相移。PM 更好的另一个原因是，调制指数（决定产生的边带数量，在普通 FM 中按调制器幅度除以调制器频率计算）不依赖调制器频率，它始终等于调制器幅度（以弧度计）。解决直流频率偏移问题的好处是，可以级联载波-调制器对，也可以做反馈调制。调制指数计算更简单，则让各声部在所有音高上更容易保持相同的谐波结构。</p>
+<p>相位调制的基本数学在任何电子通信理论教材中都能找到。</p>
+<p>下面是一些实现 FM、PM 与 AM 的数字振荡器 C 代码。它展示了 FM 与 PM 在实现上的差异。它仅作示例，并非高效实现。</p>
+</blockquote>
+<pre><code>/* 数字振荡器的示例实现，支持 FM、PM &amp; AM */
+
+#define PI 3.14159265358979
+#define RADIANS_TO_INDEX (512.0 / (2.0 * PI))
+
+typedef struct{	/* 振荡器数据 */
+	double freq;   /* 振荡器频率，单位弧度/采样点 */
+	double phase;  /* 累积的振荡器相位，单位弧度 */
+	double wavetable[512]; /* 波形查找表 */
+} OscilRec;
+
+
+/* oscil — 计算一个采样点的振荡器输出，其频率、相位和
+*    波表位于 orec 指向的 OscilRec 结构中。
+*/
+double oscil(orec, fm, pm, am)
+	OscilRec *orec;  /* 指向 oscil 数据的指针 */
+	double fm; /* 频率调制输入，单位弧度/采样点 */
+	double pm; /* 相位调制输入，单位弧度 */
+	double am; /* 幅度调制输入，单位任意 */
+{
+	long tableindex;            /* 波表索引 */
+	double instantaneous_freq;  /* 振荡器频率 + 频率调制 */
+	double instantaneous_phase; /* 振荡器相位 + 相位调制 */
+	double output;              /* 振荡器输出 */
+
+	instantaneous_freq  = orec-&gt;freq  + fm; /* 获取瞬时频率 */
+	orec-&gt;phase += instantaneous_freq;      /* 累加相位 */
+	instantaneous_phase = orec-&gt;phase + pm; /* 获取瞬时相位 */
+
+	/* 转换为查找表索引 */
+	tableindex = RADIANS_TO_INDEX * instantaneous_phase;
+	tableindex &amp;= 511; /* 对 512 取模 === 消除 2*k*PI 的整数倍 */
+
+	output = orec-&gt;wavetable[tableindex] * am; /* 查表并乘以 am 输入 */
+
+	return (output);  /* 返回振荡器输出 */
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2011-03-08 11:29:32</strong> · ed.redienhcsslin@mapsvulipsdcisum</p>
+<pre><code>As the PM/FM is "iterative", won't this code produce different results at different sampling rates? How can this be prevented?
+
+Any advice is highly appreciated!</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Synthesis/160-phase-modulation-vs-frequency-modulation-ii.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Synthesis/160-phase-modulation-vs-frequency-modulation-ii.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

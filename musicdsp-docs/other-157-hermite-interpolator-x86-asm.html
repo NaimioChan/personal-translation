@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hermite 插值器（x86 汇编） - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：Hermite 插值器（x86 汇编）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Hermite 插值器（x86 汇编）</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>moc.oiduacbr@kileib.trebor</li>
+<li><strong>类型：</strong>x86 汇编的 Hermite 插值器（用于 MS VC++）</li>
+<li><strong>创建时间：</strong>2004-04-07 09:38:32</li>
+</ul>
+<blockquote class="note">
+<p>Laurent de Soras 的 Hermite 插值器的“汇编化”版本。我尽可能把计算并行化，但几乎肯定还有改进空间。目前它大约快 5.3 倍（！），作为起点不坏……</p>
+<p>参数说明：<br>frac_pos：传给插值器的小数值 [0.0f - 1.0f]<br>pntr：指向 float 数组的指针，其中：<br>pntr[0] = 前一个样本（idx = -1）<br>pntr[1] = 当前样本（idx = 0）<br>pntr[2] = 下一个样本（idx = +1）<br>pntr[3] = 再下一个样本（idx = +2）</p>
+<p>插值发生在 pntr[1] 与 pntr[2] 之间。</p>
+<p>此致，<br>/Robert Bielik<br>RBC Audio</p>
+</blockquote>
+<pre><code>const float c_half = 0.5f;
+
+__declspec(naked) float __hermite(float frac_pos, const float* pntr)
+{
+	__asm
+	{
+		push	ecx;		
+		mov		ecx, dword ptr[esp + 12]; //////////////////////////////////////////////////////////////////////////////////////////////////
+		add		ecx, 0x04;			//	ST(0)		ST(1)		ST(2)		ST(3)		ST(4)		ST(5)		ST(6)		ST(7)		
+		fld		dword ptr [ecx+4];	//	x1
+		fsub	dword ptr [ecx-4];	//	x1-xm1
+		fld		dword ptr [ecx];	//	x0			x1-xm1
+		fsub	dword ptr [ecx+4];	//	v			x1-xm1
+		fld		dword ptr [ecx+8];	//	x2			v			x1-xm1
+		fsub	dword ptr [ecx];	//	x2-x0		v			x1-xm1
+		fxch	st(2);				//	x1-m1		v			x2-x0
+		fmul	c_half;				//	c			v			x2-x0
+		fxch	st(2);				//	x2-x0		v			c
+		fmul	c_half;				//	0.5*(x2-x0)	v			c
+		fxch	st(2);				//	c			v			0.5*(x2-x0)
+		fst		st(3);				//	c			v			0.5*(x2-x0)	c
+		fadd	st(0), st(1);		//	w			v			0.5*(x2-x0)	c
+		fxch	st(2);				//	0.5*(x2-x0)	v			w			c	
+		faddp	st(1), st(0);		//  v+.5(x2-x0)	w			c	
+		fadd	st(0), st(1);		//	a			w			c
+		fadd	st(1), st(0);		//	a			b_neg		c
+		fmul	dword ptr [esp+8];	//	a*frac		b_neg		c
+		fsubp	st(1), st(0);		//	a*f-b		c
+		fmul	dword ptr [esp+8];	//	(a*f-b)*f	c
+		faddp	st(1), st(0);		//	res-x0/f
+		fmul	dword ptr [esp+8];	//	res-x0
+		fadd	dword ptr [ecx];	//	res
+		pop		ecx;
+		ret;
+	}
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2003-11-27 04:53:16</strong> · dmi@smartelectronix</p>
+<pre><code>This code produces a nasty buzzing sound.  I think there might be a bug somwhere but I haven't found it yet.            </code></pre>
+<p><strong>2003-11-29 16:41:41</strong> · gro.lortnocdnim@psdcisum-sulph</p>
+<pre><code>I agree; the output, when plotted, looks like it has overlaid rectangular shapes on it.</code></pre>
+<p><strong>2003-12-02 21:18:57</strong> · moc.oiduacbr@kileib.trebor</p>
+<pre><code>AHH! True! A bug has sneaked in! Change the row that says:
+fsubp st(1), st(0); // a*f-b c
+to:
+fsubrp st(1), st(0); // a*f-b c
+
+and it should be much better. Although I noticed that a good optimization by the compiler generates nearly as fast a code, but only nearly. This is still about 10% faster. </code></pre>
+<p><strong>2004-09-07 02:24:34</strong> · moc.enecslatnemirepxe@renrewd</p>
+<pre><code>I have tested the four hermite interpolation algorithms posted to musicdsp.org plus the assemblified version of 
+
+Laurent de Soras' code by Robert Bielik and found that on a Pentium 4 with full optimization (targeting the 
+
+Pentium 4 and above, but not using code that won't work on older processors) with MS VC++ 7 that the second 
+
+function is the fastest.
+
+
+Function    Percent Total    Time    Return Value
+
+hermite1:   18.90%,          375ms,  0.52500004f
+hermite2:   16.53%,          328ms,  0.52500004f
+hermite3:   17.34%,          344ms,  0.52500004f
+hermite4:   19.66%,          390ms,  0.52500004f
+hermite5:   27.57%,          547ms,  0.52500004f
+
+- Daniel Werner
+http://experimentalscene.com/</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Other/157-hermite-interpolator-x86-asm.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Other/157-hermite-interpolator-x86-asm.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C# 振荡器类 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：C# 振荡器类">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>C# 振荡器类</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>neotec</li>
+<li><strong>类型：</strong>正弦、锯齿、可变脉冲、三角、C64 噪声</li>
+<li><strong>创建时间：</strong>2007-01-08 10:49:36</li>
+</ul>
+<blockquote class="note">
+<p>参数：</p>
+<p>Pitch：振荡器音高，单位音分 [0 - 14399]，从 A 开始 -&gt; 6.875Hz<br>Pulsewidth：[0 - 65535] -&gt; 0% 到 99.99%<br>Value：最后一次的输出值，给这个属性赋值会“同步”振荡器</p>
+</blockquote>
+<pre><code>public class SynthOscilator
+{
+    public enum OscWaveformType
+    {
+        SAW, PULSE, TRI, NOISE, SINE
+    }
+
+    public int Pitch
+    {
+        get
+        {
+            return this._Pitch;
+        }
+        set
+        {
+            this._Pitch = this.MinMax(0, value, 14399);
+            this.OscStep = WaveSteps[this._Pitch];
+        }
+    }
+
+    public int PulseWidth
+    {
+        get
+        {
+            return this._PulseWidth;
+        }
+        set
+        {
+            this._PulseWidth = this.MinMax(0, value, 65535);
+        }
+    }
+
+    public OscWaveformType Waveform
+    {
+        get
+        {
+            return this._WaveForm;
+        }
+        set
+        {
+            this._WaveForm = value;
+        }
+    }
+
+    public int Value
+    {
+        get
+        {
+            return this._Value;
+        }
+        set
+        {
+            this._Value = 0;
+            this.OscNow = 0;
+        }
+    }
+
+    private int _Pitch;
+    private int _PulseWidth;
+    private int _Value;
+    private OscWaveformType _WaveForm;
+
+    private int OscNow;
+    private int OscStep;
+    private int ShiftRegister;
+
+    public const double BaseFrequence = 6.875;
+	public const int SampleRate = 44100;
+    public static int[] WaveSteps = new int[0];
+    public static int[] SineTable = new int[0];
+
+    public SynthOscilator()
+    {
+        if (WaveSteps.Length == 0)
+            this.CalcSteps();
+
+        if (SineTable.Length == 0)
+            this.CalcSine();
+
+        this._Pitch = 7200;
+        this._PulseWidth = 32768;
+        this._WaveForm = OscWaveformType.SAW;
+
+        this.ShiftRegister = 0x7ffff8;
+
+        this.OscNow = 0;
+        this.OscStep = WaveSteps[this._Pitch];
+        this._Value = 0;
+    }
+
+    private void CalcSteps()
+    {
+        WaveSteps = new int[14400];
+
+        for (int i = 0; i &lt; 14400; i++)
+        {
+            double t0, t1, t2;
+
+            t0 = Math.Pow(2.0, (double)i / 1200.0);
+            t1 = BaseFrequence * t0;
+            t2 = (t1 * 65536.0) / (double)this.SampleRate;
+
+            WaveSteps[i] = (int)Math.Round(t2 * 4096.0);
+        }
+    }
+
+	private void CalcSine()
+	{
+        SineTable = new int[65536];
+
+        double s = Math.PI / 32768.0;
+
+        for (int i = 0; i &lt; 65536; i++)
+        {
+            double v = Math.Sin((double)i * s) * 32768.0;
+
+            int t = (int)Math.Round(v) + 32768;
+
+            if (t &lt; 0)
+                t = 0;
+            else if (t &gt; 65535)
+                t = 65535;
+
+            SineTable[i] = t;
+        }
+	}
+
+    public override int Run()
+    {
+        int ret = 32768;
+        int osc = this.OscNow &gt;&gt; 12;
+
+        switch (this._WaveForm)
+        {
+            case OscWaveformType.SAW:
+                ret = osc;
+                break;
+            case OscWaveformType.PULSE:
+                if (osc &lt; this.PulseWidth)
+                    ret = 65535;
+                else
+                    ret = 0;
+                break;
+            case OscWaveformType.TRI:
+                if (osc &lt; 32768)
+                    ret = osc &lt;&lt; 1;
+                else
+                    ret = 131071 - (osc &lt;&lt; 1);
+                break;
+            case OscWaveformType.NOISE:
+                ret = ((this.ShiftRegister &amp; 0x400000) &gt;&gt; 11) |
+                  ((this.ShiftRegister &amp; 0x100000) &gt;&gt; 10) |
+                  ((this.ShiftRegister &amp; 0x010000) &gt;&gt; 7) |
+                  ((this.ShiftRegister &amp; 0x002000) &gt;&gt; 5) |
+                  ((this.ShiftRegister &amp; 0x000800) &gt;&gt; 4) |
+                  ((this.ShiftRegister &amp; 0x000080) &gt;&gt; 1) |
+                  ((this.ShiftRegister &amp; 0x000010) &lt;&lt; 1) |
+                  ((this.ShiftRegister &amp; 0x000004) &lt;&lt; 2);
+                ret &lt;&lt;= 4;
+                break;
+            case OscWaveformType.SINE:
+                ret = SynthTools.SineTable[osc];
+                break;
+            default:
+                break;
+        }
+
+        this.OscNow += this.OscStep;
+
+        if (this.OscNow &gt; 0xfffffff)
+        {
+            int bit0 = ((this.ShiftRegister &gt;&gt; 22) ^ (this.ShiftRegister &gt;&gt; 17)) &amp; 0x1;
+            this.ShiftRegister &lt;&lt;= 1;
+            this.ShiftRegister &amp;= 0x7fffff;
+            this.ShiftRegister |= bit0;
+        }
+
+        this.OscNow &amp;= 0xfffffff;
+
+        this._Value = ret - 32768;
+
+        return this._Value;
+    }
+
+    public int MinMax(int a, int b, int c)
+    {
+        if (b &lt; a)
+            return a;
+        else if (b &gt; c)
+            return c;
+        else
+            return b;
+    }
+}</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Synthesis/239-c-oscilator-class.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Synthesis/239-c-oscilator-class.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

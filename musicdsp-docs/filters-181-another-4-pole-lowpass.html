@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>另一种 4 极点低通…… - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：另一种 4 极点低通……">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>另一种 4 极点低通……</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>ten.xmg@zlipzzuf</li>
+<li><strong>类型：</strong>4 极点低通/高通</li>
+<li><strong>创建时间：</strong>2004-09-06 08:40:52</li>
+</ul>
+<blockquote class="note">
+<p>大致基于 Stilson/Smith 的 Moog 论文，但走向与这里见过的其他实现相当不同。</p>
+<p>参数是峰值频率和峰值幅度（下面的 g）；对于大于 1 的幅度，两者都相当准确。直流增益为 1。</p>
+<p>这个滤波器有一些不理想的特性——例如用单精度实现时，在低峰值频率下不稳定（我没能把它干净地拆成 biquad 或单极点，看看是否有帮助），而且它对参数变化反应强烈，扫描时系数更新的间隔最好不要比每八个样本更稀疏，这使它有些昂贵。</p>
+<p>不过我喜欢它的声音，而且精度高是件好事，因为很多滤波器在这方面并不强。</p>
+<p>我有一阵没再看高通版本了，但记得它的优缺点大致相同。</p>
+</blockquote>
+<pre><code>double coef[9];
+double d[4];
+double omega; //峰值频率
+double g;     //峰值幅度
+
+// 计算系数：
+
+double k,p,q,a;
+double a0,a1,a2,a3,a4;
+
+k=(4.0*g-3.0)/(g+1.0);
+p=1.0-0.25*k;p*=p;
+
+// LP:
+a=1.0/(tan(0.5*omega)*(1.0+p));
+p=1.0+a;
+q=1.0-a;
+
+a0=1.0/(k+p*p*p*p);
+a1=4.0*(k+p*p*p*q);
+a2=6.0*(k+p*p*q*q);
+a3=4.0*(k+p*q*q*q);
+a4=    (k+q*q*q*q);
+p=a0*(k+1.0);
+
+coef[0]=p;
+coef[1]=4.0*p;
+coef[2]=6.0*p;
+coef[3]=4.0*p;
+coef[4]=p;
+coef[5]=-a1*a0;
+coef[6]=-a2*a0;
+coef[7]=-a3*a0;
+coef[8]=-a4*a0;
+
+// 或高通：
+a=tan(0.5*omega)/(1.0+p);
+p=a+1.0;
+q=a-1.0;
+
+a0=1.0/(p*p*p*p+k);
+a1=4.0*(p*p*p*q-k);
+a2=6.0*(p*p*q*q+k);
+a3=4.0*(p*q*q*q-k);
+a4=    (q*q*q*q+k);
+p=a0*(k+1.0);
+
+coef[0]=p;
+coef[1]=-4.0*p;
+coef[2]=6.0*p;
+coef[3]=-4.0*p;
+coef[4]=p;
+coef[5]=-a1*a0;
+coef[6]=-a2*a0;
+coef[7]=-a3*a0;
+coef[8]=-a4*a0;
+
+// 逐样本：
+
+out=coef[0]*in+d[0];
+d[0]=coef[1]*in+coef[5]*out+d[1];
+d[1]=coef[2]*in+coef[6]*out+d[2];
+d[2]=coef[3]*in+coef[7]*out+d[3];
+d[3]=coef[4]*in+coef[8]*out;</code></pre>
+<h2>评论</h2>
+<p><strong>2005-04-04 20:39:55</strong> · ed.luosfosruoivas@naitsirhC</p>
+<pre><code>Yet untested object pascal translation:
+
+unit T4PoleUnit;
+
+interface
+
+type TFilterType=(ftLowPass, ftHighPass);
+     T4Pole=class(TObject)
+     private
+       fGain     : Double;
+       fFreq     : Double;
+       fSR       : Single;
+     protected
+       fCoeffs     : array[0..8] of Double;
+       d           : array[0..3] of Double;
+       fFilterType : TFilterType;
+       procedure SetGain(s:Double);
+       procedure SetFrequency(s:Double);
+       procedure SetFilterType(v:TFilterType);
+       procedure Calc;
+     public
+       constructor Create;
+       function Process(s:single):single;
+     published
+       property Gain: Double read fGain write SetGain;
+       property Frequency: Double read fFreq write SetFrequency;
+       property SampleRate: Single read fSR write fSR;
+       property FilterType: TFilterType read fFilterType write SetFilterType;
+     end;
+
+implementation
+
+uses math;
+
+const kDenorm = 1.0e-25;
+
+constructor T4Pole.Create;
+begin
+ inherited create;
+ fFreq:=1000;
+ fSR:=44100;
+ Calc;
+end;
+
+procedure T4Pole.SetFrequency(s:Double);
+begin
+ fFreq:=s;
+ Calc;
+end;
+
+procedure T4Pole.SetGain(s:Double);
+begin
+ fGain:=s;
+ Calc;
+end;
+
+procedure T4Pole.SetFilterType(v:TFilterType);
+begin
+ fFilterType:=v;
+ Calc;
+end;
+
+procedure T4Pole.Calc;
+var k,p,q,b,s : Double;
+    a         : array[0..4] of Double;
+begin
+ fGain:=1;
+ if fFilterType=ftLowPass
+  then s:=1
+  else s:=-1;
+ // calculating coefficients:
+ k:=(4.0*fGain-3.0)/(fGain+1.0);
+ p:=1.0-0.25*k;
+ p:=p*p;
+
+ if fFilterType=ftLowPass
+  then b:=1.0/(tan(pi*fFreq/fSR)*(1.0+p))
+  else b:=tan(pi*fFreq/fSR)/(1.0+p);
+ p:=1.0+b;
+ q:=s*(1.0-b);
+
+ a[0] := 1.0/(  k+p*p*p*p);
+ a[1] := 4.0*(s*k+p*p*p*q);
+ a[2] := 6.0*(  k+p*p*q*q);
+ a[3] := 4.0*(s*k+p*q*q*q);
+ a[4] :=     (  k+q*q*q*q);
+ p    := a[0]*(k+1.0);
+
+ fCoeffs[0]:=p;
+ fCoeffs[1]:=4.0*p*s;
+ fCoeffs[2]:=6.0*p;
+ fCoeffs[3]:=4.0*p*s;
+ fCoeffs[4]:=p;
+ fCoeffs[5]:=-a[1]*a[0];
+ fCoeffs[6]:=-a[2]*a[0];
+ fCoeffs[7]:=-a[3]*a[0];
+ fCoeffs[8]:=-a[4]*a[0];
+end;
+
+function T4Pole.Process(s:single):single;
+begin
+ Result:=fCoeffs[0]*s+d[0];
+ d[0]:=fCoeffs[1]*s+fCoeffs[5]*Result+d[1];
+ d[1]:=fCoeffs[2]*s+fCoeffs[6]*Result+d[2];
+ d[2]:=fCoeffs[3]*s+fCoeffs[7]*Result+d[3];
+ d[3]:=fCoeffs[4]*s+fCoeffs[8]*Result;
+end;
+
+end.              </code></pre>
+<p><strong>2015-03-19 19:24:23</strong> · ed.xmg@0891retep_repus</p>
+<pre><code>so bad that this filter is so unstable. i tested it and is has a really nice sound. but frequencies below 200 hz are not possible. :-(              </code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Filters/181-another-4-pole-lowpass.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Filters/181-another-4-pole-lowpass.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

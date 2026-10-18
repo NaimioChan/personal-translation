@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>陷波滤波器 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：陷波滤波器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>陷波滤波器</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Olli Niemitalo</li>
+<li><strong>类型：</strong>2 极点 2 零点 IIR</li>
+<li><strong>创建时间：</strong>2002-01-17 02:11:07</li>
+</ul>
+<blockquote class="note">
+<p>在频谱中制造一个凹陷点，陡度可调。z 平面单位圆上有一对共轭零点，以及从单位圆内部以相同角度逼近的抵消极点。</p>
+</blockquote>
+<pre><code>Parameters:
+0 =&lt; freq =&lt; samplerate/2
+0 =&lt; q &lt; 1 (The higher, the narrower)
+
+AlgoAlgo=double pi = 3.141592654;
+double sqrt2 = sqrt(2.0);
+
+double freq = 2050; // 改这里！（零点 &amp; 极点角度）
+double q = 0.4;     // 改这里！（极点幅度）
+
+double z1x = cos(2*pi*freq/samplerate);
+double a0a2 = (1-q)*(1-q)/(2*(fabs(z1x)+1)) + q;
+double a1 = -2*z1x*a0a2;
+double b1 = -2*z1x*q;
+double b2 = q*q;
+double reg0, reg1, reg2;
+
+unsigned int streamofs;
+reg1 = 0;
+reg2 = 0;
+
+/* 主循环 */
+for (streamofs = 0; streamofs &lt; streamsize; streamofs++)
+{
+  reg0 = a0a2 * ((double)fromstream[streamofs]
+                 + fromstream[streamofs+2])
+       + a1 * fromstream[streamofs+1]
+       - b1 * reg1
+       - b2 * reg2;
+
+  reg2 = reg1;
+  reg1 = reg0;
+
+  int temp = reg0;
+
+  /* 检查削波 */
+  if (temp &gt; 32767) {
+    temp = 32767;
+  } else if (temp &lt; -32768) temp = -32768;
+
+  /* 存储新值 */
+  tostream[streamofs] = temp;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2006-09-27 09:53:49</strong> · moc.liamtoh@18recnuor</p>
+<pre><code>i tried implementing it, failed,
+and its wierd how it looks further in time
+instead of backwards, you cant use it in
+a running rendered stream cause the end of
+it stuffs up....</code></pre>
+<p><strong>2006-09-27 11:43:49</strong> · musicdsp@Nospam dsparsons.co.uk</p>
+<pre><code>I think it's a type, and should be
+=-=-=
+reg0 = a0a2 * ((double)fromstream[streamofs]
++ fromstream[streamofs-2])
++ a1 * fromstream[streamofs-1]
+- b1 * reg1
+- b2 * reg2;
+=-=-=
+In which case there is some rangechecking to be done when streamofs&lt;2
+
+You could just use the coeffs, and stick them into whatever biquad code you have hanging around :)
+
+DSP</code></pre>
+<p><strong>2007-02-17 10:44:00</strong> · moc.loa@561kluafla</p>
+<pre><code>Still doesn't work. Either way its looking one each side of a centre value, so it doesn't change the maths. Not sure what the code should be. Ideas???            </code></pre>
+<p><strong>2009-04-24 16:34:32</strong> · moc.liamg@naecohsife</p>
+<pre><code>does this code work with float output?
+I really need a notch filter, i will try the code.</code></pre>
+<p><strong>2011-05-12 11:22:57</strong> · moc.oohay@skinyela</p>
+<pre><code>yes, there are some errors in this source.
+
+Here is the correct version:
+
+
+// (C) Sergey Aleynik.   aleyniks@yahoo.com
+
+     // BW_Coeff is changing from 0.0 to 1.0 (excluded) and the more the narrow:
+     // |  BW_Coeff   |  Real BandWidth (approxim.)  |
+     // |   0.975     | 0.00907 * Sampling_Frequency |
+     // |   0.95      | 0.01814 * Sampling_Frequency |
+     // |   0.9       | 0.03628 * Sampling_Frequency |
+
+void  Notch_Filter_Test(short int *Data_In, 
+                        short int *Data_Out, 
+                        long       nData_Length,
+                        double     Sampling_Frequency,
+                        double     CutOff_Frequency,
+                        double     BW_Coeff) 
+{
+  // If wrong parameters:
+  if((NULL == Data_In)||(Data_Out)||(nData_Length &lt;= 0))   return;
+  if((Sampling_Frequency &lt; 0.0)||(CutOff_Frequency &lt; 0.0)) return;
+  if(CutOff_Frequency &gt; (Sampling_Frequency/2))            return;
+  if((BW_Coeff &lt;= 0.0)||(BW_Coeff &gt;= 1.0))                 return; 
+
+  static const double  pi = 3.141592654; 
+
+  // Filter coefficients:
+  double z1x = cos(2*pi*CutOff_Frequency/Sampling_Frequency); 
+  double b0 = (1-BW_Coeff)*(1-BW_Coeff)/(2*(fabs(z1x)+1)) + BW_Coeff; 
+  double b2 = b0;
+  double b1 = -2*z1x*b0; 
+  double a1 = -2*z1x*BW_Coeff; 
+  double a2 = BW_Coeff*BW_Coeff; 
+
+  // Filter internal vars:
+  double y=0,  y1=0, y2=0; 
+  double x0=0, x1=0, x2=0; 
+
+  long i;
+  for(i=0; i&lt;nData_Length; i++)
+  {
+    y  = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; 
+    y2 = y1; 
+    y1 = y;
+    x2 = x1;
+    x1 = x0;
+    x0 = Data_In[i];
+
+    if(      y &gt;  32767) y =  32767;
+    else if (y &lt; -32768) y = -32768;
+
+    Data_Out[i] = (short int)y;
+  }
+} </code></pre>
+<p><strong>2011-11-11 03:30:26</strong> · rf.liamtoh@abe.yrduabreivilo</p>
+<pre><code>Just an idea on coef notch : 
+ a0 = 1;
+ a1 = -2 * cs;
+a2 = 1;
+b0 = 1 + alpha;
+b1 = -2 * cs;
+b2 = 1 - alpha;
+ notch: H(s) = (s^2 + 1) / (s^2 + s/Q + 1);
+ omega = 2*PI*cf/sample_rate;
+sn = sin(omega);
+cs = cos(omega);
+alpha = sn/(2*Q);</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Filters/35-notch-filter.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Filters/35-notch-filter.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

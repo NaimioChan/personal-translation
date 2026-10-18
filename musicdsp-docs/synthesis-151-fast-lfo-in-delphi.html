@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delphi 中的快速 LFO…… - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：Delphi 中的快速 LFO……">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Delphi 中的快速 LFO……</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Dambrin Didier ( moc.tcerideciffo-e@log )</li>
+<li><strong>创建时间：</strong>2003-07-15 09:01:18</li>
+<li><strong>关联文件：</strong><a href="https://raw.githubusercontent.com/bdejong/musicdsp/master/source/files/LFOGenerator.zip" rel="noreferrer noopener">LFOGenerator.zip</a></li>
+</ul>
+<blockquote class="note">
+<p>［摘自 Didier 的邮件……］<br>［另见附件 zip 文件！］</p>
+<p>我当时在做镶边器，需要一个 LFO。起初用 Sin()，但太慢；后来试了一个大波表，又不够精确。<br>然后我看了你网站上的替代正弦发生器，它们虽然不错，但都会漂移，所以你还得在分支里做漂移检查，浪费太多 CPU。<br>于是我做了个快速简单的线性 LFO，接着又做了个类似正弦的版本。它适合做 LFO，不适合直接输出声音。<br>没有分支，相当简单。用了两次 Abs()，但据说它们很快。无论如何都比 Sin() 快。<br>代码是 Delphi 的，但如果你看得懂，可以自己翻译。<br>它使用一个会溢出的 32 位整数计数器，以及一个用于正弦输出的幂运算。<br>如果你不懂 Delphi：$ 表示十六进制（C++ 里是末尾的 h？），Single 是 32 位浮点，integer 是 32 位整数（通常有符号）。</p>
+</blockquote>
+<pre><code>unit Unit1;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
+  StdCtrls, ExtCtrls, ComCtrls;
+
+type
+  TForm1 = class(TForm)
+    PaintBox1: TPaintBox;
+    Bevel1: TBevel;
+    procedure PaintBox1Paint(Sender: TObject);
+  private
+    { 私有声明 }
+  public
+    { 公开声明 }
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.DFM}
+
+procedure TForm1.PaintBox1Paint(Sender: TObject);
+var n,Pos,Speed:Integer;
+    Output,Scale,HalfScale,PosMul:Single;
+    OurSpeed,OurScale:Single;
+begin
+OurSpeed:=100;  // 每周期 100 个采样点
+OurScale:=100;  // output in -100..100
+
+Pos:=0;  // 线性 LFO 中的位置
+Speed:=Round($100000000/OurSpeed);
+
+
+// --- 三角波 LFO ---
+Scale:=OurScale*2;
+PosMul:=Scale/$80000000;
+
+// 循环
+for n:=0 to 299 do
+  Begin
+  // 递增 32 位整数 LFO 位置 &amp; 让其溢出。数学单元读取时会被视为有符号数
+  Pos:=Pos+Speed;
+
+  Output:=Abs(Pos*PosMul)-OurScale;
+
+  // 可视化
+  Paintbox1.Canvas.Pixels[n,Round(100+Output)]:=clRed;
+  End;
+
+
+// --- 类正弦 LFO ---
+Scale:=Sqrt(OurScale*4);
+PosMul:=Scale/$80000000;
+HalfScale:=Scale/2;
+
+// 循环
+for n:=0 to 299 do
+  Begin
+  // 递增 32 位整数 LFO 位置 &amp; 让其溢出。数学单元读取时会被视为有符号数
+  Pos:=Pos+Speed;
+
+  Output:=Abs(Pos*PosMul)-HalfScale;
+  Output:=Output*(Scale-Abs(Output));
+
+  // 可视化
+  Paintbox1.Canvas.Pixels[n,Round(100+Output)]:=clBlue;
+  End;
+end;
+
+end.</code></pre>
+<h2>评论</h2>
+<p><strong>2004-04-29 09:18:58</strong> · ed.luosfosruoivas@naitsirhC</p>
+<pre><code>LFO Class...
+
+unit Unit1;
+
+interface
+
+uses
+  Windows, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
+  StdCtrls, ExtCtrls, ComCtrls;
+
+type
+  TLFOType = (lfoTriangle,lfoSine);
+  TLFO = class(TObject)
+  private
+    iSpeed     : Integer;
+    fSpeed     : Single;
+    fMax, fMin : Single;
+    fValue     : Single;
+    fPos       : Integer;
+    fType      : TLFOType;
+    fScale     : Single;
+    fPosMul    : Single;
+    fHalfScale : Single;
+    function GetValue:Single;
+    procedure SetType(tt: TLFOType);
+    procedure SetMin(v:Single);
+    procedure SetMax(v:Single);
+  public
+    { Public declarations }
+    constructor Create;
+  published
+    property Value:Single read GetValue;
+    property Speed:Single read FSpeed Write FSpeed;
+    property Min:Single read FMin write SetMin;
+    property Max:Single read FMax Write SetMax;
+    property LFO:TLFOType read fType Write SetType;
+  end;
+
+  TForm1 = class(TForm)
+    Bevel1: TBevel;
+    PaintBox1: TPaintBox;
+    procedure PaintBox1Paint(Sender: TObject);
+  private
+    { Private declarations }
+  public
+    { Public declarations }
+  end;
+
+var
+  Form1: TForm1;
+
+implementation
+
+{$R *.DFM}
+
+constructor TLFO.Create;
+begin
+ fSpeed:=100;
+ fMax:=1;
+ fMin:=0;
+ fValue:=0;
+ fPos:=0;
+ iSpeed:=Round($100000000/fSpeed);
+ fType:=lfoTriangle;
+ fScale:=fMax-((fMin+fMax)/2);
+end;
+
+procedure TLFO.SetType(tt: TLFOType);
+begin
+ fType:=tt;
+ if fType = lfoSine then
+  begin
+   fPosMul:=(Sqrt(fScale*2))/$80000000;
+   fHalfScale:=(Sqrt(fScale*2))/2;
+  end
+ else
+  begin
+   fPosMul:=fScale/$80000000;
+  end;
+end;
+
+procedure TLFO.SetMin(v: Single);
+begin
+ fMin:=v;
+ fScale:=fMax-((fMin+fMax)/2);
+end;
+
+procedure TLFO.SetMax(v: Single);
+begin
+ fMax:=v;
+ fScale:=fMax-((fMin+fMax)/2);
+end;
+
+function TLFO.GetValue:Single;
+begin
+ if fType = lfoSine then
+  begin
+   Result:=Abs(fPos*fPosMul)-fHalfScale;
+   Result:=Result*(fHalfScale*2-Abs(Result))*2;
+   Result:=Result+((fMin+fMax)/2);
+  end
+ else
+  begin
+    Result:=Abs(fPos*(2*fPosMul))+fMin;
+  end;
+ fPos:=fPos+iSpeed;
+end;
+
+procedure TForm1.PaintBox1Paint(Sender: TObject);
+var n    : Integer;
+    LFO1 : TLFO;
+begin
+
+LFO1:=TLFO.Create;
+LFO1.Min:=-100;
+LFO1.Max:=100;
+LFO1.Speed:=100;
+LFO1.LFO:=lfoTriangle;
+
+// --- triangle LFO ---
+for n:=0 to 299 do Paintbox1.Canvas.Pixels[n,Round(100+LFO1.Value)]:=clRed;
+
+
+LFO1.LFO:=lfoSine;
+// --- sine-like LFO ---
+for n:=0 to 299 do Paintbox1.Canvas.Pixels[n,Round(100+LFO1.Value)]:=clBlue;
+end;
+
+end.             </code></pre>
+<p><strong>2005-06-01 23:36:15</strong> · ed.luosfosruoivas@naitsirhC</p>
+<pre><code>Ups, i forgot something:
+
+  TLFO = class(TObject)
+  private
+    ...
+    procedure SetSpeed(v:Single);
+  public
+    ...
+  published
+    ...
+    property Speed:Single read FSpeed Write SetSpeed;
+    ...
+  end;
+
+...
+
+constructor TLFO.Create;
+begin
+ ...
+ Speed:=100;
+ ...
+end;
+
+procedure TLFO.SetSpeed(v:Single);
+begin
+ fSpeed:=v;
+ iSpeed:=Round($100000000/fSpeed);
+end;
+
+...</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Synthesis/151-fast-lfo-in-delphi.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Synthesis/151-fast-lfo-in-delphi.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

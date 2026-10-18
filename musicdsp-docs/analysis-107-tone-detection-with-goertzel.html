@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用 Goertzel 的音调检测 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：使用 Goertzel 的音调检测">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>使用 Goertzel 的音调检测</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>on.biu.ii@rnepse</li>
+<li><strong>类型：</strong>Goertzel</li>
+<li><strong>创建时间：</strong>2004-04-07 09:37:10</li>
+<li><strong>关联文件：</strong><a href="http://www.ii.uib.no/~espenr/tonedetect.zip" rel="noreferrer noopener">http://www.ii.uib.no/~espenr/tonedetect.zip</a></li>
+</ul>
+<blockquote class="note">
+<p>Goertzel 本质上是对频谱的局部做 DFT，而不是像通常用 FFT 那样对整段频谱做。所以如果你只想查看某些频率的功率，它可能更合适。听说它很适合 DTMF 检测。</p>
+<p>WNk 的计算并非 100% 正确，但看起来能用 ;) 另外代码是 C++ 的，若要用 C 编译，可能得做些小调整。</p>
+</blockquote>
+<pre><code>/** Goertzel 算法音调检测
+ *
+ * 本程序在样本中搜索音调（正弦波），并报告它在各个频率上测得的 dB 值。
+ * 稍加阈值判断即可扩展为输出检测真/假的结果。
+ * 我远不能确定 Goertzel 的实现 100% 正确，但它确实能用 :)
+ * 
+ * 提示：SAMPLERATE、BUFFERSIZE、FREQUENCY、NOISE 和 SIGNALVOLUME 都会影响所报告的 dB 结果。请
+ * 调整这些参数，找到最适合你的应用的设置。另外，它对噪声（至少是白噪声）相当敏感，这
+ * 有点遗憾。我也不知道 Goertzel 是否真适合用浮点值表示频率……而且用 44100 作为
+ * 采样率来检测 6000 Hz 音调确实有点傻，我知道 :)
+ * 
+ * 作者：Espen Riskedal, espenr@ii.uib.no，2002 年 7 月
+ */
+
+#include &lt;iostream&gt;
+#include &lt;cmath&gt;
+#include &lt;cstdlib&gt;
+
+using std::rand;
+// 数学部分
+using std::cos;
+using std::abs;
+using std::exp;
+using std::log10;
+// iostream 相关
+using std::cout;
+using std::endl;
+
+#define PI 3.14159265358979323844
+// 可按需修改这些宏定义
+#define SAMPLERATE 44100
+#define BUFFERSIZE 8820
+#define FREQUENCY 6000
+#define NOISE 0.05
+#define SIGNALVOLUME 0.8
+
+/**  Goertzel 算法用二阶滤波器计算输入信号的第 k 个 DFT 系数。 
+ *   http://ptolemy.eecs.berkeley.edu/papers/96/dtmf_ict/www/node3.html。 
+ *   基本上它只对我们想检测的那个频率做 DFT，其余频率不做（FFT 会计算所有频率）。
+ */
+float goertzel(float *x, int N, float frequency, int samplerate) {
+    float Skn, Skn1, Skn2;
+    Skn = Skn1 = Skn2 = 0;
+
+    for (int i=0; i&lt;N; i++) {
+	Skn2 = Skn1;
+	Skn1 = Skn;
+	Skn = 2*cos(2*PI*frequency/samplerate)*Skn1 - Skn2 + x[i];
+    }
+
+    float WNk = exp(-2*PI*frequency/samplerate); // 此版本忽略复数部分
+    //float WNk = exp(-2*j*PI*k/N);
+    return (Skn - WNk*Skn1);
+}
+
+/** 生成指定频率的音调 
+ *  来源：http://groups.google.com/groups?hl=en&amp;lr=&amp;ie=UTF-8&amp;oe=UTF-8&amp;safe=off&amp;selm=3c641e%243jn%40uicsl.csl.uiuc.edu
+ */
+float *makeTone(int samplerate, float frequency, int length, float gain=1.0) {
+    //y(n) = 2 * cos(A) * y(n-1) - y(n-2)
+    //A = (目标频率) * 2 * PI / (采样频率)
+    //A 的单位是弧度。
+    // 目标频率必须 &lt;= 采样频率的 1/2。
+    float *tone = new float[length];
+    float A = frequency*2*PI/samplerate;
+
+    for (int i=0; i&lt;length; i++) {
+	if (i &gt; 1) tone[i]= 2*cos(A)*tone[i-1] - tone[i-2];
+	else if (i &gt; 0) tone[i] = 2*cos(A)*tone[i-1] - (cos(A));
+	else tone[i] = 2*cos(A)*cos(A) - cos(2*A);
+    }
+
+    for (int i=0; i&lt;length; i++) tone[i] = tone[i]*gain;
+
+    return tone;
+}
+
+/** 给样本添加白噪声 */
+void *addNoise(float *sample, int length, float gain=1.0) {
+    for (int i=0; i&lt;length; i++) sample[i] += (2*(rand()/(float)RAND_MAX)-1)*gain;
+}
+
+/** 返回信号功率/dB */
+float power(float value) {
+    return 20*log10(abs(value));
+}
+
+int main(int argc, const char* argv) {
+    cout &lt;&lt; "Samplerate: " &lt;&lt; SAMPLERATE &lt;&lt; "Hz\n";
+    cout &lt;&lt; "Buffersize: " &lt;&lt; BUFFERSIZE &lt;&lt; " samples\n";
+    cout &lt;&lt; "Correct frequency is: " &lt;&lt; FREQUENCY &lt;&lt; "Hz\n";
+    cout &lt;&lt; " - signal volume: " &lt;&lt; SIGNALVOLUME*100 &lt;&lt; "%\n";
+    cout &lt;&lt; " - white noise: " &lt;&lt; NOISE*100 &lt;&lt; "%\n";
+
+    float *tone = makeTone(SAMPLERATE, FREQUENCY, BUFFERSIZE, SIGNALVOLUME);
+    addNoise(tone, BUFFERSIZE,NOISE);
+
+    int stepsize = FREQUENCY/5;
+
+    for (int i=0; i&lt;10; i++) {
+	int freq = stepsize*i;
+	cout &lt;&lt; "Trying freq: " &lt;&lt; freq &lt;&lt; "Hz  -&gt;  dB: " &lt;&lt; power(goertzel(tone, BUFFERSIZE, freq, SAMPLERATE)) &lt;&lt; endl;
+    }
+    delete tone;
+
+    return 0;
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2004-04-12 22:03:56</strong> · ed.luosfosruoivas@naitsirhC</p>
+<pre><code>// yet untested Delphi translation of the algorithm:
+
+function Goertzel(Buffer:array of Single; frequency, samplerate: single):single;
+var Skn, Skn1, Skn2 : Single;
+    i               : Integer;
+    temp1, temp2    : Single;
+begin
+ skn:=0;
+ skn1:=0;
+ skn2:=0;
+ temp1:=2*PI*frequency/samplerate;
+ temp2:=Cos(temp1);
+ for i:=0 to Length(Buffer) do
+  begin
+   Skn2 = Skn1;
+   Skn1 = Skn;
+   Skn = 2*temp2*Skn1 - Skn2 + Buffer[i];
+  end;
+ Result:=(Skn - exp(-temp1)*Skn1);
+end;
+
+// Maybe someone can use it...
+//
+// Christian</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Analysis/107-tone-detection-with-goertzel.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Analysis/107-tone-detection-with-goertzel.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

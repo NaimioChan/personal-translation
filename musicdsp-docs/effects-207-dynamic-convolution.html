@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>动态卷积 - Musicdsp.org 文档</title>
+<meta name="description" content="musicdsp.org 中文译本：动态卷积">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>动态卷积</h1>
+<ul class="doc-meta-list">
+<li><strong>作者或来源：</strong>Risto Holopainen</li>
+<li><strong>类型：</strong>C++ 的朴素实现</li>
+<li><strong>创建时间：</strong>2005-06-05 22:05:19</li>
+</ul>
+<blockquote class="note">
+<p>这个类演示了动态卷积的用法，所用的一组 IR 由带滑音（glissando）的指数衰减正弦组成。在效率上有很多可以改进的地方。</p>
+</blockquote>
+<pre><code>#include &lt;cmath&gt;
+
+class dynaconv
+{
+  public:
+// sr=采样率，cf=共振频率， 
+// dp=扫频量或非线性量 
+		dynaconv(const int sr, float cf, float dp);
+		double operator()(double);
+
+	private:	
+// steps：幅度区域数；L：冲激响应长度
+		enum {steps=258, dv=steps-2, L=200};
+		double x[L];
+		double h[steps][L]; 
+		int S[L];
+		double conv(double *x, int d);
+};
+
+
+
+dynaconv::dynaconv(const int sr, float cfr, float dp)
+{
+	for(int i=0; i&lt;L; i++)
+		x[i] = S[i] = 0;
+
+	double sc = 6.0/L;
+	double frq = twopi*cfr/sr;
+
+// IR 在此初始化。 
+// h[0] 存放最低幅度样本所用的 IR。
+	for(int k=0; k&lt;steps; k++)
+		{
+		double sum = 0;
+		double theta=0;
+		double w;
+		for(int i=0; i&lt;L; i++)
+			{
+	// 带滑音的指数衰减正弦波 IR
+			h[k][i] = sin(theta)*exp(-sc*i); 
+			w = (double)i/L;
+			theta += frq*(1 + dp*w*(k - 0.4*steps)/steps);
+			sum += fabs(h[k][i]);
+			}
+
+		double norm = 1.0/sum;
+		for(int i=0; i&lt;L; i++)
+			h[k][i] *= norm;
+		}
+}
+
+double dynaconv::operator()(double in)
+{
+	double A = fabs(in);
+	double a, b, w, y;
+	int sel = int(dv*A);
+
+	for(int j=L-1; j&gt;0; j--)
+		{
+		x[j] = x[j-1];
+		S[j] = S[j-1];
+		}
+	x[0] = in;
+	S[0] = sel;		
+
+	if(sel == 0)
+		y = conv(x, 0);
+
+	else if(sel &gt; 0)
+		{
+		a = conv(x, 0);
+		b = conv(x, 1);
+		w = dv*A - sel;
+		y = w*a + (1-w)*b;
+		}
+
+	return y;
+}
+
+double dynaconv::conv(double *x, int d)
+{
+	double y=0;
+	for(int i=0; i&lt;L; i++)
+		y += x[i] * h[ S[i]+d ][i];
+
+	return y;	
+}</code></pre>
+<h2>评论</h2>
+<p><strong>2005-06-06 08:26:12</strong> · ed.luosfosruoivas@naitsirhC</p>
+<pre><code>You can speed things up by:
+
+a) rewriting the "double dynaconv::conv(double *x, int d)" function using Assembler, SSE and 3DNow</code></pre>
+<pre><code>routines.</code></pre>
+<pre><code>b) instead of this</code></pre>
+<pre><code>"else if(sel &gt; 0) { a = conv(x, 0); b = conv(x, 1); w = dv*A - sel; y = w*a + (1-w)*b; }"</code></pre>
+<pre><code>you can create a temp IR by fading the two impulse responses before convolution. Then you'll only need ONE CPU-expensive-convolution.</code></pre>
+<pre><code>c) this one only works with the upper half wave!</code></pre>
+<pre><code>d) only nonlinear components can be modeled. For time-variant modeling (compressor/limiter) you'll need more than this.</code></pre>
+<pre><code>e) the algo is proteced by a patent. But it's easy to find more efficient ways, which aren't protected by the patent.</code></pre>
+<pre><code>With my implementation i can fold up to 4000 Samples (IR) in realtime on my machine.</code></pre>
+<p><strong>2005-07-20 13:52:49</strong> · d.tniop@noitcerroc</p>
+<pre><code>Correction to d:
+
+d) only time invariant nonlinear components can be modeled; and then adequate memory must be used.</code></pre>
+<pre><code>Compressors/Limiters can be modelled, but the memory requirements will be somewhat frightening. Time-variant systems, such as flangers, phasors, and sub-harmonic generators (i.e. anything with an internal clock) will need more than this.</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://www.musicdsp.org/en/latest/Effects/207-dynamic-convolution.html" rel="noreferrer noopener">https://www.musicdsp.org/en/latest/Effects/207-dynamic-convolution.html</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
