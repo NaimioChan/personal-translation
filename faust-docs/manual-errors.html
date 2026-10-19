@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>错误信息 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：错误信息">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="error-messages">错误信息</h1><p>错误信息通常以编译器错误的形式显示。它们出现在代码无法成功编译时，一般表示语法错误或语义错误之类的问题。它们可能在编译过程的不同阶段产生，并可能包含出错的文件与行号（当这些信息能取到时），以及问题的简要说明。</p><p>编译器分为若干阶段：</p><ul><li>从 DSP 源代码出发，解析器为源程序建立内部的内存表示（通常称为<a href="https://en.wikipedia.org/wiki/Abstract_syntax_tree" rel="noreferrer noopener">抽象语法树</a>），在这里由<em>框图语言</em>的基元构成。第一类错误信息称为<em>语法错误</em>，例如缺少行末的 <code>;</code> 字符等。</li><li>下一步是求值 <code>process</code> 这个程序入口点的定义。这一步基本上是一个采用严格求值的 λ 演算解释器。结果是一张「扁平」的框图，其中一切都已展开。得到的框图会被标注类型，以确定它的输入数和输出数。</li><li>随后「扁平」框图被翻译成<em>信号语言</em>，在信号语言中，信号在概念上是样本或控制值的无限流。框图语言实际上实现了 Faust 的<a href="https://hal.science/hal-02159011v1" rel="noreferrer noopener">框图代数</a>，不遵守连接规则就会触发第二类错误信息，即<em>框图连接错误</em>。这一阶段还可能产生其他错误，例如某些基元的参数类型不正确。</li><li>模式匹配元语言让我们能以算法方式创建和操作框图表达式。因此在这一层可能出现第三类错误，即<em>模式匹配编码错误</em>。</li><li>信号表达式会被优化并标注类型（为每个信号关联整数或实数类型，并确定信号何时必须计算：初始化时、控制速率还是采样率），从而产生所谓的<em>范式</em>。在这一层可能出现第四类错误，即<em>参数范围错误</em>或<em>类型错误</em>，例如使用长度无界的延迟。</li><li>随后信号表达式被转换为 FIR（Faust Imperative Representation），这是一种面向基于状态的计算的表示（内存访问、算术运算、控制流等），之后再转换为最终的目标语言（如 C/C++、LLVM IR、Rust、WebAssembly 等）。在这一层可能出现第五类错误，即<em>后端错误</em>，例如某个后端不支持的编译选项。</li></ul><p>注意，当前的错误信息系统仍远非完善，尤其是无法正确追溯 DSP 源码中错误来源时。这种情况下不会显示出错的文件与行号，而是打印表达式的内部描述（作为框图或信号）。</p><h2 id="syntax-errors">语法错误</h2><p>这些错误在语言语法未被遵守时发生。下面是一些例子。</p><p>以下程序：</p><pre><code class="language-faust">box1 = 1
+box2 = 2;
+process = box1,box2;
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">error.dsp:2 : ERROR : syntax error, unexpected IDENT
+</code></pre><p>它的意思是，在文件 <code>test.dsp</code> 的第 2 行发现了一个意料之外的标识符。通常这个错误是因为上一行末尾缺少分号 <code>;</code>。</p><p>以下程序：</p><pre><code class="language-faust">t1 = _~(+(1);
+2 process = t1 / 2147483647;
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">errors.dsp:1 : ERROR : syntax error, unexpected ENDDEF
+
+</code></pre><p>解析器在寻找右括号时遇到了定义的结尾（<code>;</code>）。</p><p>以下程序：</p><pre><code class="language-faust">process = ffunction;
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">errors.dsp:1 : ERROR : syntax error, unexpected ENDDEF, expecting LPAR
+</code></pre><p>解析器期待一个左括号，却识别出一个需要参数的语言关键字。</p><p>以下程序：</p><pre><code class="language-faust">process = +)1);
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">errors.dsp:1 : ERROR : syntax error, unexpected RPAR
+</code></pre><p>使用了不正确的括号。</p><p>以下程序：</p><pre><code class="language-faust">process = &lt;:+;
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">errors.dsp:1 : ERROR : syntax error, unexpected SPLIT
+</code></pre><p><code>&lt;:</code> 拆分算子使用不正确，应该写成 <code>process = _&lt;:+;</code>。</p><p>以下程序：</p><pre><code class="language-faust">process = foo;
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">errors.dsp:1 : ERROR : undefined symbol : foo
+</code></pre><p>这发生在使用了未定义的名字时。</p><h2 id="box-connection-errors">框图连接错误</h2><p><a href="manual-syntax.html#diagram-expressions">框图表达式</a>表达的是如何把框图表达式组合成新的表达式。每种组合的连接规则都有精确定义，程序要正确就必须遵守。写较复杂的表达式时，请记住<a href="manual-syntax.html#diagram-composition-operations">算子优先级</a>。</p><h3 id="the-five-connections-rules">五条连接规则</h3><p>第二类错误信息在框图表达式连接不正确时返回。</p><h4 id="parallel-connection">并行连接</h4><p>把两个框图 <code>A</code> 和 <code>B</code> 并行组合永远不会产生框图连接错误，因为两个框图是上下叠放的，之间没有连接。所得框图的输入是 <code>A</code> 和 <code>B</code> 的输入，所得框图的输出是 <code>A</code> 和 <code>B</code> 的输出。</p><h4 id="sequential-connection-error">顺序连接错误</h4><p>把两个框图 <code>A</code> 和 <code>B</code> 顺序组合时，如果 <code>outputs(A) != inputs(B)</code>，就会产生框图连接错误。例如以下程序：</p><pre><code class="language-faust">A = _,_;
+B = _,_,_;
+process = A : B;
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">ERROR : sequential composition A:B
+The number of outputs [2] of A must be equal to the number of inputs [3] of B
+
+Here  A = _,_;
+has 2 outputs
+
+while B = _,_,_;
+has 3 inputs
+</code></pre><h4 id="split-connection-error">拆分连接错误</h4><p>用拆分组合把两个框图 <code>A</code> 和 <code>B</code> 组合时，如果 <code>B</code> 的输入数不是 <code>A</code> 的输出数的整数倍，就会产生框图连接错误。例如以下程序：</p><pre><code class="language-faust">A = _,_;
+B = _,_,_;
+process = A &lt;: B;
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">ERROR : split composition A&lt;:B
+The number of outputs [2] of A must be a divisor of the number of inputs [3] of B
+
+Here  A = _,_;
+has 2 outputs
+
+while B = _,_,_;
+has 3 inputs
+</code></pre><h4 id="merge-connection-error">合并连接错误</h4><p>用合并组合把两个框图 <code>A</code> 和 <code>B</code> 组合时，如果 <code>A</code> 的输出数不是 <code>B</code> 的输入数的整数倍，就会产生框图连接错误。例如以下程序：</p><pre><code class="language-faust">A = _,_;
+B = _,_,_;
+process = A :&gt; B;
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">ERROR : merge composition A:&gt;B
+The number of outputs [2] of A must be a multiple of the number of inputs [3] of B
+
+Here  A = _,_;
+has 2 outputs
+
+while B = _,_,_;
+has 3 inputs
+</code></pre><h4 id="recursive-connection-error">递归连接错误</h4><p>用递归组合把两个框图 <code>A</code> 和 <code>B</code> 组合时，如果 <code>A</code> 的输出数小于 <code>B</code> 的输入数，或者 <code>B</code> 的输出数大于 <code>A</code> 的输入数（即必须遵守以下连接规则：<code class="math">\mathrm{outputs}(A) \geq \mathrm{inputs}(B)\ \text{and}\ \mathrm{inputs}(A) \geq \mathrm{outputs}(B)</code>），就会产生框图连接错误。例如以下程序：</p><pre><code class="language-faust">A = _,_;
+B = _,_,_;
+process = A ~ B;
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">ERROR : recursive composition A~B
+The number of outputs [2] of A must be at least the number of inputs [3] of B. The number of inputs [2] of A must be at least the number of outputs [3] of B. 
+
+Here  A = _,_;
+has 2 inputs and 2 outputs
+
+while B = _,_,_;
+has 3 inputs and 3 outputs
+</code></pre><h4 id="route-connection-errors">route 连接错误</h4><p>框图之间更复杂的路由也可以用 <a href="manual-syntax.html#route-primitive">route</a> 基元来描述。编码不正确时可能产生两种不同的错误：</p><pre><code class="language-faust">process = route(+,8.7,(0,0),(0,1));
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">ERROR : invalid route expression, first two parameters should be blocks producing a value, third parameter a list of input/output pairs : route(+,8.7f,0,0,0,1)
+</code></pre><p>第二种出现在参数实际上不是数字时：</p><pre><code class="language-faust">process = route(9,8.7f,0,0,0,button("foo"));
+</code></pre><p>将产生以下错误信息：</p><pre><code class="language-faust">ERROR : invalid route expression, parameters should be numbers : route(9,8.7f,0,0,0,button("foo"))
+</code></pre><h3 id="iterative-constructions">迭代构造</h3><p><a href="manual-syntax.html#iterations">迭代</a>类似于其他语言中的 <code>for(...)</code> 循环，提供了一种便捷的方式来把复杂的框图构造自动化。所有 <code>par</code>、<code>seq</code>、<code>sum</code> 和 <code>prod</code> 表达式的形式相同：第一个参数是一个标识符，第二个参数是作为整数常量数值表达式的迭代次数，第三个参数是任意的框图。</p><p>示例代码：</p><pre><code class="language-faust">process = par(+, 2, 8);
+</code></pre><p>将产生以下语法错误，因为第一个参数不是标识符：</p><pre><code class="language-faust">filename.dsp : xx : ERROR : syntax error, unexpected ADD, expecting IDENT
+</code></pre><p>示例代码：</p><pre><code class="language-faust">process = par(i, +, 8);
+</code></pre><p>将产生以下错误：</p><pre><code>filename.dsp : 1 : ERROR : not a constant expression of type : (0-&gt;1) : +
+</code></pre><h2 id="pattern-matching-errors">模式匹配错误</h2><p>模式匹配机制让我们能以算法方式创建和操作框图表达式。在这一层可能出现模式匹配编码错误。</p><h3 id="multiple-symbol-definition-error">符号重复定义错误</h3><p>这个错误在同一个 DSP 文件中多次定义某个符号时发生：</p><pre><code class="language-faust">ERROR : [file foo.dsp : N] : multiple definitions of symbol 'foo'
+</code></pre><p>由于计算在编译期完成，而模式匹配语言是图灵完备的，编译期甚至可能产生死循环，编译器应当能检测出来。</p><h3 id="loop-detection-error">循环检测错误</h3><p>以下（有些<em>极端</em>的）代码：</p><pre><code class="language-faust">foo(x) = foo(x);
+process = foo;
+</code></pre><p>将产生以下错误：</p><pre><code class="language-faust">ERROR : stack overflow in eval
+</code></pre><p>更复杂的代码也可能产生同类死循环错误。</p><p>[待补充]</p><h2 id="signal-related-errors">信号相关错误</h2><p>信号表达式由框图表达式产生，会被标注类型，最后归约为范式。有些基元要求其参数满足某些约束，例如位于特定范围内或有界。数学函数的定义域会被检查，不允许的运算会被标记出来。</p><h3 id="automatic-type-promotion">自动类型提升</h3><p>有些基元（如 <a href="manual-syntax.html#route-primitive">route</a>、<a href="manual-syntax.html#rdtable-primitive">rdtable</a>、<a href="manual-syntax.html#rwtable-primitive">rwtable</a> 等）要求参数为整数类型，整数类型会被自动提升。也就是说，内部会自动加上等同于 <code>int(exp)</code> 的处理，源码中无需显式写出。</p><h3 id="parameter-range-errors">参数范围错误</h3><h4 id="soundfile-usage-error">soundfile 用法错误</h4><p>soundfile 基元要求 part 编号保持在 [0..255] 区间内，因此例如以下代码：</p><pre><code class="language-faust">process = _,0 : soundfile("foo.wav", 2);
+</code></pre><p>将产生以下错误：</p><pre><code class="language-faust">ERROR : out of range soundfile part number (interval(-1,1,-24) instead of interval(0,255)) in expression : length(soundfile("foo.wav"),IN[0])
+</code></pre><h4 id="delay-primitive-error">延迟基元错误</h4><p>延迟 <code>@</code> 基元要求延迟信号的值有界，因此以下表达式：</p><pre><code class="language-faust">import("stdfaust.lib");
+process = @(ba.time);
+</code></pre><p>将产生以下错误：</p><pre><code class="language-faust">ERROR : can't compute the min and max values of : proj0(letrec(W0 = (proj0(W0)'+1)))@0+-1
+        used in delay expression : IN[0]@(proj0(letrec(W0 = (proj0(W0)'+1)))@0+-1)
+        (probably a recursive signal)
+</code></pre><p>[待补充]</p><h3 id="table-construction-errors">表的构造错误</h3><p><a href="manual-syntax.html#rdtable-primitive">rdtable</a> 基元可用于通过一张只读表（在初始化时预定义）读取数据。<a href="manual-syntax.html#rwtable-primitive">rwtable</a> 基元可用于实现可读写的表。两者的尺寸都在编译期计算。</p><p><code>rdtable</code> 基元要求表的内容由一个 0 输入、1 输出且在编译期已知的处理器产生。因此以下表达式：</p><pre><code class="language-faust">process = rdtable(9, +, 4);
+</code></pre><p>将产生以下错误，因为 <code>+</code> 的类型不正确：</p><pre><code class="language-faust">ERROR : checkInit failed for type RSEVN interval(-2,2,-24)
+</code></pre><p>在 <code>rwtable</code> 基元中读写索引定义不正确时，也会发生同类错误。</p><h3 id="duplicate-pathname-error">路径名重复错误</h3><p>不同 GUI 元件的路径名必须不同。编译以下代码：</p><pre><code class="language-faust">import("stdfaust.lib");
+nBands = 8;
+filterBank(N) = hgroup("Filter Bank",seq(i,N,oneBand(i)))
+with {
+    oneBand(j) = vgroup("[%j]Band",fi.peak_eq(l,f,b))
+    with {
+        a = j+1; // 这样频段编号就不会从 0 开始
+        l = vslider("[2]Level[unit:db]",0,-70,12,0.01) : si.smoo;
+        f = nentry("[1]Freq",(80+(1000*8/N*(j+1)-80)),20,20000,0.01) : si.smoo;
+        b = f/hslider("[0]Q[style:knob]",1,1,50,0.01) : si.smoo;
+    };
+};
+process = filterBank(nBands);
+</code></pre><p>会给出 <code>ERROR : path '/Filter_Bank/Band/Q' is already used</code> 消息。这是因为我们通常希望区分路径名，以便例如由 OSC 消息来控制。所以正确的做法是把代码改写为：</p><pre><code class="language-faust">import("stdfaust.lib");
+nBands = 8;
+filterBank(N) = hgroup("Filter Bank",seq(i,N,oneBand(i)))
+with {
+    oneBand(j) = vgroup("[%j]Band %a",fi.peak_eq(l,f,b))
+    with {
+        a = j+1; // 这样频段编号就不会从 0 开始
+        l = vslider("[2]Level[unit:db]",0,-70,12,0.01) : si.smoo;
+        f = nentry("[1]Freq",(80+(1000*8/N*(j+1)-80)),20,20000,0.01) : si.smoo;
+        b = f/hslider("[0]Q[style:knob]",1,1,50,0.01) : si.smoo;
+    };
+};
+process = filterBank(nBands);
+</code></pre><h2 id="mathematical-functions-out-of-domain-errors">数学函数超出定义域错误</h2><p>当数学函数在其定义域之外使用，且问题计算在编译期完成时，会产生错误信息。若超出定义域的计算可能在运行时发生，则可用 <code>-me</code> 选项产生警告（见<a href="#warning-messages">警告消息</a>一节）。</p><h3 id="modulo-primitive-error">取模基元错误</h3><p>取模 <code>%</code> 要求分母不为 0，因此以下代码：</p><pre><code class="language-faust">process = _%0;
+</code></pre><p>将产生以下错误：</p><pre><code class="language-faust">ERROR : % by 0 in IN[0] % 0
+</code></pre><p><code>acos</code>、<code>asin</code>、<code>fmod</code>、<code>log10</code>、<code>log</code>、<code>remainder</code> 和 <code>sqrt</code> 函数会产生同类错误。</p><h2 id="fir-and-backends-related-errors">FIR 与后端相关错误</h2><p>语言中的某些基元在某些后端中不可用。</p><p>示例代码：</p><pre><code class="language-faust">fun = ffunction(float fun(float), &lt;fun.h&gt;, "");
+process = fun;
+</code></pre><p>用 <code>faust -lang wast errors.dsp</code> 以 wast/wasm 后端编译，将产生以下错误：</p><p><code>ERROR : calling foreign function 'fun' is not allowed in this compilation mode</code></p><p>外部变量或常量也会产生同类错误。</p><p>[待补充]</p><h2 id="compiler-option-errors">编译器选项错误</h2><p>并非所有编译器选项都能用于所有后端。此外，有些编译器选项不能组合使用。这些情况通常会在编译真正开始之前触发错误。</p><p>[待补充]</p><h1 id="warning-messages">警告消息</h1><p>警告消息不会中断编译过程，但会提供关于潜在问题代码的有用信息。使用 <code>-wall</code> 编译选项可打印这些消息。只有同时使用 <code>-wall</code> 和 <code>-me</code> 选项时，才会显示数学上的超出定义域错误警告消息。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/manual/errors/" rel="noreferrer noopener">https://faustdoc.grame.fr/manual/errors/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

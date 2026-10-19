@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>从零构建正弦振荡器与加法合成 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：从零构建正弦振荡器与加法合成">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="making-a-sine-oscillator-from-scratch-and-additive-synthesis">从零构建正弦振荡器与加法合成</h1><h2 id="goals">目标</h2><ul><li>在 Faust 中从零实现正弦振荡器</li><li>理解正弦函数与所生成声音之间的关系</li><li>用多个正弦振荡器实现加法合成器</li><li>用 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/smartKeyboard" rel="noreferrer noopener">SmartKeyboard</a> 制作可控制该合成器的复音移动应用</li></ul><h2 id="sine-function-in-faust">Faust 中的正弦函数</h2><ul><li>Faust 中的正弦函数与计算器上的用法相同：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust0/exfaust0.svg"/><pre><code class="language-faust">process = sin(0);</code></pre><br/><p>会输出 <code>0</code>。</p><blockquote><p>要验证这一点，可以点击 <a href="https://faustide.grame.fr" rel="noreferrer noopener">Faust 网页版 IDE</a> 中的卡车图标（导出功能），然后选择 <code>misc/csv</code>，得到一张包含程序输出的前 <em>n</em> 个样本的表。</p></blockquote><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust1/exfaust1.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = sin(ma.PI/2);</code></pre><br/><p>会输出 <code>1</code>。</p><blockquote><p>注意，这里导入 <code>stdfaust.lib</code> 是为了使用 <code>ma.pi</code>。</p></blockquote><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust2/exfaust2.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = sin(2*ma.PI);</code></pre><br/><p>会输出 <code>0</code>。</p><h2 id="implementing-a-phasor">实现相位累加器</h2><ul><li>要生成完整的正弦波需要什么？<ul><li>-&gt; 我们需要创建一串从 0 到 2pi 的数（向量），换句话说，画一条线。</li></ul></li><li>先在 Faust 里创建一个「计数器」：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust3/exfaust3.svg"/><pre><code class="language-faust">process = +(1) ~ _;</code></pre><br/><blockquote><p>别忘了，你随时可以用 <a href="https://faustide.grame.fr" rel="noreferrer noopener">Faust 网页版 IDE</a> 中的 <code>misc/csv</code> 选项打印 Faust 程序的输出。</p></blockquote><ul><li>当前的计数器每次加一。而我们希望它增长得更慢，每次加 0.01。</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust4/exfaust4.svg"/><pre><code class="language-faust">process = +(0.01) ~ _;</code></pre><br/><ul><li>现在，我们希望计数器到达 1 时重置回 0。用 <code>ma.frac</code> 函数可以轻松做到：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust5/exfaust5.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = +(0.01) ~ ma.frac;</code></pre><br/><blockquote><p>注意这里在循环中使用了 <code>ma.frac</code>，以避免数值误差。</p></blockquote><ul><li>试着运行程序（编辑器里的播放按钮），它应该会发声！我们生成的是什么？<ul><li>-&gt; 一个<a href="https://en.wikipedia.org/wiki/Sawtooth_wave" rel="noreferrer noopener">锯齿波</a>。</li></ul></li><li>怎样改变锯齿波的音高？<ul><li>-&gt; 让计数器增长得更快或更慢。试试不同的值（例如 0.001、0.1 等）。</li></ul></li><li>我们不想直接控制计数器的增量，而是想控制锯齿波的频率。</li><li>为此，需要知道计算机在一秒内处理多少个波形值。这就是所谓的<a href="https://en.wikipedia.org/wiki/Sampling_(signal_processing)" rel="noreferrer noopener">采样率</a>。这个值取决于程序所在的运行环境，因此可以用 <code>ma.SR</code> 获取。</li><li>采样率 44100 对应频率 44100 Hz。如果想要 440 的频率，计数器里应该放多大的增量？<ul><li>-&gt; <code>freq/ma.SR</code></li></ul></li><li>最终得到：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust6/exfaust6.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+freq = 440;
+process = (+(freq/ma.SR) ~ ma.frac);</code></pre><br/><ul><li>此时不妨用在线编辑器导出功能里的 <code>misc/csv</code> 画出 Faust 程序的输出。</li><li><code>freq</code> 参数可以动态控制：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust7/exfaust7.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+freq = hslider("freq",440,50,2000,0.01);
+process = (+(freq/ma.SR) ~ ma.frac);</code></pre><br/><ul><li>把相位累加器放进函数里，代码会更整洁：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust8/exfaust8.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+f = hslider("freq",440,50,2000,0.01);
+phasor(freq) = (+(freq/ma.SR) ~ ma.frac);
+process = phasor(f);</code></pre><br/><h2 id="generating-a-sine-wave">生成正弦波</h2><ul><li>快完成了！现在我们要让相位累加器从 0 走到 2pi，好把它接到 <code>sin</code> 函数上：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust9/exfaust9.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+f = hslider("freq",440,50,2000,0.01);
+phasor(freq) = (+(freq/ma.SR) ~ ma.frac);
+osc(freq) = sin(phasor(freq)*2*ma.PI);
+process = osc(f);</code></pre><br/><p>注意我们创建了 <code>osc</code> 函数，让代码更整洁。</p><h2 id="additive-synthesis">加法合成</h2><ul><li>正弦波产生的是所谓的<a href="https://en.wikipedia.org/wiki/Pure_tone" rel="noreferrer noopener">纯音</a>。把多个正弦波叠加起来产生<a href="https://en.wikipedia.org/wiki/Harmonic" rel="noreferrer noopener">谐波</a>，就能得到更复杂的声音。每个谐波的频率与增益决定声音的<a href="https://en.wikipedia.org/wiki/Timbre" rel="noreferrer noopener">音色</a>。用这种技术可以「雕刻」声音。</li><li>用加法合成可以实现一个简单的管风琴合成器：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust10/exfaust10.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+f = hslider("freq",440,50,2000,0.01);
+phasor(freq) = (+(freq/ma.SR) ~ ma.frac);
+osc(freq) = sin(phasor(freq)*2*ma.PI);
+organ(freq) = (osc(freq) + osc(freq*2) + osc(freq*3))/3;
+process = organ(f);</code></pre><br/><ul><li>这就是所谓的<a href="https://en.wikipedia.org/wiki/Harmonic_series_(mathematics)" rel="noreferrer noopener">谐波列</a>。</li></ul><h2 id="making-a-synthesizer">制作合成器</h2><ul><li>要用键盘演奏这个合成器，我们需要能够开关声音，并控制它的音量：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust11/exfaust11.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+f = hslider("freq",440,50,2000,0.01);
+g = hslider("gain",1,0,1,0.01);
+t = button("gate");
+phasor(freq) = (+(freq/ma.SR) ~ ma.frac);
+osc(freq) = sin(phasor(freq)*2*ma.PI);
+organ(freq) = (osc(freq) + osc(freq*2) + osc(freq*3))/3;
+process = organ(f)*g*t;</code></pre><br/><ul><li>可以加入包络，让它听起来更自然：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/tutorials/basic-osc/exfaust12/exfaust12.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+f = hslider("freq",440,50,2000,0.01);
+g = hslider("gain",1,0,1,0.01);
+t = si.smoo(button("gate"));
+phasor(freq) = (+(freq/ma.SR) ~ ma.frac);
+osc(freq) = sin(phasor(freq)*2*ma.PI);
+organ(freq) = (osc(freq) + osc(freq*2) + osc(freq*3))/3;
+process = organ(f)*g*t;</code></pre><br/><ul><li>这个合成器可以用 MIDI 键盘控制。</li></ul><h2 id="turn-it-into-an-android-app">做成 Android 应用</h2><ul><li>用 Faust 编辑器的导出功能，选择 <code>android/smartkeyb</code>，把应用装到手机上，然后尽情玩吧！</li><li>也可以把它做成一个持续发声、由加速度计控制的应用：</li></ul><pre><code class="language-faust">import("stdfaust.lib");
+f = hslider("freq[acc: 0 0 -10 0 10]",1000,50,2000,0.01) : si.smoo;
+phasor(freq) = (+(freq/ma.SR) ~ ma.frac);
+osc(freq) = sin(phasor(freq)*2*ma.PI);
+organ(freq) = (osc(freq) + osc(freq*2) + osc(freq*3))/3;
+process = organ(f);
+</code></pre><ul><li>这种情况下，用 <code>android/android</code> 导出。</li></ul>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/basic-osc/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/basic-osc/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

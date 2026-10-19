@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在 JSFX 中使用 Faust - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：在 JSFX 中使用 Faust">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="using-faust-in-jsfx">在 JSFX 中使用 Faust</h1><p>本教程介绍如何把 <a href="https://faust.grame.fr" rel="noreferrer noopener">Faust</a> 与 <a href="https://www.reaper.fm/sdk/js/js.php" rel="noreferrer noopener">JSFX</a> 配合使用，JSFX 是 <a href="https://www.reaper.fm" rel="noreferrer noopener">Reaper</a> 中使用的一种脚本语言。JSFX 引擎默认集成在 Reaper 中，也可以作为 Csound 的插件 opcode 使用，还有一组独立项目：<a href="https://github.com/jpcima/ysfx" rel="noreferrer noopener">ysfx</a>、<a href="https://github.com/asb2m10/jsusfx/tree/bcc9cd7b910ee7bba5b4cd2649448ade2ec15712" rel="noreferrer noopener">jsusfx</a>。JSFX 语言基于 Cockos 的开源编程语言 <a href="https://www.cockos.com/EEL2/" rel="noreferrer noopener">EEL2</a>。</p><h4 id="who-is-this-tutorial-for">本教程面向谁？</h4><p><a href="#using-command-line-tools">第一节</a>假定机器上已安装可用的 <a href="https://github.com/grame-cncm/faust" rel="noreferrer noopener">Faust 编译器</a>，因此更适合常规的 Faust 用户。<a href="#using-the-faust-web-ide">第二节</a>更适合想了解 Faust 的 JSFX 用户。</p><h2 id="using-command-line-tools">使用命令行工具</h2><h3 id="generating-jsfx-code">生成 JSFX 代码</h3><p>假定你已经从 <a href="https://github.com/grame-cncm/faust" rel="noreferrer noopener">master-dev 分支</a><a href="https://github.com/grame-cncm/faust/wiki/BuildingSimple" rel="noreferrer noopener">编译并安装</a>了 <strong>faust</strong> 编译器，从下面这个 DSP 程序 <strong>osc.dsp</strong> 出发：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/jsfx/exfaust0/exfaust0.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+
+vol = hslider("volume [unit:dB]", 0, -96, 0, 0.1) : ba.db2linear : si.smoo;
+freq1 = hslider("freq1 [unit:Hz]", 1000, 20, 3000, 1);
+freq2 = hslider("freq2 [unit:Hz]", 200, 20, 3000, 1);
+
+process = vgroup("Oscillator", os.osc(freq1) * vol, os.osc(freq2) * vol);</code></pre><br/><p>可以用下面的命令生成 JSFX 代码：</p><pre><code>faust -lang jsfx osc.dsp -o osc.jsfx 
+</code></pre><p>这会生成遵循标准 JSFX 文件结构的 JSFX 代码：</p><pre><code class="language-faust">@init // 初始化段
+
+@block // 控制段
+
+@slider // 控制值变化时调用
+
+@sample // 音频计算段
+</code></pre><p>这段代码可以直接导入 Reaper，或放入 Reaper 的 Effects 目录。</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/jsfx/img/jsfx_reaper.png"/><em>在 Reaper 中生成的 JSFX 插件</em></p><p>生成的代码完全自包含，可以直接作为 Reaper JSFX 音频插件导入，适用于所有受支持的平台。</p><p>生成文件的顶部有几行用于说明文件描述与元数据。随后初始化从下面开始：</p><ul><li>滑块</li><li>输入与输出</li></ul><pre><code class="language-faust">slider1:fHslider0=1000&lt;20,3000,1&gt;hslider_freq10
+slider2:fHslider2=200&lt;20,3000,1&gt;hslider_freq20
+slider3:fHslider1=0&lt;-96,0,0.1&gt;hslider_volume0
+
+out_pin:output0
+out_pin:output1
+</code></pre><p>在 JSFX 中，滑块是唯一能与 Faust 控件对应的控件。因此按钮与复选框在 JSFX 中表示为 <strong><em>0-1</em></strong> 滑块。</p><p>接着，<code>@init</code> 段以所有必需的函数开始——包括 JSFX 中缺失的数学函数和内存管理函数。这些函数总会被包含在生成的 JSFX 代码中，因为其余代码依赖它们。</p><p>随后 <code>@init</code> 段定义若干常量（用于 MIDI 处理的位掩码，以及声部数 <code>nvoices</code> 等有用的处理常量）。真正的 DSP 部分紧接着这些常量开始。接着分配全局表；这里是用于计算正弦波形的表：</p><pre><code class="language-faust">ftbl0mydspSIG0 = MEMORY.alloc_memory(65536);
+</code></pre><p>然后定义 DSP 类的结构。由于 JSFX 不是真正的面向对象编程语言，我们通过在内存块中使用索引来访问 DSP 对象的成员。每个对象本身表示为 JSFX 预分配内存中的一个地址。<code>dsp.</code> 字段指示各成员在对象内存中的位置。</p><pre><code class="language-faust">// DSP 结构体内存布局
+dsp.memory = MEMORY.alloc_memory(0);
+ddsp.size = 24;
+dsp.iVec1 = 0;
+dsp.fHslider0 = 2;
+dsp.fSampleRate = 3;
+dsp.fConst1 = 4;
+dsp.fRec1 = 5;
+dsp.fConst2 = 7;
+dsp.fConst3 = 8;
+dsp.fHslider1 = 9;
+dsp.fRec2 = 10;
+dsp.fHslider2 = 12;
+dsp.fRec3 = 13;
+dsp.iVec0 = 15;
+dsp.iRec0 = 17;
+dsp.fSlow0 = 19;
+dsp.fSlow1 = 20;
+dsp.fSlow2 = 21;
+dsp.output0 = 22;
+dsp.output1 = 23;
+</code></pre><p>下一部分包含两个函数，用于创建 DSP 对象、为其分配内存并初始化其状态。一个对象代表一个声部。如果对象没有 <code>[nvoices]</code> 元数据，或者为 <code>[nvoices:1]</code>，则只会创建一个对象。<code>create_instance</code> 函数负责分配内存，<code>init_instances</code> 负责预计算对象状态，包括常量和一切无需在运行时计算的内容。</p><p>最后，<code>@init</code> 段定义 <code>control</code> 函数。这个函数对应 C++ 后端中音频循环之前发生的计算，即与控件和 MIDI 相关的计算。</p><p>在 JSFX 的沙箱环境中，我们不需要在每次循环时调用它，因此它被移到了 <code>@block</code> 之外。此外，这段计算必须能从 <code>@slider</code> 和 <code>@block</code> 两处访问。当前实现会在每次滑块值变化或发生 MIDI 输入事件时调用一次 <code>control</code> 函数。</p><p>默认情况下，<code>@block</code> 段是空的。如果以某种方式启用了 MIDI，它就会被填入代码：</p><ul><li>通过在滑块元数据 <code>[keyon:64]</code> 中把 MIDI 输入关联到某个控件</li><li>通过 <code>declare options ["nvoices:4"]</code> 设置复音模式</li></ul><p>前者实际上把 MIDI 按键或控制器接到滑块上，后者则把 MIDI 音符输入接到名为 <em>freq</em>、<em>key</em>、<em>vel</em>、<em>gain</em>、<em>gate</em> 的滑块上，并把 MIDI 值转换为其应表示的量：<em>freq</em> 对应频率，key 对应原始 MIDI 音符编号（……）。</p><p><code>@block</code> 段包含一个条件，使它只在发生 MIDI 事件时调用 <code>control</code> 函数。</p><p><code>@slider</code> 段只调用 <code>control</code>，而它本身只在滑块值变化时才计算。</p><p>最后，<code>@sample</code> 段是神奇发生的地方。它会遍历各个对象并计算音频输出。这一节在 JSFX 中表现为对每个样本都要调用的一段代码。在生成代码的底部，各对象的输出汇总到 JSFX 的特殊变量 <code>spl0</code>、<code>spl1</code>（……）中，它们才是 JSFX 插件的实际输出。</p><h3 id="midi-basic-example">MIDI 基础示例</h3><p>如果在控件名上添加特定元数据，就可以用控件（Faust 滑块）获取基本的 MIDI 输入。可用的 MIDI 输入有：</p><ul><li>keyon</li><li>keyoff</li><li>key（keyon 与 keyoff 两者）</li><li>ctrl</li></ul><p>MIDI 元数据语法的更多信息见 <a href="manual-midi.html">MIDI</a>。</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/jsfx/exfaust1/exfaust1.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+
+vel = hslider("vel[midi:ctrl 10]", 0, 0, 127, 1);
+freq = hslider("freq[midi:ctrl 11]", 50, 50, 1000, 0.1);
+
+process = os.osc(freq) * 0.1 * (vel / 127);</code></pre><br/><p>生成的代码会包含一个 <code>@block</code> 段，把 MIDI CC 输入（CC 10 与 11）接到相应的控制值上。</p><pre><code class="language-faust">@block
+midi_event = 0;
+while (midirecv(mpos, msg1, msg2, msg3)) (
+        status = msg1&amp;0xF0;
+        channel = msg1&amp;0x0F;
+        (status == CC) ? (
+                midi_event += 1;
+                (msg2 == 0xa) ? (fHslider1 = midi_scale(msg3, 0.0000000000000000, 127.0000000000000000, 1.0000000000000000));
+                (msg2 == 0xb) ? (fHslider0 = midi_scale(msg3, 50.0000000000000000, 1000.0000000000000000, 0.1000000000000000));
+        );
+);
+(midi_event &gt; 0) ? (control());
+</code></pre><h3 id="midi-polyphonic-example">MIDI 复音示例</h3><p>正如 <a href="manual-midi.html">MIDI</a> 文档中所说明的，Faust 支持 MIDI 复音音频插件。这类插件以三类数据响应 MIDI 音符输入：</p><ul><li>音高或频率</li><li>力度或增益</li><li>用于触发包络的门信号</li></ul><p>注意<em>音高</em>是 0 到 127 之间的值，而频率被换算为每秒周期数。力度（0-127）与增益（0-1）也是同样的对应关系。下面的代码展示了可编译为 JSFX 的 MIDI 复音乐器的基本机制。</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/jsfx/exfaust2/exfaust2.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:4]";
+import("stdfaust.lib");
+
+freq = hslider("freq", 0, 0, 10000, 0.1) : si.smoo;
+gain = hslider("gain", 0, 0, 1, 0.01) : si.smoo;
+gate = checkbox("gate");
+env = gate : en.asr(0.1, 0.5, 0.5);
+
+process = os.osc(freq) * env * gain * 0.1;</code></pre><br/><p>在这个 JSFX 后端中，复音声部采用声部抢占机制：如果没有空闲声部，新声部会抢占最老的声部。</p><p>生成的代码包含一个填好的 <code>@block</code> 段，用于查找 MIDI 输入音符 <code>midirecv</code>，从而执行相应动作：</p><ul><li>NOTE ON 消息会寻找可用声部（必要时抢占最老的声部）并设置其控件</li><li>NOTE OFF 消息会寻找正在演奏该音高的声部，关闭它的门信号。</li></ul><pre><code class="language-faust">@block
+midi_event = 0;
+while (midirecv(mpos, msg1, msg2, msg3)) (
+        status = msg1&amp;0xF0;
+        channel = msg1&amp;0x0F;
+        (status == NOTE_ON) ? (
+                midi_event += 1;
+                voice_idx = get_oldest_voice();
+                sort_voices(voice_idx);
+                obj = get_dsp(voice_idx);
+                obj[dsp.key_id] = msg2;
+                obj[dsp.gate] = 1;
+                obj[dsp.fCheckbox0] = 1;
+                obj[dsp.fHslider1] = midi_scale(msg3, 0.0000000000000000, 1.0000000000000000, 0.0100000000000000);
+                obj[dsp.fHslider0] = limit(mtof(msg2), 0.0000000000000000, 10000.0000000000000000);
+        ); // NOTE ON 条件结束
+        (status == NOTE_OFF) ? (
+                midi_event += 1;
+                voice_idx = 0;
+                while(voice_idx &lt; nvoices) (
+                        obj = get_dsp(voice_idx);
+                        (obj[dsp.key_id] == msg2 &amp;&amp; obj[dsp.gate] &gt; 0) ? (
+                                obj[dsp.gate] = 0;
+                                obj[dsp.fCheckbox0] = 0;
+                                voice_idx = nvoices;
+                        );
+                        voice_idx += 1;
+                ); // while 结束
+        ); // 条件结束
+);
+(midi_event &gt; 0) ? (control());
+</code></pre><h2 id="using-the-faust-web-ide">使用 Faust 网页版 IDE</h2><h3 id="generating-a-jsfx-file">生成 JSFX 文件</h3><p>JSFX 后端在 <a href="https://faustide.grame.fr/" rel="noreferrer noopener">Faust 网页版 IDE</a> 中可用。要把 Faust 程序导出为 JSFX 代码，需要点击「导出/编译到特定目标」按钮（位于左侧「另存为」下方）。然后平台和架构都选择 <strong><em>jsfx</em></strong>，点击 <strong><em>compile</em></strong>。<br/> 这样就可以下载一个 <code>binary.zip</code> 文件，其中包含生成的 <strong><em>jsfx</em></strong> 文件和你原来的 <strong><em>dsp</em></strong> 文件。</p><h3 id="generating-a-jsfx-file-in-polyphonic-mode">以复音模式生成 JSFX 文件</h3><p>可以在 DSP 代码中使用 <code>declare options "[midi:on][nvoices:n]";</code> 这一<a href="manual-midi.html#configuring-and-activating-polyphony">编码约定</a>来启用 MIDI 与复音模式。</p><h2 id="limitations">限制</h2><p>由于 JSFX 是沙箱环境，这个后端无法发挥 Faust 的全部潜力。有些功能缺失，另一些可能在未来加入。</p><p>首先，只有三种控件可用：</p><ul><li>滑块：hslider、vslider、nentry</li><li>button</li><li>checkbox</li></ul><p>这些在 JSFX 中全部映射为滑块。</p><p>在 MIDI 方面，这个后端不支持程序切换、通道压力或弯音轮消息。如前所述，可用的 MIDI 输入是 key、keyon、keyoff、ctrl 和复音模式。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/jsfx/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/jsfx/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

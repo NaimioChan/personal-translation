@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>居家篇：为你的 JUCE 插件添加 Faust DSP 支持 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：居家篇：为你的 JUCE 插件添加 Faust DSP 支持">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="faust-for-the-confined-adding-faust-dsp-support-to-your-juce-plug-ins">居家篇：为你的 JUCE 插件添加 Faust DSP 支持</h1><p><a href="https://juce.com/" rel="noreferrer noopener">JUCE</a> 是一个知名框架，用于为大量平台创建音频插件（即 VST、AU、AAX 等）和应用。可以用 Faust 配合 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/juce" rel="noreferrer noopener">faust2juce</a> 生成开箱即用的 JUCE 应用和插件，它们实现 Faust 代码中描述的标准用户界面（UI）。不过在 JUCE 中从零做出专业外观的 UI 非常容易，所以你可能更愿意用 Faust 实现插件的 DSP 部分，并自己构建 UI。</p><p>本教程演示如何用 Faust 编译器生成 C++ DSP 对象，以及如何把它与你的 JUCE 插件/UI 对接。我们涵盖基础示例（单音合成器、复音合成器、音频效果器）以及涉及复音等更高级的应用。</p><h2 id="simple-monophonic-synth-plug-in">简单的单音合成器插件</h2><p><a href="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/misc/mono.zip" rel="noreferrer noopener">&lt;&lt; 下载本教程的源代码 &gt;&gt;</a></p><p>本节演示如何用 Faust 合成器在 JUCE 中从零构建带自定义 UI 的插件。</p><h3 id="generating-the-dsp-engine">生成 DSP 引擎</h3><p>首先，用 Faust 实现一个基于滤波锯齿波的基础减法合成器（<code>FaustSynth.dsp</code>）：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/exfaust0/exfaust0.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+freq = nentry("freq",200,50,1000,0.01);
+gain = nentry("gain",0.5,0,1,0.01) : si.smoo;
+gate = button("gate") : si.smoo;
+cutoff = nentry("cutoff",10000,50,10000,0.01) : si.smoo;
+process = os.sawtooth(freq)*gain*gate : fi.lowpass(3,cutoff) &lt;: _,_;</code></pre><br/><p>不妨在网页版 IDE 中运行它，听听效果！</p><blockquote><p>低通的输出被分成 2 路信号，以创建立体声对象。</p></blockquote><p>注意所有参数都做了平滑处理以防咔嗒声（我们希望插件干净！）。连 <code>gate</code> 也做了平滑，这样在发送触发信号时会施加一个平缓的指数包络，等等。</p><p>由于这里 Faust 不会构建自己的 UI，代码中使用哪种界面控件并不重要。它们只是作为控制即将生成的音频引擎参数的入口。所以 <code>nentry</code> 可以换成 <code>hslider</code> 或 <code>vslider</code>，没有任何区别。不过我们建议你始终写出「自洽」的界面，以防某天有人想「原样」使用你的 Faust 代码。</p><p>为了把这个 Faust 程序变成可在 JUCE 中使用的 C++ DSP 对象，必须使用一个 Faust 架构文件来包装 Faust 编译器生成的 C++ 代码（后者实际上只包含一个音频回调函数）。<a href="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/misc/faustMinimal.h" rel="noreferrer noopener"><code>faustMinimal.h</code></a>（包含在本教程开头下载的包中）就是做这件事的。实际上，打开它你会看到：</p><pre><code>#include &lt;cmath&gt;
+#include &lt;cstring&gt;
+
+#include "faust/gui/MapUI.h"
+#include "faust/gui/meta.h"
+#include "faust/dsp/dsp.h"
+
+// BEGIN-FAUSTDSP
+
+&lt;&lt;includeIntrinsic&gt;&gt;
+
+&lt;&lt;includeclass&gt;&gt;
+
+// END-FAUSTDSP
+</code></pre><p>如果系统安装了 Faust，<code>faust/...</code> 下的文件应该已经存在。如果没有，可以使用架构文件的内联版本（<a href="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/misc/faustMinimalInlined.h" rel="noreferrer noopener"><code>faustMinimalInlined.h</code></a>），它同样可以在本教程开头下载的包中找到。</p><p><code>MapUI.h</code> 让我们可以用 Faust 代码中声明的名称轻松控制 Faust 对象的参数。其他 include 在多数情况下都是必需的，它们只是 Faust 编译器生成的 DSP 类的父类。<code>&lt;&lt;includeclass&gt;&gt;</code> 是 Faust 编译器生成的代码被粘贴的位置。</p><p>只需运行以下命令，就可以把该架构文件用于 Faust 编译器：</p><pre><code class="language-faust">faust -i -a faustMinimal.h FaustSynth.dsp -o FaustSynth.h 
+</code></pre><p>其中 <code>FaustSynth.h</code> 是生成文件的名称，本教程稍后会在 JUCE 项目中导入它。<code>-i</code> 选项会把包含的 C++ 文件内联进生成的文件。</p><p>另外，如果系统没有安装 Faust，可以用 Faust 在线 IDE 完成同样的工作，在导出（卡车）功能中选择 <code>source/cplusplus</code>。然后把下载的 C++ 文件内容复制粘贴到 <code>BEGIN-FAUSTDSP</code> 与 <code>END-FAUSTDSP</code> 标签之间。</p><p>现在可以创建新的 JUCE 插件项目了！</p><h3 id="creating-an-empty-juce-plug-in-project">创建一个空的 JUCE 插件项目</h3><p>本节假设你对 <a href="https://juce.com/" rel="noreferrer noopener">JUCE</a> 有一定了解。如果不是，别慌，只需阅读他们的 <a href="https://docs.juce.com/master/tutorial_new_projucer_project.html" rel="noreferrer noopener">Projucer 入门</a>教程。我们也建议你看看接下来的几个教程，了解大致的工作方式。它们写得轻松易读！</p><p>在 Projucer 中新建一个 Audio Plug-In，添加你需要的目标，在设置中确保勾选「Plugin is a Synth」。在我们的例子中把它命名为「MonoSynth」（命名要谨慎，因为它会影响程序的类名）。</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/img/newPlugin.jpg"/></p><p>现在把上一步生成的 <code>FaustSynth.h</code> 文件放到 JUCE 插件项目的 <code>Source</code> 文件夹中。然后在文件浏览器中于 <code>Source</code> 下选中它，拖到 Projucer 中，使它出现在 <code>Source</code> 标签页里：</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/img/juceProject.jpg"/></p><p>此时试着编译插件，看看能否运行。请记住 JUCE 现在默认生成「独立插件」，这非常方便，不必在第三方应用中打开插件就能测试。</p><h3 id="integrating-the-faust-dsp-object-to-the-juce-project">把 Faust DSP 对象集成到 JUCE 项目</h3><p>现在把 Faust 生成的 DSP 对象集成到 <code>PluginProcessor</code> 中。在 <code>PluginProcessor.h</code> 的 <code>MonoSynthAudioProcessor</code> 类的 private 区声明以下成员：</p><pre><code class="language-faust">private:
+    MapUI* fUI;
+    dsp* fDSP;
+    float** outputs;
+    //==============================================================================
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MonoSynthAudioProcessor)
+</code></pre><p><code>fUI</code> 用于控制 Faust DSP 的参数，<code>fDSP</code> 将包含音频 DSP/回调本身（基本上就是 Faust 编译器生成的对象）。为了在不知道 <code>MapUI</code> 和 <code>dsp</code> 定义的情况下声明这些对象，你还必须在文件开头声明空的类定义：</p><pre><code class="language-faust">class dsp;
+class MapUI;
+
+class MonoSynthAudioProcessor : public AudioProcessor
+</code></pre><p>在 <code>PluginProcessor.cpp</code> 中，在文件开头的 include 区加入 <code>FaustSynth.h</code>：</p><pre><code>#include "PluginProcessor.h"
+#include "PluginEditor.h"
+#include "FaustSynth.h"
+</code></pre><p>在 <code>prepareToPlay</code> 方法中写入以下内容：</p><pre><code>void MonoSynthAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
+{
+    fDSP = new mydsp();
+    fDSP-&gt;init(sampleRate);
+    fUI = new MapUI();
+    fDSP-&gt;buildUserInterface(fUI);
+    outputs = new float*[2];
+    for (int channel = 0; channel &lt; 2; ++channel) {
+        outputs[channel] = new float[samplesPerBlock];
+    }
+}
+</code></pre><p>这里首先实例化 <code>fDSP</code>，即 Faust DSP 对象。然后实例化 <code>fUI</code>，用于控制 DSP 的参数。这两个对象通过 <code>fDSP</code> 的 <code>buildUserInterface</code> 方法绑定在一起。最后为 Faust 对象的立体声输出分配内存。注意 <code>outputs</code> 是一个二维数组（一维表示声道，一维表示音频样本/缓冲区）。</p><p>相应地，在 <code>MonoSynthAudioProcessor</code> 的 <code>releaseResources</code> 方法中写入以下内容：</p><pre><code class="language-faust">void MonoSynthAudioProcessor::releaseResources()
+{
+    delete fDSP;
+    delete fUI;
+    for (int channel = 0; channel &lt; 2; ++channel) {
+        delete[] outputs[channel];
+    }
+    delete [] outputs;
+}
+</code></pre><p>这里只是在资源释放时释放前面步骤分配的内存。</p><p>现在进入正题：通过 <code>MonoSynthAudioProcessor</code> 的 <code>processBlock</code> 方法实现的音频回调：</p><pre><code>void MonoSynthAudioProcessor::processBlock (AudioBuffer&lt;float&gt;&amp; buffer, MidiBuffer&amp; midiMessages)
+{
+    ScopedNoDenormals noDenormals;
+    auto totalNumInputChannels = getTotalNumInputChannels();
+    auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+    fDSP-&gt;compute(buffer.getNumSamples(),NULL,outputs);
+
+    for (int channel = 0; channel &lt; totalNumOutputChannels; ++channel) {
+        for (int i = 0; i &lt; buffer.getNumSamples(); i++) {
+            *buffer.getWritePointer(channel,i) = outputs[channel][i];
+        }
+    }
+}
+</code></pre><p>这里我们基本上计算一个大小为 <code>buffer.getNumSamples()</code> 的完整音频块，存入 <code>outputs</code>，然后把 <code>outputs</code> 链接到 <code>processBlock</code> 的实际音频输出（<code>*buffer.getWritePointer(channel,i)</code>）。</p><p>此时你的插件应该能发声了！在 <code>prepareToPlay</code> 方法中临时加入以下一行，把 <code>gate</code> 参数设为 1：</p><pre><code>fUI-&gt;setParamValue("gate",1);
+</code></pre><p>注意这里如何用 <code>fUI</code> 的 <code>setParamValue</code> 方法配置 Faust DSP 的参数，该方法有两个参数：参数在 Faust 代码中的路径/名称，以及它的值。</p><p>为目标平台（例如 VST、AU 等）编译插件。在我们的例子中，为方便起见只生成独立插件。运行插件时，你现在应该能听到声音！</p><p>由于我们希望从 <code>PluginEditor</code> 控制合成器的参数，必须在 <code>PluginProcessor</code> 中创建一系列公有方法来控制合成器的每个参数。在 <code>PluginProcessor.h</code> 中大致如下：</p><pre><code class="language-faust">public:
+  void setFreq(float freq);
+  void setGain(float gain);
+  void setCutoff(float cutoff);
+  void setGate(bool gate);
+</code></pre><p>在 <code>PluginProcessor.cpp</code> 中对应的实现是：</p><pre><code>void MonoSynthAudioProcessor::setFreq(float freq)
+{
+    fUI-&gt;setParamValue("freq",freq);
+}
+
+void MonoSynthAudioProcessor::setGain(float gain)
+{
+    fUI-&gt;setParamValue("gain",gain);
+}
+
+void MonoSynthAudioProcessor::setGate(bool gate)
+{
+    if(gate) {
+        fUI-&gt;setParamValue("gate",1);
+    } else {
+        fUI-&gt;setParamValue("gate",0);
+    }
+}
+
+void MonoSynthAudioProcessor::setCutoff(float cutoff)
+{
+    fUI-&gt;setParamValue("cutoff",cutoff);
+}
+</code></pre><p><code>PluginProcessor</code> 就这些！很简单，对吧？现在加一个基础界面来控制这个合成器。</p><p>在 <code>PluginEditor.h</code> 中 <code>MonoSynthAudioProcessorEditor</code> 的 private 区加入一系列滑块、按钮和标签：</p><pre><code class="language-faust">private:
+  Slider frequencySlider;
+  Slider gainSlider;
+  Slider cutoffSlider;
+  ToggleButton onOffButton;
+
+  Label frequencyLabel;
+  Label gainLabel;
+  Label cutoffLabel;
+  Label onOffLabel;
+</code></pre><p>以及它们在 <code>PluginEditor.cpp</code> 中对应的实现：</p><pre><code class="language-faust">MonoSynthAudioProcessorEditor::MonoSynthAudioProcessorEditor(MonoSynthAudioProcessor&amp; p)
+    : AudioProcessorEditor(&amp;p), processor(p)
+{
+    setSize (800, 130);
+
+    addAndMakeVisible(frequencySlider);
+    frequencySlider.setRange(50.0, 5000.0);
+    frequencySlider.setSkewFactorFromMidPoint(500.0);
+    frequencySlider.setValue(300);
+    frequencySlider.onValueChange = [this] {
+        processor.setFreq(frequencySlider.getValue());  
+    };
+
+    addAndMakeVisible(frequencyLabel);
+    frequencyLabel.setText("Frequency", dontSendNotification);
+    frequencyLabel.attachToComponent(&amp;frequencySlider, true);
+
+    addAndMakeVisible(gainSlider);
+    gainSlider.setRange(0.0, 1.0);
+    gainSlider.setValue(0.5);
+    gainSlider.onValueChange = [this] { 
+        processor.setGain(gainSlider.getValue()); 
+    };
+
+    addAndMakeVisible(gainLabel);
+    gainLabel.setText("Gain", dontSendNotification);
+    gainLabel.attachToComponent (&amp;gainSlider, true);
+
+    addAndMakeVisible(cutoffSlider);
+    cutoffSlider.setRange(50.0, 10000.0);
+    cutoffSlider.setValue(5000.0);
+    cutoffSlider.onValueChange = [this] { 
+        processor.setCutoff(cutoffSlider.getValue()); 
+    };
+
+    addAndMakeVisible(cutoffLabel);
+    cutoffLabel.setText("Cutoff", dontSendNotification);
+    cutoffLabel.attachToComponent(&amp;cutoffSlider, true);
+
+    addAndMakeVisible(onOffButton);
+    onOffButton.onClick = [this] { 
+        processor.setGate(onOffButton.getToggleState());
+    };
+
+    addAndMakeVisible(onOffLabel);
+    onOffLabel.setText("On/Off", dontSendNotification);
+    onOffLabel.attachToComponent (&amp;onOffButton, true);
+}
+</code></pre><p>上一步声明的方法基本上就是通过 <code>processor</code> 对象来设置 DSP 引擎各参数的值。</p><p>必须实现 <code>resized</code> 方法，这样我们创建的各种 UI 元素才真正有尺寸：</p><pre><code class="language-faust">void MonoSynthAudioProcessorEditor::resized()
+{
+    const int sliderLeft = 80;
+    frequencySlider.setBounds(sliderLeft, 10, getWidth() - sliderLeft - 20, 20);
+    gainSlider.setBounds(sliderLeft, 40, getWidth() - sliderLeft - 20, 20);
+    cutoffSlider.setBounds(sliderLeft, 70, getWidth() - sliderLeft - 20, 20);
+    onOffButton.setBounds(sliderLeft, 100, getWidth() - sliderLeft - 20, 20);
+}
+</code></pre><p>最后，确保清理 <code>paint</code> 方法的实现，去掉默认那个难看的「Hello World：」</p><pre><code class="language-faust">void MonoSynthAudioProcessorEditor::paint (Graphics&amp; g)
+{
+    g.fillAll(getLookAndFeel().findColour (ResizableWindow::backgroundColourId));
+}
+</code></pre><p>编译并运行你的插件，它应该看起来像这样：</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/img/plugin.jpg"/></p><p>本节的目的只是展示如何把 Faust DSP 对象集成到 JUCE 插件项目中，以及如何用简单的 UI 控制它。再说一次，JUCE 是一个强大的工具，能以非常简单的方式实现复杂的 UI。你可以在他们的<a href="https://juce.com/" rel="noreferrer noopener">网站</a>上找到开始制作漂亮插件所需的全部文档！</p><h2 id="simple-audio-effect-plug-in">简单的音频效果器插件</h2><p><a href="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/misc/effect.zip" rel="noreferrer noopener">&lt;&lt; 下载本教程的源代码 &gt;&gt;</a></p><p>本节演示如何用 Faust 效果器在 JUCE 中从零构建带自定义 UI 的插件。</p><h3 id="generating-the-dsp-engine_1">生成 DSP 引擎</h3><p>用 Faust 生成音频效果器 C++ DSP 对象的步骤与合成器完全相同（<a href="#simple-monophonic-synth-plug-in">见上一节</a>），也可以使用 <a href="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/misc/faustMinimal.h" rel="noreferrer noopener"><code>faustMinimal.h</code></a> 架构文件。</p><p>本示例中我们使用一个立体声回声：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/exfaust1/exfaust1.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+echo(d,f) = +~de.delay(48000,del)*f
+with {
+  del = d*ma.SR;
+};
+delay = nentry("delay",0.25,0,1,0.01) : si.smoo;
+feedback = nentry("feedback",0.5,0,1,0.01) : si.smoo;
+process = par(i,2,echo(delay,feedback));</code></pre><br/><p>然后运行类似这样的命令：</p><pre><code class="language-faust">faust -i -a faustMinimal.h FaustEffect.dsp -o Effect/Source/FaustEffect.h 
+</code></pre><h3 id="creating-a-new-empty-juce-plug-in-project">创建新的空 JUCE 插件项目</h3><p>步骤与<a href="#simple-monophonic-synth-plug-in">单音合成器教程</a>相同，只是这次不应勾选「Plug-in is a Synth」复选框。本示例中我们给插件项目起了一个很糟糕但很直白的名字：「Effect」。</p><p>最后，把上一步生成的 C++ 文件（即 <code>FaustEffect.h</code>）导入项目。</p><h3 id="integrating-the-faust-dsp-object-to-the-juce-project_1">把 Faust DSP 对象集成到 JUCE 项目</h3><p>这里的步骤也与<a href="#simple-monophonic-synth-plug-in">单音合成器教程</a>类似，只是需要创建音频输入。于是在 <code>PluginProcessor.h</code> 中我们有：</p><pre><code class="language-faust">private:
+    MapUI* fUI;
+    dsp* fDSP;
+    float **inputs;
+    float **outputs;
+</code></pre><p>在 <code>PluginProcessor.cpp</code> 中，<code>prepareToPlay</code> 和 <code>releaseResources</code> 方法：</p><pre><code>void EffectAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+{
+    fDSP = new mydsp();
+    fDSP-&gt;init(sampleRate);
+    fUI = new MapUI();
+    fDSP-&gt;buildUserInterface(fUI);
+    inputs = new float*[2];
+    outputs = new float*[2];
+    for (int channel = 0; channel &lt; 2; ++channel) {
+        inputs[channel] = new float[samplesPerBlock];
+        outputs[channel] = new float[samplesPerBlock];
+    }
+}
+
+void EffectAudioProcessor::releaseResources()
+{
+    delete fDSP;
+    delete fUI;
+    for (int channel = 0; channel &lt; 2; ++channel) {
+        delete[] inputs[channel];
+        delete[] outputs[channel];
+    }
+    delete [] inputs;
+    delete [] outputs;
+}
+</code></pre><p>以及音频回调：</p><pre><code>void EffectAudioProcessor::processBlock (AudioBuffer&lt;float&gt;&amp; buffer, MidiBuffer&amp; midiMessages)
+{
+    ScopedNoDenormals noDenormals;
+    auto totalNumInputChannels  = getTotalNumInputChannels();
+    auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+    for (int channel = 0; channel &lt; totalNumInputChannels; ++channel) {
+        for (int i = 0; i &lt; buffer.getNumSamples(); i++) {
+            inputs[channel][i] = *buffer.getWritePointer(channel,i);
+        }
+    }
+
+    fDSP-&gt;compute(buffer.getNumSamples(),inputs,outputs);
+
+    for (int channel = 0; channel &lt; totalNumOutputChannels; ++channel) {
+        for (int i = 0; i &lt; buffer.getNumSamples(); i++){
+            *buffer.getWritePointer(channel,i) = outputs[channel][i];
+        }
+    }
+}
+</code></pre><p>这应该比较容易理解。</p><p>当然，对应的控制方法也应当创建，等等：</p><pre><code>void EffectAudioProcessor::setDelay(float delay)
+{
+    fUI-&gt;setParamValue("delay",delay);
+}
+
+void EffectAudioProcessor::setFeedback(float feedback)
+{
+    fUI-&gt;setParamValue("feedback",feedback);
+}
+</code></pre><p>在界面方面，可以用类似下面的方式轻松适配这个新配置：</p><pre><code class="language-faust">EffectAudioProcessorEditor::EffectAudioProcessorEditor (EffectAudioProcessor&amp; p)
+    : AudioProcessorEditor(&amp;p), processor(p)
+{
+    // 确保在构造函数结束之前，你已经设置好
+    // 编辑器尺寸为你需要的值。
+    setSize(800, 100);
+
+    addAndMakeVisible (delaySlider);
+    delaySlider.setRange(0.0, 1.0);
+    delaySlider.setValue(0.5);
+    delaySlider.onValueChange = [this] {
+        processor.setDelay(delaySlider.getValue());  
+    };
+
+    addAndMakeVisible(delayLabel);
+    delayLabel.setText("Delay (s)", dontSendNotification);
+    delayLabel.attachToComponent (&amp;delaySlider, true);
+
+    addAndMakeVisible(feedbackSlider);
+    feedbackSlider.setRange(0.0, 1.0);
+    feedbackSlider.setValue(0.5);
+    feedbackSlider.onValueChange = [this] {
+        processor.setFeedback(feedbackSlider.getValue());  
+    };
+
+    addAndMakeVisible(feedbackLabel);
+    feedbackLabel.setText("Feedback", dontSendNotification);
+    feedbackLabel.attachToComponent(&amp;feedbackSlider, true);    
+}
+
+void EffectAudioProcessorEditor::resized()
+{
+    const int sliderLeft = 80;
+    delaySlider.setBounds(sliderLeft, 10, getWidth() - sliderLeft - 20, 20);
+    feedbackSlider.setBounds(sliderLeft, 40, getWidth() - sliderLeft - 20, 20);
+}
+</code></pre><p>试着编译程序，你应该得到一个漂亮的音频效果器插件 :)。</p><h2 id="creating-and-using-a-polyphonic-faust-dsp-object">创建并使用复音 Faust DSP 对象</h2><p><a href="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/misc/poly.zip" rel="noreferrer noopener">&lt;&lt; 下载本教程的源代码 &gt;&gt;</a></p><p>创建复音合成器 DSP 对象的流程与简单单音合成器（如本教程开头介绍的那个）略有不同。这里我们使用与<a href="#simple-monophonic-synth-plug-in">单音合成器示例</a>相同的 Faust 程序。要启用复音，只需配置 <code>nvoices</code> 元数据，它用于指定将要生成的 DSP 对象的最大复音声部数：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/exfaust2/exfaust2.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+
+import("stdfaust.lib");
+freq = nentry("freq",200,50,1000,0.01);
+gain = nentry("gain",0.5,0,1,0.01) : si.smoo;
+gate = button("gate") : si.smoo;
+cutoff = nentry("cutoff",10000,50,10000,0.01) : si.smoo;
+process = os.sawtooth(freq)*gain*gate : fi.lowpass(3,cutoff) &lt;: _,_;</code></pre><br/><p>本教程开头下载的包中包含一个 Faust 架构文件，与前面示例（单音合成器和效果器）所用的略有不同：<a href="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/misc/faustMinimalPoly.h" rel="noreferrer noopener">faustMinimalPoly.h</a>。打开它你会看到：</p><pre><code>#include &lt;cmath&gt;
+#include &lt;cstring&gt;
+
+#include "faust/misc.h"
+#include "faust/gui/UI.h"
+#include "faust/gui/JSONUIDecoder.h"
+#include "faust/dsp/dsp.h"
+#include "faust/dsp/dsp-adapter.h"
+#include "faust/gui/meta.h"
+
+// BEGIN-FAUSTDSP
+
+&lt;&lt;includeIntrinsic&gt;&gt;
+
+&lt;&lt;includeclass&gt;&gt;
+
+// END-FAUSTDSP
+
+#include "faust/dsp/faust-poly-engine.h"
+#include "faust/audio/dummy-audio.h"
+
+std::list&lt;GUI*&gt; GUI::fGuiList;
+ztimedmap GUI::gTimedZoneMap;
+</code></pre><p><code>faust-poly-engine.h</code> 包含 <code>FaustPolyEngine</code> 类，可用于把 Faust C++ DSP 对象变成复音合成器。为了让这个类工作，必须提供一个「音频驱动」，<code>dummy-audio.h</code> 中提供的 <code>dummyaudio</code> 类正是为此。它还允许我们把采样率和缓冲区大小传给 <code>FaustPolyEngine</code>。</p><p>用这个架构文件编译之前的 Faust 程序，可以使用 Faust 命令行编译器或网页版 IDE：</p><pre><code class="language-faust">faust -i -a faustMinimalPoly.h FaustSynth.dsp -o PolySynth/Source/FaustSynth.h
+</code></pre><p>并把 <code>FaustSynth.h</code> 集成到新的 JUCE 合成器插件项目中（按照<a href="#simple-monophonic-synth-plug-in">单音合成器教程</a>中的相同步骤）。</p><p>在 <code>PluginProcessor.h</code> 中声明以下对象：</p><pre><code class="language-faust">private:
+    audio *driver;
+    FaustPolyEngine *faustObject;
+    float **outputs;
+    //==============================================================================
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PolySynthAudioProcessor)
+</code></pre><p>同样，这里的 <code>faustObject</code> 将是复音 Faust 对象，<code>driver</code> 用于把采样率和缓冲区大小传给系统。</p><p>别忘了在文件开头声明对应的空类：</p><pre><code class="language-faust">class FaustPolyEngine;
+class audio;
+
+class PolySynthAudioProcessor : public AudioProcessor
+{
+</code></pre><p>在 <code>PluginProcessor.cpp</code> 中，首先别忘了 include <code>FaustSynth.h</code>。然后用以下代码填充 <code>prepareToPlay</code>：</p><pre><code class="language-faust">void PolySynthAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
+{
+    driver =  new dummyaudio(sampleRate,samplesPerBlock);
+    faustObject = new FaustPolyEngine(NULL,driver,NULL);
+    outputs = new float*[2];
+    for (int channel = 0; channel &lt; 2; ++channel){
+        outputs[channel] = new float[samplesPerBlock];
+    }
+}
+</code></pre><p>首先实例化空的音频驱动并传给 Faust 复音对象。当然，我们还要为音频输出分配内存。</p><p>资源的释放方式如下：</p><pre><code class="language-faust">void PolySynthAudioProcessor::releaseResources()
+{
+    // delete faustObject;
+    delete driver;
+    for (int channel = 0; channel &lt; 2; ++channel) {
+        delete[] outputs[channel];
+    }
+    delete [] outputs;
+}
+</code></pre><p><code>processBlock</code> 方法的工作方式与<a href="#simple-monophonic-synth-plug-in">单音合成器教程</a>相同，只是这里的计算方法是直接从 <code>faustObject</code>（<code>FaustPolyEngine</code>）调用的。</p><pre><code>void PolySynthAudioProcessor::processBlock (AudioBuffer&lt;float&gt;&amp; buffer, MidiBuffer&amp; midiMessages)
+{
+    ScopedNoDenormals noDenormals;
+    auto totalNumInputChannels = getTotalNumInputChannels();
+    auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+    faustObject-&gt;compute(buffer.getNumSamples(),NULL,outputs);
+
+    for (int channel = 0; channel &lt; totalNumOutputChannels; ++channel) {
+        for (int i = 0; i &lt; buffer.getNumSamples(); i++) {
+            *buffer.getWritePointer(channel,i) = outputs[channel][i];
+        }
+    }
+}
+</code></pre><p>现在可以直接从 <code>faustObject</code> 调用 <code>setParamValue</code> 方法来设置 Faust 对象的特定参数，此外还有 <code>keyOn</code> 和 <code>keyOff</code> 等复音专用方法。完整列表可以查看 <code>FaustPolyEngine</code> 的源代码，它本身就足够说明问题。</p><p>本教程的最终目标是创建一个带以下界面的简单插件：</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/img/polyPlugin.jpg"/></p><p>因此，Faust DSP 对象应当由复音键盘控制。必须在 <code>PluginProcessor.cpp</code> 中创建新方法，把 key-on 和 key-off 事件从 <code>PluginEditor</code> 发送到 <code>PluginProcessor</code>：</p><pre><code>void PolySynthAudioProcessor::keyOn(int pitch, int velocity)
+{
+    faustObject-&gt;keyOn(pitch,velocity);
+}
+
+void PolySynthAudioProcessor::keyOff(int pitch)
+{
+    faustObject-&gt;keyOff(pitch);
+}
+
+void PolySynthAudioProcessor::setCutoff(float cutoff)
+{
+    faustObject-&gt;setParamValue("cutoff",cutoff);
+}
+</code></pre><p>当然，别忘了在 <code>PluginProcessor.h</code> 中声明这些方法。</p><p><code>keyOn</code> 会分配一个新的声部，把它的 <code>pitch</code> 参数转换为频率并自动发送给 Faust 的 <code>freq</code> 参数，<code>velocity</code> 被转换为电平并发送给 <code>gain</code> 参数，<code>gate</code> 参数被设为 1。反过来说，<code>keyOff</code> 把 <code>gate</code> 设为 0，并等待到达 t60 后再释放当前声部。</p><p><code>keyOn</code> 返回一个类型为 <code>unsigned long</code> 的声部 ID。这个 ID 随后可用于改变特定声部的参数。本教程的示例中没有使用这个功能，但它的用法如下：</p><pre><code class="language-faust">unsigned long voiceID = dspFaust.keyOn(60,110);
+dspFaust.setVoiceParamValue("/synth/cutoff",voiceID,378);
+</code></pre><p>注意，也可以不用 <code>keyOn</code> 和 <code>keyOff</code>，而是用 <code>newVoice</code> 和 <code>deleteVoice</code> 方法直接分配声部：</p><pre><code class="language-faust">unsigned long voiceID = dspFaust.newVoice();
+dspFaust.setVoiceParamValue("/synth/gate",voiceID,1);
+// 做一些事情……
+dspFaust.deleteVoice(voiceID);
+</code></pre><p>像当前示例这样使用 <code>setParamValue</code>，可以为 DSP 引擎的所有声部设置某个参数的值。</p><p>以下实现极其简陋，只处理来自 UI 键盘的消息：我们这样做只是为了示例。如果你从未在 JUCE 中处理过键盘和 MIDI，我们强烈建议阅读<a href="https://docs.juce.com/master/tutorial_handling_midi_events.html" rel="noreferrer noopener">这个教程</a>。</p><p>在 <code>PluginEditor.h</code> 中，先给 <code>PolySynthAudioProcessorEditor</code> 类加上以下继承：</p><pre><code class="language-faust">class PolySynthAudioProcessorEditor : 
+  public AudioProcessorEditor, 
+  private MidiInputCallback, 
+  private MidiKeyboardStateListener
+{
+</code></pre><p>这是实现 MIDI 回调和键盘（UI）监听器所必需的。该继承要求我们在 <code>PluginEditor.h</code> 的 private 区实现以下方法。我们还会加入一个 UI 键盘实例及其关联状态，以及一个滑块及其标签，用于控制低通的截止频率：</p><pre><code class="language-faust">private:
+  void handleNoteOn(MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity) override;
+  void handleNoteOff(MidiKeyboardState*, int midiChannel, int midiNoteNumber, float /* 力度 */) override;
+  void handleIncomingMidiMessage(MidiInput* source, const MidiMessage&amp; message) override;
+
+  MidiKeyboardState keyboardState;   
+  MidiKeyboardComponent keyboardComponent; 
+
+  Slider cutoffSlider;
+  Label cutoffLabel;
+</code></pre><p>在 <code>PluginEditor.cpp</code> 中，可以把键盘和滑块加入构造函数：</p><pre><code class="language-faust">PolySynthAudioProcessorEditor::PolySynthAudioProcessorEditor (PolySynthAudioProcessor&amp; p)
+    : AudioProcessorEditor(&amp;p), processor(p), keyboardComponent (keyboardState, MidiKeyboardComponent::horizontalKeyboard)
+{
+    setSize (800, 150);
+
+    addAndMakeVisible(keyboardComponent);
+    keyboardState.addListener(this);
+
+    addAndMakeVisible(cutoffSlider);
+    cutoffSlider.setRange(50.0, 10000.0);
+    cutoffSlider.setValue(5000.0);
+    cutoffSlider.onValueChange = [this] { 
+        processor.setCutoff(cutoffSlider.getValue()); 
+    };
+
+    addAndMakeVisible(cutoffLabel);
+    cutoffLabel.setText("Cutoff", dontSendNotification);
+    cutoffLabel.attachToComponent(&amp;cutoffSlider, true);
+}
+</code></pre><p>并且必须在析构函数中释放键盘状态监听器：</p><pre><code class="language-faust">PolySynthAudioProcessorEditor::~PolySynthAudioProcessorEditor()
+{
+    keyboardState.removeListener(this);
+}
+</code></pre><p><code>setCutoff</code> 方法的实现在本教程后面详述，与上一节介绍的非常相似。</p><p>我们还需要定义界面中各元素的尺寸（像之前那样）：</p><pre><code class="language-faust">void PolySynthAudioProcessorEditor::resized()
+{
+    const int sliderLeft = 80;
+    keyboardComponent.setBounds (10,10,getWidth()-30,100);
+    cutoffSlider.setBounds(sliderLeft, 120, getWidth() - sliderLeft - 20, 20);
+}
+</code></pre><p>只需实现以下继承方法，就可以从键盘获取 MIDI 消息：</p><pre><code class="language-faust">void PolySynthAudioProcessorEditor::handleIncomingMidiMessage (MidiInput* source, const MidiMessage&amp; message) {}
+
+void PolySynthAudioProcessorEditor::handleNoteOn(MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity)
+{
+    processor.keyOn(midiNoteNumber,int(127*velocity));
+}
+
+void PolySynthAudioProcessorEditor::handleNoteOff(MidiKeyboardState*, int midiChannel, int midiNoteNumber, float /* 力度 */)
+{
+    processor.keyOff(midiNoteNumber);
+}
+</code></pre><p>各位，就到这里！试着编译并运行你的插件，它应该能直接工作。当然，这里还有很多可以显著改进的地方，但到这一步，你应该能自己航行了。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/" rel="noreferrer noopener">https://faustdoc.grame.fr/workshops/2020-04-10-faust-juce/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

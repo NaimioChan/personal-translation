@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Faust 中的 RMS 与求和 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：Faust 中的 RMS 与求和">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="rms-and-summation-in-faust">Faust 中的 RMS 与求和</h1><p>本教程介绍在 Faust 中计算 <strong><em>n</em> 个连续样本之和</strong>的几种编程技巧。这类求和通常用于计算信号的 RMS 值，因此我们放在 RMS 的语境下讲解。我们不会使用任何预定义函数，只用 Faust 基元，好让你看到所有细节。</p><p>本文面向具备一些 Faust 基础知识的初学者。如果你还不具备，请先看看本站上的各种文档。</p><h2 id="rms-value">RMS 值</h2><p>信号 RMS（Root Mean Square，均方根）值的计算由下面的 Faust 表达式定义：</p><pre><code class="language-faust">^(2) : summation : /(n) : sqrt
+</code></pre><p>其中 <em>n</em> 是所考虑的连续样本数。</p><p>这个表达式包含几个步骤：</p><ul><li>首先对信号取平方：<code>^(2)</code>。这就是 RMS 中的 S。</li><li>然后对 <em>n</em> 个连续样本求和：<code>summation</code>，再把这个和除以 <em>n</em> 得到均值：<code>/(n)</code>。这就是 RMS 中的 M。</li><li>最后取平方根 <code>sqrt</code>。这就是 RMS 中的 R。</li></ul><p>换句话说，在 Faust 中 RMS 写作 S:M:R（暂时不定义 <code>summation</code> 函数）：</p><pre><code class="language-faust">RMS(n) = S:M:R with {
+    S = ^(2);
+    M = summation : /(n);
+    R = sqrt;
+};
+</code></pre><p>下面几段将介绍编写这个 <code>summation</code> 函数的 4 种不同技巧。我们假定音频样本在 -1 与 1 之间。</p><h2 id="sliding-sum">滑动求和</h2><p>先从<em>滑动求和</em>方法开始，这大概是用 <em>n</em> 个连续样本高效求和的最简单方式。先回顾一下，用下面的表达式可以把信号 <em>s</em> 从时刻 0 到当前时刻的所有样本累加起来：<code>s : +~_</code>。</p><p>只累加最近 <em>n</em> 个样本的技巧，是从这个和中减去 <em>n</em> 个样本之前的同一个和。例如，要只保留最近 10 个样本的和，只需从所有样本之和 <code>(s:+~_)</code> 中减去 10 个样本之前这个和的值 <code>(s:+~_ : @(10))</code>：</p><pre><code class="language-faust">(s:+~_), (s:+~_ : @(10)) : -
+</code></pre><p>这个表达式还可以通过提取 <code>s:+~_</code> 进一步化简。于是得到：</p><pre><code class="language-faust">s : +~_ &lt;: _, @(10) : -
+</code></pre><p>从数学角度看这完全正确，但用浮点数计算时会出问题。与数学中的数不同，浮点数的精度有限（单精度为 23 位）。计算 RMS 值时我们只累加正数，因此和会一直增长。但当和超过 <code class="math">2^{23} </code> 之后，最低有效位就会高于 <code class="math">0</code> 到 <code class="math">1</code> 之间的任何数。此时加上这么小的数就等同于加 0，和再也不会变化。</p><p>幸运的是，这个问题很容易解决。只需把积分与差分两部分交换位置：</p><pre><code class="language-faust">s &lt;: _, @(10) : - : +~_
+</code></pre><p>从数学角度看，这个新写法与之前完全相同。但现在和始终保持在 <code class="math">-10​</code> 与 <code class="math">+10</code> 之间，精度问题只出现在最低有效位上。如果把量化引起的舍入误差建模为 -q/2 与 q/2 之间均匀分布的随机数，那么它的方差（均方）为 q^2/12，而在累加和中这个值随时间线性增长（参见「Wiener process」）。因此，累加和式 RMS 计算器的舍入误差预期会按时间的平方根增长。</p><p>现在可以补全 RMS 的定义：</p><pre><code class="language-faust">RMS(n) = S:M:R with {
+    S = ^(2);
+    M = summation : /(n);
+    R = sqrt;
+
+    summation = _ &lt;: _, @(n) : - : +~_;
+};
+</code></pre><h2 id="fixed-point-sliding-sum">定点滑动求和</h2><p>虽然前一种方案在典型信号和实际时间跨度上表现很好，但舍入误差仍会缓慢增长。为避免精度逐渐损失，可以对样本采用定点编码，使延迟后的减法始终精确。假设我们要对 0 与 1 之间的 10 个值做滑动求和，已知这个和不会超过 <code class="math">2^4</code>。因此最多可以用 27 位（31-4）来编码值的小数部分。</p><p>转换很直接。把浮点值转成定点可以用：<code>*(2^27):int</code>。从定点转回浮点用相反的表达式：<code>float:/(2^27)</code>。</p><p>现在可以补全 RMS 的定义。如下面的求和定义所示，我们先把样本转成定点，在整数上求和，再把结果转回浮点：</p><pre><code class="language-faust">RMS(n) = S:M:R with {
+    S = ^(2);
+    M = summation : /(n);
+    R = sqrt;
+
+    summation = float2fix(16) : _ &lt;: _, @(n) : - : +~_ : fix2float(16);
+    float2fix(p) = *(2^p) : int;
+    fix2float(p) = float : /(2^p);
+};
+</code></pre><p>显然，只有在为整数部分留出足够位数时这才是正确的。这里我们有 15 位（31-16），足以支持 <em>n</em> 达到 32000 个样本。</p><h2 id="block-sum">分块求和</h2><p><em>滑动求和</em>的行为平滑，因为每个样本都会产生一个更新后的和。但它们需要很长的延迟线（长于 <em>n</em>），而且可能有精度问题。第三种方法采用分块求和：求和是精确的，不需要长延迟线，但每 <em>n</em> 个样本的一块才更新一次。</p><p>代码稍微复杂一些。它需要一个<em>相位</em>信号：<code class="math">0,1,2,3,\ldots,n-1,0,1\ldots</code>，以及一个<em>捕获</em>（采样保持）操作。</p><p>先从一个由 <code>s:+~_</code> 导出的简化版本开始。记住 <code>_</code> 是恒等函数，等价于 <code>*(1)</code>。因此可以把前面的表达式改写为 <code>s:+~*(1)</code>。现在设想把 <code>1</code> 换成一个布尔值 <code>b</code>，写成：<code>s:~*(b)</code>。当 <code>b</code> 为 <code>1</code> 时，输入样本加到之前的和上；而当 <code>b</code> 为 <code>0</code> 时，输入样本加到 <code>0</code> 上，和就被重置为输入样本。</p><p>在我们的情形中，希望每 <em>n</em> 个样本一块之后重置和，也就是每次 <code>phase</code> 回到 <code>0</code> 时。可以写成：<code>s:+~*(phase!=0)</code>。</p><p>注意不能直接使用这个表达式的输出。它只在 <code>phase==(n-1)</code> 时表示我们要找的和。因此需要一个额外的<em>捕获</em>级，在处理下一块期间把和采样并保持住。假设 <code>b</code> 指示何时捕获输入值，那么 <code>select2(b)~_</code> 就能完成这件事。当 <code>b</code> 为 <code>0</code> 时它复现反馈信号，当 <code>b</code> 为 <code>1</code> 时它捕获输入信号。</p><p>完整实现如下：</p><pre><code class="language-faust">RMS(n) = S:M:R with {
+    S = ^(2);
+    M = summation : /(n);
+    R = sqrt;
+
+    summation = + ~ *(phase != 0) : capture(phase==(n-1));
+    phase = 1 : (+,n:%)~_;
+    capture(b) = select2(b)~_;
+};
+</code></pre><h2 id="overlapping-block-sum">重叠分块求和</h2><p>如前所述，分块求和的缺点是一块只产生一个新值。如果块很大，这会成为问题。第四种方法将让产生的值相互重叠。例如，我们想计算最近 1000 个样本的和，但每 250 个样本给出一个新结果（即 75% 的重叠）。</p><p>原理是对 250 个样本的小块求和，保留最近四个和，再把它们相加，从而每 250 个样本产生最近 1000 个样本的新和。设 <em>w</em> 为一个小块的长度，<em>c</em> 为 <em>n</em> 个样本的大块中小块的个数（即 <code class="math">n=c*w</code>）。</p><p>我们不再像 <code>+ ~ *(phase != 0)</code> 那样对 <em>n</em> 个样本求和，而是对 <em>w</em> 个样本求和：<code>+ ~ *(phase%w != 0)</code>。也不再每 <em>n</em> 个样本捕获一次：<code>capture(phase == (n-1))</code>，而是需要在 <code>1*w-1</code>、<code>2*w-1</code> 等位置并行捕获 <em>c</em> 次：<code>par(i,c, capture( phase == (w*(i+1) - 1) ))</code></p><p>完整代码如下：</p><pre><code class="language-faust">RMS(n) = S:M:R with {
+    S = ^(2);
+    M = summation : /(n);
+    R = sqrt;
+
+    c = 4; // 重叠次数
+    summation = + ~ *(phase%w != 0) 
+                 &lt;: par(i, c, capture( phase == (w*(i+1) - 1) )) 
+                 :&gt; _
+        with { w = n/c; };
+
+    phase = 1 : (+,n:%)~_;
+    capture(b) = select2(b)~_;
+};
+</code></pre><h2 id="comparing-all-the-solutions">比较所有方案</h2><p>用 Faust IDE 可以方便地比较这些方案。为了把全部定义封装起来并选择 RMS 的实现，我们使用环境。如果你不熟悉环境这个概念，它是一种把定义分组的办法。</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/summation/exfaust0/exfaust0.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+
+process = testsource &lt;: _, RMS(n).sliding, RMS(n).fixpoint, RMS(n).block, RMS(n).overlap(4)
+    with {
+        n = 10000;
+        testsource = os.osc(40) * lfo(1) * hslider("level", 1, 0, 1, 0.01);
+        lfo(f) = os.osc(f)/2+0.5;
+    };
+
+RMS(n) = environment {
+
+    // 要测试的 4 种实现
+    sliding    = horms(( _ &lt;: _, @(n) : - : +~_ ));
+    fixpoint   = horms(( float2fix(16) : _ &lt;: _, @(n) : -: +~_ : fix2float(16) ));
+    block      = horms(( + ~ *(phase != 0) : capture(phase == (n-1)) ));
+    overlap(c) = horms(( + ~ *(phase%w != 0) &lt;: par(i, c, capture( phase == (w*(i+1) - 1) )) :&gt; _ with { w = n/c; } ));
+
+    // 以 summation 函数为参数的高阶 rms
+    horms(summation) = S:M:R with {
+        S = ^(2);
+        M = summation : /(n);
+        R = sqrt;
+    };
+
+    // 辅助函数
+    float2fix(p) = *(2^p) : int;
+    fix2float(p) = float : /(2^p);
+
+    phase = 1 : (+,n:%)~_;
+    capture(b) = select2(b)~_;
+
+};</code></pre><br/><p>下面的 Faust IDE 截图展示了 testsource 按四种方法得到的 RMS 值：<em>滑动求和</em>、<em>定点滑动求和</em>、<em>分块求和</em>与<em>重叠分块求和</em>。</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/summation/img/curves.png"/></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/summation/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/summation/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

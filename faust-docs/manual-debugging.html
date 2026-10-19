@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>调试代码 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：调试代码">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="debugging-the-code">调试代码</h1><h2 id="looking-at-the-generated-code">查看生成的代码</h2><h3 id="using-the-fir-backend">使用 FIR 后端</h3><p>FIR（Faust Imperative Representation）后端可用于查看中间命令式语言的文本形式。使用 <code>make developer</code> 目标编译 FIR 后端，然后用 <code>faust -lang fir foo.dsp</code> 把指定的 foo.dsp 文件编译为 FIR 文本输出。</p><pre><code class="language-faust">import("stdfaust.lib");
+
+vol = hslider("volume [unit:dB]", 0, -96, 0, 0.1) : ba.db2linear : si.smoo;
+freq1 = hslider("freq1 [unit:Hz]", 1000, 20, 3000, 1);
+freq2 = hslider("freq2 [unit:Hz]", 200, 20, 3000, 1);
+
+process = vgroup("Oscillator", os.osc(freq1) * vol, os.osc(freq2) * vol);
+</code></pre><p>例如，用 <code>faust -lang fir osc.dsp</code> 命令编译前面的代码，会显示各种统计信息，比如生成的 <code>compute</code> 方法中执行了多少次运算：</p><pre><code class="language-faust">======= Compute DSP begin ==========
+Instructions complexity : Load = 23 Store = 9 
+Binop = 12 [ { Int(+) = 1 } { Int(&lt;) = 1 } { Real(*) = 3 } { Real(+) = 5 } { Real(-) = 2 } ] 
+Mathop = 2 [ { floorf = 2 } ] 
+Numbers = 8 
+Declare = 1 
+Cast = 2 
+Select = 0 
+Loop = 1
+</code></pre><p>还会显示 DSP 结构的内存大小与布局，以及读/写统计：</p><pre><code class="language-faust">======= Object memory footprint ==========
+
+Heap size int = 4 bytes
+Heap size int* = 0 bytes
+Heap size real = 48 bytes
+Total heap size = 68 bytes
+Stack size in compute = 28 bytes
+
+======= Variable access in compute control ==========
+
+Field = fSampleRate size = 1 r_count = 0 w_count = 0
+Field = fConst1 size = 1 r_count = 1 w_count = 0
+Field = fHslider0 size = 1 r_count = 1 w_count = 0
+Field = fConst2 size = 1 r_count = 0 w_count = 0
+Field = fRec0 size = 2 r_count = 0 w_count = 0
+Field = fConst3 size = 1 r_count = 2 w_count = 0
+Field = fHslider1 size = 1 r_count = 1 w_count = 0
+Field = fRec2 size = 2 r_count = 0 w_count = 0
+Field = fHslider2 size = 1 r_count = 1 w_count = 0
+Field = fRec3 size = 2 r_count = 0 w_count = 0
+
+======= Variable access in compute DSP ==========
+
+Field = fSampleRate size = 1 r_count = 0 w_count = 0
+Field = fConst1 size = 1 r_count = 0 w_count = 0
+Field = fHslider0 size = 1 r_count = 0 w_count = 0
+Field = fConst2 size = 1 r_count = 1 w_count = 0
+Field = fRec0 size = 2 r_count = 4 w_count = 2
+Field = fConst3 size = 1 r_count = 0 w_count = 0
+Field = fHslider1 size = 1 r_count = 0 w_count = 0
+Field = fRec2 size = 2 r_count = 4 w_count = 2
+Field = fHslider2 size = 1 r_count = 0 w_count = 0
+Field = fRec3 size = 2 r_count = 4 w_count = 2
+</code></pre><p>这些信息可用于检测异常的内存占用。</p><h2 id="debugging-the-dsp-code">调试 DSP 代码</h2><p>在计算机上，进行数学上无定义的运算（如 <code>val/0</code> 或 <code>log(-1)</code>），在浮点运算中无法表示，会产生 <a href="https://en.wikipedia.org/wiki/NaN" rel="noreferrer noopener">NaN</a> 值，它有<a href="https://en.cppreference.com/w/cpp/numeric/math/NAN" rel="noreferrer noopener">特殊的内部表示</a>。同样，有些运算会超出浮点运算能表示的范围，会用一个特殊的 <a href="https://en.cppreference.com/w/cpp/numeric/math/INFINITY" rel="noreferrer noopener">INFINITY</a> 值表示，其具体值取决于所选类型（如 <code>float</code>、<code>double</code> 或 <code>long double</code>）。</p><p>这些值产生之后，实际上会<em>污染</em>后续的计算流（例如 <code>Nan + any value = NaN</code>），甚至在使用数组访问时产生错误的索引，导致内存访问崩溃。</p><p>代码在语法或语义上不正确时，Faust 编译器会报错。它的区间分析系统设计用于在编译期检测可能不安全的信号运算，并拒绝相应的 DSP 代码。然而，<em>区间分析尚不完善</em>。在它无法保证安全的情况下，必须在生成的代码中插入特殊的保护，以确保运行时的正确行为。</p><p>人们开发了若干策略，帮助程序员在编译期和运行时更好地理解自己写的 DSP 代码，并对其进行分析。</p><h3 id="debugging-at-compile-time">在编译期调试</h3><h4 id="the-ct-option">-ct 选项</h4><p>使用 <code>-ct</code> 编译选项可以检查表的索引范围，并生成安全的表访问代码。它会验证信号范围与表大小是否相容，需要时把读、写索引约束在给定的 <code>[0.. size-1]</code> 范围内，从而生成安全的索引访问代码。</p><p>注意，由于信号区间计算并不完善，你可能会看到<em>误报</em>，从而生成不必要的范围约束代码，尤其是在使用递归信号时——区间计算系统通常会产生 <em>[-inf, inf]</em> 范围，这不足以准确描述真实的信号范围。</p><h4 id="the-me-option">-me 选项</h4><p>从 2.37.0 版开始，定义域有限的数学函数（如对非负值有定义的 <code>sqrt</code>，或对 [-1..1] 范围有定义的 <code>asin</code>）在<em>编译期确实要计算值</em>时会<em>被检查</em>，如果程序试图计算超出定义域的值，就会<em>报错</em>。若这些函数出现在生成的代码中，也可以（用区间计算系统）检查其使用域，<code>-me</code> 选项在<em>使用域不正确时会显示警告</em>。再次提醒，由于区间计算系统并不完善，可能出现<em>误报</em>，应予核实。</p><h4 id="warning-messages">警告消息</h4><p>警告消息不会中断编译过程，但能提供关于潜在问题代码的有用信息。使用 <code>-wall</code> 编译选项可打印这些消息。只有同时使用 <code>-wall</code> 和 <code>-me</code> 选项时，才会显示数学上的超出定义域错误警告消息。</p><h3 id="debugging-at-runtime">在运行时调试</h3><h4 id="the-interp-tracer-tool">interp-tracer 工具</h4><p><strong>interp-tracer</strong> 工具使用解释器后端运行并插桩已编译的程序。运行期间和/或关闭应用时，会收集并显示代码的各种统计信息，典型的有 <code>FP_SUBNORMAL</code>、<code>FP_INFINITE</code> 和 <code>FP_NAN</code> 值，<code>INTEGER_OVERFLOW</code>、<code>CAST_INT_OVERFLOW</code> 和 <code>DIV_BY_ZERO</code> 运算，以及 <code>LOAD/STORE</code> 错误。</p><p>参见<a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/benchmark#interp-tracer" rel="noreferrer noopener">完整文档</a>与<a href="tutorial-debugging.html">用 interp-tracer 进阶调试</a>教程。</p><h4 id="the-faust2caqt-tool">faust2caqt 工具</h4><p>在 macOS 上，<a href="manual-tools.html#faust2caqt">faust2caqt</a> 脚本有一个 <code>-me</code> 选项，可在运行时捕获数学计算异常（浮点异常、整数除零或溢出等）。开发者可以用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/dsp-checker.h#L42" rel="noreferrer noopener">dsp_me_checker</a> 类，为指定的 DSP 对象套上数学计算异常处理的代码。</p><h3 id="fixing-the-errors">修正错误</h3><p>之后必须通过仔细检查信号范围来修正这些错误，例如核对 <code>vslider/hslider/nentry</code> 界面控件中的最小/最大值。</p><h3 id="additional-resources">其他资源</h3><p>注意 Faust 的<a href="https://faustlibraries.grame.fr/libs/maths/" rel="noreferrer noopener">数学库</a>中包含 <code>isnan</code> 和 <code>isinf</code> 函数的实现，开发时可能有用。</p><p>正确处理无穷大与非数（NaN）仍是一个棘手的问题，当前版本的编译器尚未完全解决。Dario Sanfilippo 的<a href="https://www.dariosanfilippo.com/blog/2020/handling_inf_nan_values_in_faust_and_cpp/" rel="noreferrer noopener">博客文章</a>非常有助于了解现状，其中给出了大量实用方案，可用来<a href="https://github.com/dariosanfilippo/realfaust/blob/main/realfaust.lib" rel="noreferrer noopener">编写更安全的 DSP 代码</a>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/manual/debugging/" rel="noreferrer noopener">https://faustdoc.grame.fr/manual/debugging/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

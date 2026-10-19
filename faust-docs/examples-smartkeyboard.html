@@ -1,0 +1,1639 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>smartKeyboard - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：smartKeyboard">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="smartkeyboard">smartKeyboard</h1><h2 id="acguitar">acGuitar</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust0/exfaust0.svg"/><pre><code class="language-faust">// ############################### acGuitar.dsp #################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，其中 6 根虚拟
+// 尼龙弦可以用一块专用键盘来扫弦和拨奏。那块
+// 额外的「扫弦键盘」可以很容易地被外部的扫弦
+// 接口替换，而触摸屏仍可用于改变各根弦的
+// 音高。
+//
+// ## SmartKeyboard 使用策略
+//
+// 前 6 块键盘分别实现乐器的一根弦。
+// 第七块键盘用作扫弦/拨奏接口。如前
+// 所述，它可以很容易地被外部接口替换。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。
+// 不过它是专门为配合 faust2smartkeyb 使用而设计的。为
+// 获得最佳效果，建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp acGuitar.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 8 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//##############################################################################
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'7',
+    'Max Keyboard Polyphony':'0',
+    'Rounding Mode':'2',
+    'Keyboard 0 - Number of Keys':'14',
+    'Keyboard 1 - Number of Keys':'14',
+    'Keyboard 2 - Number of Keys':'14',
+    'Keyboard 3 - Number of Keys':'14',
+    'Keyboard 4 - Number of Keys':'14',
+    'Keyboard 5 - Number of Keys':'14',
+    'Keyboard 6 - Number of Keys':'6',
+    'Keyboard 0 - Lowest Key':'52',
+    'Keyboard 1 - Lowest Key':'57',
+    'Keyboard 2 - Lowest Key':'62',
+    'Keyboard 3 - Lowest Key':'67',
+    'Keyboard 4 - Lowest Key':'71',
+    'Keyboard 5 - Lowest Key':'76',
+    'Keyboard 0 - Send Keyboard Freq':'1',
+    'Keyboard 1 - Send Keyboard Freq':'1',
+    'Keyboard 2 - Send Keyboard Freq':'1',
+    'Keyboard 3 - Send Keyboard Freq':'1',
+    'Keyboard 4 - Send Keyboard Freq':'1',
+    'Keyboard 5 - Send Keyboard Freq':'1',
+    'Keyboard 6 - Piano Keyboard':'0',
+    'Keyboard 6 - Send Key Status':'1',
+    'Keyboard 6 - Key 0 - Label':'S0',
+    'Keyboard 6 - Key 1 - Label':'S1',
+    'Keyboard 6 - Key 2 - Label':'S2',
+    'Keyboard 6 - Key 3 - Label':'S3',
+    'Keyboard 6 - Key 4 - Label':'S4',
+    'Keyboard 6 - Key 5 - Label':'S5'
+}";
+
+import("stdfaust.lib");
+
+// SMARTKEYBOARD 参数
+kbfreq(0) = hslider("kb0freq",164.8,20,10000,0.01);
+kbbend(0) = hslider("kb0bend",1,ma.EPSILON,10,0.01);
+kbfreq(1) = hslider("kb1freq",220,20,10000,0.01);
+kbbend(1) = hslider("kb1bend",1,ma.EPSILON,10,0.01);
+kbfreq(2) = hslider("kb2freq",293.7,20,10000,0.01);
+kbbend(2) = hslider("kb2bend",1,ma.EPSILON,10,0.01);
+kbfreq(3) = hslider("kb3freq",392,20,10000,0.01);
+kbbend(3) = hslider("kb3bend",1,ma.EPSILON,10,0.01);
+kbfreq(4) = hslider("kb4freq",493.9,20,10000,0.01);
+kbbend(4) = hslider("kb4bend",1,ma.EPSILON,10,0.01);
+kbfreq(5) = hslider("kb5freq",659.2,20,10000,0.01);
+kbbend(5) = hslider("kb5bend",1,ma.EPSILON,10,0.01);
+kb6kstatus(0) = hslider("kb6k0status",0,0,1,1) &lt;: ==(1) | ==(4) : int;
+kb6kstatus(1) = hslider("kb6k1status",0,0,1,1) &lt;: ==(1) | ==(4) : int;
+kb6kstatus(2) = hslider("kb6k2status",0,0,1,1) &lt;: ==(1) | ==(4) : int;
+kb6kstatus(3) = hslider("kb6k3status",0,0,1,1) &lt;: ==(1) | ==(4) : int;
+kb6kstatus(4) = hslider("kb6k4status",0,0,1,1) &lt;: ==(1) | ==(4) : int;
+kb6kstatus(5) = hslider("kb6k5status",0,0,1,1) &lt;: ==(1) | ==(4) : int;
+
+// 模型参数
+// 弦长
+sl(i) = kbfreq(i)*kbbend(i) : pm.f2l : si.smoo;
+// 拨弦位置由加速度计的 x 轴控制
+pluckPosition =
+    hslider("pluckPosition[acc: 1 0 -10 0 10]",0.5,0,1,0.01) : si.smoo;
+
+// 组装模型
+// 弦的数量
+nStrings = 6;
+guitar = par(i,nStrings,
+    kb6kstatus(i) : ba.impulsify : // 使用「原始」冲激驱动模型
+    pm.nylonGuitarModel(sl(i),pluckPosition)) :&gt; _;
+
+process = guitar &lt;: _,_;</code></pre><br/><h2 id="bells">bells</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust1/exfaust1.svg"/><pre><code class="language-faust">// ################################ bells.dsp ###################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，其中
+// 4 种不同钟的物理模型可以用屏幕上的打击垫演奏。这些
+// 模型取自 physmodels.lib。
+//
+// ## SmartKeyboard 使用策略
+//
+// SmartKeyboard 界面用于实现打击垫，其中
+// 会获取手指的 X/Y 位置，用来控制击打
+// 钟的位置。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。
+// 不过它是专门为配合 faust2smartkeyb 使用而设计的。为
+// 获得最佳效果，建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp bells.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 8 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//##############################################################################
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'2',
+    'Max Keyboard Polyphony':'0',
+    'Keyboard 0 - Number of Keys':'2',
+  'Keyboard 1 - Number of Keys':'2',
+    'Keyboard 0 - Send Freq':'0',
+  'Keyboard 1 - Send Freq':'0',
+    'Keyboard 0 - Piano Keyboard':'0',
+  'Keyboard 1 - Piano Keyboard':'0',
+    'Keyboard 0 - Send Key Status':'1',
+    'Keyboard 1 - Send Key Status':'1',
+    'Keyboard 0 - Send X':'1',
+    'Keyboard 0 - Send Y':'1',
+    'Keyboard 1 - Send X':'1',
+    'Keyboard 1 - Send Y':'1',
+    'Keyboard 0 - Key 0 - Label':'English Bell',
+    'Keyboard 0 - Key 1 - Label':'French Bell',
+    'Keyboard 1 - Key 0 - Label':'German Bell',
+    'Keyboard 1 - Key 1 - Label':'Russian Bell'
+}";
+
+import("stdfaust.lib");
+
+// SMARTKEYBOARD 参数
+kb0k0status = hslider("kb0k0status",0,0,1,1) : min(1) : int;
+kb0k1status = hslider("kb0k1status",0,0,1,1) : min(1) : int;
+kb1k0status = hslider("kb1k0status",0,0,1,1) : min(1) : int;
+kb1k1status = hslider("kb1k1status",0,0,1,1) : min(1) : int;
+x = hslider("x",1,0,1,0.001);
+y = hslider("y",1,0,1,0.001);
+
+// 模型参数
+strikeCutoff = 6500;
+strikeSharpness = 0.5;
+strikeGain = 1;
+// 从 50 个模态中合成 10 个
+nModes = 10;
+// 共振时长为 30 s
+t60 = 30;
+// 激励位置的数量（从模型获取）
+nExPos = 7;
+// 根据 X 和 Y 计算激励位置
+exPos = min((x*2-1 : abs),(y*2-1 : abs))*(nExPos-1) : int;
+
+// 组装模型
+bells =
+    (kb0k0status : pm.strikeModel(10,strikeCutoff,strikeSharpness,strikeGain) : pm.englishBellModel(nModes,exPos,t60,1,3)) +
+    (kb0k1status : pm.strikeModel(10,strikeCutoff,strikeSharpness,strikeGain) : pm.frenchBellModel(nModes,exPos,t60,1,3)) +
+    (kb1k0status : pm.strikeModel(10,strikeCutoff,strikeSharpness,strikeGain) : pm.germanBellModel(nModes,exPos,t60,1,2.5)) +
+    (kb1k1status : pm.strikeModel(10,strikeCutoff,strikeSharpness,strikeGain) : pm.russianBellModel(nModes,exPos,t60,1,3)) :&gt; *(0.2);
+
+process = bells &lt;: _,_;</code></pre><br/><h2 id="bowed">bowed</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust2/exfaust2.svg"/><pre><code class="language-faust">// ##################################### bowed.dsp ########################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，实现一个
+// 非复音合成器（例如物理模型等），用到多种
+// 不同类型的界面控件。
+//
+// ## SmartKeyboard 使用策略
+//
+// 声明了 5 块键盘（4 块实际键盘和 1 个控制面板）。我们想
+// 禁用声部分配系统，并且想在启动时激活一个声部，
+// 让所有弦持续运行，因此把 Max Keyboard Polyphony 设为
+// 0。由于不希望前 4 块键盘发送屏幕上手指的 X 和 Y 位置，
+// 我们把所有这些键盘的 Send X 和 Send Y 设为 0。
+// 同样，我们不希望第五块键盘向合成器发送音高信息，
+// 因此把该键盘的 Send Freq 设为 0。最后，我们关闭钢琴键盘
+// 模式（第五块键盘），以确保按键被触摸时颜色不变，
+// 并且不显示音名。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp midiOnly.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'5',
+    'Max Keyboard Polyphony':'0',
+    'Rounding Mode':'1',
+    'Keyboard 0 - Number of Keys':'19',
+    'Keyboard 1 - Number of Keys':'19',
+    'Keyboard 2 - Number of Keys':'19',
+    'Keyboard 3 - Number of Keys':'19',
+    'Keyboard 4 - Number of Keys':'1',
+    'Keyboard 4 - Send Freq':'0',
+    'Keyboard 0 - Send X':'0',
+    'Keyboard 1 - Send X':'0',
+    'Keyboard 2 - Send X':'0',
+    'Keyboard 3 - Send X':'0',
+    'Keyboard 0 - Send Y':'0',
+    'Keyboard 1 - Send Y':'0',
+    'Keyboard 2 - Send Y':'0',
+    'Keyboard 3 - Send Y':'0',
+    'Keyboard 0 - Lowest Key':'55',
+    'Keyboard 1 - Lowest Key':'62',
+    'Keyboard 2 - Lowest Key':'69',
+    'Keyboard 3 - Lowest Key':'76',
+    'Keyboard 4 - Piano Keyboard':'0',
+    'Keyboard 4 - Key 0 - Label':'Bow'
+}";
+
+import("stdfaust.lib");
+
+// 参数
+f = hslider("freq",400,50,2000,0.01);
+bend = hslider("bend",1,0,10,0.01);
+keyboard = hslider("keyboard",0,0,5,1) : int;
+key = hslider("key",0,0,18,1) : int;
+x = hslider("x",0.5,0,1,0.01) : si.smoo;
+y = hslider("y",0,0,1,0.01) : si.smoo;
+
+// 映射
+freq = f*bend;
+// 简易运动跟踪器
+velocity = x-x' : abs : an.amp_follower_ar(0.1,1) : *(8000) : min(1);
+
+// 4 根「弦」
+synthSet = par(i,4,synth(localFreq(i),velocity)) :&gt; _
+with{
+    localFreq(i) = freq : ba.sAndH(keyboard == i) : si.smoo;
+    synth(freq,velocity) = sy.fm((freq,freq + freq*modFreqRatio),index*velocity)*velocity
+    with{
+        index = 1000;
+        modFreqRatio = y*0.3;
+    };
+};
+
+process = synthSet &lt;: _,_;</code></pre><br/><h2 id="brass">brass</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust3/exfaust3.svg"/><pre><code class="language-faust">// ############################### brass.dsp ###################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，其中
+// 小号物理模型由设备的部分内置传感器
+// 和触摸屏控制。其中一些元素可以替换为
+// 外部控制器（例如呼吸/吹嘴控制器）。
+//
+// ## SmartKeyboard 使用策略
+//
+// 1 块键盘用来实现小号的活塞（3 个键），
+// 另一块用来控制嘴唇张力。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。
+// 不过它是专门为配合 faust2smartkeyb 使用而设计的。为
+// 获得最佳效果，建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp brass.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 8 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//##############################################################################
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'2',
+    'Max Keyboard Polyphony':'0',
+    'Keyboard 0 - Number of Keys':'1',
+  'Keyboard 1 - Number of Keys':'3',
+    'Keyboard 0 - Send Freq':'0',
+  'Keyboard 1 - Send Freq':'0',
+    'Keyboard 0 - Piano Keyboard':'0',
+  'Keyboard 1 - Piano Keyboard':'0',
+    'Keyboard 0 - Send Key X':'1',
+    'Keyboard 1 - Send Key Status':'1',
+    'Keyboard 0 - Static Mode':'1',
+    'Keyboard 0 - Key 0 - Label':'Lips Tension',
+    'Keyboard 1 - Key 0 - Label':'P1',
+    'Keyboard 1 - Key 1 - Label':'P2',
+    'Keyboard 1 - Key 2 - Label':'P3'
+}";
+
+import("stdfaust.lib");
+
+// SMARTKEYBOARD 参数
+kb0k0x = hslider("kb0k0x",0,0,1,1);
+kb1k0status = hslider("kb1k0status",0,0,1,1) : min(1) : int;
+kb1k1status = hslider("kb1k1status",0,0,1,1) : min(1) : int;
+kb1k2status = hslider("kb1k2status",0,0,1,1) : min(1) : int;
+
+// 模型参数
+// 气压由加速度计控制
+pressure = hslider("pressure[acc: 1 1 -10 0 10]",0,0,1,0.01) : si.smoo;
+breathGain = 0.005; breathCutoff = 2000;
+vibratoFreq = 5; vibratoGain = 0;
+// 未按下活塞时的音高
+basePitch = 48; // C4
+// 根据活塞组合计算音高偏移
+pitchShift =
+  ((kb1k0status == 0) &amp; (kb1k1status == 1) &amp; (kb1k2status == 0))*(1) +
+  ((kb1k0status == 1) &amp; (kb1k1status == 0) &amp; (kb1k2status == 0))*(2) +
+  ((kb1k0status == 1) &amp; (kb1k1status == 1) &amp; (kb1k2status == 0))*(3) +
+  ((kb1k0status == 0) &amp; (kb1k1status == 1) &amp; (kb1k2status == 1))*(4) +
+  ((kb1k0status == 1) &amp; (kb1k1status == 0) &amp; (kb1k2status == 1))*(5) +
+  ((kb1k0status == 1) &amp; (kb1k1status == 1) &amp; (kb1k2status == 1))*(6);
+// 管长根据活塞组合计算
+tubeLength = basePitch-pitchShift : ba.midikey2hz : pm.f2l : si.smoo;
+// 嘴唇张力由屏幕上的打击垫控制
+lipsTension = kb0k0x : si.smoo;
+// 默认静音值
+mute = 0.5;
+
+// 组装模型
+model =
+    pm.blower(pressure,breathGain,breathCutoff,vibratoFreq,vibratoGain) :
+  pm.brassModel(tubeLength,lipsTension,mute);
+
+process = model &lt;: _,_;</code></pre><br/><h2 id="clarinet">clarinet</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust4/exfaust4.svg"/><pre><code class="language-faust">// ############################### clarinet.dsp #################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，其中
+// 单簧管物理模型由一个实现
+// 与真实乐器类似指法的界面控制。进入
+// 单簧管吹嘴的气息压力，通过对设备的
+// 内置麦克风吹气来控制。
+//
+// ## SmartKeyboard 使用策略
+//
+// 设备应双手竖直握持，以便把所有
+// 手指同时放在屏幕上。按键组合决定
+// 乐器的音高。始终只运行一个声部。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。
+// 不过它是专门为配合 faust2smartkeyb 使用而设计的。为
+// 获得最佳效果，建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] clarinet.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 8 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//##############################################################################
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'2',
+    'Max Keyboard Polyphony':'0',
+    'Keyboard 0 - Number of Keys':'4',
+  'Keyboard 1 - Number of Keys':'5',
+    'Keyboard 0 - Send Freq':'0',
+  'Keyboard 1 - Send Freq':'0',
+    'Keyboard 0 - Piano Keyboard':'0',
+  'Keyboard 1 - Piano Keyboard':'0',
+    'Keyboard 0 - Send Key Status':'1',
+    'Keyboard 1 - Send Key Status':'1',
+    'Keyboard 0 - Key 3 - Label':'O+',
+    'Keyboard 1 - Key 4 - Label':'O-'
+}";
+
+import("stdfaust.lib");
+
+// SMARTKEYBOARD 参数
+kb0k0status = hslider("kb0k0status",0,0,1,1) : min(1) : int;
+kb0k1status = hslider("kb0k1status",0,0,1,1) : min(1) : int;
+kb0k2status = hslider("kb0k2status",0,0,1,1) : min(1) : int;
+kb0k3status = hslider("kb0k3status",0,0,1,1) : min(1) : int;
+kb1k0status = hslider("kb1k0status",0,0,1,1) : min(1) : int;
+kb1k1status = hslider("kb1k1status",0,0,1,1) : min(1) : int;
+kb1k2status = hslider("kb1k2status",0,0,1,1) : min(1) : int;
+kb1k3status = hslider("kb1k3status",0,0,1,1) : min(1) : int;
+kb1k4status = hslider("kb1k4status",0,0,1,1) : min(1) : int;
+
+// 模型参数
+reedStiffness = hslider("reedStiffness[acc: 1 1 -10 0 10]",0,0,1,0.01) : si.smoo;
+basePitch = 73; // C#4
+pitchShift = // 根据「按键」组合计算音高偏移
+  ((kb0k0status == 0) &amp; (kb0k1status == 1) &amp; (kb0k2status == 0) &amp;
+        (kb1k0status == 0) &amp; (kb1k1status == 0) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 0))*(-1) + // C
+    ((kb0k0status == 1) &amp; (kb0k1status == 0) &amp; (kb0k2status == 0) &amp;
+        (kb1k0status == 0) &amp; (kb1k1status == 0) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 0))*(-2) + // B
+    ((kb0k0status == 1) &amp; (kb0k1status == 0) &amp; (kb0k2status == 1) &amp;
+        (kb1k0status == 0) &amp; (kb1k1status == 0) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 0))*(-3) + // Bb
+    ((kb0k0status == 1) &amp; (kb0k1status == 1) &amp; (kb0k2status == 0) &amp;
+        (kb1k0status == 0) &amp; (kb1k1status == 0) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 0))*(-4) + // A
+    ((kb0k0status == 1) &amp; (kb0k1status == 1) &amp; (kb0k2status == 0) &amp;
+        (kb1k0status == 1) &amp; (kb1k1status == 0) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 0))*(-5) + // G#
+    ((kb0k0status == 1) &amp; (kb0k1status == 1) &amp; (kb0k2status == 1) &amp;
+        (kb1k0status == 0) &amp; (kb1k1status == 0) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 0))*(-6) + // G
+    ((kb0k0status == 1) &amp; (kb0k1status == 1) &amp; (kb0k2status == 1) &amp;
+        (kb1k0status == 0) &amp; (kb1k1status == 1) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 0))*(-7) + // F#
+    ((kb0k0status == 1) &amp; (kb0k1status == 1) &amp; (kb0k2status == 1) &amp;
+        (kb1k0status == 1) &amp; (kb1k1status == 0) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 0))*(-8) + // F
+    ((kb0k0status == 1) &amp; (kb0k1status == 1) &amp; (kb0k2status == 1) &amp;
+        (kb1k0status == 1) &amp; (kb1k1status == 1) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 0))*(-9) + // E
+    ((kb0k0status == 1) &amp; (kb0k1status == 1) &amp; (kb0k2status == 1) &amp;
+        (kb1k0status == 1) &amp; (kb1k1status == 1) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 1))*(-10) + // Eb
+    ((kb0k0status == 1) &amp; (kb0k1status == 1) &amp; (kb0k2status == 1) &amp;
+        (kb1k0status == 1) &amp; (kb1k1status == 1) &amp; (kb1k2status == 1) &amp;
+        (kb1k3status == 0))*(-11) + // D
+    ((kb0k0status == 0) &amp; (kb0k1status == 0) &amp; (kb0k2status == 0) &amp;
+        (kb1k0status == 0) &amp; (kb1k1status == 0) &amp; (kb1k2status == 0) &amp;
+        (kb1k3status == 1))*(-12) + // C#
+    ((kb0k0status == 1) &amp; (kb0k1status == 1) &amp; (kb0k2status == 1) &amp;
+        (kb1k0status == 1) &amp; (kb1k1status == 1) &amp; (kb1k2status == 1) &amp;
+        (kb1k3status == 1))*(-13); // C
+octaveShiftUp = +(kb0k3status : ba.impulsify)~_; // 向上计数
+octaveShiftDown = +(kb1k4status : ba.impulsify)~_; // 向下计数
+octaveShift = (octaveShiftUp-octaveShiftDown)*(12);
+// 管长只是做了平滑处理：还有改进空间
+tubeLength = basePitch+pitchShift+octaveShift : ba.midikey2hz : pm.f2l : si.smoo;
+bellOpening = 0.5;
+
+// 组装模型
+model(pressure) = pm.clarinetModel(tubeLength,pressure,reedStiffness,bellOpening);
+
+// 气压由麦克风信号估计
+process = an.amp_follower_ud(0.02,0.02)*0.7 : model &lt;: _,_;</code></pre><br/><h2 id="crazyguiro">crazyGuiro</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust5/exfaust5.svg"/><pre><code class="language-faust">// ################################### crazyGuiro.dsp #####################################
+// 一个简单的智能手机「刮响器」，触摸屏用来驱动乐器，
+// 并选择其音高，加速度计的 x 和 y 轴则控制
+// 乐器的共振特性。
+//
+// ## SmartKeyboard 使用策略
+//
+// 由于这个合成器产生的声音很短，这里的策略是
+// 利用 iOSKeyboard 架构的复音能力，每次按下
+// 新键时都创建一个新声部。由于 SmartKeyboard 界面在这里
+// 有大量按键（128 个），手指在键盘上滑动时会
+// 产生大量声音。另外值得注意的是，这里不使用 freq 参数，
+// 而改用 keyboard 和 key，这让我们可以很容易地
+// 做自定义映射。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] crazyGuiro.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+import("stdfaust.lib");
+
+
+// ========================= Smart Keyboard 配置 =================================
+// 8 块键盘，每块 16 个键，都不显示键名。
+//========================================================================================
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'8',
+    'Keyboard 0 - Number of Keys':'16',
+    'Keyboard 1 - Number of Keys':'16',
+    'Keyboard 2 - Number of Keys':'16',
+    'Keyboard 3 - Number of Keys':'16',
+    'Keyboard 4 - Number of Keys':'16',
+    'Keyboard 5 - Number of Keys':'16',
+    'Keyboard 6 - Number of Keys':'16',
+    'Keyboard 7 - Number of Keys':'16',
+    'Keyboard 0 - Piano Keyboard':'0',
+    'Keyboard 1 - Piano Keyboard':'0',
+    'Keyboard 2 - Piano Keyboard':'0',
+    'Keyboard 3 - Piano Keyboard':'0',
+    'Keyboard 4 - Piano Keyboard':'0',
+    'Keyboard 5 - Piano Keyboard':'0',
+    'Keyboard 6 - Piano Keyboard':'0',
+    'Keyboard 7 - Piano Keyboard':'0'
+}";
+
+
+// ================================ 乐器参数 =================================
+// 在合成器与移动设备之间建立连接
+//========================================================================================
+
+// 当前键盘
+keyboard = hslider("keyboard",0,0,2,1);
+// 当前键盘的当前按键
+key = hslider("key",0,0,2,1);
+// 混响的湿声比例
+wet = hslider("wet[acc: 0 0 -10 0 10]",0,0,1,0.01);
+// 混响的共振系数
+res = hslider("res[acc: 1 0 -10 0 10]",0.5,0,1,0.01);
+// smart keyboard 的门控参数
+gate = button("gate");
+
+
+// =================================== 参数映射 =================================
+//========================================================================================
+
+// 刮响器每次刮擦的共振频率随
+// 所选键盘及其上的按键变化
+minKey = 50; // 最低键盘的最小键
+keySkipKeyboard = 8; // 每块键盘的键跨度
+drumResFreq = (key+minKey)+(keyboard*keySkipKeyboard) : ba.midikey2hz;
+reverbWet = wet : si.smoo;
+reverbRes = wet : si.smoo;
+
+// 滤波器 Q 值
+q = 8;
+
+// ============================================ DSP =======================================
+//========================================================================================
+
+reverb(wet,res)  =  _ &lt;: *(1-wet),(*(wet) : re.mono_freeverb(res, 0.5, 0.5, 0)) :&gt; _;
+
+process = sy.popFilterDrum(drumResFreq,q,gate) : reverb(wet,res) &lt;: _,_;</code></pre><br/><h2 id="drums">drums</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust6/exfaust6.svg"/><pre><code class="language-faust">// ##################################### drums.dsp ########################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，其中 3 个鼓可以
+// 用打击垫控制。每块键上会检测手指的 X/Y 位置，
+// 并用来控制虚拟鼓面上的击打位置。
+//
+// ## SmartKeyboard 使用策略
+//
+// 这里使用的鼓物理模型实现得比较通用，其
+// 基频可以按声部改变。SmartKeyboard 以
+// 复音模式使用，因此界面上的每次新击打都对应一个
+// 新声部。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp drums.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+// 界面为 2 块键盘，分别有 2 个和 1 个键（共 3 个打击垫）
+// 使用静态模式，使按键被触摸时颜色不变
+// 音名标签已隐藏
+// 关闭钢琴键盘模式，使所有按键外观一致
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'2',
+    'Keyboard 0 - Number of Keys':'2',
+    'Keyboard 1 - Number of Keys':'1',
+    'Keyboard 0 - Static Mode':'1',
+    'Keyboard 1 - Static Mode':'1',
+    'Keyboard 0 - Send X':'1',
+    'Keyboard 0 - Send Y':'1',
+    'Keyboard 1 - Send X':'1',
+    'Keyboard 1 - Send Y':'1',
+    'Keyboard 0 - Piano Keyboard':'0',
+    'Keyboard 1 - Piano Keyboard':'0',
+    'Keyboard 0 - Key 0 - Label':'High',
+    'Keyboard 0 - Key 1 - Label':'Mid',
+    'Keyboard 1 - Key 0 - Label':'Low'
+}";
+
+import("stdfaust.lib");
+
+// 标准参数
+gate = button("gate");
+x = hslider("x",1,0,1,0.001);
+y = hslider("y",1,0,1,0.001);
+keyboard = hslider("keyboard",0,0,1,1) : int;
+key = hslider("key",0,0,1,1) : int;
+
+drumModel = pm.djembe(rootFreq,exPos,strikeSharpness,gain,gate)
+with{
+    // 最低鼓的频率
+    bFreq = 60;
+    // 获取打击垫 ID（0-2）
+    padID = 2-(keyboard*2+key);
+    // 鼓的根频根据打击垫编号计算
+    rootFreq = bFreq*(padID+1);
+    // 激励位置
+    exPos = min((x*2-1 : abs),(y*2-1 : abs));
+    strikeSharpness = 0.5;
+    gain = 2;
+};
+
+process = drumModel &lt;: _,_;</code></pre><br/><h2 id="dubdub">dubDub</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust7/exfaust7.svg"/><pre><code class="language-faust">// ################################### dubDub.dsp #####################################
+// 一个简单的智能手机抽象乐器，可以用
+// 触摸屏和设备的加速度计控制。
+//
+// ## SmartKeyboard 使用策略
+//
+// 这里的思路是把 SmartKeyboard 界面当作 X/Y 控制垫，只需
+// 创建一块只有一个键的键盘，并通过标准参数 x 和 y 获取该
+// 按键上的 X 和 Y 位置。键盘模式已关闭，这样
+// 按下时垫的颜色不会改变。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] dubDub.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+declare name "dubDub";
+
+import("stdfaust.lib");
+
+// ========================= Smart Keyboard 配置 =================================
+// （1 块键盘，1 个键，配置为一个打击垫。
+//========================================================================================
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'1',
+    'Keyboard 0 - Number of Keys':'1',
+    'Keyboard 0 - Piano Keyboard':'0',
+    'Keyboard 0 - Static Mode':'1',
+    'Keyboard 0 - Send X':'1',
+    'Keyboard 0 - Send Y':'1'
+}";
+
+
+// ================================ 乐器参数 =================================
+// 在合成器与移动设备之间建立连接
+//========================================================================================
+
+// SmartKeyboard X 参数
+x = hslider("x",0,0,1,0.01);
+// SmartKeyboard Y 参数
+y = hslider("y",0,0,1,0.01);
+// SmartKeyboard gate 参数
+gate = button("gate");
+// 调制频率由加速度计的 x 轴控制
+modFreq = hslider("modFeq[acc: 0 0 -10 0 10]",9,0.5,18,0.01);
+// 总增益由加速度计的 y 轴控制
+gain = hslider("gain[acc: 1 0 -10 0 10]",0.5,0,1,0.01);
+
+
+// =================================== 参数映射 =================================
+//========================================================================================
+
+// 锯齿波频率
+minFreq = 80;
+maxFreq = 500;
+freq = x*(maxFreq-minFreq) + minFreq : si.polySmooth(gate,0.999,1);
+
+// 滤波器 Q 值
+q = 8;
+
+// 滤波器截止频率由三角波调制
+minFilterCutoff = 50;
+maxFilterCutoff = 5000;
+filterModFreq = modFreq : si.smoo;
+filterCutoff = (1-os.lf_trianglepos(modFreq)*(1-y))*(maxFilterCutoff-minFilterCutoff)+minFilterCutoff;
+
+// 合成器的总增益
+generalGain = gain : ba.lin2LogGain : si.smoo;
+
+
+// ============================================ DSP =======================================
+//========================================================================================
+
+process = sy.dubDub(freq,filterCutoff,q,gate)*generalGain &lt;: _,_;</code></pre><br/><h2 id="elecguitar">elecGuitar</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust8/exfaust8.svg"/><pre><code class="language-faust">// ################################### elecGuitar.dsp #####################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，其中电
+// 吉他物理模型由同构键盘控制。摇滚起来！
+//
+// ## SmartKeyboard 使用策略
+//
+// 我们想创建一个同构键盘，每块键盘都是单音的，
+// 实现一根「弦」。各键盘之间应相隔四度
+// （大致像吉他上那样）。我们希望能通过在键盘之间滑动
+// （扫弦）来触发新音符（声部），并且希望键盘上新出现的手指能
+// 「抢占」前一根手指的音高（类似击弦）。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect elecGuitarEffecr.dsp elecGuitar.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017：
+// https://ccrma.stanford.edu/~rmichon
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+// 界面为 6 块单音键盘，彼此相隔四度
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'6',
+    'Max Keyboard Polyphony':'1',
+    'Keyboard 0 - Number of Keys':'13',
+    'Keyboard 1 - Number of Keys':'13',
+    'Keyboard 2 - Number of Keys':'13',
+    'Keyboard 3 - Number of Keys':'13',
+    'Keyboard 4 - Number of Keys':'13',
+    'Keyboard 5 - Number of Keys':'13',
+    'Keyboard 0 - Lowest Key':'72',
+    'Keyboard 1 - Lowest Key':'67',
+    'Keyboard 2 - Lowest Key':'62',
+    'Keyboard 3 - Lowest Key':'57',
+    'Keyboard 4 - Lowest Key':'52',
+    'Keyboard 5 - Lowest Key':'47',
+    'Rounding Mode':'2'
+}";
+
+import("stdfaust.lib");
+
+// 标准参数
+f = hslider("freq",300,50,2000,0.01);
+bend = hslider("bend[midi:pitchwheel]",1,0,10,0.01) : si.polySmooth(gate,0.999,1);
+gain = hslider("gain",1,0,1,0.01);
+s = hslider("sustain[midi:ctrl 64]",0,0,1,1); // 用于延音踏板
+t = button("gate");
+
+// 映射参数
+gate = t+s : min(1);
+freq = f*bend : max(50); // 最低频率为 50 Hz
+
+stringLength = freq : pm.f2l;
+pluckPosition = 0.8;
+mute = gate : si.polySmooth(gate,0.999,1);
+
+process = pm.elecGuitar(stringLength,pluckPosition,mute,gain,gate) &lt;: _,_;</code></pre><br/><h2 id="fm">fm</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust9/exfaust9.svg"/><pre><code class="language-faust">// ###################################### fm.dsp ##########################################
+// 一个简单的智能手机打击类抽象声音玩具，基于 FM 合成器。
+//
+// ## SmartKeyboard 使用策略
+//
+// 这里的思路是把 SmartKeyboard 界面当作 X/Y 控制垫，只需
+// 创建一块只有一个键的键盘，并通过标准参数 x 和 y 获取该
+// 按键上的 X 和 Y 位置。键盘模式已关闭，这样
+// 按下时垫的颜色不会改变。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] crazyGuiro.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+declare name "fm";
+
+import("stdfaust.lib");
+
+// ========================= Smart Keyboard 配置 =================================
+// （1 块键盘，1 个键，配置为一个打击垫。
+//========================================================================================
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'1',
+    'Keyboard 0 - Number of Keys':'1',
+    'Keyboard 0 - Piano Keyboard':'0',
+    'Keyboard 0 - Static Mode':'1',
+    'Keyboard 0 - Send X':'1',
+    'Keyboard 0 - Send Y':'1'
+}";
+
+// ================================ 乐器参数 =================================
+// 在合成器与移动设备之间建立连接
+//========================================================================================
+
+// SmartKeyboard X 参数
+x = hslider("x",0,0,1,0.01);
+// SmartKeyboard Y 参数
+y = hslider("y",0,0,1,0.01);
+// SmartKeyboard gate 参数
+gate = button("gate") ;
+// 模态共振时长由加速度计的 x 轴控制
+modFreqRatio = hslider("res[acc: 0 0 -10 0 10]",1,0,2,0.01) : si.smoo;
+
+// =================================== 参数映射 =================================
+//========================================================================================
+
+// 载波频率
+minFreq = 80;
+maxFreq = 500;
+cFreq = x*(maxFreq-minFreq) + minFreq : si.polySmooth(gate,0.999,1);
+
+// 调制器频率
+modFreq = cFreq*modFreqRatio;
+
+// 调制指数
+modIndex = y*1000 : si.smoo;
+
+// ============================================ DSP =======================================
+//========================================================================================
+
+// 由于生成的声音相当混乱，不需要包络发生器
+fmSynth = sy.fm((cFreq,modFreq),(modIndex))*(gate : si.smoo)*0.5;
+
+process = fmSynth;</code></pre><br/><h2 id="frog">frog</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust10/exfaust10.svg"/><pre><code class="language-faust">// ################################### frog.dsp #####################################
+// 一个简单的智能手机抽象乐器，可以用
+// 触摸屏和设备的加速度计控制。
+//
+// ## SmartKeyboard 使用策略
+//
+// 这里的思路是把 SmartKeyboard 界面当作 X/Y 控制垫，只需
+// 创建一块只有一个键的键盘，并通过标准参数 x 和 y 获取该
+// 按键上的 X 和 Y 位置。键盘模式已关闭，这样
+// 按下时垫的颜色不会改变。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] frog.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+declare name "frog";
+
+import("stdfaust.lib");
+
+// ========================= Smart Keyboard 配置 =================================
+// （1 块键盘，1 个键，配置为一个打击垫。
+//========================================================================================
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'1',
+    'Keyboard 0 - Number of Keys':'1',
+    'Keyboard 0 - Piano Keyboard':'0',
+    'Keyboard 0 - Static Mode':'1',
+    'Keyboard 0 - Send X':'1',
+    'Keyboard 0 - Send Y':'1'
+}";
+
+// ================================ 乐器参数 =================================
+// 在合成器与移动设备之间建立连接
+//========================================================================================
+
+// SmartKeyboard X 参数
+x = hslider("x",0,0,1,0.01);
+// SmartKeyboard Y 参数
+y = hslider("y",0,0,1,0.01);
+// SmartKeyboard gate 参数
+gate = button("gate");
+// 滤波器截止频率由加速度计的 x 轴控制
+cutoff = hslider("cutoff[acc: 0 0 -10 0 10]",2500,50,5000,0.01);
+
+// =================================== 参数映射 =================================
+//========================================================================================
+
+maxFreq = 100;
+minFreq = 1;
+freq = x*(maxFreq-minFreq) + minFreq : si.polySmooth(gate,0.999,1);
+
+maxQ = 40;
+minQ = 1;
+q = (1-y)*(maxQ-minQ) + minQ : si.smoo;
+filterCutoff = cutoff : si.smoo;
+
+// ============================================ DSP =======================================
+//========================================================================================
+
+process = sy.dubDub(freq,filterCutoff,q,gate) &lt;: _,_;</code></pre><br/><h2 id="harp">harp</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust11/exfaust11.svg"/><pre><code class="language-faust">// ######################################## harp.dsp ######################################
+// 一个简单的智能手机竖琴（如果敢这么叫的话）。
+//
+// ## SmartKeyboard 使用策略
+//
+// 由于这个合成器产生的声音很短，这里的策略是
+// 利用 iOSKeyboard 架构的复音能力，每次按下
+// 新键时都创建一个新声部。由于 SmartKeyboard 界面在这里
+// 有大量按键（128 个），手指在键盘上滑动时会
+// 产生大量声音。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] harp.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+declare name "harp";
+
+import("stdfaust.lib");
+
+// ========================= Smart Keyboard 配置 =================================
+// （8 块键盘，每块 16 个键，配置为音高矩阵。
+//========================================================================================
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'8',
+    'Keyboard 0 - Number of Keys':'16',
+    'Keyboard 1 - Number of Keys':'16',
+    'Keyboard 2 - Number of Keys':'16',
+    'Keyboard 3 - Number of Keys':'16',
+    'Keyboard 4 - Number of Keys':'16',
+    'Keyboard 5 - Number of Keys':'16',
+    'Keyboard 6 - Number of Keys':'16',
+    'Keyboard 7 - Number of Keys':'16',
+    'Keyboard 0 - Lowest Key':'40',
+    'Keyboard 1 - Lowest Key':'45',
+    'Keyboard 2 - Lowest Key':'50',
+    'Keyboard 3 - Lowest Key':'55',
+    'Keyboard 4 - Lowest Key':'60',
+    'Keyboard 5 - Lowest Key':'65',
+    'Keyboard 6 - Lowest Key':'70',
+    'Keyboard 7 - Lowest Key':'75',
+    'Keyboard 0 - Piano Keyboard':'0',
+    'Keyboard 1 - Piano Keyboard':'0',
+    'Keyboard 2 - Piano Keyboard':'0',
+    'Keyboard 3 - Piano Keyboard':'0',
+    'Keyboard 4 - Piano Keyboard':'0',
+    'Keyboard 5 - Piano Keyboard':'0',
+    'Keyboard 6 - Piano Keyboard':'0',
+    'Keyboard 7 - Piano Keyboard':'0'
+}";
+
+// ================================ 乐器参数 =================================
+// 在合成器与移动设备之间建立连接
+//========================================================================================
+
+// 弦的共振时长（秒）由加速度计的 x 轴控制
+res = hslider("res[acc: 0 0 -10 0 10]",2,0.1,4,0.01);
+// Smart Keyboard 频率参数
+freq = hslider("freq",400,50,2000,0.01);
+// Smart Keyboard gate 参数
+gate = button("gate");
+
+// =================================== 参数映射 =================================
+//========================================================================================
+
+stringFreq = freq;
+
+// ============================================ DSP =======================================
+//========================================================================================
+
+process = sy.combString(freq,res,gate);</code></pre><br/><h2 id="midionly">midiOnly</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust12/exfaust12.svg"/><pre><code class="language-faust">// ################################### midiOnly.dsp ######################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，实现一个 MIDI
+// 可控的应用，用移动设备的触摸屏持续控制
+// 合成器的特定参数，通过两个独立的 X/Y 控制面板。
+//
+// ## SmartKeyboard 使用策略
+//
+// 这个乐器的 SmartKeyboard 配置只有一块键盘，
+// 上面有两个键。每个键实现一个控制面板。钢琴键盘模式
+// 已关闭，因此不显示键名，按键被触摸时也不改变
+// 颜色。最后，Send Freq 设为 0，这样触摸屏不会分配新
+// 声部，也不计算 freq 和 bend 参数。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp midiOnly.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+// 界面为 4 块复音键盘，各 13 个键，配置相同
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'1',
+    'Keyboard 0 - Number of Keys':'2',
+    'Keyboard 0 - Send Freq':'0',
+    'Keyboard 0 - Piano Keyboard':'0',
+    'Keyboard 0 - Static Mode':'1',
+    'Keyboard 0 - Send Key X':'1',
+    'Keyboard 0 - Key 0 - Label':'Mod Index',
+    'Keyboard 0 - Key 1 - Label':'Mod Freq'
+}";
+
+import("stdfaust.lib");
+
+f = hslider("freq",300,50,2000,0.01);
+bend = ba.semi2ratio(hslider("bend[midi:pitchwheel]",0,-2,2,0.001)) : si.polySmooth(gate,0.999,1);
+gain = hslider("gain",1,0,1,0.01);
+key = hslider("key",0,0,1,1) : int;
+kb0k0x = hslider("kb0k0x[midi:ctrl 1]",0.5,0,1,0.01) : si.smoo;
+kb0k1x = hslider("kb0k1x[midi:ctrl 1]",0.5,0,1,0.01) : si.smoo;
+s = hslider("sustain[midi:ctrl 64]",0,0,1,1);
+t = button("gate");
+
+// 格式化参数
+gate = t+s : min(1);
+freq = f*bend;
+index = kb0k0x*1000;
+modFreqRatio = kb0k1x;
+
+envelope = gain*gate : si.smoo;
+
+process = sy.fm((freq,freq + freq*modFreqRatio),index*envelope)*envelope &lt;: _,_;</code></pre><br/><h2 id="multisynth">multiSynth</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust13/exfaust13.svg"/><pre><code class="language-faust">// ################################### multiSynth.dsp ######################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，其中 4 块键盘
+// 用来控制 4 个独立的合成器。
+//
+// ## SmartKeyboard 使用策略
+//
+// 这个示例的 SmartKeyboard 配置相对简单，
+// 只是四个并联的复音键盘。keyboard 标准
+// 参数用来激活合成器的特定元素。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp multiSynth.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+// 界面为 4 块复音键盘，各 13 个键，配置相同
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'4',
+    'Rounding Mode':'2',
+    'Inter-Keyboard Slide':'0',
+    'Keyboard 0 - Number of Keys':'13',
+    'Keyboard 1 - Number of Keys':'13',
+    'Keyboard 2 - Number of Keys':'13',
+    'Keyboard 3 - Number of Keys':'13',
+    'Keyboard 0 - Lowest Key':'60',
+    'Keyboard 1 - Lowest Key':'60',
+    'Keyboard 2 - Lowest Key':'60',
+    'Keyboard 3 - Lowest Key':'60',
+    'Keyboard 0 - Send Y':'1',
+    'Keyboard 1 - Send Y':'1',
+    'Keyboard 2 - Send Y':'1',
+    'Keyboard 3 - Send Y':'1'
+}";
+
+import("stdfaust.lib");
+
+// 标准参数
+f = hslider("freq",300,50,2000,0.01);
+bend = ba.semi2ratio(hslider("bend[midi:pitchwheel]",0,-2,2,0.001)) : si.polySmooth(gate,0.999,1);
+gain = hslider("gain",1,0,1,0.01);
+s = hslider("sustain[midi:ctrl 64]",0,0,1,1); // 用于延音踏板
+t = button("gate");
+y = hslider("y[midi:ctrl 1]",1,0,1,0.001) : si.smoo;
+keyboard = hslider("keyboard",0,0,3,1) : int;
+
+// 格式化参数
+gate = t+s : min(1);
+freq = f*bend;
+cutoff = y*4000+50;
+
+// 振荡器
+oscilators(0) = os.sawtooth(freq);
+oscilators(1) = os.triangle(freq);
+oscilators(2) = os.square(freq);
+oscilators(3) = os.osc(freq);
+
+// 振荡器根据当前键盘来选择
+synths = par(i,4,select2(keyboard == i,0,oscilators(i))) :&gt; fi.lowpass(3,cutoff) : *(envelope)
+with{
+    envelope = gate*gain : si.smoo;
+};
+
+process = synths &lt;: _,_;</code></pre><br/><h2 id="toy">toy</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust14/exfaust14.svg"/><pre><code class="language-faust">// ##################################### toy.dsp #######################################
+// 专为 faust2smartkeyb 设计的 Faust 声音玩具，其中可以用
+// 屏幕上的多根手指和内置的
+// 加速度计来控制一个有趣的合成器。
+//
+// ## SmartKeyboard 使用策略
+//
+// 我们只想要一个空白屏幕，可以在其中跟踪
+// 屏幕上不同手指的位置，并在 Faust 对象里取到。为此，我们
+// 创建一块只有一个键的键盘，它应当铺满屏幕。我们让
+// 界面不计算 freq 和 bend 参数，以节省
+// 运算，做法是设置 'Keyboard 0 - Send Freq':'0'。我们不希望
+// 按键被触摸时颜色改变，因此关闭
+// 钢琴键盘模式。手指需要编号，才能使用
+// 带编号的 x 和 y 参数（x0、y0、x1 等），因此
+// 启用了 Count Fingers。最后，把 Max Keyboard Polyphony 设为 0，
+// 即可关闭声部分配系统，并在应用启动时自动启动一个声部。
+// 这意味着手指不再与特定声部关联。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] toy.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017：
+// https://ccrma.stanford.edu/~rmichon
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+// X/Y 界面：一块键盘，一个键
+// 不计算 freq 和 bend
+// 手指参与计数
+// 启动时即启动声部
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'1',
+    'Max Keyboard Polyphony':'0',
+    'Keyboard 0 - Number of Keys':'1',
+    'Keyboard 0 - Send Freq':'0',
+    'Keyboard 0 - Static Mode':'1',
+    'Keyboard 0 - Piano Keyboard':'0',
+    'Keyboard 0 - Send Numbered X':'1',
+    'Keyboard 0 - Send Numbered Y':'1'
+}";
+
+import("stdfaust.lib");
+
+// 参数
+x0 = hslider("x0",0.5,0,1,0.01) : si.smoo;
+y0 = hslider("y0",0.5,0,1,0.01) : si.smoo;
+y1 = hslider("y1",0,0,1,0.01) : si.smoo;
+q = hslider("q[acc: 0 0 -10 0 10]",30,10,50,0.01) : si.smoo;
+del = hslider("del[acc: 0 0 -10 0 10]",0.5,0.01,1,0.01) : si.smoo;
+fb = hslider("fb[acc: 1 0 -10 0 10]",0.5,0,1,0.01) : si.smoo;
+
+// 映射
+impFreq = 2 + x0*20;
+resFreq = y0*3000+300;
+
+// 简单的回声效果
+echo = +~(de.delay(65536,del*ma.SR)*fb);
+
+// 整合起来
+process = os.lf_imptrain(impFreq) : fi.resonlp(resFreq,q,1) : echo : ef.cubicnl(y1,0)*0.95 &lt;: _,_;</code></pre><br/><h2 id="trumpet">trumpet</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust15/exfaust15.svg"/><pre><code class="language-faust">// ################################### trumpet.dsp #####################################
+// 一个简单的小号应用……（适合大屏幕）。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp trumpet.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+import("stdfaust.lib");
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'5',
+    'Max Keyboard Polyphony':'1',
+    'Mono Mode':'1',
+    'Keyboard 0 - Number of Keys':'13',
+    'Keyboard 1 - Number of Keys':'13',
+    'Keyboard 2 - Number of Keys':'13',
+    'Keyboard 3 - Number of Keys':'13',
+    'Keyboard 4 - Number of Keys':'13',
+    'Keyboard 0 - Lowest Key':'77',
+    'Keyboard 1 - Lowest Key':'72',
+    'Keyboard 2 - Lowest Key':'67',
+    'Keyboard 3 - Lowest Key':'62',
+    'Keyboard 4 - Lowest Key':'57',
+    'Rounding Mode':'2',
+    'Keyboard 0 - Send Y':'1',
+    'Keyboard 1 - Send Y':'1',
+    'Keyboard 2 - Send Y':'1',
+    'Keyboard 3 - Send Y':'1',
+    'Keyboard 4 - Send Y':'1',
+}";
+
+// 标准参数
+f = hslider("freq",300,50,2000,0.01);
+bend = ba.semi2ratio(hslider("bend[midi:pitchwheel]",0,-2,2,0.001)) : si.polySmooth(gate,0.999,1);
+gain = hslider("gain",1,0,1,0.01);
+s = hslider("sustain[midi:ctrl 64]",0,0,1,1); // 用于延音踏板
+t = button("gate");
+y = hslider("y[midi:ctrl 1]",1,0,1,0.001) : si.smoo;
+
+// 格式化参数
+gate = t+s : min(1);
+freq = f*bend;
+cutoff = y*4000+50;
+envelope = gate*gain : si.smoo;
+
+process = os.sawtooth(freq)*envelope : fi.lowpass(3,cutoff) &lt;: _,_;</code></pre><br/><h2 id="turenas">turenas</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust16/exfaust16.svg"/><pre><code class="language-faust">// ################################### turenas.dsp ########################################
+// 一个简单的智能手机打击乐器，基于加法合成器。
+//
+// ## SmartKeyboard 使用策略
+//
+// 由于这个合成器产生的声音很短，这里的策略是
+// 利用 iOSKeyboard 架构的复音能力，每次按下
+// 新键时都创建一个新声部。由于 SmartKeyboard 界面在这里
+// 有大量按键（180 个），手指在键盘上滑动时会
+// 产生大量声音。
+//
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] turenas.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+declare name "turenas";
+
+import("stdfaust.lib");
+
+// ========================= Smart Keyboard 配置 =================================
+// （10 块键盘，每块 18 个键，配置为音高矩阵。
+//========================================================================================
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'10',
+    'Keyboard 0 - Number of Keys':'18',
+    'Keyboard 1 - Number of Keys':'18',
+    'Keyboard 2 - Number of Keys':'18',
+    'Keyboard 3 - Number of Keys':'18',
+    'Keyboard 4 - Number of Keys':'18',
+    'Keyboard 5 - Number of Keys':'18',
+    'Keyboard 6 - Number of Keys':'18',
+    'Keyboard 7 - Number of Keys':'18',
+    'Keyboard 8 - Number of Keys':'18',
+    'Keyboard 9 - Number of Keys':'18',
+    'Keyboard 0 - Lowest Key':'50',
+    'Keyboard 1 - Lowest Key':'55',
+    'Keyboard 2 - Lowest Key':'60',
+    'Keyboard 3 - Lowest Key':'65',
+    'Keyboard 4 - Lowest Key':'70',
+    'Keyboard 5 - Lowest Key':'75',
+    'Keyboard 6 - Lowest Key':'80',
+    'Keyboard 7 - Lowest Key':'85',
+    'Keyboard 8 - Lowest Key':'90',
+    'Keyboard 9 - Lowest Key':'95',
+    'Keyboard 0 - Piano Keyboard':'0',
+    'Keyboard 1 - Piano Keyboard':'0',
+    'Keyboard 2 - Piano Keyboard':'0',
+    'Keyboard 3 - Piano Keyboard':'0',
+    'Keyboard 4 - Piano Keyboard':'0',
+    'Keyboard 5 - Piano Keyboard':'0',
+    'Keyboard 6 - Piano Keyboard':'0',
+    'Keyboard 7 - Piano Keyboard':'0',
+    'Keyboard 8 - Piano Keyboard':'0',
+    'Keyboard 9 - Piano Keyboard':'0',
+    'Keyboard 0 - Send X':'0',
+    'Keyboard 1 - Send X':'0',
+    'Keyboard 2 - Send X':'0',
+    'Keyboard 3 - Send X':'0',
+    'Keyboard 4 - Send X':'0',
+    'Keyboard 5 - Send X':'0',
+    'Keyboard 6 - Send X':'0',
+    'Keyboard 7 - Send X':'0',
+    'Keyboard 8 - Send X':'0',
+    'Keyboard 9 - Send X':'0'
+}";
+
+// ================================ 乐器参数 =================================
+// 在合成器与移动设备之间建立连接
+//========================================================================================
+
+// SmartKeyboard Y 参数
+y = hslider("y",0,0,1,0.01);
+// Smart Keyboard 频率参数
+freq = hslider("freq",400,50,2000,0.01);
+// SmartKeyboard gate 参数
+gate = button("gate");
+// 模态共振时长由加速度计的 x 轴控制
+res = hslider("res[acc: 0 0 -10 0 10]",2.5,0.01,5,0.01);
+
+// =================================== 参数映射 =================================
+//========================================================================================
+
+// 模态数量
+nModes = 6;
+// 各模态之间的间隔
+maxModeSpread = 5;
+modeSpread = y*maxModeSpread;
+// 计算模态频率比
+modeFreqRatios = par(i,nModes,1+(i+1)/nModes*modeSpread);
+// 计算模态增益
+minModeGain = 0.3;
+modeGains = par(i,nModes,1-(i+1)/(nModes*minModeGain));
+// 平滑后的模态共振
+modeRes = res : si.smoo;
+
+// ============================================ DSP =======================================
+//========================================================================================
+
+process = sy.additiveDrum(freq,modeFreqRatios,modeGains,0.8,0.001,modeRes,gate)*0.05;</code></pre><br/><h2 id="violin">violin</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust17/exfaust17.svg"/><pre><code class="language-faust">// ############################### violin.dsp ###################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，其中
+// 一个完整的小提琴物理模型可以用触摸屏
+// 界面演奏。4 根虚拟弦可以用屏幕上的一个控制面板
+// 来拉奏，而它也可以很容易地替换为外部
+// 接口。
+//
+// ## SmartKeyboard 使用策略
+//
+// 4 块键盘用来控制 4 根拉奏弦的音高。弦
+// 在被触碰时连接到虚拟弓。用一个只有单个键的键盘
+// 创建的打击垫，可以用来控制弓速和
+// 所选弦上的压力。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。
+// 不过它是专门为配合 faust2smartkeyb 使用而设计的。为
+// 获得最佳效果，建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp violin.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 8 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//##############################################################################
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'5',
+    'Max Keyboard Polyphony':'0',
+    'Rounding Mode':'2',
+    'Send Fingers Count':'1',
+    'Keyboard 0 - Number of Keys':'19',
+    'Keyboard 1 - Number of Keys':'19',
+    'Keyboard 2 - Number of Keys':'19',
+    'Keyboard 3 - Number of Keys':'19',
+    'Keyboard 4 - Number of Keys':'1',
+    'Keyboard 0 - Lowest Key':'55',
+    'Keyboard 1 - Lowest Key':'62',
+    'Keyboard 2 - Lowest Key':'69',
+    'Keyboard 3 - Lowest Key':'76',
+    'Keyboard 0 - Send Keyboard Freq':'1',
+    'Keyboard 1 - Send Keyboard Freq':'1',
+    'Keyboard 2 - Send Keyboard Freq':'1',
+    'Keyboard 3 - Send Keyboard Freq':'1',
+    'Keyboard 4 - Send Freq':'0',
+    'Keyboard 4 - Send Key X':'1',
+    'Keyboard 4 - Send Key Y':'1',
+    'Keyboard 4 - Key 0 - Label':'Bow',
+    'Keyboard 4 - Static Mode':'1'
+}";
+
+import("stdfaust.lib");
+
+// SMARTKEYBOARD 参数
+kbfreq(0) = hslider("kb0freq",220,20,10000,0.01);
+kbbend(0) = hslider("kb0bend",1,ma.EPSILON,10,0.01);
+kbfreq(1) = hslider("kb1freq",330,20,10000,0.01);
+kbbend(1) = hslider("kb1bend",1,ma.EPSILON,10,0.01);
+kbfreq(2) = hslider("kb2freq",440,20,10000,0.01);
+kbbend(2) = hslider("kb2bend",1,ma.EPSILON,10,0.01);
+kbfreq(3) = hslider("kb3freq",550,20,10000,0.01);
+kbbend(3) = hslider("kb3bend",1,ma.EPSILON,10,0.01);
+kb4k0x = hslider("kb4k0x",0,0,1,1) : si.smoo;
+kb4k0y = hslider("kb4k0y",0,0,1,1) : si.smoo;
+kbfingers(0) = hslider("kb0fingers",0,0,10,1) : int;
+kbfingers(1) = hslider("kb1fingers",0,0,10,1) : int;
+kbfingers(2) = hslider("kb2fingers",0,0,10,1) : int;
+kbfingers(3) = hslider("kb3fingers",0,0,10,1) : int;
+
+// 模型参数
+// 弦长
+sl(i) = kbfreq(i)*kbbend(i) : pm.f2l : si.smoo;
+// 弦仅在手指接触键盘时激活
+as(i) = kbfingers(i)&gt;0;
+// 弓压也可以由外部参数控制
+bowPress = kb4k0y;
+// 获取手指在屏幕上的位移（非常简单）
+bowVel = kb4k0x-kb4k0x' : abs : *(8000) : min(1) : si.smoo;
+// 弓位是固定的，但也可以由外部接口控制
+bowPos = 0.7;
+
+// 组装模型
+// 本质上是 4 根并联的小提琴弦
+model = par(i,4,pm.violinModel(sl(i),bowPress,bowVel*as(i),bowPos)) :&gt; _;
+
+process = model &lt;: _,_;</code></pre><br/><h2 id="violin2">violin2</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust18/exfaust18.svg"/><pre><code class="language-faust">// ############################### violin2.dsp ##################################
+// 专为 faust2smartkeyb 设计的 Faust 乐器，其中
+// 一个完整的小提琴物理模型可以用触摸屏
+// 界面演奏。拉奏通过在某个键的 y 轴上不断
+// 移动手指来实现。
+//
+// ## SmartKeyboard 使用策略
+//
+// 4 块键盘用来控制 4 根拉奏弦的音高。弦
+// 在被触碰时连接到虚拟弓。
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。
+// 不过它是专门为配合 faust2smartkeyb 使用而设计的。为
+// 获得最佳效果，建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] -effect reverb.dsp violin.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 8 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//##############################################################################
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'4',
+    'Max Keyboard Polyphony':'0',
+    'Rounding Mode':'2',
+    'Send Fingers Count':'1',
+    'Keyboard 0 - Number of Keys':'12',
+    'Keyboard 1 - Number of Keys':'12',
+    'Keyboard 2 - Number of Keys':'12',
+    'Keyboard 3 - Number of Keys':'12',
+    'Keyboard 0 - Lowest Key':'55',
+    'Keyboard 1 - Lowest Key':'62',
+    'Keyboard 2 - Lowest Key':'69',
+    'Keyboard 3 - Lowest Key':'76',
+    'Keyboard 0 - Send Keyboard Freq':'1',
+    'Keyboard 1 - Send Keyboard Freq':'1',
+    'Keyboard 2 - Send Keyboard Freq':'1',
+    'Keyboard 3 - Send Keyboard Freq':'1',
+    'Keyboard 0 - Send Y':'1',
+    'Keyboard 1 - Send Y':'1',
+    'Keyboard 2 - Send Y':'1',
+    'Keyboard 3 - Send Y':'1'
+}";
+
+import("stdfaust.lib");
+
+// SMARTKEYBOARD 参数
+kbfreq(0) = hslider("kb0freq",220,20,10000,0.01);
+kbbend(0) = hslider("kb0bend",1,ma.EPSILON,10,0.01);
+kbfreq(1) = hslider("kb1freq",330,20,10000,0.01);
+kbbend(1) = hslider("kb1bend",1,ma.EPSILON,10,0.01);
+kbfreq(2) = hslider("kb2freq",440,20,10000,0.01);
+kbbend(2) = hslider("kb2bend",1,ma.EPSILON,10,0.01);
+kbfreq(3) = hslider("kb3freq",550,20,10000,0.01);
+kbbend(3) = hslider("kb3bend",1,ma.EPSILON,10,0.01);
+kbfingers(0) = hslider("kb0fingers",0,0,10,1) : int;
+kbfingers(1) = hslider("kb1fingers",0,0,10,1) : int;
+kbfingers(2) = hslider("kb2fingers",0,0,10,1) : int;
+kbfingers(3) = hslider("kb3fingers",0,0,10,1) : int;
+y = hslider("y",0,0,1,1) : si.smoo;
+
+// 模型参数
+// 弦长
+sl(i) = kbfreq(i)*kbbend(i) : pm.f2l : si.smoo;
+// 弦仅在手指接触键盘时激活
+as(i) = kbfingers(i)&gt;0;
+// 获取手指在屏幕上的位移（非常简单）
+bowVel = y-y' : abs : *(3000) : min(1) : si.smoo;
+// 弓位是固定的，但也可以由外部接口控制
+bowPos = 0.7;
+bowPress = 0.5;
+
+// 组装模型
+// 本质上是 4 根并联的小提琴弦
+model = par(i,4,pm.violinModel(sl(i),bowPress,bowVel*as(i),bowPos)) :&gt; _;
+
+process = model &lt;: _,_;</code></pre><br/><h2 id="vocal">vocal</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/smartKeyboard/exfaust19/exfaust19.svg"/><pre><code class="language-faust">// ######################################## vocal.dsp #####################################
+// 一个有趣的人声合成器应用……
+//
+// ## 编译说明
+//
+// 这份 Faust 代码可以用任何标准的 Faust 目标平台正常编译。不过
+// 它是专门为配合 faust2smartkeyb 使用而设计的。为获得最佳效果，
+// 建议编译时使用以下参数：
+//
+// 
+// faust2smartkeyb [-ios/-android] vocal.dsp
+// 
+//
+// ## 版本/许可
+//
+// 版本 0.0，2017 年 2 月
+// 版权所有 Romain Michon CCRMA（斯坦福大学）/GRAME 2017
+// MIT 许可：https://opensource.org/licenses/MIT
+//########################################################################################
+
+import("stdfaust.lib");
+
+declare interface "SmartKeyboard{
+    'Number of Keyboards':'1',
+    'Max Keyboard Polyphony':'0',
+    'Keyboard 0 - Number of Keys':'1',
+    'Keyboard 0 - Send Freq':'0',
+    'Keyboard 0 - Static Mode':'1',
+    'Keyboard 0 - Send X':'1',
+    'Keyboard 0 - Piano Keyboard':'0'
+}";
+
+// 标准参数
+vowel = hslider("vowel[acc: 0 0 -10 0 10]",2,0,4,0.01) : si.smoo;
+x = hslider("x",0.5,0,1,0.01) : si.smoo;
+vibrato = hslider("vibrato[acc: 1 0 -10 0 10]",0.05,0,0.1,0.01);
+gain = hslider("gain",0.25,0,1,0.01);
+
+// 格式化参数
+freq = x*200 + 50;
+voiceFreq = freq*(os.osc(6)*vibrato+1);
+
+process = pm.SFFormantModelBP(1,vowel,0,voiceFreq,gain) &lt;: _,_;</code></pre><br/>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/examples/smartKeyboard/" rel="noreferrer noopener">https://faustdoc.grame.fr/examples/smartKeyboard/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

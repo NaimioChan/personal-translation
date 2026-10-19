@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>generator - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：generator">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="generator">generator</h1><h2 id="brightorgan">brightOrgan</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust0/exfaust0.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+
+declare name "brightOrgan";
+declare author "Claude AI";
+
+// 安全的频率上限（远低于奈奎斯特频率）
+MAX_FREQ = ma.SR / 2 - 1000;
+
+// 安全滤波函数，把频率限制在安全范围内
+safe_resonlp(f, q, gain) = fi.resonlp(min(f, MAX_FREQ * 0.4), q, gain);
+safe_lowpass(order, f) = fi.lowpass(order, max(20, min(f, MAX_FREQ * 0.9)));
+
+// 管风琴参数
+freq = hslider("h:Main/freq [style:knob][midi:ctrl 1]", 220, 55, 880, 0.1);
+gate = button("h:Main/gate [midi:ctrl 64]");
+volume = hslider("h:Main/volume [style:knob][midi:ctrl 7]", 0.5, 0, 1, 0.01);
+
+// 管风琴音栓
+foundation8 = hslider("h:Stops/Foundation 8' [style:knob][midi:ctrl 14]", 0.8, 0, 1, 0.01);
+principal4 = hslider("h:Stops/Principal 4' [style:knob][midi:ctrl 15]", 0.5, 0, 1, 0.01);
+fifteenth2 = hslider("h:Stops/Fifteenth 2' [style:knob][midi:ctrl 16]", 0.3, 0, 1, 0.01);
+flute8 = hslider("h:Stops/Flute 8' [style:knob][midi:ctrl 17]", 0.4, 0, 1, 0.01);
+nasard = hslider("h:Stops/Nasard 2 2/3' [style:knob][midi:ctrl 18]", 0.2, 0, 1, 0.01);
+tierce = hslider("h:Stops/Tierce 1 3/5' [style:knob][midi:ctrl 19]", 0.15, 0, 1, 0.01);
+
+// 混响参数
+reverbAmount = hslider("h:Reverb/Amount [style:knob][midi:ctrl 91]", 0.3, 0, 1, 0.01);
+reverbDamp = hslider("h:Reverb/Damp [style:knob][midi:ctrl 92]", 0.5, 0, 1, 0.01);
+reverbSize = hslider("h:Reverb/Size [style:knob][midi:ctrl 93]", 0.6, 0, 1, 0.01);
+
+// 管风琴音管生成器（滤波方波 + 气流噪声）
+organ_pipe(f, brightness) = pipe
+with {
+    // 把频率限制在安全范围内
+    safe_f = min(f, MAX_FREQ);
+
+    // 含奇次谐波的方波
+    square = os.square(safe_f);
+
+    // 低通滤波器，柔化音色
+    cutoff = safe_f * (2 + brightness * 8);
+    filtered = square : safe_lowpass(2, cutoff);
+
+    // 管风琴特有的气流噪声（经安全滤波）
+    breath = no.noise * 0.015 : safe_resonlp(safe_f, 1, 1);
+
+    pipe = filtered + breath;
+};
+
+// 笛管（更接近正弦波）
+flute_pipe(f) = pipe
+with {
+    // 把频率限制在安全范围内
+    safe_f = min(f, MAX_FREQ);
+
+    // 占主导的正弦基频
+    fundamental = os.osc(safe_f);
+    // 少量谐波（仅在频率允许时）
+    h2 = os.osc(min(safe_f * 2, MAX_FREQ)) * 0.25 * (safe_f * 2 &lt; MAX_FREQ);
+    h3 = os.osc(min(safe_f * 3, MAX_FREQ)) * 0.08 * (safe_f * 3 &lt; MAX_FREQ);
+    // 笛管气流噪声（经安全滤波）
+    breath = no.noise * 0.02 : safe_resonlp(safe_f * 1.5, 2, 1);
+
+    pipe = fundamental + h2 + h3 + breath;
+};
+
+// 合并音栓
+organ = (
+    // 基础音栓 8'（基频）
+    organ_pipe(freq, 0.3) * foundation8 +
+
+    // Principal 4'（高八度）
+    organ_pipe(freq * 2, 0.4) * principal4 +
+
+    // Fifteenth 2'（两个八度）
+    organ_pipe(freq * 4, 0.5) * fifteenth2 +
+
+    // Flute 8'
+    flute_pipe(freq) * flute8 +
+
+    // Nasard 2 2/3'（纯五度）
+    flute_pipe(freq * 3) * nasard * 0.7 +
+
+    // Tierce 1 3/5'（大三度）
+    flute_pipe(freq * 5) * tierce * 0.5
+) / 4;
+
+// 管风琴包络（特有的慢起音）
+env = en.asr(0.1, 1, 0.2, gate);
+
+// 干信号
+dry = organ * env * volume;
+
+// 参数可调的小型混响
+reverb(x) = x : re.mono_freeverb(reverbSize, reverbDamp, 0.3, 6000);
+
+// 干湿比
+output = dry * (1 - reverbAmount * 0.5) + reverb(dry) * reverbAmount;
+
+// 立体声输出
+process = output &lt;: _,_;</code></pre><br/><h2 id="churchorgan">churchOrgan</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust1/exfaust1.svg"/><pre><code class="language-faust">declare name "churchOrgan";
+declare author "Remi Chapelle";
+
+import("stdfaust.lib");
+
+// GUI
+f = hslider("[00]freq[unit:Hz]",440,50,1000,0.1);
+g = hslider("[01]gain",1,0,1,0.01);
+t = button("[10]gate") : si.smoo;
+p8 = hslider("[03]gain 8ve partial",1,0,1,0.01);
+p5 = hslider("[04]gain 5th partial",1,0,1,0.01);
+p3 = hslider("[05]gain 3d partial",1,0,1,0.01);
+px = hslider("[06]gain other partials",0.05,0,1,0.01);
+p0 = hslider("[02]gain fundamental",1,0,1,0.01);
+psub = hslider("[07]gain lower octave",1,0,1,0.01);
+nog = hslider("[08]noise gain",0.01,0,1,0.001);
+pg = hslider("[09]gain preset",1,0,1,0.01);
+
+// 混响
+r = dm.zita_light;
+
+// 乐器
+orgue = os.osc(f)       *p0
+        + os.osc(f*2)   *p8
+        + os.osc(f*0.5) *psub*0.5
+        + os.osc(f*1.5) *p5*0.3
+        + os.osc(f*3)   *p5*0.9
+        + os.osc(f*4)   *p8*0.8
+        + os.osc(f*5)   *p3*0.7
+        + os.osc(f*6)   *p5*0.6
+        + os.osc(f*7)   *px*0.5
+        + os.osc(f*8)   *p8*0.6
+        + os.osc(f*9)   *px*0.3
+        + os.osc(f*10)  *p3*0.2
+        + os.osc(f*11)  *px*0.15
+        + os.osc(f*12)  *p5*0.1
+        + os.osc(f*13)  *px*0.8
+        + os.osc(f*14)  *px*0.6
+        + os.osc(f*15)  *px*0.5
+        + os.osc(f*16)  *p8*0.4
+        + no.noise*nog;
+
+process = orgue*g*t &lt;: r;</code></pre><br/><h2 id="dx7">dx7</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust2/exfaust2.svg"/><pre><code class="language-faust">//-----------------------------------
+// DX7 库的示例
+// 从算法 1 到 32
+//-----------------------------------
+
+import("stdfaust.lib");
+
+process = dx.algorithm(1) &lt;: _,_;</code></pre><br/><h2 id="filterosc">filterOsc</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust3/exfaust3.svg"/><pre><code class="language-faust">declare name "filterOSC";
+declare version "0.0";
+declare author "JOS, revised by RM";
+declare description "Simple application demoing filter based oscillators.";
+
+import("stdfaust.lib");
+
+process = dm.oscrs_demo;</code></pre><br/><h2 id="noise">noise</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust4/exfaust4.svg"/><pre><code class="language-faust">// 警告：这是「基于已弃用库的遗留示例」。请查看 noises.lib
+// 以获取更准确的噪声函数示例
+
+declare name        "Noise";
+declare version     "1.1";
+declare author      "Grame";
+declare license     "BSD";
+declare copyright   "(c)GRAME 2009";
+
+//-----------------------------------------------------------------
+// 用于 Faust 数学文档的噪声生成器与演示文件
+//-----------------------------------------------------------------
+
+&lt;mdoc&gt;
+\section{对「noise.dsp」Faust 程序的介绍}
+本程序描述一个带交互式音量的白噪声生成器，使用随机函数。
+
+\subsection{随机函数}
+\texttt{random} 函数描述一个随机数生成器，其公式如下。这里要注意使用了 32 位整数运算，对大数依赖整数回绕。
+&lt;equation&gt;random&lt;/equation&gt;
+
+\subsection{噪声函数}
+白噪声则对应：
+&lt;equation&gt;noise&lt;/equation&gt;
+&lt;/mdoc&gt;
+
+random  = +(12345)~*(1103515245);
+noise   = random/2147483647.0;
+
+&lt;mdoc&gt;
+\subsection{只需添加一个界面控件即可调整音量！}
+最后，本程序的声级由用户滑块控制，得到如下公式：
+&lt;equation&gt;process&lt;/equation&gt;
+&lt;/mdoc&gt;
+
+&lt;mdoc&gt;
+\section{process 的框图示意}
+图 1 展示了这一过程。
+&lt;diagram&gt;process&lt;/diagram&gt;
+&lt;/mdoc&gt;
+
+process = noise * vslider("Volume[style:knob][acc: 0 0 -10 0 10]", 0.5, 0, 1, 0.1);
+
+&lt;mdoc&gt;
+\section{关于本文档的说明}
+请注意本文档中使用的某些信息和命名约定：
+&lt;notice/&gt;
+
+\section{输入代码清单}
+下面的清单给出用于编译本文档的输入 Faust 代码。
+&lt;listing/&gt;
+&lt;/mdoc&gt;</code></pre><br/><h2 id="noisemetadata">noiseMetadata</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust5/exfaust5.svg"/><pre><code class="language-faust">// 警告：这是「基于已弃用库的遗留示例」。请查看 noises.lib
+// 以获取更准确的噪声函数示例
+
+&lt;mdoc&gt;
+\title{&lt;metadata&gt;name&lt;/metadata&gt;}
+\author{&lt;metadata&gt;author&lt;/metadata&gt;}
+\date{\today}
+\maketitle
+
+\begin{tabular}{ll}
+    \hline
+    \textbf{name}       &amp; &lt;metadata&gt;name&lt;/metadata&gt; \\
+    \textbf{version}    &amp; &lt;metadata&gt;version&lt;/metadata&gt; \\
+    \textbf{author}     &amp; &lt;metadata&gt;author&lt;/metadata&gt; \\
+    \textbf{license}    &amp; &lt;metadata&gt;license&lt;/metadata&gt; \\
+    \textbf{copyright}  &amp; &lt;metadata&gt;copyright&lt;/metadata&gt; \\
+    \hline
+\end{tabular}
+\bigskip
+&lt;/mdoc&gt;
+//-----------------------------------------------------------------
+// 用于 Faust 数学文档的噪声生成器与演示文件
+//-----------------------------------------------------------------
+
+declare name        "noiseMetadata"; // 避免与 noise.dsp 中的名称相同
+declare version     "1.1";
+declare author      "Grame";
+declare author      "Yghe";
+declare license     "BSD";
+declare copyright   "(c)GRAME 2009";
+
+&lt;mdoc&gt;
+\section{对「noise.dsp」Faust 程序的介绍}
+本程序描述一个带交互式音量的白噪声生成器，使用随机函数。
+
+\subsection{随机函数}
+&lt;/mdoc&gt;
+
+random  = +(12345)~*(1103515245);
+
+&lt;mdoc&gt;
+\texttt{random} 函数描述一个随机数生成器，其公式如下。这里要注意使用了 32 位整数运算，对大数依赖整数回绕。
+&lt;equation&gt;random&lt;/equation&gt;
+
+\subsection{噪声函数}
+&lt;/mdoc&gt;
+
+noise   = random/2147483647.0;
+
+&lt;mdoc&gt;
+白噪声则对应：
+&lt;equation&gt;noise&lt;/equation&gt;
+
+\subsection{只需添加一个界面控件即可调整音量！}
+&lt;/mdoc&gt;
+
+process = noise * vslider("Volume[style:knob]", 0, 0, 1, 0.1);
+
+&lt;mdoc&gt;
+最后，本程序的声级由用户滑块控制，得到如下公式：
+&lt;equation&gt;process&lt;/equation&gt;
+
+\section{process 的框图示意}
+图 1 展示了这一过程。
+&lt;diagram&gt;process&lt;/diagram&gt;
+
+\section{关于本文档的说明}
+请注意本文档中使用的某些信息和命名约定：
+&lt;notice /&gt;
+
+\section{输入代码清单}
+下面的清单给出用于编译本文档的输入 Faust 代码。
+&lt;listing mdoctags="false" dependencies="false" distributed="false" /&gt;
+&lt;/mdoc&gt;</code></pre><br/><h2 id="osc">osc</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust6/exfaust6.svg"/><pre><code class="language-faust">declare name        "osc";
+declare version     "1.0";
+declare author      "Grame";
+declare license     "BSD";
+declare copyright   "(c)GRAME 2009";
+
+//-----------------------------------------------
+// 正弦振荡器
+//-----------------------------------------------
+
+import("stdfaust.lib");
+
+vol = hslider("volume [unit:dB]", 0, -96, 0, 0.1) : ba.db2linear : si.smoo;
+freq = hslider("freq [unit:Hz]", 1000, 20, 24000, 1);
+
+process = vgroup("Oscillator", os.osc(freq) * vol);</code></pre><br/><h2 id="osci">osci</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust7/exfaust7.svg"/><pre><code class="language-faust">declare name        "osci";
+declare version     "1.0";
+declare author      "Grame";
+declare license     "BSD";
+declare copyright   "(c)GRAME 2009";
+
+//-----------------------------------------------
+// 正弦振荡器
+// （带线性插值）
+//-----------------------------------------------
+
+import("stdfaust.lib");
+
+vol = hslider("volume [unit:dB]", 0, -96, 0, 0.1) : ba.db2linear : si.smoo ;
+freq = hslider("freq [unit:Hz]", 1000, 20, 24000, 1);
+
+process = vgroup("Oscillator", os.osci(freq) * vol);</code></pre><br/><h2 id="oteypianov1">oteyPianoV1</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust8/exfaust8.svg"/><pre><code>declare name "OteyPiano";
+declare author "Faust port of C. Otey's piano model (Stanford Ph210, 2007) by Claude Fable AI";
+declare reference "http: // large.stanford.edu/courses/2007/ph210/otey2/";
+declare options "[midi:on] [nvoices:8]";
+
+import("stdfaust.lib");
+
+//============================================================================
+// 按 C. Otey（2007）实现的钢琴物理模型。
+//
+// 结构（文章图 1）：
+// 琴槌 -&gt; 两根失谐数字波导弦 -&gt; 琴桥 -&gt; 音板
+//
+// 每根弦是一个单次往返（SR/f0）的速度波延迟环，
+// 由两端终端的乘积闭合：
+// -1    框架销处的完全反射，
+// Hd    色散全通级联（刚度 -&gt; 非谐、拉伸的
+// 分音；文章中的 Thiran 全通用负系数的一阶全通
+// 级联来近似，因此
+// 高频传播更快，正如 kappa*d4y/dx4 所表明），
+// Hl    损耗滤波器，实现 tau(w) = 1/(c1 + c3 w^2)：增益 g0
+// （c1，低次分音的 T60）乘以一个单极点低通（c3），
+// r&lt;1   琴桥反射（琴桥阻抗约为弦阻抗的 1000 倍）；
+// 其损耗并入 g0。
+// 延迟线被缩短，以补偿 Hd 与 Hl 在基频处的
+// 相位延迟，如文章所要求。
+//
+// 琴槌的滞回毛毡 F(u) = F0 u^p (1 + alpha du/dt) 被换位
+// 为其感知效果：一个升余弦力脉冲，其持续时间
+// 随琴槌速度缩短、频谱变亮（p 在 2..4 之间
+// 时，强音会格外明亮）。
+//
+// 音板是文章中的反馈延迟网络：4 条延迟线、
+// Hadamard 反馈矩阵、各线随频率变化的损耗、一个陡峭的
+// 约 100 Hz 高通（在此之下弯曲波比空气中的声速慢），以及
+// 两个去相关的输出抽头用于立体声。
+//============================================================================
+
+// ---------------------------------- controls --------------------------------
+freq = hslider("freq [unit:Hz]", 220, 27.5, 4186, 0.01);
+gain = hslider("gain", 0.7, 0, 1, 0.01); // 琴槌速度
+gate = button("gate");
+
+stiffness = hslider("v:piano/[0]stiffness", 0.25, 0, 0.9, 0.01);
+t60       = hslider("v:piano/[1]t60 [unit:s]", 14, 1, 30, 0.1);
+damping   = hslider("v:piano/[2]damping", 0.25, 0, 0.9, 0.01);
+detune    = hslider("v:piano/[3]detune [unit:cents]", 1.2, 0, 10, 0.1);
+direct    = hslider("v:piano/[4]direct", 0.1, 0, 1, 0.01);
+sbT60     = hslider("v:soundboard/[0]sb_t60 [unit:s]", 0.4, 0.1, 2, 0.01);
+sbDamp    = hslider("v:soundboard/[1]sb_damp [unit:Hz]", 4500, 500, 12000, 1);
+volume    = hslider("v:piano/[5]volume", 0.5, 0, 1, 0.01);
+
+// ---------------------------------- hammer ----------------------------------
+// 升余弦力脉冲：接触时间约 1-3 ms，高音更短，
+// 重击也更短；亮度随速度变化（毛毡变硬，p &gt; 1）。
+trig  = gate : ba.impulsify;
+timer = (+(1) : *(1 - trig)) ~ _ : /(ma.SR); // 自按键起的秒数
+// 接触时间随音高缩短（低音约 2.5 ms，C8 约 0.3 ms）：
+// 脉冲的第一个频谱零点位于 2/tc，高音弦只有在
+// 该零点高于其基频时才会被激励。
+tc    = (0.00025 + 0.0018 * (220/freq)^(0.6)) * (1.35 - 0.6*gain)
+        : max(0.0002) : min(0.0035);
+pulse = 0.5 * (1 - cos(2*ma.PI * timer/tc)) * (timer &lt; tc);
+// dcblocker 使激励保持零均值：折叠的弦环在
+// 直流处增益为 1/(1-g0)，单极性的力脉冲会在那里堆积。
+// (f/220)^0.25 项用来抵消短脉冲能量偏低的影响，使
+// 整个键盘大致保持同一电平。
+hammer = pulse * gain^(1.5) * min(2.5, (freq/220)^(0.25))
+         : fi.lowpass(1, 700 + 11000*gain*gain)
+         : fi.dcblocker;
+
+// ---------------------------------- string ----------------------------------
+nAP = 4; // 每根弦的色散全通节数
+
+// 激励在进入环路前先经 f0/4 高通：环路的
+// 直流增益为 1/(1-g0)——短的高音弦可达数千——因此
+// 脉冲中的任何次谐波成分都会在多次往返中堆积。
+// 在环路外滤波不会影响环路的调音与损耗。
+string(f0) = fi.highpass(2, f0*0.25)
+             : (+ : de.fdelay4(4096, dl) : dispersion : lossFilter) ~ *(g0)
+with {
+    // 色散：全通系数随音高增大，正如真实钢琴上的
+    // 非谐性 B（短而硬的高音弦）。其幅度受
+    // 延迟预算限制：最高音的音环只有十几个
+    // 样本，级联自身的相位延迟必须容纳其中。
+    w = 2 * ma.PI * f0 / ma.SR;
+    budget = max(0.5, (ma.SR/f0 - 4) / nAP); // 每节的延迟预算
+    alim = max(0, (budget - 1) / (budget + 1));
+    a  = 0 - min(min(0.75, stiffness * sqrt(f0/1000)), alim);
+    ap = fi.tf1(a, 1, a);
+    dispersion = seq(i, nAP, ap);
+    // 级联在基频处的精确相位延迟（不是直流处：
+    // 滤波器的意义正在于两者不同）。
+    apDelay = nAP * (atan2(sin(w), a + cos(w))
+                     - atan2(a*sin(w), 1 + a*cos(w))) / w;
+
+    // 损耗：g0 设定低频处的 tau（c1 项，含琴桥损耗），
+    // 单极点低通加上 w^2 项（c3）。
+    g0 = exp(-6.91 / (t60 * f0));
+    // 单极点系数随音高减小：固定系数
+    // 在每次往返中吃掉固定比例，而短的高音弦每秒
+    // 要做数千次往返——中等取值会在几毫秒内
+    // 杀掉 C8。按 300/f0 缩放，可使高频损耗的速率
+    // （c3 w^2 项）在整个键盘上处于
+    // 合理范围。
+    s  = damping * min(1, 300/f0);
+    lossFilter = *(1 - s) : + ~ *(s);
+    lossDelay = atan2(s*sin(w), 1 - s*cos(w)) / w; // 在 f0 处精确
+
+    // 一次往返，减去滤波器与反馈已经造成的延迟。
+    dl = max(2, ma.SR/f0 - apDelay - lossDelay - 1);
+};
+
+cents(c) = 2^(c/1200);
+
+// 每个音两根弦，围绕 f0 失谐：它们的拍频给出钢琴的
+// 两段式衰减；两者都终止于同一琴桥。
+bridge = hammer &lt;: string(freq*cents(0-detune*0.5)), string(freq*cents(detune*0.5)) :&gt; *(0.5);
+
+// -------------------------------- soundboard --------------------------------
+// 4x4 FDN，Hadamard 反馈，各线损耗 g_i = 10^(-3 d_i / (SR*T60))
+// 以及一个低通，使衰减随频率变短，与实测音板一致。
+sbDelays(0) = 1123; sbDelays(1) = 1471; sbDelays(2) = 1811; sbDelays(3) = 2287;
+
+soundboard(x) = loop ~ si.bus(4) : mixdown
+with {
+    // ro.hadamard 是库中的蝶形 Hadamard；它未归一化
+    // （元素为 +/-1，故增益为 sqrt(4) = 2），因此每线乘 0.5，
+    // 以保持矩阵正交归一、环路至多无损。
+    line(i) = *(10^(-3.0 * sbDelays(i) / (ma.SR * sbT60)))
+              : fi.lowpass(1, sbDamp)
+              : de.delay(4096, sbDelays(i));
+    // 在矩阵之后注入：若在矩阵前相加，会在四行 Hadamard 中的
+    // 三行上抵消，只喂入一条线。
+    loop = ro.hadamard(4) : par(i, 4, *(0.5) : +(x*0.5) : line(i));
+    // 两个去相关抽头 -&gt; 立体声；约 100 Hz 弯曲波截止处的
+    // 陡峭高通，对密集的中低共振做轻微提升。
+    shape = fi.highpass(4, 95) : fi.peak_eq(3, 150, 180);
+    mixdown(y1, y2, y3, y4) = (y1 - y3 : shape), (y2 - y4 : shape);
+};
+
+// ---------------------------------- output ----------------------------------
+process = bridge &lt;: _, soundboard : mix
+with {
+    mix(d, l, r) = (d*direct + l) * volume, (d*direct + r) * volume;
+};</code></pre><br/><h2 id="oteypianov2">oteyPianoV2</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust9/exfaust9.svg"/><pre><code>declare name "OteyPiano";
+declare author "Faust port of C. Otey's piano model (Stanford Ph210, 2007) by Claude Fable AI";
+declare reference "http: // large.stanford.edu/courses/2007/ph210/otey2/";
+declare options "[midi:on] [nvoices:8]";
+
+import("stdfaust.lib");
+
+//============================================================================
+// 钢琴物理模型，移植自 C. Otey 的原始 C 代码
+// （piano.cpp / dwgs.cpp / filter.cpp / reverb.cpp，2007 年 12 月）。
+//
+// 槌击脉冲 -&gt; 击弦点梳状滤波 -&gt; 最多 3 根失谐波导弦
+// -&gt; 琴桥（按阻抗比反射）-&gt; 8 线循环 FDN
+// 音板 -&gt; 立体声抽头
+//
+// 弦的物理参数（长度、半径、张力、阻抗 Z、
+// 非谐性 B）遵循 piano.cpp 中按音符频率给出的
+// 闭式拟合；损耗滤波器与色散全通采用 filter.cpp 的
+// 精确设计。琴槌被换位为按速度成形的脉冲（原始代码
+// 以 3 倍过采样积分滞回毛毡 ODE；这里保留其
+// 感知效果——更短、更亮、高速度下格外强的接触
+// ——）。每个音使用的弦数（低音 1 根 / 中音 2 根 / 高音 3
+// 根）及其失谐 {1, 1.0003, 0.9996} 沿用原始代码的 TUNE。
+//============================================================================
+
+freq = hslider("freq [unit:Hz]", 220, 27.5, 4186, 0.01);
+gain = hslider("gain", 0.7, 0, 1, 0.01); // 琴槌速度
+gate = button("gate");
+
+c1     = hslider("v:piano/[0]c1 [tooltip:string loss, low partials]", 0.5, 0.05, 2, 0.01);
+c3     = hslider("v:piano/[1]c3 [tooltip:string loss, high partials]", 5.85, 0.5, 30, 0.05);
+direct = hslider("v:piano/[2]direct", 0.06, 0, 1, 0.01);
+volume = hslider("v:piano/[3]volume", 0.7, 0, 1, 0.01);
+
+// ------------------------- physical string parameters -----------------------
+// 直接取自 piano.cpp 中的 Piano::Piano()。
+f0c  = 27.5;
+lr   = log(freq/f0c) / log(4192.0/f0c); // 整个键盘上为 0..1
+Lstr = 0.04 + 1.4 / (1 + exp(-3.4 + 1.4*log(freq/f0c)));
+rstr = 0.002 * (1 + 0.6*log(freq/f0c))^(-1.4); // 弦半径（m）
+rhoL = ma.PI * rstr * rstr * 7850; // 线质量密度
+Tstr = (2*Lstr*freq)^2 * rhoL; // 张力
+Zstr = sqrt(Tstr * rhoL); // 弦阻抗
+Zb   = 4000; // 琴桥阻抗
+rcore = min(rstr, 0.0006); // 缠弦低音：钢芯
+Bstiff = ma.PI^3 * 200e9 * rcore^4 / (4 * Lstr*Lstr * Tstr); // 非谐性
+
+// midi 31 以下 1 根弦，41 以下 2 根，以上 3 根——按频率计算。
+midinote = 69 + 12*log(freq/440)/log(2);
+nstr  = 1 + (midinote &gt;= 31) + (midinote &gt;= 41);
+ZbEff = Zb + (nstr-1)*Zstr;
+// 琴桥结点处的速度波反射，以及驱动音板的
+// 透射（piano.cpp 的 2Z/(Z*nstrings+Zb)）。
+rBridge = (ZbEff - Zstr) / (ZbEff + Zstr);
+outCoupling = 2*Zstr / (Zstr*nstr + Zb);
+
+// ---------------------------------- hammer ----------------------------------
+trig  = gate : ba.impulsify;
+timer = (+(1) : *(1 - trig)) ~ _ : /(ma.SR); // 自按键起的秒数
+tc    = (0.0002 + 0.0009 * (220/freq)^(0.6)) * (1.35 - 0.6*gain)
+        : max(0.0002) : min(0.0035);
+pulse = 0.5 * (1 - cos(2*ma.PI * timer/tc)) * (timer &lt; tc);
+// 击弦点在弦长的 1/7 处（piano.cpp 的 hp）：从近端销
+// 反射回来的波经 hp/f 秒后反相返回，在每隔 7 个
+// 分音处形成陷波——耳朵正是借此辨认钢琴。
+hp = 1.0/7.0;
+strikeComb = _ &lt;: _, de.fdelay2(1024, hp * ma.SR/freq) : -;
+// 零均值、随速度变亮的激励（换位后的琴槌）。
+// 末级高通把次谐波挡在弦环之外（其直流
+// 增益极大）；它位于此处、作用于激励，而不在环路内部，
+// 否则其相位超前会使环路失谐。
+hammer = pulse * gain^(1.5) * min(2.5, (freq/220)^(0.25))
+         : fi.lowpass(1, 1400 + 16000*gain*gain)
+         : strikeComb
+         : fi.dcblocker : fi.highpass(2, freq*0.25);
+
+// ---------------------------------- string ----------------------------------
+// 每根弦一个折叠波导环：延迟、Thiran 色散、损耗
+// 滤波器、琴桥反射。滤波器采用 filter.cpp 的精确设计，
+// 延迟线按其测得的 f0 处相位延迟相应缩短。
+
+// Thiran 全通节延迟取自 filter.cpp 的经验式 Db(B,f,M)。
+thiranD(f, M) = exp(Cd - Ikey*kd)
+with {
+    C1 = ba.if(M == 4, 0.069618, 0.071089);
+    C2 = ba.if(M == 4, 2.0427,   2.1074);
+    k1 = ba.if(M == 4, -0.00050469, -0.0026580);
+    k2 = ba.if(M == 4, -0.0064264,  -0.014811);
+    k3 = ba.if(M == 4, -2.8743,     -2.9018);
+    logB = log(Bstiff);
+    kd = exp(k1*logB*logB + k2*logB + k3);
+    Cd = exp(C1*logB + C2);
+    Ikey = log(f * 2^(1.0/12.0) / 27.5) / log(2^(1.0/12.0));
+};
+
+// 单根弦的前向路径：延迟、Thiran 色散、损耗滤波器。
+// 琴桥反射不再折入此处——它发生在下面的
+// bridge 中的共享结点处，以便各弦耦合。
+stringBody(f0) = de.fdelay4(4096, dl) : dispersion : lossFilter
+with {
+    w = 2 * ma.PI * f0 / ma.SR;
+
+    // 色散：400 Hz 以下 4 个 Thiran 节，以上 1 个（dwgs.cpp），每节
+    // 延迟为 D；D &lt;= 1 时旁路，与 thiriandispersion() 一致。
+    M = ba.if(f0 &gt; 400, 1, 4);
+    D = thiranD(f0, M);
+    active(i) = (D &gt; 1) &amp; ((i == 0) | (f0 &lt;= 400));
+    a1t = -2*(D - 2)/(D + 1);
+    a2t = (D - 1)*(D - 2)/((D + 1)*(D + 2));
+    sec(i) = fi.tf2(select2(active(i), 1, a2t), select2(active(i), 0, a1t),
+                    select2(active(i), 0, 1),
+                    select2(active(i), 0, a1t), select2(active(i), 0, a2t));
+    dispersion = seq(i, 4, sec(i));
+    // 一个有效节在 f0 处的精确相位延迟。
+    pdSec = 0 - (atan2(0 - (a1t*sin(w) + sin(2*w)), a2t + a1t*cos(w) + cos(2*w))
+                 - atan2(0 - (a1t*sin(w) + a2t*sin(2*w)), 1 + a1t*cos(w) + a2t*cos(2*w))) / w
+            : +(2*ma.PI/w * ((a2t + a1t*cos(w) + cos(2*w)) &lt; 0)); // 解卷绕
+    dispDelay = M * pdSec * (D &gt; 1);
+
+    // 损耗滤波器，即 filter.cpp 的 loss()：H(z) = g(1+a1)/(1 + a1 z^-1)，
+    // 其中 g = 1 - c1/f0，a1 由 c3 得出——即 tau(w) = 1/(c1 + c3 w^2) 设计。
+    lg  = 1 - c1/f0;
+    bb  = 4*c3 + f0;
+    a1l = (0 - bb + sqrt(bb*bb - 16*c3*c3)) / (4*c3);
+    lossFilter = fi.tf1(lg*(1 + a1l), 0, a1l);
+    pdLoss = atan2(0 - a1l*sin(w), 1 + a1l*cos(w)) / w;
+
+    dl = max(2, ma.SR/f0 - dispDelay - pdLoss - 1);
+};
+
+// 原始代码的 TUNE[3] = {1, 1.0003, 0.9996}；多余弦在该音区
+// 用弦更少时静音。所有弦在同一个
+// 散射结点处汇入琴桥（dwgs.cpp 在各弦间分担负载）：反射回
+// 第 k 根弦的波为 o_k - t*S，其中 S 是入射弦
+// 速度之和，t = 2Z/(nZ+Zb)。对单根弦，这退化为
+// (Zb-Z)/(Zb+Z) 反射；对两根或三根弦，同相运动
+// 把能量灌入琴桥并迅速衰减，而失谐的弦
+// 逐渐错相并持续——这就是钢琴的两段式衰减。
+tJ = 2*Zstr / (Zstr*nstr + Zb);
+bridge = (couple ~ si.bus(3)) : sumS * 100
+with {
+    on2 = nstr &gt;= 2;
+    on3 = nstr &gt;= 3;
+    sumS(o1, o2, o3) = tJ * (o1 + o2*on2 + o3*on3);
+    couple(o1, o2, o3) = stringBody(freq,        hammer + o1 - s),
+                         stringBody(freq*1.0003, hammer + o2 - s),
+                         stringBody(freq*0.9996, hammer + o3 - s)
+    with { s = sumS(o1, o2, o3); };
+};
+
+// -------------------------------- soundboard --------------------------------
+// 照搬 reverb.cpp：8 条延迟线、循环反馈矩阵，其首行
+// 为 {a, 1+a, a, ..., a}，a = -1/4（所有特征值都在单位圆上），
+// 每条线一个 loss(Fs/len, 20, 20) 滤波器。原始代码把各线
+// 以交替 +/-1/8 求和为单声道；第二个以不同方式交替的抽头
+// 为立体声提供同样有效的去相关声道。
+sbLen(0) = 37;  sbLen(1) = 87;  sbLen(2) = 181; sbLen(3) = 271;
+sbLen(4) = 359; sbLen(5) = 592; sbLen(6) = 687; sbLen(7) = 721;
+
+soundboard(x) = (fb ~ si.bus(8)) : taps
+with {
+    aC = -0.25;
+    lossLine(k) = fi.tf1(lg*(1 + a1l), 0, a1l)
+    with {
+        f0 = ma.SR / sbLen(k);
+        lg  = 1 - 20.0/f0;
+        bb  = 4*20.0 + f0;
+        a1l = (0 - bb + sqrt(bb*bb - 16.0*20.0*20.0)) / (4*20.0);
+    };
+    line(k) = de.delay(1024, sbLen(k)) : lossLine(k);
+    fb(o0, o1, o2, o3, o4, o5, o6, o7) =
+        line(0, x + aC*s + o1), line(1, x + aC*s + o2),
+        line(2, x + aC*s + o3), line(3, x + aC*s + o4),
+        line(4, x + aC*s + o5), line(5, x + aC*s + o6),
+        line(6, x + aC*s + o7), line(7, x + aC*s + o0)
+    with { s = o0+o1+o2+o3+o4+o5+o6+o7; };
+    taps(o0, o1, o2, o3, o4, o5, o6, o7) =
+        0.5/8 * (o0 - o1 + o2 - o3 + o4 - o5 + o6 - o7),
+        0.5/8 * (o0 + o1 - o2 - o3 + o4 + o5 - o6 - o7);
+};
+
+// ---------------------------------- output ----------------------------------
+process = bridge &lt;: _, soundboard : mix
+with {
+    mix(d, l, r) = (d*direct + l) * volume, (d*direct + r) * volume;
+};</code></pre><br/><h2 id="sawtoothlab">sawtoothLab</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust10/exfaust10.svg"/><pre><code class="language-faust">declare name "sawtoothLab";
+declare version "0.0";
+declare author "JOS, revised by RM";
+declare description "An application demonstrating the different sawtooth oscillators of Faust.";
+
+import("stdfaust.lib");
+
+process = dm.sawtooth_demo;</code></pre><br/><h2 id="virtualanalog">virtualAnalog</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust11/exfaust11.svg"/><pre><code class="language-faust">declare name "VirtualAnalog";
+declare version "0.0";
+declare author "JOS, revised by RM";
+declare description "Virtual analog oscillator demo application.";
+
+import("stdfaust.lib");
+
+process = dm.virtual_analog_oscillator_demo;</code></pre><br/><h2 id="virtualanaloglab">virtualAnalogLab</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/generator/exfaust12/exfaust12.svg"/><pre><code class="language-faust">declare name "virtualAnalogLab";
+
+import("stdfaust.lib");
+
+process = 
+ vgroup("[1]", dm.virtual_analog_oscillator_demo) : 
+ vgroup("[2]", dm.moog_vcf_demo) : 
+ vgroup("[3]", dm.spectral_level_demo)
+ // 另见：vgroup("[3]", dm.fft_spectral_level_demo(32))
+  &lt;: _,_;</code></pre><br/>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/examples/generator/" rel="noreferrer noopener">https://faustdoc.grame.fr/examples/generator/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

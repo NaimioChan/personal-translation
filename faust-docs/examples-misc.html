@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>misc - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：misc">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="misc">misc</h1><h2 id="autopan">autopan</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust0/exfaust0.svg"/><pre><code class="language-faust">// --------------------------autopan----------------------------
+//
+// 对立体声输入，左右声道的增益
+// 按与速率同步的正弦振荡器调节。本示例
+// 反推自 Ableton Live 的「Auto Pan」音频
+// 效果。我们没有实现「spin」功能，
+// 即让两个 LFO 具有不同频率。
+// 也没有使用三角波、方波、噪声等其它 LFO。
+//
+// 用法
+//
+// 
+// si.bus(2) : autopan(amount, rate, phase, shape) : si.bus(2)
+// 
+//
+// 其中：
+//
+// - amount：调节 LFO 调制量，该调制量会
+// 施加到输入信号上
+// - rate：设置 LFO 的频率，单位为赫兹
+// - phase：调节左右声道波形之间的偏移量；
+// 180 表示两个 LFO 完全反相。
+// 取其它值时，你会听到
+// 更多整体音量被压低
+// 的时刻。
+// - shape：调高 shape 会把波形推向
+// 上下限，使其形状「变硬」
+//------------------------------------------------------------
+import("stdfaust.lib");
+
+autopan(amount, rate, phase, shape) = _*gainLeft, _*gainRight
+with {
+
+    // 一个饱和器
+    // 假设 x 是 -1 到 1 之间的信号。该函数
+    // 把输出推向 -1 和 1。随着 shape
+    // 参数从 0 变到 1，正弦输入会
+    // 越来越接近方波。若 shape 为零，
+    // 函数不改变输入信号。
+    saturator(shape, x) = result
+    with {
+        // 可以把 tanh 换成别的饱和器
+        result = x, ma.tanh(x*10.) : it.interpolate_linear(shape);
+    };
+
+    phase2Gain(phase) = os.oscp(rate, phase)
+        : saturator(shape) // 注释掉这一行即可去掉饱和器
+        : it.remap(-1., 1., 1.-amount, 1.);
+
+    gainLeft = 0. : phase2Gain;
+    gainRight = phase : ma.deg2rad : phase2Gain;
+};
+
+amount = hslider("[0]Amount[style:knob]", 0., 0., 1., .001);
+rate = hslider("[1]Rate[style:knob][unit:Hz][scale:log]", 1., .05, 90., .001);
+phase = hslider("[2]Phase[style:knob][unit:deg]", 180., 0., 360., 15) : si.smoo;
+shape = hslider("[3]Shape[style:knob]", 0., 0., 1., 0.001) : si.smoo;
+
+process = hgroup("Auto Pan", autopan(amount, rate, phase, shape));</code></pre><br/><h2 id="capture">capture</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust1/exfaust1.svg"/><pre><code class="language-faust">declare name        "capture";
+declare version     "1.0";
+declare author      "Grame";
+declare license     "BSD";
+declare copyright   "(c)GRAME 2006";
+
+//-------------------------------------------------
+// Capture：录制最长 8 秒的声音，并
+// 循环回放录下的声音
+//-------------------------------------------------
+
+import("stdfaust.lib");
+
+B = button("Capture"); // 按下时采集声音
+I = int(B); // 把按钮信号从浮点转为整数
+R = (I-I') &lt;= 0; // 按下按钮时重置采集
+D = (+(I):*(R))~_; // 按下按钮期间计算采集时长：0..NNNN0..MMM
+
+capture = *(B) : (+ : de.delay(8*65536, D-1)) ~ *(1.0-B);
+
+level = hslider("level (db)", 0, -96, 4, 0.1) : ba.db2linear : si.smoo;
+
+process = vgroup("Audio Capture", capture : *(level));</code></pre><br/><h2 id="drumkit">drumkit</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust2/exfaust2.svg"/><pre><code class="language-faust">//-------------------------------------------------
+// 一个简单的、完全生成的
+// 鼓机
+//-------------------------------------------------
+
+import("stdfaust.lib");
+
+drumkit(gate, ks, ss, hs) = k_seq, s_seq, h_seq :&gt; /(3)
+    with {
+        N = outputs(ks);
+        env = en.ar(0.001, 0.05);
+        kick(g) = g : env : *(os.osc(100));
+        snare(g) = g : env : *(no.noise : fi.low_shelf(-60, 3000));
+        hihat(g) = g : env : *(no.noise : fi.highpass(3, 10000));
+        sequencer(t) = t : ba.selectn(N, gate : ba.pulse_countup_loop(N - 1, 1)) : *(gate : mem);
+        k_seq = sequencer(ks) : kick;
+        s_seq = sequencer(ss) : snare;
+        h_seq = sequencer(hs) : hihat;
+    };
+
+drumkit_ui(n) = drumkit(attach(gate, nn), ks, ss, hs)
+    with {
+        gate = ba.pulse(ba.tempo(bpm));
+        ks = par(i, n, checkbox("v:Drum kit/h:[0]kick/%2i"));
+        ss = par(i, n, checkbox("v:Drum kit/h:[1]snare/%2i"));
+        hs = par(i, n, checkbox("v:Drum kit/h:[2]hihat/%2i"));
+        bpm = hslider("v:Drum kit/[4]BPM", 350, 10, 800, 1);
+        mon = par(i, n, hbargraph("v:Drum kit/h:[3]seq/%2i[style:led]", 0, 1));
+        nn = 1 : ba.selectoutn(n, gate : ba.pulse_countup_loop(n - 1, 1)) : mon :&gt; _;
+    };
+
+drumkit_ui_demo = drumkit_ui(15) &lt;: (_, _);
+
+process = drumkit_ui_demo;</code></pre><br/><h2 id="inlooper">inlooper</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust3/exfaust3.svg"/><pre><code class="language-faust">// --------------------------inlooper----------------------------
+//
+// # inlooper
+//
+// 一个简单的循环器，可从单声道输入采集、回放、倒放并以可调速度循环。
+// 到达采集区段末尾时会绕回开头。
+// 循环的起点和终点位置以及播放方向均可控制。
+// 水平条形图显示循环内的当前播放位置。
+//
+// 用法
+//
+// 
+// _ : inlooper(length) : _;
+// 
+// 其中：
+//
+// - length：循环时长，单位为样本（常量数值表达式）。
+//
+//------------------------------------------------------------
+
+import("stdfaust.lib");
+
+declare name      "inlooper";
+declare version   "1.0";
+declare author    "Grame";
+declare license   "BSD";
+declare copyright "(c)GRAME 2025";
+
+inlooper(length, x) = attach(rwtable(length, 0.0, rec_index, x, loop_index), pos)
+with {
+
+    // 用户控件
+    speed = hslider("h:Controls/[3]Speed", 1, 0.2, 5, 0.01); // 控制播放速度的滑块
+    record = button("h:Controls/[4]Record"); // 开始/停止录制的按钮
+    play = checkbox("h:Controls/[5]Play/Stop"); // 开始/停止回放的复选框
+    reverse = checkbox("h:Controls/[6]Reverse"); // 倒放复选框
+
+    // 循环起点与终点位置，带平滑（按采集到的输入长度缩放）
+    loop_start = length * hslider("[1]Loop_start", 0, 0, 1, 0.01) : si.smoo;
+    loop_end = length * hslider("[2]Loop_end", 1, 0, 1, 0.01) : si.smoo;
+
+    // 跟踪录制位置的索引计数器
+    rec_index = (+(1) : %(length)) ~ *(record);
+
+    // 循环内的当前播放位置
+    loop_index = min_loop_pos + ma.modulo(index, max(ma.EPSILON, loop_length))
+    with {
+
+        // 循环位置的下限
+        min_loop_pos = min(loop_start, loop_end);
+
+        // 循环时长
+        loop_length = abs(loop_end - loop_start);
+
+        // 带方向的播放速度
+        read_speed = speed * ba.if(reverse, -1, 1);
+
+        // 跟踪播放位置的索引计数器
+        index = windex
+        letrec {
+            'windex = windex + play * read_speed;
+        };
+
+    };
+
+    // 以水平条形图显示播放位置
+    pos = (loop_index / length) : hbargraph("[7]Position", 0, 1);
+
+};
+
+process = inlooper(MAX_LENGTH)
+with {
+    MAX_LENGTH = 5 * 44100; // 44100 Hz 下的 5 秒，必须是常量
+};</code></pre><br/><h2 id="matrix">matrix</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust4/exfaust4.svg"/><pre><code class="language-faust">declare name      "matrix";
+declare version   "1.0";
+declare author    "Grame";
+declare license   "BSD";
+declare copyright "(c)GRAME 2006";
+
+//-----------------------------------------------
+// 音频矩阵：N 个输入 × M 个输出
+//-----------------------------------------------
+
+import("stdfaust.lib");
+
+Fader(in)    = ba.db2linear(vslider("Input %in", -10, -96, 4, 0.1));
+Mixer(N,out) = hgroup("Output %out", par(in, N, *(Fader(in)) ) :&gt; _ );
+Matrix(N,M)  = tgroup("Matrix %N x %M", par(in, N, _) &lt;: par(out, M, Mixer(N, out)));
+
+process = Matrix(8, 8);</code></pre><br/><h2 id="miditester">midiTester</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust5/exfaust5.svg"/><pre><code class="language-faust">declare name      "midiTester";
+declare version   "1.0";
+declare author    "Vincent Rateau, GRAME";
+declare license   "GPL v3";
+declare reference "www.sonejo.net";
+
+// FAUST MIDI 测试器
+
+process = *(1), (vgroup("FAUST MIDI TESTER", hgroup("[1]", controltester, controlchantester, noteontester, noteonchantester, noteofftester, noteoffchantester, keypresschantester, midiclocktester), hgroup("[2]", kattester, katchantester, pctester, pcchantester, chattester, chatchantester, pitchwheeltester, pitchwheelchantester) :&gt; _)) : attach;
+
+///////////////////////////
+
+// Ctrl 测试器（ctrl）：tester(midi in, midi out)
+controltester = vgroup("CTRL IN/OUT", valuetest(50,51), booltest(100,101))
+with {
+    valuetest(i,o) = hslider("Ctrl Value IN (Ctrl %i) [midi:ctrl %i]", 60, 0, 127, 1) : hbargraph("Ctrl Value OUT (Ctrl %o) [midi:ctrl %o]", 0, 127);
+    booltest(i,o) = checkbox("Ctrl Bool IN (Ctrl %i) [midi:ctrl %i]") : hbargraph("Ctrl Bool OUT (Ctrl %o) [midi:ctrl %o]", 0, 1);
+};
+
+// Ctrl 通道测试器（ctrl chan）：tester(midi in, midi out)
+controlchantester = vgroup("CTRL CHAN IN/OUT", valuetest(50,2,74,3))
+with {
+    valuetest(i,ic,o,oc) = hslider("Ctrl Value IN (Ctrl %i Channel %ic) [midi:ctrl %i %ic]", 60, 0, 127, 1) : hbargraph("Ctrl Value OUT (Ctrl %o) Channel OUT(Chan %oc) [midi:ctrl %o %oc]", 0, 127);
+};
+
+// 音符测试器（keyon）：tester(midi in, midi out)
+noteontester = vgroup("NOTE ON IN/OUT", valuetest(50,51), booltest(100,101))
+with {
+    valuetest(i,o) = hslider("NoteOn Value IN (Note %i) [midi:keyon %i]", 60, 0, 127, 1) : hbargraph("NoteOn Value OUT (Note %o) [midi:keyon %o]", 0, 127);
+    booltest(i,o) = checkbox("NoteOn Bool IN (Note %i) [midi:keyon %i]") : hbargraph("NoteOn Bool OUT (Note %o) [midi:keyon %o]", 0, 1);
+};
+
+// 音符通道测试器（keyon）：tester(midi in, midi out)
+noteonchantester = vgroup("NOTE ON CHAN IN/OUT", valuetest(50, 2, 51, 3), booltest(50, 2, 101, 3))
+with {
+    valuetest(i, ic, o, oc) = hslider("NoteOn Value IN (Note %i Channel %ic) [midi:keyon %i %ic]", 60, 0, 127, 1) : hbargraph("NoteOn Value OUT (Note %o Chan %oc) [midi:keyon %o %oc]", 0, 127);
+    booltest(i, ic, o, oc) = checkbox("NoteOn Chan Bool IN (Note %i Channel %ic) [midi:keyon %i %ic]") : hbargraph("NoteOn Chan Bool OUT (Note %o Channel %oc) [midi:keyon %o %oc]", 0, 1);
+};
+
+// 音符测试器（keyoff）：tester(midi in, midi out)
+noteofftester = vgroup("NOTE OFF IN/OUT", valuetest(50,51), booltest(100,101))
+with {
+    valuetest(i,o) = hslider("NoteOff Value IN (Note %i) [midi:keyoff %i]", 60, 0, 127, 1) : hbargraph("NoteOff Value OUT (Note %o) [midi:keyoff %o]", 0, 127);
+    booltest(i,o) = checkbox("NoteOff Bool IN (Note %i) [midi:keyoff %i]") : hbargraph("NoteOff Bool OUT (Note %o) [midi:keyoff %o]", 0, 1);
+};
+
+// 音符通道测试器（keyoff）：tester(midi in, midi out)
+noteoffchantester = vgroup("NOTE OFF CHAN IN/OUT", valuetest(50, 2, 51, 3), booltest(50, 2, 101, 3))
+with {
+    valuetest(i, ic, o, oc) = hslider("NoteOff Value IN (Note %i Channel %ic) [midi:keyoff %i %ic]", 60, 0, 127, 1) : hbargraph("NoteOff Value OUT (Note %o Channel %oc) [midi:keyoff %o %oc]", 0, 127);
+    booltest(i, ic, o, oc) = checkbox("NoteOff Bool IN (Note %i Channel %ic) [midi:keyoff %i %ic]") : hbargraph("NoteOff Bool OUT (Note %o Channel %oc) [midi:keyoff %o %oc]", 0, 1);
+};
+
+// 按键通道测试器（keypress）：tester(midi in, midi out)
+keypresschantester = vgroup("KEY PRESS CHAN IN/OUT", valuetest(50, 2, 51, 3), booltest(50, 2, 101, 3))
+with {
+    valuetest(i, ic, o, oc) = hslider("Pressure Value IN (Note %i Channel %ic) [midi:keypress %i %ic]", 60, 0, 127, 1) : hbargraph("Note Value OUT (Note %o Channel %oc) [midi:keypress %o %oc]", 0, 127);
+    booltest(i, ic, o, oc) = checkbox("Pressure Bool IN (Note %i Channel %ic) [midi:keypress %i %ic]") : hbargraph("Pressure Bool OUT (Note %o Channel %oc) [midi:keypress %o %oc]", 0, 1);
+};
+
+// Midisync 测试器
+midiclocktester = vgroup("MIDI SYNC (IN)", clock, startstop)
+with {
+    clock = checkbox("MIDI clock signal [midi:clock]");
+    startstop = checkbox("MIDI START/STOP [midi:start] [midi:stop]");
+};
+
+// 按键触后测试器（keypress）：tester(midi in, midi out)
+kattester = vgroup("KEY AFTERTOUCH (KAT) IN/OUT",valuetest(50,51), booltest(100,101))
+with {
+    valuetest(i,o) = hslider("Note KAT Value IN (Note %i) [midi:keypress %i]", 60, 0, 127, 1) : hbargraph("Note KAT Value OUT (Note %o) [midi:keypress %o]", 0, 127);
+    booltest(i,o) = checkbox("Note KAT Bool IN (Note %i) [midi:keypress %i]") : hbargraph("Note KAT Bool OUT (Note %o) [midi:keypress %o]", 0, 1);
+};
+
+// 按键触后测试器（keypress）：tester(midi in, midi out)
+katchantester = vgroup("KEY AFTERTOUCH CHAN (KAT) IN/OUT",valuetest(50,2,51,3), booltest(100,2,101,3))
+with {
+    valuetest(i,ic,o,oc) = hslider("Note KAT Value IN (Note %i) (Chan %ic) [midi:keypress %i %ic]", 60, 0, 127, 1) : hbargraph("Note KAT Value OUT (Note %o) (Chan %oc) [midi:keypress %o %oc]", 0, 127);
+    booltest(i,ic,o,oc) = checkbox("Note KAT Bool IN (Note %i) (Chan %ic) [midi:keypress %i %ic]") : hbargraph("Note KAT Bool OUT (Note %o) (Chan %oc)[midi:keypress %o %oc]", 0, 1);
+};
+
+// 音色切换测试器（pgm）：tester(midi in, midi out)
+pctester = vgroup("PROGRAM CHANGE (PC) IN/OUT",valuetest(1,2), booltest(1,2))
+with {
+    valuetest(i,o) = hslider("ProgramChange Value IN (PC %i) [midi:pgm %i]", 60, 0, 127, 1) : hbargraph("ProgramChange Value OUT (PC %o) [midi:pgm %o]", 0, 127);
+    booltest(i,o) = checkbox("ProgramChange Bool IN (PC %i) [midi:pgm %i]") : hbargraph("ProgramChange Bool OUT (PC %o) [midi:pgm %o]", 0, 1);
+};
+
+// 音色切换通道测试器（pgm）：tester(midi in, midi out)
+pcchantester = vgroup("PROGRAM CHANGE CHAN (PC) IN/OUT",valuetest(1, 2, 2, 3), booltest(1, 2, 2, 3))
+with {
+    valuetest(i,ic,o,oc) = hslider("ProgramChange Value IN (PC %i) (CHAN %ic) [midi:pgm %i %ic]", 60, 0, 127, 1) : hbargraph("ProgramChange Value OUT (PC %o) (CHAN %oc) [midi:pgm %o %oc]", 0, 127);
+    booltest(i,ic,o,oc) = checkbox("ProgramChange Bool IN (PC %i) (CHAN %ic) [midi:pgm %i %ic]") : hbargraph("ProgramChange Bool OUT (PC %o) (CHAN %oc) [midi:pgm %o %oc]", 0, 1);
+};
+
+// 通道触后测试器（chanpress）：tester(midi in, midi out)
+chattester = vgroup("CHANNEL AFTERTOUCH (CHAT) IN/OUT",valuetest(50,51), booltest(100,101))
+with {
+    valuetest(i,o) = hslider("Note CHAT Value IN (Note %i) [midi:chanpress %i]", 60, 0, 127, 1) : hbargraph("Note CHAT Value OUT (Note %o) [midi:chanpress %o]", 0, 127);
+    booltest(i,o) = checkbox("Note CHAT Bool IN (Note %i) [midi:chanpress %i]") : hbargraph("Note CHAT Bool OUT (Note %o) [midi:chanpress %o]", 0, 1);
+};
+
+// 通道触后测试器（chanpress）：tester(midi in, midi out)
+chatchantester = vgroup("CHANNEL AFTERTOUCH CHAN (CHAT) IN/OUT",valuetest(50,2,51,3), booltest(100,2,101,3))
+with {
+    valuetest(i,ic,o,oc) = hslider("Note CHAT Chan Value IN (Note %i) (Chan %ic) [midi:chanpress %i %ic]", 60, 0, 127, 1) : hbargraph("Note CHAT Value OUT (Note %o) (Chan %oc) [midi:chanpress %o %oc]", 0, 127);
+    booltest(i,ic,o,oc) = checkbox("Note CHAT Bool IN (Note %i) (Chan %ic) [midi:chanpress %i %ic]") : hbargraph("Note CHAT Bool OUT (Note %o) (Chan %oc) [midi:chanpress %o %oc]", 0, 1);
+};
+
+// 弯音轮测试器（pitchwheel）：tester(midi in, midi out)
+pitchwheeltester = vgroup("PITCHWHEEL IN/OUT",valuetest, booltest)
+with {
+    valuetest = hslider("Pitchwheel Value IN  [midi:pitchwheel]", 0, -8192, 8191, 1) : hbargraph("Pitchwheel Value OUT[midi:pitchwheel]", -8192, 8191);
+    booltest = checkbox("Pitchwheel Bool IN [midi:pitchwheel]") : hbargraph("Pitchwheel Bool OUT [midi:pitchwheel]", 0, 1);
+};
+
+// 弯音轮通道测试器（pitchwheel）：tester(midi in, midi out)
+pitchwheelchantester = vgroup("PITCHWHEEL CHAN IN/OUT",valuetest(2, 15), booltest(2, 15))
+with {
+    valuetest(ic, oc) = hslider("Pitchwheel Value IN (Chan %ic) [midi:pitchwheel %ic]", 0, -8192, 8191, 1) : hbargraph("Pitchwheel Value OUT (Chan %oc)[midi:pitchwheel %oc]", -8192, 8191);
+    booltest(ic, oc) = checkbox("Pitchwheel Bool IN (Chan %ic) [midi:pitchwheel %ic]") : hbargraph("Pitchwheel Bool OUT (Chan %oc) [midi:pitchwheel %oc]", 0, 1);
+};</code></pre><br/><h2 id="paradigma">paradigma</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust6/exfaust6.svg"/><pre><code>// 使用稀疏卷积滤波器和匹配冲激响应的噪声进行调制合成
+// ========================================================================
+//
+// 一个在 x、y、z 轴上振荡的「3D」振荡器，x、y 的半径差分
+// 与可选的、匹配冲激响应的同步噪声一起进入三角滤波器，随后是磁拾音失真。
+//
+// 适合各种半自然音色，参数少而含义明确，调音很快。
+//
+// y 轴振荡由 MIDI 音高设定，x 与 z 按纯律比值失谐。
+// x 比值为负时振荡器会重新调音。
+// 反馈作用于各个振荡分量。
+//  
+//
+// 三份加权（微分）副本带时变偏移，在有损积分器中相加
+// （稀疏卷积），之后是峰值谐振滤波器。
+//
+// 卷积表若积分两次会得到（变化的）三角冲激响应，
+// 滚降为 -12 dB/倍频程，并带有变化的等间隔陷波。
+// 此处只使用一个积分器。
+// 变化的滤波器形状给出伪自然移动的陷波，并带频谱倾斜，
+// 并相对时域响应峰值把相位反向因果地摊开。
+// 这类似若干原声乐器中扩散的波形或变化的激励。
+//
+// symmetry 参数控制下降沿，在近乎瞬时的陡沿
+// 与对称三角脉冲之间变化，对应不同的激励与音色。
+//
+// 「adaptive」参数决定滤波器跟随音高与包络的程度。
+// Q 增加一个额外的峰值谐振，随后是额外的高通和磁拾音整形器。
+// 另有一个单极点低通硬连接到力度（和音高）。
+//
+// 包络硬连接到各振荡的幅度和滤波器的上升时间。
+//
+// LFO 连接到音高。
+//
+// 灵感来自声音合成史，即 Trautonium、Mini Moog、Roland Juno、相位调制合成、
+// Variophon 管乐器合成器、物理建模，以及 Thomas D. Rossing 的工作。
+//
+// gm 2020, 2026-8-24 (this version)
+//
+//
+//
+// 参考文献：
+// Kot, Vítězslav. (2006). DIGITAL SOUND EFFECTS ECHO AND REVERB BASED ON NON EXPONENTIALLY DECAYING COMB FILTER.
+// https://en.wikipedia.org/wiki/Variophon
+// Parker, Julian &amp; Zavalishin, Vadim &amp; Le Bivic, Efflam. (2016).
+// Reducing The Aliasing Of Nonlinear Waveshaping Using Continuous-Time Convolution.
+// Nicholas G. Horton, Thomas R. Moore. (2008). Modelling The Magnetic Pickup Of An Electric Guitar.
+// Frei, Beat. Digital Sound Generation I &amp; II, ICST Zurich University of the Arts
+// Smith, J.O. Physical Audio Signal Processing,http://ccrma.stanford.edu/~jos/pasp/, online book, 2010 edition
+
+declare options "[midi:on][nvoices:16]";
+declare options "[-vec]";
+declare name "Paradigma v0145";
+declare version "0.1.45";
+declare author "gabriel | vox angelica";
+
+import("stdfaust.lib");
+
+// 频率比值表
+frtonum = waveform{1, 16, 9, 6, 5, 4, 7, 3, 8, 5, 7, 15};
+frtodiv = waveform{1, 15, 8, 5, 4, 3, 5, 2, 5, 3, 4, 8};
+
+// 匹配冲激响应的噪声种子：钢琴、大提琴、吉他
+// 这些种子同步后生成近似于二次微分冲激响应的序列
+// （还可以通过加重冲激响应起始部分或做频谱匹配来进一步改进）
+seeds = waveform{560098197, 478917317, 82993751};
+
+// MIDI
+// 最小力度
+minvelo = 1/32;
+midigrp(x) = hgroup("[1]MIDI", x);
+f = nentry("freq[hidden:1]", 200, 40, 2000, 0.1);
+kmidi = nentry("key[hidden:1]", 69, 0, 127, 1);
+bend = ba.semi2ratio(hslider("bend[hidden:1][midi:pitchwheel][style: knob]", 0, -2, 2, 0.01));
+gain = nentry("gain[hidden:1]", 0.4, 0, 1, 0.01)&lt;:*:_*(1-minvelo):_+minvelo;
+master = hslider("volume[midi:ctrl 7]", 0.6, 0, 1, 0.01);
+gate = button("gate[hidden:1]");
+
+// 振荡器参数
+oscgrp(x) = hgroup("[2]Oscillator", x);
+rto1sel = oscgrp(hslider("[1]x[style:knob]", -12, -36, 36, 1));
+rto2sel = oscgrp(hslider("[2]z[style:knob]", 7, -36, 36, 1));
+fbka = oscgrp(hslider("[3]Feedback[style:knob]", 0, 0, 1, 0.01)&lt;:*:*(0.5/ma.PI));
+detune = oscgrp(hslider("[4]Detune[style:knob]", 0.1, 0, 0.5, 0.005)/ma.SR);
+nxamnt = oscgrp(hslider("[5]Osc / Noise[style:knob]", 0.7, 0, 1, 0.005)&lt;:*);
+constnx = oscgrp(checkbox("[6]continous"));
+nxselect = oscgrp(hslider("[7]NoiseColor[style:knob]", 0, 0, 2, 1));
+
+nxseed = seeds, nxselect:rdtable;
+
+// LFO 与包络参数
+lfogrp(x) = hgroup("[3]Envelope &amp; LFO", x);
+enva = (lfogrp(ba.db2linear(hslider("[1]A[style:knob]", 20, 15, 66, 1))/1000));
+envd = (lfogrp(ba.db2linear(hslider("[2]D[style:knob]", 71, 26, 100, 1))/1000)*envpscal);
+envs = (lfogrp(hslider("[3]S[style:knob]", 0, 0, 1, 0.01)));
+envr = (lfogrp(ba.db2linear(hslider("[4]R[style:knob]", 42, 26, 100, 1))/1000)*envpscal);
+lfof = lfogrp(hslider("[5]LFO Hz[style:knob]", 3.5, 0.1, 12, 0.1));
+lfvibra = lfogrp(hslider("[6]Vibrato[style:knob]", 0.05, 0, 1, 0.01))&lt;:*;
+
+env = en.adsre(enva, envd*envpscal, envs, envr*envpscal, gate);
+envlfo = en.adsre(enva, 0, 1, envr*envpscal, gate);
+envg = env*gain;
+envgr3 = env*(gain^(1/3));
+
+lfosn = qsin(mphasor(lfof/ma.SR))*envlfo;
+
+// 三角滤波器参数
+fltgrp(x) = hgroup("[4]Filter", x);
+wid = fltgrp(hslider("[1]RisingEdge[style:knob]", 1.67, 1, 2.64, 0.001))&lt;:_, _:*:_*(-1):2^_;
+widsym = fltgrp(hslider("[2]Symmetry[style:knob]", 0, 0, 1, 0.01));
+fiq = fltgrp(hslider("[3]Q[style:knob]", 1.25, 0.5, 3.87, 0.01))&lt;:*;
+fiadapt = fltgrp(hslider("[4]Adaption[style:knob]", 2.5, 1, 3, 0.25));
+
+hpoffs = fltgrp(hslider("[5]HighPass[style:knob]", -2, -2, 2, 0.03125)):2^_;
+pickupdrive = fltgrp(hslider("[6]Pickup[style:knob]", -2, -2, 2, 0.03125)):2^_;
+
+// 调制频率比值
+rto1oct = rto1sel/12:floor;
+rto1semi = rto1sel+36:_%12;
+rto1a = frtonum, rto1semi:rdtable;
+rto1b = frtodiv, rto1semi:rdtable;
+rto1 = (rto1a/rto1b)*(2^rto1oct);
+rto1r = min((1/rto1), 1);
+
+rto2oct = rto2sel/12:floor;
+rto2semi = rto2sel+36:_%12;
+rto2a = frtonum, rto2semi:rdtable;
+rto2b = frtodiv, rto2semi:rdtable;
+rto2 = (rto2a/rto2b)*(2^rto2oct);
+rto2r = min((1/rto2), 1);
+
+// x 振荡低于基频时重新调音
+retune = ba.if((rto1oct+rto1semi)&lt;0, rto1, 1);
+
+// 音高
+lg2f = ma.log2(f/440);
+// 按音高的轻微失谐
+stretch = 0.003*lg2f;
+// 按音高的缩放
+envpscal = (-1.5*lg2f):ba.db2linear;
+// 含调制与失谐的 f
+fplus = f*bend+lfosn*lfvibra*f*0.5/12*envg+stretch;
+
+w = retune*f/ma.SR;
+w2 = rto1*w;
+w3 = rto2*w;
+wplus = retune*fplus/ma.SR;
+
+// 反馈缩放
+fbk1 = fbka*(0.5-w)^4;
+fbk2 = fbka*(0.5-w2)^4*rto1r;
+fbk3 = fbka*(0.5-w3)^4*rto2r;
+
+// 按频率的调制衰减
+redux = octcurve(w);
+redux1 = octcurve(rto1*w);
+redux2 = octcurve(rto2*w);
+modep = envgr3*redux;
+modep1 = envgr3*redux1;
+modep2 = envgr3*redux2;
+
+// 振荡器
+// ==========
+// 在 -0.5 与 0.5 之间回绕
+wrap(n) = n-(floor(n+0.5));
+// 基于 Bhaskara I 的近似余弦曲线
+qsincurve(x) = 1-((x*x)&lt;:*(1.2253517*16), (_&lt;:*:*(-3.60562732*16)):&gt;_);
+// 类余弦的半圆
+qsin(x) = x+(0.5):wrap&lt;:(abs:-(0.25):qsincurve), _:ma.copysign;
+// 完整正弦波，输入 -0.5...0.5
+// 反馈与调制深度衰减曲线
+fbcurve(x) = 1/x&lt;:_, 1:max:ma.log2:_-6&lt;:_, 0:max:_*(1/10);
+octcurve(x) = 1/x&lt;:_, 1:max:ma.log2:_-2&lt;:_, 0:max:_*(1/6)&lt;:*;
+// 基本相位累加器 -0.5...0.5
+mphasor(fw) = (+(fw)~(wrap));
+// 基本正弦振荡器
+oscsn(fw, off) = mphasor(fw)+off:qsin;
+// 带反馈和 IIR 反馈滤波器的振荡器
+osc1(fw, off) = ((fw), +(off):(oscsn))~(*(fbka):fi.pole(0.5):_*fbcurve(fw));
+
+// 3D 调制
+// 一个点绕 3 个轴旋转，x、y 半径的微分随后作为信号
+oscy(fw, off) = (osc1(fw, off)*osc1(fw*rto2+2*detune, 0.75+off)*modep2)*modep;
+oscx(fw, off) = (osc1(fw*rto1+detune, 0.25+off)*osc1(fw*rto2+2*detune, 0.25+off)*modep2)*modep1;
+// 2D 半径 -&gt; 微分器（信号稍后会被积分），加上（同步的）噪声
+oscxy(fw, off) = (oscy(fw, off)&lt;:*), (oscx(fw, off)&lt;:*):+:sqrt&lt;:_-_':_*(1-nxamnt)+sncnx(fw, off)*envg*nxamnt;
+
+// 同步噪声波形
+// 异或随机，全局 constnx 标志为 1 时递归，否则仅用 nxseed + step 作为种子
+xornx(step) = (*(constnx):+(nxseed+step):int&lt;:_, (_&lt;&lt;13):xor&lt;:_, (_&gt;&gt;17):xor&lt;:_, (_&lt;&lt;5):xor:_&amp;536870911&lt;:_, (float:_*(1/2147483648):wrap))~_:!, _*(1/(constnx+1));
+sncwin(ph) = ba.if((abs(ph)&lt;4*w), (abs(ph)/(4*w))-0.25:qsin*(0.5)+0.5, 1);
+// 同步或连续噪声，因过渡简单（8 个样本的余弦渐变到零）而不抗混叠
+sncnx(fw, off) = mphasor(fw):_+off:wrap&lt;:(_&lt;:_+0.5&lt;:_, _+fw&lt;:_/fw, _/fw&lt;:(_&lt;:_, _), _:_, floor, floor&lt;:_, (_&lt;:_, _), _:(_-_, xornx, xornx):(_&lt;:_, _), _, _:route(4, 4, 1, 1, 3, 2, 2, 3, 4, 4):(1-_)*_, _*_:&gt;_*5), sncwin:_, ba.if(constnx, 1, _):*;
+
+// 上升沿可变、下降沿相对的三角滤波器
+// =================================================================
+octavesfromtop = 1/w&lt;:_, 1:max:ma.log2;
+widbrighten = octavesfromtop-4&lt;:_, 0:max:1/(2^_);
+// 用于提亮低音的曲线（== 减小三角宽度）
+widredux = octavesfromtop-4&lt;:_, 0:max: // 用于降低高音亮度（== 增大宽度）的曲线
+_*(1/6)&lt;:_, 1:min:sqrt*widbrighten;
+
+// 到最大宽度的差，以倍频程计，高八度递减
+dwo = (0.25/wid):max(_, 1):ma.log2:_*widredux;
+
+minwid = 4/(ma.SR/f);
+// 三角边的最小时间
+maxwid = 0.5;
+// 三角边的最大时间
+
+// 按包络缩放
+// 1. 上升沿
+wid2 = wid*(fiadapt^(dwo*(1-envg))):min(_, maxwid):max(_, minwid);
+// 2. 相对上升沿的下降沿
+wid2e = (1/512+wid2*widsym):min(_, maxwid):max(_, minwid);
+fiw = w/wid2;
+// 上升沿的 t 增量
+fiwtail = w/wid2e;
+// 下降沿的 t 增量
+
+fiwcompens = 0.25*wid2e/(2/512);
+// 增益补偿
+
+// 三角系数
+apg0 = fiw*fiwcompens;
+apg1 = -apg0-fiwtail*fiwcompens;
+apg2 = fiwtail*fiwcompens;
+
+// 积分频率约 25 Hz
+igpole = 1.0-25.0/ma.SR;
+// 谐振频率
+resf = (fplus/(wid2+wid2e)):min(_, (0.166*ma.SR));
+
+// 额外的随音高与力度变化的单极点低通，以及全局声部电平
+lpfw = w+(5000/ma.SR-w)*gain*gain;
+lpp = ma.E^(-2*ma.PI*lpfw);
+lpa = 1.5*(1-lpp);
+
+// 类拾音器失真
+// =======================
+// （x 距离 = 0.25）
+pickup(x) = x, // in &lt; 1.2e-4 时正常
+(x, (x^2:_+0.25:_^(3/2)):/), // ILO 抗混叠：
+(0.25^(3/2)/(sqrt(x*x+1)):ma.neg:_+0.25^(3/2)): // 选择
+ba.if((_:abs:_&lt;=1.2e-4), _, _):_*(0.25^(4/3));
+
+// 基本合成器声部：3 份相移加权副本、随力度变化的低通、积分
+synthvox(fw, ph2, ph3, g1, g2, g3) = (oscxy(fw, 0):_*g1), (oscxy(fw, ph2):_*g2), (oscxy(fw, ph3):_*g3):&gt;_:_*lpa:fi.pole(lpp):fi.pole(igpole);
+
+// 声音
+// =====
+process = synthvox(wplus, wid2, wid2e, apg0, apg1, apg2):fi.svf.peak(resf, fiq):fi.svf.hp(hpoffs*fplus/(wid2+wid2e):min(_, ma.SR*0.166), 0.707):_*pickupdrive:pickup*(min(1/pickupdrive, 1))&lt;:_, _;
+
+effect = re.dattorro_rev_default;</code></pre><br/><h2 id="sflooper">sflooper</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust7/exfaust7.svg"/><pre><code class="language-faust">// --------------------------sflooper----------------------------
+//
+// # sflooper
+//
+// 一个简单的循环器，可在声音文件内回放、倒放并以可调速度循环。
+// 它自动适配输入声音文件的声道数，并在到达
+// 文件末尾时绕回开头。
+// 循环的起点和终点位置以及播放方向均可控制。
+// 水平条形图显示循环内的当前播放位置。
+//
+// 用法
+//
+// 
+// sflooper(sound) : si.bus(outputs(sound)-2);
+// 
+// 其中：
+//
+// - sound：输入的声音文件。
+//
+// 示例：
+//
+// 
+// sound = soundfile("sound[url:{'loop.wav'}]",2);
+// sflooper(sound);
+// 
+//------------------------------------------------------------
+
+import("stdfaust.lib");
+
+declare name      "looper";
+declare version   "1.0";
+declare author    "Grame";
+declare license   "BSD";
+declare copyright "(c)GRAME 2025";
+
+// 播放按钮的状态用于控制 loop_reader 索引的递增和实际输出信号的生成。
+
+sflooper(sf) = (0, play * loop_index) : sf : !, !, attach(_,pos), si.bus(outputs(sf)-3)
+with {
+
+    // 用户控件
+    speed = hslider("h:Controls/[3]Speed", 1, 0.2, 5, 0.01); // 控制播放速度的滑块
+    play = checkbox("h:Controls/[4]Play/Stop"); // 开始/停止回放的复选框
+    reverse = checkbox("h:Controls/[5]Reverse"); // 倒放复选框
+
+    // 循环起点与终点位置，带平滑（按声音文件长度缩放）
+    loop_start = length * hslider("[1]Loop_start", 0, 0, 1, 0.01) : si.smoo;
+    loop_end = length * hslider("[2]Loop_end", 1, 0, 1, 0.01) : si.smoo;
+
+    // 声音文件长度
+    length = (0, 0) : sf : (_, si.block(outputs(sf) - 1));  
+
+    // 循环内的当前播放位置
+    loop_index = min_loop_pos + ma.modulo(index, max(ma.EPSILON, loop_length))
+    with {
+
+        // 循环位置的下限
+        min_loop_pos = min(loop_start, loop_end);
+
+        // 循环时长
+        loop_length = abs(loop_end - loop_start);
+
+        // 带方向的播放速度
+        read_speed = speed * ba.if(reverse, -1, 1);
+
+        // 跟踪播放位置的索引计数器
+        index = windex
+        letrec {
+            'windex = windex + play * read_speed;
+        };
+
+    };
+
+    // 以水平条形图显示播放位置
+    pos = (loop_index / length) : hbargraph("[6]Position", 0, 1);
+
+};
+
+declare soundfiles "https: // raw.githubusercontent.com/sletz/faust-sampler/main";
+sound = soundfile("sound[url:{'violon.wav'}]", 2);
+
+process = sflooper(sound);</code></pre><br/><h2 id="statespace">statespace</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust8/exfaust8.svg"/><pre><code class="language-faust">declare name        "statespace";
+declare version     "1.0";
+declare author      "JOS";
+declare license     "MIT";
+declare copyright   "(c) Julius O. Smith III, 2020";
+
+//-----------------------------------------------
+// 一般线性状态空间模型示例
+//-----------------------------------------------
+
+import("stdfaust.lib");
+
+p = 2; // 输入个数
+q = 3; // 输出个数
+N = 5; // 状态个数
+
+A = matrix(N,N); // 状态转移矩阵
+B = matrix(N,p); // 输入到状态矩阵
+C = matrix(q,N); // 状态到输出矩阵
+D = matrix(q,p); // 直通项矩阵，绕过状态
+
+// ./matrix.dsp，为符合惯例已转置 M 与 N：
+matrix(M,N) = tgroup("Matrix: %M x %N", par(in, N, _)
+              &lt;: par(out, M, mixer(N, out))) with {
+  fader(in) = ba.db2linear(vslider("Input %in", -10, -96, 4, 0.1));
+  mixer(N,out) = hgroup("Output %out", par(in, N, *(fader(in)) ) :&gt; _ );
+};
+
+Bd = par(i,p,mem) : B; // 传统定义所需的输入延迟
+vsum(N) = si.bus(2*N) :&gt; si.bus(N); // 两个 N 维向量的向量和
+
+// 演示非零初始状态，遵循传统定义：
+impulse = 1-1'; // 若初始状态为零，设 impulse = 0 或简化代码
+x0 = par(i,N,i*impulse); // 初始状态 = (0,1,2,3,...,N-1)
+
+system = si.bus(p) &lt;: D, (Bd : vsum(N)~(A), x0 : vsum(N) : C) :&gt; si.bus(q);
+
+process = system;</code></pre><br/><h2 id="switcher">switcher</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust9/exfaust9.svg"/><pre><code>declare name        "switcher";
+declare version     "1.0";
+declare author      "Grame";
+declare license     "BSD";
+declare copyright   "(c)GRAME 2007";
+
+//-----------------------------------------------
+// 在两个立体声源之间切换。
+// 便于比较这两个源
+// 参数 c\in{0,1} 表示
+// 要选择的声道
+//-----------------------------------------------
+
+switch(c,x0,x1,y0,y1) = sel(c,x0,y0), sel(c,x1,y1)
+                        with { 
+                            sel(c,x,y) = (1-c)*x + c*y; 
+                        };
+
+process = switch(hslider("source 0 &lt;-&gt; source 1",0,0,1,1));</code></pre><br/><h2 id="tester">tester</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust10/exfaust10.svg"/><pre><code class="language-faust">declare name      "tester";
+declare version   "1.0";
+declare author    "Grame";
+declare license   "BSD";
+declare copyright "(c)GRAME 2006";
+
+//-----------------------------------------------
+// Tester：测试扬声器
+// 把测试信号（正弦、噪声、粉红噪声）送到
+// 8 个扬声器中的一个
+//-----------------------------------------------
+
+import("stdfaust.lib");
+
+// TODO：应当用 noises.lib 的粉红噪声函数重写
+pink = f : (+ ~ g) with {
+    f(x) = 0.04957526213389*x - 0.06305581334498*x' + 0.01483220320740*x'';
+    g(x) = 1.80116083982126*x - 0.80257737639225*x';
+};
+
+// 用户界面
+//----------------
+vol  = hslider("[2] volume [unit:dB]", -96, -96, 0, 1): ba.db2linear : si.smoo;
+freq = hslider("[1] freq [unit:Hz]", 1000, 10, 20000, 1);
+dest = hslider("[3] destination", 0, 0, 8, 1);
+
+testsignal = os.osci(freq)*checkbox("sine wave")
+            + no.noise * checkbox("white noise")
+            + pink(no.noise) * ba.db2linear(20)  * checkbox("pink noise");
+
+process = vgroup("Audio Tester", testsignal*vol &lt;: par(i, 8, *(dest==i)));</code></pre><br/><h2 id="tester2">tester2</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust11/exfaust11.svg"/><pre><code class="language-faust">declare name      "tester2";
+declare version   "1.0";
+declare author    "Grame";
+declare license   "BSD";
+declare copyright "(c)GRAME 2014";
+
+//-----------------------------------------------
+// 立体声测试器：向立体声通道发送测试信号（正弦、
+// 噪声、粉红噪声）
+//-----------------------------------------------
+
+import("stdfaust.lib");
+
+pink = f : (+ ~ g) with {
+    f(x) = 0.04957526213389*x - 0.06305581334498*x' + 0.01483220320740*x'';
+    g(x) = 1.80116083982126*x - 0.80257737639225*x';
+};
+
+// 用户界面
+//----------------
+transition(n) = \(old,new).(ba.if(old&lt;new, min(old+1.0/n,new), max(old-1.0/n,new))) ~ _;
+
+vol  = hslider("[2] volume [unit:dB]", -96, -96, 0, 1): ba.db2linear : si.smoo;
+freq = hslider("[1] freq [unit:Hz][scale:log]", 440, 40, 20000, 1);
+wave = nentry("[3] signal [style:menu{'white noise':0;'pink noise':1;'sine':2}]", 0, 0, 2, 1) : int;
+dest = nentry("[4] channel [style:radio{'none':0;'left':1;'right':2;'both':3}]", 0, 0, 3, 1) : int;
+
+testsignal = no.noise, pink(no.noise), os.osci(freq): select3(wave);
+
+process = vgroup("Stereo Audio Tester", testsignal*vol &lt;: par(i, 2, *((dest &amp; (i+1)) != 0 : transition(4410))));</code></pre><br/><h2 id="uitester">UITester</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/misc/exfaust12/exfaust12.svg"/><pre><code class="language-faust">declare name "UITester";
+declare version "1.0";
+declare author "O. Guillerminet";
+declare license "BSD";
+declare copyright "(c) O. Guillerminet 2012";
+
+vbox = vgroup("vbox", 
+    checkbox("check1"),
+    checkbox("check2"),
+     nentry("knob0[style:knob]", 60, 0, 127, 0.1));
+
+sliders = hgroup("sliders",
+        vslider("vslider1", 60, 0, 127, 0.1),
+        vslider("vslider2", 60, 0, 127, 0.1),
+        vslider("vslider3", 60, 0, 127, 0.1));
+
+knobs = hgroup("knobs",
+        vslider("knob1[style:knob]", 60, 0, 127, 0.1),
+        vslider("knob2[style:knob]", 60, 0, 127, 0.1),
+        vslider("knob3[style:knob]", 60, 0, 127, 0.1));
+
+smallhbox1 = hgroup("small box 1",
+            vslider("vslider5 [unit:Hz]", 60, 0, 127, 0.1),
+            vslider("vslider6 [unit:Hz]", 60, 0, 127, 0.1),
+            vslider("knob4[style:knob]", 60, 0, 127, 0.1),
+            nentry("num1 [unit:f]", 60, 0, 127, 0.1),
+            vbargraph("vbar1", 0, 127));
+
+smallhbox2 = hgroup("small box 2",
+            vslider("vslider7 [unit:Hz]", 60, 0, 127, 0.1),
+            vslider("vslider8 [unit:Hz]", 60, 0, 127, 0.1),
+            vslider("knob5[style:knob]", 60, 0, 127, 0.1),
+            nentry("num2 [unit:f]", 60, 0, 127, 0.1),
+            vbargraph("vbar2", 0, 127));
+
+smallhbox3 = hgroup("small box 3",
+            vslider("vslider9 [unit:Hz]", 60, 0, 127, 0.1),
+            vslider("vslider10 [unit:m]", 60, 0, 127, 0.1),
+            vslider("knob6[style:knob]", 60, 0, 127, 0.1),
+            nentry("num3 [unit:f]", 60, 0, 127, 0.1),
+            vbargraph("vbar3", 0, 127));
+
+subhbox1 = hgroup("sub box 1",
+        smallhbox2,
+        smallhbox3);
+
+vmisc = vgroup("vmisc",
+        vslider("vslider4 [unit:Hz]", 60, 0, 127, 0.1),
+        button("button"),
+        hslider("hslider [unit:Hz]", 60, 0, 127, 0.1),
+        smallhbox1,
+        subhbox1,
+        hbargraph("hbar", 0, 127));
+
+hmisc = hgroup("hmisc",
+        vslider("vslider4 [unit:f]", 60, 0, 127, 0.1),
+        button("button"),
+        hslider("hslider", 60, 0, 127, 0.1),
+        nentry("num [unit:f]", 60, 0, 127, 0.1),
+        vbargraph("vbar", 0, 127),
+        hbargraph("hbar", 0, 127));
+
+// ------------------------- Process --------------------------------
+
+process = tgroup("grp 1",
+        vbox,
+        sliders,
+        knobs,
+        vmisc,
+        hmisc);</code></pre><br/>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/examples/misc/" rel="noreferrer noopener">https://faustdoc.grame.fr/examples/misc/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

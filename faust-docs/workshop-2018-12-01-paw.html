@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>构建一个简单的 MIDI 合成器 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：构建一个简单的 MIDI 合成器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="building-a-simple-midi-synthesizer">构建一个简单的 MIDI 合成器</h1><p>我们将从零构建一个 MIDI 合成器（不使用 Faust 库）。</p><h2 id="phase-generator">相位发生器</h2><p>第一步是构建一个<em>相位发生器</em>，产生 0 到 1 之间的周期锯齿波信号。下面是我们要生成的信号：</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2018-12-01-paw/img/phase-sig.png"/></p><h3 id="ramp">斜坡</h3><p>为了产生上面的信号，我们必须先生成一个斜坡信号 <img alt="框图" src="https://faustdoc.grame.fr/workshops/2018-12-01-paw/img/ramp-sig.png"/></p><p>使用以下 Faust 程序：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2018-12-01-paw/exfaust0/exfaust0.svg"/><pre><code class="language-faust">process = 0.125 : + ~ _;</code></pre><br/><p>你可以把 Faust 程序看作对一个音频电路的描述，其中 <code>0.125</code>、<code>+</code> 和 <code>_</code> 是语言的<em>基元</em>（预定义的基本音频组件），另外两个符号：<code>:</code> 和 <code>~</code> 用于把这些音频组件连接起来。</p><h3 id="semantics">语义</h3><p>为了理解上面的图，我们用它的数学语义来标注它。</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2018-12-01-paw/img/ramp-diag-math.svg"/></p><p>从图中可以看出，输出信号的公式是：<code class="math">y(t) = y(t-1) + 0.125</code></p><p>可以计算 <code class="math">y(t)</code> 的前几个值：</p><ul><li><code class="math">y(t&amp;lt;0)=0</code></li><li><code class="math">y(0) = y(-1) + 0.125 = 0.125</code></li><li><code class="math">y(1) = y(0) + 0.125 = 2*0.125 = 0.250</code></li><li><code class="math">y(2) = y(1) + 0.125 = 3*0.125 = 0.375</code></li><li>...</li><li><code class="math">y(6) = y(5) + 0.125 = 7*0.125 = 0.875</code></li><li><code class="math">y(7) = y(6) + 0.125 = 8*0.125 = 1.000</code></li><li><code class="math">y(8) = y(7) + 0.125 = 9*0.125 = 1.125</code></li><li>...</li></ul><h3 id="phase-signal">相位信号</h3><p>如何把上面的斜坡变成锯齿波信号？去掉样本的整数部分，只保留小数（分数）部分（<code>3.14159</code> -&gt; <code>0.14159</code>）。</p><p>定义一个函数来做这件事：</p><pre><code class="language-faust">decimalpart(x) = x - int(x);
+</code></pre><p>现在可以用这个函数把斜坡变成锯齿波。于是很自然会写：</p><pre><code class="language-faust">process = 0.125 : + ~ _ : decimalpart;
+</code></pre><p>从数学角度看这完全正确，但会累积舍入误差。为了保持完整精度，最好把小数部分运算放在循环内部：</p><pre><code class="language-faust">process = 0.125 : (+ : decimalpart) ~ _;
+</code></pre><p>现在可以听一下产生的信号。只需把 <code>decimalpart</code> 和 <code>process</code> 的定义复制粘贴到 <a href="https://faustide.grame.fr" rel="noreferrer noopener">Faust 网页版 IDE</a> 中。</p><h2 id="controlling-the-frequency-of-the-phase-signal">控制相位信号的频率</h2><p>先重排一下代码：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2018-12-01-paw/exfaust1/exfaust1.svg"/><pre><code class="language-faust">decimalpart(x) = x-int(x);
+phase = 0.125 : (+ : decimalpart) ~ _;
+process = phase;</code></pre><br/><p>在我们的 <code>phase</code> 定义中，步长值（这里是 <code>0.125</code>）控制生成信号的频率。我们希望根据目标频率计算这个步长值。为了完成转换，需要知道采样率。它可以从标准库中以 <code>ma.SR</code> 获得。</p><p>假设希望相位信号的频率为 1 Hz，那么步长应该非常小，为 <code>1/ma.SR</code>，这样相位信号达到 1 需要 <code>ma.SR</code> 个样本（即 1 秒）。</p><p>如果希望频率为 440 Hz，就需要大 440 倍的步长，让相位信号达到 1 快四百四十倍。</p><pre><code class="language-faust">phase = 440/ma.SR : (+ : decimalpart) ~ _;
+</code></pre><p>把 <code>440</code> 换成参数 <code>f</code>，这个定义就可以推广：</p><pre><code class="language-faust">phase(f) = f/ma.SR : (+ : decimalpart) ~ _;
+</code></pre><p>并在使用 <code>phase</code> 时指明目标频率：</p><pre><code class="language-faust">process = phase(440);
+</code></pre><h2 id="creating-a-sine-wave-oscillator">创建正弦波振荡器</h2><p>下一步是把上面的相位发生器变成正弦波发生器。我们将使用 <code>sin</code> 基元，它计算 x 的正弦（以弧度为单位）。因此我们从相位信号出发，把它乘以 <code>2*ma.PI</code> 得到弧度，再计算正弦。完整程序如下：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2018-12-01-paw/exfaust2/exfaust2.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+decimalpart(x) = x-int(x);
+phase(f) = f/ma.SR : (+ : decimalpart) ~ _;
+osc(f) = phase(f) * 2 * ma.PI : sin;
+process = osc(440);</code></pre><br/><h2 id="controlling-the-frequency-and-gain-of-the-oscillator">控制振荡器的频率与增益</h2><p>下一步是为振荡器的频率和增益添加控制。可以把固定频率 <code>440</code> 换成一个界面滑块：</p><pre><code class="language-faust">process = osc(hslider("freq", 440, 20, 10000, 1));
+</code></pre><p>并添加一个增益来控制振荡器的输出电平：</p><pre><code class="language-faust">process = osc(hslider("freq", 440, 20, 10000, 1)) * hslider("gain", 0.5, 0, 1, 0.01);
+</code></pre><h2 id="adding-a-gate-button">添加门按钮</h2><p>为了准备我们的 MIDI 合成器，需要加一个门按钮，这样只有按下它时才产生声音：</p><pre><code class="language-faust">process = osc(hslider("freq", 440, 20, 10000, 1)) * hslider("gain", 0.5, 0, 1, 0.01) * button("gate");
+</code></pre><h2 id="adding-an-envelope-generator">添加包络发生器</h2><p>最好再加一个包络发生器。这里我们使用 Faust 标准库中预定义的 ADSR。</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2018-12-01-paw/exfaust3/exfaust3.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:4]";
+import("stdfaust.lib");
+decimalpart(x) = x-int(x);
+phase(f) = f/ma.SR : (+ : decimalpart) ~ _;
+osc(f) = phase(f) * 2 * ma.PI : sin;
+process = osc(hslider("freq", 440, 20, 10000, 1)) 
+        * hslider("gain", 0.5, 0, 1, 0.01) 
+        * (button("gate") : en.adsr(0.1,0.1,0.98,0.1));</code></pre><br/><h2 id="improving-the-timbre">改善音色</h2><p>与其只演奏纯正弦音，不如用简单的加法合成来改善音色：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2018-12-01-paw/exfaust4/exfaust4.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:4]";
+import("stdfaust.lib");
+decimalpart(x) = x-int(x);
+phase(f) = f/ma.SR : (+ : decimalpart) ~ _;
+osc(f) = phase(f) * 2 * ma.PI : sin;
+timbre(f) = osc(f)*0.5 + osc(f*2)*0.25 + osc(f*3)*0.125;
+process = timbre(hslider("freq", 440, 20, 10000, 1)) 
+        * hslider("gain", 0.5, 0, 1, 0.01) 
+        * (button("gate") : en.adsr(0.1,0.1,0.98,0.1));</code></pre><br/><h2 id="running-as-a-polyphonic-midi-synth">作为复音 MIDI 合成器运行</h2><p>要用 MIDI 控制合成器，需要使用 Chrome。复音 MIDI 模式通过编辑器左侧的下拉菜单 <em>Poly Voices</em> 激活。选择 <em>Computer Keyboard</em> 作为 MIDI 输入，就可以用电脑键盘演奏音符，或者插入 MIDI 键盘。</p><h2 id="adding-a-global-effect">添加全局效果</h2><p>为 <code>effect</code> 提供一个定义，就可以添加全局效果。</p><pre><code class="language-faust">// 通用效果
+effect = dm.zita_light;
+</code></pre><img alt="框图" src="https://faustdoc.grame.fr/workshops/2018-12-01-paw/exfaust5/exfaust5.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:4]";
+import("stdfaust.lib");
+decimalpart(x) = x-int(x);
+phase(f) = f/ma.SR : (+ : decimalpart) ~ _;
+timbre(f) = phase(f)*0.5 + phase(f*2)*0.25 + phase(f*3)*0.125;
+
+process = timbre(hslider("freq", 440, 20, 10000, 1)) 
+* hslider("gain", 0.5, 0, 1, 0.01) 
+* (button("gate") : en.adsr(0.1,0.1,0.98,0.1));
+
+effect = dm.zita_light;</code></pre><br/>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/workshops/2018-12-01-paw/" rel="noreferrer noopener">https://faustdoc.grame.fr/workshops/2018-12-01-paw/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

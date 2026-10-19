@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在 Cmajor 中使用 Faust - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：在 Cmajor 中使用 Faust">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="using-faust-in-cmajor">在 Cmajor 中使用 Faust</h1><p>本教程介绍如何把 <a href="https://faust.grame.fr" rel="noreferrer noopener">Faust</a> 与 <a href="https://cmajor.dev" rel="noreferrer noopener">Cmajor</a> 配合使用，Cmajor 是一门类似 C 的过程式高性能语言，专为音频处理设计，支持基于 JIT 的动态编译。把 Faust DSP 编译成 Cmajor 代码，可以利用 <a href="https://faustlibraries.grame.fr" rel="noreferrer noopener">Faust 库</a>中实现的数百个 DSP 构建模块、开箱即用的<a href="examples-ambisonics.html">示例</a>、<a href="https://faust.grame.fr/community/powered-by-faust/" rel="noreferrer noopener">Powered By Faust</a> 页面上 200 多个项目中开发的任何 DSP 程序，或网上找到的 Faust DSP 程序。</p><h4 id="who-is-this-tutorial-for">本教程面向谁？</h4><p><a href="#using-command-line-tools">第一节</a>假定机器上已安装可用的 <a href="https://github.com/grame-cncm/faust" rel="noreferrer noopener">Faust</a> 编译器，因此更面向常规的 Faust 用户。<a href="#using-the-faust-web-ide">第二节</a>更适合想了解 Faust 的 Cmajor 用户。</p><h4 id="installing-the-required-packages">安装所需的包</h4><p>下载 <a href="https://github.com/SoundStacks/cmajor/releases" rel="noreferrer noopener"><strong>cmaj</strong> 包</a>并安装，使它在 PATH 中可用。</p><h2 id="using-command-line-tools">使用命令行工具</h2><h3 id="generating-cmajor-code">生成 Cmajor 代码</h3><p>假定你已经<a href="https://faust.grame.fr/downloads/" rel="noreferrer noopener">安装了 <strong>faust</strong> 编译器</a>，从下面这个 DSP 程序 <strong>osc.dsp</strong> 出发：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/cmajor/exfaust0/exfaust0.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+
+vol = hslider("volume [unit:dB]", 0, -96, 0, 0.1) : ba.db2linear : si.smoo;
+freq1 = hslider("freq1 [unit:Hz]", 1000, 20, 3000, 1);
+freq2 = hslider("freq2 [unit:Hz]", 200, 20, 3000, 1);
+
+process = vgroup("Oscillator", os.osc(freq1) * vol, os.osc(freq2) * vol);</code></pre><br/><p>可以用下面的命令生成 Cmajor 代码：</p><pre><code>faust -lang cmajor osc.dsp -o osc.cmajor
+</code></pre><p>这会生成一个 <code>mydsp</code> 处理器，包含在命名空间 <code>faust {...}</code> 中，并附带一组操作它的方法。这个 API 基本上仿照<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/dsp.h" rel="noreferrer noopener">为 C++ 后端定义的那套接口</a>。</p><h3 id="looking-at-the-generated-code">查看生成的代码</h3><p>生成的代码包含针对 DSP 源代码中定义的三个滑块的 <code>input event</code> 定义：</p><pre><code class="language-faust">input event float32 eventfHslider1 [[ name: "freq1", group: "/v:Oscillator/freq1", min: 20.0f, max: 3000.0f, init: 1000.0f, step: 1.0f, meta_unit0: "Hz" ]];
+input event float32 eventfHslider2 [[ name: "freq2", group: "/v:Oscillator/freq2", min: 20.0f, max: 3000.0f, init: 200.0f, step: 1.0f, meta_unit1: "Hz" ]];
+input event float32 eventfHslider0 [[ name: "volume", group: "/v:Oscillator/volume", min: 0.0f, max: 1.0f, init: 0.5f, step: 0.01f ]];
+</code></pre><p>必需的 <code>main</code> 函数执行 DSP 样本生成代码：</p><pre><code class="language-faust">void main()
+{
+    // DSP 循环永远运行……
+    loop
+    {
+        if (fUpdated) { fUpdated = false; control(); }
+
+        // 计算一个样本
+        fRec1[0] = fControl[1] + fRec1[1] - floor (fControl[1] + fRec1[1]);
+        output0 &lt;- float32 (fControl[0] * ftbl0mydspSIG0.at (int32 (65536.0f * fRec1[0])));
+        fRec2[0] = fControl[2] + fRec2[1] - floor (fControl[2] + fRec2[1]);
+        output1 &lt;- float32 (fControl[0] * ftbl0mydspSIG0.at (int32 (65536.0f * fRec2[0])));
+        fRec1[1] = fRec1[0];
+        fRec2[1] = fRec2[0];
+
+        // 把所有流向前推进一个「tick」
+        advance();
+    }
+}
+</code></pre><p>注意生成的代码使用所谓的<a href="manual-compiler.html#structure-of-the-generated-code">标量代码生成模型</a>（默认模型），其中编译好的样本生成代码内联在 Cmajor 的 <code>loop</code> 块里。</p><p>我们无法直接播放生成的 <code>osc.cmajor</code> 文件，因为 <strong>cmaj</strong> 程序需要 <code>osc.cmajorpatch</code> 才能执行。一个简单的办法是使用下面的命令：</p><pre><code>cmaj create --name=osc osc 
+</code></pre><p>创建一个 <code>osc</code> 文件夹，其中含默认的 <code>osc.cmajor</code> 与 <code>osc.cmajorpatch</code> 文件。然后用下面的命令：</p><pre><code>faust -lang cmajor osc.dsp -o osc/osc.cmajor
+</code></pre><p>就可以把默认的 <code>osc.cmajor</code> 简单替换为我们自己由 Faust 生成的版本。</p><p>现在可以用 <strong>cmaj</strong> 程序编译并执行这个 patch 文件：</p><pre><code>cmaj play osc/osc.cmajorpatch
+</code></pre><p>三个声明的滑块会被自动创建，可用于改变两个声道的频率及其音量。</p><p>Cmajor 处理器代码可以直接用于更复杂的 Cmajor 程序，也可以与其他 Faust 生成的或手写的 Cmajor 处理器相连。注意，生成的处理器名字可以直接用 Faust 编译器的 <code>-cn &lt;name&gt;</code> 选项更改，这样多个 Faust 生成的处理器就能靠名字区分开：</p><pre><code>faust -lang cmajor -cn osc osc.dsp -o osc/osc.cmajor
+</code></pre><h3 id="using-the-faust2cmajor-tool">使用 faust2cmajor 工具</h3><p><a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/cmajor#faust2cmajor" rel="noreferrer noopener">faust2cmajor</a> 工具可以自动完成用正确选项调用 Faust 编译器并与 <strong>cmaj</strong> 程序交互的过程：</p><pre><code>faust2cmajor -h
+Usage: faust2cmajor [options] [Faust options] &lt;file.dsp&gt;
+Compiles Faust programs to Cmajor
+Options:
+-midi : activates MIDI control
+-nvoices &lt;num&gt; : produces a polyphonic DSP with &lt;num&gt; voices, ready to be used with MIDI events
+-effect &lt;effect.dsp&gt; : generates a polyphonic DSP connected to a global output effect, ready to be used with MIDI or OSC
+-effect auto : generates a polyphonic DSP connected to a global output effect defined as 'effect' in &lt;file.dsp&gt;, ready to be used with MIDI or OSC
+-juce : to create a JUCE project
+-dsp : to create a 'dsp' compatible subclass
+-play : to start the 'cmaj' runtime with the generated Cmajor file
+Faust options : any option (e.g. -vec -vs 8...). See the Faust compiler documentation.
+</code></pre><p>所以下面的命令：</p><pre><code>faust2cmajor -play osc.dsp 
+</code></pre><p>会直接编译 <code>osc.dsp</code> 文件，生成 <code>osc.cmajor</code> 与 <code>osc.cmajorpatch</code> 文件：</p><pre><code class="language-faust">{
+    "CmajorVersion": 1,
+    "ID": "grame.cmajor.osc",
+    "version": "1.0",
+    "name": "osc",
+    "description": "Cmajor example",
+    "category": "synth",
+    "manufacturer": "GRAME",
+    "website": "https: // faust.grame.fr",
+    "isInstrument": false,
+    "source": "osc.cmajor"
+}
+</code></pre><p>并启动 <strong>cmaj</strong> 程序来运行这个处理器。</p><p>下面这个<a href="manual-midi.html#midi-polyphony-support">支持复音乐器</a>的 DSP 可以转换为 MIDI 就绪的 cmajor 乐器：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/cmajor/exfaust1/exfaust1.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:8]";
+import("stdfaust.lib");
+process = organ &lt;: _,_
+with {
+    decimalpart(x) = x-int(x);
+    phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+    osc(f) = sin(2 * ma.PI * phasor(f));
+    freq = nentry("freq", 100, 100, 3000, 0.01);
+    gate = button("gate");
+    gain = nentry("gain", 0.5, 0, 1, 0.01);
+    organ = en.adsr(0.1, 0.1, 0.7, 0.25, gate) * (osc(freq) * gain + osc(2*freq)*0.5 * gain);
+};</code></pre><br/><p>随后下面的命令会打开 <strong>cmaj</strong> 程序，可以发送 MDI 事件来控制这个乐器：</p><pre><code>faust2cmajor -play -midi -nvoices 16 organ.dsp 
+</code></pre><p>注意生成的 GUI 是空的，因为生成的处理器无法自动把它的控件反映到主图里。</p><p>下面这个<a href="manual-midi.html#audio-effects-and-polyphonic-synthesizer">集成了效果</a>的支持复音乐器的 DSP 可以转换为 MIDI 就绪的 cmajor 乐器：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/cmajor/exfaust2/exfaust2.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:8]";
+import("stdfaust.lib");
+process = pm.clarinet_ui_MIDI &lt;: _,_;
+effect = dm.freeverb_demo;</code></pre><br/><p>随后下面的命令会打开 <strong>cmaj</strong> 程序，可以发送 MIDI 事件来控制这个乐器：</p><pre><code>faust2cmajor -play -midi -nvoices 16 -effect auto clarinet.dsp 
+</code></pre><p>这里生成的 GUI 同样是空的。</p><h3 id="generating-the-cmajor-output-using-faustremote">用 faustremote 生成 Cmajor 输出</h3><p>另一种办法是用 <a href="manual-remote.html">faustremote</a> 脚本，通过下面的命令转换本地的 DSP：</p><pre><code>faustremote cmajor cmajor foo.dsp
+unzip binary.zip
+</code></pre><h2 id="using-the-faust-web-ide">使用 Faust 网页版 IDE</h2><p>Faust DSP 程序可以在 <a href="https://faustide.grame.fr/" rel="noreferrer noopener">Faust 网页版 IDE</a> 中编写、测试，并生成为可嵌入的 Cmajor 代码。</p><h3 id="generating-the-cmajor-output">生成 Cmajor 输出</h3><p>可以直接用 <em>Platform = cmajor</em> 与 <em>Architecture = cmajor</em> 导出选项生成 Cmajor 程序形式的输出。得到的 <em>foo</em> 文件夹是自包含的，包含 <code>foo.cmajor</code> 与 <code>foo.cmajorpatch</code> 文件。可以用 <code>cmaj play foo/foo.cmajorpatch</code> 命令执行这个程序，也可以<a href="https://github.com/SoundStacks/cmajor/blob/main/docs/Cmaj%20Quick%20Start.md" rel="noreferrer noopener">把它转换为 JUCE 插件</a>。</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/cmajor/img/export.png"/><em>导出代码</em></p><h3 id="generating-the-cmajor-output-in-polyphonic-mode">以复音模式生成 Cmajor 输出</h3><p>遵循复音<a href="manual-midi.html#midi-polyphony-support">freq/gate/gain 约定</a>的 DSP 程序可以用 <em>Platform = cmajor</em> 与 <em>Architecture = cmajor-poly</em> 导出选项生成。得到的 <em>foo</em> 文件夹是自包含的，包含 <code>foo.cmajor</code> 与 <code>foo.cmajorpatch</code> 文件。可以用 <code>cmaj play foo/foo.cmajorpatch</code> 命令执行这个乐器，并用 MIDI 设备演奏，也可以<a href="https://github.com/SoundStacks/cmajor/blob/main/docs/Cmaj%20Quick%20Start.md" rel="noreferrer noopener">把它转换为 JUCE 插件</a>。</p><h3 id="generating-the-cmajor-output-in-polyphonic-mode-with-a-global-effect">以复音模式并带全局效果生成 Cmajor 输出</h3><p>遵循复音<a href="manual-midi.html#midi-polyphony-support">freq/gate/gain 约定</a>、并带<a href="manual-midi.html#audio-effects-and-polyphonic-synthesizer">集成效果</a>的 DSP 程序可以用 <em>Platform = cmajor</em> 与 <em>Architecture = cmajor-poly-effect</em> 导出选项生成。得到的 <em>foo</em> 文件夹是自包含的，包含 <code>foo.cmajor</code> 与 <code>foo.cmajorpatch</code> 文件。可以用 <code>cmaj play foo/foo.cmajorpatch</code> 命令执行这个乐器，并用 MIDI 设备演奏，也可以<a href="https://github.com/SoundStacks/cmajor/blob/main/docs/Cmaj%20Quick%20Start.md" rel="noreferrer noopener">把它转换为 JUCE 插件</a>。</p><h3 id="generating-the-cmajor-output-from-a-faust-dsp-program-found-on-the-web">从网上找到的 Faust DSP 程序生成 Cmajor 输出</h3><p>网上找到的 Faust DSP 程序也可以转换：</p><ul><li><p>例如 <a href="https://faust.grame.fr/community/powered-by-faust/" rel="noreferrer noopener">Powered By Faust</a> 页面上列出的 <a href="https://faust.grame.fr/community/powered-by-faust/#fverb" rel="noreferrer noopener">fverb</a>。用 <code>https://faustide.grame.fr/?code=URL</code> 语法即可加载 DSP 内容，所以用下面这个 URL：<a href="https://faustide.grame.fr/?code=https://raw.githubusercontent.com/jpcima/fverb/master/fverb.dsp" rel="noreferrer noopener">https://faustide.grame.fr/?code=https://raw.githubusercontent.com/jpcima/fverb/master/fverb.dsp</a>，在 Faust 网页版 IDE 中测试后，再如前所示转换为 Cmajor 程序</p></li><li><p>基础<a href="examples-ambisonics.html">示例</a>已编译为 Cmajor 版本，见<a href="https://faustdoc.grame.fr/tutorials/cmajor/rsrc/examples-cmajor.zip" rel="noreferrer noopener">此处</a></p></li><li><p><a href="https://faustplayground.grame.fr/" rel="noreferrer noopener">faustplayground</a> 平台的示例可以<a href="https://github.com/grame-cncm/faustplayground/tree/master/public/faust-modules" rel="noreferrer noopener">在此找到</a>并转换。它们已编译为 Cmajor 版本，见<a href="https://faustdoc.grame.fr/tutorials/cmajor/rsrc/faust-modules-cmajor.zip" rel="noreferrer noopener">此处</a>。</p></li></ul><h2 id="experimental-faust-in-cmajor-integration">实验性的 Faust in Cmajor 集成</h2><p>随着 <a href="https://github.com/cmajor-lang/cmajor" rel="noreferrer noopener">Cmajor 源代码</a>的发布，现在已有与 Faust 的实验性集成，从 <a href="https://github.com/cmajor-lang/cmajor/releases/tag/1.0.2616" rel="noreferrer noopener">Cmajor 1.0.2616 发布版</a>开始。这样可以创建融合 Faust 与 Cmajor 代码的 patch。包含 Faust 到 Cmajor 后端的 <code>libfaust</code> 组件被编译为 WebAssembly，在 Faust DSP 到 Cmajor 的转换过程中动态使用。随后生成的 Cmajor 文件会被 JIT 编译。参见 <a href="https://github.com/cmajor-lang/cmajor/tree/main/examples/patches/FaustFM" rel="noreferrer noopener">FaustFM 示例</a>。</p><h3 id="known-limitations">已知限制</h3><p>当 patch 导出为 C++ 或 JavaScript 时，Cmajor 语言会生成一些有用的 API。例如 <code>getInputEndpoints/getOutputEndpoints</code> 与 <code>getEndpointHandle</code> 函数允许外部代码枚举并访问所有端点，从而控制程序或构建 GUI。但遗憾的是，这些函数<strong>并不属于语言本身</strong>。因此我们不知道有什么办法可以：</p><ul><li><p>编写一个通用的 Cmajor 程序，自动把某些端点（假设它们使用某种 MIDI 描述元数据）连接到 MIDI 消息</p></li><li><p>编写一个通用的 Cmajor 程序，自动把由 Faust DSP 程序生成的声部包装成复音且支持 MIDI 的程序，并在主图层面上暴露该声部的参数集，以便对所有声部统一控制</p></li></ul><p>我们认为，如果语言具备某种<a href="https://en.wikipedia.org/wiki/Reflective_programming" rel="noreferrer noopener">反射性</a>，表达能力会更强。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/cmajor/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/cmajor/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在 Julia 中使用 Faust - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：在 Julia 中使用 Faust">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="using-faust-in-julia">在 Julia 中使用 Faust</h1><p>本教程介绍如何在 <a href="https://julialang.org/" rel="noreferrer noopener">Julia</a> 中使用 Faust。Julia 是一门高层次、高性能的动态编程语言。虽然它是通用语言，可用于编写任何应用，但它的许多特性非常适合数值分析与计算科学。</p><p>把 <a href="https://github.com/corajr/Faust.jl" rel="noreferrer noopener">libfaust 编译器的集成</a>引入 Julia 的工作最早由 <a href="https://corajr.com" rel="noreferrer noopener">Cora Johnson-Roberson</a> 完成，将在<a href="#using-the-faustjl-julia-package">本教程最后一节</a>介绍。之后又在 Faust 编译器中加入了 <a href="https://github.com/grame-cncm/faust/tree/master-dev/compiler/generator/julia" rel="noreferrer noopener">Julia 后端</a>，它可以从任意 Faust DSP 程序生成可直接使用的 Julia 代码。</p><h4 id="who-is-this-tutorial-for">本教程面向谁？</h4><p><a href="#using-command-line-tools">第一节</a>假定机器上已安装可用的 <a href="https://github.com/grame-cncm/faust" rel="noreferrer noopener">Faust 编译器</a>，因此更适合常规的 Faust 用户。<a href="#using-the-faust-web-ide">第二节</a>与<a href="#using-the-faustjl-julia-package">第三节</a>更适合想了解 Faust 的 Julia 用户。</p><h3 id="installing-the-required-packages">安装所需的包</h3><p>请确认 <strong>julia</strong> 命令已在 PATH 中可用，方法<a href="https://julialang.org/downloads/platform/" rel="noreferrer noopener">见此</a>。全新安装 Julia 后，所有需要的包都在 <a href="https://raw.githubusercontent.com/grame-cncm/faust/master-dev/architecture/julia/packages.jl" rel="noreferrer noopener">packages.jl</a> 文件中列出：</p><ul><li>如果你已经安装了某个 Faust 版本，可以在 Faust 仓库的 <code>architecture/julia</code> 目录中运行 <code>julia packages.jl</code> 命令来安装</li><li>或者直接下载后用 <code>julia packages.jl</code> 命令执行</li></ul><h2 id="using-command-line-tools">使用命令行工具</h2><h3 id="generating-julia-code">生成 Julia 代码</h3><p>假定你已经从 <a href="https://github.com/grame-cncm/faust" rel="noreferrer noopener">master-dev 分支</a><a href="https://github.com/grame-cncm/faust/wiki/BuildingSimple" rel="noreferrer noopener">编译并安装</a>了 <strong>faust</strong> 编译器，从下面这个 DSP 程序 <strong>osc.dsp</strong> 出发：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/julia/exfaust0/exfaust0.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+
+vol = hslider("volume [unit:dB]", 0, -96, 0, 0.1) : ba.db2linear : si.smoo;
+freq1 = hslider("freq1 [unit:Hz]", 1000, 20, 3000, 1);
+freq2 = hslider("freq2 [unit:Hz]", 200, 20, 3000, 1);
+
+process = vgroup("Oscillator", os.osc(freq1) * vol, os.osc(freq2) * vol);</code></pre><br/><p>可以用下面的命令生成 Julia 代码：</p><pre><code>faust -lang julia osc.dsp -o osc.jl
+</code></pre><p>这会生成一个 <code>mydsp{T}</code> 数据结构，作为 <code>abstract type dsp</code> 的子类型，并附带一组操作它的方法。生成的 API 完全遵循为基类型 <code>dsp</code> <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/julia/dsp/dsp.jl" rel="noreferrer noopener">定义的那套接口</a>。这个 API 基本上仿照<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/dsp.h" rel="noreferrer noopener">为 C++ 后端定义的那套接口</a>。</p><p>生成的文件不是自包含的，因此不能直接用 <strong>julia</strong> 程序编译：</p><pre><code>julia osc.jl
+ERROR: LoadError: UndefVarError: dsp not defined
+...
+</code></pre><p>像 <code>FAUSTFLOAT</code>、<code>dsp</code>、<code>Meta</code>、<code>UI</code> 这样的额外类型必须在所谓的<a href="manual-architectures.html">架构文件</a>中定义。Julia 专用的架构文件<a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/julia#julia-architecture-files" rel="noreferrer noopener">在这里说明</a>。可以用一个名为 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/julia/minimal.jl" rel="noreferrer noopener">minimal.jl</a> 的简单架构文件配合以下命令完成这件事：</p><pre><code>faust -lang julia osc.dsp -a julia/minimal.jl -o osc.jl
+</code></pre><p>现在生成的 <strong>foo.jl</strong> 文件是自包含的，可以用下面的命令执行：</p><pre><code>julia -i osc.jl (here -i to stay in interactive mode)
+</code></pre><p>这会编译并执行 Julia 代码，输出：</p><pre><code>Application name: osc
+
+getNumInputs: 0
+getNumOutputs: 2
+
+Path/UIZone dictionary: Dict{String, UIZone}("/Oscillator/volume" =&gt; UIZone(:fHslider0, 0.0f0, -96.0f0, 0.0f0, 0.1f0), "/Oscillator/freq2" =&gt; UIZone(:fHslider2, 1000.0f0, 20.0f0, 3000.0f0, 1.0f0), "/Oscillator/freq1" =&gt; UIZone(:fHslider1, 1000.0f0, 20.0f0, 3000.0f0, 1.0f0))
+
+</code></pre><p>其中包含应用名称、输入/输出声道数、各控制器路径及其范围，以及所计算输出的前几个样本的图形显示（使用强大的 <a href="http://docs.juliaplots.org/latest/" rel="noreferrer noopener">Plots.jl</a> 包），这里显示的是信号开头处 <code>si.smoo</code> 的效果：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/julia/img/osc-display.png"/><em>显示输出</em></p><h3 id="looking-at-the-generated-code">查看生成的代码</h3><p>生成一个 <code>mydsp{T}</code> 数据结构，作为 <code>abstract type dsp</code> 的子类型，其中包含带类型的字段定义，以及一个初始化这些字段的构造函数：</p><pre><code class="language-faust">mutable struct mydsp{T} &lt;: dsp
+    fSampleRate::Int32 
+    fConst1::T 
+    fHslider0::FAUSTFLOAT 
+    fConst2::T 
+    fRec0::Vector{T} 
+    fConst3::T 
+    fHslider1::FAUSTFLOAT 
+    fRec2::Vector{T} 
+    fHslider2::FAUSTFLOAT 
+    fRec3::Vector{T} 
+    iVec0::Vector{Int32} 
+    iRec1::Vector{Int32} 
+    ftbl0mydspSIG0::Vector{T} 
+    mydsp{T}() where {T} = begin
+        dsp = new{T}()
+        dsp.fRec0 = zeros(T, 2)
+        dsp.fRec2 = zeros(T, 2)
+        dsp.fRec3 = zeros(T, 2)
+        dsp.iVec0 = zeros(Int32, 2)
+        dsp.iRec1 = zeros(Int32, 2)
+        dsp.ftbl0mydspSIG0 = zeros(T, 65536)
+        dsp
+    end
+end
+</code></pre><p>注意该结构用 <code>{T}</code> 类型参数化，该类型在初始化时给出。生成的 <code>const REAL = Float32</code> 或 <code>const REAL = Float64</code> 一行取决于编译时给出的 <code>-single</code>（默认）或 <code>-double</code> 选项，可用于此。</p><p>生成的还有若干访问方法：</p><pre><code class="language-faust">function getNumInputs(dsp::mydsp{T}) where {T}
+    return Int32(0) 
+end
+function getNumOutputs(dsp::mydsp{T}) where {T}
+    return Int32(2) 
+end
+</code></pre><p>还会生成 <code>init!</code>、<code>instanceInit!</code>、<code>instanceResetUserInterface!</code> 等若干初始化方法；下面是其中之一：</p><pre><code class="language-faust">function instanceResetUserInterface!(dsp::mydsp{T}) where {T}
+    dsp.fHslider0 = FAUSTFLOAT(0.0f0) 
+    dsp.fHslider1 = FAUSTFLOAT(1000.0f0) 
+    dsp.fHslider2 = FAUSTFLOAT(200.0f0) 
+end
+</code></pre><p><code>buildUserInterface!</code> 方法使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/julia/gui/UI.jl" rel="noreferrer noopener">UI</a> 子类型来构建控制器，可以是图形用户界面（例如使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/julia/gui/GTKUI.jl" rel="noreferrer noopener">GTK</a>），也可以是 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/julia/gui/OSCUI.jl" rel="noreferrer noopener">OSC</a> 控制器：</p><pre><code class="language-faust">function buildUserInterface!(dsp::mydsp{T}, ui_interface::UI) where {T}
+    openVerticalBox!(ui_interface, "Oscillator") 
+    declare!(ui_interface, :fHslider1, "unit", "Hz") 
+    addHorizontalSlider!(ui_interface, "freq1", :fHslider1, FAUSTFLOAT(1000.0f0), FAUSTFLOAT(20.0f0), FAUSTFLOAT(3000.0f0), FAUSTFLOAT(1.0f0)) 
+    declare!(ui_interface, :fHslider2, "unit", "Hz") 
+    addHorizontalSlider!(ui_interface, "freq2", :fHslider2, FAUSTFLOAT(500.0f0), FAUSTFLOAT(20.0f0), FAUSTFLOAT(3000.0f0), FAUSTFLOAT(1.0f0)) 
+    declare!(ui_interface, :fHslider0, "unit", "dB") 
+    addHorizontalSlider!(ui_interface, "volume", :fHslider0, FAUSTFLOAT(0.0f0), FAUSTFLOAT(-96.0f0), FAUSTFLOAT(0.0f0), FAUSTFLOAT(0.1f0)) 
+    closeBox!(ui_interface)
+end
+</code></pre><p>要访问的 DSP 结构字段只需用名字描述（在 Julia 术语中实际上是 <a href="https://docs.julialang.org/en/v1/manual/metaprogramming/#Symbols" rel="noreferrer noopener">Symbol</a>），之后就可以用标准的 <a href="https://docs.julialang.org/en/v1/base/base/#Base.setproperty!" rel="noreferrer noopener">setproperty!</a> 与 <a href="https://docs.julialang.org/en/v1/base/base/#Base.getproperty" rel="noreferrer noopener">getproperty</a> 访问方法，就像 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/julia/gui/MapUI.jl" rel="noreferrer noopener">MapUI</a> 架构中编写的 <code>setParamValue!</code> 与 <code>getParamValue</code> 方法那样。</p><p>最后，<code>compute!</code> 方法处理含 <code>count</code> 帧的输入缓冲区，产生一个输出缓冲区：</p><pre><code class="language-faust">@inbounds function compute!(dsp::mydsp, count::Int32, inputs, outputs)
+    output0 = @inbounds @view outputs[:, 1]
+    output1 = @inbounds @view outputs[:, 2]
+    fSlow0::Float32 = (dsp.fConst1 * pow(10.0f0, (0.0500000007f0 * Float32(dsp.fHslider0)))) 
+    fSlow1::Float32 = (dsp.fConst3 * Float32(dsp.fHslider1)) 
+    fSlow2::Float32 = (dsp.fConst3 * Float32(dsp.fHslider2)) 
+    @inbounds for i0 in 0:count-1
+        dsp.fRec0[1] = (fSlow0 + (dsp.fConst2 * dsp.fRec0[2])) 
+        dsp.fRec2[1] = (fSlow1 + (dsp.fRec2[2] - floor((fSlow1 + dsp.fRec2[2])))) 
+        output0[i0+1] = FAUSTFLOAT((dsp.fRec0[1] 
+        * dsp.ftbl0mydspSIG0[trunc(Int32, (65536.0f0 * dsp.fRec2[1]))+1])) 
+        dsp.fRec3[1] = (fSlow2 + (dsp.fRec3[2] - floor((fSlow2 + dsp.fRec3[2])))) 
+        output1[i0+1] = FAUSTFLOAT((dsp.fRec0[1] 
+        * dsp.ftbl0mydspSIG0[trunc(Int32, (65536.0f0 * dsp.fRec3[1]))+1])) 
+        dsp.fRec0[2] = dsp.fRec0[1] 
+        dsp.fRec2[2] = dsp.fRec2[1] 
+        dsp.fRec3[2] = dsp.fRec3[1] 
+    end
+end
+</code></pre><p><strong>注意</strong>，这个简短介绍并未展示所有生成的方法。请查看生成的 <strong>osc.jl</strong> 文件以了解全部内容。</p><h3 id="using-the-generated-code">使用生成的代码</h3><p>需要定义若干全局变量：</p><pre><code class="language-faust"># Testing
+samplerate = Int32(44100)
+block_size = Int32(16)
+</code></pre><p>必须创建并初始化 DSP 对象，这里使用生成的 <code>REAL</code> 类型别名：</p><pre><code class="language-faust"># Init DSP
+my_dsp = mydsp{REAL}()
+init!(my_dsp, samplerate)
+</code></pre><p>可以用下面的代码从 DSP 元数据中提取它的名字：</p><pre><code class="language-faust"># Retrieve the application name
+mutable struct NameMeta &lt;: Meta
+    name::String
+end
+
+function declare!(m::NameMeta, key::String, value::String)
+    if (key == "name") 
+        m.name = value;
+    end
+end)
+
+m = NameMeta("")
+metadata!(my_dsp, m)
+println("Application name: ", m.name, "\n")
+</code></pre><p>可以打印输入/输出的数量：</p><pre><code class="language-faust">println("getNumInputs: ", getNumInputs(my_dsp))
+println("getNumOutputs: ", getNumOutputs(my_dsp), "\n")
+</code></pre><p>可以用 <code>MapUI</code> 类型获取所有控制器的信息：</p><pre><code class="language-faust"># Create a MapUI controller
+map_ui = MapUI(my_dsp)
+buildUserInterface!(my_dsp, map_ui)
+
+# Print all zones
+println("Path/UIZone dictionary: ", getZoneMap(map_ui), "\n")   
+</code></pre><p>最后，可以用下面的代码处理一个缓冲区，这里把 <code>FAUSTFLOAT</code> 作为外部样本的实际类型：</p><pre><code class="language-faust">inputs = zeros(FAUSTFLOAT, block_size, getNumInputs(my_dsp))
+outputs = zeros(FAUSTFLOAT, block_size, getNumOutputs(my_dsp)) 
+compute!(my_dsp, block_size, inputs, outputs)
+println("One computed output buffer: ", outputs)
+</code></pre><p>现在 <strong>osc.jl</strong> 可能可以直接集成到更大的项目中，或者用适配的新架构文件加以定制。</p><h3 id="the-faust2portaudiojulia-tool">faust2portaudiojulia 工具</h3><p>可以用更完善的 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/julia#faust2portaudiojulia" rel="noreferrer noopener">faust2portaudiojulia</a> 工具编译并运行 Faust DSP 程序，它使用 <a href="https://juliapackages.com/p/portaudio" rel="noreferrer noopener">PortAudio.jl</a> 包访问音频驱动、使用 <a href="https://juliapackages.com/p/opensoundcontrol" rel="noreferrer noopener">OpenSoundControl.jl</a> 包做 OSC 控制、使用 <a href="http://juliagraphics.github.io/Gtk.jl/latest/" rel="noreferrer noopener">GTK.jl</a> 包做图形用户界面。</p><p><strong>faust2portaudiojulia</strong> 工具使用这个 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/julia/portaudio_gtk.jl" rel="noreferrer noopener">portaudio_gtk.jl</a> 架构文件。按如下方式使用时：</p><pre><code>faust2portaudiojulia osc.dsp
+</code></pre><p>它会创建一个 <strong>osc.jl</strong> 文件，直接用下面的命令即可执行：</p><pre><code>julia osc.jl
+</code></pre><p>于是这个默认生成 1000 Hz 与 200 Hz 正弦波的立体声程序就开始播放了，没有任何可供控制它的界面。</p><p>现在改用下面的命令：</p><pre><code>faust2portaudiojulia -play 2 osc.dsp
+</code></pre><p>会创建 <strong>osc.jl</strong> 文件，直接用 <strong>Julia</strong> 执行，音频由 PortAudio 渲染，界面为 GTK GUI（需要 2 个线程分别用于 GTK 和音频）。<strong>注意</strong>，这个 GUI 还相当简单：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/julia/img/osc-gtk.png"/><em>基于 GTK 的控制器</em></p><p>下面的命令：</p><pre><code>faust2portaudiojulia -play 2 -osc osc.dsp
+</code></pre><p>会创建 <strong>osc.jl</strong> 文件，直接用 <strong>Julia</strong> 执行，音频由 PortAudio 渲染，采用 OSC 控制（需要 2 个线程分别用于 OSC 和音频）。现在应用启动时会带一个运行在 5000 与 5001 端口上的 OSC 控制器：</p><pre><code>getNumInputs: 0
+getNumOutputs: 2
+
+Dict{String, UIZone}("/Oscillator/volume" =&gt; UIZone(:fHslider0, 0.0f0, -96.0f0, 0.0f0, 0.1f0), "/Oscillator/freq2" =&gt; UIZone(:fHslider2, 500.0f0, 20.0f0, 3000.0f0, 1.0f0), "/Oscillator/freq1" =&gt; UIZone(:fHslider1, 1000.0f0, 20.0f0, 3000.0f0, 1.0f0))
+
+Faust OSC application 'Oscillator' is running on UDP ports 5000, 5001
+</code></pre><p>可以直接发送 OSC 命令，方法<a href="manual-osc.html">见此</a>。例如同时改变两个声道的频率：</p><pre><code> oscsend localhost 5000 /Oscillator/freq1 f 400
+ oscsend localhost 5000 /Oscillator/freq2 f 960
+</code></pre><p>你还可以用 <a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/benchmark#faust-osc-controller" rel="noreferrer noopener">faust-osc-controller</a> 工具远程控制这个 Julia 程序，命令如下：</p><pre><code>faust-osc-controller /Oscillator -port 5001 -outport 5000 -xmit 1
+</code></pre><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/julia/img/faust-osc-controller.png"/><em>faust-osc-controller OSC 控制器</em></p><p>最后，用 <code>faust2portaudiojulia -play 2 -oscc osc.dsp</code> 命令，可以让 <code>faust-osc-controller</code> 工具随 OSC 接收端一起自动启动。</p><h2 id="using-the-faust-web-ide">使用 Faust 网页版 IDE</h2><p>Faust DSP 程序可以在 <a href="https://faustide.grame.fr/" rel="noreferrer noopener">Faust 网页版 IDE</a> 中编写、测试，并生成为可嵌入的 Julia 代码，或者生成为可用的音频应用。</p><h3 id="generating-the-pure-julia-output">生成纯 Julia 输出</h3><p>可以直接用 <em>Platform = source</em> 与 <em>Architecture = julia</em> 导出选项生成 Julia 后端的输出。如前所述，生成的文件不是自包含的，但它展示了需要用适配的 Julia 架构文件包装的代码。</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/julia/img/export.png"/><em>导出代码</em></p><h3 id="generating-a-minimal-working-julia-file">生成最小的可运行 Julia 文件</h3><p><em>Platform = julia</em> 与 <em>Architecture = julia</em> 导出选项可以借助 <code>minimal.jl</code> 架构生成自包含的文件，用下面的命令启动：</p><pre><code>julia -i foo.jl (here -i to stay in interactive mode)
+</code></pre><h3 id="generating-an-audio-application-controllable-with-gtk-or-osc-based-interfaces">生成可用 GTK 或 OSC 界面控制的音频应用</h3><p><em>Platform = julia</em> 与 <em>Architecture = portaudiojulia</em> 导出选项可以借助 <code>portaudio_gtk.jl</code> 架构生成自包含的文件。下面的命令以 GTK 控制界面启动程序：</p><pre><code>julia -t 2 foo.jl -gtk 
+</code></pre><p>下面的命令以 OSC 控制界面启动程序，随时可以接收 OSC 命令，或如前所述用 <code>faust-osc-controller</code> 工具控制：</p><pre><code>julia -t 2 foo.jl -osc 
+</code></pre><p>最后，用下面的命令可以让 <code>faust-osc-controller</code> 工具随 OSC 接收端一起自动启动：</p><pre><code>julia -t 2 foo.jl -oscc 
+</code></pre><h2 id="using-the-faustjl-julia-package">使用 Faust.jl Julia 包</h2><p>Julia 生态中有 4000 多个包<a href="https://julialang.org/packages/" rel="noreferrer noopener">注册在 General 注册表中</a>。最初由 <a href="https://corajr.com" rel="noreferrer noopener">Cora Johnson-Roberson</a> 开发的 Faust.jl 包已<a href="https://github.com/sletz/Faust.jl" rel="noreferrer noopener">在此分支并扩展</a>。它可以使用 libfaust 库与 Julia Faust 后端。</p><p><a href="https://code.visualstudio.com" rel="noreferrer noopener">Visual Studio Code</a> 应用可以配合 <a href="https://marketplace.visualstudio.com/items?itemName=julialang.language-julia" rel="noreferrer noopener">Julia 扩展</a>使用。这是编辑、编译和测试 Julia + Faust 代码的非常方便的方式。</p><h3 id="installing-the-forked-faustjl-package">安装分支版的 Faust.jl 包</h3><p>在 VS Code 中可以<a href="https://docs.julialang.org/en/v1/stdlib/Pkg/" rel="noreferrer noopener">进入包管理模式</a>。Pkg 自带一个 REPL。在 Julia REPL 中按 <code>]</code> 进入 Pkg REPL，然后用下面的命令安装 Faust 包：</p><pre><code class="language-faust">pkg&gt; add https: // github.com/sletz/Faust.jl
+</code></pre><p>要回到 Julia REPL，按退格键或 ^C，然后用下面的命令加载 Faust 包：</p><pre><code class="language-faust"> julia&gt; using Faust
+</code></pre><p>假定已经搭好可用的 Julia 环境，就可以使用下面的命令。</p><h3 id="using-the-libfaust-compiler">使用 libfaust 编译器</h3><pre><code class="language-faust">
+ # Create a DSP factory.
+ dsp = compile("""
+ import("stdfaust.lib");
+
+ freq = hslider("freq", 440, 20, 20000, 1);
+ gain = hslider("gain", 0.25, 0, 1, 0.001);
+ process = os.oscs(freq) * gain;
+ """)
+
+ # Initialize DSP instance and controls.
+ init!(dsp; block_size=1024, samplerate=48000)
+
+ # Compute one block of audio.
+ compute!(dsp)
+</code></pre><p>默认情况下程序按单精度编译；可以这样给编译器传入 <code>-double</code> 或其他参数：</p><pre><code class="language-faust"> compile("process = _;"; name="passthrough", argv=["-double", "-vec"])
+</code></pre><p>每次调用 <code>compute!</code> 都会计算 <code>block_size</code> 个样本，并把输出作为 (block_size, n_channels) 的矩阵返回。如果程序有输入，请在调用 <code>compute!</code> 之前把 <code>dsp.inputs</code> 设为 (block_size, n_channels) 的矩阵：</p><pre><code class="language-faust"> passthrough = init!(compile("process = _,_;"))
+ x = rand(Float32, 256, 2)
+ passthrough.inputs = x
+ @test compute!(passthrough) == x
+</code></pre><p>调用 <code>init!</code> 之后，代码中声明的所有界面控件的路径名与范围都可以通过 <code>dsp.ui.ranges</code> 获得。</p><pre><code class="language-faust"> julia&gt; dsp.ui.ranges
+ Dict{String, Faust.UIRange} with 2 entries:
+ "/score/gain" =&gt; UIRange(0.25, 0.0, 1.0, 0.001)
+ "/score/freq" =&gt; UIRange(440.0, 20.0, 20000.0, 1.0)
+
+ julia&gt; ctrl = dsp.ui.ranges["/score/freq"]; (ctrl.min, ctrl.max)
+ (20.0f0, 20000.0f0)
+</code></pre><p>然后就可以这样设置这些参数的值：</p><pre><code class="language-faust"> setparams!(dsp, Dict("/score/freq" =&gt; 220.0f0))
+</code></pre><h3 id="displaying-signals">显示信号</h3><p>Julia 有很多显示信号的包，例如可以用下面的命令（<a href="https://github.com/sletz/Faust.jl/blob/main/src/Faust.jl" rel="noreferrer noopener">代码在此</a>）显示输出缓冲区：</p><pre><code class="language-faust"> # Define a block of DSP code
+ julia&gt; code = """import("stdfaust.lib"); process = os.osc(500), os.sawtooth(1000);"""
+
+ # Compile the DSP, compute one block of audio and display the outputs
+ julia&gt; compileFaustString(code)
+
+ # Compile the DSP, with additional compiler arguments and display the outputs
+ julia&gt; compileFaustString(code; argv=["-double", "-vec"])
+
+ # Compile the DSP, with a larger block_size and display the outputs
+ julia&gt; compileFaustString(code; block_size=50000)
+</code></pre><p>在 VS code 中结果如下：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/julia/img/faust-jl-package.png"/><em>在 VS code 中使用 Julia</em></p><p>还可以做更复杂的分析，比如<a href="https://github.com/sletz/Faust.jl/blob/main/examples/finitediff.jl" rel="noreferrer noopener">这个示例</a>，或者这个试验<a href="https://github.com/corajr/faust_nn" rel="noreferrer noopener">在 Faust 中使用神经网络</a>的项目。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/julia/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/julia/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
