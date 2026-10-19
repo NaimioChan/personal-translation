@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenCV - TouchDesigner 文档</title>
+<meta name="description" content="OpenCV —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>OpenCV</h1>
+<p><a href="https://en.wikipedia.org/wiki/OpenCV" rel="noreferrer noopener" target="_blank">OpenCV</a>（Open Source Computer Vision）是一个编程函数库，主要面向实时计算机视觉，最初由 Intel 的一个研究中心开发，现已开源。</p><p>TouchDesigner 预装了 OpenCV 4.8.0（包含贡献模块），以及与 TouchDesigner 的 Python 3.11.1 对接的 numpy，使 TouchDesigner 可以直接访问 OpenCV 函数。</p><p>OpenCV 用于 <a href="Script_TOP.html">Script TOP</a>、<a href="Blob_Track_TOP.html">Blob Track TOP</a> 和 <a href="https://docs.derivative.ca/Palette:camSchnappr" rel="noreferrer noopener" target="_blank">camSchnappr</a>。</p><h2 id="Using_OpenCV_with_python">在 python 中使用 OpenCV</h2><h3 id="Testing_OpenCV">测试 OpenCV</h3><ul><li>打开 TouchDesigner</li><li>用 Alt+t 打开 Textport</li><li>运行以下命令：</li></ul><div dir="ltr"><pre><code>TouchDesigner  Build 2023.10990 compile on Wed Aug 16 08:27:59 2023
+Python 3.11.1 (heads/3.11-Derivative-dirty:82b0389147, Jan 25 2023, 22:34:27) [MSC v.1929 64 bit (AMD64)]
+
+python &gt;&gt;&gt; import cv2
+python &gt;&gt;&gt; cv2.__version__
+'4.8.0'
+</code></pre></div><ul><li>如果输出为 '4.8.0' 且没有错误，说明 OpenCV 工作正常。</li></ul><h3 id="Textures_to_numpyArrays">将纹理转换为 numpyArray</h3><p>通过调用 <code dir="ltr"><span>myTop</span><span>.</span><span>numpyArray</span><span>()</span></code> 方法，每个 TOP 都可以直接转换为 NumPy 数组（另见：<a href="TOP_Class.html#Methods">TOP Class#Methods</a>）</p><p>NumPy 数组是 openCV 保存数据的默认数据结构。一般而言，NumPy 可以理解为一个供 Python 使用的库，用于支持大型多维数组和矩阵，以及大量用于操作这些数组的高层函数。（对比：<a href="https://en.wikipedia.org/wiki/NumPy" rel="noreferrer noopener" target="_blank">NumPy</a>）</p><h3 id="Example:_Applying_a_colormap_to_a_Texture">示例：为纹理应用颜色映射表</h3><p>以下示例是一个 Script TOP 的内容。OpenCV 函数 <code dir="ltr">cv2.applyColorMap()</code> 接受单色图像以及对预定义颜色映射表的引用，其作用本质上与 TouchDesigner 中的 Lookup TOP 相同。更多信息见：<a href="https://docs.opencv.org/master/d3/d50/group__imgproc__colormap.html#gadf478a5e5ff49d8aa24e726ea6f65d15" rel="noreferrer noopener" target="_blank">ColorMaps in OpenCV</a></p><div dir="ltr"><pre><code>def onCook(scriptOp):
+	# 以延迟一帧的方式获取 scriptTOP 的输入
+    # 以获得更快的运行速度（对比 TopTo CHOP）
+	input = scriptOp.inputs[0].numpyArray(delayed=True)
+
+	# 图像是否已就绪？
+    # 第一帧会是 None，因为我们是晚一帧取数据。
+	if not input is None: 
+		# 提取红色通道并转换为 uint8
+		sChan = cv2.extractChannel(input,0)*255
+		sChan = sChan.astype('uint8')
+
+		# 为红色通道应用色图
+		output = cv2.applyColorMap(sChan, cv2.COLORMAP_TWILIGHT_SHIFTED)
+        # 把 numpyarray 输出到 Script TOP
+		scriptOp.copyNumpyArray(output)
+	return
+</code></pre></div><h3 id="Example:_Finding_Features_in_a_Texture">示例：在纹理中查找特征</h3><p>以下示例是一个 Script CHOP 的内容。首先指定 Script CHOP 的参数。</p><p>每次计算 Script CHOP 时，<code>Top</code> 自定义参数中指定的操作符都会被读入 numPy 数组，然后传给名为 goodFeaturesToTrack 的 openCV 函数。</p><p><b>注意：</b> 所引用的 TOP 应为单色图像。可以使用 <a href="Monochrome_TOP.html">Monochrome TOP</a> 把彩色纹理转换为灰度。这样做，并使用 Luminance 函数作为转换方式，就不必在脚本中执行此步骤（许多 openCV 函数期望输入灰度图像）。</p><p>所得的输出可用于 Instancing 设置中。</p><div dir="ltr"><pre><code># me - 此 DAT
+# scriptOp - 正在 cook 的 OP
+
+# 在 OP 中按下 'Setup Parameters' 可调用此函数重新创建参数。
+def onSetupParameters(scriptOp):
+	# 创建自定义页
+	page = scriptOp.appendCustomPage('Good Features')
+
+	# 创建一个自定义 TOP 引用参数
+	topPar = page.appendTOP('Top', label='TOP (monochrome)')
+
+	# 创建一个自定义参数，用于指定要检测的特征数量
+	p = page.appendInt('Features', label='Number of Features')
+	p[0].default = 25
+	p[0].normMin = 1
+	p[0].normMax = 250
+
+	# 创建一个自定义参数，用于指定最低质量级别
+	# 低于该级别时，检测到的特征会被拒绝
+	p = page.appendFloat('Quality', label='Minimum Quality Level')
+	p[0].default = 0.01
+	p[0].normMin = 0.001
+	p[0].normMax = 1
+
+	# 创建一个自定义参数，用于指定最小距离
+	# 即检测到的特征之间的距离
+	p = page.appendInt('Distance', label='Minimum Distance')
+	p[0].default = 10
+	p[0].normMin = 1
+	p[0].normMax = 1200
+	return
+
+# 每当推入自定义 pulse 参数时调用
+def onPulse(par):
+	return
+	
+import numpy as np
+import cv2
+
+def onCook(scriptOp):
+	scriptOp.clear()
+	
+	# 读取参数以确定要检测的特征数量
+	topRef = scriptOp.par.Top.eval()
+	features = scriptOp.par.Features
+	quality = scriptOp.par.Quality
+	distance = scriptOp.par.Distance
+	
+	# 默认值
+	xVals = []
+	yVals = []
+	corners = []
+	
+	if topRef:
+		# 以 numpyArray 方式读取 top
+		img = topRef.numpyArray()
+		
+		# 由于从灰度 TOP 读取，除红色通道外全部丢弃
+		# 这样也就可以跳过本来用于把彩色图转换为灰度的 cv2.cvtColor 函数
+		img = img[:,:,:1]
+		
+		# 运行 OpenCV 的 goodFeaturesToTrack 函数
+		# https://docs.opencv.org/3.0-beta/doc/py_tutorials/py_feature2d/py_shi_tomasi/py_shi_tomasi.html
+		corners = cv2.goodFeaturesToTrack(img,features,quality,distance)
+		
+		# 对数组切片，把 x 和 y 位置分到 2 个变量中
+		xVals = corners[:,:,0:1]
+		yVals = corners[:,:,1:2]
+	
+	# 为 scriptOp 设置 2 个通道
+	# 并把长度设为检测到的特征数量
+	scriptOp.rate = me.time.rate
+	scriptOp.numSamples = len(corners)
+	tx = scriptOp.appendChan('tx')
+	ty = scriptOp.appendChan('ty')
+	
+	# 为通道赋值
+	tx.vals = xVals
+	ty.vals = yVals
+	return
+</code></pre></div><h3 id="Example:_Adding_Elements_in_OpenCV">示例：在 OpenCV 中添加元素</h3><p>需要注意的一点是，OpenCV 的坐标系原点在左上角，而 TouchDesigner 以左下角为基准。因此，在 openCV 中向纹理叠加线条、文字或其他图形元素时，需要先翻转源纹理，处理后再翻回来。</p><p>以下示例会从 <a href="Script_TOP.html">Script TOP</a> 的输入读取纹理并添加一些文字：</p><div dir="ltr"><pre><code># me - 此 DAT
+# scriptOp - 正在 cook 的 OP
+
+# 在 OP 中按下 'Setup Parameters' 可调用此函数重新创建参数。
+def onSetupParameters(scriptOp):
+	return
+
+# 每当推入自定义 pulse 参数时调用
+def onPulse(par):
+	return
+
+import cv2
+def onCook(scriptOp):
+	# 获取 scriptOp 的输入纹理
+	inputTex = scriptOp.inputs[0].numpyArray(delayed=False)
+
+	# 在向图像添加内容之前，需要先翻转它，因为 OpenCV 的坐标系
+	# 起点在左上，而 TouchDesigner 起点在左下
+	# flip() 的第二个参数是围绕哪个轴翻转
+	inputTex = cv2.flip(inputTex, 0)
+
+	# 现在来添加一些文本
+	outputTex = cv2.putText(inputTex, 'Derivative', (100,400), cv2.FONT_HERSHEY_PLAIN, 10, (255, 0, 255), 2, cv2.LINE_AA)
+	
+	# 把纹理翻回来，以回到 TouchDesigner 坐标空间
+	outputTex = cv2.flip(outputTex, 0)
+	
+	# 把最终纹理写入 scriptOp
+	scriptOp.copyNumpyArray(outputTex)
+	return
+</code></pre></div><h3 id="Next_Steps">后续步骤</h3><p><a href="http://docs.opencv.org/3.0-beta/doc/py_tutorials/py_tutorials.html" rel="noreferrer noopener" target="_blank">OpenCV website</a> 和 <a href="http://docs.opencv.org/master/d6/d00/tutorial_py_root.html" rel="noreferrer noopener" target="_blank">OpenCV Tutorials</a> 上有一系列入门教程</p><h2 id="Using_OpenCV_with_Custom_Operators">在自定义操作符中使用 OpenCV</h2><p>TouchDesigner 包含完整的 OpenCV 库及所需的包含文件，可用于开发使用 OpenCV 4.8.0 的自定义操作符</p><p>在 TouchDesigner GitHub 仓库 <a href="https://github.com/TouchDesigner/CustomOperatorSamples" rel="noreferrer noopener" target="_blank">"Custom Operator Samples"</a> 中，多个 TOP 族示例都使用了 OpenCV：</p><ul><li><a href="https://github.com/TouchDesigner/CustomOperatorSamples/tree/main/TOP/CannyEdgeTOP" rel="noreferrer noopener" target="_blank">Canny Edge TOP</a></li><li><a href="https://github.com/TouchDesigner/CustomOperatorSamples/tree/main/TOP/ContoursTOP" rel="noreferrer noopener" target="_blank">Contours TOP</a></li><li><a href="https://github.com/TouchDesigner/CustomOperatorSamples/tree/main/TOP/DistanceTransformTOP" rel="noreferrer noopener" target="_blank">Distance Transform TOP</a></li><li><a href="https://github.com/TouchDesigner/CustomOperatorSamples/tree/main/TOP/ObjectDetectorTOP" rel="noreferrer noopener" target="_blank">Object Detector TOP</a></li><li><a href="https://github.com/TouchDesigner/CustomOperatorSamples/tree/main/TOP/OpticalFlowCPUTOP" rel="noreferrer noopener" target="_blank">Optical Flow CPU TOP</a></li><li><a href="https://github.com/TouchDesigner/CustomOperatorSamples/tree/main/TOP/SpectrumTOP" rel="noreferrer noopener" target="_blank">Spectrum TOP</a></li></ul><p>OpenCV C++ 文档见 <a href="https://docs.opencv.org/4.8.0/index.html" rel="noreferrer noopener" target="_blank">here</a>。</p><h2 id="OpenCV_License_Agreement">OpenCV 许可协议</h2><p>TouchDesigner 按以下许可使用 OpenCV 的部分内容（即 <a href="Blob_Track_TOP.html">Blob Track TOP</a>）。</p><p>Intel 许可协议。</p><p>Copyright (C) 2000, Intel Corporation, rights reserved. 第三方版权归各自所有者所有。</p><p>只要满足以下条件，即允许以源代码和二进制形式再分发 OpenCV 并使用，无论是否经过修改：</p><ul><li>源代码的再分发必须保留上述版权声明、此条件列表和以下免责声明。</li></ul><ul><li>二进制形式的再分发必须在随分发提供的文档和/或其他材料中复制上述版权声明、此条件列表和以下免责声明。</li></ul><ul><li>未经事先书面许可，不得使用 Intel Corporation 的名称来认可或推广源自本软件的产品。</li></ul><p>OpenCV 软件由版权持有人和贡献者「按原样」提供，不提供任何明示或暗示的担保，包括但不限于对适销性和特定用途适用性的暗示担保。在任何情况下，Intel Corporation 或贡献者均不对任何直接、间接、偶发、特殊、惩戒性或后果性损害（包括但不限于采购替代商品或服务；使用、数据或利润损失；或业务中断）承担责任，无论其成因如何，也无论基于何种责任理论，无论是合同、严格责任还是侵权（包括过失或其他），只要以任何方式源自本软件的使用，即使已被告知发生此类损害的可能性。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/OpenCV" rel="noreferrer noopener">docs.derivative.ca/OpenCV</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

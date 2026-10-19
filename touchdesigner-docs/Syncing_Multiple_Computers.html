@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多台计算机同步 - TouchDesigner 文档</title>
+<meta name="description" content="多台计算机同步 —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>多台计算机同步</h1>
+<h2 id="Overview">概述</h2><p>始终更简单的是把项目放在一台使用单块 GPU 的电脑上。不过如果出现必须把工作拆分到更多 GPU 或电脑上的情况，系统之间就可能需要某种程度的同步。需要什么级别的同步，很大程度上取决于显示设置和内容。你可能需要硬件级的严格同步，而在另一些情况下，软件级的基础同步就足够了。 </p><p>对于内容变化非常缓慢的项目，或彼此相距很远的显示器，非常基础的同步可能就够了，完美同步/硬件同步反而过度。对于内容快速变化、显示器彼此非常靠近的项目，则可能需要完美同步才能看起来正常。 </p><p>另请参阅 <a href="Sync.html">Sync</a>。 </p><h2 id="Source_of_Sync_Errors">同步错误的来源</h2><p>从开始渲染一帧到它最终显示在显示器上，中间有多个阶段可能引入同步错误。 </p><h3 id="Content_Generation">内容生成</h3><p>要让多台电脑输出同步的图像，它们首先必须为同一帧生成相同的图像。如果播放视频，这意味着确保它们播放的是同一帧视频。如果渲染场景，这意味着确保该帧上所有对象和摄像机使用相同的变换和几何。这些问题通过软件同步解决。某些内容生成算法不太适合同步，例如 <a href="Particle_SOP.html">Particle SOP</a>，或使用带 <a href="Feedback_TOP.html">Feedback TOP</a> 的网络生成图像。这是因为这些方法使用上一帧的信息来计算当前帧。如果任何时候其中一台电脑丢了一帧，它的内容就可能开始与另一台机器的内容产生偏差。即使只丢一帧，再渲染几秒之后就可能导致截然不同的结果。 </p><p>理想情况下，正在构建的项目应能保证：给定某个命令或某组控制通道，它总是输出相同的东西。这被称为「确定性」项目。通常的做法是让一切都由单个帧索引，或由一组控制项目内所有状态的通道来驱动。 </p><p>一旦项目是「确定性」的，下一步就是确保各台电脑同时、或尽可能接近同时地收到命令/控制通道。这通过软件同步完成。简单的软件同步通常会有 1-3 帧的同步误差。完美的软件同步在内容生成上应有 0 帧同步误差。不过仍可能有显示器造成的 1 帧同步误差，将在下一节说明。 </p><p>（细节：Sync Out CHOP 是服务器，In CHOP 是客户端。Out 节点会等待 In 节点发来消息告知已完成一帧，然后再发送新一帧的数据。 如前所述，粒子系统很棘手，因为如果每个客户端都自己计算数据，仅仅一帧的计算偏差就会导致截然不同的结果。所以如果需要完美效果，应让服务器和客户端都关闭 realtime，这样它永远不会跳帧（这会影响视觉流畅度），并确保所有客户端在计算时始终使用完全相同的输入。通常人们希望让其中一个渲染节点充当服务器，这没问题，但需要确保生成 time.absframe（$F）等的工作与所有执行渲染的节点分开。这可以用 Component Time 实现。把 Sync Out CHOP 放在一个拥有自己时间轴的 COMP 中，并在同一文件里用 Sync In CHOP 从该 Sync Out CHOP 读取值。它应放在另一个同样拥有自己时间的 COMP 中，并使用 Sync In CHOP 的值进行渲染，而不是直接使用来自 Sync Out CHOP 网络的任何东西。所有其他客户端只会有处于活动状态的 Sync In CHOP。） </p><h3 id="Displaying_Content">显示内容</h3><p>即使各台电脑生成的内容完全同步，显示图像仍可能引入最多 1 帧的同步误差。这是因为不同机器上显示器的刷新间隔不会同相。如果以 60fps 运行，每台显示器开始刷新的时刻彼此可能相差最多 16.6ms。这通过 Hardware Sync/Hardware Frame Lock 解决。 </p><h2 id="Types_of_Sync">同步类型</h2><h3 id="Software_Sync">软件同步</h3><p>软件同步确保所有进程在同一时间生成相同的内容。 </p><p><a href="TouchDesigner_Pro.html">Pro</a> 用户可以通过使用 <a href="Sync_In_CHOP.html">Sync In CHOP</a>、<a href="Sync_Out_CHOP.html">Sync Out CHOPs</a> 获得完美的软件同步。 </p><p><a href="TouchDesigner_Commercial.html">Commercial</a> 和非商业版用户无法获得有保证的完美软件同步，但通过使用网络节点如 <a href="OSC_In_CHOP.html">OSC In CHOP</a>/<a href="OSC_Out_CHOP.html">OSC Out CHOP</a> 或 <a href="OSC_In_DAT.html">OSC In DAT</a>/<a href="OSC_Out_DAT.html">OSC Out DAT</a>，通常能把同步控制在 1-3 帧内，并确保使用 Multicast 作为网络协议。对于 OSC CHOP，务必关闭排队，以确保 OSC In CHOP 不会给你的数据增加延迟。绝大多数项目使用这种同步，因为内容和/或显示设置不会显出 1-3 帧的同步误差。如果显示器相距很远，或内容运动缓慢，通常不需要完美同步。 </p><h3 id="Hardware_Sync">硬件同步</h3><p>硬件同步用于确保所有显示器同时更新内容，并确保某台不会在其他显示器尚未准备好更新时先更新自己的内容。对于内容快速变化的显示器阵列（例如 Christie Microtile Wall），这可能是必要的。没有硬件同步时，显示器可能在不同时间刷新，给内容带来最多 1 帧的同步误差。 要实现硬件同步，你需要带 Quadro Sync 卡的 Quadro GPU。有关硬件同步的更多信息，请参阅 <a href="Hardware_Frame_Lock.html">Hardware Frame Lock</a> 一文。 </p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Syncing_Multiple_Computers" rel="noreferrer noopener">docs.derivative.ca/Syncing_Multiple_Computers</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -52,5 +52,9 @@ window.PT_LIBRARIES = [
   { dir: 'juce-docs', title: 'JUCE 参考文档',
     desc: 'JUCE 官方 API 参考文档的中文译本。',
     source: 'https://docs.juce.com/master/index.html',
-    updated: '2026-10-19', pages: 1160 }
+    updated: '2026-10-19', pages: 1160 },
+  { dir: 'touchdesigner-docs', title: 'TouchDesigner 文档',
+    desc: 'TouchDesigner 官方用户指南的中文译本。',
+    source: 'https://docs.derivative.ca/',
+    updated: '2026-10-19', pages: 2022 }
 ];

@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write a GLSL TOP - TouchDesigner 文档</title>
+<meta name="description" content="Write a GLSL TOP —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Write a GLSL TOP</h1>
+<h2 id="Overview">概述</h2><p>官方 GLSL 文档可在 <a href="https://www.khronos.org/opengl/wiki/Core_Language_(GLSL)" rel="noreferrer noopener" target="_blank">this address.</a> 找到 </p><p>TouchDesigner 主要支持的 GLSL 版本为 4.60。由于切换到 Vulkan，对 GLSL 3.30 及更早版本的支持已被移除。不过，为 3.30 编写的着色器在面向更新的 GLSL 时应该能正常工作。 </p><p>为 <a href="GLSL_TOP.html">GLSL TOP</a> 编写的着色器通常是一种基于图像的操作。它基本不做任何基于几何的工作。对于熟悉编写 3D GLSL 着色器的用户来说，GLSL TOP 就是应用在单个四边形上的着色器，该四边形被绘制以覆盖整个视口（也称为全屏对齐四边形）。 为简化主题，本指南会避开 3D 渲染带来的额外复杂性，仅在 2D 世界中介绍编写 GLSL 着色器这一主题，只处理像素。 </p><p>GLSL TOP 中的着色器代码会针对每个要输出的像素运行一次。着色器编写者的工作是： </p><ul><li>对输入的像素进行采样（如果有的话）。</li><li>执行所需的数学运算来生成像素颜色。</li><li>输出像素颜色。</li></ul><h2 id="Concepts">概念</h2><h3 id="Output_Swizzle">Output Swizzle</h3><p>为确保 Windows 与 macOS 之间的跨平台支持，写入纹理的任何颜色都应先经过 <code dir="ltr"><span>vec4</span><span> </span><span>TDOutputSwizzle</span><span>(</span><span>vec4</span><span>)</span><span></span></code>。该函数会根据目标纹理格式，确保正确的通道进入正确的输出通道。例如，纯 alpha 纹理实际上并不存在，而是以纯红色纹理存储。采样时会对输出自动应用 swizzle（0, 0, 0, R）。这种情况下，<code dir="ltr"><span>vec4</span><span> </span><span>TDOutputSwizzle</span><span>()</span><span></span></code> 会把 alpha 值放入输出的红色通道。当该纹理在其他地方使用时，借助前面提到的 swizzle，该值会正确出现在「alpha」通道中。 </p><h3 id="Outputting_Color">输出颜色</h3><h4 id="Pixel_Shader">像素着色器</h4><p>通常，你只需要一个像素着色器就能创建可用的 GLSL TOP。 </p><p>一个简单的入门着色器就是把每个像素都设为红色。 </p><div dir="ltr"><pre><code>layout(location = 0) out vec4 fragColor;
+void main()
+{
+   vec4 color = vec4(1.0, 0.0, 0.0, 1.0);
+   fragColor = TDOutputSwizzle(color);
+}
+</code></pre></div><p>只需将此代码放入 <a href="DAT.html">DAT</a>，并将 GLSL TOP 的 <b>Pixel Shader</b> 参数设为该 DAT。 </p><p>注意，<code>fragColor</code> 由着色器编写者定义为输出颜色的位置。这与 GLSL 1.20 中不同，那里使用的是内置变量 <code>gl_FragColor</code>。 </p><h4 id="Compute_Shader">计算着色器</h4><p>对于计算着色器，输出纹理会为你定义好，不要在你的着色器代码中定义它。 </p><p>你应使用这些函数读写纹理。uvec3 版本是为了方便而提供，其行为与 ivec3 版本相同。如果输出纹理的维度不需要 3 个坐标，则多余的坐标会被忽略。这与 2025.30000 系列版本之前的工作流程不同，那时使用 <code>sTDComputeOutputs</code>。之所以改变，是因为读写 sRGB 编码的纹理需要配合 <code>imageStore()/imageLoad()</code> 进行特殊处理，而这些函数会为你自动处理。 在使用这些函数之前，你也 ***不需要*** 对颜色应用 <code>TDOutputSwizzle()</code>，它会在内部自动为你应用。 这些函数还会为你做范围检查，确保超出范围的坐标被送入 <code>imageStore/imageLoad</code>。 尽管 GLSL 声明这些函数对越界访问是安全的，但 Vulkan 并非如此，因此需要做范围检查以保证安全。 </p><div dir="ltr"><pre><code>void TDImageStoreOutput(uint index, ivec3 coord, vec4 color);
+void TDImageStoreOutput(uint index, uvec3 coord, vec4 color);
+vec4 TDImageLoadOutput(uint index, ivec3 coord);
+vec4 TDImageLoadOutput(uint index, uvec3 coord);
+</code></pre></div><p>要写入输出，请使用 GLSL 函数 <code>TDImageStoreOutput()</code> </p><div dir="ltr"><pre><code>void main()
+{
+   vec4 color = vec4(1, 0, 0, 1);
+   TDImageStoreOutput(0, ivec3(gl_GlobalInvocationID.xy, 0), color);
+}
+</code></pre></div><h3 id="Sampling_Inputs">采样输入</h3><p>接下来你可能想做的是采样输入 TOP 的像素。下面这行使用 texture() 函数采样一个输入 TOP： </p><div dir="ltr"><pre><code>vec4 inputColor = texture(sTD2DInputs[0], vUV.st);
+</code></pre></div><h4 id="Pixel_Shaders">像素着色器</h4><p>默认情况下，像素着色器中会为你声明并设置输入变量 <code>vUV</code>，其中包含该像素的纹理坐标。只有在你没有提供顶点着色器时才会给出该变量。如果你提供了自己的顶点着色器，那么把纹理坐标传递到像素着色器就由你负责。这些值会在整个 2D 图像上平滑插值，因此当你绘制中间像素时，<code>vUV.st</code> 的值为（0.5, 0.5）。输入采样器变量会以数组形式为你声明。采样器按其维度（2D、3D、2DArray、Cube）划分。指向包含第一个 2D 纹理的 TOP 的采样器为 <code>sTD2DInputs[0]</code>。类似地，第二个 2D 输入称为 <code>sTD2DInputs[1]</code>，依此类推，适用于任意数量的 2D 输入（GLSL Multi TOP 的输入数量不限，但你的显卡在着色器中可使用的纹理数量是有限的）。 </p><p>代码行 <code>texture(sTD2DInputs[0], vUV.st)</code> 在纹理坐标 <code>vUV.st</code> 处采样纹理 <code>sTD2DInputs[0]</code>。由于 <code>vUV.st</code> 对每个像素都会变化，因此每次都会从输入中采样不同的像素。 </p><p>要可视化 <code>vUV.st</code> 的值，可以尝试将此着色器放入 GLSL TOP。 </p><div dir="ltr"><pre><code>layout(location = 0) out vec4 fragColor;
+void main()
+{
+   fragColor = vec4(vUV.s, vUV.t, 0.0, 1.0);
+}
+</code></pre></div><h4 id="Compute_Shaders">计算着色器</h4><p>计算着色器可以像像素着色器一样，使用相同的 texture() 函数采样输入。但它没有可用的 <code>vUV</code> 坐标，因此需要利用 <code>gl_GlobalInvocationID</code> 和输入纹理分辨率（可在其 <code>TDTexInfo</code> 结构中获取）手动计算坐标。也可以使用 <code>texelFetch</code>，它访问范围为 [0, width - 1] 和 [0, height - 1] 的整数纹理坐标。 </p><h2 id="Samplers">采样器</h2><p>采样器是 GLSL 中对纹理的称呼。采样器以数组形式提供给 GLSL 程序，按纹理的维度（2D、3D、2DArray、Cube 等）划分。你可以使用以下常量了解每种类型有多少个连接到了该 TOP： </p><div dir="ltr"><pre><code>TD_NUM_2D_INPUTS
+TD_NUM_3D_INPUTS
+TD_NUM_2D_ARRAY_INPUTS
+TD_NUM_CUBE_INPUTS
+</code></pre></div><p>如果你改变了连接到 GLSL TOP 的输入数量或类型，着色器会重新编译，上面的 define 和下面的数组都会使用新值。无论 TOP 连接到哪个输入，它都会按维度归并到相应的采样器数组中。数组定义如下（你无需在着色器中声明它们）： </p><div dir="ltr"><pre><code>uniform sampler2D sTD2DInputs[TD_NUM_2D_INPUTS];
+uniform sampler3D sTD3DInputs[TD_NUM_3D_INPUTS];
+uniform sampler2DArray sTD2DArrayInputs[TD_NUM_2D_ARRAY_INPUTS];
+uniform samplerCube sTDCubeInputs[TD_NUM_CUBE_INPUTS];
+</code></pre></div><p>例如，假设你的 GLSL TOP 按此顺序连接了 5 个输入：2D TOP、3D TOP、2D TOP、Cube TOP、2D Array TOP。那么 </p><div dir="ltr"><pre><code>TD_NUM_2D_INPUTS = 2
+TD_NUM_3D_INPUTS = 1
+TD_NUM_2D_ARRAY_INPUTS = 1
+TD_NUM_CUBE_INPUTS = 1
+</code></pre></div><p>你可以像这样引用你的输入： </p><div dir="ltr"><pre><code>texture(sTD2DInputs[0], vUV.st); // 第一个 2D 输入
+texture(sTD2DInputs[1], vUV.st); // 第二个 2D 输入，但不是连接到该 TOP 的第二个输入
+texture(sTD3DInputs[0], vUV.stp); // 第一个 3D 输入
+texture(sTDCubeInputs[0], vUV.stp); // 第一个立方体输入
+texture(sTD2DArrayInputs[0], vUV.stp); // 第一个 2D 数组输入
+</code></pre></div><h4 id="Non-Dynamically_Uniform_Sampler_Access">非动态 uniform 的采样器访问</h4><p>默认情况下，访问采样器数组（或图像输出）必须使用所谓的 <a href="https://www.khronos.org/opengl/wiki/Core_Language_(GLSL)#Dynamically_uniform_expression" rel="noreferrer noopener" target="_blank">dynamically uniform expression</a>。这基本上意味着数组索引应为编译期常量、编译器在编译时可化简为常量的值，或前文链接文章中列出的其他少数着色器输入。例如，始终从 0 到 5 的 for 循环是编译器在编译时就能知道的，因此是动态 uniform 的。类似地，传入着色器的 uniform 整数值也是动态 uniform 的。对于 GLSL MAT，你的 Instance ID（TDInstanceID()）<b>not</b> 动态 uniform 的。 如果你想用在着色器执行期间才决定的值来查找输入，例如根据当前 UV 值选择不同的输入，就需要用 <code>nonuniformEXT()</code> 包裹索引，告诉编译器该索引是非 uniform 的。 例如 </p><div dir="ltr"><pre><code>int inputIndex;
+if (vUV.s &gt; 0.5)
+   inputIndex = 0;
+else
+   inputIndex = 1;
+vec4 col = sTD2DInputs[nonuniformEXT(inputIndex)], vUV);
+</code></pre></div><h3 id="Built_In_Samplers">内置采样器</h3><p>为方便起见，提供了以下采样器供你按需使用： </p><div dir="ltr"><pre><code>uniform sampler2D sTDNoiseMap;  // 一个 256x256 的 8 位仅红色通道纹理，内含随机数据。
+
+uniform sampler1D sTDSineLookup; // 一个仅红色通道、按正弦形状从 0 到 1 变化的纹理。
+</code></pre></div><h2 id="POP_Attributes">POP 属性</h2><div dir="ltr"><pre><code>attribType TDBuffer_AttribName(uint elementIndex, uint arrayIndex); // 访问在 Buffer 页上声明的 POP 属性缓冲区
+TDBuffer_AttribName(uint elementIndex) = TDBuffer_AttribName(elementIndex, 0); // arrayIndex 可选，默认为 0
+
+const uint TDBufferLength_AttribName(); // 缓冲区长度
+const uint cTDBufferArraySize_AttribName; // 用于数组属性的、带数组大小的常量
+</code></pre></div><h2 id="Uniforms">Uniform</h2><p>Uniform 是每个绘制的像素都保持相同的值。它们通过 GLSL TOP 中的 Vectors 1 和 Vectors 2 页设置。要在着色器中使用 uniform，请声明一个与你在 GLSL TOP 的 Vectors 页上设置的参数同名同尺寸的 uniform。 例如，假设我们要做一个生成纯色图像的着色器，但你不想把它硬编码在着色器中（如同第一个示例那样）。 </p><div dir="ltr"><pre><code>layout(location = 0) out vec4 fragColor;
+uniform vec4 uColor;
+void main()
+{
+   fragColor = uColor;
+}
+</code></pre></div><p>现在你可以根据需要为 <b>Uniform Name</b> <i>uColor</i> 设置 GLSL TOP 上的 <b>Value</b> 参数（例如导出到这些参数、使用表达式或手动设置）。GLSL TOP 会自动更新，并根据变化的值生成新图像。 </p><h3 id="Built_in_Uniforms">内置 Uniform 变量</h3><p>GLSL TOP 有内置 uniform，根据你所编写的着色器可能会派上用场。你无需声明这些 uniform，它们会为你声明。 </p><p>有许多该结构的数组，提供关于输入/输出纹理的信息，例如其分辨率。该结构定义如下： </p><div dir="ltr"><pre><code>struct TDTexInfo
+{
+   // 包含 (1.0 / width, 1.0 / height, width, height)
+   vec4 res;  
+   // 包含 (1.0 / depth, depth, depthOffset, undefined)
+   // depthOffset 对 3D 纹理位于 [0,1]，对 2D 纹理数组位于 [0, depth - 1]。
+   vec4 depth;
+};
+</code></pre></div><p>对于每个输入采样器数组（2D、3D、2DArray 等），都有一个上述结构的并行数组，包含关于每个采样器的信息。纹理的输出信息由 uTDOutputINfo 提供。你可以使用该 uniform 获取 TOP 将要输出的分辨率，无需通过自定义 uniform 手动传入。不过 depthOffset 值始终为 0。 </p><div dir="ltr"><pre><code>uniform TDTexInfo uTD2DInfos[TD_NUM_2D_INPUTS];
+uniform TDTexInfo uTD3DInfos[TD_NUM_3D_INPUTS];
+uniform TDTexInfo uTD2DArrayInfos[TD_NUM_2D_ARRAY_INPUTS];
+uniform TDTexInfo uTDCubeInfos[TD_NUM_CUBE_INPUTS];
+  
+// 有关 TOP 输出的信息，例如它的分辨率。
+uniform TDTexInfo uTDOutputInfo;
+</code></pre></div><p>例如，要获取第一个 2D 输入的宽度，你可以这样写： </p><div dir="ltr"><pre><code>float width = uTD2DInfos[0].res.z;
+</code></pre></div><p>当输入是有深度的纹理（3D 或 2D Array）时，depth 变量会包含深度，以及 depthOffset。depthOffset 是从纹理前端处的纹理坐标到最近更新的输入切片的纹理坐标的偏移。因此，如果你想要一个始终输出 3D 纹理最新切片的 TOP，可以使用这个着色器 </p><div dir="ltr"><pre><code>layout(location = 0) out vec4 fragColor;
+void main()
+{
+   // 第一个切片的中心并不位于 0，而是位于 0（第一个切片的起点）
+   // 与 1.0 / depth（第一个切片的终点）之间
+   float firstSlice = uTD3DInfos[0].depth.x * 0.5;
+
+   // 现在加上偏移
+   firstSlice += uTD3DInfos[0].depth.z;
+ 
+   // 现在采样纹理
+   fragColor = texture(sTD3DInputs[0], vec3(vUV.st, firstSlice));
+}
+</code></pre></div><p>对于 3D 纹理，depthOffset 始终在 0 到 1 之间。对于 2D Array，偏移在 0 到（depth - 1）之间，且始终为整数。 </p><p>当输出 3D 或 2D Array 纹理时，该 uniform 保存你当前正在渲染到的切片索引。 </p><div dir="ltr"><pre><code>// 参见 [[#3D Textures and 2D Texture Arrays |3D Textures and 2D Texture Arrays]]
+uniform int uTDCurrentDepth;
+</code></pre></div><p>使用 GLSL TOP 的 Common 页上的「Num Passes」参数时，通常需要在着色器中知道当前正在渲染哪一个 pass。你可以通过查看该 uniform 来实现 </p><div dir="ltr"><pre><code>// GLSL TOP 中当前的渲染通道，从 0 开始递增。
+uniform int uTDPass;
+</code></pre></div><h2 id="Atomic_Counters">原子计数器</h2><p>原子计数器是全局无符号整数，可对其执行原子操作，即自增和自减。它们可以在管线的任何阶段（vertex、fragment/pixel、compute）的着色器中使用，可用于追踪各种信息，例如顶点数量、红色像素数量等。所有着色器执行都会使用同一个变量，从而可以在彼此之间共享信息。 </p><p>下面是一个简单的像素着色器示例：每次（即每个像素一次）递增原子计数器，将其转换为 float，然后写入红色通道。从视觉上看，先渲染的像素会比后渲染的像素呈现更深的红色。 </p><div dir="ltr"><pre><code>uniform atomic_uint ac;
+out vec4 fragColor;
+void main()
+{
+   uint c = atomicCounterIncrement(ac);
+   float r = (c/255)/255.f;
+   fragColor = vec4(r,0,0,1);
+}
+</code></pre></div><p>它们也可以通过如下方式声明为数组并初始化： </p><div dir="ltr"><pre><code>uniform atomic_uint ac[10];
+</code></pre></div><p>注意，尽管许多在线示例会在声明前加上绑定点，如 <code>layout (binding = 0)</code>，但省略它并让我们的编译器自动分配绑定会更高效。 </p><h2 id="Specialization_Constants">特化常量</h2><p>Specialization Constants 是 Vulkan 的新特性，它允许基于整数常量值对代码重新优化，而无需完全重新编译着色器代码。它们适用于为很少变化的值设值，例如着色器中的「模式」，或通过 switch() 或 if() 语句选择的特定代码路径。过去这可能通过 <code>#define</code> 语句或 <code>uniform</code> 来实现。 着色器的特化版本会被缓存并重复使用，但会占用 GPU 资源。因此不应用于不断变化的值，而应用于仅偶尔变化、且取值范围有限的值。</p><p>要定义特化常量，需声明一个带额外 layout() 限定符的常量。</p><div dir="ltr"><pre><code>layout(constant_id = 0) const int SomeMode = 0;
+</code></pre></div><p>然后你可以像使用其他变量一样使用 <code>SomeMode</code>。如果不希望它为 = 0，可以在 <a href="GLSL_TOP.html">GLSL TOP</a>、<a href="GLSL_MAT.html">GLSL MAT</a> 等的「Constants」页上赋予不同的值。 你可以声明多个特化常量，只需为每个赋予自己唯一的 <code>constant_id</code> 值（0、1、2 等）。</p><h2 id="Built-in_Functions">内置函数</h2><p>这些是 TouchDesigner 特有的函数，可供在着色器中使用。 </p><h3 id="Output_Swizzle_2">Output Swizzle</h3><div dir="ltr"><pre><code>// 任何通过 &lt;code&gt;out&lt;/code&gt; 变量写入纹理的颜色值
+// 都应经过此函数，以确保颜色通道输出到正确的颜色通道。
+// &lt;code&gt;TDImageStoreOutput&lt;/code&gt; 会为你自动处理这一点。
+vec4 TDOutputSwizzle(vec4 c);
+</code></pre></div><h3 id="Dithering">抖动</h3><div dir="ltr"><pre><code>// 对颜色施加少量随机噪声，以帮助避免色带
+// 在某些情况下。
+vec4 TDDither(vec4 color);
+</code></pre></div><h3 id="Common_Functions">常用函数</h3><h4 id="Math_Functions">数学函数</h4><div dir="ltr"><pre><code>// TDMath
+
+// 创建一个旋转矩阵，从朝 +Z 方向开始旋转到 'forward' 向量方向。
+// 传给此函数的 'forward' 和 'up' 向量无需归一化。
+mat3 TDRotateToVector(vec3 forward, vec3 up);
+
+// 创建一个绕 'axis' 旋转给定 'radians' 弧度的旋转矩阵
+// 传给此函数之前，'axis' 向量必须已归一化。
+mat3 TDRotateOnAxis(float radians, vec3 axis);
+
+// 创建分别绕 +X、+Y 和 +Z 轴旋转的旋转矩阵。
+mat3 TDRotateX(float radians);
+mat3 TDRotateY(float radians);
+mat3 TDRotateZ(float radians);
+
+// 为给定的 3 个缩放值创建缩放矩阵。
+mat3 TDScale(float x, float y, float z);
+
+// 为给定的 3 个平移值创建平移矩阵。
+mat4 TDTranslate(float x, float y, float z);
+
+// 一个给出从 0 到 1 的半正弦斜坡的函数。
+// 用 (0, 1) 范围之外的坐标采样时，低于 0 的返回 0，高于 1 的返回 1。
+// 取决于硬件，它可能比使用 GLSL 的 sin() 函数更快。
+float TDSineLookup(float v);
+
+// 创建一个从向量 'from' 旋转到向量 'to' 的旋转矩阵。该解法并不特别稳定，但在某些情况下很有用。
+// 传给此函数之前，'from' 和 'to' 向量必须已归一化。
+mat3 TDCreateRotMatrix(vec3 from, vec3 to);
+
+// 接收一个表面法线、表面的切线，以及一个手性值（-1 或 1）
+// 返回一个矩阵，把向量从切线空间转换到法线和切线所在的空间
+// 调用此函数之前，法线和切线都必须归一化。
+// 由 [[Attribute Create SOP]] 创建的 T 属性的 w 坐标包含手性
+// 该值应按原样传入。
+mat3 TDCreateTBNMatrix(vec3 N, vec3 T, float handedness);
+
+// 在 RGB 和 HSV 色彩空间之间转换
+vec3 TDRGBToHSV(vec3 c);
+vec3 TDHSVToRGB(vec3 c);
+
+// 将 0-1 的等距柱状投影纹理坐标转换为立方体贴图坐标。
+// U 坐标为 0 时对应 +X 面的中间，即沿 vec3(1, Y, 0) 平面。
+// 随着 U 增大，等距柱状投影坐标从 +X 依次转向 +Z、-X 和 -Z。vec3 TDEquirectangularToCubeMap(vec2 mapCoord);
+vec3 TDEquirectangularToCubeMap(vec2 mapCoord);
+
+// 从立方体贴图坐标转换为等距柱状投影坐标
+// 调用此函数前，cubemapCoord 必须归一化。
+vec2 TDCubeMapToEquirectangular(vec3 envMapCoord)
+
+// 在 2019.18140 及之后版本中可用
+// 此版本还会输出一个 mipmap 偏移浮点值。该浮点值应传入 texture() 的 'bias'
+// 参数，用于帮助选择 mipmap 级别。这有助于避免等距柱状投影图
+// 边缘的接缝。
+vec2 TDCubeMapToEquirectangular(vec3 envMapCoord, out float mipMapBias)
+
+// 使用标准亮度权重 (0.2126, 0.7152, 0.0722) 将 RGB 转换为单色
+float TDLuminance(vec3 c);
+
+// 返回在 low 和 high 之间循环的值
+float TDLoop(float val, float low, float high);
+// 返回在 low 和 high 之间折返（zigzag）的值
+float TDZigZag(float val, float low, float high);
+// 返回两个值之间的平均值。
+float TDAverage(float valA, float valB);
+
+// 类似 Math CHOP 中的 remap 功能，将 'value' 从 [low1, high1] 范围重映射到 [low2, high2] 范围。
+float TDRemap(float value, float low1, float high1, float low2, float high2);
+vec2 TDRemap(vec2 value, vec2 low1, vec2 high1, vec2 low2, vec2 high2);
+vec3 TDRemap(vec3 value, vec3 low1, vec3 high1, vec3 low2, vec3 high2);
+vec4 TDRemap(vec4 value, vec4 low1, vec4 high1, vec4 low2, vec4 high2);
+
+// 三平面混合函数。根据法线向量加权，在 3 个正交颜色值之间混合。&lt;code&gt;blendPower&lt;/code&gt; 参数是权重函数使用的指数，用于控制衰减。
+vec4 TDTriplanarBlend(vec3 normal, vec4 xcolor, vec4 ycolor, vec4 zcolor, int blendPower);
+
+// 在给定采样器上执行 Tricubic 和 bicubic 采样/插值。
+// texSize 和 invTexSize 应为纹理的分辨率及其 1.0 / 分辨率。
+vec4 TDBicubicInterpolation(sampler2D tex, vec2 texCoord, vec2 texSize, vec2 invTexSize);
+vec4 TDBicubicInterpolation(sampler2D tex, vec2 texCoord);
+vec4 TDTricubicInterpolation(sampler3D tex, vec3 texCoord, vec3 texSize, vec3 invTexSize);
+vec4 TDTricubicInterpolation(sampler3D tex, vec3 texCoord);
+
+// 从 3D 环境坐标生成用于查找球面贴图的 2D 坐标。
+vec2 TDTexGenSphere(vec3 envMapCoord);
+</code></pre></div><div dir="ltr"><pre><code>// TDQuaternionMath
+// 使用以弧度表示的角度，构建表示绕某轴旋转的四元数。
+vec4 TDAxisAngleToQuaternion(vec3 axis, float angle) ;
+// 从四元数构建 3×3 旋转矩阵。
+mat3 TDQuaternionToRotMatrix(vec4 q);
+// 提取表示 3×3 矩阵旋转的四元数。
+vec4 TDRotMatrixToQuaternion(mat3 rotMat);
+// 使用四元数旋转来旋转向量或点。
+vec3 TDRotateFromQuaternion(vec3 v, vec4 q);
+// 合并两个四元数，以依次应用它们的旋转。
+vec4 TDQuaternionMultiply(vec4 Q1, vec4 Q2);
+// 在两个四元数之间执行球面线性插值。
+vec4 TDSlerpQuaternions(vec4 q0, vec4 q1, float t);
+// 从 4×4 变换矩阵中提取纯旋转分量。
+mat3 TDExtractRotation(mat4 m);
+// 通过四元数 slerp 在两个旋转矩阵之间平滑插值。
+mat3 TDSlerpRotationMatrices(mat3 m0, mat3 m1, float t);
+// 在两个变换矩阵之间插值平移、旋转和缩放。
+mat4 TDInterpolateTransformMatrices(mat4 m0, mat4 m1, float t);
+// 计算把一个向量方向旋转到另一个向量方向的四元数。
+vec4 TDQuaternionFromTo(vec3 from, vec3 to);
+</code></pre></div><h4 id="Noise_Functions">噪声函数</h4><div dir="ltr"><pre><code>// 返回 &lt;code&gt;t*t*t*(t*(t*6.0-15.0)+10.0);&lt;/code&gt;。
+float TDFade(float t);
+
+// Perlin 2D、3D、4D 噪声函数
+float TDPerlinNoise(vec2 P);
+float TDPerlinNoise(vec3 P);
+float TDPerlinNoise(vec4 P);
+
+// Simplex 2D、3D、4D 噪声函数
+float TDSimplexNoise(vec2 P);
+float TDSimplexNoise(vec3 P);
+float TDSimplexNoise(vec4 P);
+
+// TDFade() 函数的导数。返回 &lt;code&gt;30*t*t*(t*(t-2)+1)&lt;/code&gt;
+float TDFadeDeriv(float t);
+
+// TDPerlinNoise() 函数的梯度。该梯度是解析导数，在噪声空间中计算。
+vec4 TDPerlinNoiseDeriv(vec2 P);
+vec4 TDPerlinNoiseDeriv(vec3 P);
+vec4 TDPerlinNoiseDeriv(vec4 P, out float outNoise);
+vec4 TDPerlinNoiseDeriv(vec4 P);
+
+// TDSimplexNoise() 函数的梯度。该梯度是解析导数，在噪声空间中计算。
+vec4 TDSimplexNoiseDeriv(vec2 P);
+vec4 TDSimplexNoiseDeriv(vec3 P);
+vec4 TDSimplexNoiseDeriv(vec4 P, out float outNoise);
+vec4 TDSimplexNoiseDeriv(vec4 P);
+</code></pre></div><h4 id="Color_Space_Functions">色彩空间函数</h4><p><code>TDTransfer*</code> 函数会在颜色数据的线性与非线性传递之间转换。如果传入 vec4，则 RGB 会在执行操作前先按 Alpha 反向预乘，最后再重新乘以 alpha。 </p><div dir="ltr"><pre><code>// TDBasicColorSpace
+vec3 TDTransferLinearToSRGB(vec3 c);
+vec4 TDTransferLinearToSRGB(vec4 c);
+
+vec3 TDTransferSRGBToLinear(vec3 c);
+vec4 TDTransferSRGBToLinear(vec4 c);
+
+// TDColorSpace
+vec3 TDTransferLinearToRec709(vec3 c);
+vec3 TDTransferRec709ToLinear(vec3 c);
+
+vec3 TDTransferLinearToGamma1_8(vec3 c);
+vec3 TDTransferLinearToGamma2_2(vec3 c);
+vec3 TDTransferLinearToGamma2_4(vec3 c);
+vec3 TDTransferLinearToGamma2_6(vec3 c);
+vec3 TDTransferLinearToGamma2_8(vec3 c);
+
+vec3 TDTransferACESproxyToLinear(vec3 c);
+vec3 TDTransferLinearToACESproxy(vec3 c);
+
+vec3 TDTransferGamma1_8ToLinear(vec3 c);
+vec3 TDTransferGamma2_2ToLinear(vec3 c);
+vec3 TDTransferGamma2_4ToLinear(vec3 c);
+vec3 TDTransferGamma2_6ToLinear(vec3 c);
+vec3 TDTransferGamma2_8ToLinear(vec3 c);
+
+// referenceWhiteNits 表示线性数据中值 1.0 所对应的亮度（以 nit 为单位）。
+vec3 TDTransferLinearToST2084PQ(vec3 color, float referenceWhiteNits);
+vec3 TDTransferST2084PQToLinear(vec3 color, float referenceWhiteNits);
+
+vec3 TDTransferBT2100HLGToLinear(vec3 color, float peakNits, float referenceWhiteNits);
+vec3 TDTransferLinearToBT2100HLG(vec3 color, float peakNits, float referenceWhiteNits);
+
+vec3 TDGamutRec709ToRec2020(vec3 c);
+vec3 TDGamutRec2020ToRec709(vec3 c);
+</code></pre></div><h2 id="Sampling_more_than_one_pixel">采样多个像素</h2><p>在某些着色器中，你可能想从输入 TOP 采样多个像素（例如创建模糊着色器时）。这只需多次调用 <code>texture()</code>，同时偏移 <code>vUV</code> 的值（或你自己的纹理坐标）。 </p><p>就纹理坐标而言，一个像素与其右侧相邻像素的值差为（1.0 / width）。类似地，一个像素与其下方相邻像素的值差为 -（1.0 / height）。 以下函数有助于计算相邻像素的正确纹理坐标： </p><div dir="ltr"><pre><code>// 此函数未替你提供，你需要自行声明它。
+vec2 input2DOffset(int texIndex, int xOffset, int yOffset)
+{
+   return vec2(vUV.s + (float(xOffset) * uTD2DInfos[texIndex].res.s),
+               vUV.t + (float(yOffset) * uTD2DInfos[texIndex].res.t));
+}
+</code></pre></div><p>不过 GLSL 中有一个新函数 <code>textureOffset()</code> 会为你完成这项工作。但它从起始坐标可采样的范围有限，因此不能用于从某个坐标获取任意偏移的采样。 </p><p>下面是一个非常简单的模糊着色器，它会在每个像素周围采样 3x3 网格，并输出全部 9 个像素的平均值。它手动计算偏移，而没有使用 <code>textureOffset</code>，不过在本例中 <code>textureOffset</code> 也可以正常工作，因为偏移只有 1 个像素。 </p><div dir="ltr"><pre><code>vec2 input2DOffset(int texIndex, int xOffset, int yOffset)
+{
+   return vec2(vUV.s + (float(xOffset) * uTD2DInfos[texIndex].res.s),
+               vUV.t + (float(yOffset) * uTD2DInfos[texIndex].res.t));
+}
+
+layout(location = 0) out vec4 fragColor;
+void main()
+{
+   vec4 colorSum = vec4(0.0);
+   colorSum += texture(sTD2DInputs[0], input2DOffset(0, 0, 0));
+   colorSum += texture(sTD2DInputs[0], input2DOffset(0, -1, -1));
+   colorSum += texture(sTD2DInputs[0], input2DOffset(0, 0, -1));
+   colorSum += texture(sTD2DInputs[0], input2DOffset(0, 1, -1));
+   colorSum += texture(sTD2DInputs[0], input2DOffset(0, 1, 0));
+   colorSum += texture(sTD2DInputs[0], input2DOffset(0, 1, 1));
+   colorSum += texture(sTD2DInputs[0], input2DOffset(0, 0, 1));
+   colorSum += texture(sTD2DInputs[0], input2DOffset(0, -1, 1));
+   colorSum += texture(sTD2DInputs[0], input2DOffset(0, -1, 0));&lt;br&gt;
+   fragColor = colorSum / 9.0;
+}
+</code></pre></div><h2 id="3D_Textures_and_2D_Texture_Arrays">3D 纹理与 2D 纹理数组</h2><h3 id="Pixel_Shaders_2">像素着色器</h3><p>创建 <a href="3D_Texture.html">3D Texture</a> 或 <a href="2D_Texture_Array.html">2D Texture Array</a> 时，你的着色器会针对生成的每个深度切片渲染一次。这就像渲染一批 2D 纹理。 </p><p>除了会获得不同的输入采样器外，你还可以使用一些 uniform 来帮助决定每个切片要创建什么。 </p><div dir="ltr"><pre><code>uniform int uTDCurrentDepth; // 当前正在创建的切片的从 0 开始的索引。
+</code></pre></div><h3 id="Compute_Shaders_2">计算着色器</h3><p>使用计算着色器创建 <a href="3D_Texture.html">3D Texture</a> 或 <a href="2D_Texture_Array.html">2D Texture Array</a> 时，着色器仍然只运行一次。整个输出纹理都可以通过 <code>TDImageStoreOutput</code> 写入，应按需填充，Z 调度尺寸可能等于纹理的深度。 </p><h2 id="Outputting_to_Multiple_Color_Buffers">输出到多个颜色缓冲区</h2><p>在同一个像素着色器中，你可以同时输出到多个尺寸/格式相同的缓冲区。为此，首先在 <a href="GLSL_TOP.html">GLSL TOP</a> 中把「# of Color Buffers」参数调到你需要的输出数量。 </p><p>GLSL TOP 的输出连接器始终输出第一个颜色缓冲区的颜色。要获取其他颜色缓冲区，请使用 <a href="Render_Select_TOP.html">Render Select TOP</a> 并将其指向 <a href="GLSL_TOP.html">GLSL TOP</a>，然后选择你需要的颜色缓冲区索引。 </p><h3 id="Pixel_Shaders_3">像素着色器</h3><p>在你的着色器中声明其他输出位置。例如，如果你打算输出到 3 个不同的缓冲区，可以这样声明： </p><div dir="ltr"><pre><code>layout(location = 0) out vec4 fragColor;
+layout(location = 1) out vec4 otherColor;
+layout(location = 2) out vec4 extraInfo;
+</code></pre></div><p>现在你可以写入 <code>fragColor</code>、<code>otherColor</code> 和 <code>extraInfo</code>，从而写入你正在输出的 3 个颜色缓冲区。如果你并非在所有情况下都写入全部输出，则得到的像素值未定义。不要为了避免写入而试图让缓冲区保留上一帧的值。 </p><h3 id="Compute_Shaders_3">计算着色器</h3><p><code>sTDComputeOutputs[]</code> uniform 的尺寸会等于正在输出的颜色缓冲区数量。 </p><h2 id="Vertex_Shader">顶点着色器</h2><p>大多数情况下，你不需要为 GLSL TOP 提供顶点着色器。如果你决定提供顶点着色器，其最基本的形式如下： </p><div dir="ltr"><pre><code>out vec3 texCoord;
+void main()
+{
+   texCoord = uv[0];
+   gl_Position = TDSOPToProj(vec4(P, 1.0));
+}
+</code></pre></div><p>非常重要的一点是不要操纵顶点位置，因为这会导致四边形与 TOP 输出不对齐。另外请注意我们在这里为纹理坐标声明了自己的输出变量。如果我们提供了顶点着色器，<code>vUV</code> 在像素着色器中就不会自动可用，因此我们改用这个变量； </p><div dir="ltr"><pre><code>layout (location = 0) out vec4 fragColor;
+in vec3 texCoord;
+void main()
+{
+   fragColor = texture(sTD2DInputs[0], texCoord.st);
+}
+</code></pre></div><h2 id="Debugging_Crashes">调试崩溃</h2><p>随着切换到 Vulkan，编写错误的 GLSL 更容易导致整个应用程序崩溃。更多相关信息请参阅 <a href="Debugging_crashes_triggered_by_GLSL_errors.html">this article.</a> </p><h2 id="Other_Notes">其他说明</h2><h3 id="#version_statement">#version 语句</h3><p>TouchDesigner 在编译着色器时会自动在开头加上 #version 语句，因此你应确保自己的着色器没有 #version 语句。如果有，就会报错。 </p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Write_a_GLSL_TOP" rel="noreferrer noopener">docs.derivative.ca/Write_a_GLSL_TOP</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

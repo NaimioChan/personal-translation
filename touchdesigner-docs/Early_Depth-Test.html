@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>早期深度测试 - TouchDesigner 文档</title>
+<meta name="description" content="早期深度测试 —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>早期深度测试</h1>
+<h2 id="Overview">概述</h2><p>在现代 GPU 上使用高质量着色器时，大部分工作都花在对像素着色上。这意味着每绘制一个像素，GPU 都必须完成一定量的工作。因此，绘制的像素越多，GPU 需要做的工作就越多。合成作品常常会因为绘制像素的数量和着色器的复杂度而遭遇像素着色器瓶颈。要判断你的合成作品是否受像素着色器限制，只需降低 Render 的分辨率或降低抗锯齿级别。如果帧率提升，通常说明该合成作品受像素着色器限制。如果帧率不变，则说明它不受像素着色器限制，此时应花时间从其他方面提速，而不用再担心像素着色器的负载。 </p><p>Early Depth-Test 是大多数 GPU 上都有的功能，用于减少需要着色的像素数量。这项测试在顶点着色器之后（即几何已被变换到最终渲染位置之后）、像素着色器对该多边形工作之前进行。Early Depth-Test 会将即将绘制的每个像素的 z 值与已经绘制的像素进行比较。如果判定该像素无法通过 <a href="Depth-Test.html">Depth-Test</a> 并将被丢弃，它就会在像素着色器对它做任何工作之前直接丢弃它。如果没有 Early Depth-Test，该像素会先被着色，然后再由正常的 Depth-Test 丢弃，使得所有对着色该像素所做的工作都毫无意义。当一个像素被着色但最终被另一个像素覆盖时，称为 <b>Overdraw</b>。 </p><h2 id="Early_Depth-Test_Example">Early Depth-Test 示例</h2><p>下面是一个说明 Early Depth-Test 工作原理的 .toe 文件。 </p><p><a href="https://docs.derivative.ca/images/e/ef/Earlydepthtest.toe" rel="noreferrer noopener" target="_blank">Media:earlydepthtest.toe</a> </p><p>打开该文件并让合成作品正向播放。注意 <a href="Perform_CHOP.html">Perform CHOP</a> 中显示的帧率。进入 /geo1，你会看到被渲染的几何是一大堆简单网格。这是非常简单的几何，只是一些多边形。尽管多边形数量很低，合成作品运行得却有点慢。现在将 /geo1 在 X 方向旋转 180 度。场景应该不会有太大变化，因为你只是翻转了这堆网格，但注意此时的帧率，应该会明显更快。它仍然在渲染相同数量的多边形，使用相同的着色器，场景看起来也差不多，但速度却有巨大差异，为什么？原来，最远的网格先被渲染，然后是次远的，依此类推。于是 GPU 绘制并着色最远的网格，但接着绘制下一个网格，结果它完全遮挡了前一个网格。因此，着色前一个网格所做的所有工作都白费了。在这个例子中，每个网格都会被绘制、着色，然后被更近的网格遮挡（最靠近的那个除外）。事实上在这种情况下，只有最靠近的网格才重要，因为那是我们唯一能看到的。当我们将几何旋转 180 度后，最靠近的网格最先被绘制。之后绘制的每个网格都会被 Early Depth-Test 丢弃，因为 GPU 判定它们反正不可见。 </p><h2 id="Taking_Advantage_of_Early_Depth-Test">利用 Early Depth-Test</h2><p>Early Depth-Test 在 GPU 上默认启用。没有开关可以打开或关闭它。相反，如果启用了与 Early Depth-Test 不兼容的功能，GPU 会自动将其关闭。不幸的是，哪些功能会导致 Early Depth-Test 被禁用，因厂商而异，也因显卡型号而异（不同驱动也可能表现不同）。这使得在编写复杂的自定义着色器时，该功能的使用颇具黑魔法色彩。不过，如果你只使用 Phong MAT 且不做太复杂的操作，Early Depth-Test 会保持开启。遗憾的是，Touch 或用户都无法向 GPU 查询 Early Depth-Test 是否已启用。 </p><p>有一件事一定会禁用 Early Depth-Test，那就是在 GLSL MAT 中写入 <code>gl_FragDepth</code> 值。这并不是说不能这样做，而是除非必要，否则应避免。 </p><p>在某些显卡上，启用 <a href="Alpha-Test.html">Alpha-Test</a>、<a href="Transparency.html">Transparency</a>，或在 <a href="Depth-Test.html">Depth-Test</a> 中使用非默认的 Depth-Test 函数，可能会禁用 Early Depth-Test。 </p><p><b>If Early Depth-Test is on, the only thing you need to do is draw your geometry in closest to farthest order.</b> 如果做得完美（不过这几乎不可能），GPU 只会对最终图像中可见的像素进行着色。 </p><h2 id="Analyzing_Overdraw">分析过度绘制</h2><p>在复杂场景中，可能很难知道发生了多少过度绘制，以及哪些对象以不够理想的顺序绘制。为帮助解决这个问题，Render 和 Render Pass TOP 在其 'Advanced' 页上提供了一项功能，可以按像素显示发生的过度绘制量。 </p><p>重新打开本文前面给出的 earlydepthtest.toe 示例。在 'Advanced' 页上打开 'Display Overdraw' 选项。Render TOP 现在显示的是每个像素上发生的过度绘制量的表示。像素颜色越亮，说明该像素发生的过度绘制越多。由于一个像素可能被绘制任意多次，'Overdraw Limit' 参数会把过度绘制次数量化到一个范围内。如果 'Overdraw Limit' 设为 10，而某个像素是 100% 白色，则该像素被绘制了 10 次或更多。如果像素是 70% 白色，则该像素被绘制了 7 次。试着调高 'Overdraw Limit' 参数，注意即使 'Overdraw Limit' 为 100，某些像素仍保持 100% 白色。这意味着那些像素被绘制了 100 次或更多。现在像之前一样将几何绕 X 轴旋转 180 度。你会注意到过度绘制显示变成了纯灰色。事实上，只有将 'Overdraw Limit' 设为 1，你才会得到 100% 白色的像素。 最理想的情况是，当 'Overdraw Limit' 设为 2 时整个场景为 50% 白色（中灰）。这意味着每个像素只被绘制了一次（或者可能完全没有被绘制，如果它们是 0% 白色），这是最理想的设置。 </p><p><b>注意：</b> 此功能目前与基于 GPU 的变形（MAT 上的 Deform 页）不兼容。如果打开此功能，任何使用变形的对象都将以无变形状态绘制（回到其默认位置）。 </p><h2 id="Conflicts_with_Transparency">与透明度的冲突</h2><p>针对利用 Early Depth-Test 优化过的场景，有一个很大的问题：该过程与利用 <a href="Transparency.html">Transparency</a> 所需的渲染顺序完全相反。透明度要求对象按从远到近的顺序绘制。最终这是速度与视觉质量之间的权衡，必须由用户决定。一个不错的折衷方案是先按从近到远的顺序绘制所有不透明对象，然后按从远到近的顺序绘制透明对象。你可以使用 Render Pass TOP 拆分工作，使其更易于处理。 </p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Early_Depth-Test" rel="noreferrer noopener">docs.derivative.ca/Early_Depth-Test</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
