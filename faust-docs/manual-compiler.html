@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用 Faust 编译器 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：使用 Faust 编译器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="using-the-faust-compiler">使用 Faust 编译器</h1><p>虽然 Faust 编译器有多种形式（例如<a href="manual-embedding.html">嵌入式编译器</a>等），最常见的是命令行版本，可通过 <code>faust</code> 命令调用。它把 Faust 程序翻译成多种语言的代码（C、C++、Rust、LLVM IR、WebAssembly 等）。生成的代码可以包装进一个可选的<em>架构文件</em>，让你直接产出可运行的程序。</p><p>Faust 命令行编译器的一次典型调用如下：</p><pre><code class="language-faust">faust [OPTIONS] faustFile.dsp
+</code></pre><p>Faust 编译器默认输出 C++ 代码，因此运行：</p><pre><code class="language-faust">faust noise.dsp 
+</code></pre><p>会编译 <code>noise.dsp</code> 并把对应的 C++ 代码输出到标准输出。<code>-o</code> 选项可把标准输出重定向到文件：</p><pre><code class="language-faust">faust noise.dsp -o noise.cpp
+</code></pre><p><code>-a</code> 选项可把生成的代码包装进架构文件：</p><pre><code class="language-faust">faust -a alsa-gtk.cpp noise.dsp 
+</code></pre><p>该架构文件既可以放在当前 Faust 文件（这里是 <code>noise.dsp</code>）所在的目录，也可以是 Faust 的标准架构之一。</p><p>要把 Faust 程序编译成 Linux 上的 ALSA 应用，可以使用以下命令：</p><pre><code class="language-faust">faust -a alsa-gtk.cpp noise.dsp -o noise.cpp
+g++ -lpthread -lasound `pkg-config --cflags --libs gtk+-2.0` noise.cpp -o noise
+</code></pre><p>注意，大量 <a href="manual-tools.html"><code>faust2...</code> 编译脚本</a>可以简化这一操作：它们接收 Faust 文件并返回适用于你平台的二进制文件。</p><h2 id="structure-of-the-generated-code">生成代码的结构</h2><p>Faust 生成的 C++ DSP 类派生自下面定义的基础类 <code>dsp</code>（C++ 之外的语言采用类似的结构）：</p><pre><code class="language-faust">class dsp {
+  public:
+  dsp() {}
+  virtual ~dsp() {}
+
+  // 返回 Faust 程序的输入数量
+  virtual int getNumInputs() = 0;
+
+  // 返回 Faust 程序的输出数量
+  virtual int getNumOutputs() = 0;
+
+  // 可调用此方法获取 Faust 程序的
+  // 用户界面描述及其关联字段
+  virtual void buildUserInterface(UI* ui_interface) = 0;
+
+  // 返回当前采样率
+  virtual int getSampleRate() = 0;
+
+  // 初始化方法
+  virtual void init(int sample_rate) = 0;
+  virtual void instanceInit(int sample_rate) = 0;
+  virtual void instanceConstants(int sample_rate) = 0;
+  virtual void instanceResetUserInterface() = 0;
+  virtual void instanceClear() = 0;
+
+  // 返回该实例的克隆
+  virtual dsp* clone() = 0;
+
+  // 获取 Faust 程序的全局元数据
+  virtual void metadata(Meta* m) = 0;
+
+  // 计算一个音频缓冲区
+  virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) = 0;
+
+  // 计算带时间戳的音频缓冲区
+  virtual void compute(double /* date_usec */, int count, FAUSTFLOAT** inputs,
+     FAUSTFLOAT** outputs) { compute(count, inputs, outputs); }
+};
+</code></pre><p>这些方法由编译器填入实际代码。对于 <code>noise.dsp</code>：</p><pre><code>class mydsp : public dsp {
+  private:
+  int iRec0[2];
+  int fSampleRate;
+
+  public:
+  void metadata(Meta* m) { 
+    m-&gt;declare("author", "GRAME");
+    m-&gt;declare("filename", "noise");
+    m-&gt;declare("name", "Noise");
+    m-&gt;declare("noises.lib/name", "Faust Noise Generator Library");
+    m-&gt;declare("noises.lib/version", "0.0");
+  }
+  virtual int getNumInputs() {
+    return 0;
+  }
+  virtual int getNumOutputs() {
+    return 1;
+  }
+  static void classInit(int sample_rate) {}
+  virtual void instanceConstants(int sample_rate) {
+    fSampleRate = sample_rate;
+  }
+  virtual void instanceResetUserInterface() {}
+  virtual void instanceClear() {
+    for (int l0 = 0; (l0 &lt; 2); l0 = (l0 + 1)) {
+      iRec0[l0] = 0;
+    }
+  }
+  virtual void init(int sample_rate) {
+    classInit(sample_rate);
+    instanceInit(sample_rate);
+  }
+  virtual void instanceInit(int sample_rate) {
+    instanceConstants(sample_rate);
+    instanceResetUserInterface();
+    instanceClear();
+  }
+  virtual mydsp* clone() {
+    return new mydsp();
+  }
+  virtual int getSampleRate() {
+    return fSampleRate;
+  }
+  virtual void buildUserInterface(UI* ui_interface) {
+    ui_interface-&gt;openVerticalBox("Noise");
+    ui_interface-&gt;closeBox();
+  }
+  virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i = 0; (i &lt; count); i = (i + 1)) {
+      iRec0[0] = ((1103515245 * iRec0[1]) + 12345);
+      output0[i] = FAUSTFLOAT((4.65661287e-10f * float(iRec0[0])));
+      iRec0[1] = iRec0[0];
+    }
+  }
+};
+</code></pre><p>还提供若干细粒度的初始化方法：</p><ul><li><code>instanceInit</code> 方法会调用若干额外的初始化方法。</li><li><code>instanceConstants</code> 方法设置实例的常量状态。</li><li><code>instanceClear</code> 方法重置实例的动态状态（延迟线……）。</li><li><code>instanceResetUserInterface</code> 方法把所有控制值重置为默认状态。</li></ul><p>这些方法都可以在已分配的实例上单独调用，以重置其部分状态。</p><p><code>init</code> 方法结合了类的静态状态初始化与实例初始化。</p><p>只使用一个实例时，调用 <code>init</code> 是「完成所需工作」最简单的方式。使用多个实例时，可以用 <code>instanceInit</code> 初始化全部实例，只需调用一次 <code>classInit</code> 来初始化静态共享状态。</p><p><code>compute</code> 方法接收要处理的帧数，以及 <code>inputs</code> 和 <code>outputs</code> 缓冲区——它们是多个单声道通道组成的数组。注意默认情况下 <code>inputs</code> 与 <code>outputs</code> 缓冲区应位于不同的内存区域，因此不能安全地写 <code>compute(count, inputs, inputs)</code>。可以用 <code>-inpl</code> 编译选项实现原地处理，但目前只支持标量模式。</p><p>默认情况下生成的代码处理 <code>float</code> 类型的样本。可用 <code>-double</code> 选项更改（某些后端甚至支持 <code>-quad</code>）。<code>compute</code> 方法中使用的 <code>FAUSTFLOAT</code> 类型在架构文件中定义，可以是 <code>float</code> 或 <code>double</code>，取决于音频驱动层。可能需要在 DSP 样本类型与音频驱动样本类型之间做样本转换。</p><h2 id="controlling-code-generation">控制代码生成</h2><p>Faust 编译器有若干选项可控制生成的 C++ 代码。默认情况下计算在单个循环中逐样本进行。但编译器也能生成<em>向量</em>和<em>并行</em>代码。</p><h3 id="vector-code-generation">向量代码生成</h3><p>现代 C++ 编译器能够自动向量化，即使用 SIMD 指令加速代码。这些指令通常可对四个或八个单精度浮点数的短向量并行运算，理论上可带来四倍或八倍的加速。</p><p>C/C++ 程序的自动向量化是件困难的事。当前编译器对代码的组织方式非常敏感，复杂的循环尤其会阻碍自动向量化。向量代码生成的目标是重新组织 C++ 代码，以便 C++ 编译器更容易完成自动向量化。它不再生成单个样本计算循环，而是把计算拆成若干更简单的循环，循环之间通过向量通信。</p><p>通过向 Faust 编译器传入 <a href="manual-options.html"><code>--vectorize</code>（或 <code>-vec</code>）</a>选项即可启用向量代码生成。另有两个选项：<code>--vec-size &lt;n&gt;</code> 控制向量大小（默认 32 个样本），<code>--loop-variant 0/1</code> 对循环提供额外控制：<code>--loop-variant 0</code> 生成固定大小的子循环，并用最后一个子循环处理剩余样本；<code>--loop-variant 1</code> 生成向量大小可变的子循环。</p><p>为说明标量代码与向量代码的差别，以信号 RMS（Root Mean Square，均方根）值的计算为例。下面是计算 1000 个样本滑动窗口均方根的 Faust 代码：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/compiler/exfaust0/exfaust0.svg"/><pre><code class="language-faust">// n 个连续样本的均方根
+RMS(n) = square : mean(n) : sqrt;
+
+// 信号的平方
+square(x) = x * x;
+
+// 信号 n 个连续样本的均值（使用定点数以避免
+// 舍入误差累积）
+mean(n) = float2fix : integrate(n) : fix2float : /(n); 
+
+// n 个连续样本的滑动和
+integrate(n,x) = x - x@n : +~_;
+
+// 浮点数与定点数之间的转换
+float2fix(x) = int(x*(1&lt;&lt;20));      
+fix2float(x) = float(x)/(1&lt;&lt;20);    
+
+// 1000 个连续样本的均方根
+process = RMS(1000);</code></pre><br/><p>标量模式下<a href="#structure-of-the-generated-code">生成的对应 <code>compute()</code> 方法</a>如下：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+  FAUSTFLOAT* input0 = inputs[0];
+  FAUSTFLOAT* output0 = outputs[0];
+  for (int i = 0; (i &lt; count); i = (i + 1)) {
+    int iTemp0 = int((1048576.0f * mydsp_faustpower2_f(float(input0[i]))));
+    iVec0[(IOTA &amp; 1023)] = iTemp0;
+    iRec0[0] = ((iRec0[1] + iTemp0) - iVec0[((IOTA - 1000) &amp; 1023)]);
+    output0[i] = FAUSTFLOAT(std::sqrt((9.53674362e-10f * float(iRec0[0]))));
+    IOTA = (IOTA + 1);
+    iRec0[1] = iRec0[0];
+  }
+}
+</code></pre><p><code>-vec</code> 选项会按如下方式重组代码：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+  fInput0_ptr = inputs[0];
+  FAUSTFLOAT* fInput0 = 0;
+  fOutput0_ptr = outputs[0];
+  FAUSTFLOAT* fOutput0 = 0;
+  int iRec0_tmp[36];
+  int* iRec0 = &amp;iRec0_tmp[4];
+  int fullcount = count;
+  int index = 0;
+  /* 主循环 */
+  for (index = 0; (index &lt;= (fullcount - 32)); index = (index + 32)) {
+    fInput0 = &amp;fInput0_ptr[index];
+    fOutput0 = &amp;fOutput0_ptr[index];
+    int count = 32;
+    /* 可向量化循环 0 */
+    /* 前置代码 */
+    iYec0_idx = ((iYec0_idx + iYec0_idx_save) &amp; 2047);
+    /* 计算代码 */
+    for (int i = 0; (i &lt; count); i = (i + 1)) {
+      iYec0[((i + iYec0_idx) &amp; 2047)] = 
+      int((1048576.0f mydsp_faustpower2_f(float(fInput0[i]))));
+    }
+    /* 后置代码 */
+    iYec0_idx_save = count;
+    /* 递归循环 1 */
+    /* 前置代码 */
+    for (int j0 = 0; (j0 &lt; 4); j0 = (j0 + 1)) {
+      iRec0_tmp[j0] = iRec0_perm[j0];
+    }
+    /* 计算代码 */
+    for (int i = 0; (i &lt; count); i = (i + 1)) {
+      iRec0[i] = ((iRec0[(i - 1)] + iYec0[((i + iYec0_idx) &amp; 2047)]) - 
+      iYec0[(((i + iYec0_idx) - 1000) &amp; 2047)]);
+    }
+    /* 后置代码 */
+    for (int j = 0; (j &lt; 4); j = (j + 1)) {
+      iRec0_perm[j] = iRec0_tmp[(count + j)];
+    }
+    /* 可向量化循环 2 */
+    /* 计算代码 */
+    for (int i = 0; (i &lt; count); i = (i + 1)) {
+      fOutput0[i] = FAUSTFLOAT(std::sqrt((9.53674362e-10f * float(iRec0[i]))));
+    }
+  }
+
+  /* 剩余的帧 */
+  if (index &lt; fullcount) {
+    fInput0 = &amp;fInput0_ptr[index];
+    fOutput0 = &amp;fOutput0_ptr[index];
+    int count = (fullcount - index);
+    /* 可向量化循环 0 */
+    /* 前置代码 */
+    iYec0_idx = ((iYec0_idx + iYec0_idx_save) &amp; 2047);
+    /* 计算代码 */
+    for (int i = 0; (i &lt; count); i = (i + 1)) {
+      iYec0[((i + iYec0_idx) &amp; 2047)] = int((1048576.0f * 
+        mydsp_faustpower2_f(float(fInput0[i]))));
+    }
+    /* 后置代码 */
+    iYec0_idx_save = count;
+    /* 递归循环 1 */
+    /* 前置代码 */
+    for (int j0 = 0; (j0 &lt; 4); j0 = (j0 + 1)) {
+      iRec0_tmp[j0] = iRec0_perm[j0];
+    }
+    /* 计算代码 */
+    for (int i = 0; (i &lt; count); i = (i + 1)) {
+      iRec0[i] = ((iRec0[(i - 1)] + iYec0[((i + iYec0_idx) &amp; 2047)]) - 
+      iYec0[(((i + iYec0_idx) - 1000) &amp; 2047)]);
+    }
+    /* 后置代码 */
+    for (int j = 0; (j &lt; 4); j = (j + 1)) {
+      iRec0_perm[j] = iRec0_tmp[(count + j)];
+    }
+    /* 可向量化循环 2 */
+    /* 计算代码 */
+    for (int i = 0; (i &lt; count); i = (i + 1)) {
+      fOutput0[i] = FAUSTFLOAT(std::sqrt((9.53674362e-10f * float(iRec0[i]))));
+    }
+  }
+}
+</code></pre><p>第二版代码虽然更复杂，但 C++ 编译器反而更容易高效地将其向量化。在完全相同的编译选项 <code>-O3 -xHost -ftz -fno-alias -fp-model fast=2</code> 下，标量版本的吞吐性能为 129.144 MB/s，向量版本达到 359.548 MB/s，加速比 x2.8！</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/compiler/img/compilerStack.svg"/></p><p>向量代码生成建立在标量代码生成之上（见上图）。每当需要编译一个表达式时，编译器都会检查它是否需要单独的循环。被共享的表达式（且足够复杂）是放入单独循环的好候选，递归表达式以及延迟线中使用的表达式同样如此。</p><p>结果是一张有向图，每个节点是一个计算循环（见下图）。该图保存在类对象中，打印代码前会对其做拓扑排序。</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/compiler/img/loopgraph2.svg"/></p><h3 id="parallel-code-generation">并行代码生成</h3><p>通过传入 <a href="manual-options.html"><code>--openMP</code>（或 <code>-omp</code>）选项或 <code>--scheduler</code>（或 <code>-sch</code>）选项</a>即可启用并行代码生成。这意味着 <code>-vec</code> 选项以及并行代码生成都建立在向量代码生成之上。</p><h4 id="the-openmp-code-generator">OpenMP 代码生成器</h4><p><img alt="框图" src="https://faustdoc.grame.fr/manual/compiler/img/openmpModel.svg"/></p><p>向 Faust 编译器传入 <a href="manual-options.html"><code>--openMP</code>（或 <code>-omp</code>）选项</a>时，它会把相应的 <a href="https://www.openmp.org/" rel="noreferrer noopener">OpenMP</a> 指令插入 C++ 代码。OpenMP 是成熟的 API，用于显式定义直接的多线程共享内存并行。它基于 fork-join 并行模型（见上图）。并行区域由 <code>#pragma omp parallel</code> 构造界定。进入并行区域时，一组并行线程被激活。并行区域内的代码由并行组的每个线程执行，直至区域结束。</p><pre><code class="language-faust">#pragma omp parallel
+{
+  // 此处的代码由并行组的每个线程
+  // 同时执行
+  ...
+}
+</code></pre><p>为避免每个线程重复做完全相同的工作，OpenMP 提供了专门的<em>工作共享</em>指令。例如 <code>#pragma omp sections</code> 可把工作拆成若干独立、离散的段，每段由一个线程执行：</p><pre><code class="language-faust">#pragma omp parallel
+{
+  #pragma omp sections
+  {
+    #pragma omp section
+    {
+      // 任务 1
+    }
+    #pragma omp section
+    {
+      // 任务 2
+    }
+    ...
+  }
+  ...
+}
+</code></pre><h4 id="adding-open-mp-directives">添加 OpenMP 指令</h4><p>如前所述，并行代码生成建立在向量代码生成之上。向量代码生成器产生的循环图会做拓扑排序，以找出可并行计算的循环。第一个集合 <code>S_0</code>（循环 <code>L1</code>、<code>L2</code> 和 <code>L3</code>）包含不依赖任何其他循环的循环，集合 <code>S_1</code> 只包含依赖 <code>S_0</code> 中循环的循环（即循环 <code>L4</code> 和 <code>L5</code>），依此类推。</p><p>由于给定集合 <code>S_n</code> 中的所有循环都可并行计算，编译器会生成一个 <code>sections</code> 构造，为每个循环生成一个 <code>section</code>。</p><pre><code class="language-faust">#pragma omp sections
+{
+  #pragma omp section
+  for (...) {
+    // 循环 1
+  }
+  #pragma omp section
+  for (...) {
+    // 循环 2
+  }
+  ...
+}
+</code></pre><p>如果某个集合只含一个循环，编译器会检查该循环能否并行化（有没有递归依赖）。若能并行化，就生成：</p><pre><code class="language-faust">#pragma omp for
+for (...) {
+ // 循环代码
+}
+</code></pre><p>否则生成 <code>single</code> 构造，使只有一个线程执行该循环：</p><pre><code class="language-faust">#pragma omp single
+for (...) {
+ // 循环代码
+}
+</code></pre><h4 id="example-of-parallel-openmp-code">OpenMP 并行代码示例</h4><p>为说明 Faust 如何使用 OpenMP 指令，这里给出一个很简单的示例：两个并联的一阶滤波器接到一个加法器上：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/compiler/exfaust1/exfaust1.svg"/><pre><code class="language-faust">filter(c) = *(1-c) : + ~ *(c);
+process = filter(0.9), filter(0.9) : +;</code></pre><br/><p>使用 <code>-omp</code> 选项得到的对应 <code>compute()</code> 方法如下：</p><pre><code class="language-faust">virtual void compute(int fullcount, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+  float fRec0_tmp[36];
+  float fRec1_tmp[36];
+  FAUSTFLOAT* fInput0 = 0;
+  FAUSTFLOAT* fInput1 = 0;
+  FAUSTFLOAT* fOutput0 = 0;
+  float* fRec0 = &amp;fRec0_tmp[4];
+  float* fRec1 = &amp;fRec1_tmp[4];
+  fInput0_ptr = inputs[0];
+  fInput1_ptr = inputs[1];
+  fOutput0_ptr = outputs[0];
+  #pragma omp parallel\
+      firstprivate(fInput0, fInput1, fOutput0, fRec0, fRec1)
+  {
+    for (int index = 0; (index &lt; fullcount); index = (index + 32)) {
+      fInput0 = &amp;fInput0_ptr[index];
+      fInput1 = &amp;fInput1_ptr[index];
+      fOutput0 = &amp;fOutput0_ptr[index];
+      int count = min(32, (fullcount - index));
+      #pragma omp sections
+      {
+        #pragma omp section
+        {
+          /* 递归循环 0 */
+          /* 前置代码 */
+          for (int j0 = 0; (j0 &lt; 4); j0 = (j0 + 1)) {
+            fRec0_tmp[j0] = fRec0_perm[j0];
+          }
+          /* 计算代码 */
+          for (int i = 0; (i &lt; count); i = (i + 1)) {
+            fRec0[i] = ((0.899999976f * fRec0[(i - 1)]) + 
+            (0.100000001f * float(fInput0[i])));
+          }
+          /* 后置代码 */
+          for (int j = 0; (j &lt; 4); j = (j + 1)) {
+            fRec0_perm[j] = fRec0_tmp[(count + j)];
+          }
+        }
+        #pragma omp section
+        {
+          /* 递归循环 1 */
+          /* 前置代码 */
+          for (int j1 = 0; (j1 &lt; 4); j1 = (j1 + 1)) {
+            fRec1_tmp[j1] = fRec1_perm[j1];
+          }
+          /* 计算代码 */
+          for (int i = 0; (i &lt; count); i = (i + 1)) {
+            fRec1[i] = ((0.899999976f * fRec1[(i - 1)]) + 
+            (0.100000001f * float(fInput1[i])));
+          }
+          /* 后置代码 */
+          for (int j = 0; (j &lt; 4); j = (j + 1)) {
+            fRec1_perm[j] = fRec1_tmp[(count + j)];
+          }
+        }
+      }
+      #pragma omp single
+      {
+        /* 可向量化循环 2 */
+        /* 计算代码 */
+        for (int i = 0; (i &lt; count); i = (i + 1)) {
+          fOutput0[i] = FAUSTFLOAT((fRec0[i] + fRec1[i]));
+        }
+      }
+    }
+  }
+}
+</code></pre><p>这段代码有几点需要说明：</p><ul><li>并行构造 <code>#pragma omp parallel</code> 是启动并行执行的基本构造。并行线程数通常是 CPU 核心数，但可以通过多种方式控制。</li><li>并行区域之外的变量默认是共享的。<code>firstprivate(fRec0,fRec1)</code> 编译指示表示每个线程应拥有 <code>fRec0</code> 和 <code>fRec1</code> 的私有副本。原因是访问共享变量需要一次间接寻址，与私有副本相比效率相当低。</li><li>顶层循环 <code>for (int index = 0;...)...</code> 由所有线程同时执行。循环内部后续的工作共享指令将指明工作必须如何在各线程间共享。</li><li>请注意每个工作共享区域末尾都有一个隐式屏障。所有线程都必须执行到该屏障，任何一个线程才能继续。</li><li>工作共享指令 <code>#pragma omp single</code> 表示第一个段只由一个线程（任意一个）执行。</li><li>工作共享指令 <code>#pragma omp sections</code> 表示每个对应的 <code>#pragma omp section</code>（这里是两个滤波器）将并行执行。</li><li>循环构造 <code>#pragma omp for</code> 指明关联循环的各次迭代将并行执行。循环的迭代被分散到各并行线程上。例如有两个线程时，第一个可计算 0 到 count/2 之间的索引，另一个计算 count/2 到 count 之间的索引。</li><li>最后 <code>#pragma omp single</code> 表示这一段只由一个线程（任意一个）执行。</li></ul><h4 id="the-scheduler-code-generator">调度器代码生成器</h4><p>向 Faust 编译器传入 <a href="manual-options.html"><code>--scheduler</code>（或 <code>-sch</code>）选项</a>后，计算图被切成若干独立的计算循环（称为「任务」），并用「工作窃取调度器」按依赖关系激活和执行它们。系统创建一组工作线程，每个线程使用自己本地的 WSQ（Work Stealing Queue，工作窃取队列）。WSQ 是一种特殊队列，提供 Push 操作、「私有」的 LIFO Pop 操作和「公共」的 FIFO Pop 操作。</p><p>从一个就绪任务出发，每个线程沿依赖关系前进，可能把就绪的子任务推入自己本地的 WSQ。当某条计算路径上再没有可激活的任务时，线程从本地 WSQ 弹出一个任务。若 WSQ 为空，线程可以从其他线程的 WSQ「窃取」任务。</p><p>本地 LIFO Pop 操作带来更好的缓存局部性，而 FIFO 窃取 Pop 取走的是更大的一块工作。原因在于许多工作窃取负载本质上是分治式的：窃取最旧的任务之一，同时也隐式窃取了可能很大的计算子树，这块工作被窃取并运行后就会展开。</p><p>与 OpenMP 模型（<code>-omp</code>）相比，新模型对简单的 Faust 程序表现更差，通常对「足够复杂」的 Faust 程序才开始表现相当，有时更好。无论如何，由于 OpenMP 在 GCC 编译器上表现不佳，并且在 macOS 的实时场景中不可用，这个新的调度器选项自有其价值。我们计划将来加入「流水线」思路来改进它。</p><h4 id="example-of-parallel-scheduler-code">并行调度器代码示例</h4><p>为说明 Faust 如何生成调度器代码，沿用前面的示例：两个并联的一阶滤波器接到一个加法器上：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/compiler/exfaust2/exfaust2.svg"/><pre><code class="language-faust">filter(c) = *(1-c) : + ~ *(c);
+process = filter(0.9), filter(0.9) : +; </code></pre><br/><p>使用 <code>-sch</code> 选项时，额外的 <code>architecture/scheduler.h</code> 文件内容会被插入生成的代码。该文件包含处理 WSQ 和线程管理的代码。<code>compute()</code> 与 <code>computeThread()</code> 方法如下：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+  fInput0_ptr = inputs[0];
+  fInput1_ptr = inputs[1];
+  fOutput0_ptr = outputs[0];
+  fCount = count;
+  fIndex = 0;
+  /* 结束任务只有一个输入，因此会被直接激活 */
+  /* 只初始化输入多于一个的任务 */
+  initTask(fScheduler, 4, 2);
+  /* 把就绪任务推入各线程的 WSQ */
+  initTaskList(fScheduler, -1);
+  signalAll(fScheduler);
+  computeThread(0);
+  syncAll(fScheduler);
+}
+void computeThread(int num_thread) {
+  int count = fCount;
+  FAUSTFLOAT* fInput0 = 0;
+  FAUSTFLOAT* fInput1 = 0;
+  FAUSTFLOAT* fOutput0 = 0;
+  int tasknum = 0;
+  while ((fIndex &lt; fCount)) {
+    fInput0 = &amp;fInput0_ptr[fIndex];
+    fInput1 = &amp;fInput1_ptr[fIndex];
+    fOutput0 = &amp;fOutput0_ptr[fIndex];
+    count = min(32, (fCount - fIndex));
+    switch (tasknum) {
+      case 0: {
+        /* 工作窃取任务 */
+        tasknum = getNextTask(fScheduler, num_thread);
+        break;
+      }
+      case 1: {
+        /* 最后一个任务 */
+        fIndex = (fIndex + 32);
+        if (fIndex &lt; fCount) {
+          /* 结束任务只有一个输入，因此会被直接激活 */
+          /* 只初始化输入多于一个的任务 */
+          initTask(fScheduler, 4, 2);
+          /* 把就绪任务推入「num_thread」个 WSQ */
+          initTaskList(fScheduler, num_thread);
+        }
+        tasknum = 0;
+        break;
+      }
+      case 2: {
+        /* 递归循环 2 */
+        /* 前置代码 */
+        for (int j0 = 0; (j0 &lt; 4); j0 = (j0 + 1)) {
+          fRec0_tmp[j0] = fRec0_perm[j0];
+        }
+        /* 计算代码 */
+        for (int i = 0; (i &lt; count); i = (i + 1)) {
+          fRec0[i] = ((0.899999976f * fRec0[(i - 1)]) + 
+          (0.100000001f * float(fInput0[i])));
+        }
+        /* 后置代码 */
+        for (int j = 0; (j &lt; 4); j = (j + 1)) {
+          fRec0_perm[j] = fRec0_tmp[(count + j)];
+        }
+        /* 只有一个输出 */
+        activateOneOutputTask(fScheduler, num_thread, 4, &amp;tasknum);
+        break;
+      }
+      case 3: {
+        /* 递归循环 3 */
+        /* 前置代码 */
+        for (int j1 = 0; (j1 &lt; 4); j1 = (j1 + 1)) {
+          fRec1_tmp[j1] = fRec1_perm[j1];
+        }
+        /* 计算代码 */
+        for (int i = 0; (i &lt; count); i = (i + 1)) {
+          fRec1[i] = ((0.899999976f * fRec1[(i - 1)]) + 
+          (0.100000001f * float(fInput1[i])));
+        }
+        /* 后置代码 */
+        for (int j = 0; (j &lt; 4); j = (j + 1)) {
+          fRec1_perm[j] = fRec1_tmp[(count + j)];
+        }
+        /* 只有一个输出 */
+        activateOneOutputTask(fScheduler, num_thread, 4, &amp;tasknum);
+        break;
+      }
+      case 4: {
+        /* 可向量化循环 4 */
+        /* 计算代码 */
+        for (int i = 0; (i &lt; count); i = (i + 1)) {
+          fOutput0[i] = FAUSTFLOAT((fRec0[i] + fRec1[i]));
+        }
+        tasknum = 1;
+        break;
+      }
+    }
+  }
+}
+</code></pre>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/manual/compiler/" rel="noreferrer noopener">https://faustdoc.grame.fr/manual/compiler/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

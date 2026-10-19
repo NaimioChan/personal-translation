@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用 Faust 配合 VCV Rack - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：用 Faust 配合 VCV Rack">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="using-faust-with-vcv-rack">用 Faust 配合 VCV Rack</h1><p><a href="https://vcvrack.com" rel="noreferrer noopener">VCV Rack</a> 是一个虚拟模块化合成器，允许把成千上万个独立开发的模块在 patch 中连接起来，以合成和处理声音。庞大的开发者社区提供了大量模块，可作为<a href="https://library.vcvrack.com" rel="noreferrer noopener">库</a>安装到应用中，其中许多是作为<a href="https://github.com/search?q=vcv+rack" rel="noreferrer noopener">GitHub 上的开源项目</a>开发的。</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/img/VCV_Rack.png"/></p><p>本教程展示如何用 <a href="https://faust.grame.fr" rel="noreferrer noopener">Faust</a> 语言生成单音或复音模块：</p><ul><li>要么使用可编程且支持 Faust 的 <a href="https://github.com/VCVRack/VCV-Prototype/tree/faust" rel="noreferrer noopener">VCV Prototype</a> 来编辑、编译和测试 Faust DSP 代码</li><li>要么使用 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/vcvrack" rel="noreferrer noopener">faust2vcvrack</a> 工具，它可以生成独立模块</li><li>为了介绍模块开发，我们先快速概览<strong>用 C++ 开发模块</strong>的过程。</li></ul><h2 id="installation">安装</h2><p>在这里获取适用于你的操作系统的<a href="https://vcvrack.com/Rack" rel="noreferrer noopener">二进制版本</a>。</p><h3 id="install-the-vcv-rack-sdk">安装 VCV Rack SDK</h3><p>参见<a href="https://vcvrack.com/manual/PluginDevelopmentTutorial" rel="noreferrer noopener">插件开发教程页面</a>，以及适用于你的操作系统的<a href="https://vcvrack.com/downloads/" rel="noreferrer noopener">SDK 本身</a>。</p><p>别忘了设置 <strong>RACK_DIR</strong> 变量：<code>export RACK_DIR=&lt;Rack SDK folder&gt;</code>。</p><h3 id="compiling-the-vcv-prototype-module-faust-version">编译 Faust 版的 VCV Prototype 模块</h3><p>Faust 编译器可以通过 <a href="manual-embedding.html">libfaust</a> 嵌入应用或插件，DSP 代码可以即时编辑和 JIT 编译。</p><p>你需要克隆并编译这个 <a href="https://github.com/VCVRack/VCV-Prototype/tree/faust" rel="noreferrer noopener">GitHub 项目</a>。务必使用 <code>faust</code> 分支，并按照所提供的<a href="https://github.com/VCVRack/VCV-Prototype/blob/faust/Faust.md" rel="noreferrer noopener">说明</a>操作。</p><p><strong>然后你就可以参加这个工作坊了！</strong></p><h2 id="the-modular-principle">模块化原理</h2><p>VCV Rack 遵循这篇<a href="https://en.wikipedia.org/wiki/Modular_synthesizer" rel="noreferrer noopener">维基百科文章</a>中所解释的<strong>模块化合成器</strong>原理：</p><blockquote><p><strong>模块化合成器</strong>是由不同功能的独立模块组成的<a href="https://en.wikipedia.org/wiki/Synthesizer" rel="noreferrer noopener">合成器</a>。用户可以用跳线、矩阵接线系统或开关把模块连接起来，形成一个 <a href="https://en.wikipedia.org/wiki/Patch_(synthesizer)" rel="noreferrer noopener">patch</a>。模块的输出（电压）可以作为（音频）信号、控制电压或逻辑/定时条件。典型的模块有振荡器（作用于频率）、滤波器（频谱）、放大器/门（幅度）和包络发生器（动态控制）。</p></blockquote><p>为此，控制信号（CV）以音频速率运行，因此整个 patch 以<strong>只有单个样本</strong>的音频缓冲区触发。当被描述为 CV 信号时，参数因此可以由任何模块传来的其他信号实时改变，只需把它们连接起来。所以这个模型中音频信号与控制信号之间存在<em>某种模糊</em>，信号可以在任何地方连接。</p><p>由于软件模块模仿真实的物理模块，它们多少遵循相同的约定来表示信号范围，<strong>通常是 [-5v...5v] 或 [0v..10v] 的取值</strong>，MIDI 信号则用 <strong>1V/倍频程</strong>。更完整的说明见<a href="https://vcvrack.com/manual/VoltageStandards" rel="noreferrer noopener">电压标准</a>页面。</p><p>控制参数也可以用开关、旋钮等从模块的 GUI 改变。</p><p>模块<strong>可以是单音或复音的（最多 16 个声道）</strong>，此时每根线实际传输若干（通常相关的）信号。复音模型显然用于乐器，但也可以用于效果器。复音模块在 GUI 中显示为<strong>更粗的线</strong>。</p><h2 id="developing-c-modules">用 C++ 开发模块</h2><p>在用 Faust 开发模块之前，先看看标准流程。模块通常用 C++ 借助 VCV Rack SDK 创建，SDK 为开发者提供了几个入手工具。按照<a href="https://vcvrack.com/manual/PluginDevelopmentTutorial" rel="noreferrer noopener">这里的教程</a>，可以创建一个模板项目：</p><h3 id="generating-a-template">生成模板</h3><pre><code class="language-faust">./helper.py createplugin MyPlugin
+</code></pre><p>创建的文件夹包含一个 Makefile，可用于编译模块并安装到你（先前安装的）VCV Rack 应用中：</p><pre><code>make &amp;&amp; make install
+</code></pre><h3 id="gui-description-using-svg">用 SVG 描述 GUI</h3><p>模块 GUI 用 SVG 完成。开发者通常用 <a href="https://inkscape.org/" rel="noreferrer noopener">Inkscape</a> 或类似工具准备背景层，并用特殊约定描述音频或 CV 的输入/输出以及界面控件（旋钮、指示灯、自定义控件等）。下面是一个基础 SVG 模板的示例，含一个<em>指示灯</em>、一个<em>参数</em>（如旋钮）、一个<em>音频或 CV 输入</em>和一个<em>音频或 CV 输出</em>：</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/img/VCV_SVG.png"/></p><p>在模块项目中，以下命令会解码 SVG 文件并生成用于创建各种控件的模板 C++ 代码：</p><pre><code class="language-faust">../helper.py createmodule MyModule res/MyModule.svg src/MyModule.cpp
+</code></pre><h3 id="adding-dsp-code">添加 DSP 代码</h3><p>然后添加 C++ 代码，在 <code>process</code> 函数中实现一个简单的振荡器：</p><pre><code> float phase = 0.f;
+ float freq = 440.f;
+
+ void process(const ProcessArgs &amp;args) override {
+        // 累加相位
+        phase += freq * args.sampleTime;
+        if (phase &gt;= 0.5f)
+            phase -= 1.f;
+
+        // 计算正弦输出
+        float sine = std::sin(2.f * M_PI * phase);
+
+        // 音频信号通常为 +/-5V
+        outputs[SINE_OUTPUT].setVoltage(5.f * sine);
+ }
+</code></pre><p>plugin.cpp 中的以下一行需要取消注释：</p><pre><code>p-&gt;addModel(modelMyModule);
+</code></pre><p>plugin.hpp 中同样如此：</p><pre><code class="language-faust">extern Model* modelMyModule;
+</code></pre><p>然后需要重新编译并安装模块：</p><pre><code>make &amp;&amp; make install
+</code></pre><h2 id="programming-using-the-faust-aware-vcv-prototype-module">用支持 Faust 的 VCV Prototype 模块编程</h2><p><a href="https://github.com/VCVRack/VCV-Prototype" rel="noreferrer noopener">VCV Prototype 模块</a>运行脚本语言，用于原型设计、学习和现场编程。它目前可以用 JavaScript、<a href="https://www.lua.org" rel="noreferrer noopener">Lua</a>、<a href="https://github.com/modlfo/vult" rel="noreferrer noopener">Vult</a> 或 <a href="https://puredata.info" rel="noreferrer noopener">PureData</a> 编程。它定义了一个通用 GUI，含 6 个输入/输出（音频或 CV 信号）、6 个旋钮、6 个指示灯（RGB LED）或 6 个开关（带 RGB LED）。</p><p>注意，用原型<strong>只能编写单音示例</strong>。</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/img/VCV_Prototype.png"/></p><p>通过嵌入 <strong>Interpreter</strong> 后端的 <strong>libfaust</strong> 加入了对 Faust 的支持。它允许即时<strong>编辑/编译/执行</strong> DSP 程序，性能尚可（使用 <a href="https://llvm.org" rel="noreferrer noopener">LLVM JIT</a> 能生成更快的代码，但安装过程会复杂得多）。</p><h3 id="editingcompilingexecuting-dsp-files">编辑/编译/执行 DSP 文件</h3><p>Faust DSP 文件必须加载到 VCV Prototype 中，并在外部编辑器（Visual Studio Code、Atom……）中编辑。每次保存文件时，它都会被重新编译并执行。为了可能节省编译时间，DSP 机器码会保存在缓存中，下次加载会话时可能被恢复。</p><p>6 个音频输入/输出可以在 Faust DSP 中按顺序访问，因此最多可以使用 6 个声道。</p><p>6 个<em>开关</em>、<em>旋钮</em>以及<em>指示灯</em>和 <em>switchLights</em> 可以用元数据连接到界面控件：</p><ul><li><code>[switch:N]</code>（N 为 1 到 6）必须用在 <code>button</code> 或 <code>checkbox</code> 项中，把它连接到原型界面的第 N 个开关</li><li><code>[knob:N]</code>（N 为 1 到 6）必须用在 <code>vslider</code>、<code>hslider</code> 或 <code>nentry</code> 项中，把它连接到原型界面的第 N 个旋钮。旋钮的 [0..1] 范围会映射到滑块/数值输入框的 [min..max] 范围</li><li><code>[light_red:N|light_green:N|light_blue:N]</code>（N 为 1 到 6）必须用在 <code>vbargraph</code> 或 <code>hbargraph</code> 项中，把它连接到原型界面的第 N 个指示灯</li><li><code>[switchlight_red:N|switchlight_green:N|switchlight_blue:N]</code>（N 为 1 到 6）必须用在 <code>vbargraph</code> 或 <code>hbargraph</code> 中，把它连接到原型界面的第 N 个 switchLight</li></ul><p>因此，按钮或复选框界面项可以用 <code>[switch:N]</code> 元数据关联到对应的 GUI 开关，其颜色可以用 <code>switchlight_xx:N</code> 元数据控制。例如：</p><ul><li><code>gate = button("gate [switch:1") : hbargraph("[switchlight_red:1]", 0, 1);</code> 描述了一个按下时变红的按钮</li><li><code>check = checkbox("check [switch:2]") : vbargraph("[switchlight_red:2]", 0, 1) : vbargraph("[switchlight_green:2]", 0, 1) : vbargraph("[switchlight_blue:2]", 0, 1);</code> 描述了一个被勾选时变白的复选框</li></ul><p>其他元数据：</p><ul><li><code>[scale:lin|log|exp]</code> 元数据已实现。</li></ul><p><a href="https://github.com/VCVRack/VCV-Prototype/blob/faust/res/faust/rack.lib" rel="noreferrer noopener">rack.lib</a> Faust 库包含用于转换 CV 信号的实用函数，必要时可以扩充。</p><p>注意<strong>只能描述单音 DSP 程序</strong>。</p><h3 id="dsp-examples">DSP 示例</h3><p>下面是一个简单示例，展示如何用 GUI 项控制振荡器，并在 DSP 代码中用元数据关联：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/exfaust0/exfaust0.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+
+// 用元数据连接的界面控件
+freq = hslider("freq [knob:1]", 200, 50, 5000, 0.01);
+gain = hslider("gain [knob:2]", 0.5, 0, 1, 0.01);
+gate = button("gate [switch:1]");
+
+// DSP 处理器
+process = os.osc(freq) * gain * 5, os.sawtooth(freq) * gain * gate * 5;</code></pre><br/><p>按照 VCV Prototype 模型，注意音频输出<strong>会乘以 5</strong>，以遵循 [-5v..5v] 范围约定。</p><p>移植到 Faust 的 VCV Prototype 标准示例可以在 examples 文件夹中看到：</p><ul><li><strong>gain.dsp</strong> 展示如何用元数据连接开关和旋钮，甚至在被按下或移动时改变颜色：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/exfaust1/exfaust1.svg"/><pre><code class="language-faust">// 使用所有变量的最简脚本
+
+import("stdfaust.lib");
+
+// 开关按钮，红色高亮
+switch(i) = button("switch%i [switch:%i]") : hbargraph("[switchlight_red:%i]", 0, 1);
+
+// 增益滑块，红色高亮
+gain(i) = hslider("gain%i [knob:%i]", 0.1, 0, 1, 0.01) : hbargraph("[light_red:%i]", 0, 1);
+
+process = si.bus(6) : par(i, 6, *(gain(i+1)) * (1-switch(i+1)));</code></pre><br/><ul><li><strong>vco.dsp</strong> 展示一个振荡器，其频率由旋钮和 CV 音高信号控制（遵循 1V/倍频程约定）：</li></ul><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/exfaust2/exfaust2.svg"/><pre><code class="language-faust">// 压控振荡器示例
+import("stdfaust.lib");
+
+// 以给定频率创建相位累加器
+phasor(freq) = freq/ma.SR : (+ : decimal) ~ _ with { decimal(x) = x-int(x); };
+
+// 音高到频率的转换（也包含在 rack.lib 库中）
+cv_pitch2freq(cv_pitch) = 440 * 2 ^ (cv_pitch - 0.75);
+
+gain = hslider("gain [knob:1]", 0.1, 0, 1, 0.01) * 10 - 5;
+
+pitch(x) = x + gain;
+
+process(x) = sin(2 * ma.PI * phasor(cv_pitch2freq(pitch(x)))) * 5;</code></pre><br/><ul><li><a href="https://github.com/VCVRack/VCV-Prototype/blob/faust/examples/rainbow.dsp" rel="noreferrer noopener">rainbow.dsp</a></li></ul><p>一些附加示例：</p><ul><li><p><a href="https://github.com/VCVRack/VCV-Prototype/blob/faust/examples/synth.dsp" rel="noreferrer noopener">synth.dsp</a> 演示如何使用 VCV Prototype 的全部界面控件</p></li><li><p><a href="https://github.com/VCVRack/VCV-Prototype/blob/faust/examples/organ.dsp" rel="noreferrer noopener">organ.dsp</a> 演示一个可 MIDI 控制的基于加法合成的风琴</p></li><li><p><a href="https://github.com/VCVRack/VCV-Prototype/blob/faust/examples/physicalmodel.dsp" rel="noreferrer noopener">physicalmodel.dsp</a> 演示一个基于模态合成的钟，连接到混响</p></li></ul><h2 id="using-faust2vcvrack">使用 faust2vcvrack</h2><p><strong>faust2vcvrack</strong> 工具把一个 Faust DSP 程序编译到一个文件夹中，其中包含 <a href="https://vcvrack.com" rel="noreferrer noopener">VCV Rack</a> 插件的 C++ 源代码和用于编译它的 Makefile。默认情况下，生成的 C++ 代码会被编译并安装到 VCV Rack 应用中：</p><p><code>faust2vcvrack [-soundfile] [-source] [-nvoices &lt;num&gt;] [additional Faust options (-vec -vs 8...)] &lt;file.dsp&gt;</code></p><p>该工具现在已进入 GitHub 上的 <a href="https://github.com/grame-cncm/faust" rel="noreferrer noopener">master-dev 分支</a>，也可以在 <a href="https://faustide.grame.fr" rel="noreferrer noopener">Faust IDE</a> 中使用，选择相应的导出目标（<em>vcvrack</em>、<em>vcvrack-poly8</em> 或 <em>vcvrack-poly16</em>）。</p><p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/img/faust2vcvrack.png"/></p><p>可用的选项如下：</p><ul><li><code>-soundfile when compiling a DSP using the 'soundfile' primitive, add required resources</code></li><li><code>-source to only create the source folder</code></li><li><code>-nvoices &lt;num&gt; to produce a polyphonic self-contained DSP with &lt;num&gt; voices, ready to be used with MIDI</code></li></ul><p>Faust DSP 代码通常产生 [-1..1] 范围的音频信号。由于 VCV 期望 [-5v..5v] 范围的音频信号，它们会在<strong>架构文件中自动转换</strong>。[0v..10v] 伏范围内的 CV 控制会映射到控制器的 [min..max] 范围。</p><h3 id="polyphony-support">复音支持</h3><p>可以用 <code>-nvoices &lt;num&gt;</code> 参数创建最多 16 个声部的复音模块。DSP 代码中可以使用 <code>freq/gate/gain</code> 约定。VCV Rack 对 MIDI 音高值遵循 1V/倍频程约定，因此 MIDI 信号会按此约定自动转换为 <code>freq</code>。增益和门信号（使用 [0v..10v] 范围）会转换为 [0..1] 的取值。</p><p>注意，<strong>创建复音效果器</strong>在 VCV Rack 中同样有意义。例如连接到复音乐器的混响需要是复音的。因此这种情况下也可以使用 <code>-nvoices &lt;num&gt;</code> 参数。</p><h3 id="metadata">元数据</h3><p>控件（通常是<em>按钮</em>、<em>滑块</em>、<em>nentry</em> 或 <em>bargraph</em>）会自动转换为 GUI 项（如开关、旋钮或指示灯）。但也可以用元数据把它们连接到 CV 输入/输出：</p><ul><li><code>[CV:N]</code> 可以用在输入（通常是<em>滑块</em>或 <em>nentry</em>）或输出（通常是 <em>bargraph</em>）控件中，把它们连接到 CV 而不是常规 GUI 参数。</li></ul><h3 id="dsp-examples_1">DSP 示例</h3><p>下面是一个简单示例，展示如何用界面项控制振荡器。GUI 中会创建一个开关、一个按钮和两个旋钮：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/exfaust3/exfaust3.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:4]";
+import("stdfaust.lib");
+
+freq = hslider("freq", 200, 50, 5000, 0.01);
+gain = hslider("gain", 0.5, 0, 1, 0.01);
+gate = button("gate");
+check = checkbox("check");
+
+// DSP 处理器
+process = os.osc(freq) * gain * gate, os.sawtooth(freq) * gain * check;</code></pre><br/><p>一个复音乐器，其 <code>freq/gate/gain</code> 控件通过 <code>[CV:N]</code> 元数据关联到 VCV 的 MIDI 输入，需用 <code>-nvoices &lt;num&gt;</code> 选项编译：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/exfaust4/exfaust4.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:4]";
+import("stdfaust.lib");
+
+// 控制变量
+master = hslider("master", 0.3, 0, 2, 0.01);    
+pan = hslider("pan", 0.5, 0, 1, 0.01);    
+
+freq = nentry("freq [CV:1]", 440, 20, 20000, 1);    
+gate = button("gate [CV:2]");      
+gain = nentry("gain [CV:3]", 0.3, 0, 10, 0.01);    
+
+// 各分音的相对幅度
+amp(1) = hslider("amp1", 1.0, 0, 3, 0.01);
+amp(2) = hslider("amp2", 0.5, 0, 3, 0.01);
+amp(3) = hslider("amp3", 0.25, 0, 3, 0.01);
+
+// 声像函数
+panner(pan, x) = x*sqrt(1-pan), x*sqrt(pan);
+
+// 加法合成：3 个带 ADSR 包络的正弦振荡器
+partial(i) = amp(i+1)*os.osc((i+1)*freq);
+
+process = sum(i, 3, partial(i))
+            * (gate : vgroup("1-adsr", en.adsr(0.05, 0.1, 0.1, 0.1)))
+            * gain : vgroup("2-master", *(master) : panner(pan));</code></pre><br/><p>这个复音乐器随后可以连接到一个复音混响，后者同样要用 <code>-nvoices &lt;num&gt;</code> 选项编译：</p><img alt="框图" src="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/exfaust5/exfaust5.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = dm.freeverb_demo;</code></pre><br/>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/" rel="noreferrer noopener">https://faustdoc.grame.fr/workshops/2020-11-21-faust-vcvrack/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

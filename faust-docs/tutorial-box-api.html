@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用 box API - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：使用 box API">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="using-the-box-api">使用 box API</h1><p>box API 在<em>Faust 编译链内部提供了一个中间接入点</em>。本教程通过代码示例介绍它。目标是展示如何在 box API 之上构建新的音频 DSP 语言（文本式或图形式），并利用 Faust 编译器基础设施的一部分。</p><h4 id="faust-compiler-structure">Faust 编译器结构</h4><p>Faust 编译器由若干步骤组成：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/img/compilation-chain.png"/><em>编译链</em></p><p>从 DSP 源代码出发，<em>语义阶段</em>产生信号，信号在概念上是样本或控制值的无限流。随后在<em>代码生成阶段</em>把这些信号编译为命令式代码（C/C++、LLVM IR、WebAssembly 等）。</p><p><em>语义阶段</em>本身由若干步骤组成：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/img/semantic-phase.png"/><em>语义阶段</em></p><p>使用框图代数（BDA）编写的初始 DSP 代码，在<em>求值、lambda 演算</em>步骤中被翻译为范式的扁平电路。</p><p>输出信号列表由<em>符号传播</em>步骤产生。每个输出信号随后被简化，并执行一组优化（范式计算与化简、延迟线共享、类型推导等），最终产生<em>范式形式的输出信号列表</em>。</p><p><em>代码生成阶段</em>把信号翻译为名为 FIR（Faust Imperative Representation）的中间表示，再通过一组后端转换为最终目标语言（C/C++、LLVM IR、WebAssembly 等）。</p><h4 id="accessing-the-box-stage">访问 box 阶段</h4><p>在<em>语义阶段</em>中、<em>求值、lambda 演算</em>步骤之后，新增了一个公开的中间入口点，可以创建 box 表达式，从而利用编译链剩余的所有部分。<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/libfaust-box.h" rel="noreferrer noopener">box API</a>（或 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/libfaust-box-c.h" rel="noreferrer noopener">C box API</a> 版本）让开发者能够以编程方式创建 box 表达式，然后编译它，生成可直接使用的 DSP，形式可以是 C++ 类，也可以是 LLVM、Interpreter 或 WebAssembly 工厂，以便与所有现有的架构文件配合使用。信号阶段完成的若干优化，将通过查看生成的 C++ 代码来演示。</p><p>注意，<a href="tutorial-signal-api.html">signal API</a> 可以访问编译链中的另一个阶段。</p><h2 id="compiling-box-expressions">编译 box 表达式</h2><p>使用 box API 需要执行以下步骤：</p><ul><li><p>使用 <code>createLibContext</code> 函数创建全局编译上下文</p></li><li><p>使用 box API 创建 box 表达式，通过组合更简单的表达式逐步构建更复杂的表达式</p></li><li><p>使用 <code>createCPPDSPFactoryFromBoxes</code> 函数编译 box 表达式以创建 DSP 工厂（或用 <a href="#using-the-generated-code">createDSPFactoryFromBoxes</a> 生成 LLVM 嵌入工厂，或用 <a href="#using-the-generated-code">createInterpreterDSPFactoryFromBoxes</a> 生成 Interpreter 嵌入工厂）</p></li><li><p>最后使用 <code>destroyLibContext</code> 函数销毁编译上下文</p></li></ul><p>DSP 工厂允许创建 DSP 实例，以便与音频和 UI 架构文件配合使用，<em>在编译过程本身之外</em>。DSP 实例和工厂最终在不再使用时必须释放。</p><h3 id="tools">工具</h3><p>先定义一个 <code>compile</code> 函数，它使用 <code>createCPPDSPFactoryFromBoxes</code> 函数并打印生成的 C++ 类：</p><pre><code>static void compile(const string&amp; name, 
+                    tvec signals, 
+                    int argc = 0, 
+                    const char* argv[] = nullptr)
+{
+    string error_msg;
+    dsp_factory_base* factory = createCPPDSPFactoryFromBoxes(name, 
+                                                             signals, 
+                                                             argc, 
+                                                             argv, 
+                                                             error_msg);
+    if (factory) {
+        // 打印 C++ 类
+        factory-&gt;write(&amp;cout);
+        delete(factory);
+    } else {
+        cerr &lt;&lt; error_msg;
+    }
+}
+</code></pre><p>一个封装所有必要步骤的宏：</p><pre><code>#define COMPILER(exp)    \
+{                        \
+    createLibContext();  \
+    exp                  \
+    destroyLibContext(); \
+}                        \
+</code></pre><h3 id="examples">示例</h3><p>每个示例都给出等价的 Faust DSP 程序和 SVG 图作为辅助。SVG 图展示编译 <em>propagate</em> 步骤的结果（即在任何信号规范化步骤之前）。所有展示的 C++ 示例（以及一些额外示例）都定义在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/tools/benchmark/box-tester.cpp" rel="noreferrer noopener">box-tester</a> 工具中，可在 tools/benchmark 目录下用 <code>make box-tester</code> 编译。</p><h4 id="expression-generating-constant-signals">生成常量信号的表达式</h4><p>我们来创建一个并行构造 7 和 3.14 两个常量值的程序。以下是 Faust DSP 代码：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust0/exfaust0.svg"/><pre><code class="language-faust">process = 7,3.14;</code></pre><br/><p>下面的代码创建一个 box 表达式，其中包含 box <code>boxPar(boxInt(7), boxReal(3.14))</code> 表达式，然后编译它并显示 C++ 类：</p><pre><code class="language-faust">static void test1()
+{
+    COMPILER
+    (
+        Box box = boxPar(boxInt(7), boxReal(3.14));
+
+        compile("test1", box);
+    )
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(7);
+        output1[i0] = FAUSTFLOAT(3.1400001f);
+    }
+}
+</code></pre><h4 id="doing-some-mathematical-operations-on-an-input-signal">对输入信号做一些数学运算</h4><p>下面是一个对信号输入做数学运算的简单程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust1/exfaust1.svg"/><pre><code class="language-faust">process = _,3.14 : +;</code></pre><br/><p>第一个音频输入用 <code>boxWire()</code> 表达式创建，然后用 <code>boxAdd</code> 和 <code>boxSeq</code> 算子变换，产生一个输出：</p><pre><code class="language-faust">static void test2()
+{
+    COMPILER
+    (
+        Box box = boxSeq(boxPar(boxWire(), boxReal(3.14)), boxAdd());
+
+        compile("test2", box);
+     )
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT((float(input0[i0]) + 3.1400001f));
+    }
+}
+</code></pre><p>在公开的 API 中，大多数算子都导出为简单的<em>无参数</em>算子，使用语言的 <a href="manual-syntax.html#infix-notation-and-other-syntax-extensions">core-syntax</a>。每个相关算子还添加了<a href="manual-syntax.html#prefix-notation">前缀记法</a>，可与额外的多参数版本一起使用。因此前面的例子可以用下面的代码更简单地写出，生成的 C++ 完全相同：</p><pre><code class="language-faust">static void test3()
+{
+    COMPILER
+    (
+        Box box = boxAdd(boxWire(), boxReal(3.14));
+
+        compile("test3", box);
+     )
+}
+</code></pre><h4 id="defining-a-delay-expression">定义延迟表达式</h4><p>下面是一个对第一个输入做延迟的简单程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust2/exfaust2.svg"/><pre><code class="language-faust">process = @(_,7);</code></pre><br/><p>前缀记法 <code>boxDelay(x, y)</code> 算子把第一个 <code>boxWire()</code> 参数延迟第二个参数 <code>boxInt(7)</code> 个样本：</p><pre><code class="language-faust">static void test6()
+{
+    COMPILER
+    (
+        Box box = boxDelay(boxWire(), boxInt(7));
+
+        compile("test6", box);
+    )
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        fVec0[0] = float(input0[i0]);
+        output0[i0] = FAUSTFLOAT(fVec0[7]);
+        for (int j0 = 7; (j0 &gt; 0); j0 = (j0 - 1)) {
+            fVec0[j0] = fVec0[(j0 - 1)];
+        }
+    }
+}
+</code></pre><p>Faust 编译器的若干选项可以控制生成的 C++ 代码。默认情况下在单个循环中逐样本计算。但<a href="manual-compiler.html#controlling-code-generation">编译器也可以生成向量化和并行代码</a>。下面的代码展示如何以向量模式编译：</p><pre><code class="language-faust">static void test7()
+{
+    createLibContext();
+    Box box = boxDelay(boxWire(), boxInt(7));
+
+    compile("test7", box, 3, (const char* []){ "-vec", "-lv", "1" });
+    destroyLibContext();
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0_ptr = inputs[0];
+    FAUSTFLOAT* output0_ptr = outputs[0];
+    float fYec0_tmp[40];
+    float* fYec0 = &amp;fYec0_tmp[8];
+    for (int vindex = 0; (vindex &lt; count); vindex = (vindex + 32)) {
+        FAUSTFLOAT* input0 = &amp;input0_ptr[vindex];
+        FAUSTFLOAT* output0 = &amp;output0_ptr[vindex];
+        int vsize = std::min&lt;int&gt;(32, (count - vindex));
+        /* 可向量化循环 0 */
+        /* 前置代码 */
+        for (int j0 = 0; (j0 &lt; 8); j0 = (j0 + 1)) {
+            fYec0_tmp[j0] = fYec0_perm[j0];
+        }
+        /* 计算代码 */
+        for (int i = 0; (i &lt; vsize); i = (i + 1)) {
+            fYec0[i] = float(input0[i]);
+        }
+        /* 后置代码 */
+        for (int j1 = 0; (j1 &lt; 8); j1 = (j1 + 1)) {
+            fYec0_perm[j1] = fYec0_tmp[(vsize + j1)];
+        }
+        /* 可向量化循环 1 */
+        /* 计算代码 */
+        for (int i = 0; (i &lt; vsize); i = (i + 1)) {
+            output0[i] = FAUSTFLOAT(fYec0[(i - 7)]);
+        }
+    }
+}
+</code></pre><p>如果 C++ 编译器能自动向量化，可能会更快。</p><p>如果延迟算子用在数学运算<em>之前</em>的输入信号上，那么只会创建<em>一条</em>延迟线，取两条延迟线的最大长度：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust3/exfaust3.svg"/><pre><code class="language-faust">process = _ &lt;: @(500) + 0.5, @(3000) * 1.5;</code></pre><br/><p>并用下面的代码构建：</p><pre><code class="language-faust">static void test8()
+{
+    COMPILER
+    (
+        Box box = boxSplit(boxWire(), 
+                            boxPar(boxAdd(boxDelay(boxWire(), 
+                                                    boxReal(500)), boxReal(0.5)),
+                                   boxMul(boxDelay(boxWire(), 
+                                                    boxReal(3000)), boxReal(1.5))));
+
+
+        compile("test8", box);
+    )
+}
+</code></pre><p>在 <code>compute</code> 方法中，单条 <code>fVec0</code> 延迟线在两个不同索引处被读取：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        float fTemp0 = float(input0[i0]);
+        fVec0[(IOTA &amp; 4095)] = fTemp0;
+        output0[i0] = FAUSTFLOAT((fVec0[((IOTA - 500) &amp; 4095)] + 0.5f));
+        output1[i0] = FAUSTFLOAT((1.5f * fVec0[((IOTA - 3000) &amp; 4095)]));
+        IOTA = (IOTA + 1);
+    }
+}
+</code></pre><h4 id="equivalent-box-expressions">等价的 box 表达式</h4><p>非常重要的一点是，<em>语法等价的 box 表达式</em>会<em>在内部由同一个内存结构表示</em>（使用哈希共享 hash consing），因此在后续编译步骤中以相同方式处理。所以下面的代码中，创建 <code>s1</code> 变量来定义 <code>boxAdd(boxDelay(boxWire(), boxReal(500)), boxReal(0.5))</code> 表达式，然后在两个输出中使用：</p><pre><code class="language-faust">static void equivalent1()
+{
+    COMPILER
+    (
+        Box b1 = boxAdd(boxDelay(boxWire(), boxReal(500)), boxReal(0.5));
+        Box box = boxPar(b1, b1);
+
+        compile("equivalent1", signals);
+    )
+}
+</code></pre><p>其行为与下面的代码完全相同，其中 <code>boxAdd(boxDelay(boxWire(), boxReal(500)), boxReal(0.5))</code> 表达式被使用了两次：</p><pre><code class="language-faust">static void equivalent2()
+{
+    COMPILER
+    (
+         Box box = boxPar(boxAdd(boxDelay(boxWire(), boxReal(500)), boxReal(0.5)),
+                          boxAdd(boxDelay(boxWire(), boxReal(500)), boxReal(0.5)));
+
+
+        compile("equivalent2", box);
+    )
+}
+</code></pre><p>在 box API 之上创建 DSL 时，这是值得记住的一个特性。</p><h4 id="using-user-interface-items">使用用户界面控件</h4><p>用户界面控件可以使用，如下例中的 <code>hslider</code>：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust4/exfaust4.svg"/><pre><code class="language-faust">process = _,hslider("Freq [midi:ctrl 7][style:knob]", 100, 100, 2000, 1) : *;</code></pre><br/><p>用下面的代码构建：</p><pre><code class="language-faust">static void test8()
+{
+    COMPILER
+    (
+        Box box = boxMul(boxWire(), 
+                         boxHSlider("Freq [midi:ctrl 7][style:knob]", 
+                                    boxReal(100), 
+                                    boxReal(100), 
+                                    boxReal(2000), 
+                                    boxReal(1)));
+
+        compile("test8", box);
+    )
+}
+</code></pre><p>生成了 <code>buildUserInterface</code> 方法，使用 <code>fHslider0</code> 变量：</p><pre><code>virtual void buildUserInterface(UI* ui_interface) 
+{
+    ui_interface-&gt;openVerticalBox("test8");
+    ui_interface-&gt;declare(&amp;fHslider0, "midi", "ctrl 7");
+    ui_interface-&gt;declare(&amp;fHslider0, "style", "knob");
+    ui_interface-&gt;addHorizontalSlider("Freq", &amp;fHslider0, 
+                                  FAUSTFLOAT(100.0f), 
+                                  FAUSTFLOAT(100.0f), 
+                                  FAUSTFLOAT(2000.0f), 
+                                  FAUSTFLOAT(1.0f));
+    ui_interface-&gt;closeBox();
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    float fSlow0 = float(fHslider0);
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT((fSlow0 * float(input0[i0])));
+    }
+}
+</code></pre><p>用户界面布局可以用 <a href="manual-syntax.html#hgroup-primitive">hgroup</a>、<a href="manual-syntax.html#vgroup-primitive">vgroup</a> 或 <a href="manual-syntax.html#tgroup-primitive">tgroup</a> 描述。使用 box API 时，布局可以用 <a href="manual-syntax.html#labels-as-pathnames">labels-as-pathnames</a> 语法定义，如下例所示：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust5/exfaust5.svg"/><pre><code class="language-faust">import("stdfaust.lib"); 
+freq = vslider("h:Oscillator/freq", 440, 50, 1000, 0.1); 
+gain = vslider("h:Oscillator/gain", 0, 0, 1, 0.01); 
+process = freq*gain;</code></pre><br/><p>用下面的代码构建：</p><pre><code class="language-faust">static void test9()
+{
+    COMPILER
+    (
+        Box box = boxMul(boxVSlider("h:Oscillator/freq", 
+                                    boxReal(440), 
+                                    boxReal(50), 
+                                    boxReal(1000), 
+                                    boxReal(0.1)),
+                         boxVSlider("h:Oscillator/gain", 
+                                    boxReal(0), 
+                                    boxReal(0), 
+                                    boxReal(1), 
+                                    boxReal(0.01)));
+
+        compile("test9", box);
+    )
+}
+</code></pre><p>生成的 <code>buildUserInterface</code> 方法包含预期的 <code>openHorizontalBox</code> 调用：</p><pre><code>virtual void buildUserInterface(UI* ui_interface) 
+{
+    ui_interface-&gt;openHorizontalBox("Oscillator");
+    ui_interface-&gt;addVerticalSlider("freq", &amp;fVslider0, 
+                                    FAUSTFLOAT(440.0f), 
+                                    FAUSTFLOAT(50.0f), 
+                                    FAUSTFLOAT(1000.0f), 
+                                    FAUSTFLOAT(0.100000001f));
+    ui_interface-&gt;addVerticalSlider("gain", &amp;fVslider1, 
+                                    FAUSTFLOAT(0.0f), 
+                                    FAUSTFLOAT(0.0f), 
+                                    FAUSTFLOAT(1.0f), 
+                                    FAUSTFLOAT(0.0109999999f));
+    ui_interface-&gt;closeBox();
+}
+</code></pre><h4 id="defining-recursive-signals">定义递归信号</h4><p>递归信号可以用 <code>boxRec</code> 表达式定义。会自动创建一个样本的延迟以产生有效的计算。下面是一个简单例子：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust6/exfaust6.svg"/><pre><code class="language-faust">process = + ~ _;</code></pre><br/><p>用下面的代码构建：</p><pre><code class="language-faust">static void test10()
+{
+    COMPILER
+    (
+        Box box = boxRec(boxAdd(), boxWire());
+
+        compile("test10", box);
+    )
+}
+</code></pre><p><code>compute</code> 方法显示了保存延迟信号的 <code>fRec0</code> 变量：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        fRec0[0] = (float(input0[i0]) + fRec0[1]);
+        output0[i0] = FAUSTFLOAT(fRec0[0]);
+        fRec0[1] = fRec0[0];
+    }
+}
+</code></pre><h4 id="accessing-the-global-context">访问全局上下文</h4><p>在 Faust 中，底层音频引擎的采样率和缓冲区大小通过外部函数与常量机制访问。这些值也可以在 box 语言中用以下辅助函数使用：</p><pre><code class="language-faust">// 在 platform.lib 中复现 'SR' 定义
+// SR = min(192000.0, max(1.0, fconstant(int fSampleFreq, <dummy.h>)));
+inline Box SR()
+{
+    return boxMin(boxReal(192000.0), 
+                  boxMax(boxReal(1.0), 
+                         boxFConst(SType::kSInt, "fSampleFreq", "&lt;math.h&gt;")));
+}
+
+// 在 platform.lib 中复现 'BS' 定义
+// BS = fvariable(int count, <dummy.h>);
+inline Signal BS()
+{
+    return boxFVar(SType::kSInt, "count", "&lt;math.h&gt;");
+}
+</dummy.h></dummy.h></code></pre><p>所以下面的 DSP 程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust7/exfaust7.svg"/><pre><code class="language-faust">import("stdfaust.lib"); 
+process = ma.SR, ma.BS;</code></pre><br/><p>可以在 box API 层面写成：</p><pre><code class="language-faust">static void test11()
+{
+    COMPILER
+    (
+        Box box = boxPar(SR(), BS());
+
+        compile("test11", box);
+    )
+}
+</code></pre><p>生成的 C++ 类包含：</p><pre><code>virtual void instanceConstants(int sample_rate) 
+{
+    fSampleRate = sample_rate;
+    fConst0 = std::min&lt;float&gt;(192000.0f, std::max&lt;float&gt;(1.0f, float(fSampleRate)));
+}
+</code></pre><p>以及：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    int iSlow0 = count;
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(fConst0);
+        output1[i0] = FAUSTFLOAT(iSlow0);
+    }
+}
+</code></pre><h4 id="creating-tables">创建表</h4><p>可以创建只读表和读写表。<em>只读表</em>信号用 <code>boxReadOnlyTable</code> 创建，接受：</p><ul><li>第一个参数为长度</li><li>第二个参数为内容</li><li>第三个参数为读取索引（介于 0 与 size-1 之间）</li></ul><p>并产生被索引的表内容作为其唯一输出。下面这个简单的 DSP 示例：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust8/exfaust8.svg"/><pre><code class="language-faust">process = 10,1,int(_) : rdtable;</code></pre><br/><p>可以用以下代码写出：</p><pre><code class="language-faust">static void test20()
+{
+    COMPILER
+    (
+        Box box = boxReadOnlyTable(boxInt(10), boxInt(1), boxIntCast(boxWire()));
+
+        compile("test20", signals);
+    )
+}
+</code></pre><p>生成的 C++ 代码包含 <code>itbl0mydspSIG0</code> 静态表定义：</p><pre><code class="language-faust">static int itbl0mydspSIG0[10];
+</code></pre><p>将在初始化时调用一次的表填充代码：</p><pre><code class="language-faust">void fillmydspSIG0(int count, int* table) 
+{
+    for (int i1 = 0; (i1 &lt; count); i1 = (i1 + 1)) {
+        table[i1] = 1;
+    }
+}
+</code></pre><p>以及访问 <code>itbl0mydspSIG0</code> 表的 <code>compute</code> 方法：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(itbl0mydspSIG0[int(float(input0[i0]))]);
+    }
+}
+</code></pre><p><em>读写表</em>信号用 <code>boxWriteReadTable</code> 创建，接受：</p><ul><li>第一个参数为长度</li><li>第二个参数为内容</li><li>第三个参数为写入索引（介于 0 与 size-1 之间）</li><li>第四个参数为表的输入</li><li>第五个参数为读取索引（介于 0 与 size-1 之间）</li></ul><p>并产生被索引的表内容作为其唯一输出。下面这个 DSP 示例：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust9/exfaust9.svg"/><pre><code class="language-faust">process = 10,1,int(_),int(_),int(_) : rwtable;</code></pre><br/><p>可以用以下代码写出：</p><pre><code class="language-faust">static void test20()
+{
+    COMPILER
+    (
+        Box box = boxWriteReadTable(boxInt(10), 
+                                    boxInt(1), 
+                                    boxIntCast(boxWire()), 
+                                    boxIntCast(boxWire()), 
+                                    boxIntCast(boxWire()));
+
+        compile("test21", signals);
+    )
+}
+</code></pre><p>生成的 C++ 代码在 <code>mydsp</code> 类中包含 <code>itbl0</code> 定义作为字段：</p><pre><code class="language-faust">int itbl0[10];
+</code></pre><p>将在初始化时调用一次的表填充代码：</p><pre><code class="language-faust">void fillmydspSIG0(int count, int* table) 
+{
+    for (int i1 = 0; (i1 &lt; count); i1 = (i1 + 1)) {
+        table[i1] = 1;
+    }
+}
+</code></pre><p>以及从 <code>itbl0</code> 表读取和写入的 <code>compute</code> 方法：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* input1 = inputs[1];
+    FAUSTFLOAT* input2 = inputs[2];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        itbl0[int(float(input0[i0]))] = int(float(input1[i0]));
+        output0[i0] = FAUSTFLOAT(itbl0[int(float(input2[i0]))]);
+    }
+}
+</code></pre><h4 id="creating-waveforms">创建波形</h4><p>下面这个定义波形的 DSP 程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust10/exfaust10.svg"/><pre><code class="language-faust">process = waveform { 0, 100, 200, 300, 400 };</code></pre><br/><p>可以用以下代码写出，其中波形的长度是第一个输出，波形内容本身是用 <code>boxWaveform</code> 创建的第二个输出，以遵循<a href="manual-syntax.html#waveform-primitive">波形语义</a>：</p><pre><code class="language-faust">static void test12()
+{
+    COMPILER
+    (
+        tvec waveform;
+        // 填充波形内容向量
+        for (int i = 0; i &lt; 5; i++) {
+            waveform.push_back(boxReal(100*i));
+        }
+        Box box = boxWaveform(waveform); // 长度和波形内容
+
+        compile("test12", box);
+     )
+}
+</code></pre><p>生成的 C++ 代码中，<code>fmydspWave0</code> 波形被定义为静态表：</p><pre><code class="language-faust">const static float fmydspWave0[5] = {0.0f,100.0f,200.0f,300.0f,400.0f};
+</code></pre><p>并在下面的 <code>compute</code> 方法中使用：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(5);
+        output1[i0] = FAUSTFLOAT(fmydspWave0[fmydspWave0_idx]);
+        fmydspWave0_idx = ((1 + fmydspWave0_idx) % 5);
+    }
+}
+</code></pre><h4 id="creating-soundfile">创建声音文件</h4><p><em>soundfile</em> 基元可以访问一组外部定义的声音资源，这些资源用其文件名或完整路径的列表描述。它接受：</p><ul><li>声音编号（作为 0 到 255 之间的整数，即<a href="manual-syntax.html#constant-numerical-expressions">常量数值表达式</a>）</li><li>声音中的读取索引（如果读取索引大于声音长度，将访问声音的最后一个样本）</li></ul><p>生成的块具有：</p><ul><li>两个固定输出：第一个是当前访问的声音长度（以帧为单位），第二个是当前访问的声音标称采样率</li><li>声音声道本身还有若干额外输出，作为<a href="manual-syntax.html#constant-numerical-expressions">常量数值表达式</a></li></ul><p>soundfile 块用 <code>boxSoundfile</code> 创建。因此下面的 DSP 代码：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust11/exfaust11.svg"/><pre><code class="language-faust">process = 0,0 : soundfile("sound[url:{'tango.wav'}]", 1);</code></pre><br/><p>将用 box API 这样创建：</p><pre><code class="language-faust">static void test19()
+{
+    COMPILER
+    (
+        Box box = boxSoundfile("sound[url:{'tango.wav'}]", 
+                               boxInt(2),  
+                               boxInt(0),  
+                               boxInt(0));
+
+        compile("test19", box);
+    )
+}
+</code></pre><p>并生成下面的 <code>compute</code> 方法：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    FAUSTFLOAT* output2 = outputs[2];
+    Soundfile* fSoundfile0ca = fSoundfile0;
+    int* fSoundfile0ca_le0 = fSoundfile0ca-&gt;fLength;
+    int iSlow0 = fSoundfile0ca_le0[0];
+    int* fSoundfile0ca_ra0 = fSoundfile0ca-&gt;fSR;
+    int iSlow1 = fSoundfile0ca_ra0[0];
+    int iSlow2 = std::max&lt;int&gt;(0, std::min&lt;int&gt;(0, (iSlow0 + -1)));
+    int* fSoundfile0ca_of0 = fSoundfile0ca-&gt;fOffset;
+    float** fSoundfile0ca_bu0 = static_cast&lt;float**&gt;(fSoundfile0ca-&gt;fBuffers);
+    float* fSoundfile0ca_bu_ch0 = fSoundfile0ca_bu0[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(iSlow0);
+        output1[i0] = FAUSTFLOAT(iSlow1);
+        output2[i0] = FAUSTFLOAT(fSoundfile0ca_bu_ch0[(fSoundfile0ca_of0[0] + iSlow2)]);
+    }
+    fSoundfile0 = fSoundfile0ca;
+}
+</code></pre><h4 id="using-the-dsptoboxes-function">使用 DSPToBoxes 函数</h4><p>完整的 DSP 程序可以用 <code>DSPToBoxes</code> 函数编译为 box，该函数接受 DSP 程序字符串，返回输入/输出数量和创建的 box：</p><pre><code>static void test25(int argc, char* argv[])
+{
+    createLibContext();
+    {
+        int inputs = 0;
+        int outputs = 0;
+        string error_msg;
+
+        // 创建振荡器
+        Box osc = DSPToBoxes("import(\"stdfaust.lib\"); process = os.osc(440);", argc, (const char**)argv, &amp;inputs, &amp;outputs, error_msg);
+
+        // 编译它
+        dsp_factory_base* factory = createCPPDSPFactoryFromBoxes("FaustDSP", osc, argc, (const char**)argv, error_msg);
+        if (factory) {
+            factory-&gt;write(&amp;cout);
+            delete(factory);
+        } else {
+            cerr &lt;&lt; error_msg;
+        }
+    }
+    destroyLibContext();
+}
+</code></pre><p>生成的 box 表达式可以复用在更复杂的构造中，如下例：用 <code>DSPToBoxes</code> 函数创建滤波器，然后用滑块控制其频率，并接入实际输入：</p><pre><code>static void test26(int argc, char* argv[])
+{
+    createLibContext();
+    {
+        int inputs = 0;
+        int outputs = 0;
+        string error_msg;
+
+        // 创建无参数滤波器
+        Box filter = DSPToBoxes("import(\"stdfaust.lib\"); process = fi.lowpass(5);", argc, (const char**)argv, &amp;inputs, &amp;outputs, error_msg);
+
+        // 创建滤波器参数并连接
+        Box cutoff = boxHSlider("cutoff", boxReal(300), boxReal(100), boxReal(2000), boxReal(0.01));
+        Box cutoffAndInput = boxPar(cutoff, boxWire());
+        Box filteredInput = boxSeq(cutoffAndInput, filter);
+
+        bool res = getBoxType(filteredInput, &amp;inputs, &amp;outputs);
+        std::cout &lt;&lt; "getBoxType inputs: " &lt;&lt; inputs &lt;&lt; " outputs: " &lt;&lt; outputs &lt;&lt; std::endl;
+
+        dsp_factory_base* factory = createCPPDSPFactoryFromBoxes("FaustDSP", filteredInput, argc, (const char**)argv, error_msg);
+        if (factory) {
+            factory-&gt;write(&amp;cout);
+            delete(factory);
+        } else {
+            cerr &lt;&lt; error_msg;
+        }
+    }
+    destroyLibContext();
+}
+</code></pre><p>注意，<code>getBoxType</code> 函数可用于获取给定 box 的输入和输出数量。</p><h4 id="defining-more-complex-expressions-phasor-and-oscillator">定义更复杂的表达式：相位器与振荡器</h4><p>可以定义更复杂的信号表达式，用辅助定义创建 box。所以下面的 DSP 程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust12/exfaust12.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = phasor(440)
+with {
+     decimalpart(x) = x-int(x);
+     phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+};</code></pre><br/><p>可以用以下辅助函数构建，这里用 C 编写：</p><pre><code class="language-faust">static Box decimalpart()
+{
+    return boxSub(boxWire(), boxIntCast(boxWire()));
+}
+
+static Box phasor(Box f)
+{
+    return boxSeq(boxDiv(f, SR()), 
+                  boxRec(boxSplit(boxAdd(), decimalpart()), boxWire()));
+}
+</code></pre><p>以及组合它们的主函数：</p><pre><code class="language-faust">static void test17()
+{
+    COMPILER
+    (
+        Box box = phasor(boxReal(440));
+
+        compile("test17", box);
+    )
+}
+</code></pre><p>它产生下面的 <code>compute</code> 方法：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        fRec0[0] = (fConst0 + (fRec0[1] - float(int((fConst0 + fRec0[1])))));
+        output0[i0] = FAUSTFLOAT(fRec0[0]);
+        fRec0[1] = fRec0[0];
+    }
+}
+</code></pre><p>现在看下面的振荡器：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust13/exfaust13.svg"/><pre><code class="language-faust"> import("stdfaust.lib");
+ process = osc(440), osc(440)
+ with {
+    decimalpart(x) = x-int(x);
+    phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+    osc(f) = sin(2 * ma.PI * phasor(f));
+ };</code></pre><br/><p>可以用以下代码构建：</p><pre><code class="language-faust">static Box osc(Box f)
+{
+    return boxSin(boxMul(boxMul(boxReal(2.0), boxReal(3.141592653)), phasor(f)));
+}
+
+static void test18()
+{
+    COMPILER
+    (
+        Box box = boxPar(osc(boxReal(440)), osc(boxReal(440)));
+
+        compile("test18", box);
+    )
+}
+</code></pre><p>它产生下面的 <code>compute</code> 方法，可以看到，由于两个输出上使用的是<em>同一个</em>振荡器信号，它实际上只计算一次并复制两次：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        fRec0[0] = (fConst0 + (fRec0[1] - float(int((fConst0 + fRec0[1])))));
+        float fTemp0 = std::sin((6.28318548f * fRec0[0]));
+        output0[i0] = FAUSTFLOAT(fTemp0);
+        output1[i0] = FAUSTFLOAT(fTemp0);
+        fRec0[1] = fRec0[0];
+    }
+}
+</code></pre><h2 id="using-the-generated-code">使用生成的代码</h2><p>使用 LLVM 或 Interpreter 后端可以即时生成并执行编译后的 DSP。</p><p>LLVM 后端可以与 <code>createDSPFactoryFromBoxes</code> 一起使用（见 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/llvm-dsp.h" rel="noreferrer noopener">llvm-dsp.h</a>）来生成 DSP 工厂，然后生成 DSP 实例：</p><pre><code>string error_msg;
+llvm_dsp_factory* factory = createDSPFactoryFromBoxes("FaustDSP", 
+                                                       box, 0, 
+                                                       nullptr, "", 
+                                                       error_msg);
+// 检查工厂
+dsp* dsp = factory-&gt;createDSPInstance();
+// 检查 dsp
+...
+// 使用 dsp
+...
+// 删除 dsp 和工厂
+delete dsp;
+deleteDSPFactory(factory);
+</code></pre><p>Interpreter 后端可以与 <code>createInterpreterDSPFactoryFromBoxes</code> 一起使用（见 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/interpreter-dsp.h" rel="noreferrer noopener">interpreter-dsp.h</a>）来生成 DSP 工厂，然后生成 DSP 实例：</p><pre><code>string error_msg;
+interpreter_dsp_factory* factory = createInterpreterDSPFactoryFromBoxes("FaustDSP", 
+                                                                         box, 0, 
+                                                                         nullptr, "", 
+                                                                         error_msg);
+// 检查工厂
+dsp* dsp = factory-&gt;createDSPInstance();
+// 检查 dsp
+...
+// 使用 dsp
+...
+// 删除 dsp 和工厂
+delete dsp;
+deleteInterpreterDSPFactory(factory);
+</code></pre><h4 id="connecting-the-audio-layer">连接音频层</h4><p>音频驱动可以渲染 DSP 实例。下面是一个使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/audio/dummy-audio.h" rel="noreferrer noopener">dummyaudio</a> 音频驱动的简单代码示例：</p><pre><code class="language-faust">// 分配音频驱动以渲染 5 个 512 帧的缓冲区
+dummyaudio audio(5);
+audio.init("Test", dsp);
+
+// 渲染缓冲区……
+audio.start();
+audio.stop();
+</code></pre><p>一个更复杂的示例，使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/audio/jack-dsp.h" rel="noreferrer noopener">JACK</a> 音频驱动：</p><pre><code class="language-faust">// 分配 JACK 音频驱动
+jackaudio audio;
+audio.init("Test", dsp);
+
+// 启动实时处理
+audio.start();
+....
+audio.stop();
+</code></pre><h4 id="connecting-the-controller-layer">连接控制层</h4><p>控制器可以通过 GUI 架构连接到 DSP 实例。下面是一个使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/GTKUI.h" rel="noreferrer noopener">GTKUI</a> 接口的代码示例：</p><pre><code>GUI* interface = new GTKUI("Test", &amp;argc, &amp;argv);
+dsp-&gt;buildUserInterface(interface);
+interface-&gt;run();
+</code></pre><p>所有其他<a href="manual-architectures.html">标准控制器</a>（MIDI、OSC 等）都可以照常使用。</p><h4 id="example-with-audio-rendering-and-gui-control">音频渲染与 GUI 控制的示例</h4><p>这里是一个更完整的示例，先是 DSP 代码：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust14/exfaust14.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = osc(f1), osc(f2)
+with {
+    decimalpart(x) = x-int(x);
+    phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+    osc(f) = sin(2 * ma.PI * phasor(f));
+    f1 = vslider("Freq1", 300, 100, 2000, 0.01);
+    f2 = vslider("Freq2", 500, 100, 2000, 0.01);
+};</code></pre><br/><p>然后是使用 box API 的 C++ 代码：</p><pre><code>// 使用 Interpreter 后端。
+static void test22(int argc, char* argv[])
+{
+    interpreter_dsp_factory* factory = nullptr;
+    string error_msg;
+
+    createLibContext();
+    {
+        Box sl1 = boxHSlider("v:Oscillator/Freq1", boxReal(300), 
+                             boxReal(100), boxReal(2000), boxReal(0.01));
+        Box sl2 = boxHSlider("v:Oscillator/Freq2", boxReal(300), 
+                             boxReal(100), boxReal(2000), boxReal(0.01));
+        Box box = boxPar(osc(sl1), osc(sl2));
+        factory = createInterpreterDSPFactoryFromBoxes("FaustDSP", 
+                                                       box, 0, 
+                                                       nullptr, error_msg);
+    }
+    destroyLibContext();
+
+    // 在 createLibContext/destroyLibContext 作用域之外使用工厂
+    if (factory) {
+        dsp* dsp = factory-&gt;createDSPInstance();
+        assert(dsp);
+
+        // 分配音频驱动
+        jackaudio audio;
+        audio.init("Test", dsp);
+
+        // 创建 GUI
+        GTKUI gtk_ui = GTKUI("Organ", &amp;argc, &amp;argv);
+        dsp-&gt;buildUserInterface(&amp;gtk_ui);
+
+        // 启动实时处理
+        audio.start();
+
+        // 启动 GUI
+        gtk_ui.run();
+
+        // 清理
+        audio.stop();
+        delete dsp;
+        deleteInterpreterDSPFactory(factory);
+    } else {
+        cerr &lt;&lt; error_msg;
+    }
+}
+</code></pre><h4 id="generating-the-signals-as-an-intermediate-step">将信号生成为中间步骤</h4><p><code>boxesToSignals</code> 函数可以把 box 编译为信号列表，以便与 <a href="tutorial-signal-api.html">signal API</a> 一起使用。下面的例子展示两个步骤（box =&gt; 信号，然后信号 =&gt; DSP 工厂）如何串联，把前面的代码重写为：</p><pre><code>// 使用 Interpreter 后端。
+static void test23(int argc, char* argv[])
+{
+    interpreter_dsp_factory* factory = nullptr;
+    string error_msg;
+
+    createLibContext();
+    {
+        Box sl1 = boxHSlider("v:Oscillator/Freq1", boxReal(300), 
+                             boxReal(100), boxReal(2000), boxReal(0.01));
+        Box sl2 = boxHSlider("v:Oscillator/Freq2", boxReal(300), 
+                             boxReal(100), boxReal(2000), boxReal(0.01));
+        Box box = boxPar(osc(sl1), osc(sl2));
+
+        // 把 'box' 编译为 'signals'
+        tvec signals = boxesToSignals(box, error_msg);
+
+        // 然后把 'signals' 编译为 DSP 工厂
+        factory = createInterpreterDSPFactoryFromSignals("FaustDSP", 
+                                                        signals, 0, 
+                                                        nullptr, error_msg);
+    }
+    destroyLibContext();
+
+    // 在 createLibContext/destroyLibContext 作用域之外使用工厂
+    if (factory) {
+        dsp* dsp = factory-&gt;createDSPInstance();
+        assert(dsp);
+
+        // 分配音频驱动
+        jackaudio audio;
+        audio.init("Test", dsp);
+
+        // 创建 GUI
+        GTKUI gtk_ui = GTKUI("Organ", &amp;argc, &amp;argv);
+        dsp-&gt;buildUserInterface(&amp;gtk_ui);
+
+        // 启动实时处理
+        audio.start();
+
+        // 启动 GUI
+        gtk_ui.run();
+
+        // 清理
+        audio.stop();
+        delete dsp;
+        deleteInterpreterDSPFactory(factory);
+    } else {
+        cerr &lt;&lt; error_msg;
+    }
+}
+</code></pre><h4 id="polyphonic-midi-controllable-simple-synthesizer">复音 MIDI 可控的简单合成器</h4><p>下面是一个 MIDI 可控的简单合成器，先是 DSP 代码：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/box-api/exfaust15/exfaust15.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = organ, organ
+with {
+    decimalpart(x) = x-int(x);
+    phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+    osc(f) = sin(2 * ma.PI * phasor(f));
+    freq = nentry("freq", 100, 100, 3000, 0.01);
+    gate = button("gate");
+    gain = nentry("gain", 0.5, 0, 1, 0.01);
+    organ = gate * (osc(freq) * gain + osc(2 * freq) * gain);
+
+};</code></pre><br/><p>然后是使用 box API 的 C++ 代码：</p><pre><code>// 简单的复音 DSP。
+static void test24(int argc, char* argv[])
+{
+    interpreter_dsp_factory* factory = nullptr;
+    string error_msg;
+
+    createLibContext();
+    {
+        // 遵循 freq/gate/gain 约定，
+        // 见：../manual/midi/#standard-polyphony-parameters
+        Box freq = boxNumEntry("freq", 
+                               boxReal(100), 
+                               boxReal(100), 
+                               boxReal(3000), 
+                               boxReal(0.01));
+        Box gate = boxButton("gate");
+        Box gain = boxNumEntry("gain",
+                               boxReal(0.5), 
+                               boxReal(0), 
+                               boxReal(1), 
+                               boxReal(0.01));
+        Box organ = boxMul(gate, boxAdd(boxMul(osc(freq), gain), 
+                                        boxMul(osc(boxMul(freq, boxInt(2))), gain)));
+        // 立体声
+        Box box = boxPar(organ, organ);
+
+        factory = createInterpreterDSPFactoryFromBoxes("FaustDSP", 
+                                                        box, 
+                                                        0, nullptr, 
+                                                        error_msg);
+    }
+    destroyLibContext();
+
+    // 在 createLibContext/destroyLibContext 作用域之外使用工厂
+    if (factory) {
+        dsp* dsp = factory-&gt;createDSPInstance();
+        assert(dsp);
+
+        // 分配复音 DSP
+        dsp = new mydsp_poly(dsp, 8, true, true);
+
+        // 分配 MIDI/音频驱动
+        jackaudio_midi audio;
+        audio.init("Organ", dsp);
+
+        // 创建 GUI
+        GTKUI gtk_ui = GTKUI("Organ", &amp;argc, &amp;argv);
+        dsp-&gt;buildUserInterface(&amp;gtk_ui);
+
+        // 创建 MIDI 控制器
+        MidiUI midi_ui = MidiUI(&amp;audio);
+        dsp-&gt;buildUserInterface(&amp;midi_ui);
+
+        // 启动实时处理
+        audio.start();
+
+        // 启动 MIDI
+        midi_ui.run();
+
+        // 启动 GUI
+        gtk_ui.run();
+
+        // 清理
+        audio.stop();
+        delete dsp;
+        deleteInterpreterDSPFactory(factory);
+    } else {
+        cerr &lt;&lt; error_msg;
+    }
+}
+</code></pre><h2 id="examples-with-the-c-api">C API 示例</h2><p>box API 也以<a href="https://github.com/grame-cncm/faust/blob/master-dev/compiler/generator/libfaust-signal-c.h" rel="noreferrer noopener">纯 C API</a> 形式提供。下面是前面某个示例用 C API 重写，以创建 box 表达式，其中 LLVM 后端与 C 版本的 <code>createCDSPFactoryFromBoxes</code> 函数一起使用（见 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/llvm-dsp-c.h" rel="noreferrer noopener">llvm-dsp-c.h</a>）来生成 DSP 工厂，然后生成 DSP 实例：</p><pre><code class="language-faust">/*
+ import("stdfaust.lib");
+ process = phasor(440)
+ with {
+     decimalpart(x) = x-int(x);
+     phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+ };
+ */
+
+static Box decimalpart()
+{
+    return CboxSubAux(CboxWire(), CboxIntCastAux(CboxWire()));
+}
+
+static Box phasor(Box f)
+{
+    return CboxSeq(CboxDivAux(f, SR()), 
+                   CboxRec(CboxSplit(CboxAdd(), decimalpart()), CboxWire()));
+}
+
+static void test1()
+{
+    createLibContext();
+    {
+        Box box = phasor(CboxReal(2000));
+
+        char error_msg[4096];
+        llvm_dsp_factory* factory = createCDSPFactoryFromBoxes("test1", 
+                                                               box, 
+                                                               0, NULL, 
+                                                               "", 
+                                                               error_msg, 
+                                                               -1);
+
+        if (factory) {
+
+            llvm_dsp* dsp = createCDSPInstance(factory);
+            assert(dsp);
+
+            // 渲染音频
+            render(dsp);
+
+            // 清理
+            deleteCDSPInstance(dsp);
+            deleteCDSPFactory(factory);
+
+        } else {
+            printf("Cannot create factory : %s\n", error_msg);
+        }
+    }
+    destroyLibContext();
+}
+</code></pre><p>下面是一个使用控制器和 <code>PrintUI</code> 架构来显示其参数的示例：</p><pre><code class="language-faust">/*
+ import("stdfaust.lib");
+
+ freq = vslider("h:Oscillator/freq", 440, 50, 1000, 0.1);
+ gain = vslider("h:Oscillator/gain", 0, 0, 1, 0.01);
+
+ process = freq * gain;
+ */
+
+static void test3()
+{
+    createLibContext();
+    {
+        Box freq = CboxVSlider("h:Oscillator/freq", 
+                               CboxReal(440), 
+                               CboxReal(50), 
+                               CboxReal(1000), 
+                               CboxReal(0.1));
+        Box gain = CboxVSlider("h:Oscillator/gain", 
+                               CboxReal(0), 
+                               CboxReal(0), 
+                               CboxReal(1), 
+                               CboxReal(0.011));
+        Box box = CboxMulAux(freq, CboxMulAux(gain, CboxWire()));
+
+        char error_msg[4096];
+        llvm_dsp_factory* factory = createCDSPFactoryFromBoxes("test3", 
+                                                               box, 0, 
+                                                               NULL, "", 
+                                                               error_msg, 
+                                                               -1);
+
+        if (factory) {
+
+            llvm_dsp* dsp = createCDSPInstance(factory);
+            assert(dsp);
+
+            printf("=================UI=================\n");
+
+            // 定义在 PrintCUI.h 中
+            metadataCDSPInstance(dsp, &amp;mglue);
+
+            buildUserInterfaceCDSPInstance(dsp, &amp;uglue);
+
+            // 清理
+            deleteCDSPInstance(dsp);
+            deleteCDSPFactory(factory);
+
+        } else {
+            printf("Cannot create factory : %s\n", error_msg);
+        }
+    }
+    destroyLibContext();
+}
+</code></pre><p>所有展示的 C 示例（以及一些额外示例）都定义在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/tools/benchmark/box-tester.c" rel="noreferrer noopener">box-tester-c</a> 工具中，可在 tools/benchmark 目录下用 <code>make box-tester-c</code> 编译。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/box-api/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/box-api/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

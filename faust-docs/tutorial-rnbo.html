@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在 RNBO 的 Codebox~ 中使用 Faust - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：在 RNBO 的 Codebox~ 中使用 Faust">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="using-faust-in-rnbo-with-codebox">在 RNBO 的 Codebox~ 中使用 Faust</h1><p>本教程介绍如何把 <a href="https://faust.grame.fr" rel="noreferrer noopener">Faust</a> 与 <a href="https://rnbo.cycling74.com" rel="noreferrer noopener">RNBO</a> 配合使用，RNBO 是一套库与工具链，可以把类似 Max 的 patch 导出为可移植代码，并直接编译到 VST、Max External 或 Raspberry Pi 等目标。DSP 程序可以编译为内部的 <a href="https://rnbo.cycling74.com/codebox" rel="noreferrer noopener">codebox~</a> 样本级脚本语言。把 Faust DSP 编译成 codebox~ 代码，可以利用 <a href="https://faustlibraries.grame.fr" rel="noreferrer noopener">Faust 库</a>中实现的数百个 DSP 构建模块、开箱即用的<a href="examples-ambisonics.html">示例</a>、<a href="https://faust.grame.fr/community/powered-by-faust/" rel="noreferrer noopener">Powered By Faust</a> 页面上 200 多个项目中开发的任何 DSP 程序，或网上找到的 Faust DSP 程序。</p><h4 id="who-is-this-tutorial-for">本教程面向谁？</h4><p><a href="#using-command-line-tools">第一节</a>假定机器上已安装可用的 <a href="https://github.com/grame-cncm/faust" rel="noreferrer noopener">Faust</a> 编译器，因此更适合常规的 Faust 用户。<a href="#using-the-faust-web-ide">第二节</a>更适合想了解 Faust 的 RNBO 用户。</p><h2 id="using-command-line-tools">使用命令行工具</h2><h3 id="generating-codebox-code">生成 codebox~ 代码</h3><p>假定你已经<a href="https://faust.grame.fr/downloads/" rel="noreferrer noopener">安装了 <strong>faust</strong> 编译器</a>，从下面这个 DSP 程序 <strong>osc.dsp</strong> 出发：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/exfaust0/exfaust0.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+
+vol = hslider("volume [unit:dB]", 0, -96, 0, 0.1) : ba.db2linear : si.smoo;
+freq1 = hslider("freq1 [unit:Hz]", 1000, 20, 3000, 1);
+freq2 = hslider("freq2 [unit:Hz]", 200, 20, 3000, 1);
+
+process = vgroup("Oscillator", os.osc(freq1) * vol, os.osc(freq2) * vol);</code></pre><br/><p>可以用下面这一行生成 codebox~ 代码（注意使用了 <code>-double</code> 选项，这是 RNBO/codebox~ 中默认的样本格式）：</p><pre><code>faust -lang codebox -double osc.dsp -o osc.codebox
+</code></pre><p>这会生成一系列用于初始化、更新参数和计算音频帧的函数。</p><h3 id="looking-at-the-generated-code">查看生成的代码</h3><p>生成的代码包含一串参数定义，带有各自的最小值、最大值、步长和默认值：</p><pre><code class="language-faust">// 参数
+@param({min: 2e+01, max: 3e+03, step: 0.1}) freq1 = 1e+03;
+@param({min: 2e+01, max: 3e+03, step: 0.1}) freq2 = 2e+02;
+@param({min: -96.0, max: 0.0, step: 0.1}) volume = 0.0;
+</code></pre><p>接着用 <code>@state</code> 装饰器声明 DSP 结构，创建一个在 codebox 对象整个生命周期内持续存在的状态。会创建具有正确类型的标量与数组字段：</p><pre><code class="language-faust">// 字段
+@state fSampleRate_cb : Int = 0;
+@state fConst1_cb : number = 0;
+@state fHslider0_cb : number = 0;
+@state fConst2_cb : number = 0;
+@state iVec0_cb = new FixedIntArray(2);
+@state fRec0_cb = new FixedDoubleArray(2);
+@state fConst3_cb : number = 0;
+@state fHslider1_cb : number = 0;
+@state fRec2_cb = new FixedDoubleArray(2);
+@state fHslider2_cb : number = 0;
+@state fRec3_cb = new FixedDoubleArray(2);
+@state iVec1_cb = new FixedIntArray(2);
+@state iRec1_cb = new FixedIntArray(2);
+@state ftbl0mydspSIG0_cb = new FixedDoubleArray(65536);
+@state fUpdated : Int = 0;
+@state fControl_cb = new FixedDoubleArray(3);
+</code></pre><p>随后，DSP 初始化代码被放进 <a href="https://rnbo.cycling74.com/codebox#special-functions" rel="noreferrer noopener">dspsetup</a>，它只在 codebox~ 中可用，每次在 Max 中开启音频时都会调用（基本上就是每次切换音频状态，或改变采样率、向量大小时）。这里用 RNBO 当前的采样率初始化 DSP 状态：</p><pre><code class="language-faust">// 初始化
+function dspsetup() {
+    fUpdated = true;
+    for (let l2_re0_cb : Int = 0; (l2_re0_cb &lt; 2); l2_re0_cb = (l2_re0_cb + 1)) {
+        iVec1_cb[l2_re0_cb] = 0;
+    }
+    for (let l3_re0_cb : Int = 0; (l3_re0_cb &lt; 2); l3_re0_cb = (l3_re0_cb + 1)) {
+        iRec1_cb[l3_re0_cb] = 0;
+    }
+    for (let i1_re0_cb : Int = 0; (i1_re0_cb &lt; 65536); i1_re0_cb = (i1_re0_cb + 1)) {
+        iVec1_cb[0] = 1;
+        iRec1_cb[0] = ((iVec1_cb[1] + iRec1_cb[1]) % 65536);
+        ftbl0mydspSIG0_cb[i1_re0_cb] = sin((9.587379924285257e-05 * iRec1_cb[0]));
+        iVec1_cb[1] = iVec1_cb[0];
+        iRec1_cb[1] = iRec1_cb[0];
+    }
+    fHslider0_cb = 0.0;
+    fHslider1_cb = 1e+03;
+    fHslider2_cb = 2e+02;
+    ...
+    ...   
+    fSampleRate_cb = samplerate();
+    let fConst0_cb : number = min(1.92e+05, max(1.0, fSampleRate_cb));
+    fConst1_cb = (44.1 / fConst0_cb);
+    fConst2_cb = (1.0 - fConst1_cb);
+    fConst3_cb = (1.0 / fConst0_cb);
+}
+</code></pre><p>参数处理拆分为两个函数：每次参数变化时调用 <code>control</code>：</p><pre><code class="language-faust">// 控制
+function control() {
+    fControl_cb[0] = (fConst1_cb * pow(1e+01, (0.05 * fHslider0_cb)));
+    fControl_cb[1] = (fConst3_cb * fHslider1_cb);
+    fControl_cb[2] = (fConst3_cb * fHslider2_cb);
+}
+</code></pre><p>只有在至少一个参数发生变化时才真正触发更改，这由全局变量 <code>fUpdated</code> 的状态控制：</p><pre><code class="language-faust">// 更新参数
+function update(freq1,freq2,volume) {
+    fUpdated = int(fUpdated) | (freq1 != fHslider1_cb); fHslider1_cb = freq1;
+    fUpdated = int(fUpdated) | (freq2 != fHslider2_cb); fHslider2_cb = freq2;
+    fUpdated = int(fUpdated) | (volume != fHslider0_cb); fHslider0_cb = volume;
+    if (fUpdated) { fUpdated = false; control(); }
+}
+</code></pre><p>最后，<code>compute</code> 处理音频输入并产生音频输出：</p><pre><code class="language-faust">// 更新参数
+/ Compute one frame
+function compute() {
+    iVec0_cb[0] = 1;
+    fRec0_cb[0] = (fControl_cb[0] + (fConst2_cb * fRec0_cb[1]));
+    let iTemp0_cb : Int = (1 - iVec0_cb[1]);
+    let fTemp1_cb : number = ((iTemp0_cb) ? 0.0 : (fControl_cb[1] + fRec2_cb[1]));
+    fRec2_cb[0] = (fTemp1_cb - floor(fTemp1_cb));
+    output0_cb = (fRec0_cb[0] * ftbl0mydspSIG0_cb[max(0, min(int((65536.0 * fRec2_cb[0])), 65535))]);
+    let fTemp2_cb : number = ((iTemp0_cb) ? 0.0 : (fControl_cb[2] + fRec3_cb[1]));
+    fRec3_cb[0] = (fTemp2_cb - floor(fTemp2_cb));
+    output1_cb = (fRec0_cb[0] * ftbl0mydspSIG0_cb[max(0, min(int((65536.0 * fRec3_cb[0])), 65535))]);
+    iVec0_cb[1] = iVec0_cb[0];
+    fRec0_cb[1] = fRec0_cb[0];
+    fRec2_cb[1] = fRec2_cb[0];
+    fRec3_cb[1] = fRec3_cb[0];
+    return [output0_cb,output1_cb];
+}
+</code></pre><p>有了这些代码，每个样本都会执行下面这一串操作：</p><pre><code class="language-faust">// 更新参数
+update(freq1,freq2,volume);
+// 计算一帧
+outputs = compute();
+// 写出输出
+out1 = outputs[0];
+out2 = outputs[1];
+</code></pre><p>注意生成的代码使用所谓的<a href="manual-compiler.html#structure-of-the-generated-code">标量代码生成模型</a>（默认模型），其中编译好的样本生成代码在 <code>compute</code> 中完成。</p><h3 id="testing-the-generated-codebox-code">测试生成的 codebox~ 代码</h3><p>要测试的话，生成的代码必须粘贴到外层 RNBO patch 的 codebox~ 组件中，还需要额外的连线来添加所需的音频输入/输出与控制参数。因此更集成、更简单的做法是使用 <strong>faust2rnbo</strong> 工具。</p><h2 id="using-the-faust2rnbo-tool">使用 faust2rnbo 工具</h2><p><a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/max-msp#faust2rnbo" rel="noreferrer noopener">faust2rnbo</a> 工具把 Faust DSP 程序转换为一个 RNBO patch，其中包含 <code>rnbo~</code> 对象，并把 codebox 代码（由 <a href="https://github.com/grame-cncm/faust/tree/master-dev/compiler/generator/codebox" rel="noreferrer noopener">codebox 后端</a>生成）作为子 patch 包含进去。所需的音频输入/输出与参数（带有正确的名字、默认值、最小值和最大值）会自动加入 patch。另有选项可以生成测试基础设施中使用的特殊版本 RNBO patch。代码用 Python 编写，使用非常强大的 <a href="https://github.com/shakfu/py2max" rel="noreferrer noopener">py2max</a> 库生成 maxpat JSON 格式。</p><pre><code>faust2rnbo -h
+Usage: faust2rnbo [options] [Faust options] &lt;file.dsp&gt;
+Compiles Faust programs to RNBO patches
+Options:
+   -midi : activates MIDI control
+   -nvoices &lt;num&gt; : produces a polyphonic DSP with &lt;num&gt; voices, ready to be used with MIDI events
+   -effect &lt;effect.dsp&gt; : generates a polyphonic DSP connected to a global output effect, ready to be used with MIDI or OSC
+   -effect auto : generates a polyphonic DSP connected to a global output effect defined as 'effect' in &lt;file.dsp&gt;, ready to be used with MIDI or OSC
+   -compile : to trigger C++ compilation at load time
+   -test : to generate special 'RB_XX' prefix for parameters (for testing)
+   -sp : to generate codebox subpatcher as a file.rnbopat file (and possibly file_effect.rnbopat)
+   -cpp_path &lt;path&gt; : to set C++ export folder
+   -cpp_filename &lt;filename&gt; : to set C++ export filename
+   Faust options : any option (e.g. -vec -vs 8...). See the Faust compiler documentation.
+</code></pre><p>生成的 patch 包含：</p><ul><li>一个音频 <code>adc~</code> 输入，自动连接到 <code>rnbo~</code> 对象（当 DSP 有音频输入时）</li><li>一个音频 <code>dac~</code> 输出，自动与 <code>rnbo~</code> 对象相连。</li></ul><p>所以下面的命令：</p><pre><code>faust2rnbo osc.dsp 
+</code></pre><p>会直接编译 <code>osc.dsp</code> 文件并生成 <code>osc.maxpat</code> 文件，可以在 Max/MSP 中打开，界面如下：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo1.png"/><em>生成的 RNBO patch</em></p><p>其中 <code>rnbo~</code> 子 patch 包含 codebox 对象以及参数控制机制：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo2.png"/><em><code>rnbo~</code> 子 patch，含参数控制机制（经过手动编辑）</em></p><p>注意，<code>rnbo~</code> 对象的子 patch 可以用 <code>-sp</code> 选项生成，并可能按<a href="https://rnbo.cycling74.com/learn/abstractions" rel="noreferrer noopener">此页</a>所述用于其他场景。因此 <code>faust2rnbo -sp osc.dsp</code> 会同时创建 <code>osc.maxpat</code> 与 <code>osc.rnbopat</code> 文件。此时主 patch 使用 <a href="https://rnbo.cycling74.com/learn/rnbo-abstractions-and-rnbopat-files#parameters-in-subpatchers-and-abstractions" rel="noreferrer noopener">patchername/paramname</a> 参数命名约定：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo1-bis.png"/><em>-sp 模式下生成的 RNBO patch</em></p><p>而子 patch 中包含一个 <code>p</code> 对象，用于加载并使用 <code>osc.rnbopat</code> 文件：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo1-ter.png"/><em><code>p</code> 模式下带参数控制机制的 <code>rnbo~</code> 子 patch</em></p><h3 id="bargraph-handling">bargraph 的处理</h3><p>在 Faust 中，bargraph 通常用于分析音频信号，计算出的值按控制率发送。这在 RNBO 模型中无法直接做到，因为 codebox~ 代码只能发送音频信号。因此会为 bargraph 创建额外的音频输出，采样后（使用 <code>snapshot~</code> 与 <code>change</code>）作为输入控制器接到 <code>param</code> 对象上。</p><p>所以例如下面这个示例：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/exfaust1/exfaust1.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+
+process = vmeter,hmeter
+with {
+    vmeter(x) = attach(x, envelop(x) : vbargraph("vmeter dB [midi:ctrl 1]", -96, 10));
+    hmeter(x) = attach(x, envelop(x) : hbargraph("hmeter dB [midi:ctrl 2]", -96, 10));
+
+    envelop = abs : max(ba.db2linear(-96)) : ba.linear2db : min(10) : max ~ -(96.0/ma.SR);
+};</code></pre><br/><p>用 <strong>faust2rnbo</strong> 编译后，会创建一个含 2 个音频输入和 4 个音频输出（2 个真实的，2 个用于 bargraph）的子 patch，以及如下用户界面：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo2-bis.png"/><em><code>rnbo~</code> 子 patch，带用于 bargraph 的额外音频输出</em></p><p>以及显示 bargraph 值的主 patch：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo2-ter.png"/><em>显示 bargraph 值的 RNBO 主 patch</em></p><h3 id="midi-control">MIDI 控制</h3><p>可以用 <code>-midi</code> 选项，或在 DSP 代码中使用 <a href="manual-midi.html#configuring-midi-in-faust">declare options "[midi:on]";</a> 语法，来启用参数的 MIDI 控制。这样 patch 会在全局层面包含 <code>midiin/midiout</code> 对象，并在 codebox 子 patch 中包含专门的 <code>ctlin/notein etc.</code> 对象，配合适当的 <code>scale</code> 对象把 MIDI 消息范围映射到目标参数范围。</p><p>所以例如这个加入 MIDI 的示例：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/exfaust2/exfaust2.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+
+declare options "[midi:on]";
+
+vol = hslider("volume [unit:dB][midi: ctrl 7]", 0, -96, 0, 0.1) : ba.db2linear : si.smoo;
+freq1 = hslider("freq1 [unit:Hz][midi: ctrl 1]", 1000, 20, 3000, 0.1);
+freq2 = hslider("freq2 [unit:Hz][midi: ctrl 2]", 200, 20, 3000, 0.1);
+
+process = vgroup("Oscillator", os.osc(freq1) * vol, os.osc(freq2) * vol);</code></pre><br/><p>现在可以用 MIDI 音量（ctrl 7）以及 ctrl 1 和 ctrl 2 分别控制每个声道的频率。在 GUI 中对参数所做的修改会作为 MIDI 输出消息发送出去。</p><p>而下面的命令：</p><pre><code>faust2rnbo -midi osc.dsp 
+</code></pre><p>会编译出一个包含额外 <code>midiin/midiout</code> 对象的 <code>osc.maxpat</code> 文件，界面如下：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo3.png"/><em>生成的带 MIDI 控制的 RNBO patch</em></p><h3 id="polyphonic-instruments">复音乐器</h3><p>当 DSP 遵循<a href="manual-midi.html#midi-polyphony-support">支持复音乐器</a>的约定时，就可以在 MIDI 可控的复音模式下启用。所以下面这个 DSP 程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/exfaust3/exfaust3.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:8]";
+import("stdfaust.lib");
+
+process = vgroup("Organ", voice(freq) * gain * en.adsr(0.1, 0.1, 0.8, 0.3, button("gate"))) * master &lt;: (_,_)
+with {
+    master = hslider("master [midi:ctrl 7]", 0.5, 0, 1, 0.01);
+    gain = hslider("gain", 0.5, 0, 1, 0.01);
+    freq = hslider("freq", 500, 200, 3000, 0.1);
+    voice(freq) = os.osc(freq) + os.osc(freq*2)*0.5 + os.osc(freq*3)*0.25;
+};</code></pre><br/><p>用下面的命令编译：</p><pre><code>faust2rnbo -midi -nvoices 12 organ.dsp 
+</code></pre><p>会创建一个含 12 个声部的 <code>rnbo~</code> 对象的 patch，在子 patch 中加入 <code>notein</code> 对象并正确连接到能感知 <em>freq/gain/gate</em> 的相应参数。根据描述音高（freq 或 key）或增益（gain 或 velocity）所用的<a href="manual-midi.html#standard-polyphony-parameters">约定</a>，还会在需要时加入额外的映射，最终界面如下：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo4.png"/><em>生成的带 MIDI 控制的复音 RNBO patch</em></p><p>在 DSP 中，注意总滑块可以用 Ctrl 7（= 音量）MIDI 消息控制。</p><p>注意这里同样可以用 <code>-sp</code> 选项生成 <code>rnbo~</code> 对象的子 patch，并可能用于其他场景。</p><h3 id="polyphonic-instruments-with-an-effect">带效果的复音乐器</h3><p>下面这个<a href="manual-midi.html#audio-effects-and-polyphonic-synthesizer">集成了效果</a>的支持复音乐器的 DSP 可以转换为复音 MIDI 就绪的 patch：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/exfaust4/exfaust4.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:8]";
+import("stdfaust.lib");
+
+process = vgroup("Organ", voice(freq) * gain * en.adsr(0.1, 0.1, 0.8, 0.3, button("gate"))) * master &lt;: (_,_)
+with {
+    master = hslider("master [midi:ctrl 7]", 0.5, 0, 1, 0.01);
+    gain = hslider("gain", 0.5, 0, 1, 0.01);
+    freq = hslider("freq", 500, 200, 3000, 0.1);
+    voice(freq) = os.osc(freq) + os.osc(freq*2)*0.5 + os.osc(freq*3)*0.25;
+};
+
+effect = dm.freeverb_demo;</code></pre><br/><p>用下面的命令编译：</p><pre><code>faust2rnbo -midi -nvoices 16 -effect auto organ2.dsp 
+</code></pre><p>生成的用户界面与复音 DSP <code>rnbo~</code> 对象使用 <code>p</code> 抽象模型来加载并激活复音乐器（作为 <code>organ2.rnbopat</code> 文件），并连接到全局效果（作为 <code>organ2_effect.rnbopat</code> 文件）。要让导出的项目正确生成，必须只有一个 <code>rnbo~</code> 对象并内嵌这两个子 patch：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo5.png"/><em>生成的带 MIDI 控制的复音 RNBO patch</em></p><p>以及 <code>rnbo~</code> 子 patch：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/faust-rnbo5-bis.png"/><em><code>rnbo~</code> 子 patch，复音乐器与全局效果均作为 <code>p</code> 抽象</em></p><h2 id="using-the-faust-web-ide">使用 Faust 网页版 IDE</h2><p>Faust DSP 程序可以在 <a href="https://faustide.grame.fr/" rel="noreferrer noopener">Faust 网页版 IDE</a> 中编写、测试，并生成为 RNBO patch。</p><h3 id="generating-a-rnbo-patch">生成 RNBO patch</h3><p>可以直接用 <em>Platform = rnbo</em> 与 <em>Architecture = rnbo</em> 导出选项生成 RNBO patch。得到的 <em>foo</em> 文件夹是自包含的，包含可用 Max/MSP 打开的 <code>foo.maxpat</code> 文件。</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/rnbo/img/export.png"/><em>导出代码</em></p><h3 id="generating-the-rnbo-patch-in-polyphonic-mode">以复音模式生成 RNBO patch</h3><p>遵循复音<a href="manual-midi.html#midi-polyphony-support">freq/gate/gain 约定</a>的 DSP 程序可以用 <em>Platform = rnbo</em> 与 <em>Architecture = rnbo-poly</em> 导出选项生成。得到的 <em>foo</em> 文件夹是自包含的，包含可用 Max/MSP 打开的 <code>foo.maxpat</code> 文件。</p><h3 id="generating-the-rnbo-patch-in-polyphonic-mode-with-a-global-effect">以复音模式并带全局效果生成 RNBO patch</h3><p>遵循复音<a href="manual-midi.html#midi-polyphony-support">freq/gate/gain 约定</a>、并带<a href="manual-midi.html#audio-effects-and-polyphonic-synthesizer">集成效果</a>的 DSP 程序可以用 <em>Platform = rnbo</em> 与 <em>Architecture = rnbo-poly-effect</em> 导出选项生成。得到的 <em>foo</em> 文件夹是自包含的，包含 <code>foo.maxpat</code>、<code>foo.rnbopat</code> 与 <code>foo_effect.rnbopat</code> 文件（使用 <code>p</code> 抽象模型）；用 Max/MSP 打开 <code>foo.maxpat</code> 即可。</p><h3 id="generating-an-rnbo-patch-from-a-faust-dsp-program-found-on-the-web">从网上找到的 Faust DSP 程序生成 RNBO patch</h3><p>网上找到的 Faust DSP 程序也可以转换：</p><ul><li><p>例如 <a href="https://faust.grame.fr/community/powered-by-faust/" rel="noreferrer noopener">Powered By Faust</a> 页面上列出的 <a href="https://faust.grame.fr/community/powered-by-faust/#fverb" rel="noreferrer noopener">fverb</a>。用 <code>https://faustide.grame.fr/?code=URL</code> 语法配合下面这个 URL 即可加载它的 DSP 内容：<a href="https://faustide.grame.fr/?code=https://raw.githubusercontent.com/jpcima/fverb/master/fverb.dsp" rel="noreferrer noopener">https://faustide.grame.fr/?code=https://raw.githubusercontent.com/jpcima/fverb/master/fverb.dsp</a>，在 Faust 网页版 IDE 中测试后，再按上述方法转换为 RNBO patch。</p></li><li><p><a href="https://faustplayground.grame.fr/" rel="noreferrer noopener">faustplayground</a> 平台的示例可以<a href="https://github.com/grame-cncm/faustplayground/tree/master/public/faust-modules" rel="noreferrer noopener">在此找到</a>并转换。</p></li></ul>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/rnbo/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/rnbo/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

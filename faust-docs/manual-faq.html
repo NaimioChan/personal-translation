@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>常见问题 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：常见问题">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="frequently-asked-questions">常见问题</h1><h2 id="when-to-use-int-or-float-cast">何时该用 <code>int</code> 或 <code>float</code> 强制转换？</h2><p><a href="manual-introduction.html#signal-processor-semantic">信号处理器语义</a>一节说明了 Faust 程序描述的内容。特别地，Faust 考虑两类信号：<em>整数信号</em>与<em>浮点信号</em>。数学运算依其类型发生在整数域或浮点域，参见<a href="manual-syntax.html#numbers">此处</a>。可能需要显式使用 <a href="manual-syntax.html#int-primitive">int 强制转换</a>或 <a href="manual-syntax.html#float-primitive">float 强制转换</a>，以强制某个计算在正确的数域中完成。</p><p>某些语言基元（如 <a href="manual-syntax.html#parallel-composition">par</a>、<a href="manual-syntax.html#sequential-composition">seq</a>、<a href="manual-syntax.html#route-primitive">route</a>、<a href="manual-syntax.html#soundfile-primitive">soundfile</a> 等）假定其参数是整数类型的<a href="manual-syntax.html#constant-numerical-expressions">常量数值表达式</a>。此时编译器会自动做<em>类型提升</em>，无需用 <code>int</code> 强制转换让参数成为整数类型（注意多余的强制转换会被直接忽略，不会在生成的代码中增加无用的计算）。</p><p>用户界面项产生<em>浮点信号</em>。取决于它们在后续计算表达式中的用法，也可能需要显式 <code>int</code> 强制转换，以强制某个计算在正确的数值域中完成。</p><h2 id="does-select2-behave-like-a-standard-cc-if"><code>select2</code> 的行为像标准 C/C++ 的 <code>if</code> 吗？</h2><p>简短回答是<strong>不像</strong>，<code>select2</code> 的行为不像传统编程语言的 <code>if-then-else</code>，标准库的 <code>ba.if</code> 也不是。要理解原因，可以把 <code>select2</code> 想成收音机的调谐器：它选择你听什么，但并不阻止各个电台继续广播。实际上，<code>select2</code> 可以很容易地在 Faust 中重新定义为：</p><pre><code class="language-faust">select2(i, x, y) = (1-i) * x + i * y;
+</code></pre><h3 id="strict-vs-lazy-semantics">严格语义与惰性语义</h3><p>用计算机术语说，<code>select2(i,x,y)</code> 具有所谓的<em>严格</em>语义。这意味着它的三个参数 <code>i</code>、<code>x</code>、<code>y</code> 总是在 <code>select2</code> 本身执行之前求值，即使 <code>x</code> 或 <code>y</code> 未被选中。标准 C/C++ 的 <code>if-then-else</code> 具有<em>惰性</em>语义。<em>条件</em>总是执行，但依<em>条件</em>的值，只执行 <em>then</em> 或 <em>else</em> 分支。</p><p><code>select2</code> 的<em>严格</em>语义意味着不能用它来避免表达式中的除零，或对负数开平方等。例如下面的代码不能避免除零错误：</p><pre><code class="language-faust">select2(x == 0, 1/x, 10000); 
+</code></pre><p>也不能用 <code>ba.if</code>，因为它是用 <code>select2</code> 实现的，语义同样严格。因此下面的代码不能避免除零错误：</p><pre><code class="language-faust">ba.if(x == 0, 10000, 1/x);
+</code></pre><h3 id="but-things-are-a-little-bit-more-complex">但事情要稍微复杂一些……</h3><p>关于 Faust 编译器如何编译 <code>select2</code>，严格语义始终得到保持。特别地，类型系统会标记有问题的表达式，有状态的部分总是放在 <code>if</code> 之外。例如 DSP 代码：</p><pre><code class="language-faust">process = button("choose"), (*(3) : +~_), (*(7):+~_) : select2;
+</code></pre><p>被编译成如下 C++ 代码，其中 <code>fRec0[0]</code> 与 <code>fRec1[0]</code> 包含各分支的计算：</p><pre><code class="language-faust">for (int i = 0; (i &lt; count); i = (i + 1)) {
+    fRec0[0] = (fRec0[1] + (3.0f * float(input0[i])));
+    fRec1[0] = (fRec1[1] + (7.0f * float(input1[i])));
+    output0[i] = FAUSTFLOAT((iSlow0 ? fRec1[0] : fRec0[0]));
+    fRec0[1] = fRec0[0];
+    fRec1[1] = fRec1[0];
+}
+</code></pre><p>出于代码优化策略，生成的代码对 <code>select2</code> 并<em>不完全</em>严格。当 Faust 生成 C++ 代码时，C++ 编译器可以决定<em>跳过未被选中（且其他地方也不需要）的无状态信号部分的执行</em>。这不改变输出信号的语义，但如果在无状态部分本会执行除零，就改变了代码的严格性。使用无状态表达式时，默认用<em>非严格</em>条件表达式生成。</p><p>例如下面的 DSP 代码：</p><pre><code class="language-faust">process = select2((+(1)~_)%10, sin:cos:sin:cos, cos:sin:cos:sin);
+</code></pre><p>被编译成 C/C++：</p><pre><code>for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+    iRec0[0] = iRec0[1] + 1;
+    output0[i0] = FAUSTFLOAT(((iRec0[0] % 10) 
+        ? std::sin(std::cos(std::sin(std::cos(float(input1[i0]))))) 
+        : std::cos(std::sin(std::cos(std::sin(float(input0[i0])))))));
+    iRec0[1] = iRec0[0];
+}
+</code></pre><p>其中只有 <em>then</em> 或 <em>else</em> 分支之一会被实际计算，从而节省 CPU。</p><p>如果确实希望两个分支都被计算，可以用 <code>-sts (--strict-select)</code> 选项，把它们放进局部变量以强制计算，如下面同一 DSP 代码<em>用 <code>-sts</code> 生成</em>的版本所示：</p><pre><code>for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+    iRec0[0] = iRec0[1] + 1;
+    float fThen0 = std::cos(std::sin(std::cos(std::sin(float(input0[i0])))));
+    float fElse0 = std::sin(std::cos(std::sin(std::cos(float(input1[i0])))));
+    output0[i0] = FAUSTFLOAT(((iRec0[0] % 10) ? fElse0 : fThen0));
+    iRec0[1] = iRec0[0];
+}
+</code></pre><p>从而保持严格语义，即使产生 <code>select2</code> 表达式结果时用的是非严格的 <code>(cond) ? then : else</code> 形式。</p><p>这对<a href="manual-debugging.html#debugging-at-runtime">调试</a>有帮助，例如测试是否存在除 0，或产生 <code>INF</code> 或 <code>NaN</code> 值。<a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/benchmark#interp-tracer" rel="noreferrer noopener">interp-tracer</a> 加上 <code>-sts</code> 选项即可用于此目的。</p><p>所以再次提醒，<code>select2</code> 不能用来<strong>避免计算某些东西</strong>。对于需要避开某些值或区间的计算（例如 <code>val/0</code> 会返回 <code>INF</code>，负值的 <code>log</code> 会返回 <code>NaN</code>），解决办法是用 <code>min</code> 和 <code>max</code> 把参数强制到正确的取值域。例如要避免除 0，可以写 <code>1/max(ma.EPSILON, x)</code>。</p><p>注意 <code>select2</code> 也常用于计算 <code>rdtable</code>/<code>rwtable</code> 的访问索引。此时计算<em>越界</em>的数组索引没有问题，只要之后不使用它。</p><h2 id="what-properties-does-the-faust-compiler-and-generated-code-have-wip">Faust 编译器与生成的代码有哪些性质？[WIP]</h2><h3 id="compiler">编译器</h3><p>编译器本身是<a href="https://en.wikipedia.org/wiki/Turing_completeness" rel="noreferrer noopener">图灵完备</a>的，因为它包含模式匹配元编程模型。因此 Faust DSP 程序可以在编译期循环。例如下面这段：</p><pre><code class="language-faust">foo = foo;
+process = foo;
+</code></pre><p>会一直循环，并希望以这样的消息结束：<em>ERROR : after 400 evaluation steps, the compiler has detected an endless evaluation cycle of 2 steps</em>，因为编译器包含死循环检测启发式。</p><h3 id="generated-code">生成的代码</h3><p>生成的代码以<em>有限</em>次操作计算样本，因此无法写出会无限循环的 DSP 程序。这意味着生成的代码不是图灵完备的。这当然是限制，因为某些类别的算法无法表达（<strong>待办</strong>：二极管 VA 模型中使用的牛顿近似）。但反过来，它给出了 CPU 开销上界的强保证，在实时音频场景中部署程序时相当有价值。</p><h3 id="memory-footprint">内存占用</h3><p>DSP 的内存占用在编译期完全可知，因此生成的代码总是消耗有限的内存。此外标准部署模型是在加载时分配 DSP、用给定采样率初始化，然后执行 DSP 代码，反复调用 <code>compute</code> 函数处理音频缓冲区。</p><h3 id="cpu-footprint">CPU 占用</h3><p>由于生成的代码以<em>有限</em>次操作计算样本，CPU 使用有上界，这在实时音频场景中部署程序时是有用的性质。关于 <code>select2</code> 基元的一些微妙问题，请阅读<a href="#does-select2-behave-like-a-standard-cc-if">「<code>select2</code> 的行为像标准 C/C++ 的 <code>if</code> 吗？」</a>。</p><h2 id="pattern-matching-and-lists">模式匹配与列表</h2><p>严格来说，Faust 中没有列表。例如 Lisp 中表示空列表的 <code>()</code> 或 <code>NIL</code>，在 Faust 中并不存在。同样，Lisp 中数字 <code>3</code> 与只含一个元素的列表 <code>(3)</code> 之间的区别，在 Faust 中也不存在。</p><p>不过，列表操作可以（部分地）用并行二元组合算子 <code>,</code> 和模式匹配来模拟。并行组合算子是右结合的。这意味着表达式 <code>(1,2,3,4)</code> 只是完全加括号表达式 <code>(1,(2,(3,4)))</code> 的简化形式。<code>(1,2,(3,4))</code> 也一样，它也是同一个完全加括号表达式 <code>(1,(2,(3,4)))</code> 的简化形式。</p><p>可以把模式匹配理解为总是在完全加括号的表达式上进行。因此任何 Faust 函数都无法区分 <code>(1,2,3,4)</code> 与 <code>(1,2,(3,4))</code>，因为它们表示同一个完全加括号表达式 <code>(1,(2,(3,4)))</code>。</p><p>这就是为什么 <code>ba.count( ((1,2), (3,4), (5,6)) )</code> 不是 3 而是 4，也是为什么 <code>ba.count( ((1,2), ((3,4),5,6)) )</code> 不是 2 而是 4。</p><p>解释：两种情况下完全加括号的表达式都是 <code>( (1,2),((3,4),(5,6)) )</code>。<code>ba.count</code> 的定义是：</p><pre><code class="language-faust">count((x,y)) = 1 + count(y); // 规则 R1
+count(x)     = 1; // 规则 R2
+</code></pre><p>于是有：</p><pre><code>ba.count( ((1,2),((3,4),(5,6))) ) 
+-R1-&gt;   1 + ba.count( ((3,4),(5,6)) ) 
+-R1-&gt;   1 + 1 +  ba.count( (5,6) ) 
+-R1-&gt;   1 + 1 + 1 + ba.count( 6 )
+-R2-&gt;   1 + 1 + 1 + 1 
+</code></pre><p>请注意，模式匹配并不限于并行组合，其他组合算子 <code>(&lt;: : :&gt; ~)</code> 也可以使用。</p><h2 id="what-is-the-situation-about-faust-compiler-licence-and-the-deployed-code">Faust 编译器的许可证与生成的代码是什么关系？</h2><p><em>问题：Faust 编译器的许可证（LGPL）在某种程度上也适用于它产生的导出代码吗？还是导出代码的许可证可以自由选择，从而可以用 Faust 开发专有软件（例如 VST 插件）？</em></p><p>回答：你可以自由地用 Faust 开发专有软件。编译器的 LGPL 许可证<em>不</em>适用于编译器生成的代码。</p><p>Faust 编译器生成的代码的许可证只取决于输入文件的许可证。因此你应检查所用 Faust 库和架构文件的许可证。总的来说，未经修改使用时，Faust 库与架构文件与专有的、非开源的使用方式兼容。</p><h2 id="pathnames-in-the-gui-items">GUI 项中的路径名</h2><p>编译以下代码：</p><pre><code class="language-faust">import("stdfaust.lib");
+nBands = 8;
+filterBank(N) = hgroup("Filter Bank",seq(i,N,oneBand(i)))
+with {
+    oneBand(j) = vgroup("Band",fi.peak_eq(l,f,b))
+    with {
+        a = j+1; // 只是为了让频段编号不从 0 开始
+        l = vslider("[2]Level[unit:db]",0,-70,12,0.01) : si.smoo;
+        f = nentry("[1]Freq",(80+(1000*8/N*(j+1)-80)),20,20000,0.01) : si.smoo;
+        b = f/hslider("[0]Q[style:knob]",1,1,50,0.01) : si.smoo;
+    };
+};
+process = filterBank(nBands);
+</code></pre><p>会给出 <code>ERROR : path '/Filter_Bank/Band/Q' is already used</code> 消息。这是因为我们通常希望区分路径名，以便例如由 OSC 消息控制。因此合适的做法是把代码改写为：</p><pre><code class="language-faust">import("stdfaust.lib");
+nBands = 8;
+filterBank(N) = hgroup("Filter Bank",seq(i,N,oneBand(i)))
+with {
+    oneBand(j) = vgroup("Band %a",fi.peak_eq(l,f,b))
+    with {
+        a = j+1; // 只是为了让频段编号不从 0 开始
+        l = vslider("[2]Level[unit:db]",0,-70,12,0.01) : si.smoo;
+        f = nentry("[1]Freq",(80+(1000*8/N*(j+1)-80)),20,20000,0.01) : si.smoo;
+        b = f/hslider("[0]Q[style:knob]",1,1,50,0.01) : si.smoo;
+    };
+};
+process = filterBank(nBands);
+</code></pre><p>以生成这样的 GUI：</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/faq/pathname.png"/><em>不同的 GUI 项应具有不同的路径名</em></p><p>规则如下：</p><ul><li>两个输入控件不能共享同一路径（ERROR）</li><li>输入控件与条形图不能具有同一路径（ERROR）</li><li>两个条形图可以具有同一路径（<a href="manual-errors.html#warning-messages">WARNING</a>）</li></ul><h2 id="surprising-effects-of-vgrouphgroup-on-how-controls-and-parameters-work">vgroup/hgroup 对控件与参数工作方式的意外影响</h2><p>像 <code>button</code>、<code>vslider/hslider</code>、<code>vbargraph/hbargraph</code> 这样的用户界面控件基元，允许在 Faust 代码中抽象地描述用户界面。它们可以用 <code>vgroup/hgroup/tgroup</code> 基元以层次方式分组。每个控件随后都有一个关联的路径名，由包裹它的所有分组的标签与它自己的标签拼接而成。</p><p>在层次结构中具有<strong>相同路径</strong>的控件将对应同一个控制器，并在 GUI 中只出现一次。例如下面的 DSP 代码不含任何显式分组机制：</p><pre><code class="language-faust">import("stdfaust.lib");
+
+freq1 = hslider("Freq1", 500, 200, 2000, 0.01);
+freq2 = hslider("Freq2", 500, 200, 2000, 0.01);
+
+process = os.osc(freq1) + os.square(freq2), os.osc(freq1) + os.triangle(freq2);
+</code></pre><p><img alt="框图" src="https://faustdoc.grame.fr/manual/faq/group1.png"/><em>共享的 freq1 与 freq2 控制器</em></p><p>因此即使 <code>freq1</code> 与 <code>freq2</code> 控制器在四个不同位置用作参数，<code>os.osc(freq1)</code> 与 <code>os.square(freq1)</code> 中使用的 <code>freq1</code> 也会具有相同路径（如 <code>/foo/Freq1</code>），关联到同一个控制器，最终在 GUI 中只出现一次。<code>freq2</code> 同理。</p><p>如果使用某种分组机制来更好地控制 UI 渲染，如下面的 DSP 代码：</p><pre><code class="language-faust">import("stdfaust.lib");
+
+freq1 = hslider("Freq1", 500, 200, 2000, 0.01);
+freq2 = hslider("Freq2", 500, 200, 2000, 0.01);
+
+process = hgroup("Voice1", os.osc(freq1) + os.square(freq2)), hgroup("Voice2", os.osc(freq1) + os.triangle(freq2));
+</code></pre><p><code>freq1</code> 与 <code>freq2</code> 控制器现在在各分组中路径不同（例如第一组中的 <code>/foo/Voice1/Freq1</code> 与 <code>/foo/Voice1/Freq2</code>，第二组中的 <code>/foo/Voice2/Freq1</code> 与 <code>/foo/Voice2/Freq2</code>），因此最终创建四个独立的控制器与 UI 项。</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/faq/group2.png"/><em>四个 freq1 与 freq2 控制器</em></p><p>使用<a href="manual-syntax.html#labels-as-pathnames">标签作为路径名</a>中说明的相对路径名，可以把 <code>freq1</code> 在层次结构中上移一级，从而再次得到唯一路径（如 <code>/foo/Freq1</code>）和唯一控制器：</p><pre><code class="language-faust">import("stdfaust.lib");
+
+freq1 = hslider("../Freq1", 500, 200, 2000, 0.01);
+freq2 = hslider("Freq2", 500, 200, 2000, 0.01);
+
+process = hgroup("Voice1", os.osc(freq1) + os.square(freq2)), hgroup("Voice2", os.osc(freq1) + os.triangle(freq2));
+</code></pre><p><img alt="框图" src="https://faustdoc.grame.fr/manual/faq/group3.png"/><em>freq1 在层次结构中上移一级</em></p><p>注意给定 <code>hgroup</code>、<code>vgroup</code> 或 <code>tgroup</code> 的名称可以多次使用，它们会被合并。当你想为不同的控件信号定义不同名称、但仍想把它们分组时，这很有用。例如这种模式可用于把合成器的 UI 设计与合成器 DSP 的实现分开：</p><pre><code class="language-faust">import("stdfaust.lib");
+
+synth(foo, bar, baz) = os.osc(foo+bar+baz);
+
+synth_ui = synth(foo, bar, baz)
+with {
+    ui(x) = hgroup("Synth", x);
+    leftcol(x) = ui(vgroup("[0]foobar", x));
+    foo = leftcol(hslider("[0]foo", 100, 20, 1000, 1));
+    bar = leftcol(hslider("[1]bar", 100, 20, 1000, 1));
+    baz = ui(vslider("[1]baz", 100, 20, 1000, 1));
+};
+
+process = synth_ui;
+</code></pre><p><img alt="框图" src="https://faustdoc.grame.fr/manual/faq/group4.png"/><em>命名与分组</em></p><h2 id="what-are-the-rules-used-for-partial-application">部分应用的规则是什么？</h2><p>假定 <code>F</code> 不是抽象且具有 <code>n+m</code> 个输入，<code>A</code> 有 <code>n</code> 个输出，那么有重写规则 <code>F(A) ==&gt; A,bus(m):F (with bus(1) = _ and bus(n+1) = _,bus(n))</code></p><p>当 <code>F</code> 是 <code>+,-,/,*</code> 这样的二元运算时有个例外。此时重写规则为 <code>/(3) ==&gt; _,3:/</code>。换言之，只应用一个参数时，它是第二个参数。</p><h2 id="control-rate-versus-audio-rate">控制率与音频率</h2><p>问题：<em>我有个关于采样率/控制率的问题。我有一段 Faust 代码，把键盘的通道触后消息作为输入（因此是控制率），并输出采样率的表达式信号。代码的第一部分可以按控制率运行，但我想强制它按采样率运行（否则会出现不想要的行为）。有没有简单办法把压力信号强制到采样率（而不施加平滑，平滑也可能导致不想要的行为）？</em></p><p>回答：可以用 <a href="https://faustlibraries.grame.fr/libs/basics/#bakr2ar" rel="noreferrer noopener">ba.kr2ar</a> 函数达到这一目的。</p><h2 id="displaying-labels-with-numbers">显示带数字的标签</h2><p>问题：<em>有没有办法让滑块按十位数排列显示数字顺序？</em></p><p>回答：标签可以包含可变部分，用 % 符号后跟变量名表示。关于如何使用该功能的详细说明，参见<a href="manual-syntax.html#variable-parts-of-a-label">完整文档</a>。</p><h2 id="semantics-of-bargraphs">条形图的语义</h2><p>问题：<em>控制率输出（如 hbargraph/vbargraph）什么时候每个样本都计算？</em></p><p>回答：这取决于进入条形图的信号的性质。如果它是控制率信号，如 <code>process = vslider("foo", 0, 0, 1, 0.01) : vbargraph("bar", 0, 1);</code>，那么按控制率更新：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs)
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    fVbargraph0 = FAUSTFLOAT(float(fVslider0));
+    float fSlow0 = fVbargraph0;
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        output0[i0] = FAUSTFLOAT(fSlow0);
+    }
+}
+</code></pre><p>但如果信号是采样率，如 <code>process = vslider("foo", 0, 0, 1, 0.01) : si.smooth(0.9) : vbargraph("bar", 0, 1);</code>，则计算必须在采样率进行才正确（即每个样本正确更新信号状态），即使并非所有值都被显示：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    float fSlow0 = fConst0 * float(fVslider0);
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        fRec0[0] = fSlow0 + fConst1 * fRec0[1];
+        fVbargraph0 = FAUSTFLOAT(fRec0[0]);
+        output0[i0] = FAUSTFLOAT(fVbargraph0);
+        fRec0[1] = fRec0[0];
+    }
+}
+</code></pre>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/manual/faq/" rel="noreferrer noopener">https://faustdoc.grame.fr/manual/faq/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

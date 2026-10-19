@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIDI 与复音支持 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：MIDI 与复音支持">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="midi-and-polyphony-support">MIDI 与复音支持</h1><p>与 <a href="manual-osc.html">OSC</a> 类似，若干 Faust 架构也提供 MIDI 支持。这让 Faust 应用能被任何 MIDI 设备控制（也能控制 MIDI 设备）。MIDI 同时也是控制复音乐器的首选方式。</p><h2 id="configuring-midi-in-faust">在 Faust 中配置 MIDI</h2><p>只要在<a href="manual-syntax.html#standard-metadata">标准 <code>options</code> 元数据</a>中加上 <code>[midi:on]</code>，就能为任何 Faust 程序添加 MIDI 支持（前提是目标架构支持，见下表）：</p><pre><code class="language-faust">declare options "[midi:on]";
+</code></pre><p>或者在多数 <a href="manual-tools.html"><code>faust2xx</code></a> 脚本中使用 <code>-midi</code> 选项。</p><p>Faust 中的 MIDI 控制通过 <a href="manual-syntax.html#user-interface-primitives-and-configuration">UI 元素</a>里的<a href="manual-syntax.html#metadata">元数据</a>配置。接收和发送时可使用 1 到 16 的 MIDI 通道。<strong>按照约定，通道值 = 0（或不设置通道）表示「全部通道」。</strong>也就是说，接收时所有通道上收到的 MIDI 消息都能控制给定参数，发送时与参数关联的 MIDI 消息会发往全部通道。</p><p>MIDI 元数据由一种特殊架构解码，该架构解析收到的 MIDI 消息并更新相应的控制参数，或在 UI 元素（即滑块、按钮等）被操作时发送 MIDI 消息。</p><p>Faust 中所有 MIDI 配置元数据都遵循以下格式：</p><pre><code class="language-faust">[midi:xxx yyy...]
+</code></pre><p>本节列出用于配置 Faust 程序 MIDI 行为的常用元数据。</p><p>下文提到用 7 位 MIDI 参数驱动<a href="manual-syntax.html#button-primitive">按钮</a>或<a href="manual-syntax.html#checkbox-primitive">复选框</a>时，其最大值（127）映射为 1（「开」），最小值（0）映射为 0（「关」）。</p><h3 id="midictrl-num-or-midictrl-num-chan-metadata"><code>[midi:ctrl num]</code> 或 <code>[midi:ctrl num chan]</code> 元数据</h3><p><code>[midi:ctrl num]</code> 元数据把 MIDI CC（控制）分配给特定的 UI 元素。用于滑块/数值输入框或 bargraph 时，该元数据会把 UI 元素的值映射到 {0, 127} 区间。用于按钮或复选框时，1 映射为 127，0 映射为 0。第一种 <code>[midi:ctrl num]</code> 写法能在所有通道上接收消息，并在所有通道上发送。第二种 <code>[midi:ctrl num chan]</code> 写法只在 <code>chan</code> 上接收消息，且只在 <code>chan</code> 通道上发送（或用 <code>chan = 0</code> 值发往所有通道）。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = hslider("foo[midi:ctrl num chan]",...);
+</code></pre><p>其中：</p><ul><li><code>num</code>：MIDI CC 编号</li><li><code>chan</code>：可选，MIDI 通道号</li></ul><p><strong>示例</strong></p><p>下例中，锯齿波振荡器的频率由 MIDI CC 11 控制。CC11=0 时频率为 50Hz，CC11=127 时频率为 1000Hz。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust0/exfaust0.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+freq = hslider("frequency[midi:ctrl 11]",200,50,1000,0.01) : si.smoo;
+process = os.sawtooth(freq);</code></pre><br/><h3 id="midikeyon-midikey-or-midikeyon-midikey-chan-metadata"><code>[midi:keyon midikey]</code> 或 <code>[midi:keyon midikey chan]</code> 元数据</h3><p><code>[midi:keyon midikey]</code> 元数据把特定 <code>midikey</code> 上收到的 key-on MIDI 消息的力度值赋给 Faust 参数。用于滑块/数值输入框或 bargraph 时，该元数据会把 UI 元素的值映射到 {0, 127} 区间。用于按钮或复选框时，1 映射为 127，0 映射为 0。第一种 <code>[midi:keyon midikey]</code> 写法能在所有通道上接收消息，并在所有通道上发送。第二种 <code>[midi:keyon midikey chan]</code> 写法只在 <code>chan</code> 上接收消息，且只在 <code>chan</code> 通道上发送（或用 <code>chan = 0</code> 值发往所有通道）。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = hslider("foo[midi:keyon midikey chan]",...);
+</code></pre><p>其中：</p><ul><li><code>midikey</code>：MIDI 键号</li><li><code>chan</code>：可选，MIDI 通道号</li></ul><p><strong>示例</strong></p><p>下例中，锯齿波振荡器的频率由键 62 收到 key-on 消息时的力度值控制。因此只有按下 MIDI 键 62 时频率才会更新。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust1/exfaust1.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+freq = hslider("frequency[midi:keyon 62]",200,50,1000,0.01) : si.smoo;
+process = os.sawtooth(freq);</code></pre><br/><h3 id="midikeyoff-midikey-or-midikeyoff-midikey-chan-metadata"><code>[midi:keyoff midikey]</code> 或 <code>[midi:keyoff midikey chan]</code> 元数据</h3><p><code>[midi:keyoff midikey]</code> 元数据把特定 <code>midikey</code> 上收到的 key-off MIDI 消息的力度值赋给 Faust 参数。用于滑块/数值输入框或 bargraph 时，该元数据会把 UI 元素的值映射到 {0, 127} 区间。用于按钮或复选框时，1 映射为 127，0 映射为 0。第一种 <code>[midi:keyoff midikey]</code> 写法能在所有通道上接收消息，并在所有通道上发送。第二种 <code>[midi:keyoff midikey chan]</code> 写法只在 <code>chan</code> 上接收消息，且只在 <code>chan</code> 通道上发送（或用 <code>chan = 0</code> 值发往所有通道）。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = hslider("foo[midi:keyoff midikey chan]",...);
+</code></pre><p>其中：</p><ul><li><code>midikey</code>：MIDI 键号</li><li><code>chan</code>：可选，MIDI 通道号</li></ul><p><strong>示例</strong></p><p>下例中，锯齿波振荡器的频率由键 62 收到 key-off 消息时的力度值控制。因此只有松开 MIDI 键 62 时频率才会更新。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust2/exfaust2.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+freq = hslider("frequency[midi:keyoff 62]",200,50,1000,0.01) : si.smoo;
+process = os.sawtooth(freq);</code></pre><br/><h3 id="midikey-midikey-or-midikey-midikey-chan-metadata"><code>[midi:key midikey]</code> 或 <code>[midi:key midikey chan]</code> 元数据</h3><p><code>[midi:key midikey]</code> 元数据把特定 <code>midikey</code> 上收到的 key-on 与 key-off MIDI 消息的力度值赋给 Faust 参数。用于滑块/数值输入框或 bargraph 时，该元数据会把 UI 元素的值映射到 {0, 127} 区间。用于按钮或复选框时，1 映射为 127，0 映射为 0。第一种 <code>[midi:key midikey]</code> 写法能在所有通道上接收消息，并在所有通道上发送。第二种 <code>[midi:key midikey chan]</code> 写法只在 <code>chan</code> 上接收消息，且只在 <code>chan</code> 通道上发送（或用 <code>chan = 0</code> 值发往所有通道）。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = hslider("foo[midi:key midikey chan]",...);
+</code></pre><p>其中：</p><ul><li><code>midikey</code>：MIDI 键号</li><li><code>chan</code>：可选，MIDI 通道号</li></ul><p><strong>示例</strong></p><p>下例中，锯齿波振荡器的频率由键 62 收到 key-on 与 key-off 消息时的力度值控制。因此只有按下和松开 MIDI 键 62 时频率才会更新。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust3/exfaust3.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+process = (os.osc(500)*en.adsr(0.1, 0.1, 0.8, 0.5, button("gate1[midi:key 60]")),
+          os.osc(800)*en.adsr(0.1, 0.1, 0.8, 1.0, button("gate2[midi:key 62]")),
+          os.osc(200)*en.adsr(0.1, 0.1, 0.8, 1.5, button("gate3[midi:key 64]"))) :&gt; _;</code></pre><br/><h3 id="midikeypress-midikey-or-midikeypress-midikey-chan-metadata"><code>[midi:keypress midikey]</code> 或 <code>[midi:keypress midikey chan]</code> 元数据</h3><p><code>[midi:keypress midikey]</code> 元数据把特定 <code>midikey</code> 的压力（触后）值赋给 Faust 参数。用于滑块/数值输入框或 bargraph 时，该元数据会把 UI 元素的值映射到 {0, 127} 区间。用于按钮或复选框时，1 映射为 127，0 映射为 0。第一种 <code>[midi:keypress midikey]</code> 写法能在所有通道上接收消息，并在所有通道上发送。第二种 <code>[midi:keypress midikey chan]</code> 写法只在 <code>chan</code> 上接收消息，且只在 <code>chan</code> 通道上发送（或用 <code>chan = 0</code> 值发往所有通道）。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = hslider("foo[midi:keypress midikey chan]",...);
+</code></pre><p>其中：</p><ul><li><code>midikey</code>：MIDI 键号</li><li><code>chan</code>：可选，MIDI 通道号</li></ul><p><strong>示例</strong></p><p>下例中，锯齿波振荡器的频率由键 62 收到的压力（触后）值控制。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust4/exfaust4.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+freq = hslider("frequency[midi:keypress 62]",200,50,1000,0.01) : si.smoo;
+process = os.sawtooth(freq);</code></pre><br/><h3 id="midichanpress-or-midichanpress-chan-metadata"><code>[midi:chanpress]</code> 或 <code>[midi:chanpress chan]</code> 元数据</h3><p><code>[midi:chanpress]</code> 元数据把通道压力值赋给 Faust 参数。用于滑块/数值输入框或 bargraph 时，该元数据会把 UI 元素的值映射到 {0, 127} 区间。用于按钮或复选框时，1 映射为 127，0 映射为 0。第一种 <code>[midi:chanpress]</code> 写法能在所有通道上接收消息，并在所有通道上发送。第二种 <code>[midi:chanpress chan]</code> 写法只在 <code>chan</code> 上接收消息，且只在 <code>chan</code> 通道上发送（或用 <code>chan = 0</code> 值发往所有通道）。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = hslider("foo[midi:chanpress chan]",...);
+</code></pre><p>其中：</p><ul><li><code>chan</code>：可选，MIDI 通道号</li></ul><p><strong>示例</strong></p><p>下例中，锯齿波振荡器的音量由通道压力值控制。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust5/exfaust5.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+vol = hslider("volume[midi:chanpress]",0.5,0,1,0.01) : si.smoo;
+process = os.sawtooth(440) * vol;</code></pre><br/><h3 id="midipgm-or-midipgm-chan-metadata"><code>[midi:pgm]</code> 或 <code>[midi:pgm chan]</code> 元数据</h3><p><code>[midi:pgm]</code> 元数据把音色切换（program-change）赋给 Faust 参数。用于滑块/数值输入框或 bargraph 时，该元数据使用 UI 元素的范围。接收时只使用 UI 元素范围内描述的值，发送时也只发送这些值。第一种 <code>[midi:pgm]</code> 写法能在所有通道上接收消息，并在所有通道上发送。第二种 <code>[midi:pgm chan]</code> 写法只在 <code>chan</code> 上接收消息，且只在 <code>chan</code> 通道上发送（或用 <code>chan = 0</code> 值发往所有通道）。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = nentry("foo[midi:pgm chan]",...);
+</code></pre><p>其中：</p><ul><li><code>chan</code>：可选，MIDI 通道号</li></ul><p><strong>示例</strong></p><p>下例中，音色将在 {0,3} 范围内选择。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust6/exfaust6.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+inst = nentry("Instrument[midi:pgm]",0,0,3,1) : int;
+process = (os.sawtooth(400),os.osc(400),os.sawtooth(600),os.osc(600)) : ba.selectn(4,inst);</code></pre><br/><h3 id="midipitchwheel-or-midipitchwheel-chan-metadata"><code>[midi:pitchwheel]</code> 或 <code>[midi:pitchwheel chan]</code> 元数据</h3><p><code>[midi:pitchwheel]</code> 元数据把弯音轮的值赋给 Faust 参数。用于滑块/数值输入框或 bargraph 时，该元数据会把 UI 元素的值映射到 {0, 16383} 区间。用于按钮或复选框时，1 映射为 16383，0 映射为 0。弯音轮的值通常用于控制音准，把 {0, 16383} 的 MIDI 区间映射到 {-semitone, semitone} 区间。必须用 <code>ba.semi2ratio</code> 函数把半音数转换为频率的乘性比率。第一种 <code>[midi:pitchwheel]</code> 写法能在所有通道上接收消息，并在所有通道上发送。第二种 <code>[midi:pitchwheel chan]</code> 写法只在 <code>chan</code> 上接收消息，且只在 <code>chan</code> 通道上发送（或用 <code>chan = 0</code> 值发往所有通道）。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = hslider("foo[midi:pitchwheel chan]",...);
+</code></pre><p>其中：</p><ul><li><code>chan</code>：可选，MIDI 通道号</li></ul><p><strong>示例</strong></p><p>下例中，锯齿波振荡器的弯音由 {-2, 2} 半音范围内的弯音轮控制，然后转换为频率的乘性比率，再乘以给定频率。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust7/exfaust7.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+bend = ba.semi2ratio(hslider("frequency[midi:pitchwheel]",0,-2,2,0.01)) : si.smoo;
+process = os.sawtooth(440*bend);</code></pre><br/><h3 id="midistart-metadata"><code>[midi:start]</code> 元数据</h3><p>用于按钮或复选框时，收到 <code>start</code> MIDI 消息会触发 <code>[midi:start]</code> 产生值 1。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = checkbox("foo[midi:start]");
+</code></pre><h3 id="midistop-metadata"><code>[midi:stop]</code> 元数据</h3><p>用于按钮或复选框时，收到 <code>stop</code> MIDI 消息会触发 <code>[midi:stop]</code> 产生值 0。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = checkbox("foo[midi:stop]");
+</code></pre><h3 id="midiclock-metadata"><code>[midi:clock]</code> 元数据</h3><p>用于按钮或复选框时，每收到一条 <code>clock</code> MIDI 消息，<code>[midi:clock]</code> 就会输出一连串相继的 1 和 0 值（在 Faust 代码中表现为方波命令信号，可用于计算更高层的信息）。</p><p><strong>用法</strong></p><pre><code class="language-faust">foo = checkbox("foo[midi:clock]");
+</code></pre><h3 id="midi-sync">MIDI 同步</h3><p>基于 MIDI 时钟的同步可用来从控给定的 Faust 程序，所用元数据即前 3 节介绍的那些。</p><p>典型的 Faust 程序随后会用 MIDI 时钟流计算 BPM 信息，或满足它可能有的其它同步需求。下面是一个简单示例：正弦波，频率由 MIDI 时钟流控制，并在收到 MIDI start/stop 消息时启动和停止：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust8/exfaust8.svg"/><pre><code class="language-faust">declare options "[midi:on]";
+import("stdfaust.lib");
+
+// 方波信号（1/0），每收到一个时钟翻转状态
+clocker = checkbox("MIDI clock[midi:clock]");    
+
+// 由 MIDI start/stop 消息控制的 ON/OFF 按钮
+play = checkbox("ON/OFF [midi:start] [midi:stop]");    
+
+// 检测前沿
+front(x) = x != x';      
+
+// 统计一秒内的峰值个数
+freq(x) = (x-x@ma.SR) : + ~ _;   
+
+process = os.osc(8*freq(front(clocker))) * play;</code></pre><br/><h2 id="midi-polyphony-support">MIDI 复音支持</h2><p>复音由 Faust 架构直接、便捷地处理。注意，完全不依赖架构、在 Faust 中从零编写复音乐器也是可行的。事实上，如果必须描述不同声部之间复杂的信号交互（如物理模型中的共鸣弦共振等），这一特性不可或缺。但由于所有声部总会被计算，对更简单或更有限的需求来说这种做法 CPU 开销可能过高。此时更好的方案是在一个 Faust DSP 程序中描述单个声部，再用专门的<em>能感知复音乐器的</em>架构文件在外部把若干声部组合起来。此外，这种特殊架构文件负责动态声部分配以及 MIDI 控制消息的解码与映射。</p><p>只要在<a href="#standard-metadata">标准 <code>option</code> 元数据</a>中加上 <code>[nvoices:n]</code>，就能为任何 Faust 程序添加复音支持（前提是目标架构支持），其中 <code>n</code> 是要分配的最大复音声部数：</p><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+</code></pre><h3 id="standard-polyphony-parameters">标准复音参数</h3><p>多数 Faust 架构只要使用一组「标准用户界面名称」，就能实现复音乐器。因此，任何声明了 <code>freq (or key)</code>、<code>gain (or vel or velocity)</code> 和 <code>gate</code> 参数的 Faust 程序都兼容复音。这 3 个参数直接关联 key-on 与 key-off 事件，行为如下：</p><ul><li>收到 key-on 事件时，<code>gate</code> 置为 1。反之，收到 key-off 事件时，<code>gate</code> 置为 0。因此 <code>gate</code> 通常用于触发包络等。</li><li><code>freq</code> 是以 Hz 为单位的频率，根据 key-on 或 key-off 消息中的音高值自动计算。也可以改用 <code>key</code> 获取原始 MIDI 音高，在 DSP 代码里自行描述音高到 Hz 的转换（例如实现其它律制）。</li><li><code>gain</code> 是线性增益（0-1 之间的值），根据 key-on 或 key-off 消息中的力度值计算。也可以改用 <code>vel</code> 或 <code>velocity</code> 获取原始 MIDI 力度，在 DSP 代码里自行描述力度到增益的转换（例如实现其它力度曲线）。</li></ul><p><strong>示例：简单的复音合成器</strong></p><p>下例用标准 <code>freq</code>、<code>gain</code> 和 <code>gate</code> 参数实现一个简单的复音合成器。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust9/exfaust9.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+import("stdfaust.lib");
+freq = hslider("freq",200,50,1000,0.01);
+gain = hslider("gain",0.5,0,1,0.01);
+gate = button("gate");
+process = os.sawtooth(freq)*gain*gate;</code></pre><br/><blockquote><p>注意，如果在<a href="https://faustide.grame.fr" rel="noreferrer noopener">Faust 在线 IDE</a> 中激活复音模式运行这段代码，应能用接在电脑上的任意 MIDI 键盘控制这个简单合成器。这仅在使用 Google Chrome 时有效（多数其它浏览器不兼容 MIDI）。</p></blockquote><p>下例用标准 <code>key</code>、<code>gain</code> 和 <code>gate</code> 参数实现一个带其它律制的简单复音合成器。</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust10/exfaust10.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+import("stdfaust.lib");
+freq = hslider("key",60,36,96,1) : midikey2hz 
+with {
+    // 四分音音准
+    midikey2hz(mk) = 440.0*pow(2.0, (mk-69.0)/48.0); 
+}; 
+gain = hslider("gain",0.5,0,1,0.01);
+gate = button("gate");
+process = os.sawtooth(freq)*gain*gate;</code></pre><br/><blockquote><p>注意，如果在<a href="https://faustide.grame.fr" rel="noreferrer noopener">Faust 在线 IDE</a> 中激活复音模式运行这段代码，应能用接在电脑上的任意 MIDI 键盘控制这个简单合成器。这仅在使用 Google Chrome 时有效（多数其它浏览器不兼容 MIDI）。</p></blockquote><p>上例可以稍作改进，加入包络发生器，用 <code>gain</code> 和 <code>gate</code> 控制它：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust11/exfaust11.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+import("stdfaust.lib");
+freq = hslider("freq",200,50,1000,0.01);
+gain = hslider("gain",0.5,0,1,0.01);
+gate = button("gate");
+envelope = en.adsr(0.01,0.01,0.8,0.1,gate)*gain;
+process = os.sawtooth(freq)*envelope;</code></pre><br/><p><strong>警告：</strong>注意所有活跃的复音声部是直接相加的，没有缩放！这意味着同时演奏多个声部时上例很可能出现爆音。Faust 程序员有责任在自己的代码中考虑这一点。例如，假设活跃声部数始终小于或等于 4，可给上例加上如下保护：</p><pre><code class="language-faust">process = os.sawtooth(freq)*envelope : /(4);
+</code></pre><h3 id="configuring-and-activating-polyphony">配置并激活复音</h3><p>在某些 Faust 架构中，可在编译时用选项/标志<em>手动</em>激活复音（例如 <a href="manual-tools.html">faust2xx</a> 脚本中通常用 <code>-poly</code> 或 <code>-nvoices &lt;num&gt;</code>）。<a href="https://faustide.grame.fr" rel="noreferrer noopener">Faust 在线 IDE</a> 也是这样工作的，可用一个按钮开关复音。</p><p>不过，在 Faust 中激活复音最标准的方式是声明 <code>[nvoices:n]</code> 元数据，用它指定生成程序中分配的最大复音声部数（<code>n</code>）。</p><p>例如，上一节的 Faust 程序可以改成：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust12/exfaust12.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+import("stdfaust.lib");
+freq = hslider("freq",200,50,1000,0.01);
+gain = hslider("gain",0.5,0,1,0.01);
+gate = button("gate");
+envelope = en.adsr(0.01,0.01,0.8,0.1,gate)*gain;
+process = os.sawtooth(freq)*envelope;</code></pre><br/><p>编译时运行（例如）：</p><pre><code>faust2jaqt faustProgram.dsp
+</code></pre><p>就会生成一个可由 MIDI 控制的复音合成器。</p><h3 id="audio-effects-and-polyphonic-synthesizer">音频效果与复音合成器</h3><p>音频效果可以直接加在 Faust 合成器的 <code>process</code> 行上，例如：</p><pre><code class="language-faust">process = os.sawtooth(freq)*envelope : reverb;
+</code></pre><p>但这不是好做法，因为每个活跃复音声部都会创建该效果的一个新实例。主要后果是 CPU 开销增加。</p><p>与 <code>process</code> 类似，Faust 允许声明 <code>effect</code> 行，用于指定连接到复音合成器输出的音频效果。</p><p>例如，只要写成下面这样，就能给上例加上一个简单的混响：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust13/exfaust13.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+import("stdfaust.lib");
+freq = hslider("freq",200,50,1000,0.01);
+gain = hslider("gain",0.5,0,1,0.01);
+gate = button("gate");
+envelope = en.adsr(0.01,0.01,0.8,0.1,gate)*gain;
+process = os.sawtooth(freq)*envelope &lt;: _,_;
+effect = dm.zita_light;</code></pre><br/><p>这种情况下，复音部分基于 <code>process</code>，<code>effect</code> 中定义的效果只创建一个实例，由所有声部共享。</p><p>架构机制随后把乐器描述本身（<code>process = ...</code> 定义）与效果定义（<code>effect = ...</code> 定义）分开，必要时把乐器的输出数适配为效果的输入数，分别编译各部分，再把它们组合起来。</p><p>这里 <a href="https://faustlibraries.grame.fr/libs/demos/#dmzita_light" rel="noreferrer noopener"><code>dm.zita_light</code></a> 是立体声效果，<code>os.sawtooth(freq)*envelope</code> 表达式的单声道输出可以拆成 2 路信号（若保持单声道输出也会自动拆分）。另外要注意，这类构造不会显示在相应的框图中，框图只显示 <code>process</code> 行中实现的内容。</p><h3 id="polyphony-and-continuous-pitch">复音与连续音高</h3><p>key-on 和 key-off MIDI 消息只发送音符实例的「基础音高」。因此，如果只用 <code>freq</code> 标准参数控制合成器频率，其音高总会被「量化」到最近的半音。要能实现滑音、颤音等，需要声明一个与弯音轮关联的变量，并让它与从 <code>freq</code> 取回的「基础频率」值这样交互：</p><pre><code class="language-faust">f = hslider("freq",300,50,2000,0.01);
+bend = ba.semi2ratio(hslider("bend[midi:pitchwheel]",0,-2,2,0.01));
+freq = f*bend; // 最终要使用的 freq 参数
+</code></pre><p><code>bend</code> 变量借助 <a href="#midipitchwheel-metadata"><code>[midi:pitchwheel]</code> 元数据</a>由弯音轮控制，再用 <code>ba.semi2ratio</code> 函数转换为频率比率。<code>bend</code> 作为因子乘到从 <code>freq</code> 取回的基础频率上。因此 <code>bend</code> 的默认值为 0 半音，对应弯音轮的中心位置，也对应乘性比率 1。小于 0 的值会降低音高，大于 0 的值会升高音高。</p><p>上述示例行为符合预期，但改变 <code>bend</code> 的值时很可能出现爆音，因为该参数没有做平滑。遗憾的是，常规平滑（例如用 <a href="https://faustlibraries.grame.fr/libs/signals/#sismoo" rel="noreferrer noopener"><code>si.smoo</code></a>）在这里不是好选择。原因是复音声部未被使用时其实例会被冻结。声部被重新激活或复用时，<code>bend</code> 的值可能从一个值跳到另一个值，此时连续平滑很可能产生「难听的扫频」。因此这种场景应使用 <a href="https://faustlibraries.grame.fr/libs/signals/#sipolysmooth" rel="noreferrer noopener"><code>si.polySmooth</code></a> 而不是 <a href="https://faustlibraries.grame.fr/libs/signals/#sismoo" rel="noreferrer noopener"><code>si.smoo</code></a>。该函数在触发激活时，会在给定样本数内关闭平滑。</p><p>沿用上一节的示例，我们可以实现一个无爆音、音高连续可控的复音合成器：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust14/exfaust14.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+import("stdfaust.lib");
+f = hslider("freq",300,50,2000,0.01);
+bend = ba.semi2ratio(hslider("bend[midi:pitchwheel]",0,-2,2,0.01)) : si.polySmooth(gate,0.999,1);
+gain = hslider("gain",0.5,0,1,0.01);
+gate = button("gate");
+freq = f*bend; 
+envelope = en.adsr(0.01,0.01,0.8,0.1,gate)*gain;
+process = os.sawtooth(freq)*envelope &lt;: _,_;
+effect = dm.zita_light;</code></pre><br/><p>注意这里 <a href="https://faustlibraries.grame.fr/libs/signals/#sismoo" rel="noreferrer noopener"><code>si.polySmooth</code></a> 的用法：<code>gate=0</code> 时信号不平滑，<code>gate=1</code> 时信号在一个样本后以 0.999 的系数平滑。</p><h3 id="complete-example-sustain-pedal-and-additional-parameters">完整示例：延音踏板与附加参数</h3><p>纯粹为了好玩，本节我们在上一节示例的基础上，再加入延音踏板控制，以及由 MIDI 键盘调制轮控制的一些调制。</p><p>延音踏板控制很容易加上：只需声明一个由 MIDI CC 64（直接对应延音踏板）控制的 sustain 参数，并让它与标准 <code>gate</code> 参数交互：</p><pre><code class="language-faust">s = hslider("sustain[midi:ctrl 64]",0,0,1,1);
+t = button("gate");
+gate = t+s : min(1);
+</code></pre><p>这样只要按住延音踏板，<code>gate</code> 就保持为 1。</p><p>上一节的简单合成器（其实就是一个锯齿波振荡器）可以稍作改进，用动态控制的低通滤波器处理：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust15/exfaust15.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+import("stdfaust.lib");
+f = hslider("freq",300,50,2000,0.01);
+bend = ba.semi2ratio(hslider("bend[midi:pitchwheel]",0,-2,2,0.01)) : si.polySmooth(gate,0.999,1);
+gain = hslider("gain",0.5,0,1,0.01);
+s = hslider("sustain[midi:ctrl 64]",0,0,1,1);
+cutoff = hslider("cutoff[midi:ctrl 1]",1000,50,4000,0.01) : si.smoo;
+t = button("gate");
+freq = f*bend; 
+gate = t+s : min(1);
+envelope = en.adsr(0.01,0.01,0.8,0.1,gate)*gain;
+process = os.sawtooth(freq)*envelope : fi.lowpass(3,cutoff) &lt;: _,_;
+effect = dm.zita_light;</code></pre><br/><p>MIDI CC 1 对应调制轮，这里用它控制低通滤波器的截止频率。</p><p>接下来我们可以加一个全局主控，用 MIDI CC 7 标准音量控制改变其电平：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/midi/exfaust16/exfaust16.svg"/><pre><code class="language-faust">declare options "[midi:on][nvoices:12]";
+import("stdfaust.lib");
+f = hslider("freq",300,50,2000,0.01);
+bend = ba.semi2ratio(hslider("bend[midi:pitchwheel]",0,-2,2,0.01)) : si.polySmooth(gate,0.999,1);
+gain = hslider("gain",0.5,0,1,0.01);
+master = hslider("master[midi:ctrl 7]",0.5,0,1,0.01);
+s = hslider("sustain[midi:ctrl 64]",0,0,1,1);
+cutoff = hslider("cutoff[midi:ctrl 1]",1000,50,4000,0.01) : si.smoo;
+t = button("gate");
+freq = f*bend; 
+gate = t+s : min(1);
+envelope = en.adsr(0.01,0.01,0.8,0.1,gate)*gain;
+process = os.sawtooth(freq)*envelope : fi.lowpass(3,cutoff) * master &lt;: _,_;
+effect = dm.zita_light;</code></pre><br/>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/manual/midi/" rel="noreferrer noopener">https://faustdoc.grame.fr/manual/midi/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

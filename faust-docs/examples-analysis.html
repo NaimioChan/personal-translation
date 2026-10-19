@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>analysis - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：analysis">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="analysis">analysis</h1><h2 id="dbmeter">dbmeter</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/analysis/exfaust0/exfaust0.svg"/><pre><code class="language-faust">declare name        "dbmeter";
+declare version     "1.0";
+declare author      "Grame";
+declare license     "BSD";
+declare copyright   "(c)GRAME 2006";
+
+//-------------------------------------------------
+// 一个 dB 音量表
+//-------------------------------------------------
+
+import("stdfaust.lib");
+
+process = hgroup("8 channels dB meter", par(i,8, vgroup("%i", vmeter(i) : null)))
+with {
+    null(x) = attach(0,x);
+    envelop = abs : max(ba.db2linear(-70)) : ba.linear2db : min(10)  : max ~ -(80.0/ma.SR);
+    vmeter(i, x) = attach(x, envelop(x) : vbargraph("chan %i[unit:dB]", -70, 10));
+    hmeter(i, x) = attach(x, envelop(x) : hbargraph("chan %i[unit:dB]", -70, 10));
+};</code></pre><br/><h2 id="fft">FFT</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/analysis/exfaust1/exfaust1.svg"/><pre><code class="language-faust">// 基 2 FFT，时域抽取，实部与虚部交错存放
+
+declare name    "FFT"; // Faust 傅里叶变换 :-)
+declare author  "JOS";
+declare license "STK-4.3";
+
+import("stdfaust.lib");
+
+N=32; // FFT 长度（2 的幂）
+// 频点数量（含直流与 SR/2）为 N/2+1
+
+No2 = N&gt;&gt;1;
+signal = amp * cosine with {
+  cosine = select2(k==0,
+         select2(k==No2,
+            2.0*os.oscrc(f(k)), // 因不显示负频率而取 2 倍
+            1-1':+~*(-1) // 交替序列：1, -1, 1, -1
+            ),
+           1.0); // 确保相位为零（频率会跳变）
+  f(k) = float(k) * ma.SR / float(N); // 仅测试 FFT 频点频率
+  k = hslider("[2] FFT Bin Number",N/4,0,No2,0.001) : int &lt;: _,dpy : attach;
+  dpy = hbargraph("[3] Measured FFT Bin Number",0,No2);
+  amp = hslider("[4] Amplitude",0.1,0,1,0.001);
+};
+
+process = signal : dm.fft_spectral_level_demo(N) &lt;: _,_;</code></pre><br/><h2 id="spectrallevel">spectralLevel</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/analysis/exfaust2/exfaust2.svg"/><pre><code class="language-faust">declare name "spectralLevel";
+declare version "0.0";
+declare author "JOS, revised by RM";
+declare description "Demonstrates mth_octave_spectral_level in a standalone GUI.";
+
+import("stdfaust.lib");
+
+process = dm.spectral_level_demo;</code></pre><br/><h2 id="spectraltiltlab">spectralTiltLab</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/analysis/exfaust3/exfaust3.svg"/><pre><code class="language-faust">// 演示 filters.lib 中 spectral_tilt_demo 的示例
+
+declare name "spectralTiltLab";
+
+import("stdfaust.lib");
+
+N = 10; // 使用的零极点对数量
+
+process = sig(dm.sawtooth_demo) 
+     : stg(ba.bypass1(bp,dm.spectral_tilt_demo(N)))
+    &lt;: sag(dm.spectral_level_demo) 
+with {
+    bp = stg(checkbox("[0] Bypass Spectral Tilt"));
+    stg(x) = vgroup(
+     "[1] Spectral Tilt Filter [tooltip: See Faust's filters.lib for spectral_tilt_demo]",x);
+    sig(x) = vgroup(
+     "[2] Test Signal [tooltip: See Faust's oscillator.lib for sawtooth_demo]",x);
+    sag(x) = vgroup(
+     "[4] Spectrum Analyzer [tooltip: See Faust's filters.lib for spectral_level_demo]",x);
+};</code></pre><br/><h2 id="vumeter">vumeter</h2><img alt="框图" src="https://faustdoc.grame.fr/examples/analysis/exfaust4/exfaust4.svg"/><pre><code class="language-faust">declare name        "vumeter";
+declare version     "1.0";
+declare author      "Grame";
+declare license     "BSD";
+declare copyright   "(c)GRAME 2006";
+
+//-------------------------------------------------
+// 简单的音量表
+//-------------------------------------------------
+
+import("stdfaust.lib");
+
+process = hmeter(0), hmeter(1)
+with {
+    vmeter(i, x) = attach(x, envelop(x) : vbargraph("chan %i[2][unit:dB]", -70, +5));
+    hmeter(i, x) = attach(x, envelop(x) : hbargraph("chan %i[2][unit:dB]", -70, +5));
+    envelop = abs : max ~ -(1.0/ma.SR) : max(ba.db2linear(-70)) : ba.linear2db;
+};</code></pre><br/>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/examples/analysis/" rel="noreferrer noopener">https://faustdoc.grame.fr/examples/analysis/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

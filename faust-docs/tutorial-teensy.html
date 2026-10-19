@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用 Faust 在 Teensy 上做 DSP - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：用 Faust 在 Teensy 上做 DSP">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="dsp-on-the-teensy-with-faust">用 Faust 在 Teensy 上做 DSP</h1><h2 id="introduction">简介</h2><p><a href="https://www.pjrc.com/teensy" rel="noreferrer noopener">Teensy</a> 是由 <a href="https://www.pjrc.com" rel="noreferrer noopener">PJRC</a> 发行的一系列基于微控制器的开发板。Teensy 3.(2+) 系列开发板基于 ARM Cortex-M4，为实时音频信号处理应用提供了充足的计算能力。特别是 <a href="https://www.pjrc.com/teensy/techspecs.html" rel="noreferrer noopener">Teensy 3.6</a> 上使用的 Cortex-M4（MK66FX1M0VMD18）带有浮点单元（FPU），主频 180MHz（可超频到 240MHz）。PJRC 最近发布了 <a href="https://www.pjrc.com/store/teensy40.html" rel="noreferrer noopener">Teensy 4.0</a>，基于 Cortex-M7（带 FPU），主频 600MHz，内存远多于 3.6。与各自对应的<a href="https://www.pjrc.com/store/teensy3_audio.html" rel="noreferrer noopener">音频扩展板</a>（同样由 PJRC 发行）配合使用时，Teensy 3.6/4.0 可以用高级算法合成与处理声音。<a href="https://zenodo.org/record/3249282#.XRxurXVfhjE" rel="noreferrer noopener">这篇论文</a>调查了这类系统配合 Faust 生成的 DSP 对象使用时的性能。</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/teensy/img/teensy.jpg"/><em>Teensy 及其音频扩展板</em></p><p>用这类芯片做嵌入式实时音频 DSP 有很多好处：</p><ul><li>功耗低（例如可以轻松用电池供电），</li><li>裸机运行：没有操作系统，因此可以使用很小的块大小（Teensy 上小到 8 个样本），从而获得极低的延迟，</li><li>启动时间极短（&lt;1s），</li><li>等等。</li></ul><p>Teensy/<a href="https://www.pjrc.com/teensy/teensyduino.html" rel="noreferrer noopener">Teensyduino</a> 自带一个<a href="https://www.pjrc.com/teensy/td_libs_Audio.html" rel="noreferrer noopener">音频库</a>，可以直接在 Teensy 上合成声音。它采用连线范式，DSP 对象之间可以用虚拟跳线连接。<a href="https://www.pjrc.com/teensy/gui/index.html" rel="noreferrer noopener">在线工具</a>为这个系统提供了用户界面，可以按「Max/MSP 的方式」实现声音处理算法。各种元件都可以作为系统的输入和输出（例如 Teensy 内置的 DAC/ADC、音频扩展板等）。更多信息与教程见<a href="https://www.pjrc.com/teensy/td_libs_Audio.html" rel="noreferrer noopener">音频库网页</a>。</p><p>Teensy 音频库现有的 DSP 对象可以实现简单算法，但范围相对有限（例如基本振荡器、滤波器等）。<a href="manual-tools.html#faust2teensy">faust2teensy</a> 可以用 Faust 为 Teensy 音频库实现新对象。由于 Faust 目前还无法生成定点 DSP C++ 代码，生成的对象内部使用浮点运算。主要后果是，这个系统只有在带 FPU 的 Teensy 开发板上才能高效工作。因此我们强烈建议为此使用 Teensy 3.6/4.0（在 3.2 上也能跑，但计算能力会极其有限）。</p><p>本教程带你走完在 Teensy 上用 Faust 合成声音的各个步骤。</p><h2 id="band-limited-sawtooth-oscillator-on-the-teensy">Teensy 上的带限锯齿波振荡器</h2><blockquote><p>本节的源代码可以在<a href="https://faustdoc.grame.fr/tutorials/teensy/misc/teensy.zip" rel="noreferrer noopener">这里</a>下载</p></blockquote><p>Teensy 音频库没有带限锯齿波振荡器，而这对实现高质量虚拟模拟合成器至关重要。Faust 库提供多种带限振荡器，可以轻松移植到 Teensy。</p><p>下面的程序（<code>FaustSawtooth.dsp</code>）实现一个增益和频率可控的锯齿波振荡器：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/teensy/exfaust0/exfaust0.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+freq = nentry("freq",440,20,20000,0.01) : si.smoo;
+gain = nentry("gain",1,0,1,0.01) : si.smoo;
+process = os.sawtooth(freq)*gain;</code></pre><br/><p><code>si.smoo</code> 用于对 <code>freq</code> 与 <code>gain</code> 参数的值做插值，防止咔嗒声和突变。</p><p>只要在终端中运行下面的命令，就可以把这个 Faust 程序变成 Teensy 音频库的对象：</p><pre><code>faust2teensy -lib FaustSawtooth.dsp
+</code></pre><p>它会返回一个包含 <code>.cpp</code> 与 <code>.h</code> 文件的 zip 包。另一种做法是通过 <a href="https://faustide.grame.fr" rel="noreferrer noopener">Faust 网页版 IDE</a> 使用 Faust 在线编译服务完成这件事（Export(Truck)/source/teensy）。生成的包中应包含 <code>FaustSawtooth.cpp</code> 与 <code>FaustSawtooth.h</code> 文件。</p><p>在 Arduino/Teensyduino 软件中新建一个项目（例如命名为 <code>faustSawtooth</code>），把 <code>FaustSawtooth.cpp</code> 与 <code>FaustSawtooth.h</code> 放到与 <code>faustSawtooth.ino</code> 相同的文件夹（文件夹名大概应是 <code>/faustSawtooth</code>）。</p><p>把 Arduino 程序的内容替换为：</p><pre><code>#include &lt;Audio.h&gt;
+#include "FaustSawtooth.h"
+
+FaustSawtooth faustSawtooth;
+AudioOutputI2S out;
+AudioControlSGTL5000 audioShield;
+AudioConnection patchCord0(faustSawtooth,0,out,0);
+AudioConnection patchCord1(faustSawtooth,0,out,1);
+
+void setup() {
+  AudioMemory(2);
+  audioShield.enable();
+  audioShield.volume(0.1);
+}
+
+void loop() {
+  faustSawtooth.setParamValue("freq",random(50,1000));
+  delay(50);
+}
+</code></pre><p>首先包含用 <code>faust2teensy</code> 生成对象的头文件（<code>.h</code>）。然后创建一个 <code>FaustSawtooth</code> 实例。由于本教程使用的 Teensy（3.6/4.0）配有 Teensy 音频扩展板，我们还创建 <code>AudioOutputI2S</code> 与 <code>AudioControlSGTL5000</code> 的实例。接着用 <code>AudioConnection</code> 把 Faust 对象接到音频扩展板的两路输出上。注意，如果 Faust 对象是立体声输出（即 <code>process = os.sawtooth(freq)*gain &lt;: _,_</code>），则应改为：</p><pre><code class="language-faust">AudioConnection patchCord0(faustSawtooth,0,out,0);
+AudioConnection patchCord1(faustSawtooth,1,out,1);
+</code></pre><p>用 <code>faust2teensy</code> 生成对象的输入输出数量，与 Faust 程序的输入输出数量一致。</p><p>在 <code>setup()</code> 中分配了两个音频内存块。注意，如果 Faust 对象有音频输入，这个数量大概应该更大（即立体声输入加立体声输出通常为六个）。</p><p><code>audioShield.enable()</code> 启用音频扩展板，<code>audioShield.volume(0.1)</code> 设置耳机输出的增益（这一步是可选的）。</p><p><code>freq</code> 与 <code>gain</code> 参数的值可以用 <code>setParamValue</code> 方法设置。注意，对于较大的 Faust 对象，可能改用参数路径。这里 <code>freq</code> 的值每 50ms 随机生成一次。</p><p>完成这些修改后，你应该可以编译并把 sketch 上传到 Teensy 4.0。</p><h3 id="special-note-about-the-teensy-36">关于 Teensy 3.6 的特别说明</h3><p>在把这个程序编译并上传到 Teensy 3.6 之前，需要修改 Teensyduino 工具链使用的配置文件（<code>boards.txt</code>）。你应该能在 Arduino 软件源码的 <code>hardware/teensy/avr</code> 中找到它（具体位置因平台而异）。最重要的修改是链接时用 <code>g++</code> 而不是 <code>gcc</code>，所以：</p><pre><code class="language-faust">teensy36.build.command.linker=arm-none-eabi-gcc
+</code></pre><p>应改为：</p><pre><code class="language-faust">teensy36.build.command.linker=arm-none-eabi-g++
+</code></pre><p>在 <code>boards.txt</code> 中。注意，在较老版本的 Teensyduino 中，这些修改应直接做在 <code>platform.txt</code> 中。</p><p>完成这些修改后，你应该可以编译并把 sketch 上传到 Teensy 3.6。</p><h2 id="audio-effect">音频效果</h2><blockquote><p>本节的源代码可以在<a href="https://faustdoc.grame.fr/tutorials/teensy/misc/teensyEffect.zip" rel="noreferrer noopener">这里</a>下载</p></blockquote><p>可以按上一节描述的相同流程为 Teensy 音频库生成音频效果。<a href="https://faust.grame.fr/doc/libraries/index.html#dm.zita_light" rel="noreferrer noopener"><code>dm.zita_light</code></a> 实现一个高质量立体声反馈延迟网络混响。它自带界面控件/参数，用于控制干湿比（<code>Dry/Wet Mix</code>）和以 dB 计的电平（<code>Level</code>）。</p><p>一个调用该效果的简单 Faust 程序（<code>FaustZita.dsp</code>）可以是这样的：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/teensy/exfaust1/exfaust1.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = dm.zita_light;</code></pre><br/><p>运行下面的命令即可生成对应的 Teensy 音频库对象：</p><pre><code>faust2teensy -lib FaustZita.dsp
+</code></pre><p>最后在 Teensy 程序中调用：</p><pre><code>#include &lt;Audio.h&gt;
+#include "FaustZita.h"
+
+FaustZita faustZita;
+AudioInputI2S in;
+AudioOutputI2S out;
+AudioControlSGTL5000 audioShield;
+AudioConnection patchCord0(in,0,faustZita,0);
+AudioConnection patchCord1(in,1,faustZita,1);
+AudioConnection patchCord2(faustZita,0,out,0);
+AudioConnection patchCord3(faustZita,1,out,1);
+
+void setup() {
+  AudioMemory(6);
+  audioShield.enable();
+  faustZita.setParamValue("level",0);
+}
+
+void loop() {
+  float dw = analogRead(A0)/512 - 1;
+  faustZita.setParamValue("dryWet",dw);
+  delay(10);
+}
+</code></pre><p>注意，在这个示例中，接在 Teensy 模拟输入 0 上的电位器用于控制混响的干湿比。</p><h2 id="additional-configuration-for-low-audio-latency">为低音频延迟所做的额外配置</h2><p>得益于裸机架构，Teensy 可以实现极低的音频延迟，这在有操作系统的环境中几乎不可能做到。音频延迟主要由系统的块大小决定。Teensy 音频库默认块大小为 128 个样本，但可以降到 8 个样本（仅在完全使用 Faust DSP 对象时）而不会明显影响性能（见<a href="https://zenodo.org/record/3249282#.XRxurXVfhjE" rel="noreferrer noopener">对应的 SMC 论文</a>）。块大小由 C++ 宏（<code>AUDIO_BLOCK_SAMPLES</code>）设置，可以在编译前作为参数传给 C++ 编译器来覆盖它；在 <code>boards.txt</code> 中替换下面这一行（见上一节）：</p><pre><code class="language-faust">teensy36.build.flags.defs=-D__MK66FX1M0__ -DTEENSYDUINO=146
+</code></pre><p>换成：</p><pre><code class="language-faust">teensy36.build.flags.defs=-D__MK66FX1M0__ -DTEENSYDUINO=146 -DAUDIO_BLOCK_SAMPLES=8
+</code></pre><p>在 Teensy 3.6 上，以及：</p><pre><code class="language-faust">teensy40.build.flags.defs=-D__MK66FX1M0__ -DTEENSYDUINO=146
+</code></pre><p>换成：</p><pre><code class="language-faust">teensy40.build.flags.defs=-D__MK66FX1M0__ -DTEENSYDUINO=146 -DAUDIO_BLOCK_SAMPLES=8
+</code></pre><p>在 Teensy 4.0 上。</p><p>同样，采样率（默认 44100KHz）可以用 <code>AUDIO_SAMPLE_RATE_EXACT</code> 宏设置。注意，计算与你的 Teensy 时钟兼容的「精确」采样率可能有点棘手。例如 <code>AUDIO_SAMPLE_RATE_EXACT</code> 默认是 44117.64706 而不是 44100，等等。</p><h3 id="warning">警告！！！</h3><p>在最新版本的 Teensy 音频库中，内置 freeverb 函数的代码做了一处「奇怪」的修正，会导致你无法使用 8 个样本的块大小。下面是对这个问题的修复，应在已安装的 <code>effect_freeverb.cpp</code> 中修改：</p><pre><code class="language-faust">0, 0, 0, {
+0, 0, 0, 0, 0, 0, 0, 0,
+#if AUDIO_BLOCK_SAMPLES &gt; 8
+0, 0, 0, 0, 0, 0, 0, 0,
+#endif
+#if AUDIO_BLOCK_SAMPLES &gt; 16
+0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+#endif
+</code></pre><h2 id="notes-about-computational-power-and-memory-footprint">关于计算能力与内存占用的说明</h2><p>Teensy 3.6 虽然相对强劲，可以运行复杂的 DSP 算法（最多可并行运行 90 个 Faust 正弦波），但它的 RAM 不多。因此，内存占用大的算法（例如大量使用延迟的算法，如混响或波表振荡器）可能需要改造才能在 Teensy 上运行。例如，Faust 默认的正弦波振荡器使用 65536 个样本的表，这太大，无法载入 Teensy 的 RAM。因此需要调整它的定义，例如：</p><pre><code class="language-faust">osc(freq) = rdtable(tablesize, os.sinwaveform(tablesize), int(os.phasor(tablesize,freq)))
+with{
+    tablesize = 1 &lt;&lt; 15; // 而不是 1 &lt;&lt; 16
+};
+</code></pre><p>同样，某些混响算法延迟线的最大长度可能过大，应做调整。使用 <code>-dlt</code> 选项会有帮助，见<a href="manual-optimizing.html#managing-dsp-memory-size">管理 DSP 内存大小</a>一节。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/teensy/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/teensy/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

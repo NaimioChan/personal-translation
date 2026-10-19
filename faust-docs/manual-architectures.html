@@ -1,0 +1,1447 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>架构文件 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：架构文件">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="architecture-files">架构文件</h1><p>Faust 程序描述一个<em>信号处理器</em>，即一个把<em>输入信号</em>映射为<em>输出信号</em>的纯 DSP 计算。它不涉及将要控制该 DSP 的音频驱动或控制器（如 GUI、OSC、MIDI、传感器）。这些附加信息由<em>架构文件</em>提供。可执行代码可以用静态或 <a href="manual-embedding.html">动态</a>编译模型生成。</p><p>一个<em>架构文件</em>描述如何把 Faust 程序与外部世界关联起来，特别是要使用的音频驱动和控制器接口。这种做法让同一个 Faust 程序可以轻松部署到大量音频标准（例如 Max/MSP 外部对象、PD 外部对象、VST 插件、CoreAudio 应用、JACK 应用、iPhone/Android 等）：</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/Architectures.png"/></p><p>要使用的架构在编译时用 <code>-a</code> 选项指定。例如 <code>faust -a jack-gtk.cpp foo.dsp</code> 表示在编译 <code>foo.dsp</code> 时使用 JACK GTK 架构。</p><p>其中一些架构是<em>音频模块</em>与一个或多个<em>控制器模块</em>的模块化组合。有些架构只把<em>音频模块</em>与生成的 DSP 组合成一个<em>音频引擎</em>，再用 <code>setParamValue/getParamValue</code> 这类附加 API 控制，这样控制器部分可以完全在外部定义。这正是后文介绍的 <a href="#the-faust2api-model">faust2api</a> 脚本的用途。</p><h2 id="minimal-structure-of-an-architecture-file">架构文件的最小结构</h2><p>在深入了解 Faust 发行版附带的架构文件细节之前，先了解架构文件由哪些必要部分组成很重要。从技术上说，架构文件就是任何含有两个占位符 <code>&lt;&lt;includeIntrinsic&gt;&gt;</code> 和 <code>&lt;&lt;includeclass&gt;&gt;</code> 的文本文件。第一个占位符目前未使用，第二个占位符会被 FAUST 编译器生成的代码替换。</p><p>因此，<em>真正最小</em>的架构文件（我们称它为 <code>nullarch.cpp</code>）如下：</p><pre><code class="language-faust">&lt;&lt;includeIntrinsic&gt;&gt;
+&lt;&lt;includeclass&gt;&gt;
+</code></pre><p>这个 <code>nullarch.cpp</code> 架构的特点是 <code>faust foo.dsp</code> 和 <code>faust -a nullarch.cpp foo.dsp</code> 产生相同的结果。显然这没什么用，而且生成的 <code>cpp</code> 文件无法编译。</p><p>下面是 <code>miniarch.cpp</code>，一个包含足够信息、能生成可成功编译的 <code>cpp</code> 文件的最小架构文件：</p><pre><code>&lt;&lt;includeIntrinsic&gt;&gt;
+
+#define FAUSTFLOAT float
+
+class dsp {};
+
+struct Meta {
+    virtual void declare(const char* key, const char* value) {};
+};
+
+struct Soundfile {};
+
+struct UI {
+    // 控件布局
+    virtual void openTabBox(const char* label) {}
+    virtual void openHorizontalBox(const char* label) {}
+    virtual void openVerticalBox(const char* label) {}
+    virtual void closeBox() {}
+
+    // 活动控件
+    virtual void addButton(const char* label, FAUSTFLOAT* zone) {}
+    virtual void addCheckButton(const char* label, FAUSTFLOAT* zone) {}
+    virtual void addVerticalSlider(const char* label, FAUSTFLOAT* zone, FAUSTFLOAT init, FAUSTFLOAT min, FAUSTFLOAT max, FAUSTFLOAT step) {}
+    virtual void addHorizontalSlider(const char* label, FAUSTFLOAT* zone, FAUSTFLOAT init, FAUSTFLOAT min, FAUSTFLOAT max, FAUSTFLOAT step) {}
+    virtual void addNumEntry(const char* label, FAUSTFLOAT* zone, FAUSTFLOAT init, FAUSTFLOAT min, FAUSTFLOAT max, FAUSTFLOAT step) {}
+
+    // 被动控件
+    virtual void addHorizontalBargraph(const char* label, FAUSTFLOAT* zone, FAUSTFLOAT min, FAUSTFLOAT max) {}
+    virtual void addVerticalBargraph(const char* label, FAUSTFLOAT* zone, FAUSTFLOAT min, FAUSTFLOAT max) {}
+
+    // 声音文件
+    virtual void addSoundfile(const char* label, const char* filename, Soundfile** sf_zone) {}
+
+    // 元数据声明
+    virtual void declare(FAUSTFLOAT* zone, const char* key, const char* val) {}
+};
+
+&lt;&lt;includeclass&gt;&gt;
+</code></pre><p>这个架构仍然不太有用，但它说明了真实架构文件除音频部分本身之外还必须实现什么。我们将在下一节看到，Faust 架构采用模块化方式实现，以避免代码重复，便于维护和复用。</p><h2 id="audio-architecture-modules">音频架构模块</h2><p>Faust 生成的程序必须连接到下层音频层。最终程序是应用还是插件，连接音频层的方式会不同：</p><ul><li>应用通常使用操作系统的音频驱动 API，例如 macOS 上的 CoreAudio、Linux 上的 ALSA、Windows 上的 WASAPI，或 <a href="http://portaudio.com" rel="noreferrer noopener">PortAudio</a>、<a href="https://jackaudio.org" rel="noreferrer noopener">JACK</a> 这类跨平台 API。这种情况下必须编写基类 <code>audio</code> 的一个子类（见后文）</li><li>插件（例如 <a href="https://www.steinberg.net/en/company/technologies/vst3.html" rel="noreferrer noopener">VST3</a>、<a href="https://developer.apple.com/documentation/audiounit" rel="noreferrer noopener">Audio Unit</a> 或 <a href="https://juce.com" rel="noreferrer noopener">JUCE</a>）通常要遵循约束更强的 API，它规定了<em>生命周期</em>，即<em>加载/初始化/启动/运行/停止/卸载</em>这样一串操作。这种情况下必须把 Faust 生成模块的 <em>new/init/compute/delete</em> 方法插入插件 API，在合适的位置调用各模块函数。</li></ul><h3 id="external-and-internal-audio-sample-formats">外部与内部音频样本格式</h3><p>音频样本由下层音频层管理，通常是 <em>[-1..1]</em>区间内 32 位 <code>float</code> 或 64 位 <code>double</code> 值。其格式由架构文件中实现的 <code>FAUSTFLOAT</code> 宏定义，默认是 <code>float</code>。DSP 音频样本格式在编译时用 <code>-single</code>（默认）、<code>-double</code> 或 <code>-quad</code> 编译选项选择。按钮、滑块等控制参数也使用 <code>FAUSTFLOAT</code> 格式。</p><p>默认情况下，<code>FAUSTFLOAT</code> 宏由以下代码写出：</p><pre><code>#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+</code></pre><p>这会为它赋予一个值（<em>如果尚未定义</em>），而由于默认内部格式是 <code>float</code>，一般情况下无需做特殊处理。但当 DSP 用 <code>-double</code> 选项编译时，音频输入/输出缓冲区必须<em>适配</em>，例如使用 <a href="https://github.com/grame-cncm/faust/blob/fcc51c12184b6e07ebdfc6fd51427ad1af498ac2/architecture/faust/dsp/dsp-adapter.h" rel="noreferrer noopener">dsp_sample_adapter</a> 类，就像 <a href="https://github.com/grame-cncm/faust/blob/07ce81dac88afe76475e93e797b94982c9298b58/tools/benchmark/dynamic-jack-gtk.cpp" rel="noreferrer noopener">dynamic-jack-gt 工具</a> 中那样。</p><p>注意，架构可以把 <code>FAUSTFLOAT</code> 重定义为 double，让整条音频链都以 double 运行。这必须在包含任何会自行定义 <code>FAUSTFLOAT</code> 的架构文件<em>之前</em>完成（因为 <code>#ifndef</code> 的逻辑）。</p><h3 id="connection-to-an-audio-driver-api">与音频驱动 API 的连接</h3><p>一个<em>音频驱动架构</em>通常把 Faust 程序连接到音频驱动。它负责：</p><ul><li>分配和释放声道，并以非交错的 float/double 数据呈现音频（取决于 <code>FAUSTFLOAT</code> 宏定义），数值归一化到 -1.0 与 1.0 之间</li><li>在初始化时调用 DSP 的 <code>init</code> 方法，以设置 DSP 代码中可能用到的 <code>ma.SR</code> 变量</li><li>调用 DSP 的 <code>compute</code> 方法处理传入的音频缓冲区，和/或产生音频输出。</li></ul><p>默认编译模型使用彼此分离、不指向同一内存位置的音频输入和输出缓冲区。<code>-inpl (--in-place)</code> 代码生成模型允许生成在<em>输入与输出缓冲区相同</em>时也能工作的代码（某些嵌入式设备通常需要如此）。该选项目前只在标量（即默认）代码生成模式下有效。</p><p>Faust 音频架构模块派生自 <em>audio</em> 类，可以如下定义（简化版本，<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/audio/audio.h" rel="noreferrer noopener">实际版本见此)</a>：</p><pre><code class="language-faust">class audio {
+
+    public:
+
+        audio() {}
+        virtual ~audio() {}
+
+        /**
+         * 初始化 DSP。
+         * @param name - 赋予音频驱动的 DSP 名称
+         * （例如可能显示为 JACK 客户端）
+         * @param dsp - 将用驱动采样率初始化的 dsp
+         *
+         * @return 成功返回 true，驱动失败返回 false。
+         **/
+        virtual bool init(const char* name, dsp* dsp) = 0;
+
+        /**
+         * 开始音频处理。
+         * @return 成功返回 true，驱动失败返回 false。
+         **/
+        virtual bool start() = 0;
+
+        /**
+         * 停止音频处理。
+         **/
+        virtual void stop() = 0;
+
+        void setShutdownCallback(shutdown_callback cb, void* arg) = 0;
+
+         // 以帧为单位返回缓冲区大小。
+        virtual int getBufferSize() = 0;
+
+        // 以 Hz 为单位返回驱动采样率。
+        virtual int getSampleRate() = 0;
+
+        // 返回驱动的硬件输入数量。
+        virtual int getNumInputs() = 0;
+
+        // 返回驱动的硬件输出数量。
+        virtual int getNumOutputs() = 0;
+
+        /**
+        * @return 返回可用 CPU 的平均占比
+        * 即音频回调中消耗的比例（介于 0.0 与 1.0 之间）。
+        **/
+        virtual float getCPULoad() = 0;
+};
+</code></pre><p>该 API 足够简单，为音频架构实现提供了很大灵活性。<code>init</code> 方法应初始化音频。在 <code>init</code> 退出时，系统应处于可以重新调用 <code>dsp</code> 对象的安全状态。以下是部分受支持音频驱动的层次结构：</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/AudioHierarchy.jpg"/></p><h3 id="connection-to-a-plugin-audio-api">与插件音频 API 的连接</h3><p>对于插件，必须开发<em>音频插件架构</em>，把 Faust DSP 的 <em>new/init/compute/delete</em> 方法集成到插件 API 中。下面是一个使用 JUCE 框架的具体示例：</p><ul><li><p>必须定义一个 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/juce/juce-plugin.cpp#L227" rel="noreferrer noopener">FaustPlugInAudioProcessor</a> 类，它是 <code>juce::AudioProcessor</code> 的子类。Faust 生成的 C++ 实例将在其构造函数中创建，可以是单声部或复音模式（见后文）</p></li><li><p>Faust DSP 实例在 JUCE 的 <code>prepareToPlay</code> 方法中用当前采样率值初始化</p></li><li><p>Faust dsp 的 <code>compute</code> 在 JUCE 的 <code>process</code> 中调用，后者接收待处理的音频输入/输出缓冲区</p></li><li><p>还可以实现其他方法，例如处理 MIDI 消息或保存/恢复插件参数状态。</p></li></ul><p>这种方法显然需要针对每种受支持的插件 API 做调整。</p><h2 id="midi-architecture-modules">MIDI 架构模块</h2><p>一个 <em>MIDI 架构模块</em>通常把 Faust 程序连接到 MIDI 驱动。MIDI 控制在 DSP 参数与 MIDI 消息之间建立双向连接，并可用于触发复音乐器。</p><h4 id="midi-messages-in-the-dsp-source-code">DSP 源代码中的 MIDI 消息</h4><p>MIDI 控制消息以元数据形式描述在界面控件上。它们由 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/MidiUI.h" rel="noreferrer noopener">MidiUI</a> 类解码，该类是 <code>UI</code> 的子类，解析传入的 MIDI 消息并更新相应的控制参数，或在界面控件（滑块、按钮……）被移动时发送 MIDI 消息。</p><h4 id="defined-standard-midi-messages">已定义的标准 MIDI 消息</h4><p>需要给界面控件添加特殊的 <code>[midi:xxx yyy...]</code> 元数据。受支持 MIDI 消息的完整说明见 <a href="manual-midi.html">Faust 文档</a>。</p><h4 id="midi-classes">MIDI 类</h4><p>已经开发了一个定义 MIDI 消息解码/编码方法的 <code>midi</code> 基类。它将用于接收和发送 MIDI 消息：</p><pre><code>class midi {
+
+public:
+
+    midi() {}
+    virtual ~midi() {}
+
+    // MIDI 输入的附加时间戳 API
+    virtual MapUI* keyOn(double, int channel, int pitch, int velocity)
+    {
+        return keyOn(channel, pitch, velocity);
+    }
+
+    virtual void keyOff(double, int channel, int pitch, int velocity = 0)
+    {
+        keyOff(channel, pitch, velocity);
+    }
+
+    virtual void keyPress(double, int channel, int pitch, int press)
+    {
+        keyPress(channel, pitch, press);
+    }
+
+    virtual void chanPress(double date, int channel, int press)
+    {
+        chanPress(channel, press);
+    }
+
+    virtual void pitchWheel(double, int channel, int wheel)
+    {
+        pitchWheel(channel, wheel);
+    }
+
+    virtual void ctrlChange(double, int channel, int ctrl, int value)
+    {
+        ctrlChange(channel, ctrl, value);
+    }
+
+    virtual void ctrlChange14bits(double, int channel, int ctrl, int value)
+    {
+        ctrlChange14bits(channel, ctrl, value);
+    }
+
+    virtual void rpn(double, int channel, int ctrl, int value)
+    {
+        rpn(channel, ctrl, value);
+    }
+
+    virtual void progChange(double, int channel, int pgm)
+    {
+        progChange(channel, pgm);
+    }
+
+    virtual void sysEx(double, std::vector&lt;unsigned char&gt;&amp; message)
+    {
+        sysEx(message);
+    }
+
+    // MIDI 同步
+    virtual void startSync(double date)  {}
+    virtual void stopSync(double date)   {}
+    virtual void clock(double date)  {}
+
+    // 标准 MIDI API
+    virtual MapUI* keyOn(int channel, int pitch, int velocity)      { return nullptr; }
+    virtual void keyOff(int channel, int pitch, int velocity)       {}
+    virtual void keyPress(int channel, int pitch, int press)        {}
+    virtual void chanPress(int channel, int press)                  {}
+    virtual void ctrlChange(int channel, int ctrl, int value)       {}
+    virtual void ctrlChange14bits(int channel, int ctrl, int value) {}
+    virtual void rpn(int channel, int ctrl, int value)              {}
+    virtual void pitchWheel(int channel, int wheel)                 {}
+    virtual void progChange(int channel, int pgm)                   {}
+    virtual void sysEx(std::vector&lt;unsigned char&gt;&amp; message)         {}
+
+    enum MidiStatus {
+        // 通道声部消息
+        MIDI_NOTE_OFF = 0x80,
+        MIDI_NOTE_ON = 0x90,
+        MIDI_CONTROL_CHANGE = 0xB0,
+        MIDI_PROGRAM_CHANGE = 0xC0,
+        MIDI_PITCH_BEND = 0xE0,
+        MIDI_AFTERTOUCH = 0xD0, // 又称通道压力
+        MIDI_POLY_AFTERTOUCH = 0xA0, // 又称按键压力
+        MIDI_CLOCK = 0xF8,
+        MIDI_START = 0xFA,
+        MIDI_CONT = 0xFB,
+        MIDI_STOP = 0xFC,
+        MIDI_SYSEX_START = 0xF0,
+        MIDI_SYSEX_STOP = 0xF7
+    };
+
+    enum MidiCtrl {
+        ALL_NOTES_OFF = 123,
+        ALL_SOUND_OFF = 120
+    };
+
+    enum MidiNPN {
+        PITCH_BEND_RANGE = 0
+    };
+};
+</code></pre><p>定义了一个纯接口，供能与 <code>midi</code> 对象互相发送和接收 MIDI 消息的 MIDI 处理器使用：</p><pre><code class="language-faust">struct midi_interface {
+    virtual void addMidiIn(midi* midi_dsp)      = 0;
+    virtual void removeMidiIn(midi* midi_dsp)   = 0;
+    virtual ~midi_interface() {}
+};
+</code></pre><p>一个 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/midi/midi.h#L261" rel="noreferrer noopener">midi_hander</a> 子类实现实际的 MIDI 解码，并<em>维护一个 MIDI 感知组件列表</em>（继承自 <code>midi</code>、可发送和/或接收 MIDI 事件的类），用 <code>addMidiIn/removeMidiIn</code> 方法添加和移除：</p><pre><code>class midi_handler : public midi, public midi_interface {
+
+    protected:
+
+        std::vector&lt;midi*&gt; fMidiInputs;
+        std::string fName;
+        MidiNRPN fNRPN;
+
+    public:
+
+        midi_handler(const std::string&amp; name = "MIDIHandler"):fName(name) {}
+        virtual ~midi_handler() {}
+
+        void addMidiIn(midi* midi_dsp) {...}
+        void removeMidiIn(midi* midi_dsp) {...}
+        ...
+        ...
+};
+</code></pre><p>已经用原生 API 编写了几个继承 <code>midi_handler</code> 的具体实现，可在 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/faust/midi" rel="noreferrer noopener">faust/midi</a> 目录中找到：</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/MIDIHierarchy.jpg"/></p><p>取决于所用的原生 MIDI API，事件时间戳或以绝对时间表示，或以帧表示。它们会被转换为相对于音频缓冲区起始位置的样本偏移。</p><p>与 <code>MidiUI</code> 类（<code>UI</code> 的子类）配合使用时，它们可以让给定的 DSP 接受传入 MIDI 消息的控制，或在内部控件状态变化时发送 MIDI 消息。</p><p>在下面的代码片段中，创建了一个 <code>MidiUI</code> 对象并连接到 <code>rt_midi</code> MIDI 消息处理器（使用 <a href="http://www.music.mcgill.ca/~gary/rtmidi/" rel="noreferrer noopener">RTMidi</a> 库），然后作为参数传给标准的 <code>buildUserInterface</code> 来控制 DSP 参数：</p><pre><code>...
+rt_midi midi_handler("MIDI");
+MidiUI midi_interface(&amp;midi_handler);
+DSP-&gt;buildUserInterface(&amp;midi_interface);
+...
+</code></pre><h2 id="ui-architecture-modules">UI 架构模块</h2><p>UI 架构模块把用户操作（例如通过图形控件、命令行参数、OSC 消息等）与要控制的 Faust 程序连接起来。它负责把程序参数关联到用户界面控件，并根据用户操作更新参数值。这种关联由 <code>buildUserInterface</code> 调用触发，此时 <code>dsp</code> 请求一个 UI 对象构建 DSP 模块的控制器。</p><p>由于界面基本是面向图形的，主要概念基于<em>控件</em>：UI 架构模块在语义上区分为处理活动控件、被动控件和控件布局。</p><p>Faust UI 架构模块派生自 <code>UI</code> 基类：</p><pre><code class="language-faust">template &lt;typename REAL&gt;
+struct UIReal {
+
+    UIReal() {}
+    virtual ~UIReal() {}
+
+    // 控件布局
+
+    virtual void openTabBox(const char* label) = 0;
+    virtual void openHorizontalBox(const char* label) = 0;
+    virtual void openVerticalBox(const char* label) = 0;
+    virtual void closeBox() = 0;
+
+    // 活动控件
+
+    virtual void addButton(const char* label, REAL* zone) = 0;
+    virtual void addCheckButton(const char* label, REAL* zone) = 0;
+    virtual void addVerticalSlider(const char* label, REAL* zone, REAL init, 
+                                   REAL min, REAL max, REAL step) = 0;
+    virtual void addHorizontalSlider(const char* label, REAL* zone, REAL init, 
+                                     REAL min, REAL max, REAL step) = 0;
+    virtual void addNumEntry(const char* label, REAL* zone, REAL init, 
+                             REAL min, REAL max, REAL step) = 0;
+
+    // 被动控件
+
+    virtual void addHorizontalBargraph(const char* label, REAL* zone, REAL min, REAL max) = 0;
+    virtual void addVerticalBargraph(const char* label, REAL* zone, REAL min, REAL max) = 0;
+
+    // 声音文件
+
+    virtual void addSoundfile(const char* label, const char* filename, Soundfile** sf_zone) = 0;
+
+    // 元数据声明
+
+    virtual void declare(REAL* zone, const char* key, const char* val) {}
+};
+
+struct UI : public UIReal&lt;FAUSTFLOAT&gt;
+{
+    UI() {}
+    virtual ~UI() {}
+};
+</code></pre><p><code>FAUSTFLOAT* zone</code> 元素是<em>控制接口与 dsp 代码之间的主要连接点。</em>编译后的 dsp Faust 代码会通过调用相应的 <code>addButton</code>、<code>addVerticalSlider</code>、<code>addNumEntry</code> 等方法（取决于原始 Faust DSP 源代码中描述的内容），让外部可以访问 dsp 代码用到的所有内部控制值地址。</p><p>控制/UI 代码保存这些地址，通常会在 dsp 代码中某个控制值需要改变时修改其指向的值。在 dsp 一侧，所有控制值都在 <code>compute</code> 方法开头被<em>采样</em>一次，以便<em>在整个音频缓冲区期间保持同一个值。</em></p><p>控制值的写入和读取通常发生在两个不同线程中：控制器（GUI、OSC 或 MIDI 等）写入值，音频实时线程在音频回调中读取它们。由于对 <code>FAUSTFLOAT* zone</code> 元素的读写是原子的，写入方（控制器）与读取方（Faust <code>dsp</code> 对象）之间（一般）不需要复杂的同步机制。</p><p>以下是 UI 类层次的一部分：</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/GUIHierarchy.png"/></p><h4 id="active-widgets">活动控件</h4><p>活动控件是控制参数值的图形元素。它们用控件名和指向所关联值的指针初始化，使用 <code>FAUSTFLOAT</code> 宏类型（编译时定义为 <code>float</code> 或 <code>double</code>）。Faust 中的活动控件有 <code>Button</code>、<code>CheckButton</code>、<code>VerticalSlider</code>、<code>HorizontalSlider</code> 和 <code>NumEntry</code>。</p><p>对每个活动控件，GUI 架构都必须实现方法 <code>addXxx(const char* name, FAUSTFLOAT* zone, ...)</code>。<code>Slider</code> 和 <code>NumEntry</code> 还有附加参数：<code>init</code>、<code>min</code>、<code>max</code> 和 <code>step</code> 值。</p><h4 id="passive-widgets">被动控件</h4><p>被动控件是反映数值的图形元素。与活动控件类似，它们用控件名和指向所关联值的指针初始化。Faust 中的被动控件有 <code>HorizontalBarGraph</code> 和 <code>VerticalBarGraph</code>。</p><p>对每个被动控件，UI 架构都必须实现方法 <code>addXxx(const char* name, FAUSTFLOAT* zone, ...)</code>。根据被动控件类型，还有附加参数。</p><h4 id="widgets-layout">控件布局</h4><p>通常，GUI 会按层次组织成方框和/或标签页方框。UI 架构必须支持以下方法来建立这种层次：</p><pre><code class="language-faust">  openTabBox(const char* label);
+  openHorizontalBox(const char* label);
+  openVerticalBox(const char* label);
+  closeBox(const char* label);
+</code></pre><p>注意所有控件都添加到当前方框中。</p><h4 id="metadata">元数据</h4><p>Faust 语言允许控件标签中以方括号包含键/值对形式的元数据。这些元数据在 GUI 层由 <code>declare</code> 方法处理，其参数为指向控件所关联 zone 的指针、元数据键和值：</p><pre><code class="language-faust">declare(FAUSTFLOAT* zone, const char* key, const char* value);
+</code></pre><p>以下是目前支持的通用元数据表：</p><table><thead><tr><th>键</th><th>值</th></tr></thead><tbody><tr><td>tooltip</td><td>实际的字符串内容</td></tr><tr><td>hidden</td><td>0 或 1</td></tr><tr><td>unit</td><td><em>Hz</em> 或 <em>dB</em></td></tr><tr><td>scale</td><td><em>log</em> 或 <em>exp</em></td></tr><tr><td>style</td><td><em>knob</em>、<em>led</em> 或 <em>numerical</em></td></tr><tr><td>style</td><td><em>radio{’label1’:v1;’label2’:v2...}</em></td></tr><tr><td>style</td><td><em>menu{’label1’:v1;’label2’:v2...}</em></td></tr><tr><td>acc</td><td><em>axe curve amin amid amax</em></td></tr><tr><td>gyr</td><td><em>axe curve amin amid amax</em></td></tr><tr><td>screencolor</td><td><em>red</em>、<em>green</em>、<em>blue</em> 或 <em>white</em></td></tr></tbody></table><p>这里 <code>acc</code> 表示<em>加速度计</em>，<code>gyr</code> 表示<em>陀螺仪</em>，两者使用相同的参数（一段映射描述），但关联到不同的传感器。</p><p>定义多个元数据的典型示例可以是：</p><pre><code class="language-faust">nentry("freq [unit:Hz][scale:log][acc:0 0 -30 0 30][style:menu{’white noise’:0;’pink noise’:1;’sine’:2}][hidden:0]", 0, 20, 100, 1)
+</code></pre><p>或：</p><pre><code class="language-faust">vslider("freq [unit:dB][style:knob][gyr:0 0 -30 0 30]", 0, 20, 100, 1)
+</code></pre><p>当同一个条目标签中添加一个或多个元数据时，它们会在描述该条目的行<em>之前</em>，以一行或连续多行 <code>declare(FAUSTFLOAT* zone, const char* key, const char* value);</code> 出现在生成的代码中。因此管理 UI 的代码必须把它们与正确的条目关联起来。这种技术的示例见 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/MetaDataUI.h" rel="noreferrer noopener">MetaDataUI</a> 类。</p><p>MIDI 专用元数据 <a href="manual-midi.html">在此说明</a>，由 <code>MidiUI</code> 类解码。</p><p>注意，元数据并非所有架构文件都支持。有些元数据（例如 <code>acc</code> 或 <code>gyr</code>）只在配有加速度计或陀螺仪传感器的平台上有意义。元数据集合未来可能扩展，<em>也可能针对特定项目做调整。</em>它们可以用 <code>MetaDataUI</code> 类解码。</p><h4 id="graphic-oriented-pure-controllers-code-generator-ui">面向图形、纯控制器与代码生成器的 UI</h4><p>即使 UI 架构模块面向图形，某个实现也完全可以忽略所有布局信息，只保留控制器部分，例如按钮、滑块、数值输入框、条形图。<code>MidiUI</code> 或 <code>OSCUI</code> 架构通常就是这样做的。</p><p>注意也可以编写纯代码生成器。<code>JSONUI</code> UI 架构就是一个把 DSP JSON 描述生成为文本文件的架构示例。</p><h4 id="dsp-json-description">DSP JSON 描述</h4><p>给定已编译 DSP 的完整描述可以生成为 JSON 文件，在架构系统的多处使用。该 JSON 描述 DSP 的输入/输出数量、一些元数据（文件名、名称、使用的编译参数、使用的库等），以及其 UI——由分组层次直到终端条目（<em>按钮</em>、<em>滑块</em>、<em>数值输入框</em>、<em>条形图</em>）及其全部参数（<em>type</em>、<em>label</em>、<em>shortname</em>、<em>address</em>、<em>meta</em>、<em>init</em>、<em>min</em>、<em>max</em> 和 <em>step</em> 值）。对于以下 DSP 程序：</p><pre><code class="language-faust">import("stdfaust.lib");
+vol = hslider("volume [unit:dB]", 0, -96, 0, 0.1) : ba.db2linear : si.smoo;
+freq = hslider("freq [unit:Hz]", 600, 20, 2000, 1);
+
+process = vgroup("Oscillator", os.osc(freq) * vol) &lt;: (_,_);
+</code></pre><p>生成的 JSON 文件为：</p><pre><code class="language-faust">{
+    "name": "foo",
+    "filename": "foo.dsp",
+    "version": "2.40.8",
+    "compile_options": "-lang cpp -es 1 -mcd 16 -single -ftz 0",
+    "library_list": [],
+    "include_pathnames": ["/usr/local/share/faust"],
+    "inputs": 0,
+    "outputs": 2,
+    "meta": [ 
+        { "basics.lib/name": "Faust Basic Element Library" },
+        { "basics.lib/version": "0.6" },
+        { "compile_options": "-lang cpp -es 1 -mcd 16 -single -ftz 0" },
+        { "filename": "foo.dsp" },
+        { "maths.lib/author": "GRAME" },
+        { "maths.lib/copyright": "GRAME" },
+        { "maths.lib/license": "LGPL with exception" },
+        { "maths.lib/name": "Faust Math Library" },
+        { "maths.lib/version": "2.5" },
+        { "name": "tes" },
+        { "oscillators.lib/name": "Faust Oscillator Library" },
+        { "oscillators.lib/version": "0.3" },
+        { "platform.lib/name": "Generic Platform Library" },
+        { "platform.lib/version": "0.2" },
+        { "signals.lib/name": "Faust Signal Routing Library" },
+        { "signals.lib/version": "0.1" }
+    ],
+    "ui": [ 
+        {
+            "type": "vgroup",
+            "label": "Oscillator",
+            "items": [ 
+                {
+                    "type": "hslider",
+                    "label": "freq",
+                    "shortname": "freq",
+                    "address": "/Oscillator/freq",
+                    "meta": [
+                        { "unit": "Hz" }
+                    ],
+                    "init": 600,
+                    "min": 20,
+                    "max": 2000,
+                    "step": 1
+                },
+                {
+                    "type": "hslider",
+                    "label": "volume",
+                    "shortname": "volume",
+                    "address": "/Oscillator/volume",
+                    "meta": [
+                        { "unit": "dB" }
+                    ],
+                    "init": 0,
+                    "min": -96,
+                    "max": 0,
+                    "step": 0.1
+                }
+            ]
+        }
+    ]
+}
+</code></pre><p>JSON 文件可以用 <code>faust -json foo.dsp</code> 命令生成，也可以用 <code>JSONUI</code> UI 架构以编程方式生成（见下一节 <a href="#some-useful-ui-classes-and-tools-for-developers">开发者常用的一些 UI 类和工具</a>）。</p><p>以下介绍可直接使用的 UI 类，然后是供开发者代码使用的类：</p><h4 id="gui-builders">GUI 构建器</h4><p>以下是主要的 GUI 类：</p><ul><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/GTKUI.h" rel="noreferrer noopener">GTKUI</a> 类使用 <a href="https://www.gtk.org" rel="noreferrer noopener">GTK</a> 工具包创建具有恰当分组布局的图形用户界面</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/QTUI.h" rel="noreferrer noopener">QTUI</a> 类使用 <a href="https://www.qt.io" rel="noreferrer noopener">QT</a> 工具包创建具有恰当分组布局的图形用户界面</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/JuceUI.h" rel="noreferrer noopener">JuceUI</a> 类使用 <a href="https://juce.com" rel="noreferrer noopener">JUCE</a> 框架创建具有恰当分组布局的图形用户界面</li></ul><h4 id="non-gui-controllers">非 GUI 控制器</h4><p>以下是主要的非 GUI 控制器类：</p><ul><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/OSCUI.h" rel="noreferrer noopener">OSCUI</a> 类实现双向 OSC 远程控制</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/httpdUI.h" rel="noreferrer noopener">httpdUI</a> 类使用 <a href="https://www.gnu.org/software/libmicrohttpd/" rel="noreferrer noopener">libmicrohttpd</a> 库实现 HTTP 远程控制，把 HTTP 服务器嵌入应用内部。随后在浏览器中打开特定 URL，就会出现 GUI，可以控制远程的应用或插件。连接是双向的</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/MIDIUI.h" rel="noreferrer noopener">MIDIUI</a> 类实现双向 MIDI 控制，后文会详细说明</li></ul><h4 id="some-useful-ui-classes-and-tools-for-developers">开发者常用的一些 UI 类和工具</h4><p>一些有用的 UI 类和工具可以在开发者代码中复用：</p><ul><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/MapUI.h" rel="noreferrer noopener">MapUI</a> 类在 UI 条目与其<em>标签</em>、<em>shortname</em> 或<em>路径</em>之间建立映射，并提供 <code>setParamValue/getParamValue</code> API 来设置和获取它们的值。它使用辅助类 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/PathBuilder.h" rel="noreferrer noopener">PathBuilder</a> 创建指向 UI 层次中叶子的完整 shortname 和 pathname。注意条目路径以 <em>/group1/group2/.../label</em> 字符串的形式编码 UI 层次，是区分标签可能相同但在 UI 树中位置不同的控件的方式。使用 shortname（构造时保证不会冲突）是访问条目的另一种方式。<code>setParamValue/getParamValue</code> API 接受<em>标签</em>、<em>shortname</em> 或<em>路径</em>作为描述控件的方式，但使用 shortname 或路径更安全</li><li>扩展的 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/APIUI.h" rel="noreferrer noopener">APIUI</a> 提供与 <code>MapUI</code> 类似的 <code>setParamValue/getParamValue</code> API，并带有处理加速度计/陀螺仪类元数据的附加方法</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/MetaDataUI.h" rel="noreferrer noopener">MetaDataUI</a> 类解码所有目前支持的元数据，可用于获取它们的值</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/JSONUI.h" rel="noreferrer noopener">JSONUI</a> 类允许生成给定 DSP 的 JSON 描述</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/JSONUIDecoder.h" rel="noreferrer noopener">JSONUIDecoder</a> 类用于解码 DSP JSON 描述并实现其 <code>buildUserInterface</code> 和 <code>metadata</code> 方法</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/FUI.h" rel="noreferrer noopener">FUI</a> 类允许把参数状态保存为文本文件并从中恢复</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/SoundUI.h" rel="noreferrer noopener">SoundUI</a> 类与关联的 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/Soundfile.h" rel="noreferrer noopener">Soundfile</a> 类用于实现 <code>soundfile</code> 基元，加载所描述的音频资源（通常是音频文件）。声音文件的路径可以是绝对路径，但要注意在创建 <code>SoundUI</code> 实例时可以设置相对路径机制，以便用更灵活的策略加载声音文件。提供了几种具体实现，分别使用：<ul><li><a href="http://www.mega-nerd.com/libsndfile/" rel="noreferrer noopener">libsndfile</a>（配合 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/LibsndfileReader.h" rel="noreferrer noopener">LibsndfileReader.h</a> 文件）</li><li><a href="https://juce.com" rel="noreferrer noopener">JUCE</a>（配合 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/JuceReader.h" rel="noreferrer noopener">JuceReader.h</a> 文件）</li><li><a href="https://miniaud.io" rel="noreferrer noopener">miniaudio</a>，一个以<em>纯头文件</em>形式提供的跨平台库，更容易嵌入（配合 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/MiniaudioReader.h" rel="noreferrer noopener">MiniaudioReader.h</a> 文件）</li></ul></li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/ControlSequenceUI.h" rel="noreferrer noopener">ControlSequenceUI</a> 类与关联的 <code>OSCSequenceReader</code> 类允许使用 OSC 时间标签格式按时间控制参数变化。控件值的变化必须与音频渲染混合处理。参见 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/sndfile.cpp" rel="noreferrer noopener">sndfile.cpp</a> 用例。</li><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/ValueConverter.h" rel="noreferrer noopener">ValueConverter</a> 文件包含若干映射类，用于把用户界面值（例如输出 0 到 1 之间值的 GUI 滑块）映射为 Faust 值（例如 20 到 2000 之间的 <code>vslider</code>），使用线性/log/exp 刻度。它还提供处理 <code>[acc:a b c d e]</code> 和 <code>[gyr:a b c d e]</code> <a href="http://localhost:8000/manual/syntax/#sensors-control-metadatas" rel="noreferrer noopener">传感器控制元数据</a>的类。</li></ul><h4 id="multi-controller-and-synchronization">多控制器与同步</h4><p>一个给定的 DSP 完全可以同时被多个 UI 类控制，它们都会读写同一批 DSP 控制内存区。下面是一个示例代码，使用 <code>GTKUI</code> 架构的 GUI，以及使用 <code>OSCUI</code> 的 OSC 控制：</p><pre><code>...
+GTKUI gtk_interface(name, &amp;argc, &amp;argv);
+DSP-&gt;buildUserInterface(&amp;gtk_interface);
+OSCUI osc_interface(name, argc, argv);
+DSP-&gt;buildUserInterface(&amp;osc_interface);
+...
+</code></pre><p>由于多个控制器<em>访问</em>相同的值，你可能需要同步它们，例如让 GUI 滑块或按钮<em>反映</em>在接收时已被 <code>OSCUI</code> 控制器改变的状态，或者在滑块、按钮等 UI 条目被移动时<em>发送</em> OSC 消息。</p><p>这种同步机制在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/GUI.h" rel="noreferrer noopener">GUI</a> 类中以通用方式实现。首先 <code>uiItemBase</code> 类被定义为可同步的基本内存区，然后按组放入一个列表，从不同 GUI 实例控制同一 zone。<code>uiItemBase::modifyZone</code> 方法用于在接收时改变 <code>uiItemBase</code> 状态，<code>uiItemBase::reflectZone</code> 会被调用来反映新值，可以改变控件布局，或发送消息（OSC、MIDI……）。</p><p>所有需要使用该同步机制的类都必须继承 <code>GUI</code> 类，后者在运行时把它们全部保存在静态类变量 <code>GUI::fGuiList</code> 中。前面用到的 <code>GTKUI</code> 和 <code>OSCUI</code> 类就是如此。注意使用 <code>GUI</code> 类时，<strong>必须在代码中定义下面两个静态类变量，</strong>（在项目的一个 <code>.cpp</code> 文件中定义一次），如下例所示：</p><pre><code>// 全局变量
+std::list&lt;GUI*&gt; GUI::fGuiList;
+ztimedmap GUI::gTimedZoneMap;
+</code></pre><p>最后，必须定期调用静态同步方法 <code>GUI::updateAllGuis()</code>，例如在应用或插件的事件管理循环中，或在周期性定时器中。这通常实现在 <code>GUI::run</code> 方法中，必须调用它来启动事件或消息处理。</p><p>在下面的代码中，先调用 <code>OSCUI::run</code> 方法开始处理 OSC 消息，然后调用阻塞的 <code>GTKUI::run</code> 方法，它打开 GUI 窗口，关闭窗口后应用才最终结束：</p><pre><code class="language-faust">...
+// 启动 OSC 消息处理
+osc_interface.run();
+// 最后启动 GTK GUI，因为它会阻塞直到打开的窗口被关闭
+gtk_interface.run()
+...
+</code></pre><h2 id="dsp-architecture-modules">DSP 架构模块</h2><p>Faust 编译器生成一个 DSP 模块，其格式取决于所选后端：使用 <code>-lang cpp</code> 选项时是 C++ 类，使用 <code>-lang c</code> 选项时是带关联函数的数据结构，使用 <code>-lang llvm</code> 选项时是 LLVM IR 模块，使用 <code>-lang wasm</code> 选项时是 WebAssembly 二进制模块，使用 <code>-lang interp</code> 选项时是字节码流……如此等等。</p><h3 id="the-base-dsp-class">基类 <code>dsp</code></h3><p>在 C++ 中，生成的类派生自基类 <code>dsp</code>：</p><pre><code class="language-faust">class dsp {
+
+public:
+
+    dsp() {}
+    virtual ~dsp() {}
+
+    /* 返回音频输入的数量 */
+    virtual int getNumInputs() = 0;
+
+    /* 返回音频输出的数量 */
+    virtual int getNumOutputs() = 0;
+
+    /**
+     * 用实例相关的调用触发 ui_interface 参数
+     * 去调用 'openTabBox'、'addButton'、'addVerticalSlider' 等，以构建 UI。
+     *
+     * @param ui_interface - 用户界面构建器
+     */
+    virtual void buildUserInterface(UI* ui_interface) = 0;
+
+    /* 返回该实例当前使用的采样率 */
+    virtual int getSampleRate() = 0;
+
+    /**
+     * 全局初始化，调用以下方法：
+     * - 静态类 'classInit'：静态表初始化
+     * - 'instanceInit'：常量和实例状态初始化
+     *
+     * @param sample_rate - 以 Hz 为单位的采样率
+     */
+    virtual void init(int sample_rate) = 0;
+
+    /**
+     * 初始化实例状态
+     *
+     * @param sample_rate - 以 Hz 为单位的采样率
+     */
+    virtual void instanceInit(int sample_rate) = 0;
+
+    /**
+     * 初始化实例常量状态
+     *
+     * @param sample_rate - 以 HZ 为单位的采样率
+     */
+    virtual void instanceConstants(int sample_rate) = 0;
+
+    /* 初始化默认控制参数值 */
+    virtual void instanceResetUserInterface() = 0;
+
+    /* 初始化实例状态（如延迟线……），但保留控制参数值 */
+    virtual void instanceClear() = 0;
+
+    /**
+     * 返回该实例的副本。
+     *
+     * @return 成功时返回实例的副本，否则返回空指针。
+     */
+    virtual dsp* clone() = 0;
+
+    /**
+     * 用实例相关的调用触发 Meta* 参数，去调用 'declare'
+     * （键、值）元数据。
+     *
+     * @param m - Meta* 元数据接收者
+     */
+    virtual void metadata(Meta* m) = 0;
+
+    /**
+     * DSP 实例计算，需按连续的输入/输出音频缓冲区多次调用。
+     *
+     * @param count - 要计算的帧数
+     * @param inputs - 输入音频缓冲区，作为非交错的数组
+     * FAUSTFLOAT 样本（float、double 或 quad）
+     * @param outputs - 输出音频缓冲区，作为非交错的数组
+     * FAUSTFLOAT 样本（float、double 或 quad）
+     *
+     */
+    virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) = 0;
+
+    /**
+     * 供子类使用的另一种 DSP 实例计算方法，多一个 `date_usec` 参数，
+     * 该参数指定音频缓冲区中第一个样本的时间戳。
+     *
+     * @param date_usec - 音频驱动给出的微秒级时间戳。按约定，时间戳为 -1 表示「不做时间戳转换」，
+     * 此时事件已带有以帧表示的时间戳。
+     * @param count - 要计算的帧数
+     * @param inputs - 输入音频缓冲区，作为非交错的数组
+     * FAUSTFLOAT 样本（float、double 或 quad）
+     * @param outputs - 输出音频缓冲区，作为非交错的数组
+     * FAUSTFLOAT 样本（float、double 或 quad）
+     *
+     */
+    virtual void compute(double date_usec, int count, 
+                         FAUSTFLOAT** inputs, 
+                         FAUSTFLOAT** outputs) = 0;
+};
+</code></pre><p>dsp 类是 Faust 架构设计的核心：</p><ul><li><code>getNumInputs</code>、<code>getNumOutputs</code> 方法提供信号处理器的信息</li><li><code>buildUserInterface</code> 方法用给定的 UI 类对象创建用户界面（见后文）</li><li><code>init</code> 方法（以及 <code>instanceInit</code>、<code>instanceConstants</code> 等更专用的方法）用给定的采样率初始化 dsp 对象，该采样率通常来自音频架构。<code>init</code> 方法调用 <code>classInit</code> 分配静态表，调用 <code>instanceInit</code> 分配给定实例</li><li><code>compute</code> 方法由音频架构调用来执行实际的音频处理。它接收要处理的样本数 <code>count</code>，以及非交错 float/double 样本的 <code>inputs</code> 和 <code>outputs</code> 数组，这些数组由音频驱动按所需的 dsp 输入输出声道数（由 <code>getNumInputs</code> 和 <code>getNumOutputs</code> 给出）分配和处理</li><li><code>clone</code> 方法可用于复制实例</li><li><code>metadata(Meta* m)</code> 方法可以用 <code>Meta</code> 对象调用，以解码实例的全局元数据（见下一节）</li></ul><p><strong>创建多个 DSP 实例时，推荐的做法是只调用一次 <code>classInit</code> 完成静态表分配，然后对每个 DSP 实例调用 <code>instanceInit</code></strong>。</p><p>（注意 <code>FAUSTFLOAT</code> 标签通常被定义为样本的实际类型：要么 <code>float</code>，要么 <code>double</code>，例如在代码中用 <code>#define FAUSTFLOAT float</code>）。</p><p>对于给定的已编译 DSP 程序，编译器会生成 <code>dsp</code> 的子类 <code>mydsp</code> 并填充各个方法。对于 LLVM IR、Cmajor 或解释器后端这类动态生成代码的后端，生成的代码（LLVM 模块、Cmajor 模块或字节码流）实际上由一些额外的 C++ 胶水代码包装。这一步包装产生 <code>llvm_dsp</code> 类型的对象（定义在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/llvm-dsp.h" rel="noreferrer noopener">llvm-dsp.h</a> 文件中）、<code>cmajorpatch_dsp</code> 类型的对象（定义在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/cmajorpatch-dsp.h" rel="noreferrer noopener">cmajorpatch-dsp.h</a> 文件中）或 <code>interpreter_dsp</code> 类型的对象（定义在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/interpreter-dsp.h" rel="noreferrer noopener">interpreter-dsp.h</a> 文件中），可直接配合 <code>UI</code> 和 <code>audio</code> C++ 类使用（就像 C++ 生成的类一样）。见下面的类图：</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/DSPHierarchy.png"/></p><h3 id="changing-the-generated-class-name">修改生成类的名称</h3><p>默认情况下生成的类是 <code>mydsp</code>，但可以用 <code>-cn new_name</code> 选项修改。注意架构类中出现的任何 <code>mydsp</code> 字符串都会被自动替换为 <code>new_name</code> 字符串。因此架构文件的其他部分也可以利用 <code>-cn new_name</code> 重命名功能做适配。</p><h3 id="global-dsp-metadata">全局 DSP 元数据</h3><p>Faust 中所有全局元数据声明都以 <code>declare</code> 开头，后跟一个键和一个字符串。例如：</p><pre><code class="language-faust">declare name "Noise";
+</code></pre><p>可以指定整个 Faust 程序的名称。</p><p>与普通注释不同，元数据声明会出现在 Faust 编译器生成的 C++ 代码中，例如以下 Faust 程序：</p><pre><code class="language-faust">declare name "NoiseProgram";
+declare author "MySelf";
+declare copyright "MyCompany";
+declare version "1.00";
+declare license "BSD"; 
+
+import("stdfaust.lib");
+
+process = no.noise;
+</code></pre><p>会在 dsp 类中生成如下 C++ <code>metadata(Meta* m)</code> 方法：</p><pre><code>void metadata(Meta* m) 
+{ 
+    m-&gt;declare("author", "MySelf");
+    m-&gt;declare("compile_options", "-lang cpp -es 1 -scal -ftz 0");
+    m-&gt;declare("copyright", "MyCompany");
+    m-&gt;declare("filename", "metadata.dsp");
+    m-&gt;declare("license", "BSD");
+    m-&gt;declare("name", "NoiseProgram");
+    m-&gt;declare("noises.lib/name", "Faust Noise Generator Library");
+    m-&gt;declare("noises.lib/version", "0.0");
+    m-&gt;declare("version", "1.00");
+}
+</code></pre><p>它与以下虚 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/meta.h" rel="noreferrer noopener">Meta</a> 类的某个实现类的实例交互：</p><pre><code class="language-faust">struct Meta
+{
+    virtual ~Meta() {};
+    virtual void declare(const char* key, const char* value) = 0;
+};
+</code></pre><p>它们属于三种不同类型的全局元数据：</p><ul><li>像 <code>compile_options</code> 或 <code>filename</code> 这样的元数据是自动生成的</li><li>像 <code>author</code> 或 <code>copyright</code> 这样的元数据属于 <a href="manual-syntax.html#global-metadata">全局元数据</a></li><li>像 <code>noises.lib/name</code> 这样的元数据属于 <a href="manual-syntax.html#function-metadata">函数元数据</a></li></ul><p><code>Meta</code> 类的专用子类可以实现，以解码给定用例所需的键/值对。</p><h3 id="macro-construction-of-dsp-components">用宏构建 DSP 组件</h3><p>Faust 程序的规格通常完全用语言本身描述。但在某些特定情况下，开发<em>分离的 DSP 组件</em>并把它们<em>组合</em>成更复杂的设置可能更有用。</p><p>由于利用大量现成的 UI 和音频架构文件很重要，最好保持相同的 <code>dsp</code> API，这样更复杂的 DSP 也能以常规方式受控并渲染音频。扩展的 DSP 类通常会继承 <code>dsp</code> 基类，并重写或补全其部分 API。</p><h4 id="dsp-decorator-pattern">DSP 装饰器模式</h4><p>首先定义了 <code>dsp_decorator</code> 类，它是根 <code>dsp</code> 类的子类。它遵循装饰器设计模式，可以静态或动态地给单个对象添加行为。</p><p>作为装饰器模式的示例，<code>timed_dsp</code> 类可以为给定 DSP 装饰出采样精确的控制能力，<code>mydsp_poly</code> 类则用于复音 DSP，后文会说明。</p><h4 id="combining-dsp-components">组合 DSP 组件</h4><p>在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/dsp-combiner.h" rel="noreferrer noopener">dsp-combiner.h</a> 头文件中还定义了几个用于宏构建的类（根 dsp 类的子类），提供含五个算子的构建 API：</p><ul><li><code>dsp_sequencer</code> 类按顺序组合两个 DSP，前提是第一个 DSP 的输出数量等于第二个 DSP 的输入数量。它通过组合两个分离的 C++ 对象，在某种程度上模拟语言中的<em>顺序</em>（即 <code>:</code>）算子。它的 <code>buildUserInterface</code> 方法被重载，把两个 DSP 归入一个标签页分组，使两个 DSP 的控制参数可以分别控制。它的 <code>compute</code> 方法被重载，按顺序调用每个 DSP 的 <code>compute</code>，把第一个 DSP 产生的中间输出缓冲区作为传给第二个 DSP 的输入。</li><li><code>dsp_parallelizer</code> 类并行组合两个 DSP。它通过组合两个分离的 C++ 对象，在某种程度上模拟语言中的<em>并行</em>（即 <code>,</code>）算子。它的 <code>getNumInputs/getNumOutputs</code> 方法被重载，把结果 DSP 的输入/输出正确表示为两个组合 DSP 之和。它的 <code>buildUserInterface</code> 方法被重载，把两个 DSP 归入一个标签页分组，使两个 DSP 的控制参数可以分别控制。它的 <code>compute</code> 方法被重载，调用每个 DSP 的 compute，每个 DSP 从方法参数中取用并产生各自数量的输入/输出音频缓冲区。</li></ul><p>其余三个组合算子（<em>拆分</em>、<em>合并</em>、<em>递归</em>）也按这种方法实现，最终形成一套用常见五个算子组合 DSP 的 C++ API：<code>createDSPSequencer</code>、<code>createDSPParallelizer</code>、<code>createDSPSplitter</code>、<code>createDSPMerger</code>、<code>createDSPRecursiver</code>，可在 C++ 层动态组合 DSP。</p><p>最后，<code>createDSPCrossfader</code> 工具允许在两个 DSP 模块之间交叉淡化。交叉淡化参数（一个滑块）控制两个模块输出之间的混合比例。当 <em>Crossfade = 1</em> 时只计算第一个 DSP，当 <em>Crossfade = 0</em> 时只计算第二个 DSP，否则两个 DSP 都计算并混合。</p><p>注意这种装饰或组合多个 C++ <code>dsp</code> 对象的思路完全可以在特定项目中扩展，以满足其他需求：例如静音由多个 DSP 组成的图中的某一部分。但请记住，保持 <code>dsp</code> API 才能利用所有现成的基于 <code>UI</code> 和 <code>audio</code> 的类。</p><h4 id="example-of-a-smoothing-decorator">平滑装饰器示例</h4><p><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/proxy-dsp.h" rel="noreferrer noopener">smoothing_dsp</a> 是一个现成的装饰器，它包装任意 <code>dsp</code> 实例并透明地平滑其输入控制器。它在构造时接受平滑时长（秒），并通过编译期策略在内置的线性（<code>smoothing_dsp_linear</code>）或指数（<code>smoothing_dsp_exp</code>）斜坡之间选择。按钮和复选框按开关处理，跳过平滑，直接跳到新值。</p><p>典型用法：</p><pre><code class="language-faust">// 用 20 ms 线性平滑包装一个已有 dsp。
+::dsp* raw = new mydsp();
+::dsp* linSmooth = new smoothing_dsp_linear(raw, 0.020);
+
+// 或用 50 ms 的指数平滑。
+::dsp* raw = new mydsp();
+::dsp* expSmooth= new smoothing_dsp_exp(raw, 0.050);
+</code></pre><p>由于该装饰器仍然暴露 <code>dsp</code> API，它本身也可以用上面的组合器辅助函数组合（例如平滑 <code>dsp_parallelizer</code> 的一个分支），可与任何现有 UI 类复用，并能在被包装的 DSP 之外安全克隆。</p><h3 id="sample-accurate-control">采样精确控制</h3><p>DSP 音频语言在处理控制事件和生成音频样本时通常涉及多个时间维度。出于性能原因，系统为样本生成保持独立的音频速率，为异步消息处理保持控制速率。</p><p>音频流大多按块计算，控制在块之间更新。为平滑控制参数的变化，一些语言选择在块之间对参数值插值。</p><p>某些情况下控制与音频渲染的交错可以更细，一些语言干脆选择在样本级交错控制和样本计算。</p><p>尽管 Faust 语言允许描述样本级算法（例如递归滤波器等），Faust 生成的 DSP 通常按块计算。底层音频架构反复把固定大小的缓冲区交给 DSP 的 <code>compute</code> 方法，由它消耗和产生音频样本。</p><h4 id="control-to-dsp-link">控制与 DSP 的连接</h4><p>在当前版本的 Faust 生成代码中，控制接口与 DSP 代码之间的主要连接点就是一个内存区。对于控制输入，架构层不断把值写入该区，DSP 代码在 <code>compute</code> 方法开头对其<em>采样</em>，并在整个调用期间使用相同的值。由于这种简单的控制/DSP 连接机制，DSP 代码使用的是<em>最新的值</em>。</p><p>控制输出同理，<code>compute</code> 方法中的 DSP 代码可能多次向同一内存区写入值，方法结束时控制架构层只会看到<em>最后一个值</em>。</p><p>虽然这种行为对大多数用例足够，但某些特定用法需要以采样精确的时间处理完整的控制值流。例如，保留所有控制消息并在其精确时间位置处理它们，对正确的 MIDI 时钟同步至关重要。</p><h4 id="timestamped-control">带时间戳的控制</h4><p>第一步是把架构控制机制扩展为处理<em>带时间戳的</em>控制事件。注意这要求底层事件控制层支持该能力。例如原生 MIDI API 通常能提供带时间戳的 MIDI 消息。</p><p>下一步是把所有带时间戳的事件保存在一个<em>按时间排序</em>的数据结构中，由控制侧持续写入，音频侧读取。</p><p>最后，样本计算必须考虑所有排队的控制事件，并在相继的时间点上正确改变 DSP 控制状态。</p><h4 id="slices-based-dsp-computation">基于切片的 DSP 计算</h4><p>有了带时间戳的控制消息，就可以在音频流上精确的样本索引处改变控制值。<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/timed-dsp.h" rel="noreferrer noopener">timed_dsp</a> 类中实现了一种通用的<em>基于切片</em>的 DSP 渲染策略。</p><p>用环形缓冲区把带时间戳的事件流从控制层传给 DSP 层。例如 MIDI 控制的情况，每收到一条 MIDI 消息，环形缓冲区就写入一个包含以样本（或微秒）表示的时间戳和实际 MIDI 消息的对。在 DSP 的 compute 方法中会读取环形缓冲区，处理上一个音频块期间收到的所有消息。</p><p>由于控制值可能在同一个音频块内多次变化，DSP 的 compute 不能只以总帧数和完整的输入/输出音频缓冲区调用一次。必须采用以下策略：</p><ul><li>定义若干切片，相邻切片之间的控制值会发生变化</li><li>时间戳相同的所有控制值一起处理，并改变 DSP 控制的内部状态。切片计算到下一个控制参数时间戳，直到到达给定音频块的末尾</li><li>下图中，帧数为 c1、c2、c3、c4 的四个切片依次连同音频输入/输出缓冲区的相应部分交给 DSP 的 compute 方法。切片之间会改变控制值（此处依次以 <em>[v1,v2,v3]</em>、<em>[v1,v3]</em>、<em>[v1]</em>、<em>[v1,v2,v3]</em>集合出现）</li></ul><p><img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/compute_slices.png"/></p><p>由于当前块中使用的是上一个音频块的带时间戳控制消息，控制消息总是带有一个音频缓冲区的延迟。</p><p>注意这种基于切片的计算模型总是可以直接在底层音频层之上实现，而不依赖 <code>timed_dsp</code> 封装类。</p><h4 id="audio-driver-timestamping">音频驱动时间戳</h4><p>有些音频驱动能获取音频缓冲区中第一个样本的时间戳，并会用正确的时间戳调用 DSP 的替代函数 <code>compute(double date_usec, int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs)</code>。按约定，时间戳 -1 表示 <em>「不做时间戳转换」，事件已带有以帧表示的时间戳</em>（使用帧时间戳的驱动示例见 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/audio/jack-dsp.h" rel="noreferrer noopener">jackaudio_midi</a>）。<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/timed-dsp.h" rel="noreferrer noopener">timed_dsp</a> 封装类是实际使用时间戳信息的 DSP 类示例。</p><h4 id="typical-use-case">典型用例</h4><p>典型的 Faust 程序可以使用 <em>MIDI 时钟</em>命令信号来计算每分钟节拍数（BPM）信息，以满足所需的任何同步需求。</p><p>下面是一个简单示例：生成一个正弦波，其频率由 MIDI 时钟流控制，并在收到 MIDI start/stop 消息时启动或停止：</p><pre><code class="language-faust">import("stdfaust.lib");
+
+// 方波信号（1/0），改变状态
+// 在每次收到时钟时
+clocker = checkbox("MIDI clock[midi:clock]");
+
+// 由 ON/OFF 按钮控制
+// 用 MIDI start/stop 消息
+play = checkbox("On/Off [midi:start][midi:stop]");
+
+// 检测前沿
+front(x) = x != x';
+
+// 统计一秒内的峰值数
+freq(x) = (x-x@ma.SR) : + ~ _;
+
+process = os.osc(8*freq(front(clocker))) * play;
+</code></pre><p>每收到一组 24 个时钟，时间位置正好前进一拍。因此<em>绝对不能丢失任何 MIDI 时钟消息</em>，而基于内存区、采用<em>使用最后收到的控制值语义</em>的标准模型并不适用。</p><p>需要由采样精确机制控制的 DSP 对象，可以简单地用 <code>timed_dsp</code> 类按以下方式装饰：</p><pre><code class="language-faust">dsp* sample_accurate_dsp = new timed_dsp(DSP);
+</code></pre><p>注意所述的采样精确 MIDI 时钟同步模型目前只能在输入层使用。由于控制接口与 DSP 代码之间是基于内存区的简单连接点，输出控件（如条形图）无法生成控制值流。<em>因此用当前方法无法实现可靠的 MIDI 时钟发生器。</em></p><h3 id="polyphonic-instruments">复音乐器</h3><p>完全可以直接在 Faust 中编写复音乐器。如果必须描述不同声部之间非常复杂的信号交互，也需要这样做。</p><p>但由于所有声部都会一直被计算，对于更简单或需求更有限的情况，这种做法的 CPU 开销可能过大。这种情况下，更好的方案是在一个 Faust DSP 程序中描述单个声部，再在外部用一个专门感知复音乐器的架构文件把若干声部组合起来。此外，这个特殊架构文件还负责动态声部分配以及 MIDI 消息的解码与映射。</p><h4 id="polyphonic-ready-dsp-code">支持复音的 DSP 代码</h4><p>按约定，具备复音能力的 Faust 架构文件期望找到名为 <code>freq</code>、<code>gain</code> 和 <code>gate</code> 的控制参数。可以在源代码中加入 <code>declare nvoices "8";</code> 这类带有所需声部数的元数据行。</p><p>在 MIDI 控制的情况下，freq 参数（应为频率）会由 MIDI 音符号自动计算，gain（应为 0 到 1 之间的值）由力度计算，gate 由按键按下或抬起事件计算。因此 gate 可以作为任何包络发生器的触发信号等。</p><h4 id="using-the-mydsp_poly-class">使用 mydsp_poly 类</h4><p>单个声部必须由一个 Faust DSP 程序描述，然后用 <code>mydsp_poly</code> 类组合若干声部，创建支持复音的 DSP：</p><ul><li><a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/poly-dsp.h" rel="noreferrer noopener">poly-dsp.h</a> 文件包含 <code>mydsp_poly</code> 类的定义，用于把 DSP 声部包装进复音架构。该类维护一个 <code>dsp*</code> 对象数组，管理动态声部分配、MIDI 消息解码与映射、所有运行中声部的混合，以及在某个声部输出电平降到给定阈值以下时停止该声部</li><li>作为 DSP 的子类，<code>mydsp_poly</code> 类重定义了 <code>buildUserInterface</code> 方法。按约定，所有已分配声部都归入一个全局的 <em>Polyphonic</em> 标签页分组。第一个标签页包含一个 <em>Voices</em> 分组，这是一个主控式组件，用于同时改变所有声部的参数，带有一个用于停止运行中声部的 <em>Panic</em> 按钮，随后是每个声部一个标签页。这样图形用户界面组件就能反映这个新复音 DSP 的多声部结构</li></ul><p><img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/poly_ui.png"/></p><p>生成的复音 DSP 对象可以照常使用，连接到所需的音频驱动，也可能连接 <code>OSCUI</code>、<code>httpdUI</code> 等其他 <code>UI</code> 控制对象。有了新的 UI 层次视图，就可以通过 OSC 完整控制每个单独声部及其控制参数，也可以通过主控组件控制所有声部。</p><p>以下 OSC 消息分别对应同一份 DSP 代码正常编译或复音模式编译的结果（此处只显示部分 OSC 层次）：</p><pre><code class="language-faust">// 单声部模式
+
+/Organ/vol f -10.0
+/Organ/pan f 0.0
+</code></pre><pre><code class="language-faust">// 复音模式
+
+/Polyphonic/Voices/Organ/pan f 0.0
+/Polyphonic/Voices/Organ/vol f -10.0
+...
+/Polyphonic/Voice1/Organ/vol f -10.0
+/Polyphonic/Voice1/Organ/pan f 0.0
+...
+/Polyphonic/Voice2/Organ/vol f -10.0
+/Polyphonic/Voice2/Organ/pan f 0.0
+</code></pre><p>注意，为节省屏幕空间，分配声部数少于 8 时使用 <code>/Polyphonic/VoiceX/xxx</code> 语法，声部更多时使用 <code>/Polyphonic/VX/xxx</code> 语法。</p><p>复音乐器分配需要传入用于一个声部的 DSP、所需声部数、动态声部分配状态，以及控制是否显示分离声部的分组状态：</p><pre><code class="language-faust">dsp* poly = new mydsp_poly(dsp, 2, true, true);
+</code></pre><p>在以下代码中注意，复音乐器可以在 MIDI 控制上下文之外使用，这样所有声部都会一直运行，并可以由 OSC 消息等控制：</p><pre><code class="language-faust">dsp* poly = new mydsp_poly(dsp, 8, false, true);
+</code></pre><h4 id="polyphonic-instrument-with-a-global-output-effect">带全局输出效果的复音乐器</h4><p>复音乐器可以配合输出效果使用。把该效果放在主 Faust 代码中通常不是好主意，因为它会为每个声部实例化，效率很低。</p><p>约定用 DSP 源代码中的 <code>effect = some effect;</code> 行来声明。实际的效果定义必须从 DSP 代码中提取，单独编译，然后用前面介绍的 <code>dsp_sequencer</code> 类把复音 DSP 与一个唯一的全局效果按顺序连接，类似这样：</p><pre><code class="language-faust">dsp* poly = new dsp_sequencer(new mydsp_poly(dsp, 2, true, true), new effect());
+</code></pre><p><img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/poly_ui_effect1.png"/>| <img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/poly_ui_effect2.png"/></p><p>一些辅助类也可以自动处理 DSP 的声部与效果部分，例如基类 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/poly-dsp.h#L897" rel="noreferrer noopener">dsp_poly_factory</a>，以及使用 LLVM 后端时的具体实现 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/poly-llvm-dsp.h" rel="noreferrer noopener">llvm_dsp_poly_factory</a>、使用解释器后端时的 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/poly-interpreter-dsp.h" rel="noreferrer noopener">interpreter_dsp_poly_factory</a>。</p><h4 id="controlling-the-polyphonic-instrument">控制复音乐器</h4><p><code>mydsp_poly</code> 类也做好了 MIDI 控制的准备（作为实现 <code>midi</code> 接口的类），可以响应 <code>keyOn/keyOff</code> 和 <code>pitchWheel</code> 事件。其他 MIDI 控制参数可以直接以 MIDI 元数据的形式加入 DSP 源代码。要接收 MIDI 事件，在对 <code>MidiUI</code> 对象调用 <code>buildUserInterface</code> 时，所创建的复音 DSP 会被自动加入 <code>midi_handler</code> 对象。</p><h4 id="deploying-the-polyphonic-instrument">部署复音乐器</h4><p>若干架构文件和相关脚本已更新以支持复音乐器：</p><p>以 OSX 为例，脚本 <code>faust2caqt foo.dsp</code> 可用于创建复音 CoreAudio/QT 应用。所需声部数可以在 <code>nvoices</code> 元数据中声明，或用附加参数 <code>-nvoices num</code> 修改。MIDI 控制用 <code>-midi</code> 参数启用。</p><p>已分配声部数可以在运行时用 <code>-nvoices</code> 参数改变默认值（例如 <code>./foo -nvoices 16</code>）。其他几个脚本也按相同约定做了适配。</p><pre><code class="language-faust">faustcaqt -midi -noices 12 inst.dsp -effect effect.dsp
+</code></pre><p>使用时应把 <code>inst.dsp</code> 和 <code>effect.dsp</code> 放在同一文件夹中，且乐器的输出数量与效果的输入数量一致。</p><p>支持复音的 <code>faust2xx</code> 脚本随后会编译复音乐器和效果，按顺序组合它们，并创建可直接使用的 DSP。</p><h3 id="custom-memory-manager">自定义内存管理器</h3><p>在 C 和 C++ 中，Faust 编译器生成一个类（C 中为结构体），实例化它以创建每个 DSP 实例。标准生成模型产生扁平的内存布局，所有字段（标量和数组）在生成的代码中直接连续排列（按编译顺序）。因此 DSP 分配在单个内存块上，根据用例在栈或堆上。以下 DSP 程序：</p><pre><code class="language-faust">import("stdfaust.lib");
+
+gain = hslider("gain", 0.5, 0, 1, 0.01);
+feedback = hslider("feedback", 0.8, 0, 1, 0.01);
+
+echo(del_sec, fb, g) = + ~ de.delay(50000, del_samples) * fb * g
+with {
+    del_samples = del_sec * ma.SR;
+};
+
+process = echo(1.6, 0.6, 0.7), echo(0.7, feedback, gain);
+</code></pre><p>将具有扁平内存布局：</p><pre><code class="language-faust">int IOTA0;
+int fSampleRate;
+float fConst0;
+int iConst1;
+float fRec0[65536];
+FAUSTFLOAT fHslider0;
+FAUSTFLOAT fHslider1;
+int iConst2;
+float fRec1[65536];
+</code></pre><p>因此标量 <code>fHslider0</code> 和 <code>fHslider1</code> 分别对应增益和反馈控制器。<code>iConst1</code> 和 <code>iConst2</code> 值通常在初始化时用动态给出的 <code>fSampleRate</code> 值计算一次，之后在 DSP 循环中使用。<code>fRec0</code> 和 <code>fRec1</code> 数组用于递归延迟，最后用共享的 <code>IOTA0</code> 索引访问它们。</p><p>以下是生成的 <code>compute</code> 函数：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* input1 = inputs[1];
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    float fSlow0 = float(fHslider0) * float(fHslider1);
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        fRec0[IOTA0 &amp; 65535] 
+            = float(input0[i0]) + 0.419999987f * fRec0[(IOTA0 - iConst1) &amp; 65535];
+        output0[i0] = FAUSTFLOAT(fRec0[IOTA0 &amp; 65535]);
+        fRec1[IOTA0 &amp; 65535] 
+            = float(input1[i0]) + fSlow0 * fRec1[(IOTA0 - iConst2) &amp; 65535];
+        output1[i0] = FAUSTFLOAT(fRec1[IOTA0 &amp; 65535]);
+        IOTA0 = IOTA0 + 1;
+    }
+}
+</code></pre><h4 id="the-mem-option">-mem 选项</h4><p>在内存被划分为若干访问时间不同的块（如 SRAM、SDRAM 等）的音频板卡上，改进 DSP 内存模型就变得很重要，使 DSP 结构不再分配在单个内存块上，而可以分布到所有可用块上。思路是把 DSP 中频繁访问的部分放在快速内存中，其他部分放在慢速内存中。</p><p>首先要指出，标量值通常留在 DSP 结构中，关键是把大的数组缓冲区（示例中的 <code>fRec0</code> 和 <code>fRec1</code>）移到独立的内存块中。可以用 <code>-mem (--memory-manager)</code> 选项生成适配的代码。对前面的 DSP 程序，现在生成如下 C++ 代码：</p><pre><code class="language-faust">int IOTA0;
+int fSampleRate;
+float fConst0;
+int iConst1;
+float* fRec0;
+FAUSTFLOAT fHslider0;
+FAUSTFLOAT fHslider1;
+int iConst2;
+float* fRec1;
+</code></pre><p><code>fRec0</code> 和 <code>fRec1</code> 两个数组变成指针，将在其他地方分配。</p><p>需要外部内存管理器与 DSP 代码交互。提出的模型做以下事情：</p><ul><li>第一步，生成的 C++ 代码会告知内存分配器它的需求：1) 分离内存区的数量，2) 它们的大小，3) 访问特征，例如每帧计算中读和写的次数。这是通过生成一个额外的静态 <code>memoryInfo</code> 方法完成的</li><li>有了完整信息，内存管理器就可以确定分配所有分离内存区的最佳策略</li><li>还会生成一个额外的 <code>memoryCreate</code> 方法来分配各个分离区</li><li>还会生成一个额外的 <code>memoryDestroy</code> 方法来释放各个分离区</li></ul><p>以下是内存管理器的 API：</p><pre><code class="language-faust">struct dsp_memory_manager {
+
+    enum MemType { kInt32, kInt32_ptr, kFloat, kFloat_ptr, kDouble, kDouble_ptr, kQuad, 
+        kQuad_ptr, kFixedPoint, kFixedPoint_ptr, kObj, kObj_ptr, kSound, kSound_ptr };
+
+    virtual ~dsp_memory_manager() {}
+
+    /**
+    * 告知内存管理器预期的内存区数量。
+    * @param count - 内存区数量
+    */
+    virtual void begin(size_t count);
+
+    /**
+     * 向内存管理器提供给定内存区的信息。
+     * @param name - 内存区名称
+     * @param type - 内存区类型（在 MemType 中）
+     * @param size - 内存区的大小，以该内存类型的单位计
+     * @param size_bytes - 内存区的字节大小
+     * @param reads - 计算一帧时对该区的读访问次数
+     * @param writes - 计算一帧时对该区的写访问次数
+     */
+    virtual void info(const char* name, MemType type, size_t size, size_t size_bytes, size_t reads, size_t writes) {}
+
+    /**
+    * 告知内存管理器所有内存区都已描述完毕，
+    * 以便可能开始「计算最佳分配策略」的步骤。
+    */
+    virtual void end();
+
+    /**
+    * 分配一个内存区。
+    * @param size - 内存区的字节大小
+    */
+    virtual void* allocate(size_t size) = 0;
+
+    /**
+    * 销毁一个内存区。
+    * @param ptr - 待释放的内存区指针
+    */
+    virtual void destroy(void* ptr) = 0;
+
+};
+</code></pre><p><code>mydsp</code> 类中增加了一个类静态成员，稍后要用具体的内存管理器设置它：</p><pre><code class="language-faust">dsp_memory_manager* mydsp::fManager = nullptr;
+</code></pre><p>生成的 C++ 代码现在包含新的 <code>memoryInfo</code> 方法，它与内存管理器交互：</p><pre><code>static void memoryInfo() {
+    fManager-&gt;begin(3);
+    // mydsp
+    fManager-&gt;info("mydsp", dsp_memory_manager::kObj_ptr, 0, 60, 9, 1);
+    // fRec0
+    fManager-&gt;info("fRec0", dsp_memory_manager::kFloat_ptr, 65536, 262144, 2, 1);
+    // fRec1
+    fManager-&gt;info("fRec1", dsp_memory_manager::kFloat_ptr, 65536, 262144, 2, 1);
+    fManager-&gt;end();
+}
+</code></pre><p><code>begin</code> 方法先生成，用于告知需要三个分离的内存区。然后连续生成三次 <code>info</code> 方法调用，一次针对 DSP 对象本身，一次针对每个递归延迟数组。随后调用 <code>end</code> 方法结束内存布局描述，让内存管理器准备实际的分配。</p><p>注意完整的内存布局信息也可以通过 <code>-json</code> 选项生成的 JSON 文件获得，以便架构机制静态使用（即在编译时）。对前面的程序，内存布局部分为：</p><pre><code class="language-faust">"memory_layout": [
+    { "name": "mydsp", "type": "kObj_ptr", "size": 0, "size_bytes": 60, "read": 9, "write": 1 },
+    { "name": "IOTA0", "type": "kInt32", "size": 1, "size_bytes": 4, "read": 7, "write": 1 },
+    { "name": "fSampleRate", "type": "kInt32", "size": 1, "size_bytes": 4, "read": 0, "write": 0 },
+    { "name": "fConst0", "type": "kFloat", "size": 1, "size_bytes": 4, "read": 0, "write": 0 },
+    { "name": "iConst1", "type": "kInt32", "size": 1, "size_bytes": 4, "read": 1, "write": 0 },
+    { "name": "fRec0", "type": "kFloat_ptr", "size": 65536, "size_bytes": 262144, "read": 2, "write": 1 },
+    { "name": "iConst2", "type": "kInt32", "size": 1, "size_bytes": 4, "read": 1, "write": 0 },
+    { "name": "fRec1", "type": "kFloat_ptr", "size": 65536, "size_bytes": 262144, "read": 2, "write": 1 }
+]
+</code></pre><p>最后生成 <code>memoryCreate</code> 和 <code>memoryDestroy</code> 方法。<code>memoryCreate</code> 方法请求内存管理器分配 <code>fRec0</code> 和 <code>fRec1</code> 缓冲区：</p><pre><code>void memoryCreate() {
+    fRec0 = static_cast&lt;float*&gt;(fManager-&gt;allocate(262144));
+    fRec1 = static_cast&lt;float*&gt;(fManager-&gt;allocate(262144));
+}
+</code></pre><p><code>memoryDestroy</code> 方法请求内存管理器销毁它们：</p><pre><code>virtual memoryDestroy() {
+    fManager-&gt;destroy(fRec0);
+    fManager-&gt;destroy(fRec1);
+}
+</code></pre><p>还会生成额外的静态 <code>create/destroy</code> 方法：</p><pre><code>static mydsp* create() {
+    mydsp* dsp = new (fManager-&gt;allocate(sizeof(mydsp))) mydsp();
+    dsp-&gt;memoryCreate();
+    return dsp;
+}
+
+static void destroy(dsp* dsp) {
+    static_cast&lt;mydsp*&gt;(dsp)-&gt;memoryDestroy();
+    static_cast&lt;mydsp*&gt;(dsp)-&gt;~mydsp();
+    fManager-&gt;destroy(dsp);
+}
+</code></pre><p>注意，将使用所谓的 <a href="https://en.wikipedia.org/wiki/Placement_syntax" rel="noreferrer noopener">C++ placement new</a> 来分配 DSP 对象本身。</p><h4 id="static-tables">静态表</h4><p>当源代码中使用 <code>rdtable</code> 或 <code>rwtable</code> 基元时，C++ 类会包含一个由该类所有实例共享的表。默认情况下，这个表生成为静态类数组，因此分配在应用的全局静态内存中。</p><p>以以下 DSP 示例为例：</p><pre><code class="language-faust">process = (waveform {10,20,30,40,50,60,70}, %(7)~+(3) : rdtable), 
+          (waveform {1.1,2.2,3.3,4.4,5.5,6.6,7.7}, %(7)~+(3) : rdtable);
+</code></pre><p>以下是默认模式下生成的代码：</p><pre><code>...
+static int itbl0mydspSIG0[7];
+static float ftbl1mydspSIG1[7];
+
+class mydsp : public dsp {
+  ...  
+  public:
+    ...
+    static void classInit(int sample_rate) {
+        mydspSIG0* sig0 = newmydspSIG0();
+        sig0-&gt;instanceInitmydspSIG0(sample_rate);
+        sig0-&gt;fillmydspSIG0(7, itbl0mydspSIG0);
+        mydspSIG1* sig1 = newmydspSIG1();
+        sig1-&gt;instanceInitmydspSIG1(sample_rate);
+        sig1-&gt;fillmydspSIG1(7, ftbl1mydspSIG1);
+        deletemydspSIG0(sig0);
+        deletemydspSIG1(sig1);
+    }
+
+    virtual void init(int sample_rate) {
+        classInit(sample_rate);
+        instanceInit(sample_rate);
+    }
+
+    virtual void instanceInit(int sample_rate) {
+        instanceConstants(sample_rate);
+        instanceResetUserInterface();
+        instanceClear();
+    }
+    ...
+}
+</code></pre><p><code>itbl0mydspSIG0</code> 和 <code>ftbl1mydspSIG1</code> 表是静态全局数组，在 <code>classInit</code> 方法中初始化。架构代码通常调用 <code>init</code> 方法，后者再调用 <code>classInit</code>，以同时初始化类级数据和 DSP 实例本身。</p><p>在 <code>-mem</code> 模式下，生成的 C++ 代码现在为：</p><pre><code>...
+static int* itbl0mydspSIG0 = 0;
+static float* ftbl1mydspSIG1 = 0;
+
+class mydsp : public dsp {
+  ...  
+  public:
+    ...
+    static dsp_memory_manager* fManager;
+
+    static void classInit(int sample_rate) {
+        mydspSIG0* sig0 = newmydspSIG0(fManager);
+        sig0-&gt;instanceInitmydspSIG0(sample_rate);
+        itbl0mydspSIG0 = static_cast&lt;int*&gt;(fManager-&gt;allocate(28));
+        sig0-&gt;fillmydspSIG0(7, itbl0mydspSIG0);
+        mydspSIG1* sig1 = newmydspSIG1(fManager);
+        sig1-&gt;instanceInitmydspSIG1(sample_rate);
+        ftbl1mydspSIG1 = static_cast&lt;float*&gt;(fManager-&gt;allocate(28));
+        sig1-&gt;fillmydspSIG1(7, ftbl1mydspSIG1);
+        deletemydspSIG0(sig0, fManager);
+        deletemydspSIG1(sig1, fManager);
+    }
+
+    static void classDestroy() {
+        fManager-&gt;destroy(itbl0mydspSIG0);
+        fManager-&gt;destroy(ftbl1mydspSIG1);
+    }
+
+    virtual void init(int sample_rate) {}
+
+    virtual void instanceInit(int sample_rate) {
+        instanceConstants(sample_rate);
+        instanceResetUserInterface();
+        instanceClear();
+    }
+    ...
+}
+</code></pre><p><code>itbl0mydspSIG0</code> 和 <code>ftbl1mydspSIG1</code> 两个表生成为静态全局指针。<code>classInit</code> 方法使用 <code>fManager</code> 对象来分配表。还会生成新的 <code>classDestroy</code> 方法来释放这些表。</p><p><strong>最后，<code>init</code> 方法现在是空的。由于静态表现在可能分配在堆上，架构代码必须调用一次 <code>classInit</code> 和 <code>classDestroy</code> 来管理这些表的分配与释放，并用 <code>instanceInit</code> 初始化每个 DSP 实例。</strong></p><p><code>memoryInfo</code> 方法现在具有以下形式，包含 <code>itbl0mydspSIG0</code> 和 <code>ftbl1mydspSIG1</code> 两个表：</p><pre><code>static void memoryInfo() {
+    fManager-&gt;begin(6);
+    // mydspSIG0
+    fManager-&gt;info("mydspSIG0", dsp_memory_manager::kObj_ptr, 0, 4, 0, 0);
+    // itbl0mydspSIG0
+    fManager-&gt;info("itbl0mydspSIG0", dsp_memory_manager::kInt32_ptr, 0, 28, 1, 0);
+    // mydspSIG1
+    fManager-&gt;info("mydspSIG1", dsp_memory_manager::kObj_ptr, 0, 4, 0, 0);
+    // ftbl1mydspSIG1
+    fManager-&gt;info("ftbl1mydspSIG1", dsp_memory_manager::kFloat_ptr, 0, 28, 1, 0);
+    // mydsp
+    fManager-&gt;info("mydsp", dsp_memory_manager::kObj_ptr, 0, 28, 0, 0);
+    // iRec0
+    fManager-&gt;info("iRec0", dsp_memory_manager::kInt32_ptr, 2, 8, 3, 2);
+    fManager-&gt;end();
+}
+</code></pre><h4 id="defining-and-using-a-custom-memory-manager">定义并使用自定义内存管理器</h4><p>用 <code>-mem</code> 选项编译时，客户端代码必须针对自己的需求定义一个适配的 <code>memory_manager</code> 类。自定义内存管理器通过继承 <code>dsp_memory_manager</code> 抽象基类，并定义 <code>begin</code>、<code>end</code>、<code>ìnfo</code>、<code>allocate</code> 和 <code>destroy</code> 方法实现。下面是一个简单的堆分配管理器示例（实现在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/dummy-mem.cpp" rel="noreferrer noopener">dummy-mem.cpp</a> 架构文件中）：</p><pre><code class="language-faust">struct malloc_memory_manager : public dsp_memory_manager {
+
+    virtual void begin(size_t count)
+    {
+        // 待办：使用 count
+    }
+
+    virtual void end()
+    {
+        // 待办：开始对内存区列表排序，以便准备
+        // 为 memoryCreate() 中后续的分配做准备
+    }
+
+    virtual void info(const char* name, MemType type, size_t size, size_t size_bytes, size_t reads, size_t writes) 
+    {
+        // 待办：使用 size_bytes、reads 和 writes
+        // 以便为分配准备内存布局
+    }
+
+    virtual void* allocate(size_t size)
+    {
+        // 待办：改进分配方案，以便
+        // 把 info 中收集的信息纳入考虑
+        return calloc(1, size);
+    }
+
+    virtual void destroy(void* ptr)
+    {
+        // 待办：改进分配方案，以便
+        // 把 info 中收集的信息纳入考虑
+        free(ptr);
+    }
+
+};
+</code></pre><p>专用的 <code>malloc_memory_manager</code> 类现在可以这样使用：</p><pre><code>// 分配一个全局静态的自定义内存管理器
+static malloc_memory_manager gManager;
+...
+// 在 DSP 类上设置全局自定义内存管理器
+mydsp::fManager = &amp;gManager;
+...
+void foo()
+{
+    // 让内存管理器获取所有子容器、
+    // 静态表、DSP 和数组的信息，并准备内存分配
+    mydsp::memoryInfo();
+
+    // 在分配任何 DSP 之前执行一次，以分配静态表
+    mydsp::classInit(44100);
+
+    // 在 'create' 方法内部使用「placement new」和 'memoryCreate'
+    dsp* DSP = mydsp::create();
+
+    // 初始化 DSP 实例
+    DSP-&gt;instanceInit(44100);
+
+    ...
+    ... // 使用 DSP
+    ...
+
+    // 'memoryDestroy' 和内存管理器的 'destroy' 用于释放内存
+    mydsp::destroy(DSP);
+}
+...
+// 在最后一个 DSP 被销毁后执行一次
+mydsp::classDestroy();
+</code></pre><p>注意客户端代码仍可以选择用常规 C++ <code>new/delete</code> 运算符分配和释放 DSP 实例：</p><pre><code>// 分配一个全局静态的自定义内存管理器
+static malloc_memory_manager gManager;
+...
+// 在 DSP 类上设置全局自定义内存管理器
+mydsp::fManager = &amp;gManager;
+...
+void foo()
+{
+    // 让内存管理器获取所有子容器、
+    // 静态表、DSP 和数组的信息，并准备内存分配
+    mydsp::memoryInfo();
+
+    // 在分配任何 DSP 之前执行一次，以分配静态表
+    mydsp::classInit(44100);
+
+    // 使用常规 C++ new
+    dsp* DSP = new mydsp();
+
+    /// 分配内部缓冲区
+    DSP-&gt;memoryCreate();
+
+    // 初始化 DSP 实例
+    DSP-&gt;instanceInit(44100);
+
+    ...
+    ... // 使用 DSP
+    ...
+
+    // 释放内部缓冲区
+    DSP-&gt;memoryDestroy();
+
+    // 使用常规 C++ delete
+    delete DSP;
+}
+
+// 在最后一个 DSP 被销毁后执行一次
+mydsp::classDestroy();
+</code></pre><p>甚至可以在栈上这样使用：</p><pre><code class="language-faust">// 分配一个全局静态的自定义内存管理器
+static malloc_memory_manager gManager;
+...
+// 在 DSP 类上设置全局自定义内存管理器
+mydsp::fManager = &amp;gManager;
+...   
+void foo()
+{
+    // 让内存管理器获取所有子容器、
+    // 静态表、DSP 和数组的信息，并准备内存分配
+    mydsp::memoryInfo();
+
+    // 在分配任何 DSP 之前执行一次，以分配静态表
+    mydsp::classInit(44100);
+
+    // 在栈上分配
+    mydsp DSP;
+
+    // 分配内部缓冲区
+    DSP.memoryCreate();
+
+    // 初始化 DSP 实例
+    DSP.instanceInit(44100);
+
+    ...
+    ... // 使用 DSP
+    ...
+
+    // 释放内部缓冲区
+    DSP.memoryDestroy();
+}
+...
+// 在最后一个 DSP 被销毁后执行一次
+mydsp::classDestroy();
+...
+</code></pre><p>通过改进这个 <code>malloc_memory_manager</code> 示例，可以开发更复杂的自定义内存分配器，甚至可以定义实时内存分配器……等等。<a href="https://www.rebeltech.org" rel="noreferrer noopener">OWL</a> 架构文件使用了自定义的 <a href="https://github.com/RebelTechnology/OwlProgram/blob/feature/faust-mem-priority/FaustSource/owl.cpp" rel="noreferrer noopener">OwlMemoryManager</a>。</p><h4 id="using-an-hybrid-staticdynamic-custom-memory-manager">使用静态/动态混合的自定义内存管理器</h4><p>内存管理器的 <code>begin/info/end</code> 方法主要面向动态内存管理器使用，后者在运行时为给定 DSP 决定最合适的分配策略。但这并不总是可行，甚至不一定可取。因此完全可以在编译时用 JSON 中的 <code>memory_layout</code> 描述预定义分配方案（例如用 #pragma 指令预留一个全局内存段）。这种情况下，运行时只需实现并使用 <code>allocate/destroy</code> 方法，在这个编译期预定义的段内实际分配和释放内存区域。这种做法实现了静态/动态混合的内存管理策略，把编译期布局规划与运行时内存控制结合起来。</p><h4 id="allocating-several-dsp-instances">分配多个 DSP 实例</h4><p>在多实例方案中，所有实例共享的静态数据结构必须在开始时用 <code>mydsp::classInit</code> 分配一次，并在最后用 <code>mydsp::classDestroy</code> 释放。然后各实例用 <code>mydsp::create()</code> 分配，用 <code>mydsp::destroy()</code> 释放，也可以直接使用常规 <code>new/delete</code>，或如前所述使用栈分配。</p><h3 id="measuring-the-dsp-cpu">测量 DSP 的 CPU 占用</h3><p><code>faust/dsp/dsp-bench.h</code> 文件中定义的 <code>measure_dsp</code> 类可以装饰给定的 DSP 对象，测量其 <code>compute</code> 方法的 CPU 消耗。结果以 Mframes/sec（每秒处理的百万帧数，越高越好）和 44,1 kHz 下的 DSP CPU 占用给出。Mframes/sec 值与样本大小和声道数无关，因此可以在同一 DSP 的 <code>float</code> 和 <code>-double</code> 版本之间直接比较。以下是一个使用它的 C++ 代码示例：</p><pre><code>static void bench(dsp* dsp, const string&amp; name)
+{
+    // 初始化 DSP
+    dsp-&gt;init(48000);
+    // 用 'measure_dsp' 装饰器包装它
+    measure_dsp mes(dsp, 1024, 5);
+    // 测量 CPU 占用
+    mes.measure();
+    // 返回 Mframes/sec 和相对标准偏差值
+    std::pair&lt;double, double&gt; res = mes.getStats(); 
+    // 打印统计信息
+    cout &lt;&lt; name &lt;&lt; " Mframes/sec : " &lt;&lt; res.first 
+         &lt;&lt; " " &lt;&lt; "(DSP CPU % : " &lt;&lt; (mes.getCPULoad() * 100) &lt;&lt; ")" &lt;&lt; endl;
+}
+</code></pre><p>定义在 <code>faust/dsp/dsp-optimizer.h</code> 文件中的 <code>dsp_optimizer</code> 类使用 libfaust 库及其 LLVM 后端，动态编译用不同 Faust 编译器选项生成的 DSP 对象，然后测量它们的 DSP CPU 占用。以下是一个使用它的 C++ 代码示例：</p><pre><code class="language-faust">static void dynamic_bench(const string&amp; in_filename)
+{
+    // 用要编译的 in_filename 初始化 DSP 优化器
+    dsp_optimizer optimizer(in_filename, 0, nullptr, "", 1024);
+    // 找出最佳参数组合
+    tuple&lt;double, double, double, TOption&gt; res = optimizer.findOptimizedParameters();
+    cout &lt;&lt; "Best value for '" &lt;&lt; in_filename &lt;&lt; "' is : " 
+         &lt;&lt; get&lt;0&gt;(res) &lt;&lt; " Mframes/sec with ";
+    for (size_t i = 0; i &lt; get&lt;3&gt;(res).size(); i++) {
+        cout &lt;&lt; get&lt;3&gt;(res)[i] &lt;&lt; " ";
+    }
+    cout &lt;&lt; endl;
+}
+</code></pre><p>这个类通常可用在帮助开发者找出给定 DSP 程序最佳 Faust 编译参数的工具中，例如 <a href="manual-optimizing.html#faustbench">faustbench</a> 和 <a href="manual-optimizing.html#faustbench-llvm">faustbench-llvm</a> 工具。</p><h3 id="the-proxy-dsp-class">Proxy DSP 类</h3><p>某些情况下，DSP 可能运行在应用或插件上下文之外，例如另一台机器上。<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/proxy-dsp.h" rel="noreferrer noopener">proxy_dsp</a> 类可以创建一个代理 DSP，它最终会（例如通过基于 OSC 或 HTTP 的机制）连接到真正的 DSP，并反映其行为。它使用前面介绍的 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/JSONUIDecoder.h" rel="noreferrer noopener">JSONUIDecoder</a> 类。这样 <code>proxy_dsp</code> 就可以代替真正的 DSP 使用，并用标准 <code>buildUserInterface</code> 连接 <code>UI</code> 控制器来控制它。</p><p><a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/benchmark" rel="noreferrer noopener">faust-osc-controller</a> 工具通过在真正的 DSP 与其代理之间建立 OSC 连接来演示这一能力。<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/proxy-osc-dsp.h" rel="noreferrer noopener">proxy_osc_dsp</a> 类实现了一个专用的 <code>proxy_dsp</code>，使用 <a href="http://liblo.sourceforge.net" rel="noreferrer noopener">liblo</a> OSC 库连接可被 OSC 控制的 DSP（该 DSP 使用 <code>OSCUI</code> 类，运行在其他上下文或机器上）。随后 <code>faust-osc-controller</code> 程序 <a href="https://github.com/grame-cncm/faust/blob/master-dev/tools/benchmark/faust-osc-controller.cpp" rel="noreferrer noopener">创建一个真正的 GUI</a>（此例中使用 <code>GTKUI</code>），并用它控制远程 DSP 并反映其动态状态（例如从真实 DSP 返回的 vumeter 值）。</p><h2 id="embedded-platforms">嵌入式平台</h2><p>近年来，Faust 面向越来越多的嵌入式平台，用于实时音频信号处理应用。现在它可用于为微控制器（如 <a href="https://www.espressif.com/en" rel="noreferrer noopener">ESP32</a>、<a href="https://www.pjrc.com/teensy/" rel="noreferrer noopener">Teensy</a>、<a href="https://www.crowdsupply.com/ohmic/pico-dsp" rel="noreferrer noopener">Pico DSP</a> 和 <a href="https://www.electro-smith.com/daisy" rel="noreferrer noopener">Daisy</a>）、移动平台、嵌入式 Linux 系统（如 <a href="https://bela.io" rel="noreferrer noopener">Bela</a> 和 <a href="https://faustdoc.grame.fr/manual/architectures/elk audio dsp" rel="noreferrer noopener">Elk</a>）、数字信号处理器（DSP）等编程。已经开发了专用的 <a href="https://ifc20.sciencesconf.org/321070" rel="noreferrer noopener">架构文件和 faust2xx 脚本</a>。</p><h4 id="metadata-naming-convention">元数据命名约定</h4><p>当设备没有屏幕或屏幕有限、无法显示 GUI，而有一组物理旋钮或按钮要连接到控制参数时，会引出一个特定问题。标准做法是在控件标签中使用元数据。由于<em>在所有设备上使用同一个 DSP 文件</em>始终是理想目标，因此定义了一套通用元数据：</p><ul><li><strong>[switch:N]</strong>用于连接开关按钮</li><li><strong>[knob:N]</strong>用于连接旋钮</li></ul><p>很可能需要逐步定义并标准化一套更广泛的元数据。</p><h4 id="using-the-uim-compiler-option">使用 <code>-uim</code> 编译选项</h4><p>在能力有限的嵌入式平台上，使用 <code>-uim</code> 选项会有帮助。这样生成的 C/C++ 代码会包含 DSP 若干特性的静态描述，例如<em>音频输入/输出</em>数量、<em>控件输入/输出</em>数量，以及<em>用控制参数（标签、DSP 字段名、init、min、max、step）填充的宏</em>，这些宏可以在架构文件中按各种需求实现。</p><p>例如以下 DSP 程序：</p><pre><code class="language-faust">process = _*hslider("Gain", 0, 0, 1, 0.01) : hbargraph("Vol", 0, 1);
+</code></pre><p>用 <code>faust -uim foo.dsp</code> 编译后，会给出这个附加段落：</p><pre><code>#ifdef FAUST_UIMACROS
+
+#define FAUST_FILE_NAME "foo.dsp"
+#define FAUST_CLASS_NAME "mydsp"
+#define FAUST_INPUTS 1
+#define FAUST_OUTPUTS 1
+#define FAUST_ACTIVES 1
+#define FAUST_PASSIVES 1
+
+FAUST_ADDHORIZONTALSLIDER("Gain", fHslider0, 0.0f, 0.0f, 1.0f, 0.01f);
+FAUST_ADDHORIZONTALBARGRAPH("Vol", fHbargraph0, 0.0f, 1.0f);
+
+#define FAUST_LIST_ACTIVES(p) \
+    p(HORIZONTALSLIDER, Gain, "Gain", fHslider0, 0.0f, 0.0f, 1.0f, 0.01f) \
+
+#define FAUST_LIST_PASSIVES(p) \
+    p(HORIZONTALBARGRAPH, Vol, "Vol", fHbargraph0, 0.0, 0.0f, 1.0f, 0.0) \
+
+#endif
+</code></pre><p>随后可以实现 <code>FAUST_ADDHORIZONTALSLIDER</code> 或 <code>FAUST_ADDHORIZONTALBARGRAPH</code> 宏，分别对 <code>Gain", fHslider0, 0.0f, 0.0f, 1.0f, 0.01f</code> 和 <code>"Vol", fHbargraph0, 0.0f, 1.0f</code> 参数做任何需要的事。</p><p>更复杂的 <code>FAUST_LIST_ACTIVES</code> 和 <code>FAUST_LIST_PASSIVES</code> 宏可用于对每个条目调用任意 <code>p</code> 函数（在架构文件其他地方定义）。<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/minimal-static.cpp" rel="noreferrer noopener">minimal-static.cpp</a> 文件演示了这一特性。</p><h2 id="developing-a-new-architecture-file">开发新的架构文件</h2><p>开发新的架构文件通常意味着编写一个通用文件，随后用 Faust 编译器的实际输出填充它，从而产生一个完整、可直接编译为独立应用或插件的文件。</p><p>要使用的架构在编译时用 <code>-a</code> 选项指定。它必须包含 Faust 编译器会识别、并用生成代码替换的 <code>&lt;&lt;includeIntrinsic&gt;&gt;</code> 和 <code>&lt;&lt;includeclass&gt;&gt;</code> 行。下面是一个 C++ 示例，但同样的逻辑也适用于产生文本输出的其他语言，如 C、Cmajor、Rust 或 Dlang。</p><p>看看架构文件夹中的 <code>minimal.cpp</code> 示例：</p><pre><code>#include &lt;iostream&gt;
+
+#include "faust/gui/PrintUI.h"
+#include "faust/gui/meta.h"
+#include "faust/audio/dummy-audio.h"
+#include "faust/dsp/one-sample-dsp.h"
+
+// 将被编译器生成的 C++ 类替换
+
+&lt;&lt;includeIntrinsic&gt;&gt;
+
+&lt;&lt;includeclass&gt;&gt;
+
+int main(int argc, char* argv[])
+{
+    mydsp DSP;
+    std::cout &lt;&lt; "DSP size: " &lt;&lt; sizeof(DSP) &lt;&lt; " bytes\n";
+
+    // 激活 UI，此处只打印控件路径
+    PrintUI ui;
+    DSP.buildUserInterface(&amp;ui);
+
+    // 分配音频驱动以渲染 5 个 512 帧的缓冲区
+    dummyaudio audio(5);
+    audio.init("Test", static_cast&lt;dsp*&gt;(&amp;DSP));
+
+    // 渲染缓冲区……
+    audio.start();
+    audio.stop();
+}
+</code></pre><p>调用 <code>faust -a minimal.cpp noise.dsp -o noise.cpp</code> 将生成可直接编译的 <code>noise.cpp</code> 文件：</p><pre><code>/* ------------------------------------------------------------
+name: "noise"
+由 Faust 2.28.0 生成的代码（https://faust.grame.fr）
+编译选项：-lang cpp -scal -ftz 0
+------------------------------------------------------------ */
+
+#ifndef  __mydsp_H__
+#define  __mydsp_H__
+
+#include &lt;iostream&gt;
+
+#include "faust/gui/PrintUI.h"
+#include "faust/gui/meta.h"
+#include "faust/audio/dummy-audio.h"
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif 
+
+#include &lt;algorithm&gt;
+#include &lt;cmath&gt;
+
+#ifndef FAUSTCLASS 
+#define FAUSTCLASS mydsp
+#endif
+
+#ifdef __APPLE__ 
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+class mydsp : public dsp {
+
+    private:
+
+        FAUSTFLOAT fHslider0;
+        int iRec0[2];
+        int fSampleRate;
+
+    public:
+
+        void metadata(Meta* m) { 
+            m-&gt;declare("filename", "noise.dsp");
+            m-&gt;declare("name", "noise");
+            m-&gt;declare("noises.lib/name", "Faust Noise Generator Library");
+            m-&gt;declare("noises.lib/version", "0.0");
+        }
+
+        virtual int getNumInputs() {
+            return 0;
+        }
+        virtual int getNumOutputs() {
+            return 1;
+        }
+
+        static void classInit(int sample_rate) {
+        }
+
+        virtual void instanceConstants(int sample_rate) {
+            fSampleRate = sample_rate;
+        }
+
+        virtual void instanceResetUserInterface() {
+            fHslider0 = FAUSTFLOAT(0.5f);
+        }
+
+        virtual void instanceClear() {
+            for (int l0 = 0; (l0 &lt; 2); l0 = (l0 + 1)) {
+                iRec0[l0] = 0;
+            }
+        }
+
+        virtual void init(int sample_rate) {
+            classInit(sample_rate);
+            instanceInit(sample_rate);
+        }
+        virtual void instanceInit(int sample_rate) {
+            instanceConstants(sample_rate);
+            instanceResetUserInterface();
+            instanceClear();
+        }
+
+        virtual mydsp* clone() {
+            return new mydsp();
+        }
+
+        virtual int getSampleRate() {
+            return fSampleRate;
+        }
+
+        virtual void buildUserInterface(UI* ui_interface) {
+            ui_interface-&gt;openVerticalBox("noise");
+            ui_interface-&gt;addHorizontalSlider("Volume", &amp;fHslider0, 0.5, 0.0, 1.0, 0.001);
+            ui_interface-&gt;closeBox();
+        }
+
+        virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+            FAUSTFLOAT* output0 = outputs[0];
+            float fSlow0 = (4.65661287e-10f * float(fHslider0));
+            for (int i = 0; (i &lt; count); i = (i + 1)) {
+                iRec0[0] = ((1103515245 * iRec0[1]) + 12345);
+                output0[i] = FAUSTFLOAT((fSlow0 * float(iRec0[0])));
+                iRec0[1] = iRec0[0];
+            }
+        }
+
+};
+
+int main(int argc, char* argv[])
+{
+    mydsp DSP;
+    std::cout &lt;&lt; "DSP size: " &lt;&lt; sizeof(DSP) &lt;&lt; " bytes\n";
+
+    // 激活 UI，此处只打印控件路径
+    PrintUI ui;
+    DSP.buildUserInterface(&amp;ui);
+
+    // 分配音频驱动以渲染 5 个 512 帧的缓冲区
+    dummyaudio audio(5);
+    audio.init("Test", &amp;DSP);
+
+    // 渲染缓冲区……
+    audio.start();
+    audio.stop();
+}
+
+</code></pre><p>通常需要使用多个文件来连接音频层、控制器层，可能还有其他（MIDI、OSC……）。其中一个是主文件，并包含其他文件。可以加上 <code>-i</code> 选项，把 <code>#include "faust/xxx/yyy"</code> 头文件（所有以 <code>faust</code> 开头的文件）真正内联，产生单个自包含的唯一文件。然后必须编写 <code>faust2xxx</code> 脚本，把 Faust 编译步骤与 C++ 编译步骤（可能还有其他步骤）串起来。参见 <a href="#developing-a-faust2xx-script">开发 faust2xx 脚本</a> 一节。</p><h4 id="adapting-the-generated-dsp">适配生成的 DSP</h4><p>开发适配的 C++ 文件时，可能需要把生成的 <code>mydsp</code> 类（<code>faust/dsp/dsp.h</code> 头文件中定义的 <code>dsp</code> 基类的子类）<em>聚合</em>到特定类中，因此需要写类似下面的代码：</p><pre><code class="language-faust">class my_class : public base_interface {
+
+    private:
+
+        mydsp fDSP;
+
+    public:
+
+        my_class()
+        {
+            // 执行特定操作
+        }
+
+        virtual ~my_class()
+        {
+            // 执行特定操作
+        }
+
+        // 执行特定操作
+
+        void my_compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs)
+        {
+            // 执行特定操作
+
+            // 调用 fDSP 的 'compute'
+            fDSP.compute(count, inputs, outputs);
+        }
+
+        // 执行特定操作
+};
+</code></pre><p>或者<em>派生子类</em>并<em>扩展它</em>，写出类似这样的代码：</p><pre><code class="language-faust">class my_class : public mydsp {
+
+    private:
+
+        // 执行特定操作
+
+    public:
+
+        my_class()
+        {
+            // 执行特定操作
+        }
+
+        virtual ~my_class()
+        {
+            // 执行特定操作
+        }
+
+        // 重写 'compute' 方法
+        void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs)
+        {
+            // 执行特定操作
+
+            // 调用继承来的 'compute'
+            mydsp::compute(count, inputs, outputs);
+        }
+
+        // 执行特定操作
+};
+</code></pre><p>或者用 <a href="https://en.wikipedia.org/wiki/Decorator_pattern" rel="noreferrer noopener">装饰器模式</a><em>装饰</em>一个 DSP 对象，该模式已在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/dsp.h" rel="noreferrer noopener">此文件</a>中实现，可以像这样派生子类：</p><pre><code class="language-faust">class my_decorator : public decorator_dsp {
+
+    private:
+
+        // 执行特定操作
+
+    public:
+
+        my_decorator(dsp* dsp):decorator_dsp(dsp)
+        {
+            // 执行特定操作
+        }
+
+
+        virtual ~my_class()
+        {
+            // 执行特定操作
+        }
+
+        // 其中一些方法的实现
+
+        // 重写 'instanceClear' 方法
+        void instanceClear()
+        {
+            // 执行特定操作
+
+            // 调用继承来的 'instanceClear'
+            decorator_dsp::instanceClear();
+        }
+
+        // 重写 'compute' 方法
+        void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs)
+        {
+            // 执行特定操作
+
+            // 调用继承来的 'compute'
+            decorator_dsp::compute(count, inputs, outputs);
+        }
+
+        // 执行特定操作
+};
+
+// 装饰一个具体实例
+my_decorator DSP = new my_decorator(new mydsp());
+...
+
+</code></pre><h4 id="developing-new-ui-architectures">开发新的 UI 架构</h4><p>对于真正全新的架构，必须继承 <code>UI</code> 基类、<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/DecoratorUI.h" rel="noreferrer noopener">GenericUI</a> 辅助类或 <code>GUI</code> 类（前面已介绍）。注意 <a href="#some-useful-ui-classes-and-tools-for-developers">开发者常用的一些 UI 类</a> 一节中介绍的许多类也可以继承，或用额外代码加以充实。</p><h4 id="developing-new-audio-architectures">开发新的音频架构</h4><p>必须继承 <code>audio</code> 基类，并为给定音频硬件实现每个方法。某些情况下音频驱动可以适应所需的 DSP 输入/输出数量（例如 <a href="https://jackaudio.org" rel="noreferrer noopener">JACK</a> 音频系统可以打开任意数量的虚拟音频端口）。但一般来说，硬件音频输入/输出数量未必与 DSP 完全一致。让音频驱动适应这种情况是它的责任。<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/dsp-adapter.h" rel="noreferrer noopener">dsp_adapter</a> 这个 <code>dsp</code> 装饰器在这种情况下会有帮助。</p><h4 id="developing-a-new-soundfile-loader">开发新的声音文件加载器</h4><p>声音文件在 DSP 程序中用 <a href="manual-syntax.html#soundfile-primitive">soundfile 基元</a>定义。下面是一个简单的 DSP 程序，使用单个 <em>tango.wav</em> 音频文件并播放到结尾：</p><pre><code class="language-faust">process = 0,_~+(1):soundfile("sound[url:{'tango.wav'}]",2):!,!,
+</code></pre><p>编译出的 C++ 类具有以下结构：</p><pre><code class="language-faust">class mydsp : public dsp {
+
+    private:
+
+    Soundfile* fSoundfile0;
+    int iRec0[2];
+    int fSampleRate;
+....
+</code></pre><p>其中包含 <code>Soundfile* fSoundfile0;</code> 字段和 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/Soundfile.h" rel="noreferrer noopener">它的定义</a>：</p><pre><code class="language-faust">struct Soundfile {
+    void* fBuffers; // 将对应一个在运行时选择的 double** 或 float** 指针
+    int* fLength; // 每段的长度（因此 fLength[P] 包含第 P 段的帧长度）
+    int* fSR; // 每段的采样率（因此 fSR[P] 包含第 P 段的采样率）
+    int* fOffset; // 每段在全局缓冲区中的偏移（因此 fOffset[P] 包含第 P 段的帧偏移）
+    int fChannels; // 所有拼接文件中的最大声道数
+    int fParts; // 已加载段的总数
+    bool fIsDouble; // 保留样本格式（float 或 double）
+};
+</code></pre><p>生成的代码按 <code>c % fChannels</code> 读取声音文件的声道 <code>c</code>，因此一个声音文件可以用多于其实际声道数的输出声道读取（用四个输出读取立体声文件会得到声道 0、1、0、1）。任何填充 <code>Soundfile</code> 结构的代码都必须遵守这一约定：</p><ul><li><code>fChannels</code> 至少为 1</li><li><code>fBuffers</code> 包含（至少）<code>fChannels</code> 个缓冲区，每个真实声道一个</li></ul><p>在此约定之前由 Faust 版本生成的代码期望 <code>fBuffers</code> 包含 64 个缓冲区（原 <code>MAX_CHAN</code> 值，多余的缓冲区共享真实声道），必须重新生成。</p><p>下面生成 <code>buildUserInterface</code> 方法，其中包含一个 <code>addSoundfile</code> 方法，调用时传入从 DSP 代码片段 <code>soundfile("sound[url:{'tango.wav'}]",2)</code> 中提取的相应参数，用于加载 <em>tango.wav</em> 音频文件并准备 <code>fSoundfile0</code> 字段：</p><pre><code>virtual void buildUserInterface(UI* ui_interface) 
+{
+    ui_interface-&gt;openVerticalBox("tp0");
+    ui_interface-&gt;addSoundfile("sound", "{'tango.wav'}", &amp;fSoundfile0);
+    ui_interface-&gt;closeBox();
+}
+</code></pre><p>随后用专用的 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/SoundUI.h" rel="noreferrer noopener">SoundUI</a> 架构文件在 DSP 初始化时加载所需声音文件，它使用一个 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/Soundfile.h" rel="noreferrer noopener">SoundfileReader</a> 对象。它只实现 <code>addSoundfile</code> 方法，该方法会加载所有需要的音频文件，创建并填充 <code>fSoundfile0</code> 对象。</p><p>已经编写了若干具体实现，分别使用 <a href="http://www.mega-nerd.com/libsndfile/" rel="noreferrer noopener">libsndfile</a>（配合 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/LibsndfileReader.h" rel="noreferrer noopener">LibsndfileReader.h</a> 文件）或 <a href="https://juce.com" rel="noreferrer noopener">JUCE</a>（配合 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/JuceReader.h" rel="noreferrer noopener">JuceReader</a> 文件）。</p><p>可以通过继承 <code>SoundfileReader</code> 类编写新的音频文件加载器。例如可以实现一个纯内存读取器，把波表作为 <code>soundfile</code> 的 URL 列表加载。参见模板 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/MemoryReader.h" rel="noreferrer noopener">MemoryReader</a> 类，作为待补全的示例，需实现以下方法：</p><pre><code>/**
+* 检查声音资源是否可用。
+*
+* @param path_name - 文件名，或用此方式标识的声音资源
+*
+* @return 声音资源可用则返回 true，否则返回 false。
+*/
+virtual bool checkFile(const std::string&amp; path_name);
+
+/**
+* 获取给定声音资源的声道数和长度值。
+*
+* @param path_name - 文件名，或用此方式标识的声音资源
+* @param channels - 要填充为该声音资源声道数的值
+* 声道数
+* @param length - 要填充为该声音资源帧长度的值
+*
+*/
+virtual void getParamsFile(const std::string&amp; path_name, int&amp; channels, int&amp; length);
+
+/**
+* 读取一个声音资源并相应填充 'soundfile' 结构
+*
+* @param path_name - 文件名，或用此方式标识的声音资源
+* @param part - 要在 soundfile 中填充的段号
+* @param offset - 要按实际声音资源帧长度递增的偏移值
+* 声音资源的帧长度
+* @param max_chan - 声音文件的声道数（soundfile-&gt;fChannels）：
+* 声音资源的所有声道都必须被填充
+*
+*/
+virtual void readFile(Soundfile* soundfile, 
+                      const std::string&amp; path_name, 
+                      int part, 
+                      int&amp; offset, 
+                      int max_chan);
+</code></pre><p>另一个可参考的示例是 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/WaveReader.h" rel="noreferrer noopener">WaveReader</a>。</p><p>随后按以下方式使用 <code>SoundUI</code> 架构：</p><pre><code class="language-faust"> mydsp DSP;
+ // 使用编译时选定的 SoundfileReader
+ SoundUI* sound_interface = new SoundUI(); 
+ DSP.buildUserInterface(sound_interface);
+ ...
+ run the DSP
+ ...
+ // 最后释放 sound_interface 和关联的 Soundfile 资源
+ delete sound_interface;
+</code></pre><p>默认情况下，<code>SoundUI</code> 类会尝试相对于可执行文件位置加载声音文件。许多情况下这可以直接工作。但如果声音文件位于其他目录（例如包、资源文件夹或自定义安装路径内），就需要显式告诉 <code>SoundUI</code> 去哪里找。声音目录的基准路径可以用 <code>SoundUI</code> 构造函数的另一个更丰富的版本给出，这里使用辅助函数 <code>SoundUI::getBinaryPathFrom</code>：</p><pre><code class="language-faust"> mydsp DSP;
+ // 创建一个为声音文件显式指定基准路径的 SoundUI
+ SoundUI* sound_interface = new SoundUI(SoundUI::getBinaryPathFrom("bundle_path")); 
+ DSP.buildUserInterface(sound_interface);
+ ...
+ run the DSP
+ ...
+ // 最后释放 sound_interface 和关联的 Soundfile 资源
+ delete sound_interface;
+</code></pre><p><code>SoundfileReader</code> 对象可以通过 <code>SoundUI</code> 构造函数的另一个版本动态选择，当 DSP 代码用 <code>-double</code> 选项编译时，还可以把样本格式选为 <em>double</em>：</p><pre><code class="language-faust"> mydsp DSP;
+ // 使用动态选择的自定义 MyMemoryReader
+ SoundfileReader* sound_reader = new MyMemoryReader(...);
+ SoundUI* sound_interface = new SoundUI("", -1, sound_reader, true);
+ DSP.buildUserInterface(sound_interface);
+ ...
+ run the DSP
+ ...
+ // 最后释放 sound_interface 和关联的 Soundfile 资源
+ delete sound_interface;
+</code></pre><h2 id="other-languages-than-c">C++ 以外的语言</h2><p>这些年来大部分架构文件都用 C++ 开发。因此它们可以直接配合 C++ 后端以及生成 C++ 包装模块的后端（如 LLVM、Cmajor 和解释器后端）使用。对于其他语言，必须编写专门的架构文件。以下是其他后端的现状：</p><ul><li>C 后端需要额外的 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/CGlue.h" rel="noreferrer noopener">CGlue.h</a> 和 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/CInterface.h" rel="noreferrer noopener">CInterface.h</a> 文件，<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/minimal.c" rel="noreferrer noopener">minimal-c</a> 文件是使用它们的一个简单控制台模式示例</li><li>Rust 后端可使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/minimal.rs" rel="noreferrer noopener">minimal-rs</a> 架构、<code>faust2jackrust</code> 脚本中使用的更复杂的 JACK <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/jack.rs" rel="noreferrer noopener">jack.rs</a>，或 <code>faust2portaudiorust</code> 脚本中使用的 PortAudio <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/portaudio.rs" rel="noreferrer noopener">portaudio.rs</a></li><li>实验性的 Dlang 后端可使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/minimal.d" rel="noreferrer noopener">minimal.d</a> 或 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/dplug.d" rel="noreferrer noopener">dplug.d</a>，配合 <code>faust2dplug</code> 脚本生成 <a href="https://dplug.org" rel="noreferrer noopener">DPlug</a> 插件。</li><li><a href="https://julialang.org" rel="noreferrer noopener">Julia</a> 后端可使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/julia/minimal.jl" rel="noreferrer noopener">minimal.jl</a> 架构，或 <code>faust2portaudiojulia</code> 脚本中使用的 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/julia/audio" rel="noreferrer noopener">portaudio.jl</a>。</li></ul><h2 id="the-faust2xx-scripts">faust2xx 脚本</h2><h3 id="using-faust2xx-scripts">使用 faust2xx 脚本</h3><p><code>faust2xx</code> 脚本最终把不同的架构文件组合起来，从 Faust DSP 程序生成可直接使用的应用或插件等。它们通常把<em>生成的 DSP</em> 与一个 <em>UI 架构</em>文件和一个<em>音频架构</em>文件组合在一起。大多数还带有附加选项，如 <code>-midi</code>、<code>-nvoices &lt;num&gt;</code>、<code>-effect &lt;auto|effect.dsp&gt;</code> 或 <code>-soundfile</code>，用于生成带效果或不带效果的复音乐器，或支持音频文件。更完整的说明见 <a href="manual-tools.html">以下页面</a>。</p><h3 id="developing-a-faust2xx-script">开发 faust2xx 脚本</h3><p><code>faust2xx</code> 脚本大多用 <a href="https://fr.wikipedia.org/wiki/Bourne-Again_shell" rel="noreferrer noopener">bash</a> 编写（但也可以用任何脚本语言），目标是从 DSP 程序生成可直接使用的应用、插件等。可以参考使用 C++ 后端的 <a href="https://github.com/grame-cncm/faust/blob/master-dev/tools/faust2appls/faust2minimal" rel="noreferrer noopener">faust2minimal</a> 模板脚本作为起点。</p><p>辅助脚本 <a href="https://github.com/grame-cncm/faust/blob/master-dev/tools/faust2appls/faustpath" rel="noreferrer noopener">faustpath</a>、<a href="https://github.com/grame-cncm/faust/blob/master-dev/tools/faust2appls/faustoptflags" rel="noreferrer noopener">faustoptflags</a> 和 <a href="https://github.com/grame-cncm/faust/blob/master-dev/tools/faust2appls/usage.sh" rel="noreferrer noopener">usage.sh</a> 可用于设置常用变量：</p><pre><code># 定义一些常用路径
+. faustpath
+
+# 定义编译选项
+. faustoptflags
+
+# 用于构建 'help' 选项的辅助文件
+. usage.sh
+
+CXXFLAGS+=" $MYGCCFLAGS"  # So that additional CXXFLAGS can be used
+
+# 架构文件名
+ARCHFILE=$FAUSTARCH/minimal.cpp
+
+# 全局变量
+OPTIONS=""
+FILES=""
+</code></pre><p>随后必须分析脚本参数，编译器选项保存在 <code>OPTIONS</code> 变量中，所有 DSP 文件保存在 <code>FILES</code> 变量中：</p><pre><code>#-------------------------------------------------------------------
+# 分发命令行参数
+#-------------------------------------------------------------------
+
+while [ $1 ]
+do
+  p=$1
+
+  if [ $p = "-help" ] || [ $p = "-h" ]; then
+     usage faust2minimal "[options] [Faust options] &lt;file.dsp&gt;"
+     exit
+  fi
+
+  echo "dispatch command arguments"
+
+  if [ ${p:0:1} = "-" ]; then
+       OPTIONS="$OPTIONS $p"
+    elif [[ -f "$p" ]] &amp;&amp; [ ${p: -4} == ".dsp" ]; then
+       FILES="$FILES $p"
+    else
+       OPTIONS="$OPTIONS $p"        
+    fi
+
+shift
+
+done
+</code></pre><p>每个 DSP 文件先用 <code>faust -a</code> 命令和相应的架构文件编译为 C++，然后编译为最终可执行程序，这里使用 C++ 编译器：</p><pre><code>#-------------------------------------------------------------------
+# 编译 *.dsp 文件
+#-------------------------------------------------------------------
+
+for f in $FILES; do
+
+    # 用架构文件把 DSP 编译为 c++
+    echo "compile the DSP to c++ using the architecture file"
+  faust -i -a $ARCHFILE $OPTIONS "$f" -o "${f%.dsp}.cpp"|| exit
+
+    # 把 c++ 编译为二进制文件
+    echo "compile c++ to binary"
+    (
+        $CXX $CXXFLAGS "${f%.dsp}.cpp" -o "${f%.dsp}"
+    ) &gt; /dev/null || exit
+
+  # 删除临时文件
+    rm -f "${f%.dsp}.cpp"
+
+    # 收集二进制文件名供 FaustWorks 使用
+    BINARIES="$BINARIES${f%.dsp};"
+done
+
+echo $BINARIES
+</code></pre><p>现有的 <a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/faust2appls" rel="noreferrer noopener">faust2xx 脚本</a>可以作为示例。</p><h2 id="the-faust2api-model">faust2api 模型</h2><p>这种把生成的 DSP 与音频和 UI 架构组件组合起来的模型非常便于自动生成可直接使用的独立应用或插件，因为控制器部分（GUI、MIDI 或 OSC……）会直接编译并部署。</p><p>某些情况下，开发者更愿意通过创建全新的 GUI（使用标准架构文件不支持的界面工具包）来控制 DSP，甚至完全不要 GUI 而使用另一种控制层。</p><p>一种只把<em>生成的 DSP</em> 与<em>音频架构</em>文件组合以产生<em>音频引擎</em>的模型已经开发出来（也就是把开头说明的三色模型中的<em>蓝色</em>和<em>红色</em>部分粘合起来）。一个通用模板类 <code>DspFaust</code> 已写在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/api/DspFaust.h" rel="noreferrer noopener">DspFaust.h</a> 和 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/api/DspFaust.cpp" rel="noreferrer noopener">DspFaust.cpp</a> 文件中。该代码包含条件编译段，用于添加并初始化相应的音频驱动（编写为前面所述 <code>audio</code> 基类的子类），可以产生<em>音频发生器</em>、<em>效果</em>，以及完全可由 MIDI 和传感器控制的<em>复音乐器</em>。</p><p>生成的音频引擎包含 <code>start</code> 和 <code>stop</code> 方法用于控制音频处理。它还提供一组函数，如 <code>getParamsCount, setParamValue, getParamValue</code> 等，用于访问所有参数（或在复音情况下用附加的 <code>setVoiceParamValue</code> 方法函数访问单个声部），让开发者添加自己的 GUI 或任何类型的控制器。</p><p>参见 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/api" rel="noreferrer noopener">faust2api</a> 脚本，它使用前面介绍的架构文件，提供一个基于一个或多个 Faust 对象轻松生成自定义 API 的工具。</p><p><img alt="框图" src="https://faustdoc.grame.fr/manual/architectures/img/FaustArchitecture5.jpg"/></p><h2 id="using-the-inj-option-with-faust2xx-scripts">在 faust2xx 脚本中使用 -inj 选项</h2><p>编译器 <code>-inj &lt;f&gt;</code> 选项可以把已有的 C++ 文件（而不是编译 dsp 文件）注入架构文件机制。假设该 C++ 文件实现了 <code>dsp</code> 基类的一个子类，那么 <code>faust2xx</code> 脚本就可以用来生成可直接使用的应用或插件，从而利用所有现有的 UI 和音频架构。下面介绍两个使用示例。</p><h3 id="using-the-template-llvmcpp-architecture">使用 template-llvm.cpp 架构</h3><p>第一个示例演示 <code>faust2xx</code> 脚本如何通过在运行时加载并编译任意 DSP 而变得更动态。这是用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/template-llvm.cpp" rel="noreferrer noopener">template-llvm.cpp</a> 架构文件完成的，它使用 libfaust 库和 LLVM 后端动态编译 <code>foo.dsp</code> 文件。因此生成的程序不再基于给定 DSP 产生静态二进制文件，而能在运行时加载并编译 DSP。</p><p>这个 template-llvm.cpp 可以在 <code>faust2xx</code> 工具中配合 <code>-inj</code> 选项使用，例如：</p><p><code>faust2cagtk -inj template-llvm.cpp faust2cagtk-llvm.dsp (a dummy DSP)</code>（即一个占位 DSP）</p><p>生成单声部的 <code>faust2cagtk-llvm</code> 应用，可直接用来加载并编译 DSP，并以 CoreAudio 音频层和 GTK 作为 GUI 框架运行它。</p><p>随后 <code>faust2cagtk-llvm</code> 会要求输入要编译的 DSP：</p><p><code>./faust2cagtk-llvm &lt;Enter a foo.dsp file&gt;</code></p><p>可以用以下命令编译通用的复音（8 声部）MIDI 可控版本：</p><p><code>faust2cagtk -inj template-llvm.cpp -midi -nvoices 8 faust2cagtk-llvm.dsp (a dummy DSP)</code>（即一个占位 DSP）</p><p>注意生成的二进制文件保留自己的控制选项，例如：</p><p><code>./faust2cagtk-llvm -h  ./faust2cagtk-llvm [--frequency &lt;val&gt;] [--buffer &lt;val&gt;] [--nvoices &lt;val&gt;] [--control &lt;0/1&gt;]   [--group &lt;0/1&gt;] [--virtual-midi &lt;0/1&gt;]</code></p><p>因此现在 <code>./faust2cagtk-llvm --nvoices 16</code> 会以 16 个声部启动程序。</p><p>该技术目前已在 <code>faust2cagtk</code>、<code>faust2jack</code>、<code>faust2csvplot</code> 和 <code>faust2plot</code> 工具上测试过。</p><h3 id="second-use-case-computing-the-spectrogram-of-a-set-of-audio-files">第二个用例：计算一组音频文件的频谱图</h3><p>下面是第二个用例，用一些外部 C++ 代码计算<em>一组音频文件的频谱图</em>（这是当前版本的 Faust 语言无法简单做到的），并把频谱图作为音频信号输出。将用一个 <code>nentry</code> 控制器选择当前播放的频谱图。Faust 编译器将用于生成一个 C++ 类，随后手工编辑并补充额外代码。</p><h4 id="writting-the-dsp-code">编写 DSP 代码</h4><p>首先编写一个假的 DSP 程序 <code>spectral.dsp</code>，使用 <code>soundfile</code> 基元加载两个音频文件，并用一个 <code>nentry</code> 控件：</p><pre><code class="language-faust">sf = soundfile("sound[url:{'sound1.wav';'sound2.wav'}]",2);
+process = (hslider("Spectro", 0, 0, 1, 1),0) : sf : !,!,_,_;
+</code></pre><p>显式使用 <code>soundfile</code> 基元和 <code>nentry</code> 控件的目的是生成一个 C++ 文件，其中带有预填充的 DSP 结构（包含 <code>fSoundfile0</code> 和 <code>fHslider0</code> 字段）以及 <code>buildUserInterface</code> 方法中的代码。用以下命令手工编译它：</p><pre><code class="language-faust">faust spectral.dsp -cn spectral -o spectral.cpp
+</code></pre><p>会生成包含 <code>spectral</code> 类的如下 C++ 代码：</p><pre><code>class spectral : public dsp {
+
+ private:
+
+  Soundfile* fSoundfile0;
+  FAUSTFLOAT fHslider0;
+  int fSampleRate;
+
+ public:
+
+  ...   
+
+  virtual int getNumInputs() {
+    return 0;
+  }
+  virtual int getNumOutputs() {
+    return 2;
+  }
+
+  ...
+
+  virtual void buildUserInterface(UI* ui_interface) {
+    ui_interface-&gt;openVerticalBox("spectral");
+    ui_interface-&gt;addHorizontalSlider("Spectrogram", &amp;fHslider0, 0.0f, 0.0f, 1.0f, 1.0f);
+    ui_interface-&gt;addSoundfile("sound", "{'sound1.wav';'sound2.wav';}", &amp;fSoundfile0);
+    ui_interface-&gt;closeBox();
+  }
+
+  virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+    int iSlow0 = int(float(fHslider0));
+    ....
+  }
+
+};
+</code></pre><h4 id="customizing-the-c-code">定制 C++ 代码</h4><p>现在可以手工编辑 <code>spectral</code> 类并补充额外代码，在 <code>buildUserInterface</code> 中计算两个音频文件的频谱图，并在 <code>compute</code> 中播放它们。</p><ul><li>在 DSP 结构中新增一行 <code>Spectrogram fSpectro[2];</code></li><li>在 <code>buildUserInterface</code> 中新增函数 <code>createSpectrogram(fSoundfile0, fSpectro);</code>，通过读取 <code>fSoundfile0</code> 中加载的两个音频文件来计算并填充两个频谱图</li><li><code>compute</code> 中删除部分生成的代码，替换为用函数 <code>playSpectrogram(fSpectro, count, iSlow0, outputs);</code> 播放其中一个频谱图（由 GUI 中的 <code>fHslider0</code> 控件选择）的新代码：</li></ul><pre><code>class spectral : public dsp {
+
+  private:
+
+    Soundfile* fSoundfile0;
+    FAUSTFLOAT fHslider0;
+    int fSampleRate;
+    Spectrogram fSpectro[2];
+
+  public:
+
+    ...
+
+    virtual int getNumInputs() {
+      return 0;
+    }
+    virtual int getNumOutputs() {
+      return 2;
+    }
+
+    ...
+
+    virtual void buildUserInterface(UI* ui_interface) {
+      ui_interface-&gt;openVerticalBox("spectral");
+      ui_interface-&gt;addHorizontalSlider("Spectro", &amp;fHslider0, 0.0f, 0.0f, 1.0f, 1.0f);
+      ui_interface-&gt;addSoundfile("sound", "{'sound1.wav';'sound2.wav';}", &amp;fSoundfile0);
+      // 读取 'fSoundfile0' 并填充 'fSpectro'
+      createSpectrogram(fSoundfile0, fSpectro);
+      ui_interface-&gt;closeBox();
+    }
+
+    virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+      int iSlow0 = int(float(fHslider0));
+      // 向 'outputs' 写入 'count' 个样本，播放由 'iSlow0' 索引的 'fSpectro'
+      playSpectrogram(fSpectro, count, iSlow0, outputs);
+    }
+
+};
+</code></pre><p>这里假设 <code>createSpectrogram</code> 和 <code>playSpectrogram</code> 函数已在其他地方定义并可直接编译。</p><h4 id="deploying-it-as-a-maxmsp-external-using-the-faust2max6-script">用 faust2max6 脚本将它部署为 Max/MSP 外部对象</h4><p>完成后的 <code>spectral.cpp</code> 文件现在可以用 <code>faust2max6</code> 脚本和 <code>-inj</code> 选项，按以下命令部署为 Max/MSP 外部对象：</p><pre><code>faust2max6 -inj spectral.cpp -soundfile spectral.dsp
+</code></pre><p>所需的两个音频文件 <code>sound1.wav</code> 和 <code>sound2.wav</code> 会嵌入生成的外部对象，在初始化时加载（因为 <code>buildUserInterface</code> 方法会被自动调用），手工添加的 C++ 代码将被执行以计算并播放频谱图。最后，只要保持与假 <code>spectral.dsp</code> DSP 程序、生成的 <code>spectral.cpp</code> C++ 文件命名一致，自动生成的 <code>spectral.maxpat</code> Max/MSP 补丁就能用现成的滑块构建 GUI。</p><h2 id="additional-ressources">其他资源</h2><p>有几个外部项目提供了以不同语言安排 Faust 源代码生成或使用方式的工具。</p><h3 id="preprocessing-tools">预处理工具</h3><h4 id="fpp"><a href="https://github.com/oleg-nesterov/fpp" rel="noreferrer noopener">fpp</a></h4><p>fpp 是一个无依赖的独立 Perl 脚本，只要目标是标量模式下的 C/C++，它就允许在 Faust .dsp 文件中出现任何 C/C++ 代码。</p><h3 id="c-tools">C++ 工具</h3><p>以更精细的方式使用和适配 <code>dsp/UI/audio</code> 模型，或把 Faust 生成的 C++ 类集成到其他框架（如 JUCE）中。</p><h4 id="faust2hpp"><a href="https://github.com/resonantdsp/faust2hpp" rel="noreferrer noopener">faust2hpp</a></h4><p>把 Faust 代码转换为仅头文件的独立 C++ 库。输出为一组头文件。提供一个类，可用其构建 DSP 对象，方法风格类似 <a href="https://juce.com/" rel="noreferrer noopener">JUCE</a> DSP 对象。</p><h4 id="faustpp"><a href="https://github.com/jpcima/faustpp" rel="noreferrer noopener">faustpp</a></h4><p>Faust 的后处理器，可以更灵活地生成。这是基于 Faust 编译器的源代码变换工具，能更灵活地安排 Faust 源代码的生成方式。</p><h4 id="faustdoctor"><a href="https://github.com/SpotlightKid/faustdoctor" rel="noreferrer noopener">faustdoctor</a></h4><p><a href="https://github.com/jpcima/faustpp" rel="noreferrer noopener">faustpp</a> 的一个分支，灵活性更高。</p><h4 id="dpf-faust-project-template"><a href="https://github.com/SpotlightKid/dpf-faust-project-template" rel="noreferrer noopener">dpf-faust-project-template</a></h4><p>一个 <a href="https://github.com/copier-org/copier" rel="noreferrer noopener">copier</a> 项目模板，用于 DISTRHO Plugin Framework（<a href="https://github.com/DISTRHO/DPF" rel="noreferrer noopener">DPF</a>）音频效果插件，使用 <a href="https://faust.grame.fr" rel="noreferrer noopener">FAUST</a> 实现 DSP 管线。</p><h4 id="faustmd"><a href="https://github.com/jpcima/faustmd" rel="noreferrer noopener">faustmd</a></h4><p>面向 Faust/C++ 的静态元数据生成器。该程序提前构建 Faust DSP 的元数据，而不是动态构建。结果是一段可附加到代码生成中的 C++ 代码。</p><h4 id="faustcppconverter"><a href="https://github.com/eyalamirmusic/FaustCPPConverter" rel="noreferrer noopener">FaustCPPConverter</a></h4><p>由 <a href="https://github.com/eyalamirmusic" rel="noreferrer noopener">Eyal Amir</a> 提供的工具，便于在 JUCE 项目中使用 Faust 生成的 C++ 代码。</p><h4 id="josmodules-and-josm_faust"><a href="https://github.com/josmithiii/JOSModules" rel="noreferrer noopener">JOSModules</a> 和 <a href="https://github.com/josmithiii/josm_faust#josm_faust" rel="noreferrer noopener">josm_faust</a></h4><p><a href="https://ccrma.stanford.edu/~jos/" rel="noreferrer noopener">Julius Smith</a> 的项目，便于在 JUCE 项目中使用 Faust 生成的 C++ 代码。</p><h4 id="arduino-tools"><a href="https://www.pschatzmann.ch/home/2022/04/22/using-faust-dsp-with-my-arduino-audio-tools/" rel="noreferrer noopener">Arduino 工具</a></h4><p>另一种在 ESP32 板卡上使用 Faust 的方式，可能比 <a href="tutorial-esp32.html">esp32 教程</a> 中提到的示例更简单、更通用。</p><h3 id="cmajor-tools">Cmajor 工具</h3><h4 id="using-faust-in-cmajor"><a href="tutorial-cmajor.html">在 Cmajor 中使用 Faust</a></h4><p>一个教程，演示 Faust 如何与 <a href="https://cmajor.dev" rel="noreferrer noopener">Cmajor</a> 配合使用。Cmajor 是一门类 C 的过程式高性能语言，专为音频处理设计，并采用基于 JIT 的动态编译。</p><h3 id="rnbo-tools">RNBO 工具</h3><h4 id="using-faust-in-rnbo-with-codebox"><a href="tutorial-rnbo.html">在 RNBO 的 codebox~ 中使用 Faust</a></h4><p>一个教程，演示 Faust 如何与 <a href="https://rnbo.cycling74.com" rel="noreferrer noopener">RNBO</a> 配合使用。RNBO 是一套库和工具链，可以把类似 Max 的补丁导出为可移植代码，并直接编译到 VST、Max External 或 Raspberry Pi 等目标平台。</p><h3 id="dlang-tools">DLang 工具</h3><h4 id="faust-2-dplug-guide"><a href="https://github.com/Tonton-Blax/dplugfausttest" rel="noreferrer noopener">Faust 2 Dplug 指南</a></h4><p>说明如何在 <a href="https://dplug.org/" rel="noreferrer noopener">Dplug</a> 项目中使用 Faust。</p><h4 id="dplug-faust-example"><a href="https://github.com/ctrecordings/dplug-faust-example" rel="noreferrer noopener">Dplug Faust 示例</a></h4><p>这是一个使用 Dplug 搭配 Faust 后端的示例插件。它是一个立体声混响插件，使用 Faust 库中的 Freeverb 演示。</p><h3 id="julia-tools">Julia 工具</h3><h4 id="faustjl"><a href="https://github.com/corajr/Faust.jl" rel="noreferrer noopener">Faust.jl</a></h4><p>Faust 编译器的 Julia 封装。使用 Faust LLVM C API。</p><h4 id="using-faust-in-julia"><a href="tutorial-julia.html">在 Julia 中使用 Faust</a></h4><p>一个教程，演示 Faust 如何与 <a href="https://julialang.org" rel="noreferrer noopener">Julia</a> 配合使用。Julia 是一门高层、通用的动态编程语言，其特性非常适合数值分析和计算科学。</p><h3 id="python-tools">Python 工具</h3><h4 id="faustpy"><a href="https://github.com/marcecj/faust_python" rel="noreferrer noopener">FAUSTPy</a></h4><p>FAUSTPy 是 FAUST DSP 语言的 Python 封装。它用 CFFI 实现，因此在运行时动态创建封装。该项目的更新版本见 <a href="https://github.com/hrtlacek/faust_python" rel="noreferrer noopener">此分支</a>。</p><h4 id="faust-ctypes"><a href="https://gitlab.com/adud2/faust-ctypes" rel="noreferrer noopener">Faust Ctypes</a></h4><p>Marc Joliet 的 FaustPy 从 CFFI 到 Ctypes 的移植版。Faust-Ctypes 的文档 <a href="https://adud2.gitlab.io/faust-ctypes" rel="noreferrer noopener">可在线获取</a>。</p><h4 id="an-scons-tool-for-faust"><a href="https://github.com/marcecj/scons_faust" rel="noreferrer noopener">一个用于 FAUST 的 SCons 工具</a></h4><p>这是一个用于编译 FAUST 程序的 SCons 工具。它向构建环境添加若干构建器：Faust、FaustXML、FaustSVG、FaustSC 和 FaustHaskell。可以通过修改各种构建变量改变它们的行为（见下文「Usage」）。</p><h4 id="faustwatch"><a href="https://github.com/hrtlacek/faustTools" rel="noreferrer noopener">Faustwatch</a></h4><p>目前包含一个工具 faustwatch.py。Faustwatch 是一个监视 dsp 语言 Faust 所使用的 .dsp 文件的工具。</p><h4 id="faustwidgets"><a href="https://github.com/hrtlacek/faustWidgets" rel="noreferrer noopener">faustWidgets</a></h4><p>从 Faust dsp 文件在 jupyter notebook 中创建交互式控件，并生成（可定制的）图表。</p><h4 id="faust-synth"><a href="https://github.com/anwaldt/py2faust_synth" rel="noreferrer noopener">Faust Synth</a></h4><p>这是一个示例项目，通过 Python 脚本控制一个用 Faust 编程并编译的合成器。合成器在 Linux 系统上作为 JACK 客户端运行，输出由 jack_capture 自动录制。</p><h4 id="dawdreamer"><a href="https://github.com/DBraun/DawDreamer" rel="noreferrer noopener">DawDreamer</a></h4><p>DawDreamer 是一个支持 Faust 及其 Box API 的音频处理 Python 框架。</p><h4 id="ode2dsp"><a href="https://git.sr.ht/~kdsch/ode2dsp" rel="noreferrer noopener">ode2dsp</a></h4><p>ode2dsp 是一个 Python 库，用于在数字信号处理（DSP）语言中生成常微分方程（ODE）求解器。它把为 ODE 建立 DSP 模型时繁琐且易错的符号计算自动化。有限差分方程（FDE）会渲染为 Faust 代码。</p><h4 id="faustlab"><a href="https://github.com/shakfu/faustlab" rel="noreferrer noopener">faustlab</a></h4><p>一个探索性项目，把 Faust <em>解释器</em>封装起来供 Python 使用，封装方式包括以下框架，音频驱动使用 RtAudio 跨平台驱动：</p><ul><li>cyfaust：cython（faust c++ 接口）</li><li>cfaustt：cython（faust c 接口）</li><li>pyfaust：pybind11（faust c++ 接口）</li><li>nanobind：nanobind（faust c++ 接口）</li></ul><h4 id="cyfaust"><a href="https://github.com/shakfu/cyfaust" rel="noreferrer noopener">cyfaust</a></h4><p>Faust 解释器与 RtAudio 跨平台音频驱动的 cython 封装，源自 <a href="#faustlab">faustlab</a> 项目。目标是得到一个最小、模块化、自包含的跨平台 python3 扩展。</p><h3 id="rust-tools">Rust 工具</h3><h4 id="rust-faust"><a href="https://github.com/Frando/rust-faust" rel="noreferrer noopener">rust-faust</a></h4><p>为 Rust 提供更好的 Faust 集成。它允许通过 build.rs 构建 DSP，并提供一些抽象，使处理 DSP 的参数和元数据容易得多。</p><h4 id="faust-egui"><a href="https://github.com/plule/faust-egui" rel="noreferrer noopener">Faust egui</a></h4><p>用 egui 和 <a href="https://github.com/Frando/rust-faust" rel="noreferrer noopener">rust-faust</a> 绘制 UI 的概念验证。</p><h4 id="rustfaustexperiments"><a href="https://github.com/bluenote10/RustFaustExperiments/" rel="noreferrer noopener">RustFaustExperiments</a></h4><p>用于比较由 Faust 生成的 C++ 与 Rust 代码的工具。</p><h4 id="fl-tui"><a href="https://gitlab.com/raoulhc/fl-tui" rel="noreferrer noopener">fl-tui</a></h4><p>Faust 编译器的 Rust 封装。使用 libfaust LLVM C API。</p><h4 id="faustlive-jack-rs"><a href="https://codeberg.org/obsoleszenz/faustlive-jack-rs" rel="noreferrer noopener">faustlive-jack-rs</a></h4><p>另一个 Faust 编译器的 Rust 封装，音频使用 <a href="https://jackaudio.org" rel="noreferrer noopener">JACK</a> 服务器。使用 libfaust LLVM C API。</p><h4 id="lowpass-lr4-faust-nih-plug"><a href="https://codeberg.org/obsoleszenz/lowpass-lr4-faust-nih-plug" rel="noreferrer noopener">lowpass-lr4-faust-nih-plug</a></h4><p>一个进行中的项目，把 Faust 生成的 Rust 代码与 <a href="https://github.com/robbert-vdh/nih-plug" rel="noreferrer noopener">NIH-plug</a> 集成。</p><h4 id="nih-faust-jit"><a href="https://github.com/YPares/nih-faust-jit" rel="noreferrer noopener">nih-faust-jit</a></h4><p>一个加载 Faust dsp 文件并用 LLVM 对其做 JIT 编译的插件。提供简单 GUI，用于选择要加载的脚本以及去哪里查找该脚本可能导入的 Faust 库。选中的 DSP 脚本会作为插件状态的一部分保存，因此会随你的 DAW 工程一起保存。</p><h4 id="faust-build"><a href="https://codeberg.org/crop/blech" rel="noreferrer noopener">FAUST Build</a></h4><p>该仓库是一个 Monorepo，包含用 Rust 编写、受 supernova 启发的 DSP 引擎所需的各个 crate。DSP 使用 FAUST 生成。</p><h3 id="webassembly-tools">WebAssembly 工具</h3><h4 id="deploying-faust-dsp-on-the-web"><a href="manual-deploying.html">在 Web 上部署 Faust DSP</a></h4><p>说明在 Web 平台上使用 Faust 的几种不同方案。</p><h4 id="faust-loader"><a href="https://github.com/Smona/faust-loader" rel="noreferrer noopener">faust-loader</a></h4><p>导入 Faust .dsp 文件，并返回 AudioWorklet 或 ScriptProcessor 节点。</p><h4 id="faust2cpp2wasm"><a href="https://github.com/nuchi/faust2cpp2wasm" rel="noreferrer noopener">faust2cpp2wasm</a></h4><p>这是 <code>faust2wasm</code> 生成的 wasm 文件的直接替代品，但使用 Faust 的 C++ 后端而不是 wasm 后端。</p><h4 id="faust-compiler-microservice"><a href="https://github.com/Ameobea/web-synth/tree/master/faust-compiler#faust-compiler-microservice" rel="noreferrer noopener">Faust Compiler Microservice</a></h4><p>这是一个只做一件事的微服务：把发送给它的 Faust 代码编译为 WebAssembly，随后可以在 web synth 应用中原生加载和运行。它用 go 编写，因为 go 据说很适合这类事情。</p><h4 id="mosfez-faust"><a href="https://github.com/dxinteractive/mosfez-faust" rel="noreferrer noopener">mosfez-faust</a></h4><p>让 Web 上 Faust 的动态编译稍微容易一些，并带有一个开发项目，用于离线让数值经过 dsp 运行，以及实时预览 dsp。它是 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/webaudio" rel="noreferrer noopener">Faust for webaudio</a> 某些部分的有倾向性版本，主要是 Web Assembly 版 Faust 编译器，打包在一个带附加功能的库中。</p><h4 id="faust-wap2-playground"><a href="https://github.com/Nek/faust-wap2-playground" rel="noreferrer noopener">faust-wap2-playground</a></h4><p>用于基于 Faust 的 Web 音频实验的试验场和模板。</p><h4 id="vite-plugin-faust"><a href="https://www.npmjs.com/package/vite-plugin-faust" rel="noreferrer noopener">vite-plugin-faust</a></h4><p>把 Faust DSP 文件转换为可导入的 JavaScript（+ WASM）模块的 Vite 插件。底层使用 <a href="https://www.npmjs.com/package/@grame/faustwasm" rel="noreferrer noopener">faustwasm</a>。</p><h3 id="dart-tools">Dart 工具</h3><h4 id="flutter_faust_ffi"><a href="https://github.com/t2techno/flutter_faust_ffi" rel="noreferrer noopener">flutter_faust_ffi</a></h4><p>一个基础 flutter 应用，作为概念验证，利用 Faust 的 C API 导出与 Dart 的 ffi 方法创建跨平台插件。</p><h3 id="lua-tools">Lua 工具</h3><h4 id="libmfxfaust"><a href="https://github.com/Simon-L/libMfxFaust" rel="noreferrer noopener">libMfxFaust</a></h4><p>该库旨在通过 FFI 与 Luajit 配合使用。DspFaust.cpp 文件末尾含有以 C 命名空间暴露函数的代码，便于从 Luajit 调用，不过纯 C 也同样可用。</p><h4 id="mfxfaustlua"><a href="https://github.com/Simon-L/MfxFaust.lua" rel="noreferrer noopener">MfxFaust.lua</a></h4><p>一个用于 Faust dsp 原型开发的环境，支持实时重新编译、示波器视图、热重载、声音文件和 MIDI。</p><h3 id="haskell-tools">Haskell 工具</h3><h4 id="hs-faust"><a href="https://github.com/DivitMittal/hs-faust" rel="noreferrer noopener">hs-faust</a></h4><p>hs-faust 为 Faust 的 C Signal API 提供 Haskell DSL 封装。它允许在 Haskell 中定义 Faust 信号处理图，并用 Faust 基础设施编译它们。该项目探索用 Haskell 构造 DSP 算法，再交由 Faust 编译为各种目标（LLVM、C++ 等）。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/manual/architectures/" rel="noreferrer noopener">https://faustdoc.grame.fr/manual/architectures/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

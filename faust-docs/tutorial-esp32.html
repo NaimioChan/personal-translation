@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用 Faust 在 ESP32 上做 DSP - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：用 Faust 在 ESP32 上做 DSP">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="dsp-on-the-esp32-with-faust">用 Faust 在 ESP32 上做 DSP</h1><p><a href="https://www.espressif.com/en/products/hardware/esp32/overview" rel="noreferrer noopener">ESP32</a> 是一款便宜的微控制器，内置蓝牙与 Wi-Fi 支持，拥有大量 GPIO 与模拟输入等。它极低的价格（几美元）使其非常有吸引力，被越来越多的开发板采用。市面上有大量面向音频应用的「未知/神秘」开发板基于 ESP32，可以在阿里巴巴/速卖通上找到。它们大多面向「智能音箱」（如 Alexa 等）的开发，但搭载了开展实时 DSP 应用所需的全部组件，因此可用于开发数字乐器、效果处理器、合成器硬件等。<a href="https://github.com/LilyGO/TTGO-TAudio" rel="noreferrer noopener">TTGO T-Audio</a> 与 <a href="https://blog.hackster.io/seeed-drops-new-esp32-audio-development-kit-for-audio-related-iot-projects-ad38d1f02637" rel="noreferrer noopener">ESP32 Audio Dev Kit</a> 就是这类开发板的好例子。</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/esp32/img/esp32.jpg"/><em>TTGO T-Audio（左）与 ESP32 Audio Dev Kit（右）</em></p><p>两者都搭载质量较好的音频编解码器，带立体声输入输出、内置功放、电池电路、外部 RAM 以及多种运动传感器（仅 TTGO T-Audio），价格都不到 15 美元。由于这些开发板不运行任何操作系统，可以达到很低的音频延迟（例如缓冲区为 8 个样本等）。与 <a href="tutorial-teensy.html">Teensy 3.6/4.0 及其各自的音频扩展板</a>相比，这些开发板便宜得多，性能也比 Teensy 3.6 强（双核，主频高得多），而且最重要的是有足够 RAM 运行混响、回声等内存占用大的 DSP 算法（这在 Teensy 3.6 和 4.0 上相对受限）。最后，ESP32 生态完全开源（包括其引导程序）！在很多方面，它们可以与 BELA（&lt;150 美元）等贵得多的专用音频平台竞争。</p><p>Faust 发行版现在带有 <code>faust2esp32</code>，这是一个用 Faust 为基于 ESP32 的开发板编程的工具。<code>faust2esp32</code> 仍在开发中，当前版本可以生成 DSP 引擎，用于 ESP32 项目中完成声音合成与处理任务。虽然 ESP32 与音频编解码器之间的通信机制（<code>i2s</code>）在所有开发板上都相同，但 ESP32 开发板所用音频编解码器的品牌和型号差别很大。<code>faust2esp32</code> 支持若干音频编解码器，可以通过运行 <code>faust2esp32 -h</code> 或查看 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/esp32" rel="noreferrer noopener"><code>faust2esp32</code> 文档</a>列出。</p><p><code>faust2esp32</code> 生成的 DSP 引擎同时兼容 ESP32 的 C++ 与 Arduino 开发环境。下面两节分别用这两种方式带你新建 ESP32 项目并为其添加 Faust 音频支持。</p><h2 id="using-the-esp32-c-development-environment">使用 ESP32 的 C++ 开发环境</h2><blockquote><p>本教程的最终源代码可以在<a href="https://faustdoc.grame.fr/tutorials/esp32/misc/esp32-c%2B%2B.zip" rel="noreferrer noopener">这里</a>找到。</p></blockquote><p>用 ESP32 原生的 C++ 环境编程有很多好处。特别是可以非常精细地控制开发板配置与编译选项。例如，如果你的 DSP 算法内存占用很大，可能别无选择，因为必须启用外部 RAM（见<a href="#using-the-external-ram-of-the-esp32">使用 ESP32 的外部 RAM</a>）。</p><p>在这个简短的教程中，我们带你从零创建一个支持音频 DSP 的 C++ 项目，目标板为 TTGO T-Audio（类似开发板的流程大致相同）。</p><h3 id="starting-a-new-esp32-project">新建 ESP32 项目</h3><p>关于如何配置 ESP32 C++ 开发环境，可以在<a href="https://docs.espressif.com/projects/esp-idf/en/latest/get-started/index.html" rel="noreferrer noopener">这个教程</a>中找到（读到第 4 步结束）。</p><p>环境就绪后，把 <a href="https://github.com/espressif/esp-idf/tree/138c941fa/examples/get-started/hello_world" rel="noreferrer noopener">ESP32 <code>hello_world</code></a> 示例项目复制到系统中某个位置。然后运行 <code>make</code>，它应会自动弹出 ESP32 配置面板。按需做一些修改（例如按 ESP32 入门教程所说明的配置串口烧录器等）。退出菜单后，编译应开始并顺利完成。</p><p>由于我们即将用 <code>faust2esp32</code> 生成的 DSP 引擎使用 C++，当前项目的主文件也应改为 C++。为此，只需把 <code>main/hello_world_main.c</code> 重命名为 <code>main/main.cpp</code>（当然也可以取别的名字，只要用 cpp 扩展名）。然后确认程序的基本结构如下：</p><pre><code>#include &lt;stdio.h&gt;
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_system.h"
+#include "esp_spi_flash.h"
+
+extern "C" {
+    void app_main(void);
+}
+
+void app_main(void)
+{
+  while(1) {
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+</code></pre><p>这里的无限 while 循环在主线程/任务中运行，每秒更新一次。修改项目根目录的 <code>CMakeLists.txt</code> 以更改项目名（例如 <code>project(FaustTutorial)</code>）。同样，修改 <code>main</code> 中的 <code>CMakeLists.txt</code>，为组件源文件设置正确的文件（例如 <code>set(COMPONENT_SRCS "main.cpp")</code>）。再次运行 make，确认程序仍能编译、没有改坏东西。</p><h3 id="making-a-simple-dsp-engine">制作一个简单的 DSP 引擎</h3><p>现在写一个简单的 Faust 程序（就是那个老熟人哈哈），实现带平滑控制的带限锯齿波：</p><pre><code class="language-faust">import("stdfaust.lib");
+
+freq = nentry("freq",440,20,20000,0.01) : si.smoo;
+gain = nentry("gain",1,0,1,0.01) : si.smoo;
+
+process = os.sawtooth(freq)*gain;
+</code></pre><p>把它保存为 <code>FaustSawtooth.dsp</code>（这将决定对应 DSP 引擎的名字），然后用 <code>faust2esp32</code> 运行以下命令编译：</p><pre><code>faust2esp32 -lib FaustSawtooth.dsp
+</code></pre><p><code>-lib</code> 要求生成 C++ DSP 引擎，而不是完整固件。</p><blockquote><p>注意：当前版本的 <code>faust2esp32</code> 只能生成 DSP 引擎（不能生成完整的 ESP32 程序），所以这里 <code>-lib</code> 选项其实并非必需。</p></blockquote><p>另一种做法是在<a href="https://faustide.grame.fr" rel="noreferrer noopener">在线 IDE</a> 的 Faust 编译服务中选择 ESP32 目标平台。</p><p>两种情况都会返回一个包含若干 C++ 文件的 <code>.zip</code> 包。在当前示例中，<code>FaustSawtooth.[cpp/h]</code> 实现由 <code>FaustSawtooth.dsp</code> 生成的 Faust DSP 对象，<code>WM8978.[cpp/h]</code> 是对应你开发板音频编解码器的对象。</p><blockquote><p>注意：在 <code>faust2esp32</code> 当前版本中，唯一支持的音频编解码器是 <a href="https://www.mouser.com/ds/2/76/WM8978_v4.5-1141768.pdf" rel="noreferrer noopener">WM8978</a>（<code>-WM8978</code> 选项，即 TTGO T-Audio 所用的那颗）和 AC101（<code>-AC101</code> 选项）。</p></blockquote><p>所有这些文件应放到项目的 <code>main</code> 文件夹中。之后按如下方式在 <code>main.cpp</code> 中包含它们：</p><pre><code>#include &lt;stdio.h&gt;
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_system.h"
+#include "esp_spi_flash.h"
+
+#include "WM8978.h"
+#include "FaustSawtooth.h"
+
+extern "C" {
+    void app_main(void);
+}
+</code></pre><h3 id="configuring-the-audio-codec">配置音频编解码器</h3><p>接下来，应在 <code>app_main</code> 中实例化并配置 <code>WM8978</code> 对象（它对应音频编解码器，即开发板上的音频接口）：</p><pre><code class="language-faust">WM8978 wm8978;
+wm8978.init();
+wm8978.addaCfg(1,1); 
+wm8978.inputCfg(1,0,0);     
+wm8978.outputCfg(1,0); 
+wm8978.micGain(30);
+wm8978.auxGain(0);
+wm8978.lineinGain(0);
+wm8978.spkVolSet(0);
+wm8978.hpVolSet(40,40);
+wm8978.i2sCfg(2,0);
+</code></pre><p>同样，<code>faust2esp32</code> 当前版本只支持 TTGO T-Audio 上的 Wolfson WM8978 和 AC101，但我们正在努力加入其他厂商的新编解码器。其他编解码器的流程应该类似。</p><p>当前的配置会启用麦克风输入、关闭扬声器功放、把耳机增益设为 40 等。更多信息请参阅 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/esp32/drivers/wm8978" rel="noreferrer noopener">WM8978 对象文档</a>。</p><p>注意，这些命令在启动时会「实时」逐条调用，因此音频编解码器的配置是逐步完成的，应在向它发送任何音频缓冲区之前完成。</p><h3 id="instantiating-the-faust-dsp-engine">实例化 Faust DSP 引擎</h3><p>配置好音频编解码器后，上一步生成并已包含在 <code>main.cpp</code> 中的 Faust DSP 对象也应在 <code>app_main</code> 中实例化：</p><pre><code class="language-faust">int SR = 48000;
+int BS = 8;
+FaustSawtooth faustSawtooth(SR,BS);  
+faustSawtooth.start();
+</code></pre><p><code>FaustSawtooth</code> 的构造函数接受两个参数：采样率（这里是 48kHz）和块大小（这里是 8）。调用构造函数会配置对象、为其分配内存等，但要开始计算，还需要调用 <code>start()</code> 方法。由于 ESP32 固件基于 <a href="https://www.freertos.org/" rel="noreferrer noopener">freertos</a>，音频在其自己的高优先级任务中计算，调用 <code>start()</code> 会启动这个任务。注意，随时调用 <code>stop()</code> 即可移除该任务并停止音频计算。</p><p>最后，随时可以调用 <code>FaustSawtooth</code> 对象的 <code>setParamValue</code> 方法，改变 Faust 对象某个参数的值（这里声明了两个参数：<code>freq</code> 与 <code>gain</code>）。例如，在 <code>app_main</code> 底部的 <code>while</code> 循环中调用下面这行，即可每个样本随机改变所生成锯齿波的频率：</p><pre><code class="language-faust">faustSawtooth.setParamValue("freq",rand()%(2000-50 + 1) + 50);
+</code></pre><p>到这里，<code>main.cpp</code> 应该如下所示：</p><pre><code>#include &lt;stdio.h&gt;
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_system.h"
+#include "esp_spi_flash.h"
+
+#include "WM8978.h"
+#include "FaustSawtooth.h"
+
+extern "C" {
+    void app_main(void);
+}
+
+void app_main(void)
+{
+    WM8978 wm8978;
+    wm8978.init();
+    wm8978.addaCfg(1,1); 
+    wm8978.inputCfg(1,0,0);     
+    wm8978.outputCfg(1,0); 
+    wm8978.micGain(30);
+    wm8978.auxGain(0);
+    wm8978.lineinGain(0);
+    wm8978.spkVolSet(0);
+    wm8978.hpVolSet(40,40);
+    wm8978.i2sCfg(2,0);
+
+    int SR = 48000;
+    int BS = 8;
+    FaustSawtooth faustSawtooth(SR,BS);  
+    faustSawtooth.start();
+
+    while(1) {
+        faustSawtooth.setParamValue("freq",rand()%(2000-50 + 1) + 50);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+</code></pre><p>试着重新编译固件并上传到开发板。如果接上耳机，你应该能听到频率每秒随机变化的锯齿波。</p><h3 id="using-the-external-ram-of-the-esp32">使用 ESP32 的外部 RAM</h3><p>某些 DSP 算法可能需要大量内存（例如波表、延迟等）。这种情况下，Faust 生成的对象可能无法放进 ESP32 的内置 RAM，可能需要使用开发板的外部 RAM 模块（SRAM）。</p><p>为了测试这一点，我们先要写一个需要大量内存的 Faust 程序。把上一个示例的锯齿波换成正弦波就够了，因为 Faust 默认的正弦振荡器（<code>os.osc</code>）基于大小为 65536 的波表：</p><pre><code class="language-faust">import("stdfaust.lib");
+
+freq = nentry("freq",440,20,20000,0.01) : si.smoo;
+gain = nentry("gain",1,0,1,0.01) : si.smoo;
+
+process = os.osc(freq)*gain;
+</code></pre><p>然后可以按<a href="#making-a-simple-dsp-engine">制作一个简单的 DSP 引擎</a>一节中描述的相同步骤，把这个 Faust 程序集成到你的 C++ ESP32 项目中。</p><p>如果再次编译固件（即 <code>make</code>），链接时应会得到如下错误：</p><pre><code class="language-faust">[...]/xtensa-esp32-elf/bin/ld: hello-world.elf section `.dram0.bss' will not fit in region `dram0_0_seg'
+[...]/xtensa-esp32-elf/bin/ld: DRAM segment data does not fit.
+[...]/xtensa-esp32-elf/bin/ld: region `dram0_0_seg' overflowed by 93408 bytes
+collect2: error: ld returned 1 exit status
+</code></pre><p>要解决这个问题，可以把外部 RAM 纳入 ESP32 的内存映射。为此，运行 <code>make menuconfig</code> 并进入 <code>Component Config/ESP32-specific</code>。然后高亮 <code>Support for external RAM, SPI-Connected RAM</code> 并按 <code>y</code> 键启用。进入 <code>SPI RAM config/SPI RAM access method</code> 菜单，选择 <code>Integrate RAM into ESP32 memory map</code>。接着选择 <code>Allow .bss segment placed in external memory</code> 并按 <code>y</code> 键启用该功能。最后，打开 <code>FaustSawtooth.cpp</code>（不过我们现在合成的是正弦波，所以你那里这个文件名可能不同），搜索 <code>static float ftbl0mydspSIG0</code>，这就是将被正弦波表填充的静态表。Faust 编译器生成的 C++ 代码中，这一部分总会包含需要大量内存的大表。现在要在表定义旁边加上 <code>EXT_RAM_ATTR</code> 属性：</p><pre><code class="language-faust">static float ftbl0mydspSIG0[65536] EXT_RAM_ATTR;
+</code></pre><p>它告诉 C++ 编译器，这个静态表应放在外部内存而不是内置内存中。如果你的 Faust 程序做的不是合成正弦波，可能需要在每个表定义上都加这个属性。</p><blockquote><p>注意：我们正在修改 Faust 编译器，使其在给定特定选项时自动完成这一过程。</p></blockquote><p>最后，试着重新编译固件，现在应该一切正常了！</p><h2 id="using-the-arduino-development-environment">使用 Arduino 开发环境</h2><blockquote><p>本教程的最终源代码可以在<a href="https://faustdoc.grame.fr/tutorials/esp32/misc/esp32-arduino.zip" rel="noreferrer noopener">这里</a>找到。</p></blockquote><p>Arduino 开发环境也可以用来给 ESP32 编程。在这种情况下使用 Faust 生成的 DSP 引擎，步骤与<a href="#using-the-esp32-c-development-environment">上一节</a>描述的 C++ 环境非常相似。</p><p>首先确认 Arduino 开发板管理器中已安装 <code>esp32</code> 包（<code>Tools/Board/Boards Manager</code>）。接着新建一个空项目并保存。然后按上一教程<a href="#making-a-simple-dsp-engine">制作一个简单的 DSP 引擎</a>一节中描述的相同步骤操作；不过应把 <code>FaustSawtooth.[cpp/h]</code> 与 <code>WM8978.[cpp/h]</code> 文件放在与项目 <code>.ino</code> 文件相同的文件夹里。生成的项目文件夹现在应如下所示：</p><pre><code class="language-faust">esp32Tuto.ino 
+FaustSawtooth.cpp
+FaustSawtooth.h
+WM8978.cpp
+WM8978.h
+</code></pre><p>然后按如下方式编辑 Arduino 程序：</p><pre><code>#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#include "WM8978.h"
+#include "FaustSawtooth.h"
+
+FaustSawtooth faustSawtooth(48000,8);
+
+void setup() {
+  WM8978 wm8978;
+  wm8978.init();
+  wm8978.addaCfg(1,1); 
+  wm8978.inputCfg(1,0,0);     
+  wm8978.outputCfg(1,0); 
+  wm8978.micGain(30);
+  wm8978.auxGain(0);
+  wm8978.lineinGain(0);
+  wm8978.spkVolSet(0);
+  wm8978.hpVolSet(40,40);
+  wm8978.i2sCfg(2,0);
+
+  faustSawtooth.start();
+}
+
+void loop() {
+  faustSawtooth.setParamValue("freq",rand()%(2000-50 + 1) + 50);
+  delay(1000);
+}
+</code></pre><p>生成的固件行为应与<a href="#using-the-esp32-c-development-environment">前面 C++ 教程</a>中的版本相同。关于 <code>WM8978</code> 那几行在做什么等更多信息，可以参考<a href="#configuring-the-audio-codec">配置音频编解码器</a>一节。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/esp32/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/esp32/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

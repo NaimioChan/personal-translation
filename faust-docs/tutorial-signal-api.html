@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用 signal API - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：使用 signal API">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="using-the-signal-api">使用 signal API</h1><p>signal API 在<em>Faust 编译链内部提供了一个中间接入点</em>。本教程通过代码示例介绍它。目标是展示如何在 signal API 之上构建新的音频 DSP 语言（文本式或图形式），并利用 Faust 编译器基础设施的一部分。</p><h4 id="faust-compiler-structure">Faust 编译器结构</h4><p>Faust 编译器由若干步骤组成：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/img/compilation-chain.png"/><em>编译链</em></p><p>从 DSP 源代码出发，<em>语义阶段</em>产生信号，信号在概念上是样本或控制值的无限流。随后在<em>代码生成阶段</em>把这些信号编译为命令式代码（C/C++、LLVM IR、WebAssembly 等）。</p><p><em>语义阶段</em>本身由若干步骤组成：</p><p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/img/semantic-phase.png"/><em>语义阶段</em></p><p>使用框图代数（BDA）编写的初始 DSP 代码，在<em>求值、lambda 演算</em>步骤中被翻译为范式的扁平电路。</p><p>输出信号列表由<em>符号传播</em>步骤产生。每个输出信号随后被简化，并执行一组优化（范式计算与化简、延迟线共享、类型推导等），最终产生<em>范式形式的输出信号列表</em>。</p><p><em>代码生成阶段</em>把信号翻译为名为 FIR（Faust Imperative Representation）的中间表示，再通过一组后端转换为最终目标语言（C/C++、LLVM IR、WebAssembly 等）。</p><h4 id="accessing-the-signal-stage">访问 signal 阶段</h4><p>在<em>语义阶段</em>中新增了一个公开的中间入口点，可以创建信号集（作为输出信号列表），从而利用编译链剩余的所有部分。<a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/libfaust-signal.h" rel="noreferrer noopener">signal API</a>（或 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/libfaust-signal-c.h" rel="noreferrer noopener">C signal API</a> 版本）让开发者能够以编程方式创建输出信号列表，然后编译它，生成可直接使用的 DSP，形式可以是 C++ 类，也可以是 LLVM、Interpreter 或 WebAssembly 工厂，以便与所有现有的架构文件配合使用。信号阶段完成的若干优化，将通过查看生成的 C++ 代码来演示。</p><p>注意，<a href="tutorial-box-api.html">box API</a> 可以访问编译链中的另一个阶段。</p><h2 id="compiling-signal-expressions">编译 signal 表达式</h2><p>使用 signal API 需要执行以下步骤：</p><ul><li><p>使用 <code>createLibContext</code> 函数创建全局编译上下文</p></li><li><p>使用 signal API 创建信号输出，通过组合更简单的表达式逐步构建更复杂的表达式</p></li><li><p>使用 <code>createCPPDSPFactoryFromSignals</code> 函数编译输出列表以创建 DSP 工厂（或用 <a href="#using-the-generated-code">createDSPFactoryFromSignals</a> 生成 LLVM 嵌入工厂，或用 <a href="#using-the-generated-code">createInterpreterDSPFactoryFromSignals</a> 生成 Interpreter 嵌入工厂）</p></li><li><p>最后使用 <code>destroyLibContext</code> 函数销毁编译上下文</p></li></ul><p>DSP 工厂允许创建 DSP 实例，以便与音频和 UI 架构文件配合使用，<em>在编译过程本身之外</em>。DSP 实例和工厂最终在不再使用时必须释放。</p><h3 id="tools">工具</h3><p>先定义一个 <code>compile</code> 函数，它使用 <code>createCPPDSPFactoryFromSignals</code> 函数并打印生成的 C++ 类：</p><pre><code>static void compile(const string&amp; name, 
+                    tvec signals, 
+                    int argc = 0, 
+                    const char* argv[] = nullptr)
+{
+    string error_msg;
+    dsp_factory_base* factory = createCPPDSPFactoryFromSignals(name, 
+                                                              signals, 
+                                                              argc, 
+                                                              argv, 
+                                                              error_msg);
+    if (factory) {
+        // 打印 C++ 类
+        factory-&gt;write(&amp;cout);
+        delete(factory);
+    } else {
+        cerr &lt;&lt; error_msg;
+    }
+}
+</code></pre><p>一个封装所有必要步骤的宏：</p><pre><code>#define COMPILER(exp)    \
+{                        \
+    createLibContext();  \
+    exp                  \
+    destroyLibContext(); \
+}                        \
+</code></pre><h3 id="examples">示例</h3><p>每个示例都给出等价的 Faust DSP 程序和 SVG 图作为辅助。SVG 图展示编译 <em>propagate</em> 步骤的结果（即在任何信号规范化步骤之前），并清楚展示每个输出信号表达式必须如何创建。所有展示的 C++ 示例（以及一些额外示例）都定义在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/tools/benchmark/signal-tester.cpp" rel="noreferrer noopener">signal-tester</a> 工具中，可在 tools/benchmark 目录下用 <code>make signal-tester</code> 编译。</p><h4 id="simple-constant-signal">简单的常量信号</h4><p>我们来创建一个生成常量值 0.5 的程序。以下是 Faust DSP 代码：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust0/exfaust0.svg"/><pre><code class="language-faust">process = 0.5;</code></pre><br/><p>下面的代码创建一个输出信号向量（类型为 <code>tvec</code>），其中包含单个 <code>sigReal(0.5)</code> 信号，然后编译它并显示 C++ 类：</p><pre><code class="language-faust">static void test1()
+{
+    COMPILER
+    (
+        tvec signals;
+        signals.push_back(sigReal(0.5));
+
+        compile("test1", signals);
+    )
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(0.5f);
+    }
+}
+</code></pre><h4 id="doing-some-mathematical-operations-on-an-input-signal">对输入信号做一些数学运算</h4><p>下面是一个对信号输入做数学运算的简单程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust1/exfaust1.svg"/><pre><code class="language-faust">process = _ &lt;: +(0.5), *(1.5);</code></pre><br/><p>第一个音频输入用 <code>sigInput(0)</code> 信号创建，然后用 <code>sigAdd</code> 和 <code>sigMul</code> 信号算子变换，产生两个输出：</p><pre><code class="language-faust">static void test2()
+{
+    COMPILER
+    (
+        tvec signals;
+        Signal in1 = sigInput(0);
+        signals.push_back(sigAdd(in1, sigReal(0.5)));
+        signals.push_back(sigMul(in1, sigReal(1.5)));
+
+        compile("test2", signals);
+     )
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        float fTemp0 = float(input0[i0]);
+        output0[i0] = FAUSTFLOAT((fTemp0 + 0.5f));
+        output1[i0] = FAUSTFLOAT((1.5f * fTemp0));
+    }
+}
+</code></pre><p>注意，访问输入 N 只需使用 <code>sigInput(N)</code> 表达式。</p><h4 id="defining-delayed-signals">定义延迟信号</h4><p>下面是一个使用信号输入并对其做数学运算、然后延迟信号的简单程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust2/exfaust2.svg"/><pre><code class="language-faust">process = _ &lt;: @(+(0.5), 500), @(*(1.5), 3000);</code></pre><br/><p><code>sigDelay(x, y)</code> 算子用第二个 <code>y</code> 参数延迟第一个参数 <code>x</code>，这里使用常量值：</p><pre><code class="language-faust">static void test3()
+{
+    COMPILER
+    (
+        tvec signals;
+        Signal in1 = sigInput(0);
+        signals.push_back(sigDelay(sigAdd(in1, sigReal(0.5)), sigInt(500)));
+        signals.push_back(sigDelay(sigMul(in1, sigReal(1.5)), sigInt(3000)));
+
+        compile("test3", signals);
+    )
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        float fTemp0 = float(input0[i0]);
+        fVec0[(IOTA &amp; 4095)] = fTemp0;
+        fVec1[(IOTA &amp; 511)] = (fTemp0 + 0.5f);
+        output0[i0] = FAUSTFLOAT(fVec1[((IOTA - 500) &amp; 511)]);
+        output1[i0] = FAUSTFLOAT((1.5f * fVec0[((IOTA - 3000) &amp; 4095)]));
+        IOTA = (IOTA + 1);
+    }
+}
+</code></pre><p>Faust 编译器的若干选项可以控制生成的 C++ 代码。默认情况下在单个循环中逐样本计算。但<a href="manual-compiler.html#controlling-code-generation">编译器也可以生成向量化和并行代码</a>。下面的代码展示如何以向量模式编译：</p><pre><code class="language-faust">static void test5()
+{
+    createLibContext();
+
+    tvec signals;
+    Signal in1 = sigInput(0);
+    signals.push_back(sigDelay(sigAdd(in1, sigReal(0.5)), sigInt(500)));
+    signals.push_back(sigDelay(sigMul(in1, sigReal(1.5)), sigInt(3000)));
+
+    // 向量化编译
+    compile("test5", signals, 3, (const char* []){ "-vec", "-lv", "1" });
+
+    destroyLibContext();
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0_ptr = inputs[0];
+    FAUSTFLOAT* output0_ptr = outputs[0];
+    FAUSTFLOAT* output1_ptr = outputs[1];
+    for (int vindex = 0; (vindex &lt; count); vindex = (vindex + 32)) {
+        FAUSTFLOAT* input0 = &amp;input0_ptr[vindex];
+        FAUSTFLOAT* output0 = &amp;output0_ptr[vindex];
+        FAUSTFLOAT* output1 = &amp;output1_ptr[vindex];
+        int vsize = std::min&lt;int&gt;(32, (count - vindex));
+        /* 可向量化循环 0 */
+        /* 前置代码 */
+        fYec0_idx = ((fYec0_idx + fYec0_idx_save) &amp; 4095);
+        /* 计算代码 */
+        for (int i = 0; (i &lt; vsize); i = (i + 1)) {
+            fYec0[((i + fYec0_idx) &amp; 4095)] = float(input0[i]);
+        }
+        /* 后置代码 */
+        fYec0_idx_save = vsize;
+        /* 可向量化循环 1 */
+        /* 前置代码 */
+        fYec1_idx = ((fYec1_idx + fYec1_idx_save) &amp; 1023);
+        /* 计算代码 */
+        for (int i = 0; (i &lt; vsize); i = (i + 1)) {
+            fYec1[((i + fYec1_idx) &amp; 1023)] = (float(input0[i]) + 0.5f);
+        }
+        /* 后置代码 */
+        fYec1_idx_save = vsize;
+        /* 可向量化循环 2 */
+        /* 计算代码 */
+        for (int i = 0; (i &lt; vsize); i = (i + 1)) {
+            output0[i] = FAUSTFLOAT(fYec1[(((i + fYec1_idx) - 500) &amp; 1023)]);
+        }
+        /* 可向量化循环 3 */
+        /* 计算代码 */
+        for (int i = 0; (i &lt; vsize); i = (i + 1)) {
+            output1[i] = FAUSTFLOAT((1.5f * fYec0[(((i + fYec0_idx) - 3000) &amp; 4095)]));
+        }
+    }
+}
+</code></pre><p>如果 C++ 编译器能自动向量化，可能会更快。</p><p>如果延迟算子用在数学运算<em>之前</em>的输入信号上，那么只会创建<em>一条</em>延迟线，取两条延迟线的最大长度：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust3/exfaust3.svg"/><pre><code class="language-faust">process = _ &lt;: @(500) + 0.5, @(3000) * 1.5;</code></pre><br/><p>并用下面的代码构建：</p><pre><code class="language-faust">static void test4()
+{
+    COMPILER
+    (
+        tvec signals;
+        Signal in1 = sigInput(0);
+        signals.push_back(sigAdd(sigDelay(in1, sigInt(500)), sigReal(0.5)));
+        signals.push_back(sigMul(sigDelay(in1, sigInt(3000)), sigReal(1.5)));
+
+        compile("test4", signals);
+    )
+}
+</code></pre><p>在 <code>compute</code> 方法中，单条 <code>fVec0</code> 延迟线在两个不同索引处被读取：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        float fTemp0 = float(input0[i0]);
+        fVec0[(IOTA &amp; 4095)] = fTemp0;
+        output0[i0] = FAUSTFLOAT((fVec0[((IOTA - 500) &amp; 4095)] + 0.5f));
+        output1[i0] = FAUSTFLOAT((1.5f * fVec0[((IOTA - 3000) &amp; 4095)]));
+        IOTA = (IOTA + 1);
+    }
+}
+</code></pre><h4 id="equivalent-signal-expressions">等价的 signal 表达式</h4><p>非常重要的一点是，<em>语法等价的 signal 表达式</em>会<em>在内部由同一个内存结构表示</em>（使用哈希共享 hash consing），因此在后续编译步骤中以相同方式处理。所以下面的代码中，创建 <code>s1</code> 变量来定义 <code>sigAdd(sigDelay(sigInput(0), sigInt(500)), sigReal(0.5))</code> 表达式，然后在两个输出中使用：</p><pre><code class="language-faust">static void equivalent1()
+{
+    COMPILER
+    (
+        tvec signals;
+        Signal s1 = sigAdd(sigDelay(sigInput(0), sigInt(500)), sigReal(0.5))
+        signals.push_back(s1);
+        signals.push_back(s1);
+
+        compile("equivalent1", signals);
+    )
+}
+</code></pre><p>其行为与下面的代码完全相同，其中 <code>sigAdd(sigDelay(sigInput(0), sigInt(500)), sigReal(0.5))</code> 表达式被使用了两次：</p><pre><code class="language-faust">static void equivalent2()
+{
+    COMPILER
+    (
+        tvec signals;
+        signals.push_back(sigAdd(sigDelay(sigInput(0), sigInt(500)), sigReal(0.5)));
+        signals.push_back(sigAdd(sigDelay(sigInput(0), sigInt(500)), sigReal(0.5)));
+
+        compile("equivalent2", signals);
+    )
+}
+</code></pre><p>在 signal API 之上创建 DSL 时，这是值得记住的一个特性。</p><h4 id="using-user-interface-items">使用用户界面控件</h4><p>用户界面控件可以使用，如下例中的 <code>vslider</code>：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust4/exfaust4.svg"/><pre><code class="language-faust">process = @(+(0.5), 500) * vslider("Vol", 0.5, 0, 1, 0.01);</code></pre><br/><p>用下面的代码构建：</p><pre><code class="language-faust">static void test8()
+{
+    COMPILER
+    (
+        tvec signals;
+        Signal in1 = sigInput(0);
+        Signal s = sigVSlider("Vol", sigReal(0.5), sigReal(0.), sigReal(1.), sigReal(0.01));
+        signals.push_back(sigMul(s, sigDelay(sigAdd(in1, sigReal(0.5)), sigInt(500))));
+
+        compile("test8", signals);
+    )
+}
+</code></pre><p>生成了 <code>buildUserInterface</code> 方法，使用 <code>fVslider0</code> 变量：</p><pre><code>virtual void buildUserInterface(UI* ui_interface) 
+{
+        ui_interface-&gt;openVerticalBox("test8");
+        ui_interface-&gt;addVerticalSlider("Vol", &amp;fVslider0, 
+                                    FAUSTFLOAT(0.5f),
+                                    FAUSTFLOAT(0.0f), 
+                                    FAUSTFLOAT(1.0f), 
+                                    FAUSTFLOAT(0.00999999978f));
+        ui_interface-&gt;closeBox();
+}
+</code></pre><p><code>compute</code> 方法则是：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+        FAUSTFLOAT* input0 = inputs[0];
+        FAUSTFLOAT* output0 = outputs[0];
+        float fSlow0 = float(fVslider0);
+        for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+            fVec0[(IOTA &amp; 511)] = (float(input0[i0]) + 0.5f);
+            output0[i0] = FAUSTFLOAT((fSlow0 * fVec0[((IOTA - 500) &amp; 511)]));
+            IOTA = (IOTA + 1);
+        }
+}
+</code></pre><p>用户界面布局可以用 <a href="manual-syntax.html#hgroup-primitive">hgroup</a>、<a href="manual-syntax.html#vgroup-primitive">vgroup</a> 或 <a href="manual-syntax.html#tgroup-primitive">tgroup</a> 描述。使用 signal API 时，布局可以用 <a href="manual-syntax.html#labels-as-pathnames">labels-as-pathnames</a> 语法定义，如下例所示：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust5/exfaust5.svg"/><pre><code class="language-faust">import("stdfaust.lib"); 
+freq = vslider("h:Oscillator/freq", 440, 50, 1000, 0.1); 
+gain = vslider("h:Oscillator/gain", 0, 0, 1, 0.01); 
+process = freq*gain;</code></pre><br/><p>用下面的代码构建：</p><pre><code class="language-faust">static void test9()
+{
+    COMPILER
+    (
+        tvec signals;
+        Signal freq = sigVSlider("h:Oscillator/freq", 
+                                 sigReal(440), sigReal(50), 
+                                 sigReal(1000), sigReal(0.1));
+        Signal gain = sigVSlider("h:Oscillator/gain", 
+                                 sigReal(0), sigReal(0), 
+                                 sigReal(1), sigReal(0.011));
+        signals.push_back(sigMul(freq, sigMul(gain, sigInput(0))));
+
+        compile("test9", signals);
+    )
+}
+</code></pre><p>生成的 <code>buildUserInterface</code> 方法包含预期的 <code>openHorizontalBox</code> 调用：</p><pre><code>virtual void buildUserInterface(UI* ui_interface) 
+{
+    ui_interface-&gt;openHorizontalBox("Oscillator");
+    ui_interface-&gt;addVerticalSlider("freq", &amp;fVslider0, 
+                                    FAUSTFLOAT(440.0f), 
+                                    FAUSTFLOAT(50.0f), 
+                                    FAUSTFLOAT(1000.0f), 
+                                    FAUSTFLOAT(0.100000001f));
+    ui_interface-&gt;addVerticalSlider("gain", &amp;fVslider1, 
+                                    FAUSTFLOAT(0.0f), 
+                                    FAUSTFLOAT(0.0f), 
+                                    FAUSTFLOAT(1.0f), 
+                                    FAUSTFLOAT(0.0109999999f));
+    ui_interface-&gt;closeBox();
+}
+</code></pre><h4 id="defining-recursive-signals">定义递归信号</h4><p>递归信号可以用 <code>sigRecursion</code> 函数构建递归，用 <code>sigSelf</code> 函数引用递归信号本身。会自动创建一个样本的延迟以产生有效的计算。下面是一个简单例子：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust6/exfaust6.svg"/><pre><code class="language-faust">process = + ~ _;</code></pre><br/><p>用下面的代码构建：</p><pre><code class="language-faust">static void test10()
+{
+    COMPILER
+    (
+        tvec signals;
+        Signal in1 = sigInput(0);
+        signals.push_back(sigRecursion(sigAdd(sigSelf(), in1)));
+
+        compile("test10", signals);
+    )
+}
+</code></pre><p><code>compute</code> 方法显示了保存延迟信号的 <code>fRec0</code> 变量：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+        FAUSTFLOAT* input0 = inputs[0];
+        FAUSTFLOAT* output0 = outputs[0];
+        for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+            fRec0[0] = (float(input0[i0]) + fRec0[1]);
+            output0[i0] = FAUSTFLOAT(fRec0[0]);
+            fRec0[1] = fRec0[0];
+        }
+}
+</code></pre><p>等价的代码也可以用更通用的 <code>sigRecursionN</code> 和 <code>sigSelfN</code> 函数定义，它们允许构建一组（可能相互依赖的）递归信号：</p><pre><code class="language-faust">static void test10bis()
+{
+    COMPILER
+    (
+        tvec signals;
+        Signal in1 = sigInput(0);
+        signals.push_back(sigRecursionN(sigAdd(sigSelfN(0), in1)));
+
+        compile("test10", signals);
+    )
+}
+</code></pre><p>下面是相互依赖的递归信号定义示例：</p><pre><code class="language-faust">static void test10ter()
+{
+    COMPILER
+    (
+        Signal in0 = sigInput(0);
+        Signal in1 = sigInput(1);
+        tvec ins;
+        ins.push_back(sigAdd(sigMul(sigSelfN(1), sigReal(0.5)), in0));
+        ins.push_back(sigAdd(sigMul(sigSelfN(0), sigReal(0.9)), in1));
+        tvec outs = sigRecursionN(ins);
+
+        compile("test10ter", outs);
+    )
+}
+</code></pre><p>以及下面的 <code>compute</code> 方法：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* input1 = inputs[1];
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        fRec0[0] = float(input0[i0]) + 0.5f * fRec1[1];
+        fRec1[0] = float(input1[i0]) + 0.9f * fRec0[1];
+        output0[i0] = FAUSTFLOAT(fRec0[0]);
+        output1[i0] = FAUSTFLOAT(fRec1[0]);
+        fRec0[1] = fRec0[0];
+        fRec1[1] = fRec1[0];
+    }
+}
+</code></pre><h4 id="accessing-the-global-context">访问全局上下文</h4><p>在 Faust 中，底层音频引擎的采样率和缓冲区大小通过外部函数与常量机制访问。这些值也可以在 signal 语言中用以下辅助函数使用：</p><pre><code class="language-faust">// 在 platform.lib 中复现 'SR' 定义
+// SR = min(192000.0, max(1.0, fconstant(int fSampleFreq, <dummy.h>)));
+inline Signal SR()
+{
+    return sigMin(sigReal(192000.0), 
+           sigMax(sigReal(1.0), 
+           sigFConst(SType::kSInt, "fSampleFreq", "&lt;dummy.h&gt;")));
+}
+
+// 在 platform.lib 中复现 'BS' 定义
+// BS = fvariable(int count, <dummy.h>);
+inline Signal BS()
+{
+    return sigFVar(SType::kSInt, "count", "&lt;dummy.h&gt;");
+}
+</dummy.h></dummy.h></code></pre><p>所以下面的 DSP 程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust7/exfaust7.svg"/><pre><code class="language-faust">import("stdfaust.lib"); 
+process = ma.SR, ma.BS;</code></pre><br/><p>可以在 signal API 层面写成：</p><pre><code class="language-faust">static void test11()
+{
+    COMPILER
+    (
+        tvec signals;
+        signals.push_back(SR());
+        signals.push_back(BS());
+
+        compile("test11", signals);
+    )
+}
+</code></pre><p>生成的 C++ 类包含：</p><pre><code>virtual void instanceConstants(int sample_rate) 
+{
+    fSampleRate = sample_rate;
+    fConst0 = std::min&lt;float&gt;(192000.0f, std::max&lt;float&gt;(1.0f, float(fSampleRate)));
+}
+</code></pre><p>以及：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    int iSlow0 = count;
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(fConst0);
+        output1[i0] = FAUSTFLOAT(iSlow0);
+    }
+}
+</code></pre><h4 id="creating-tables">创建表</h4><p>可以创建只读表和读写表。<em>只读表</em>信号用 <code>sigReadOnlyTable</code> 创建，接受：</p><ul><li>第一个参数为长度</li><li>第二个参数为内容</li><li>第三个参数为读取索引（介于 0 与 size-1 之间）</li></ul><p>并产生被索引的表内容作为其唯一输出。下面这个简单的 DSP 示例：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust8/exfaust8.svg"/><pre><code class="language-faust">process = 10,1,int(_) : rdtable;</code></pre><br/><p>可以用以下代码写出：</p><pre><code class="language-faust">static void test20()
+{
+    COMPILER
+    (
+        tvec signals;
+        signals.push_back(sigReadOnlyTable(sigInt(10), sigInt(1), sigIntCast(sigInput(0))));
+
+        compile("test20", signals);
+    )
+}
+</code></pre><p>生成的 C++ 代码包含 <code>itbl0mydspSIG0</code> 静态表定义：</p><pre><code class="language-faust">static int itbl0mydspSIG0[10];
+</code></pre><p>将在初始化时调用一次的表填充代码：</p><pre><code class="language-faust">void fillmydspSIG0(int count, int* table) 
+{
+    for (int i1 = 0; (i1 &lt; count); i1 = (i1 + 1)) {
+        table[i1] = 1;
+    }
+}
+</code></pre><p>以及访问 <code>itbl0mydspSIG0</code> 表的 <code>compute</code> 方法：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(itbl0mydspSIG0[int(float(input0[i0]))]);
+    }
+}
+</code></pre><p><em>读写表</em>信号用 <code>sigWriteReadTable</code> 创建，接受：</p><ul><li>第一个参数为长度</li><li>第二个参数为内容</li><li>第三个参数为写入索引（介于 0 与 size-1 之间）</li><li>第四个参数为表的输入</li><li>第五个参数为读取索引（介于 0 与 size-1 之间）</li></ul><p>并产生被索引的表内容作为其唯一输出。下面这个 DSP 示例：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust9/exfaust9.svg"/><pre><code class="language-faust">process = 10,1,int(_),int(_),int(_) : rwtable;</code></pre><br/><p>可以用以下代码写出：</p><pre><code class="language-faust">static void test20()
+{
+    COMPILER
+    (
+        tvec signals;
+        signals.push_back(sigWriteReadTable(sigInt(10), 
+                                            sigInt(1), 
+                                            sigIntCast(sigInput(0)), 
+                                            sigIntCast(sigInput(1)),    
+                                            sigIntCast(sigInput(2))));
+
+        compile("test21", signals);
+    )
+}
+</code></pre><p>生成的 C++ 代码在 <code>mydsp</code> 类中包含 <code>itbl0</code> 定义作为字段：</p><pre><code class="language-faust">int itbl0[10];
+</code></pre><p>将在初始化时调用一次的表填充代码：</p><pre><code class="language-faust">void fillmydspSIG0(int count, int* table) 
+{
+    for (int i1 = 0; (i1 &lt; count); i1 = (i1 + 1)) {
+        table[i1] = 1;
+    }
+}
+</code></pre><p>以及从 <code>itbl0</code> 表读取和写入的 <code>compute</code> 方法：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* input1 = inputs[1];
+    FAUSTFLOAT* input2 = inputs[2];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        itbl0[int(float(input0[i0]))] = int(float(input1[i0]));
+        output0[i0] = FAUSTFLOAT(itbl0[int(float(input2[i0]))]);
+    }
+}
+</code></pre><h4 id="creating-waveforms">创建波形</h4><p>下面这个定义波形的 DSP 程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust10/exfaust10.svg"/><pre><code class="language-faust">process = waveform { 0, 100, 200, 300, 400 };</code></pre><br/><p>可以用以下代码写出，其中波形的长度是第一个输出，波形内容本身是用 <code>sigWaveform</code> 创建的第二个输出，以遵循<a href="manual-syntax.html#waveform-primitive">波形语义</a>：</p><pre><code class="language-faust">static void test12()
+{
+    COMPILER
+    (
+        tvec waveform;
+        // 填充波形内容向量
+        for (int i = 0; i &lt; 5; i++) {
+            waveform.push_back(sigReal(100*i));
+        }
+        tvec signals;
+        signals.push_back(sigInt(waveform.size())); // 波形长度
+        signals.push_back(sigWaveform(waveform)); // 波形内容
+
+        compile("test12", signals);
+     )
+}
+</code></pre><p>生成的 C++ 代码中，<code>fmydspWave0</code> 波形被定义为静态表：</p><pre><code class="language-faust">const static float fmydspWave0[5] = {0.0f,100.0f,200.0f,300.0f,400.0f};
+</code></pre><p>并在下面的 <code>compute</code> 方法中使用：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(5);
+        output1[i0] = FAUSTFLOAT(fmydspWave0[fmydspWave0_idx]);
+        fmydspWave0_idx = ((1 + fmydspWave0_idx) % 5);
+    }
+}
+</code></pre><h4 id="creating-soundfiles">创建声音文件</h4><p><em>soundfile</em> 基元可以访问一组外部定义的声音资源，这些资源用其文件名或完整路径的列表描述。它接受：</p><ul><li>声音编号（作为 0 到 255 之间的整数，即<a href="manual-syntax.html#constant-numerical-expressions">常量数值表达式</a>）</li><li>声音中的读取索引（如果读取索引大于声音长度，将访问声音的最后一个样本）</li></ul><p>生成的块具有：</p><ul><li>两个固定输出：第一个是当前访问的声音长度（以帧为单位），第二个是当前访问的声音标称采样率</li><li>声音声道本身还有若干额外输出，作为<a href="manual-syntax.html#constant-numerical-expressions">常量数值表达式</a></li></ul><p>soundfile 块用 <code>sigSoundfile</code> 创建，但不能直接使用。它必须与以下函数配合：</p><ul><li><code>sigSoundfileLength</code> 用于访问声音长度（以帧为单位）</li><li><code>sigSoundfileRate</code> 用于访问声音采样率（以 Hz 为单位）</li><li><code>sigSoundfileBuffer</code> 用于访问实际的样本</li></ul><p>因此下面的 DSP 代码：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust11/exfaust11.svg"/><pre><code class="language-faust">process = 0,0 : soundfile("sound[url:{'tango.wav'}]", 1);</code></pre><br/><p>将用 signal API 这样创建：</p><pre><code class="language-faust">static void test19()
+{
+    COMPILER
+    (
+        tvec signals;
+        // soundfile 定义
+        Signal sf = sigSoundfile("sound[url:{'tango.wav'}]");
+        // 为简化代码使用简单的读取索引 0
+        Signal rdx = sigInt(0);
+        // 第 0 部分
+        Signal part = sigInt(0);
+        // 包装索引以避免读取超出缓冲区
+        Signal wridx = sigIntCast(sigMax(sigInt(0), 
+                       sigMin(rdx, sigSub(sigSoundfileLength(sf, 
+                       sigInt(0)),
+                       sigInt(1)))));
+        // 访问第 0 部分
+        signals.push_back(sigSoundfileLength(sf, part));
+        // 访问第 0 部分
+        signals.push_back(sigSoundfileRate(sf, part));
+        // 访问声道 0 和第 0 部分，使用包装后的读取索引
+        signals.push_back(sigSoundfileBuffer(sf, sigInt(0), part, wridx));
+
+        compile("test19", signals);
+    )
+}
+</code></pre><p>并生成下面的 <code>compute</code> 方法：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    FAUSTFLOAT* output2 = outputs[2];
+    Soundfile* fSoundfile0ca = fSoundfile0;
+    int* fSoundfile0ca_le0 = fSoundfile0ca-&gt;fLength;
+    int iSlow0 = fSoundfile0ca_le0[0];
+    int* fSoundfile0ca_ra0 = fSoundfile0ca-&gt;fSR;
+    int iSlow1 = fSoundfile0ca_ra0[0];
+    int iSlow2 = std::max&lt;int&gt;(0, std::min&lt;int&gt;(0, (iSlow0 + -1)));
+    int* fSoundfile0ca_of0 = fSoundfile0ca-&gt;fOffset;
+    float** fSoundfile0ca_bu0 = static_cast&lt;float**&gt;(fSoundfile0ca-&gt;fBuffers);
+    float* fSoundfile0ca_bu_ch0 = fSoundfile0ca_bu0[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        output0[i0] = FAUSTFLOAT(iSlow0);
+        output1[i0] = FAUSTFLOAT(iSlow1);
+        output2[i0] = FAUSTFLOAT(fSoundfile0ca_bu_ch0[(fSoundfile0ca_of0[0] + iSlow2)]);
+    }
+    fSoundfile0 = fSoundfile0ca;
+}
+</code></pre><h4 id="defining-more-complex-expressions-phasor-and-oscillator">定义更复杂的表达式：相位器与振荡器</h4><p>可以定义更复杂的信号表达式，用辅助定义创建信号。所以下面的 DSP 程序：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust12/exfaust12.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = phasor(440)
+with {
+     decimalpart(x) = x-int(x);
+     phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+};</code></pre><br/><p>可以用以下辅助函数构建，这里用 C 编写：</p><pre><code class="language-faust">static Signal decimalpart(Signal x)
+{
+    return sigSub(x, sigIntCast(x));
+}
+
+static Signal phasor(Signal f)
+{
+    return sigRecursion(decimalpart(sigAdd(sigSelf(), sigDiv(f, SR()))));
+}
+</code></pre><p>以及组合它们的主函数：</p><pre><code class="language-faust">static void test17()
+{
+    COMPILER
+    (
+        tvec signals;
+        signals.push_back(phasor(sigReal(440.0)));
+
+        compile("test17", signals);
+    )
+}
+</code></pre><p>它产生下面的 <code>compute</code> 方法：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        fRec0[0] = (fConst0 + (fRec0[1] - float(int((fConst0 + fRec0[1])))));
+        output0[i0] = FAUSTFLOAT(fRec0[0]);
+        fRec0[1] = fRec0[0];
+    }
+}
+</code></pre><p>现在看下面的振荡器：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust13/exfaust13.svg"/><pre><code class="language-faust"> import("stdfaust.lib");
+ process = osc(440), osc(440)
+ with {
+    decimalpart(x) = x-int(x);
+    phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+    osc(f) = sin(2 * ma.PI * phasor(f));
+ };</code></pre><br/><p>可以用以下代码构建：</p><pre><code class="language-faust">static Signal osc(Signal f)
+{
+    return sigSin(sigMul(phasor(f), sigMul(sigReal(2.0), sigReal(3.141592653))));
+}
+
+static void test18()
+{
+    COMPILER
+    (
+        tvec signals;
+        signals.push_back(osc(sigReal(440.0)));
+        signals.push_back(osc(sigReal(440.0)));
+
+        compile("test18", signals);
+    )
+}
+</code></pre><p>它产生下面的 <code>compute</code> 方法，可以看到，由于两个输出上使用的是<em>同一个</em>振荡器信号，它实际上只计算一次并复制两次：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    FAUSTFLOAT* output1 = outputs[1];
+    for (int i0 = 0; (i0 &lt; count); i0 = (i0 + 1)) {
+        fRec0[0] = (fConst0 + (fRec0[1] - float(int((fConst0 + fRec0[1])))));
+        float fTemp0 = std::sin((6.28318548f * fRec0[0]));
+        output0[i0] = FAUSTFLOAT(fTemp0);
+        output1[i0] = FAUSTFLOAT(fTemp0);
+        fRec0[1] = fRec0[0];
+    }
+}
+</code></pre><h2 id="using-the-generated-code">使用生成的代码</h2><p>使用 LLVM 或 Interpreter 后端可以即时生成并执行编译后的 DSP。</p><p>LLVM 后端可以与 <code>createDSPFactoryFromSignals</code> 一起使用（见 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/llvm-dsp.h" rel="noreferrer noopener">llvm-dsp.h</a>）来生成 DSP 工厂，然后生成 DSP 实例：</p><pre><code>string error_msg;
+llvm_dsp_factory* factory = createDSPFactoryFromSignals("FaustDSP", 
+                                                        signals, 0, 
+                                                        nullptr, "", 
+                                                        error_msg);
+// 检查工厂
+dsp* dsp = factory-&gt;createDSPInstance();
+// 检查 dsp
+...
+// 使用 dsp
+...
+// 删除 dsp 和工厂
+delete dsp;
+deleteDSPFactory(factory);
+</code></pre><p>Interpreter 后端可以与 <code>createInterpreterDSPFactoryFromSignals</code> 一起使用（见 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/interpreter-dsp.h" rel="noreferrer noopener">interpreter-dsp.h</a>）来生成 DSP 工厂，然后生成 DSP 实例：</p><pre><code>string error_msg;
+interpreter_dsp_factory* factory = createInterpreterDSPFactoryFromSignals("FaustDSP", 
+                                                                          signals, 0, 
+                                                                          nullptr, "", 
+                                                                          error_msg);
+// 检查工厂
+dsp* dsp = factory-&gt;createDSPInstance();
+// 检查 dsp
+...
+// 使用 dsp
+...
+// 删除 dsp 和工厂
+delete dsp;
+deleteInterpreterDSPFactory(factory);
+</code></pre><h4 id="connecting-the-audio-layer">连接音频层</h4><p>音频驱动可以渲染 DSP 实例。下面是一个使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/audio/dummy-audio.h" rel="noreferrer noopener">dummyaudio</a> 音频驱动的简单代码示例：</p><pre><code class="language-faust">// 分配音频驱动以渲染 5 个 512 帧的缓冲区
+dummyaudio audio(5);
+audio.init("Test", dsp);
+
+// 渲染缓冲区……
+audio.start();
+audio.stop();
+</code></pre><p>一个更复杂的示例，使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/audio/jack-dsp.h" rel="noreferrer noopener">JACK</a> 音频驱动：</p><pre><code class="language-faust">// 分配 JACK 音频驱动
+jackaudio audio;
+audio.init("Test", dsp);
+
+// 启动实时处理
+audio.start();
+....
+audio.stop();
+</code></pre><h4 id="connecting-the-controller-layer">连接控制层</h4><p>控制器可以通过 GUI 架构连接到 DSP 实例。下面是一个使用 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/gui/GTKUI.h" rel="noreferrer noopener">GTKUI</a> 接口的代码示例：</p><pre><code>GUI* interface = new GTKUI("Test", &amp;argc, &amp;argv);
+dsp-&gt;buildUserInterface(interface);
+interface-&gt;run();
+</code></pre><p>所有其他<a href="manual-architectures.html">标准控制器</a>（MIDI、OSC 等）都可以照常使用。</p><h4 id="example-with-audio-rendering-and-gui-control">音频渲染与 GUI 控制的示例</h4><p>这里是一个更完整的示例，先是 DSP 代码：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust14/exfaust14.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = osc(f1), osc(f2)
+with {
+    decimalpart(x) = x-int(x);
+    phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+    osc(f) = sin(2 * ma.PI * phasor(f));
+    f1 = vslider("Freq1", 300, 100, 2000, 0.01);
+    f2 = vslider("Freq2", 500, 100, 2000, 0.01);
+};</code></pre><br/><p>然后是使用 signal API 的 C++ 代码：</p><pre><code>// 使用 Interpreter 后端。
+static void test23(int argc, char* argv[])
+{
+    interpreter_dsp_factory* factory = nullptr;
+    string error_msg;
+
+    createLibContext();
+    {
+        tvec signals;
+        signals.push_back(osc(sigHSlider("v:Oscillator/Freq1", 
+                                         sigReal(300), 
+                                         sigReal(100), 
+                                         sigReal(2000), 
+                                         sigReal(0.01))));
+        signals.push_back(osc(sigHSlider("v:Oscillator/Freq2",
+                                         sigReal(500), 
+                                         sigReal(100), 
+                                         sigReal(2000), 
+                                         sigReal(0.01))));
+        factory = createInterpreterDSPFactoryFromSignals("FaustDSP", 
+                                                         signals, 0, 
+                                                         nullptr, error_msg);
+    }
+    destroyLibContext();
+
+    // 在 createLibContext/destroyLibContext 作用域之外使用工厂
+    if (factory) {
+        dsp* dsp = factory-&gt;createDSPInstance();
+        assert(dsp);
+
+        // 分配音频驱动
+        jackaudio audio;
+        audio.init("Test", dsp);
+
+        // 创建 GUI
+        GTKUI gtk_ui = GTKUI("Organ", &amp;argc, &amp;argv);
+        dsp-&gt;buildUserInterface(&amp;gtk_ui);
+
+        // 启动实时处理
+        audio.start();
+
+        // 启动 GUI
+        gtk_ui.run();
+
+        // 清理
+        audio.stop();
+        delete dsp;
+        deleteInterpreterDSPFactory(factory);
+    } else {
+        cerr &lt;&lt; error_msg;
+    }
+}
+</code></pre><h4 id="polyphonic-midi-controllable-simple-synthesizer">复音 MIDI 可控的简单合成器</h4><p>下面是一个 MIDI 可控的简单合成器，先是 DSP 代码：</p><img alt="框图" src="https://faustdoc.grame.fr/tutorials/signal-api/exfaust15/exfaust15.svg"/><pre><code class="language-faust">import("stdfaust.lib");
+process = organ, organ
+with {
+    decimalpart(x) = x-int(x);
+    phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+    osc(f) = sin(2 * ma.PI * phasor(f));
+    freq = nentry("freq", 100, 100, 3000, 0.01);
+    gate = button("gate");
+    gain = nentry("gain", 0.5, 0, 1, 0.01);
+    organ = gate * (osc(freq) * gain + osc(2 * freq) * gain);
+
+};</code></pre><br/><p>然后是使用 signal API 的 C++ 代码：</p><pre><code>// 简单的复音 DSP。
+static void test24(int argc, char* argv[])
+{
+    interpreter_dsp_factory* factory = nullptr;
+    string error_msg;
+
+    createLibContext();
+    {
+        tvec signals;
+
+        // 遵循 freq/gate/gain 约定，
+        // 见：../manual/midi/#standard-polyphony-parameters
+        Signal freq = sigNumEntry("freq", 
+                                  sigReal(100), 
+                                  sigReal(100), 
+                                  sigReal(3000), 
+                                  sigReal(0.01));
+        Signal gate = sigButton("gate");
+        Signal gain = sigNumEntry("gain", 
+                                  sigReal(0.5), 
+                                  sigReal(0), 
+                                  sigReal(1), 
+                                  sigReal(0.01));
+        Signal organ = sigMul(gate, sigAdd(sigMul(osc(freq), gain), 
+                                           sigMul(osc(sigMul(freq, sigInt(2))), gain)));
+        // 立体声
+        signals.push_back(organ);
+        signals.push_back(organ);
+
+        factory = createInterpreterDSPFactoryFromSignals("FaustDSP", 
+                                                         signals, 
+                                                         0, nullptr, 
+                                                         error_msg);
+    }
+    destroyLibContext();
+
+    // 在 createLibContext/destroyLibContext 作用域之外使用工厂
+    if (factory) {
+        dsp* dsp = factory-&gt;createDSPInstance();
+        assert(dsp);
+
+        // 分配复音 DSP
+        dsp = new mydsp_poly(dsp, 8, true, true);
+
+        // 分配 MIDI/音频驱动
+        jackaudio_midi audio;
+        audio.init("Organ", dsp);
+
+        // 创建 GUI
+        GTKUI gtk_ui = GTKUI("Organ", &amp;argc, &amp;argv);
+        dsp-&gt;buildUserInterface(&amp;gtk_ui);
+
+        // 创建 MIDI 控制器
+        MidiUI midi_ui = MidiUI(&amp;audio);
+        dsp-&gt;buildUserInterface(&amp;midi_ui);
+
+        // 启动实时处理
+        audio.start();
+
+        // 启动 MIDI
+        midi_ui.run();
+
+        // 启动 GUI
+        gtk_ui.run();
+
+        // 清理
+        audio.stop();
+        delete dsp;
+        deleteInterpreterDSPFactory(factory);
+    } else {
+        cerr &lt;&lt; error_msg;
+    }
+}
+</code></pre><h2 id="examples-with-the-c-api">C API 示例</h2><p>signal API 也以<a href="https://github.com/grame-cncm/faust/blob/master-dev/compiler/generator/libfaust-signal-c.h" rel="noreferrer noopener">纯 C API</a> 形式提供。下面是前面某个示例用 C API 重写，以创建信号，其中 LLVM 后端与 C 版本的 <code>createCDSPFactoryFromSignals</code> 函数一起使用（见 <a href="https://github.com/grame-cncm/faust/blob/master-dev/architecture/faust/dsp/llvm-dsp-c.h" rel="noreferrer noopener">llvm-dsp-c.h</a>）来生成 DSP 工厂，然后生成 DSP 实例：</p><pre><code class="language-faust">/*
+ import("stdfaust.lib");
+ process = phasor(440)
+ with {
+     decimalpart(x) = x-int(x);
+     phasor(f) = f/ma.SR : (+ : decimalpart) ~ _;
+ };
+ */
+
+static Signal decimalpart(Signal x)
+{
+    return CsigSub(x, CsigIntCast(x));
+}
+
+static Signal phasor(Signal f)
+{
+    return CsigRecursion(decimalpart(CsigAdd(CsigSelf(), CsigDiv(f, SR()))));
+}
+
+static void test1()
+{
+    createLibContext();
+    {
+        Signal signals[2];
+        signals[0] = phasor(CsigReal(2000));
+        signals[1] = NULL; // 以 null 结尾的数组
+
+        char error_msg[4096];
+        llvm_dsp_factory* factory = createCDSPFactoryFromSignals("test1", 
+                                                                 signals, 
+                                                                 0, NULL, 
+                                                                 "", 
+                                                                 error_msg, 
+                                                                 -1);
+
+        if (factory) {
+
+            llvm_dsp* dsp = createCDSPInstance(factory);
+            assert(dsp);
+
+            // 渲染音频
+            render(dsp);
+
+            // 清理
+            deleteCDSPInstance(dsp);
+            deleteCDSPFactory(factory);
+
+        } else {
+            printf("Cannot create factory : %s\n", error_msg);
+        }
+    }
+    destroyLibContext();
+}
+</code></pre><p>下面是一个使用控制器和 <code>PrintUI</code> 架构来显示其参数的示例：</p><pre><code class="language-faust">/*
+ import("stdfaust.lib");
+
+ freq = vslider("h:Oscillator/freq", 440, 50, 1000, 0.1);
+ gain = vslider("h:Oscillator/gain", 0, 0, 1, 0.01);
+
+ process = freq * gain;
+ */
+
+static void test3()
+{
+    createLibContext();
+    {
+        Signal signals[2];
+        Signal freq = CsigVSlider("h:Oscillator/freq", 
+                                  CsigReal(440), 
+                                  CsigReal(50), 
+                                  CsigReal(1000), 
+                                  CsigReal(0.1));
+        Signal gain = CsigVSlider("h:Oscillator/gain", 
+                                  CsigReal(0), 
+                                  CsigReal(0), 
+                                  CsigReal(1), 
+                                  CsigReal(0.011));
+        signals[0] = CsigMul(freq, CsigMul(gain, CsigInput(0)));
+        signals[1] = NULL; // 以 null 结尾的数组
+
+        char error_msg[4096];
+        llvm_dsp_factory* factory = createCDSPFactoryFromSignals("test3", 
+                                                                 signals, 0, 
+                                                                 NULL, "", 
+                                                                 error_msg, 
+                                                                 -1);
+
+        if (factory) {
+
+            llvm_dsp* dsp = createCDSPInstance(factory);
+            assert(dsp);
+
+            printf("=================UI=================\n");
+
+            // 定义在 PrintCUI.h 中
+            metadataCDSPInstance(dsp, &amp;mglue);
+
+            buildUserInterfaceCDSPInstance(dsp, &amp;uglue);
+
+            // 清理
+            deleteCDSPInstance(dsp);
+            deleteCDSPFactory(factory);
+
+        } else {
+            printf("Cannot create factory : %s\n", error_msg);
+        }
+    }
+    destroyLibContext();
+}
+</code></pre><p>所有展示的 C 示例（以及一些额外示例）都定义在 <a href="https://github.com/grame-cncm/faust/blob/master-dev/tools/benchmark/signal-tester.c" rel="noreferrer noopener">signal-tester-c</a> 工具中，可在 tools/benchmark 目录下用 <code>make signal-tester-c</code> 编译。</p><h2 id="creating-a-signal-language-based-on-this-api">基于此 API 创建 signal 语言</h2><p>直接使用 signal API 生成复杂表达式很快就会变得非常棘手且不实用。因此通常需要一种<em>构建在 signal API 之上</em>的语言。这正是<em>框图代数</em>的全部内容，也是整个 Faust 语言本身。</p><p>但也可以尝试其他一些方法。例如 <a href="https://www.elementary.audio" rel="noreferrer noopener">Elementary audio language</a> 就构建在类似的 <a href="https://www.elementary.audio/docs" rel="noreferrer noopener">signal language</a> 之上，并使用 JavaScript 作为上层语言，帮助以编程方式创建复杂的输出信号列表。使用基于图形的工具的其他方法当然也可以尝试。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/signal-api/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/signal-api/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

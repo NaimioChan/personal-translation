@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用 interp-tracer 进阶调试 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：用 interp-tracer 进阶调试">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="advanced-debugging-with-interp-tracer">用 interp-tracer 进阶调试</h1><p>关于如何调试 Faust DSP 代码，<a href="manual-debugging.html#debugging-the-dsp-code">这里</a>有一些通用说明。本教程讲解如何用 <a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/benchmark#interp-tracer" rel="noreferrer noopener">interp-tracer</a> 工具在运行时调试代码。<br/> <strong>interp-tracer</strong> 工具使用解释器后端运行并插桩已编译的程序。运行期间和/或关闭应用时会收集并显示代码的各种统计信息，典型的有 FP_SUBNORMAL、FP_INFINITE 与 FP_NAN 值，INTEGER_OVERFLOW、CAST_INT_OVERFLOW、NEGATIVE_BITSHIFT 与 DIV_BY_ZERO 操作，以及 LOAD/STORE 错误。</p><h2 id="debugging-out-of-domain-computations">调试域外计算</h2><p>使用 <code>-trace 4</code> 选项可以在遇到第一个错误时退出，并把 FBC（Faust 字节码）追踪写成 <code>DumpCode-foo.txt</code> 文件，把程序内存布局写成 <code>DumpMem-fooXXX.txt</code> 文件。</p><p>下面的 <code>debug.dsp</code> 程序：</p><pre><code class="language-faust">process = hslider("foo", 0.5, -1, 1, 0.01) : log; 
+</code></pre><p>一旦滑块值等于 0 或更低，就会产生域外值，并在控制台写出如下追踪：</p><pre><code class="language-faust">-------- Interpreter 'NaN' trace start --------
+opcode 202 kLogf int 0 real 0 offset1 -1 offset2 -1
+Stack [Int: 0] [REAL: 0,000000]
+opcode 2 kLoadReal int 0 real 0 offset1 1 offset2 0 name fHslider0
+Stack [Int: 0] [REAL: -4,605170]
+opcode 279 kCondBranch int 0 real 0 offset1 0 offset2 0
+Stack [Int: 16] [REAL: -4,605170]
+opcode 46 kLTInt int 0 real 0 offset1 -1 offset2 -1
+Stack [Int: 0] [REAL: -4,605170]
+opcode 3 kLoadInt int 0 real 0 offset1 2 offset2 0 name i0
+Stack [Int: 1] [REAL: -4,605170]
+opcode 3 kLoadInt int 0 real 0 offset1 1 offset2 0 name count
+Stack [Int: 16] [REAL: -4,605170]
+opcode 7 kStoreInt int 0 real 0 offset1 2 offset2 0 name i0
+Stack [Int: 1] [REAL: -4,605170]
+opcode 33 kAddInt int 0 real 0 offset1 -1 offset2 -1
+Stack [Int: 0] [REAL: -4,605170]
+-------- Interpreter 'NaN' trace end --------
+</code></pre><p>追踪中包含解释器执行的 Faust 字节码（FBC）指令栈，最后几条指令是出错前刚刚执行的，这里是 <code>kLogf</code> 操作。DSP 结构体中各字段的名字也可见，这里是 <code>fHslider0</code>。查看生成的 C++ 有助于厘清控制流：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    float fSlow0 = std::log(float(fHslider0));
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        output0[i0] = FAUSTFLOAT(fSlow0);
+    }
+}
+</code></pre><p>生成的 <code>DumpMem-debug22419.txt</code> 文件包含解释器虚拟机 REAL（按 <code>-single/-double</code> 编译选项为 float 或 double）内存数组和 INT（整数）内存数组的内容。</p><pre><code class="language-faust">DSP name: debug
+=================================
+REAL memory: 3
+0 defaultsound 0
+1 fHslider0 -0.01
+2 fSlow0 -4.60517
+=================================
+INT memory: 3
+0  44100
+1 count 16
+2 i0 16
+</code></pre><h2 id="debugging-rdtable-and-rwtable-primitives">调试 <code>rdtable</code> 与 <code>rwtable</code> 基元</h2><p><a href="manual-syntax.html#rdtable-primitive">rdtable</a> 基元使用一个读索引，<a href="manual-syntax.html#rdtable-primitive">rwtable</a> 基元使用一个读索引和一个写索引。表的大小在编译期已知，读写索引必须留在表内，以免运行时发生内存访问崩溃。</p><p><a href="manual-debugging.html#the-ct-option">-ct</a> 选项可用于检查表的索引范围，并生成安全的表访问代码。</p><p>对于下面的 <code>table.dsp</code> 程序：</p><pre><code class="language-faust">process = rwtable(SIZE, 0.0, rdx, _, wdx)
+with {
+    SIZE = 16;
+    integrator = +(1) ~ _;
+    rdx = integrator%(SIZE*2);
+    wdx = integrator%(SIZE*2);
+};
+</code></pre><p>用 <code>-ct 0</code> 选项生成的代码会产生：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        iRec0[0] = iRec0[1] + 1;
+        int iTemp0 = iRec0[0] % 32;
+        ftbl0[iTemp0] = float(input0[i0]);
+        output0[i0] = FAUSTFLOAT(ftbl0[iTemp0]);
+        iRec0[1] = iRec0[0];
+    }
+}
+</code></pre><p>其中 <code>compute</code> 方法里的表访问代码不正确，<code>iTemp0</code> 的读写索引可能超出 16 的表大小。执行 <code>interp-tracer -trace 4 -ct 0 table.dsp</code> 会在控制台生成如下追踪，显示内存读写访问错误：</p><pre><code class="language-faust">-------- Interpreter crash trace start --------
+assertStoreRealHeap array: fIntHeapSize 17 index 16 size 16 name ftbl0
+Stack [Int: 16] [REAL: 0,000000]
+opcode 3 kLoadInt int 0 real 0 offset1 7 offset2 0 name iTemp0
+Stack [Int: 15] [REAL: 0,000000]
+opcode 24 kLoadInput int 0 real 0 offset1 0 offset2 0
+Stack [Int: 16] [REAL: 0,000000]
+opcode 3 kLoadInt int 0 real 0 offset1 6 offset2 0 name i0
+Stack [Int: 16] [REAL: 0,000000]
+opcode 7 kStoreInt int 0 real 0 offset1 7 offset2 0 name iTemp0
+Stack [Int: 16] [REAL: 0,000000]
+opcode 41 kRemInt int 0 real 0 offset1 -1 offset2 -1
+Stack [Int: 0] [REAL: 0,000000]
+opcode 11 kLoadIndexedInt int 0 real 0 offset1 0 offset2 2 name iRec0
+Stack [Int: 0] [REAL: 0,000000]
+opcode 1 kInt32Value int 0 real 0 offset1 -1 offset2 -1
+Stack [Int: 0] [REAL: 0,000000]
+opcode 1 kInt32Value int 32 real 0 offset1 -1 offset2 -1
+-------- Interpreter crash trace end --------
+</code></pre><p>使用 <code>-ct 1</code> 选项，生成的代码现在是：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        iRec0[0] = iRec0[1] + 1;
+        int iTemp0 = std::max&lt;int&gt;(0, std::min&lt;int&gt;(iRec0[0] % 32, 15));
+        ftbl0[iTemp0] = float(input0[i0]);
+        output0[i0] = FAUSTFLOAT(ftbl0[iTemp0]);
+        iRec0[1] = iRec0[0];
+    }
+}
+</code></pre><p>此时 <code>iTemp0</code> 的读写索引被限制在 <em>[0..15]</em> 范围内，代码在运行时不再崩溃。</p><p>这个 DSP 程序确实有错，索引在 32 个样本的边界处回绕。可以改写为：</p><pre><code class="language-faust">process = rwtable(SIZE, 0.0, rdx, _, wdx)
+with {
+    SIZE = 16;
+    index = (+(1) : %(SIZE)) ~ _;
+    rdx = index;
+    wdx = index;
+};
+</code></pre><p>用 <code>-ct 1</code> 选项（并加上 <code>-wall</code> 选项在控制台打印警告信息）生成的 C++ 代码现在是：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        iRec0[0] = (iRec0[1] + 1) % 16;
+        int iTemp0 = std::max&lt;int&gt;(0, std::min&lt;int&gt;(iRec0[0], 15));
+        ftbl0[iTemp0] = float(input0[i0]);
+        output0[i0] = FAUSTFLOAT(ftbl0[iTemp0]);
+        iRec0[1] = iRec0[0];
+    }
+}
+</code></pre><p>警告信息为：</p><pre><code class="language-faust">WARNING : RDTbl read index [0:inf] is outside of table size (16) in read(write(TABLE(16,0.0f),proj0(letrec(W0 = ((proj0(W0)'+1)%16)))@0,IN[0]),proj0(letrec(W0 = ((proj0(W0)'+1)%16)))@0)
+WARNING : WRTbl write index [0:inf] is outside of table size (16) in write(TABLE(16,0.0f),proj0(letrec(W0 = ((proj0(W0)'+1)%16)))@0,IN[0])
+</code></pre><p>范围检查代码会判断读或写索引的区间是否落在 <em>[0..size-1]</em> 范围内，只在需要时生成约束代码。<strong>但由于目前的信号区间计算并不完美，可能生成多余的区间约束代码！</strong> 生成的代码里正是这种情况，可以用 <code>interp-tracer -trace 4 -ct 0 table.dsp</code> 测试，它不生成约束代码，也没有显示任何问题。</p><p><strong>如果完全确定满足<em>留在范围内</em>这一性质，可以用 <code>-ct 0</code> 关闭约束代码的生成，生成的代码会更快。</strong> 我们希望改进信号区间计算模型，从而不再需要索引约束代码。</p><p>注意，DSP 程序也可以这样改写：</p><pre><code class="language-faust">process = rwtable(SIZE, 0.0, rdx, _, wdx)
+with {
+    SIZE = 16;
+    index = (+(1) ~ _) : %(SIZE);
+    rdx = index;
+    wdx = index;
+};
+</code></pre><p>这种情况下信号区间是正确的，生成的 C++ 代码现在是：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        iRec0[0] = iRec0[1] + 1;
+        int iTemp0 = iRec0[0] % 16;
+        ftbl0[iTemp0] = float(input0[i0]);
+        output0[i0] = FAUSTFLOAT(ftbl0[iTemp0]);
+        iRec0[1] = iRec0[0];
+    }
+}
+</code></pre><p>没有加入任何范围约束代码。</p><p><strong>注意 <code>-ct 1</code> 选项是默认值，因此总会生成安全的代码。</strong></p><h2 id="debugging-the-select2-primitive">调试 select2 基元</h2><p><code>select2</code> 基元有严格的语义，但为了优化代码，生成的代码<a href="manual-faq.html#does-select2-behave-like-a-standard-cc-if">并不完全严格</a>。</p><p>对于下面的 DSP 程序：</p><pre><code class="language-faust">process = select2(button("gate"), branch1, branch2)
+with {
+    branch1 = (hslider("foo", 0.5, 0, 1, 0.01):log);
+    branch2 = (hslider("bar", 0.5, -1, 1, 0.01):sqrt);
+};
+</code></pre><p>生成的 C++ 使用 <code>((cond) ? then : else)</code> 形式，实际上只根据 <code>button("gate")</code> 条件计算 <em>then</em> 或 <em>else</em> 两个分支中的一个：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    float fSlow0 = ((int(float(fButton0))) ? std::sqrt(float(fHslider1)) : std::log(float(fHslider0)));
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        output0[i0] = FAUSTFLOAT(fSlow0);
+    }
+}
+</code></pre><p>因此用 <code>interp-tracer -trace 4 debug.dsp</code> 执行它时，在条件处于某个状态时只能检测到一个分支。要强制计算两个分支，可以使用 <code>-sts (--strict-select)</code> 选项。生成的 C++ 现在是：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    float fThen0 = std::log(float(fHslider0));
+    float fElse0 = std::sqrt(float(fHslider1));
+    float fSlow0 = ((int(float(fButton0))) ? fElse0 : fThen0);
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        output0[i0] = FAUSTFLOAT(fSlow0);
+    }
+}
+</code></pre><p>其中创建的中间变量 <code>fThen0</code> 与 <code>fElse0</code> 强制实际计算两个分支。然后用 <code>interp-tracer -trace 4 -sts debug.dsp</code> 执行，就会在条件的两种状态下揭示两个分支上的越界计算。</p><h2 id="debugging-using-test-signals">用测试信号调试</h2><p>效果类 DSP 程序通常需要输入标准化的测试信号，才可能触发异常行为。<code>interp-tracer</code> 工具有一个 <code>-input</code> 选项，可以先把一个 <code>impulse</code> 程序（用 <code>process = 1-1';</code> 定义）接到被测 DSP 的所有输入上，然后接一个 <code>noise</code> 程序（用 <code>import("stdfaust.lib"); process = no.noise;</code> 定义）。因此需要使用类似 <code>interp-tracer -trace 4 -input debug.dsp</code> 的命令。</p><p>也可以直接修改 <code>debug.dsp</code> 代码来使用更专门的测试输入信号，然后正常运行 DSP 代码（即不再使用 <code>-input</code> 选项）。比如写成：<code>process = test_signal &lt;: effect;</code>，把给定的单声道 <code>test_signal</code> 接到 <code>effect</code> 程序的所有输入上。</p><h2 id="correcting-the-program">修正程序</h2><p><code>interp-tracer</code> 工具能帮助找出编程错误。但显然，检测到的错误之后必须修正：</p><ul><li>仔细检查信号范围，比如核验 <code>vslider/hslider/nentry</code> 界面控件里的最小/最大值</li><li>检查数学函数的定义域</li><li>使用 <code>rdtable</code>/<code>rwtable</code> 基元时检查索引</li><li>...</li></ul>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/tutorials/debugging/" rel="noreferrer noopener">https://faustdoc.grame.fr/tutorials/debugging/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

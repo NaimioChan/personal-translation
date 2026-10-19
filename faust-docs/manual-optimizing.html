@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>优化代码 - Faust 文档</title>
+<meta name="description" content="Faust 官方文档的中文译本：优化代码">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="optimizing-the-code">优化代码</h1><h2 id="optimizing-the-dsp-code">优化 DSP 代码</h2><p>Faust 是一门领域特定语言，帮程序员写出非常高层、简洁的 DSP 代码，而把生成该规格最佳、最高效实现的繁重工作交给编译器。处理 DSP 源码时，编译器的类型系统能发现所描述的计算实际上分为四大类：</p><ul><li>在<em>编译/特化期</em>完成的计算：这里适合以构成该语言的 lambda 演算及其模式匹配能力为基础的算法化信号处理器定义</li><li>在<em>初始化期</em>完成的计算：例如所有依赖实际采样率的代码，或填充内部表的代码（用 <code>rdtable</code> 或 <code>rwtable</code> 语言基元编写）</li><li>在<em>控制率</em>完成的计算：典型的是读取控制器（按钮、滑块、数值输入框）当前值、并更新依赖它们的 DSP 内部状态的所有代码</li><li>在<em>采样率</em>完成的计算：其余所有处理和生产样本的代码</li></ul><p>可以把这四类看作<em>不同的计算率</em>。程序员可以拆分 DSP 算法，把所需计算分配到最合适的域（较慢的率域通常优于较快的率域），也可以把 DSP 算法的某些部分从某个域改写到更慢的率域，以获得最高效的代码。</p><h3 id="computations-done-at-compilationspecialization-time">在<em>编译/特化期</em>完成的计算</h3><h4 id="using-pattern-matching">使用模式匹配</h4><p><strong>待办</strong>：说明如何用模式匹配以算法方式描述信号处理器，说明在 Faust DSL 内部定义新 DSL 的原理（以 <a href="https://faustlibraries.grame.fr/libs/fds/" rel="noreferrer noopener">fds.lib</a>、<a href="https://faustlibraries.grame.fr/libs/physmodels/" rel="noreferrer noopener">physmodels.lib</a>、<a href="https://faustlibraries.grame.fr/libs/wavedigitalfilters/" rel="noreferrer noopener">wdmodels.lib</a> 为例）。</p><h4 id="specializing-the-dsp-code">特化 DSP 代码</h4><p>Faust 编译器在编译期可以完成许多优化。例如，DSP 代码可以按固定采样率编译，从而在编译期完成所有依赖采样率的计算。由于 Faust 编译器从本地目录开始搜索库，一种简单的做法是把 <code>libraries/platform.lib</code> 文件（其中包含 <code>SR</code> 定义）复制到本地，并把它改成固定值，例如 48,000 Hz。然后必须重新编译 DSP 代码，特化才会生效。注意 <code>libraries/platform.lib</code> 还包含 <code>tablesize</code> 常量的定义，它在多处用于为振荡器分配表。因此减小该值可以节省内存，例如为嵌入式设备编译时。某些 Faust 服务脚本就采用这一技术：它们在 Faust 命令行上添加 <code>-I /usr/local/share/faust/embedded/</code> 参数，以使用特殊版本的 <code>platform.lib</code> 文件。</p><h3 id="computations-done-at-init-time">在<em>初始化期</em>完成的计算</h3><p>如果没有在编译期用常量值特化，那么所有使用采样率的计算（在 DSP 源码中用 <code>ma.SR</code> 访问，在 DSP 的 <code>init</code> 函数中作为参数提供）都在初始化期完成，而且每当同一个 DSP 以另一个采样率初始化时可能再执行一次。</p><h4 id="using-rdtable-or-rwtable">使用 rdtable 或 rwtable</h4><p><strong>待办</strong>：说明计算如何在初始化期完成，以及如何用 <code>rdtable</code> 或 <code>rwtable</code> 存储预先算好的值。</p><p>也可以使用若干<a href="https://faustlibraries.grame.fr/libs/basics/#function-tabulation" rel="noreferrer noopener">制表函数</a>。</p><h3 id="computations-done-at-control-rate">在<em>控制率</em>完成的计算</h3><h4 id="parameter-smoothing">参数平滑</h4><p>控制参数每块采样一次，其值在块内视为常量，依赖它们的内部状态在 <code>compute</code> 方法开头、采样率 DSP 循环之前更新。</p><p>在下面的 DSP 代码中，<code>vol</code> 滑块的值直接作用于输入音频信号：</p><pre><code class="language-faust">import("stdfaust.lib");
+vol = hslider("Volume", 0.5, 0, 1, 0.01);
+process = *(vol);
+</code></pre><p>为 <code>compute</code> 生成的 C++ 代码中，<code>vol</code> 滑块的值在实际 DSP 循环之前采样，方式是读取保存在局部变量 <code>fSlow0</code> 中的 <code>fHslider0</code> 字段：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    float fSlow0 = float(fHslider0);
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        output0[i0] = FAUSTFLOAT(fSlow0 * float(input0[i0]));
+    }
+}
+</code></pre><p>如果控制参数需要用 <code>control : si.smoo</code> 这类代码平滑（例如避免咔嗒声或突变），计算率就从<em>控制率</em>移到<em>采样率</em>。若把前面的 DSP 代码改成：</p><pre><code class="language-faust">import("stdfaust.lib");
+vol = hslider("Volume", 0.5, 0, 1, 0.01) : si.smoo;
+process = *(vol);
+</code></pre><p><code>vol</code> 滑块在实际 DSP 循环之前采样，乘以初始化期算出的滤波器常量 <code>fConst0</code>，最后在 DSP 循环中用于平滑滤波器：</p><pre><code class="language-faust">virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    float fSlow0 = fConst0 * float(fHslider0);
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        fRec0[0] = fSlow0 + fConst1 * fRec0[1];
+        output0[i0] = FAUSTFLOAT(float(input0[i0]) * fRec0[0]);
+        fRec0[1] = fRec0[0];
+    }
+}
+</code></pre><p>因此 CPU 占用显然更高，是否需要参数平滑应仔细权衡。</p><p>另一点要考虑的是平滑控制时的<em>计算顺序</em>。在下面的 DSP 代码中，dB 滑块的值<em>先</em>转换为线性值，<em>再</em>平滑：</p><pre><code class="language-faust">import("stdfaust.lib");
+smoother_vol = hslider("Volume", -6.0, -120.0, .0, 0.01) : ba.db2linear : si.smoo;
+process = *(smoother_vol);
+</code></pre><p>为 <code>compute</code> 生成的 C++ 代码中，<code>ba.db2linear</code> 里开销较大的 <code>pow</code> 数学函数在控制率求值，即 DSP 循环之前只算一次：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    float fSlow0 = fConst0 * std::pow(1e+01f, 0.05f * float(fHslider0));
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        fRec0[0] = fSlow0 + fConst1 * fRec0[1];
+        output0[i0] = FAUSTFLOAT(float(input0[i0]) * fRec0[0]);
+        fRec0[1] = fRec0[0];
+    }
+}
+</code></pre><p>但如果把 <code>ba.db2linear</code> 与 <code>si.smoo</code> 的顺序反过来，如以下代码所示：</p><pre><code class="language-faust">import("stdfaust.lib");
+smoother_vol = hslider("Volume", -6.0, -120.0, .0, 0.01) : si.smoo : ba.db2linear;
+process = *(smoother_vol);
+</code></pre><p>为 <code>compute</code> 生成的 C++ 代码中，<code>ba.db2linear</code> 里用的 <code>pow</code> 数学函数现在在 DSP 循环中按采样率求值，开销显然大得多：</p><pre><code>virtual void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    float fSlow0 = fConst0 * float(fHslider0);
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        fRec0[0] = fSlow0 + fConst1 * fRec0[1];
+        output0[i0] = FAUSTFLOAT(float(input0[i0]) * std::pow(1e+01f, 0.05f * fRec0[0]));
+        fRec0[1] = fRec0[0];
+    }
+}
+</code></pre><p>要让生成的代码性能最佳，所有开销大的计算都应尽量作用在控制值上（尽可能如此——这并不总是可取），并把 <code>si.smoo</code>（或任何把计算从控制率移到采样率的函数）作为最后一步操作。</p><h3 id="computations-done-at-sample-rate">在<em>采样率</em>完成的计算</h3><h4 id="possibly-deactivating-table-range-check-with-ct-option">可以用 -ct 选项关闭表的范围检查</h4><p><a href="manual-debugging.html#the-ct-option">-ct</a> 选项默认开启（自 Faust 2.53.4 版起），但可以去掉（用 <code>-ct 0</code>）以加速代码。完整说明见<a href="tutorial-debugging.html#debugging-rdtable-and-rwtable-primitives">调试 rdtable 与 rwtable 基元</a>。</p><h4 id="using-function-tabulation">使用函数制表</h4><p>在初始化期完成 <code>rdtable</code> 风格的编译，可以用 <a href="https://faustlibraries.grame.fr/libs/basics/#batabulate" rel="noreferrer noopener">ba.tabulate</a> 或 <a href="https://faustlibraries.grame.fr/libs/basics/#batabulate_chebychev" rel="noreferrer noopener">ba.tabulate_chebychev</a> 函数简化：它们在给定区间上把给定的一元函数 <code>fun</code> <em>制表</em>。系统创建一张表并填入预先算好的值，用于以更高效的方式计算 <code>fun(x)</code>（代价是表需要额外的静态内存）。</p><h4 id="using-fast-math-functions">使用快速数学函数</h4><p>当开销大的数学函数仍出现在采样率代码中时，可以用 <code>-fm</code> <a href="manual-options.html">编译选项</a>把底层操作系统提供的标准版本（例如 C++ 中的 <code>std::cos</code>、<code>std::tan</code> 等）替换为用户自定义版本（希望更快，但可能精度较低）。</p><h3 id="delay-lines-implementation-and-dsp-memory-size">延迟线的实现与 DSP 内存占用</h3><p>Faust 编译器自动为延迟线分配缓冲区。每次样本计算时，延迟信号写入某个位置（<em>写</em>位置），并从另一个位置（<em>读</em>位置）读出，读写索引之间的<em>样本距离</em>就是延迟本身。</p><p>实现延迟线有两种策略：要么读写索引保持不变、每次样本计算后移动延迟线内存，要么读写索引沿延迟线自行移动（有两种<em>回绕索引</em>方式）。这些方法可在内存消耗与使用延迟线的 CPU 开销之间取舍。</p><p>两个编译器选项 <code>-mcd &lt;n&gt;</code>（<code>-max-copy-delay</code>）和 <code>-dlt &lt;n&gt;</code>（<code>--delay-line-threshold</code>）可让你调整这两种策略，甚至组合使用。</p><p>对于最多两个样本的极短延迟线，第一种策略通过手动搬移缓冲区实现。随后，对 2 个到 <code>-mcd &lt;n&gt;</code> 个样本的延迟会生成搬移循环。</p><p>对于大于 <code>-mcd &lt;n&gt;</code> 个样本的延迟值，第二种策略通过以下方式实现：</p><ul><li>当延迟小于 <code>-dlt &lt;n&gt;</code> 值时，使用大小为 2 的幂的数组，并以基于掩码的索引计算访问。</li><li>或者使用基于 if 的方式移动回绕索引：递增的索引与延迟线大小比较，达到时回绕到零。该方法用于大于 <code>-dlt &lt;n&gt;</code> 的延迟值。</li></ul><p>在这一策略中，第一种方法更快但消耗更多内存（给定大小的延迟线会扩展到下一个 2 的幂大小），第二种方法更慢但占用内存更少。</p><p>注意默认使用 <code>-mcd 16</code> 和 <code>-dlt &lt;INT_MAX&gt;</code> 值。下图说明了该机制：</p><pre><code class="language-faust">[ shift buffer |-mcd &lt;N1&gt;| wrapping power-of-two buffer |-dlt &lt;N2&gt;| if based wrapping buffer ]
+</code></pre><p>下面是一个 Faust 程序示例，十条并联的延迟线各自延迟一个独立输入，有三种编译方式（使用默认的 <code>-scalar</code> 模式）：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/optimizing/exfaust0/exfaust0.svg"/><pre><code class="language-faust">process = par(i, 10, @(i+1)) :&gt; _;</code></pre><br/><p>用 <code>faust -mcd 20</code> 编译时，由于 20 大于最长延迟线的长度，所有延迟线都用<em>搬移内存</em>策略编译：</p><pre><code class="language-faust">...
+// DSP 的内存布局
+float fVec0[11];
+float fVec1[10];
+float fVec2[9];
+float fVec3[8];
+float fVec4[7];
+float fVec5[6];
+float fVec6[5];
+float fVec7[4];
+float fVec8[2];
+float fVec9[3];
+int fSampleRate;
+...
+virtual void compute(int count, 
+    FAUSTFLOAT** RESTRICT inputs, 
+    FAUSTFLOAT** RESTRICT outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* input1 = inputs[1];
+    FAUSTFLOAT* input2 = inputs[2];
+    FAUSTFLOAT* input3 = inputs[3];
+    FAUSTFLOAT* input4 = inputs[4];
+    FAUSTFLOAT* input5 = inputs[5];
+    FAUSTFLOAT* input6 = inputs[6];
+    FAUSTFLOAT* input7 = inputs[7];
+    FAUSTFLOAT* input8 = inputs[8];
+    FAUSTFLOAT* input9 = inputs[9];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        fVec0[0] = float(input9[i0]);
+        fVec1[0] = float(input8[i0]);
+        fVec2[0] = float(input7[i0]);
+        fVec3[0] = float(input6[i0]);
+        fVec4[0] = float(input5[i0]);
+        fVec5[0] = float(input4[i0]);
+        fVec6[0] = float(input3[i0]);
+        fVec7[0] = float(input2[i0]);
+        fVec8[0] = float(input0[i0]);
+        fVec9[0] = float(input1[i0]);
+        output0[i0] = FAUSTFLOAT(fVec0[10] + fVec1[9] + fVec2[8] + fVec3[7] + fVec4[6] 
+            + fVec5[5] + fVec6[4] + fVec7[3] + fVec8[1] + fVec9[2]);
+        for (int j0 = 10; j0 &gt; 0; j0 = j0 - 1) {
+            fVec0[j0] = fVec0[j0 - 1];
+        }
+        for (int j1 = 9; j1 &gt; 0; j1 = j1 - 1) {
+            fVec1[j1] = fVec1[j1 - 1];
+        }
+        for (int j2 = 8; j2 &gt; 0; j2 = j2 - 1) {
+            fVec2[j2] = fVec2[j2 - 1];
+        }
+        for (int j3 = 7; j3 &gt; 0; j3 = j3 - 1) {
+            fVec3[j3] = fVec3[j3 - 1];
+        }
+        for (int j4 = 6; j4 &gt; 0; j4 = j4 - 1) {
+            fVec4[j4] = fVec4[j4 - 1];
+        }
+        for (int j5 = 5; j5 &gt; 0; j5 = j5 - 1) {
+            fVec5[j5] = fVec5[j5 - 1];
+        }
+        for (int j6 = 4; j6 &gt; 0; j6 = j6 - 1) {
+            fVec6[j6] = fVec6[j6 - 1];
+        }
+        for (int j7 = 3; j7 &gt; 0; j7 = j7 - 1) {
+            fVec7[j7] = fVec7[j7 - 1];
+        }
+        fVec8[1] = fVec8[0];
+        fVec9[2] = fVec9[1];
+        fVec9[1] = fVec9[0];
+
+    }
+}
+...
+</code></pre><p>在这个代码示例中，<em>最多两个样本的极短延迟线通过手动搬移缓冲区</em>的方法可见于以下行：</p><pre><code class="language-faust">...
+// 1 个样本的延迟线
+fVec8[1] = fVec8[0];
+// 2 个样本的延迟线
+fVec9[2] = fVec9[1];
+fVec9[1] = fVec9[0];
+...
+</code></pre><p>而<em>对 2 个到 <code>-mcd &lt;n&gt;</code> 个样本的延迟会生成搬移循环</em>的方法可见于以下行：</p><pre><code class="language-faust">...
+output0[i0] = FAUSTFLOAT(fVec0[10] + fVec1[9] + fVec2[8] + fVec3[7] + fVec4[6] 
+    + fVec5[5] + fVec6[4] + fVec7[3] + fVec8[1] + fVec9[2]);
+// 10 个样本的搬移延迟线
+for (int j0 = 10; j0 &gt; 0; j0 = j0 - 1) {
+    fVec0[j0] = fVec0[j0 - 1];
+}
+// 9 个样本的搬移延迟线
+for (int j1 = 9; j1 &gt; 0; j1 = j1 - 1) {
+    fVec1[j1] = fVec1[j1 - 1];
+}
+...
+</code></pre><p>用 <code>faust -mcd 0</code> 编译时，所有延迟线都使用<em>回绕索引</em>的第二种策略，大小为 2 的幂（因为默认使用 <code>-dlt &lt;INT_MAX&gt;</code>）：</p><pre><code class="language-faust">...
+// DSP 的内存布局
+int IOTA0;
+float fVec0[16];
+float fVec1[16];
+float fVec2[16];
+float fVec3[8];
+float fVec4[8];
+float fVec5[8];
+float fVec6[8];
+float fVec7[4];
+float fVec8[2];
+float fVec9[4];
+int fSampleRate;
+...
+virtual void compute(int count, 
+    FAUSTFLOAT** RESTRICT inputs, 
+    FAUSTFLOAT** RESTRICT outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* input1 = inputs[1];
+    FAUSTFLOAT* input2 = inputs[2];
+    FAUSTFLOAT* input3 = inputs[3];
+    FAUSTFLOAT* input4 = inputs[4];
+    FAUSTFLOAT* input5 = inputs[5];
+    FAUSTFLOAT* input6 = inputs[6];
+    FAUSTFLOAT* input7 = inputs[7];
+    FAUSTFLOAT* input8 = inputs[8];
+    FAUSTFLOAT* input9 = inputs[9];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        fVec0[IOTA0 &amp; 15] = float(input9[i0]);
+        fVec1[IOTA0 &amp; 15] = float(input8[i0]);
+        fVec2[IOTA0 &amp; 15] = float(input7[i0]);
+        fVec3[IOTA0 &amp; 7] = float(input6[i0]);
+        fVec4[IOTA0 &amp; 7] = float(input5[i0]);
+        fVec5[IOTA0 &amp; 7] = float(input4[i0]);
+        fVec6[IOTA0 &amp; 7] = float(input3[i0]);
+        fVec7[IOTA0 &amp; 3] = float(input2[i0]);
+        fVec8[IOTA0 &amp; 1] = float(input0[i0]);
+        fVec9[IOTA0 &amp; 3] = float(input1[i0]);
+        output0[i0] = FAUSTFLOAT(fVec0[(IOTA0 - 10) &amp; 15] + fVec1[(IOTA0 - 9) &amp; 15] 
+            + fVec2[(IOTA0 - 8) &amp; 15] + fVec3[(IOTA0 - 7) &amp; 7] + fVec4[(IOTA0 - 6) &amp; 7]
+            + fVec5[(IOTA0 - 5) &amp; 7] + fVec6[(IOTA0 - 4) &amp; 7] + fVec7[(IOTA0 - 3) &amp; 3] 
+            + fVec8[(IOTA0 - 1) &amp; 1] + fVec9[(IOTA0 - 2) &amp; 3]);
+        IOTA0 = IOTA0 + 1;
+    }
+}
+...
+</code></pre><p>在这个代码示例中，生成若干大小各为 2 的幂（2、4、8、16）的延迟线。所有延迟线共享一个持续递增的 <code>IOTA0</code> 变量。<em>回绕索引</em>代码以 <code>(IOTA0 - 5) &amp; 7</code> 这类形式生成，掩码为 2 的幂减一（这里 8 - 1 = 7）。</p><p>用 <code>faust -mcd 4 -dlt 7</code> 编译时，会混合使用三种生成策略：</p><pre><code class="language-faust">// DSP 的内存布局
+...
+int fVec0_widx;
+float fVec0[11];
+int fVec1_widx;
+float fVec1[10];
+int fVec2_widx;
+float fVec2[9];
+int fVec3_widx;
+float fVec3[8];
+int IOTA0;
+float fVec4[8];
+float fVec5[8];
+float fVec6[8];
+float fVec7[4];
+float fVec8[2];
+float fVec9[3];
+int fSampleRate;
+...
+virtual void compute(int count, 
+    FAUSTFLOAT** RESTRICT inputs, 
+    FAUSTFLOAT** RESTRICT outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* input1 = inputs[1];
+    FAUSTFLOAT* input2 = inputs[2];
+    FAUSTFLOAT* input3 = inputs[3];
+    FAUSTFLOAT* input4 = inputs[4];
+    FAUSTFLOAT* input5 = inputs[5];
+    FAUSTFLOAT* input6 = inputs[6];
+    FAUSTFLOAT* input7 = inputs[7];
+    FAUSTFLOAT* input8 = inputs[8];
+    FAUSTFLOAT* input9 = inputs[9];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        int fVec0_widx_tmp = fVec0_widx;
+        fVec0[fVec0_widx_tmp] = float(input9[i0]);
+        int fVec0_ridx_tmp0 = fVec0_widx - 10;
+        int fVec1_widx_tmp = fVec1_widx;
+        fVec1[fVec1_widx_tmp] = float(input8[i0]);
+        int fVec1_ridx_tmp0 = fVec1_widx - 9;
+        int fVec2_widx_tmp = fVec2_widx;
+        fVec2[fVec2_widx_tmp] = float(input7[i0]);
+        int fVec2_ridx_tmp0 = fVec2_widx - 8;
+        int fVec3_widx_tmp = fVec3_widx;
+        fVec3[fVec3_widx_tmp] = float(input6[i0]);
+        int fVec3_ridx_tmp0 = fVec3_widx - 7;
+        fVec4[IOTA0 &amp; 7] = float(input5[i0]);
+        fVec5[IOTA0 &amp; 7] = float(input4[i0]);
+        fVec6[IOTA0 &amp; 7] = float(input3[i0]);
+        fVec7[0] = float(input2[i0]);
+        fVec8[0] = float(input0[i0]);
+        fVec9[0] = float(input1[i0]);
+        output0[i0] = FAUSTFLOAT(fVec0[((fVec0_ridx_tmp0 &lt; 0) ? fVec0_ridx_tmp0 + 11 : fVec0_ridx_tmp0)] 
+            + fVec1[((fVec1_ridx_tmp0 &lt; 0) ? fVec1_ridx_tmp0 + 10 : fVec1_ridx_tmp0)] 
+            + fVec2[((fVec2_ridx_tmp0 &lt; 0) ? fVec2_ridx_tmp0 + 9 : fVec2_ridx_tmp0)] 
+            + fVec3[((fVec3_ridx_tmp0 &lt; 0) ? fVec3_ridx_tmp0 + 8 : fVec3_ridx_tmp0)] 
+            + fVec4[(IOTA0 - 6) &amp; 7] + fVec5[(IOTA0 - 5) &amp; 7] + fVec6[(IOTA0 - 4) &amp; 7] + fVec7[3] + fVec8[1] + fVec9[2]);
+        fVec0_widx_tmp = fVec0_widx_tmp + 1;
+        fVec0_widx_tmp = ((fVec0_widx_tmp == 11) ? 0 : fVec0_widx_tmp);
+        fVec0_widx = fVec0_widx_tmp;
+        fVec1_widx_tmp = fVec1_widx_tmp + 1;
+        fVec1_widx_tmp = ((fVec1_widx_tmp == 10) ? 0 : fVec1_widx_tmp);
+        fVec1_widx = fVec1_widx_tmp;
+        fVec2_widx_tmp = fVec2_widx_tmp + 1;
+        fVec2_widx_tmp = ((fVec2_widx_tmp == 9) ? 0 : fVec2_widx_tmp);
+        fVec2_widx = fVec2_widx_tmp;
+        fVec3_widx_tmp = fVec3_widx_tmp + 1;
+        fVec3_widx_tmp = ((fVec3_widx_tmp == 8) ? 0 : fVec3_widx_tmp);
+        fVec3_widx = fVec3_widx_tmp;
+        IOTA0 = IOTA0 + 1;
+        for (int j0 = 3; j0 &gt; 0; j0 = j0 - 1) {
+            fVec7[j0] = fVec7[j0 - 1];
+        }
+        fVec8[1] = fVec8[0];
+        fVec9[2] = fVec9[1];
+        fVec9[1] = fVec9[0];
+    }
+}
+...
+</code></pre><p>在这个代码示例中，可以通过 <code>fVec0_ridx_tmp0</code> 和 <code>fVec0_widx_tmp0</code> 这类变量认出<em>基于 if 方式移动的回绕索引</em>。</p><p>在嵌入式设备场景中，选择占用内存更少的值可能尤为重要。试验 <code>-mcd</code> 与 <code>-dlt</code> 选项的不同组合有助于优化 CPU 利用率，总结如下：</p><ul><li>为 <code>-mcd n</code> 选较大的 <code>n</code> 值会消耗更少内存，但延迟值较大时搬移循环会开始耗时。如果 C++ 或 LLVM 编译器能正确自动向量化代码并生成更高效的 SIMD 代码，这种模型有时可能更合适。</li><li>选 <code>-mcd 0</code> 会让 DSP 代码中所有延迟线都使用<em>回绕索引</em>的第二种策略，然后用 <code>-dlt &lt;n&gt;</code> 在<em>更快但占用更多内存</em>与<em>更慢但占用更少内存</em>两种方法之间取舍。</li><li>当 DSP 代码中使用大量不同大小的延迟线时，选择 <code>-mcd n1</code> 与 <code>-dlt &lt;n2&gt;</code> 的组合可能更合适。</li></ul><p>使用基准测试工具 <a href="#faustbench">faustbench</a> 与 <a href="#faustbench-llvm">faustbench-llvm</a> 可以细化编译选项的选择。</p><h4 id="recursive-signals">递归信号</h4><p>在生成的 C++ 代码中，延迟线表现为 <code>fVecXX</code> 数组。DSP 中使用递归时，递归路径上会自动加入一个样本的延迟，并分配一条极短的延迟线（在生成的代码中表现为 <code>fRecX</code> 数组）。下面是递归定义的积分器代码：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/optimizing/exfaust1/exfaust1.svg"/><pre><code class="language-faust">process = 1 : + ~ _;</code></pre><br/><p>以及带 <code>iRec0</code> 缓冲区的生成 C++ 代码：</p><pre><code class="language-faust">...
+// DSP 的内存布局
+int iRec0[2];
+...
+virtual void compute(int count, 
+    FAUSTFLOAT** RESTRICT inputs, 
+    FAUSTFLOAT** RESTRICT outputs) 
+{
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        iRec0[0] = iRec0[1] + 1;
+        output0[i0] = FAUSTFLOAT(iRec0[0]);
+        iRec0[1] = iRec0[0];
+    }
+}
+...   
+</code></pre><h4 id="delay-lines-in-recursive-signals">递归信号中的延迟线</h4><p>下面是一个 Faust 程序示例，十个并联的递归块，每个使用一条长度递增的延迟线：</p><img alt="框图" src="https://faustdoc.grame.fr/manual/optimizing/exfaust2/exfaust2.svg"/><pre><code class="language-faust">process = par(i, 10, + ~ @(i+1)) :&gt; _;</code></pre><br/><p>由于递归信号在其环路中使用一个样本的延迟，会分配一个缓冲区来处理该延迟。当递归信号之外还用了延迟时，会分配<em>单个缓冲区</em>来合并这两个延迟来源。例如用 <code>faust -mcd 0</code> 生成的代码现在是：</p><pre><code class="language-faust">...
+// DSP 的内存布局
+int IOTA0;
+float fRec0[4];
+float fRec1[4];
+float fRec2[8];
+float fRec3[8];
+float fRec4[8];
+float fRec5[8];
+float fRec6[16];
+float fRec7[16];
+float fRec8[16];
+float fRec9[16];
+int fSampleRate;
+...
+virtual void compute(int count, 
+    FAUSTFLOAT** RESTRICT inputs, 
+    FAUSTFLOAT** RESTRICT outputs) 
+{
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* input1 = inputs[1];
+    FAUSTFLOAT* input2 = inputs[2];
+    FAUSTFLOAT* input3 = inputs[3];
+    FAUSTFLOAT* input4 = inputs[4];
+    FAUSTFLOAT* input5 = inputs[5];
+    FAUSTFLOAT* input6 = inputs[6];
+    FAUSTFLOAT* input7 = inputs[7];
+    FAUSTFLOAT* input8 = inputs[8];
+    FAUSTFLOAT* input9 = inputs[9];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 &lt; count; i0 = i0 + 1) {
+        fRec0[IOTA0 &amp; 3] = float(input0[i0]) + fRec0[(IOTA0 - 2) &amp; 3];
+        fRec1[IOTA0 &amp; 3] = float(input1[i0]) + fRec1[(IOTA0 - 3) &amp; 3];
+        fRec2[IOTA0 &amp; 7] = float(input2[i0]) + fRec2[(IOTA0 - 4) &amp; 7];
+        fRec3[IOTA0 &amp; 7] = float(input3[i0]) + fRec3[(IOTA0 - 5) &amp; 7];
+        fRec4[IOTA0 &amp; 7] = float(input4[i0]) + fRec4[(IOTA0 - 6) &amp; 7];
+        fRec5[IOTA0 &amp; 7] = float(input5[i0]) + fRec5[(IOTA0 - 7) &amp; 7];
+        fRec6[IOTA0 &amp; 15] = float(input6[i0]) + fRec6[(IOTA0 - 8) &amp; 15];
+        fRec7[IOTA0 &amp; 15] = float(input7[i0]) + fRec7[(IOTA0 - 9) &amp; 15];
+        fRec8[IOTA0 &amp; 15] = float(input8[i0]) + fRec8[(IOTA0 - 10) &amp; 15];
+        fRec9[IOTA0 &amp; 15] = float(input9[i0]) + fRec9[(IOTA0 - 11) &amp; 15];
+        output0[i0] = FAUSTFLOAT(fRec0[IOTA0 &amp; 3] + fRec1[IOTA0 &amp; 3] + fRec2[IOTA0 &amp; 7] + fRec3[IOTA0 &amp; 7] + fRec4[IOTA0 &amp; 7] + fRec5[IOTA0 &amp; 7] + fRec6[IOTA0 &amp; 15] + fRec7[IOTA0 &amp; 15] + fRec8[IOTA0 &amp; 15] + fRec9[IOTA0 &amp; 15]);
+        IOTA0 = IOTA0 + 1;
+    }
+}
+...
+</code></pre><p>缓冲区命名为 <code>fRecX</code> 而非上一示例中的 <code>fVecX</code>。<code>-mcd &lt;n&gt;</code> 与 <code>-dlt &lt;n&gt;</code> 选项也可用于同样的目的。</p><h3 id="managing-dsp-memory-layout">管理 DSP 内存布局</h3><p>在内存被分成若干块（如 SRAM、SDRAM……）、访问时间各不相同的音频板上，就需要细化 DSP 内存模型，使 DSP 结构不被分配在单一块内存上，而可能分布到所有可用块上。思路是把 DSP 中经常访问的部分分配到快速内存，其余分配到慢速内存。这可以用 <code>-mem</code> 编译选项和<a href="manual-architectures.html#custom-memory-manager">相应的架构文件</a>来控制。</p><h2 id="optimizing-the-c-or-llvm-code">优化 C++ 或 LLVM 代码</h2><p>对于给定的 DSP 程序，Faust 编译器会尽力生成<a href="manual-compiler.html">最高效的实现</a>。优化可以在编写 DSP 时进行，也可以在之后生成目标语言（如 C++ 或 LLVM IR）时进行。生成的代码依编译选项不同会有不同的<em>形态</em>，运行速度可快可慢。有多种程序和工具可帮 Faust 程序员测试程序是否有数值或精度问题、找出给定 DSP 代码的最佳选项集合，最后把它们编译成面向目标 CPU 的本地代码。</p><p>默认情况下 Faust 编译器在生成的 <code>mydsp::compute</code> 方法中产生一个大的标量循环。编译选项可让你生成其他<em>形态</em>的代码，例如在所谓的向量化模式下（用 <code>-vec</code> 选项获得）生成用缓冲区相连的若干更简单的独立循环。其假设是现代编译器中的自动向量化过程能为它们生成更高效的 SIMD 代码。在这个 vec 选项中，内部缓冲区的大小可以用 <code>-vs value</code> 选项更改。此外计算图可以用 <code>-dfs</code> 按深度优先顺序组织。</p><p>延迟线的实现可以用 <code>-mcd size</code> 与 <code>-dlt size</code> 选项控制，例如在<em>大小为 2 的幂、基于掩码的回绕</em>（更快但占用更多内存）与<em>基于 if 的回绕</em>（更慢但占用更少内存）之间选择。</p><p>还有许多其他编译选择完全可以通过选项控制。注意 C/C++ 与 LLVM 后端提供的编译选项最多。以下只是其中几个：</p><ul><li><code>-clang</code> 选项：用 clang/clang++ 编译时，为自动向量化添加特定的 #pragma。</li><li><code>-nvi</code> 选项：用 C++ 后端编译时，不添加 'virtual' 关键字。<strong>该选项在嵌入式设备场景中特别有用</strong></li><li><code>-mapp</code> 选项：'floor/ceil/fmod/remainder' 函数的更简单、更快的版本（实验性）</li></ul><p>逐个手动测试它们及其组合是不现实的。因此开发了若干工具来自动化这一过程，帮助搜索配置空间以找出最佳编译选项集合（务必在 Faust 顶层目录运行 <code>make benchmark &amp;&amp; sudo make devinstall</code> 来安装基准测试工具）：</p><h3 id="faustbench">faustbench</h3><p><strong>faustbench</strong> 工具使用 C++ 后端，生成一组用不同 Faust 编译器选项产生的 C++ 文件。然后所有文件被编译进一个二进制文件，用于测量编译后各个 DSP 版本的 CPU 占用。该工具本应在终端中启动，但也可用于生成 iOS 工程，准备好在 Xcode 中启动和测试。更完整的文档见<a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/benchmark#faustbench" rel="noreferrer noopener">此页面</a>。</p><h3 id="faustbench-llvm">faustbench-llvm</h3><p><strong>faustbench-llvm</strong> 工具使用 <code>libfaust</code> 库及其 LLVM 后端，动态编译用不同 Faust 编译器选项产生的 DSP 对象，然后测量它们的 DSP CPU 占用。除工具会自动探索的选项外，还可以给出附加的 Faust 编译器选项。更完整的文档见<a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/benchmark#faustbench-llvm" rel="noreferrer noopener">此页面</a>。</p><h3 id="faust2bench">faust2bench</h3><p><strong>faust2bench</strong> 工具可对给定 DSP 程序做基准测试：</p><pre><code>faust2bench -h
+Usage: faust2bench [Faust options] &lt;file.dsp&gt;
+Compiles Faust programs to a benchmark executable
+</code></pre><p>因此类似 <code>faust2bench -vec -lv 0 -vs 4 foo.dsp</code> 的命令用于生成一个可执行文件，然后启动 <code>./foo</code> 会给出：</p><pre><code class="language-faust">./foo
+./foo : 303.599 Mframes/sec (DSP CPU % : 0.224807 at 44100 Hz)
+</code></pre><p><code>-inj</code> 选项可以注入并基准测试一个外部 C++ 类，使其<em>适配</em>为 <code>dsp</code> 类的行为，如下面 <code>adapted.cpp</code> 示例所示。继承的 <code>compute</code> 方法被重写为调用外部 C++ 的 <code>limiterStereo.SetPreGain</code> 等代码来更新控制器，以及调用计算 DSP 的 <code>limiterStereo.Process</code> 方法：</p><pre><code>#include "faust/dsp/dsp.h"
+#include "Limiter.hpp"
+
+struct mydsp : public dsp {
+
+    Limiter&lt;float&gt; limiterStereo;
+
+    void init(int sample_rate)
+    {
+        limiterStereo.SetSR(sample_rate);
+    }
+
+    int getNumInputs() { return 2; }
+    int getNumOutputs() { return 2; }
+
+    int getSampleRate() { return 44100; }
+
+    void instanceInit(int sample_rate)
+    {}
+
+    void instanceConstants(int sample_rate)
+    {}
+    void instanceResetUserInterface()
+    {}
+    void instanceClear()
+    {}
+
+    void buildUserInterface(UI* ui_interface)
+    {}
+
+    dsp* clone()
+    {
+        return new mydsp();
+    }
+    void metadata(Meta* m)
+    {}
+
+    void compute(int count, FAUSTFLOAT** inputs, FAUSTFLOAT** outputs)
+    {
+        limiterStereo.SetPreGain(0.5);
+        limiterStereo.SetAttTime(0.5);
+        limiterStereo.SetHoldTime(0.5);
+        limiterStereo.SetRelTime(0.5);
+        limiterStereo.SetThreshold(0.5);
+
+        limiterStereo.Process(inputs, outputs, count);
+    }
+
+};
+</code></pre><p>用 <code>faust2bench -inj adapted.cpp dummy.dsp</code> 会创建可执行文件，用 <code>./dummy</code> 测试（记住 <code>dummy.dsp</code> 是一个在 <code>-inj</code> 模式下实际未使用的程序）。</p><h3 id="faustcompilerbenchtool">faustcompilerbenchtool</h3><p><strong>faustcompilerbenchtool</strong> 是一套用于分析和测量 Faust 编译器生成的 C++ 代码性能的工具。这些工具在开发新的编译策略时特别有用，因为它们能确保正确性并评估性能影响。更完整的文档见<a href="https://github.com/grame-cncm/faustcompilerbenchtool" rel="noreferrer noopener">此页面</a>。</p><h3 id="dynamic-faust">dynamic-faust</h3><p><strong>dynamic-faust</strong> 工具使用动态编译链（基于 LLVM 后端），把 Faust DSP 源码编译成 LLVM IR（.ll）、位码（.bc）、机器码（.mc）或目标码（.o）输出文件。这是 C++ 编译链的替代方案，因为 DSP 代码可以编译成目标码（.o），然后在常规 C++ 项目中使用并链接。更完整的文档见<a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/benchmark#dynamic-faust" rel="noreferrer noopener">此页面</a>。</p><h3 id="optimizing-with-any-faust2xx-tool">用任意 faust2xx 工具优化</h3><p>所有 <code>faust2xx</code> 工具默认以标量模式编译，但可以接受任意组合的最优选项（例如 <code>-vec -fun -vs 32 -dfs -mcd 32</code>），这些选项正是前面所述工具会自动找出的。因此串接使用 <strong>faustbench</strong> 或 <strong>faustbench-llvm</strong> 找出给定 DSP 的最佳编译选项，再在所需的 <strong>faust2xx</strong> 工具中使用，就能得到 CPU 优化的独立程序或插件。</p><p>注意某些 <strong>faust2xx</strong> 工具如 <a href="https://github.com/grame-cncm/faust/tree/master-dev/architecture/max-msp" rel="noreferrer noopener"><code>faust2max6</code></a> 或 <code>faust2caqt</code> 可以在内部调用 <code>faustbench-llvm</code> 工具，找出并在之后使用尽可能好的编译选项。</p><h2 id="compiling-for-multiple-cpus">为多种 CPU 编译</h2><p>在现代 CPU 上，编译面向目标处理器的本地代码对获得最佳性能至关重要。涉及 SIMD 指令时尤其重要，因为向量单元宽度必须在编译期已知。使用 C++ 后端时，可以用 <code>gcc</code> 或 <code>clang</code> 配合相应的 <code>-march=cpu</code> 选项，为每种可能的目标 CPU 编译同一个 C++ 文件。使用 LLVM 后端时，可以用 <a href="manual-optimizing.html#dynamic-faust">dynamic-faust</a> 工具把同一份 LLVM IR 代码编译成特定 CPU 的机器码。这一步通常会用 <a href="manual-optimizing.html#faustbench">faustbench</a> 或 <a href="manual-optimizing.html#faustbench-llvm">faustbench-llvm</a> 工具自动找出的最佳编译选项来完成。还开发了专门的工具来组合所有可能的选项。</p><h3 id="faust2object">faust2object</h3><p><code>faust2object</code> 工具使用标准 C++ 编译器或 LLVM 动态编译链（<a href="manual-optimizing.html#dynamic-faust">dynamic-faust</a> 工具）把 Faust DSP 编译成面向不同 CPU 的目标码文件（.o）以及封装用 C++ 头文件。DSP 名称用于生成的 C++ 与目标码文件，因此可以生成不同版本的代码，最终链接到同一个二进制文件中。更完整的文档见<a href="https://github.com/grame-cncm/faust/tree/master-dev/tools/benchmark#faust2object" rel="noreferrer noopener">此页面</a>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://faustdoc.grame.fr/manual/optimizing/" rel="noreferrer noopener">https://faustdoc.grame.fr/manual/optimizing/</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
