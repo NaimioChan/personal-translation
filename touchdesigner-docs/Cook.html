@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cook - TouchDesigner 文档</title>
+<meta name="description" content="Cook —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Cook</h1>
+<p><b>Cooking</b> 是 TouchDesigner 中用来表示计算或算出网络中各操作符的术语。在节点上中键单击，可以看到它上次计算用了多久，以及自启动 TouchDesigner 以来它计算了多少次。 </p><p>TouchDesigner 只会在需要时计算节点——它不会每帧计算所有节点。 </p><p>每一帧，TouchDesigner 都会考虑计算以下节点： </p><ul><li>查看器在 <a href="Network.html">Network</a> 中可见的节点。</li><li>参与在面板或 <a href="Window_COMP.html">Window COMP</a> 中显示面板的节点。</li><li>参与网络操作符向 TouchDesigner 外部发送数据的节点，例如 <a href="Touch_Out_CHOP.html">Touch Out CHOP</a>、<a href="OSC_Out_CHOP.html">OSC Out CHOP</a>。</li><li>参与通过 <a href="NDI_Out_TOP.html">NDI Out TOP</a>、<a href="Video_Device_Out_TOP.html">Video Device Out TOP</a>、<a href="Audio_Device_Out_CHOP.html">Audio Device Out CHOP</a> 等节点发送视频/音频输出的节点。</li></ul><p>当你看到节点之间的 <a href="Wire.html">Wires</a> 在动画（虚线在动）时，表示上游节点正在计算。下游节点可能在计算，也可能没有。<a href="Mouse_Click.html">Middle mouse-click</a> 任意节点，在信息弹窗中查看计算次数是否在增加。 </p><p>Dialogs → <a href="Performance_Monitor.html">Performance Monitor</a> 会显示一帧内计算了哪些内容。要让你的合成以 30 或 60 fps 运行，关键在于尽量减少参与计算的节点数量。 </p><p>调色板 Tools 中的 <a href="https://docs.derivative.ca/Palette:probe" rel="noreferrer noopener" target="_blank">Probe</a> 组件可以让你实时观察正在计算的内容。 </p><p>参见 <a href="Optimize.html">Optimize</a>、<a href="Dependency.html">Dependency</a> 和 <a href="Event.html">Event</a>。 </p><h3 id="Cooking_Mechanism">计算机制</h3><h4 id="What_Causes_Cooking">什么会导致计算</h4><p>节点要计算，需要满足两个条件：(1) 节点需要有计算请求（有东西要求它计算），(2) 它需要有计算的理由。 </p><p>会产生计算请求的情况： </p><ul><li>连接到该节点输出的节点想要计算。</li><li>通过参数引用该节点的节点想要计算。</li><li>有查看器正在查看该节点的数据。</li><li>CHOP 或 DAT 正在导出到的那个节点想要计算。</li><li>在 OP 上调用 <code>cook()</code> 方法。</li></ul><p>会赋予节点计算理由的情况。 </p><ul><li>该节点的某个输入已计算。</li><li>它通过参数指向的节点已计算。</li><li>该节点的某个参数发生变化。</li><li>在该节点上运行了特定的脚本命令。</li><li>表达式的结果可能已改变。</li><li>该节点引用的变量值发生变化。</li><li>其某个参数的表达式中指向的节点已计算。</li><li>该节点与时间相关，也就是说它每帧都可能输出不同的数据，即使其输入或参数都没有变化（例如 <a href="Time_Slice_CHOP.html">Time Slice CHOP</a>，或 <a href="Video_Device_In_TOP.html">Video Device In TOP</a>）。</li><li>用户与它交互，但仅当它是 <a href="Panel_Component.html">Panel Component</a> 时。</li></ul><p>当节点收到计算请求时，它会请求其所有输入计算，这可能会也可能不会让它们计算。如果其中任何一个计算了，它就有了计算的理由，于是它会计算。如果都没有计算，它就会检查其他可能的计算理由。如果这些都不存在，它就不会计算（你也不会在 <a href="Performance_Monitor.html">Performance Monitor</a> 中看到它）。 </p><p>例如，如果你正在查看默认 Constant CHOP 的查看器（一个没有表达式的通道），该节点会不断收到计算请求（例如每次 UI 重绘时），但它从不计算，因为它没有计算的理由。 </p><h4 id="The_Order_of_Cooking">计算顺序</h4><p>TouchDesigner 是一个「拉取系统」。关于 TouchDesigner 中的计算，一个常见误解是计算从上游开始、向下游推进。例如，如果你有一个 <a href="Constant_CHOP.html">Constant CHOP</a> 连接到 <a href="Math_CHOP.html">Math CHOP</a>，大多数人会认为在 <a href="Constant_CHOP.html">Constant CHOP</a> 中改动一个值，就会强制 <a href="Math_CHOP.html">Math CHOP</a> 计算。这是不对的。几乎所有操作符只有在有东西需要它的数据时才会计算。在我们的例子中，这意味着虽然在 Constant CHOP 中修改参数会让它变「脏」，但在有人请求它的数据之前它不会计算。所以 Constant CHOP 要等到 Math CHOP 请求它的数据时才会计算。Constant CHOP 也可能因其他原因计算，比如它的查看器开着（即用户要求查看它的数据）。 </p><p>什么在拉取？所有每帧都需要图像的显示设备，都会拉取所有参与生成一帧图像的 TOP 和其他 OP。音频输出设备同理，它们每帧都需要把采样送入音频硬件。 </p><h4 id="Event-Driven_Cooking">事件驱动的计算</h4><p>参见 <a href="Event.html">Event</a>。所有「Execute」DAT 都会响应收到的事件，并通过其 python 回调函数改变其他操作符的参数，或让其他操作符计算。「Execute」DAT 这一组包括 <a href="Panel_Execute_DAT.html">Panel Execute DAT</a>、<a href="CHOP_Execute_DAT.html">CHOP Execute DAT</a>、<a href="Parameter_Execute_DAT.html">Parameter Execute DAT</a>、<a href="DAT_Execute_DAT.html">DAT Execute DAT</a>、<a href="Render_Pick_DAT.html">Render Pick DAT</a>。其他操作符如 <a href="Monitors_DAT.html">Monitors DAT</a>、<a href="OP_Find_DAT.html">OP Find DAT</a>、<a href="Folder_DAT.html">Folder DAT</a> 也有在条件变化时被调用的回调，同样可以改变参数并让节点计算。参数被改变时，目标节点只会按照上述拉取系统的计算规则计算。而当任何节点通过调用 <code>OP.cook()</code> 被强制计算时，它的数据会向下游传递，同样遵循上述计算规则。 </p><h4 id="Forced_Cooking">强制计算</h4><p>有些节点，特别是 <a href="Movie_File_Out_TOP.html">Movie File Out TOP</a>、Touch Out OP 及其他 *Out OP 之类的节点，会每帧计算，无论其输入或参数是否变化。这种行为确保其输出的接收方（影片、网络管道等）能获得持续的数据流。 </p><p>其他节点在被要求计算时，即使输入或参数都没有变化也会计算。这些主要是特殊节点，如 <a href="Render_TOP.html">Render TOP</a> 以及 *In OP（例如 Touch In 和 Pipe In CHOP，但不包括 In CHOP 和 In SOP）。这些节点有太多可能的输入变化需要监视（对 Render TOP 来说：材质、几何位置、几何渲染标记等），因此与其试图判断它们是否 <i>should</i> 计算，不如直接计算。对这些节点来说，始终计算在 99% 的情况下都能节省计算周期，因为渲染场景中大多数时候 <i>something</i> 都在变化。 </p><p><b>See also</b>: <a href="Null_CHOP.html">Null CHOP</a>, <a href="Event.html">Event</a> </p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Cook" rel="noreferrer noopener">docs.derivative.ca/Cook</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

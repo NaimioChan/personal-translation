@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>影片播放 - TouchDesigner 文档</title>
+<meta name="description" content="影片播放 —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>影片播放</h1>
+<h2 id="Overview">概述</h2><p>本文将介绍播放影片所需的数据传输与处理阶段。它会更深入地说明 <a href="Movie_File_In_TOP.html">Movie File In TOP</a> 如何将一帧放到 TOP 的 GPU 上。</p><p>共有三个阶段：播放影片的第一个阶段是从磁盘将文件数据原样读入 CPU 内存。文件数据进入 CPU 内存后，需要解码为光栅图像。播放的最后一个阶段发生在帧从 CPU 内存的预读缓存上传到 GPU 内存之后，此时 GPU 上所有下游 TOP 都可以使用它。</p><h2 id="Reading_from_Disk">从磁盘读取</h2><p>播放影片的第一个阶段是从磁盘读取文件数据。这些数据需要读入 CPU 内存，以便解压为未压缩的 RGBA 或 YUV 图像数据。</p><p><a href="Info_CHOP.html">Info CHOP</a> 的 <code>"last_frame_hd_read_time</code> 通道表示上一帧从硬盘/SSD 读取所花的时间。该值以毫秒为单位。</p><h3 id="Bit-rate">比特率</h3><p>影片的比特率是播放该文件时每秒需要从磁盘读取的数据量。这个数值通常以 bits-per-second 给出。而驱动器速度通常以 bytes-per-second 给出，因此在判断读取速度是否足以播放影片时，务必确认单位正确。字节通常用大写 'B' 表示，比特用小写 'b' 表示。1 字节等于 8 比特，因此比特率为 80Mbits/sec 的文件会占用 10MBytes/s 的磁盘读取带宽。</p><p><a href="Info_CHOP.html">Info CHOP</a> 的 <code>"disk_read_mbit_rate</code> 通道表示平均磁盘读取速率，单位为兆比特每秒。</p><h3 id="Buffered/Cached_Reading">缓冲/缓存读取</h3><p>默认情况下，操作系统中读取的所有文件都采用所谓的缓冲/缓存读取。这意味着文件数据先复制到操作系统拥有的 CPU 内存，再复制到 TouchDesigner 的 CPU 内存。操作系统可以随意将文件副本保留在自己的内存中，只有在必要时（例如该 CPU 内存要用于其他用途）才会丢弃这些文件数据。操作系统内存中保留的是压缩的文件数据，而不是未压缩的 RGB/YUV 帧。</p><p>如果你播放的文件总计 4GB，而你有 16GB CPU 内存。除非其他应用占用了其余内存，否则完全可能这些文件只从磁盘读取一次，之后都从操作系统的 CPU 内存中读取。文件数据在读取时会被缓存，因此在你完整播放一遍之前，文件不会被完全缓存。请检查磁盘使用情况，以判断播放是在读取磁盘还是使用缓存数据。</p><p>用于缓存影片文件数据的内存不会记录在任何地方。它既不会显示为 TouchDesigner 占用的 CPU 内存，也不会显示为系统整体消耗的内存。因为这部分内存完全是可丢弃的，操作系统可以随时以任何理由丢弃缓存数据。</p><p><b>注意</b> - 如果内容第一次播放很卡、第二次却很快，这通常说明磁盘无法按所需速率提供数据，只有从缓存数据才能播放。除非你有足够的内存，否则这种状态很危险，因为你无法控制操作系统何时或是否会把缓存数据从内存中丢弃。</p><p>除非你播放的是数据率极高的文件（未压缩数据、HAP、无损 H264 等），否则这通常是你想要的播放模式。</p><h3 id="High-Performance_Read_(Unbuffered_Reading)">高性能读取（无缓冲读取）</h3><p><a href="Movie_File_In_TOP.html">Movie File In TOP</a> 中的 High-Performance Read 参数会关闭缓冲/缓存文件读取。数据直接从磁盘读入 TouchDesigner 的 CPU 内存。这样更快，因为避免了内存复制操作。此模式下还针对 TouchDesigner 做了其他算法优化，可实现极高的数据率播放。使用此模式时，播放期间磁盘会持续工作，并显示内容的真实播放速率。</p><p>当需要极高的读取数据率时（例如高分辨率 Hap、无损 H264/H265），应使用此模式。</p><h2 id="Decoding_Frames">解码帧</h2><p>文件数据进入 CPU 内存后，需要解码为图像。该图像通常是未压缩的 RGB 或 YUV 数据。大多数 YUV 数据在到达 GPU 后会转换为 RGB，但有些会在 CPU 上转换。可通过 <a href="Info_CHOP.html">Info CHOP</a> 中的 'hardware_yuv_to_rgb' 通道查看。</p><p>某些编解码器会使用多线程解码数据。这可以通过 Movie File In TOP 中的 'Max Decode CPUs' 参数控制。</p><p>解压后的帧会放入 Movie File In TOP 的预读缓存。该缓存的大小由 'Pre-Read Frames' 参数控制。Movie File In TOP 上的 <code>preload()</code> 方法可以在对文件其余部分播放影响最小的情况下填充 'Pre-Read Frames'。</p><p><a href="Info_CHOP.html">Info CHOP</a> 的 <code>last_frame_decode_time</code> 通道表示上一帧在 CPU 上解码所花的时间。该值以毫秒为单位。</p><h3 id="Hap_decoding">Hap 解码</h3><p>Hap 之类的编解码器 CPU 解压阶段很轻，而 H264 之类的编解码器 CPU 解压阶段很重。不过超高分辨率的 Hap 文件仍会产生可观的 CPU 解码时间，因此要播放高分辨率 Hap 文件，可能需要使用分块编码，并具备足够的内核来解码这些分块。</p><p>虽然 Hap 有一部分在 GPU 上解码，但仍存在 CPU 开销。默认情况下会应用无损 CPU 压缩，这会耗时。如果在编码时禁用该压缩，开销会大幅降低，但仍有一些内存复制需要时间。</p><h3 id="Nvidia_Hardware_Decoding">Nvidia 硬件解码</h3><p>支持使用 Nvidia 的硬件解码器解码。该功能在 Movie File In TOP 参数的 Tune 页上启用。有关 Nvidia GPU 支持的编解码器信息，请见 <a href="https://developer.nvidia.com/nvidia-video-codec-sdk" rel="noreferrer noopener" target="_blank">here</a>。在此模式下，数据会在任何解码之前上传到 GPU，帧在 GPU 上解码为 RGBA 并留在那里供 TOP 使用。如果文件无法使用 GPU 解码，会回退到常规 CPU 解码。如果正在使用硬件解码，<a href="Info_CHOP.html">Info CHOP</a> 的 <code>hardware_decode</code> 通道为 1，否则为 0。</p><h3 id="Pre-Read_Cache">预读缓存</h3><p>一帧的 CPU 解码工作完成后，会被加入预读缓存，等待在该帧需要显示时上传到 GPU。你可以查看 <a href="Info_CHOP.html">Info CHOP</a> 的 <code>num_pre_read_frames</code> 通道，了解已预读多少帧。</p><h2 id="Uploading_to_the_GPU">上传到 GPU</h2><p>播放的最后一个阶段发生在 Movie File In TOP 需要输出某一帧时。该帧从预读缓存上传到 GPU 内存，供 GPU 上所有下游 TOP 使用。如果该帧还不在预读缓存中（例如因为影片被跳转到新索引），就会发生预读未命中，迫使 Movie File In TOP 等到该帧被读取并解压。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Movie_Playback" rel="noreferrer noopener">docs.derivative.ca/Movie_Playback</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

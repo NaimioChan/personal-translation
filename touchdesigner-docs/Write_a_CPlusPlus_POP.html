@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write a CPlusPlus POP - TouchDesigner 文档</title>
+<meta name="description" content="Write a CPlusPlus POP —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Write a CPlusPlus POP</h1>
+<h2 id="Overview">概述</h2><p><b>Make sure you've read through <a href="Write_a_CPlusPlus_Plugin.html">Write a CPlusPlus Plugin</a> first for general information about writing a plugin for a CPlusPlus POP</b>. </p><p>CPlusPlus POP 允许创建 POP 几何，方法是在 CPU 上指定缓冲区，或通过 CUDA 在 GPU 上创建缓冲区（仅限配有 NVIDIA GPU 的 Windows）。 数据缓冲区用于为 point、vertex 和 primtive 属性提供数据。然后使用 Index Buffer 指定点如何连接以创建三角形、四边形、线带、线和点。最后，还有一些关于拓扑的元信息，可能（也可能不）需要指定，以进一步细化 POP 处理所需的信息。</p><p>一个使用 CPU 内存的示例插件位于安装文件夹下： Samples/CPlusPlus/SimpleShapesPOP 使用 CUDA 工作流的示例位于： Samples/CPlusPlus/CudaPOP</p><p>与 CPlusPlus TOP 不同，插件无需选择 TOP_ExecuteMode。它可以按需自由混用 CPU 数据和 CUDA 工作流，前提是系统支持 CUDA。</p><h2 id="Generating_POP_data">生成 POP 数据</h2><h3 id="Creating_Buffers">创建缓冲区</h3><p>内存缓冲区通过 <code>POP_Context::createBuffer()</code> 函数创建。返回的缓冲区可通过对它使用 <code>getBuffer()</code> 来查询其真实内存地址。这些缓冲区可用于指定属性、索引缓冲区和其他元信息缓冲区。尽管这些缓冲区使用 OP_SmartRef 进行智能引用计数，但在通过调用 <code>setIndexBuffer(), setAttribute()</code> 等交还给 TouchDesigner 之后就不应再使用。CUDA 缓冲区必须在调用 <code>beginCUDAOperations()</code> 之前创建。CPU 缓冲区可在任意线程中随时创建。</p><p>缓冲区中的数据始终被视为紧密打包。</p><h3 id="Creating_Attributes">创建属性</h3><p>缓冲区填满数据后，可以通过 <code>POP_Output::setAttribute</code> 交给 <code>POP_Output</code>。属性的类型、分量数、名称等通过填写 <code>POP_AttributeInfo</code> 类给出，并将其与缓冲区一起提供给 <code>setAttribute</code>。每个给定属性类（point、vertices、primitives）的属性数量，将由所提供该属性类中最小缓冲区的大小隐式确定。</p><h3 id="Creating_the_Index_Buffer">创建索引缓冲区</h3><p>每个 POP 只有一个索引缓冲区。索引缓冲区是一个 <code>uint32_t</code> 索引数组，引用每个顶点所指向的 point 属性索引。例如，条目为 [0, 1, 3, 2, 0, 1] 的索引缓冲区引用索引为 0-3 的 4 个 point 属性。该索引缓冲区总共指定 6 个顶点，它们将使用的顶点属性索引（若指定了任何属性）将为 [0, 1, 2, 3, 4, 5]。如果该索引缓冲区指定 2 个三角形，则意味着图元索引为 [0, 1]。</p><p>POP 支持 5 种不同的图元类型：三角形、四边形、线带（N 个顶点的相连线）、线（2 顶点线）和点图元（如点云或粒子）。每种类型的图元必须在索引缓冲区中分组在一起，并按上面列出的相同顺序出现（这也是信息在 <code>POP_TopologyInfo</code> 中列出的顺序）。这是必需的，以便通过大批量地一次处理每种图元类型来快速渲染图元。</p><p>注意，虽然图元在 Index Buffer 中必须按此顺序出现，但点属性不需要这样排序。点属性可以在缓冲区中随机分布。</p><h4 id="Line_Strips">Line Strips</h4><p>其他图元类型相当简单，因为每个图元的顶点数已知（三角形为 3，四边形为 4，点图元为 1）。根据遇到的顶点数即可知道一个图元何时结束、下一个何时开始。但线带更复杂，因为其长度任意。要表示线带结束，应在索引缓冲区中写入 0xFFFFFFFF 索引。这称为图元重启索引。下一条线带的第一个顶点可以紧随其后。请确保根据计划输出的线带数量分配足够的顶点，以包含这些图元重启索引。</p><h3 id="Info_Buffers">信息缓冲区</h3><p>可以指定几种不同的信息缓冲区。有些是必需的，有些则取决于所使用的图元类型，或数据是提供在 CPU 内存还是 CUDA 内存中。这些通过在 <code>POP_InfoBuffers</code> 类中创建和设置缓冲区来指定。</p><h4 id="Point_Info">点信息</h4><p>由一个格式为 <code>POP_PointInfo</code> 类的缓冲区给出。它指定实际存在的点数。所有点属性缓冲区至少必须足够大以容纳此数量的点。该缓冲区可以在 CPU 或 CUDA 内存中给出。如果通过 CUDA 内存指定，则还必须提供 Max Info 缓冲区。</p><h4 id="Topology_Info">拓扑信息</h4><p>由一个格式为 <code>POP_TopologyInfo</code> 类的缓冲区给出。它指定每种类型的图元数量，以及该类型图元在索引缓冲区中起始的偏移。线带在这里包含比其他图元类型更多的信息，因为仅靠知道线带顶点数无法推断索引缓冲区中线带的数量。这可以在 CPU 或 CUDA 内存中指定。如果通过 CUDA 内存指定，则还必须提供 Max Info 缓冲区。</p><h4 id="Max_Info">最大信息</h4><p>如果 Point 或 Topology Info 通过 CUDA 提供，则 CPU 实际上不知道缓冲区中可能有多少个图元和点。CPU 需要这些信息来为下游 POP 分配内存，以及渲染几何。此处必须指定每种类型可能的图元最大数量。此缓冲区始终位于 CPU 上，无需使用 createBuffer() 分配。<code>maxInfo</code> 成员在 <code>POP_InfoBuffers</code> 类中就地写入。</p><h4 id="Line_Strips_Info">线带信息</h4><p>当线带被其他 POP 处理时，需要额外的元信息来快速找到每条线带的起点和终点。该缓冲区大小至少为 <code>2 * sizeof(uint32_t) * lineStripsCount</code>。它可以在 CPU 或 CUDA 内存中分配。对于每条线带，它包含一对整数，表示 { lineStripStartIndex, lineStripNumVertices }。lineStripStartIndex 是基于 0 的索引，从线带在索引缓冲区中首次出现的位置开始（索引缓冲区前面出现多少三角形或四边形无关紧要，0 就是第一条线带的索引）。例如，一条 5 顶点线带后接一条 10 顶点线带，其条目为：[0, 5, 5, 10]，因为第一条线带起始索引为 0、有 5 个顶点，第二条从 5 开始、有 10 个顶点。</p><p>如果你的拓扑包含线带，则必须提供此项。</p><h4 id="Line_Strips_Prim_Indices">线带图元索引</h4><p>这是辅助线带工作流所需的第二个缓冲区。该缓冲区大小应为 <code>sizeof(uint32_t) * lineStripsNumVertices</code>。它可以在 CPU 或 CUDA 内存中分配。每个条目应为与该索引缓冲区条目相匹配的线带图元索引。重启索引条目也应包含在内。例如，一条 3 点线带后接一条 4 点线带将为 [0, 0, 0, 0, 1, 1, 1, 1, 1]。</p><p>如果你的拓扑包含线带，则必须提供此项。</p><h4 id="Grid_Info">网格信息</h4><p>网格信息是描述一组点之间相互关系的额外元信息。某些 POP 在其操作中使用此信息。其缓冲区应使用 <code>POP_GridInfo::getRequiredSize(uint32_t numDims)</code> 分配，以确定所需的缓冲区大小。缓冲区应始终在 CPU 上分配。该类使用一种称为 'flexible arrays' 的工作流，允许类中的最后一个条目为数组，尽管它只定义为大小 [1]，但只要分配了足够空间容纳额外条目，就可以写入超出该范围的内容。</p><h2 id="Reading_Buffers_from_a_POP_Input">从 POP 输入读取缓冲区</h2><p>作为输入连接到你的 CPlusPlus 节点的 POP，其所有单独的 attribute、index 和元信息缓冲区都可以读取。你可以在 CPU 上、作为 CUDA 内存请求这些缓冲区，或声明接受 CPUOrCUDA，这允许内存留在原处（CPU 或 GPU 内存）。属性和索引缓冲区始终位于 GPU 上，但元信息缓冲区可能位于任一位置。更多关于可用函数的细节，请参见 SimpleShapesPOP 中的示例代码以及头文件中的文档。</p><p>目前从 POP 返回的 CUDA 缓冲区是数据的副本，因此你可以随意修改它们，并可在操作结束时作为输出缓冲区传回 POP。CUDA 缓冲区必须在调用 <code>beginCUDAOperations()</code> 之前获取。</p><h2 id="CUDA">CUDA</h2><p>任何读写 TouchDesigner 已知 CUDA 内存的操作，都应发生在 <code>POP_Context::beginCUDAOperations()</code> 和 <code>POP_Context::endCUDAOperations()</code> 调用之间。所有操作都应使用 <code>cudaStream_t</code>，并提供给 create*/get*/set* 调用，以便实现 GPU 同步。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Write_a_CPlusPlus_POP" rel="noreferrer noopener">docs.derivative.ca/Write_a_CPlusPlus_POP</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

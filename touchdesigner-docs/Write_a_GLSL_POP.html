@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write a GLSL POP - TouchDesigner 文档</title>
+<meta name="description" content="Write a GLSL POP —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Write a GLSL POP</h1>
+<h2 id="Overview">概述</h2><p>这有助于你为 <a href="GLSL_POP.html">GLSL POP</a>、<a href="GLSL_Advanced_POP.html">GLSL Advanced POP</a>、<a href="GLSL_Copy_POP.html">GLSL Copy POP</a> 编写着色器，并在 <a href="GLSL_TOP.html">GLSL_TOP</a> 和 <a href="GLSL_MAT.html">GLSL_MAT</a> 中访问 POP 缓冲区</p><p>官方 GLSL 文档可在 <a href="https://www.khronos.org/opengl/wiki/Core_Language_(GLSL)" rel="noreferrer noopener" target="_blank">this address.</a> 找到。TouchDesigner 主要支持的 GLSL 版本是 4.60。</p><h3 id="Reading_and_writing_attributes">读写属性</h3><p>GLSL POP 可以通过每个 POP 的 "Create Attributes" 页创建并写入新属性，或通过 "Output Attributes" 参数选择要修改的输入属性，然后分配用于写入。来自第一个输入的未修改 POP 输入属性会以引用方式传给下游 POP，不额外占用内存。参见 <a href="POP.html#Some_POP_Features_and_Concepts">POP#Some_POP_Features_and_Concepts</a> 中的 <b>Memory Reduction via References</b>。</p><p>每个属性都是一个 Shader Storage Buffer Object（<a href="https://www.khronos.org/opengl/wiki/Shader_Storage_Buffer_Object" rel="noreferrer noopener" target="_blank">SSBO</a>）。</p><p>输出属性（包括新属性）未初始化，需要由着色器代码写入值，除非 "Initialize Output Attributes" 为 On（默认）；此时对现有属性会从输入值复制，新属性则用 "Create Attributes" 页的默认值填充。这是在自定义着色器运行前额外执行的一次着色器调度，如果用户确定所有输出值都会被写入，为性能应关闭它。在下游 POP 中读取未初始化的值可能导致不可预测的行为和崩溃。</p><p>"Output Access" 菜单允许将输出属性设为只写（writeonly SSBO 限定符）或读写。读写是执行原子操作所必需的。此时应先初始化输出值，可以使用开关参数，或在多通道 POP 的第一遍中完成（仅 GLSL POP）。</p><p>所有输入的输入属性都会自动可供读取。</p><h3 id="Number_of_Threads">线程数</h3><p>参见 <a href="Compute_Shader.html">Compute_Shader</a> 和 <a href="https://www.khronos.org/opengl/wiki/Compute_Shader" rel="noreferrer noopener" target="_blank">Compute Shader</a>，了解线程如何按调度次数和每个工作组的线程数组织。GLSL POP 提供简化模式以及对线程数的完全控制。大多数情况下人们希望一个线程读写一个属性元素（一个点、顶点或图元）的值，这可通过不同菜单项实现，具体取决于 GLSL POP。</p><h3 id="Uniforms">Uniform</h3><p>在其各自页面上用参数字段声明的 uniform 会在着色器中自动声明。</p><h3 id="POPs_overview">POP 概述</h3><h4 id="GLSL_POP">GLSL POP</h4><p>这是最简单的 GLSL POP。它允许用户一次处理一类属性：point、vertex 或 primitive 属性。</p><p>GLSL POP 中唯一而 GLSL Advanced POP 没有的功能，是使用 "Passes" 参数多次运行着色器。</p><p>所有输入属性都可读取。对于与所选类别不同的属性，访问这些属性的函数会带属性类别前缀，与 GLSL Advanced POP 类似。例如，如果处理 point 属性，名为 "Attrib" 的属性若为 point 属性可用 <code>TDIn_Attrib()</code> 访问，若为 vertex 属性用 <code>TDInVert_Attrib()</code>，若为 primitive 属性用 <code>TDInPrim_Attrib()</code>。详见下文。</p><p>所有输入的索引缓冲区也可读取，见下方 <code>uint TDInputPointIndex(uint inputIndex, uint vertIndex)</code>。</p><ul><li>"Number of Threads" 模式 "Auto" 会为所选类别（point、vertex 或 primitive）的每个元素创建一个线程。</li><li>"Number of Elements in Other Input" 对其他输入类似 "Auto"。</li></ul><p>如果所选类别和输入的元素数量在 GPU 上已知而 CPU 上未知（见 <a href="POP.html#Indirect_POPs_and_Memory_Management">POP#Indirect_POPs_and_Memory_Management</a>），会填充间接命令缓冲区，并以间接调度启动计算着色器。</p><ul><li>"Manual Number of Elements" 根据 "Number of Elements" 参数创建线程。</li><li>"Number of Elements" from Attribute 根据指定 POP 和属性的第一个元素值创建线程。此时计算着色器以间接调度启动。</li></ul><p>在所有这些情况下，实际线程数是将请求线程数向上取整到最近的工作组大小，<code>uint TDNumElements()</code> 包含请求的线程数，<code>uint TDIndex()</code> 包含一个 1d 索引。</p><p>使用 "Manual" 模式时，工作组大小和调度次数可在 3 个维度上指定，此时 <code>TDNumElements()</code> 和 <code>TDIndex()</code> 未定义，会导致编译错误。</p><p>示例着色器：</p><div dir="ltr"><pre><code>void main() {
+	const uint id = TDIndex();
+	if(id &gt;= TDNumElements())
+		return;
+		
+	P[id] = TDIn_P(); // 等同于 TDIn_P(0, TDIndex());
+}
+</code></pre></div><p>为使 <code>P[id] = TDIn_P();</code> 无错误编译，输入中必须存在 <code>P</code>，并在 "Output Attributes" 中选中用于写入。</p><p><code>TDIn_P()</code> 读取输入 0（第一个输入）中元素 <code>TDIndex()</code> 处的 P 属性，它是 <code>TDIn_P(0, id)</code> 的简写，因为 <code>id</code> 映射到 <code>TDIndex()</code>。</p><p>这会用 <code>P[id]</code> 写入输出中的元素 <code>id</code>。</p><p>如上所述，<code>TDNumElements()</code> 是请求的线程数（"Auto" 模式下且 Attribute Class 选择 "Point" 时，每个点一个线程）。实际线程数很可能更高，因为它会向上取整到工作组大小，NVIDIA 硬件设为 32，AMD 硬件设为 64。<code>if</code> 条件可防止着色器写出已分配 SSBO 的边界，否则可能导致不可预测的结果和崩溃。</p><h4 id="GLSL_Advanced_POP">GLSL Advanced POP</h4><p>GLSL Advanced POP 允许做 GLSL POP 能做的事，并有以下差异和附加功能：</p><ul><li>可在同一着色器中读写和创建所有类别的属性（point、primitive、vertex）</li><li>可写入来自多个 POP 的属性（"Extra Outputs" 页）。修改的输出可用 GLSL Select POP 选择。</li><li>可修改点和图元的数量（"Output" 页）</li><li>可写入索引缓冲区</li><li>额外的 "Per Primitive Batch" 着色器调度模式，会在第一个输入中存在的每个图元批次上运行一次着色器。</li></ul><p>为提高处理和渲染效率，相同类型的所有图元（Triangles、Quads、Line Strips、Lines、Point Primitives）在索引缓冲区中分组在一起。处理多种图元类型时，每种图元类型调度一次着色器可能更有利，因为此时某些变量是常量，用户知道所有图元都是同一类型，无需额外的 <code>if()</code> 条件。</p><p>处理图元时，GLSL Advanced POP 允许用参数或属性设置每种类型的图元数量，但使用 Topology POP 合并多个 GLSL Advanced POP 的结果（通常每个属性类别一个着色器更有利）并设置拓扑信息也很方便。</p><p>示例着色器：</p><div dir="ltr"><pre><code>void main() {
+	const uint id = TDIndex();
+	if(id &gt;= TDNumElements())
+		return;
+		
+	oTDPoint_P[id] = TDInPoint_P(); // 等同于 TDInPoint_P(0, TDIndex());
+}
+</code></pre></div><p>基础着色器读取输入 P 属性并原样写入输出。注意额外的 "Point" 前缀用于区分属性类别，因为不同属性类别中可能存在同名属性。</p><p>以下代码片段展示如何遍历一个图元的所有点：</p><div dir="ltr"><pre><code>for (int i = 0; i &lt; TDInputNumVertsPerPrim(); i++)
+{
+	uint vertId = TDInputPrimVertsStartIndex() + i;
+	uint pointId = TDInputPointIndex(0, vertId);
+}
+</code></pre></div><p>当输出点数量改变时，不再创建对未更改输入点属性的引用，因为现有属性缓冲区中的点数与新的点数不匹配。现有和新点属性的手动更新留给用户完成。同样，当顶点或图元数量改变时，不再创建对未更改输入顶点和图元属性的引用。</p><h4 id="GLSL_Copy_POP">GLSL Copy POP</h4><p>GLSL Copy POP 允许在每个拷贝上运行自定义 GLSL 代码。不过所有拷贝都限制为具有相同拓扑，与 Copy POP 类似。与 Copy POP 类似，还提供一个 template 输入。没有其他输入，因此其他 POP 属性需使用 "POP Buffers" 页和 <code>TDBuffer()</code> 函数访问，与 GLSL TOP 和 MAT 类似，见下文。</p><p>与 Copy POP 的内部工作方式类似，会调度一个计算着色器更新点、一个更新顶点、一个更新图元。</p><p>默认情况下，只有点运行自定义着色器，而顶点和图元只是将输入属性复制到所有拷贝。</p><p>不过也可以为顶点和图元提供自定义着色器。</p><p>示例点着色器：</p><div dir="ltr"><pre><code>void main() {
+	const uint id = TDIndex();
+	if(id &gt;= TDNumPoints())
+		return;
+		
+	// TDInputNumPoints()：输入几何体上的点数
+	// TDInputPointIndex()、TDInputIndex()：与输入当前点 id 匹配的点 id
+	// TDCopyIndex()：复制编号
+	
+	// TDTemplate_Attrib() 函数用于采样模板输入的属性
+
+	// P[id] = TDIn_P() + TDTemplate_P();
+	// 等同于 P[id] = TDIn_P(TDInputPointIndex()) + TDTemplate_P(TDCopyIndex());
+
+	P[id] =  TDIn_P() + TDCopyIndex() * vec3(0.5, 0, 0);
+	
+	// 更新已存在的点组（如果有）
+	TDUpdatePointGroups();
+}
+</code></pre></div><p>每个输出点执行一个线程，即 <code>TDIndex()</code> 是输出点索引。<code>TDInputPointIndex()</code> 指与当前输出点匹配的输入点索引。<code>TDIn_P()</code> 不带属性时读取 <code>TDInputPointIndex()</code>，因为我们假定要从输入中匹配的原始点读取。<code>TDCopyIndex()</code> 是当前拷贝索引。<code>TDTemplate_P()</code> 在未提供参数时从模板输入的拷贝索引位置读取 <code>P</code>。<code>TDUpdatePointGroups()</code> 是一个辅助函数，用于更新输入上原有的任何点组：在每个拷贝中，输入里属于某组的点将属于同一组。</p><h2 id="Built-in_functions_and_constants">内置函数与常量</h2><h3 id="Number_of_Elements_and_Indexing">元素数量与索引</h3><p>GLSL POP，以及 GLSL Advanced POP 的单次调度模式和按批次模式</p><div dir="ltr"><pre><code> uint TDNumElements();
+ 
+ // 根据分发模式和线程数模式请求的线程数（因此取决于模式，有时 = TDInputNumPoints() 等）
+ // （在 nvidia 上，实际线程数是工作组大小 32 的向上取整）
+ // 当线程数设为手动、由用户选择工作组大小和工作组分发数时为未定义
+</code></pre></div><div dir="ltr"><pre><code> uint TDIndex();
+ 
+ // 当前线程的一维索引
+ // 当线程数设为手动时为未定义
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputNumPoints(uint inputIndex); // inputIndex 输入中的点数
+uint TDInputNumPrims(uint inputIndex); // inputIndex 输入中的图元数
+uint TDInputNumVerts(uint inputIndex); // inputIndex 输入中的顶点数
+
+// 如果输入不存在则返回 0
+</code></pre></div><div dir="ltr"><pre><code>TDInputNumPoints() = TDInputNumPoints(0);
+TDInputNumPrims() = TDInputNumPrims(0);
+TDInputNumVerts() = TDInputNumVerts(0);
+// 如果未指定输入索引参数，则返回输入 0 的值
+</code></pre></div><p>仅 GLSL POP：</p><div dir="ltr"><pre><code>uint TDInputNumElements(); // 根据属性类别，是 TDInputNumPoints()、TDInputNumPrims() 或 TDInputNumVerts() 的包装
+</code></pre></div><h3 id="Index_Buffer_Access">索引缓冲区访问</h3><h4 id="Read_Access">读取访问</h4><div dir="ltr"><pre><code>uint TDInputPointIndex(uint inputIndex, uint vertIndex); // 带边界检查的索引缓冲访问
+uint TDInputPointIndex(uint vertIndex) = TDInputPointIndex(0, uint vertIndex);
+</code></pre></div><h4 id="Write_Access">写入访问</h4><p>仅当 GLSL Advanced POP 中某个 Max Primitives 参数设为 custom 时启用。</p><div dir="ltr"><pre><code>uint I[]; // 数组变量
+</code></pre></div><h3 id="Attribute_Access:">属性访问：</h3><p>来自输入的所有属性都已绑定并可读取。</p><p>添加到 "Output Attributes" 参数的属性或在 POP 中创建的属性会被分配，并可写入。</p><p>对其他属性，会创建对第一个输入的输入属性的引用，类似于其他 POP 中未修改的属性（信息面板中的 (r)）</p><h4 id="GLSL_POP:">GLSL POP：</h4><h5 id="Input_Attributes">输入属性</h5><div dir="ltr"><pre><code>attribType TDIn_AttribName(uint inputIndex, uint elementId, uint arrayIndex) // 以访问输入 inputIndex 的 AttribName
+
+TDIn_AttribName() = TDIn_AttribName(0, TDIndex(), 0); // 如果未指定参数，则返回输入 0 中 elementId 处的值；如果属性是数组属性，则返回 arrayIndex 0 处的值
+TDIn_AttribName(uint inputIndex, uint elementId) = TDIn_AttribName(inputIndex, elementId, 0); arrayIndex is optional and defaults to 0
+
+// 这会进行边界检查，越界时返回最后几个元素，arrayIndex 越界时返回最后一个 arrayIndex
+
+attribType TDInCache_AttribName(uint inputIndex, uint cacheIndex, uint elemId, uint arrayIndex); // 以访问 cache POP 缓存的帧，arrayIndex 是可选的
+</code></pre></div><h5 id="Input_Attributes_From_Non_Selected_Attribute_Class">来自非所选属性类别的输入属性</h5><ul><li>如果属性类别为 Point，可用 TDInVert_AttribName() 和 TDInPrim_AttribName() 访问 Vertex 和 Primitive 属性。</li><li>如果属性类别为 Vertex，可用 TDInPoint_AttribName() 和 TDInPrim_AttribName() 访问 Point 和 Primitive 属性。</li><li>如果属性类别为 Primitive，可用 TDInPoint_AttribName() 和 TDInVert_AttribName() 访问 Point 和 Vertex 属性。</li></ul><div dir="ltr"><pre><code>attribType TDInPoint_AttribName(uint inputIndex, uint pointId, uint arrayIndex);
+attribType TDInPrim_AttribName(uint inputIndex, uint primId, uint arrayIndex);
+attribType TDInVert_AttribName(uint inputIndex, uint vertId, uint arrayIndex);
+</code></pre></div><div dir="ltr"><pre><code>attribType TDInCachePoint_AttribName(uint inputIndex, uint cacheIndex, uint elemId, uint arrayIndex);
+attribType TDInCacheVert_AttribName(uint inputIndex, uint cacheIndex, uint elemId, uint arrayIndex);
+attribType TDInCachePrim_AttribName(uint inputIndex, uint cacheIndex, uint elemId, uint arrayIndex);
+</code></pre></div><h5 id="Output_Attributes">输出属性</h5><div dir="ltr"><pre><code>attribType AttribName[]; // 输出变量，没有提供可用于原子函数（AtomicAdd 等）的函数
+</code></pre></div><h5 id="Attribute_Array_Size">属性数组大小</h5><div dir="ltr"><pre><code>const uint cTDArraySize_Attrib;
+</code></pre></div><h4 id="GLSL_Advanced_POP:">GLSL Advanced POP：</h4><p>与 GLSL POP 类似，但函数名中带有额外的属性类别前缀。</p><h5 id="Input_Attributes_2">输入属性</h5><div dir="ltr"><pre><code>attribType TDInPoint_AttribName(uint inputIndex, uint pointId, uint arrayIndex);
+attribType TDInPrim_AttribName(uint inputIndex, uint primId, uint arrayIndex);
+attribType TDInVert_AttribName(uint inputIndex, uint vertId, uint arrayIndex);
+
+// 类似于用于点、图元、顶点属性的 GLSL POP 函数
+</code></pre></div><div dir="ltr"><pre><code>attribType TDInCachePoint_AttribName(uint inputIndex, uint cacheIndex, uint elemId, uint arrayIndex);
+attribType TDInCacheVert_AttribName(uint inputIndex, uint cacheIndex, uint elemId, uint arrayIndex);
+attribType TDInCachePrim_AttribName(uint inputIndex, uint cacheIndex, uint elemId, uint arrayIndex);
+</code></pre></div><h5 id="Output_Attributes_2">输出属性</h5><div dir="ltr"><pre><code>attribType oTDPoint_AttribName[];
+attribType oTDPrim_AttribName[];
+attribType oTDVert_AttribName[];
+
+// 点、图元、顶点属性的输出变量
+</code></pre></div><h5 id="Attribute_Array_Size_2">属性数组大小</h5><div dir="ltr"><pre><code>const uint cTDArraySizePoint_Attrib;
+const uint cTDArraySizePrim_Attrib;
+const uint cTDArraySizeVert_Attrib;
+</code></pre></div><h3 id="GLSL_Advanced_POP_Extra_outputs:">GLSL Advanced POP 额外输出：</h3><p>与 GLSL Advanced POP 类似，只是额外输出的名称成为函数的一部分，而不是通过索引访问。</p><h4 id="Number_of_Elements_in_Input">输入中的元素数量</h4><div dir="ltr"><pre><code>uint TDInputNumPoints_OutputName();
+uint TDInputNumPrims_OutputName();
+uint TDInputNumVerts_OutputName();
+</code></pre></div><h4 id="Input_Attributes_3">输入属性</h4><div dir="ltr"><pre><code>attribType TDInPoint_OutputName_AttribName(uint pointId, uint arrayIndex);
+attribType TDInPrim_OutputName_AttribName(uint primId, uint arrayIndex);
+attribType TDInVert_OutputName_AttribName(uint vertId, uint arrayIndex);
+</code></pre></div><h4 id="Output_Attributes_3">输出属性</h4><div dir="ltr"><pre><code>attribType oTDPoint_OutputName_AttribName[];
+attribType oTDPrim_OutputName_AttribName[];
+attribType oTDVert_OutputName_AttribName[];
+</code></pre></div><h5 id="Attribute_Array_Size_3">属性数组大小</h5><div dir="ltr"><pre><code>const uint cTDArraySizePoint_OutputName_Attrib;
+const uint cTDArraySizePrim_OutputName_Attrib;
+const uint cTDArraySizeVert_OutputName_Attrib;
+</code></pre></div><h4 id="Index_Buffer">索引缓冲区</h4><div dir="ltr"><pre><code>uint TDInputPointIndex_OuputName(uint vertIndex);
+</code></pre></div><h3 id="GLSL_Copy_POP:">GLSL Copy POP：</h3><h4 id="Number_of_Elements_and_Indexing_2">元素数量与索引</h4><h5 id="Point_shader">点着色器</h5><p>每个输出点一个线程</p><div dir="ltr"><pre><code>uint TDNumPoints(); // 输出点数
+uint TDInputNumPoints(); // 输入点数
+</code></pre></div><h5 id="Vertex_shader">顶点着色器</h5><p>当前图元批次中每个输出顶点一个线程</p><div dir="ltr"><pre><code>uint TDNumVertsBatch(); // 当前图元批次中的输出顶点数
+uint TDInputNumVertsBatch(); // 当前图元批次中的输入顶点数
+uint TDInputNumVerts(); // 输入顶点总数
+uint TDVertIndex(); // 当前全局顶点索引
+</code></pre></div><h5 id="Primitive_shader">图元着色器</h5><p>当前图元批次中每个输出图元一个线程</p><div dir="ltr"><pre><code>uint TDNumPrimsBatch(); // 当前图元批次中的输出图元数
+uint TDInputNumPrimsBatch(); // 当前图元批次中的输入图元数
+uint TDInputNumPrims(); // 输入图元总数
+uint TDPrimIndex();  // 当前全局图元索引
+</code></pre></div><h5 id="All_GLSL_Copy_POP_shaders">所有 GLSL Copy POP 着色器</h5><div dir="ltr"><pre><code>TDInputIndex(); // 与输入（源）点/图元/顶点匹配的索引
+TDCopyIndex(); // 当前复制索引
+TDTemplateNumPoints(); // 模板输入中的点数
+</code></pre></div><h4 id="Attribute_Access:_2">属性访问：</h4><h5 id="Source_input:">源输入：</h5><div dir="ltr"><pre><code>attribType TDIn_AttribName(uint elementId, uint arrayIndex);
+TDIn_AttribName(uint elementId) = TDIn_AttribName(elementId, 0); // arrayIndex 是可选的，默认为 0
+TDIn_AttribName() = TDIn_AttribName(TDInputIndex(), 0); // 如果未指定参数，则返回 TDInputIndex() 处元素的值
+
+const uint cTDArraySize_Attrib; // 用于数组属性的、带数组大小的常量
+</code></pre></div><h5 id="Template_input:">模板输入：</h5><div dir="ltr"><pre><code>attribType TDTemplate_AttribName(uint elementId, uint arrayIndex);
+TDTemplate_AttribName(uint elementId) = TDTemplate_AttribName(elementId, 0);
+TDTemplate_AttribName() = TDTemplate_AttribName(TDCopyIndex(), 0); // 如果未指定参数，则返回 TDCopyIndex() 处点的值
+
+const uint cTDTemplateArraySize_Attrib; // 用于数组属性的、带数组大小的常量
+</code></pre></div><h5 id="Other_POP_attribute_access:">其他 POP 属性访问：</h5><p>由于 GLSL Copy POP 没有其他输入，其他 POP 属性可用 <code>TDBuffer()</code> 函数及相关常量访问，参见 <a href="https://docs.derivative.ca/Write_GLSL_POPs#GLSL_TOP_and_MAT:_POP_attribute_access" rel="noreferrer noopener" target="_blank">Write_GLSL_POPs#GLSL_TOP_and_MAT:_POP_attribute_access</a></p><h5 id="Output_Attributes_4">输出属性</h5><div dir="ltr"><pre><code>attribType AttribName[]; // 输出变量，没有提供可用于原子函数（AtomicAdd 等）的函数
+</code></pre></div><h4 id="Misc_Functions">杂项函数</h4><ul><li>点着色器：</li></ul><div dir="ltr"><pre><code>void TDUpdatePointGroups(); // 更新已存在的点组（如果有）
+</code></pre></div><ul><li>顶点着色器：</li></ul><div dir="ltr"><pre><code>void TDUpdateTopology(); // 更新拓扑（索引缓冲以及线带的线带索引缓冲）
+</code></pre></div><ul><li>图元着色器</li></ul><div dir="ltr"><pre><code>void TDUpdateLineStripsInfo(); // 更新拓扑（线带信息缓冲）
+
+void TDUpdatePrimGroups(); // 更新现有的图元组（如果有）
+</code></pre></div><h3 id="Primitive_restart_index_for_line_strips">线带的图元重启索引</h3><p>最大无符号值，32 位下为 0xFFFFFFFF</p><div dir="ltr"><pre><code>const uint cTDPrimIndexRestart;
+</code></pre></div><h3 id="Dimension_info_and_helper_functions">维度信息与辅助函数</h3><p>仅 GLSL POP 和 GLSL Advanced POP</p><div dir="ltr"><pre><code>const uint cTDDimSizeN; // 保存输入 N 维度数的常量
+uint[cTDDimSizeN] TDDimensionN(); // 返回包含输入 N 各维度的数组
+uint[cTDDimSizeN] TDDimCoordsN(uint pointIndex); // 返回包含 pointIndex 相对于输入 N 各维度坐标的数组：对应内置属性 _DimI[]
+uint TDDimPointIndexN(uint[cTDDimSizeN] coords); // 返回输入 N 中坐标为 coords 的点索引
+</code></pre></div><p>为方便起见，如果不包含 N，则常量和函数指第一个输入</p><div dir="ltr"><pre><code>const uint cTDDimSize;
+uint[cTDDimSize] TDDimension();
+uint[cTDDimSize] TDDimCoords(uint pointIndex);
+uint TDDimPointIndex(uint[cTDDimSize] coords);
+</code></pre></div><p>这些函数也适用于 GLSL Advanced POP 中额外输出的输入：</p><div dir="ltr"><pre><code>const uint cTDDimSize_OutputName;
+uint[cTDDimSize_OutputName] TDDimension_OutputName();
+uint[cTDDimSize_OutputName] TDDimCoords_OutputName(uint pointIndex);
+uint TDDimPointIndex_OutputName(uint[cTDDimSize_OutputName] coords);
+</code></pre></div><h3 id="Primitive_Batches_info_and_built-in_attributes_equivalent">图元批次信息及等价的内置属性</h3><h4 id="GLSL_POP,_and_GLSL_Advanced_POP">GLSL POP，以及 GLSL Advanced POP</h4><p>（对于按图元批次调度模式，仅对次要输入有用）</p><div dir="ltr"><pre><code>uint TDInputPrimIndex(uint vertIndex);
+
+// 顶点 vertIndex 所属图元的索引。
+// 这对应在顶点上运行的内置属性 _PrimI。
+// 这也对应线带的 Line Metrics 中的 Line Strip Index
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputVertPrimIndex(uint vertIndex);
+
+// vertIndex 顶点在当前图元中的索引（从 0 到 numVertsPerPrim - 1）
+// 这对应在顶点上运行的内置属性 _VertPrimI。
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputPrimType(uint primIndex); // 图元 primIndex 的图元类型
+uint TDInputPrimType_Vert(uint vertIndex); // 顶点 vertIndex 所属图元的图元类型
+
+// 图元类型：
+
+const uint cTDTrianglesType = 0;
+const uint cTDQuadsType = 1;
+const uint cTDLineStripsType = 2;
+const uint cTDLinesType  = 3;
+const uint cTDPointPrimsType  = 4;
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputNumVertsPerPrim(uint inputIndex, uint primIndex);
+
+// 输入 inputIndex 中图元 primIndex 的顶点数
+// 这对应在图元上运行的内置属性 _NumVertsPerPrim
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputNumVertsPerPrimFromVert(uint inputIndex, uint vertIndex);
+
+// 输入 inputIndex 中顶点 vertIndex 所属图元的顶点数
+// 这对应在顶点上运行的内置属性 _NumVertsPerPrim
+// 这也对应线度量中的 Number of Verts
+	
+For line strips this doesn't include the restart index at the end of the line strip
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputPrimVertsStartIndex(uint inputIndex, uint primIndex); // 输入 inputIndex 中图元 primIndex 的第一个顶点索引
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputPrimsStartIndex(uint inputIndex, uint primType); // primType 图元批次中第一个输入图元的索引
+uint TDInputVertsStartIndex(uint inputIndex, uint primType); // primType 图元批次中第一个输入顶点的索引
+</code></pre></div><p>对于上述内容，如果只指定一个参数，则 inputIndex = 0。</p><p>对于 GLSL POP，无参数的额外函数按如下方式封装上述部分：</p><ul><li>在顶点上运行：</li></ul><div dir="ltr"><pre><code>TDInputPrimIndex() = TDInputPrimIndex(TDIndex());
+TDInputPrimType() = TDInputPrimType_Vert(TDIndex());
+TDInputNumVertsPerPrim() = TDInputNumVertsPerPrim_Vert(TDIndex());
+TDInputVertPrimIndex() = TDInputVertPrimIndex(TDIndex());
+</code></pre></div><ul><li>在图元上运行</li></ul><div dir="ltr"><pre><code>TDInputPrimIndex() = TDIndex();
+TDInputPrimType() = TDInputPrimType(TDIndex());
+TDInputNumVertsPerPrim() = TDInputNumVertsPerPrim(TDIndex());
+TDInputPrimVertsStartIndex() = TDInputPrimVertsStartIndex(TDIndex());
+</code></pre></div><p>这些函数名称中带 "Input" 是因为 GLSL Advanced POP 可能有不同的输出，同时也是为了让 GLSL POP 和 GLSL Advanced POP 拥有相同的函数。目前 GLSL Advanced POP 单次调度模式尚未定义输出的函数。</p><h4 id="GLSL_Advanced_POP_per_primitive_batch_dispatch_mode:">GLSL Advanced POP 按图元批次调度模式：</h4><div dir="ltr"><pre><code>uint TDInputPrimIndex();
+
+// 对于图元：当前输入图元的索引（TDInputPrimsStartIndex() + TDIndex()）
+// 对于顶点：当前顶点所属图元的索引
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputNumVertsPerPrim();
+
+// 对于图元：当前输入图元的顶点数
+// 对于顶点：当前顶点所属图元的顶点数
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputPrimType();
+
+// 对于图元：当前输入图元的图元类型（在整个批次中恒定）
+// 对于顶点：当前顶点所属图元的图元类型（在整个批次中恒定）
+</code></pre></div><div dir="ltr"><pre><code>uint TDInputPrimVertsStartIndex(); // 仅图元：当前输入图元的第一个顶点索引
+uint TDInputVertPrimIndex(); // 仅顶点：当前顶点在输入图元中的索引（从 0 到 numVertsPerPrim - 1）
+	
+uint TDInputPrimsStartIndex(); // 当前图元批次中第一个输入图元的索引
+uint TDPrimsStartIndex(); // 当前图元批次中第一个输出图元的索引
+
+uint TDInputVertsStartIndex(); // 当前图元批次中第一个输入顶点的索引
+uint TDVertsStartIndex(); // 当前图元批次中第一个输出顶点的索引
+
+uint TDInputNumPrimsBatch(); // 当前图元批次中输入图元的数量
+uint TDNumPrimsBatch(); // 当前图元批次中输出图元的数量
+
+uint TDInputNumVertsBatch(); // 当前图元批次中输入顶点的数量
+uint TDNumVertsBatch(); // 当前图元批次中输出顶点的数量
+</code></pre></div><h3 id="GLSL_POPs_Helper_functions">GLSL POP 辅助函数</h3><p>Write a GLSL material 页上的常用函数 <a href="https://docs.derivative.ca/Write_a_GLSL_Material#Common_Functions" rel="noreferrer noopener" target="_blank">Write_a_GLSL_Material#Common_Functions</a> </p><h4 id="Math_Functions">数学函数</h4><div dir="ltr"><pre><code>// TDMath
+
+// 创建一个旋转矩阵，从朝 +Z 方向开始旋转到 'forward' 向量方向。
+// 传给此函数的 'forward' 和 'up' 向量无需归一化。
+mat3 TDRotateToVector(vec3 forward, vec3 up);
+
+// 创建一个绕 'axis' 旋转给定 'radians' 弧度的旋转矩阵
+// 传给此函数之前，'axis' 向量必须已归一化。
+mat3 TDRotateOnAxis(float radians, vec3 axis);
+
+// 创建分别绕 +X、+Y 和 +Z 轴旋转的旋转矩阵。
+mat3 TDRotateX(float radians);
+mat3 TDRotateY(float radians);
+mat3 TDRotateZ(float radians);
+
+// 为给定的 3 个缩放值创建缩放矩阵。
+mat3 TDScale(float x, float y, float z);
+
+// 为给定的 3 个平移值创建平移矩阵。
+mat4 TDTranslate(float x, float y, float z);
+
+// 一个给出从 0 到 1 的半正弦斜坡的函数。
+// 用 (0, 1) 范围之外的坐标采样时，低于 0 的返回 0，高于 1 的返回 1。
+// 取决于硬件，它可能比使用 GLSL 的 sin() 函数更快。
+float TDSineLookup(float v);
+
+// 创建一个从向量 'from' 旋转到向量 'to' 的旋转矩阵。该解法并不特别稳定，但在某些情况下很有用。
+// 传给此函数之前，'from' 和 'to' 向量必须已归一化。
+mat3 TDCreateRotMatrix(vec3 from, vec3 to);
+
+// 接收一个表面法线、表面的切线，以及一个手性值（-1 或 1）
+// 返回一个矩阵，把向量从切线空间转换到法线和切线所在的空间
+// 调用此函数之前，法线和切线都必须归一化。
+// 由 [[Attribute Create SOP]] 创建的 T 属性的 w 坐标包含手性
+// 该值应按原样传入。
+mat3 TDCreateTBNMatrix(vec3 N, vec3 T, float handedness);
+
+// 在 RGB 和 HSV 色彩空间之间转换
+vec3 TDRGBToHSV(vec3 c);
+vec3 TDHSVToRGB(vec3 c);
+
+// 将 0-1 的等距柱状投影纹理坐标转换为立方体贴图坐标。
+// U 坐标为 0 时对应 +X 面的中间，即沿 vec3(1, Y, 0) 平面。
+// 随着 U 增大，等距柱状投影坐标从 +X 依次转向 +Z、-X 和 -Z。vec3 TDEquirectangularToCubeMap(vec2 mapCoord);
+vec3 TDEquirectangularToCubeMap(vec2 mapCoord);
+
+// 从立方体贴图坐标转换为等距柱状投影坐标
+// 调用此函数前，cubemapCoord 必须归一化。
+vec2 TDCubeMapToEquirectangular(vec3 envMapCoord)
+
+// 在 2019.18140 及之后版本中可用
+// 此版本还会输出一个 mipmap 偏移浮点值。该浮点值应传入 texture() 的 'bias'
+// 参数，用于帮助选择 mipmap 级别。这有助于避免等距柱状投影图
+// 边缘的接缝。
+vec2 TDCubeMapToEquirectangular(vec3 envMapCoord, out float mipMapBias)
+
+// 使用标准亮度权重 (0.2126, 0.7152, 0.0722) 将 RGB 转换为单色
+float TDLuminance(vec3 c);
+
+// 返回在 low 和 high 之间循环的值
+float TDLoop(float val, float low, float high);
+// 返回在 low 和 high 之间折返（zigzag）的值
+float TDZigZag(float val, float low, float high);
+// 返回两个值之间的平均值。
+float TDAverage(float valA, float valB);
+
+// 类似 Math CHOP 中的 remap 功能，将 'value' 从 [low1, high1] 范围重映射到 [low2, high2] 范围。
+float TDRemap(float value, float low1, float high1, float low2, float high2);
+vec2 TDRemap(vec2 value, vec2 low1, vec2 high1, vec2 low2, vec2 high2);
+vec3 TDRemap(vec3 value, vec3 low1, vec3 high1, vec3 low2, vec3 high2);
+vec4 TDRemap(vec4 value, vec4 low1, vec4 high1, vec4 low2, vec4 high2);
+
+// 三平面混合函数。根据法线向量加权，在 3 个正交颜色值之间混合。&lt;code&gt;blendPower&lt;/code&gt; 参数是权重函数使用的指数，用于控制衰减。
+vec4 TDTriplanarBlend(vec3 normal, vec4 xcolor, vec4 ycolor, vec4 zcolor, int blendPower);
+
+// 在给定采样器上执行 Tricubic 和 bicubic 采样/插值。
+// texSize 和 invTexSize 应为纹理的分辨率及其 1.0 / 分辨率。
+vec4 TDBicubicInterpolation(sampler2D tex, vec2 texCoord, vec2 texSize, vec2 invTexSize);
+vec4 TDBicubicInterpolation(sampler2D tex, vec2 texCoord);
+vec4 TDTricubicInterpolation(sampler3D tex, vec3 texCoord, vec3 texSize, vec3 invTexSize);
+vec4 TDTricubicInterpolation(sampler3D tex, vec3 texCoord);
+
+// 从 3D 环境坐标生成用于查找球面贴图的 2D 坐标。
+vec2 TDTexGenSphere(vec3 envMapCoord);
+</code></pre></div><div dir="ltr"><pre><code>// TDQuaternionMath
+// 使用以弧度表示的角度，构建表示绕某轴旋转的四元数。
+vec4 TDAxisAngleToQuaternion(vec3 axis, float angle) ;
+// 从四元数构建 3×3 旋转矩阵。
+mat3 TDQuaternionToRotMatrix(vec4 q);
+// 提取表示 3×3 矩阵旋转的四元数。
+vec4 TDRotMatrixToQuaternion(mat3 rotMat);
+// 使用四元数旋转来旋转向量或点。
+vec3 TDRotateFromQuaternion(vec3 v, vec4 q);
+// 合并两个四元数，以依次应用它们的旋转。
+vec4 TDQuaternionMultiply(vec4 Q1, vec4 Q2);
+// 在两个四元数之间执行球面线性插值。
+vec4 TDSlerpQuaternions(vec4 q0, vec4 q1, float t);
+// 从 4×4 变换矩阵中提取纯旋转分量。
+mat3 TDExtractRotation(mat4 m);
+// 通过四元数 slerp 在两个旋转矩阵之间平滑插值。
+mat3 TDSlerpRotationMatrices(mat3 m0, mat3 m1, float t);
+// 在两个变换矩阵之间插值平移、旋转和缩放。
+mat4 TDInterpolateTransformMatrices(mat4 m0, mat4 m1, float t);
+// 计算把一个向量方向旋转到另一个向量方向的四元数。
+vec4 TDQuaternionFromTo(vec3 from, vec3 to);
+</code></pre></div><h4 id="Noise_Functions">噪声函数</h4><div dir="ltr"><pre><code>// 返回 &lt;code&gt;t*t*t*(t*(t*6.0-15.0)+10.0);&lt;/code&gt;。
+float TDFade(float t);
+
+// Perlin 2D、3D、4D 噪声函数
+float TDPerlinNoise(vec2 P);
+float TDPerlinNoise(vec3 P);
+float TDPerlinNoise(vec4 P);
+
+// Simplex 2D、3D、4D 噪声函数
+float TDSimplexNoise(vec2 P);
+float TDSimplexNoise(vec3 P);
+float TDSimplexNoise(vec4 P);
+
+// TDFade() 函数的导数。返回 &lt;code&gt;30*t*t*(t*(t-2)+1)&lt;/code&gt;
+float TDFadeDeriv(float t);
+
+// TDPerlinNoise() 函数的梯度。该梯度是解析导数，在噪声空间中计算。
+vec4 TDPerlinNoiseDeriv(vec2 P);
+vec4 TDPerlinNoiseDeriv(vec3 P);
+vec4 TDPerlinNoiseDeriv(vec4 P, out float outNoise);
+vec4 TDPerlinNoiseDeriv(vec4 P);
+
+// TDSimplexNoise() 函数的梯度。该梯度是解析导数，在噪声空间中计算。
+vec4 TDSimplexNoiseDeriv(vec2 P);
+vec4 TDSimplexNoiseDeriv(vec3 P);
+vec4 TDSimplexNoiseDeriv(vec4 P, out float outNoise);
+vec4 TDSimplexNoiseDeriv(vec4 P);
+</code></pre></div><h4 id="Color_Space_Functions">色彩空间函数</h4><p><code>TDTransfer*</code> 函数会在颜色数据的线性与非线性传递之间转换。如果传入 vec4，则 RGB 会在执行操作前先按 Alpha 反向预乘，最后再重新乘以 alpha。 </p><div dir="ltr"><pre><code>// TDBasicColorSpace
+vec3 TDTransferLinearToSRGB(vec3 c);
+vec4 TDTransferLinearToSRGB(vec4 c);
+
+vec3 TDTransferSRGBToLinear(vec3 c);
+vec4 TDTransferSRGBToLinear(vec4 c);
+
+// TDColorSpace
+vec3 TDTransferLinearToRec709(vec3 c);
+vec3 TDTransferRec709ToLinear(vec3 c);
+
+vec3 TDTransferLinearToGamma1_8(vec3 c);
+vec3 TDTransferLinearToGamma2_2(vec3 c);
+vec3 TDTransferLinearToGamma2_4(vec3 c);
+vec3 TDTransferLinearToGamma2_6(vec3 c);
+vec3 TDTransferLinearToGamma2_8(vec3 c);
+
+vec3 TDTransferACESproxyToLinear(vec3 c);
+vec3 TDTransferLinearToACESproxy(vec3 c);
+
+vec3 TDTransferGamma1_8ToLinear(vec3 c);
+vec3 TDTransferGamma2_2ToLinear(vec3 c);
+vec3 TDTransferGamma2_4ToLinear(vec3 c);
+vec3 TDTransferGamma2_6ToLinear(vec3 c);
+vec3 TDTransferGamma2_8ToLinear(vec3 c);
+
+// referenceWhiteNits 表示线性数据中值 1.0 所对应的亮度（以 nit 为单位）。
+vec3 TDTransferLinearToST2084PQ(vec3 color, float referenceWhiteNits);
+vec3 TDTransferST2084PQToLinear(vec3 color, float referenceWhiteNits);
+
+vec3 TDTransferBT2100HLGToLinear(vec3 color, float peakNits, float referenceWhiteNits);
+vec3 TDTransferLinearToBT2100HLG(vec3 color, float peakNits, float referenceWhiteNits);
+
+vec3 TDGamutRec709ToRec2020(vec3 c);
+vec3 TDGamutRec2020ToRec709(vec3 c);
+</code></pre></div>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Write_a_GLSL_POP" rel="noreferrer noopener">docs.derivative.ca/Write_a_GLSL_POP</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

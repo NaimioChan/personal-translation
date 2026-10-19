@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write a GLSL MAT - TouchDesigner 文档</title>
+<meta name="description" content="Write a GLSL MAT —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Write a GLSL MAT</h1>
+<h2 id="Overview">概述</h2><p>本文说明在 TouchDesigner 中编写 GLSL 材质的一些细节。假定读者已了解 GLSL 语言。官方 GLSL 文档可在 <a href="https://www.khronos.org/opengl/wiki/Core_Language_(GLSL)" rel="noreferrer noopener" target="_blank">this address.</a> 找到</p><h3 id="GLSL_Version">GLSL 版本</h3><p>TouchDesigner 使用 GLSL 3.30 及更高版本作为其语言。许多在线示例以及 WebGL 着色器都是针对 GLSL 1.20 编写的。GLSL 1.20 与 GLSL 3.30+ 之间存在一些重要的语言差异。有关其中一些差异的信息，请参阅 <a href="#Changes_from_GLSL_1.20">Changes from GLSL 1.20</a></p><h3 id="The_concept_of_GLSL_Shaders">GLSL 着色器的概念</h3><p>GLSL <a href="Shader.html">Shader</a> 是在几何渲染时应用于几何的程序。GLSL 着色器分为两个主要部分：顶点着色器和像素着色器。</p><p><b>Vertex Shader</b> - 顶点着色器是应用于材质所作用几何的每个顶点的程序。</p><p><b>Pixel Shader</b> - 像素着色器是应用于每个绘制像素的程序。它也常被称为 Fragment Shader。</p><p>还有一个 <b>Geometry Shader</b>，它是顶点阶段和像素阶段之间的阶段，但不常使用。关于几何着色器的更多信息，请查看 <a href="https://open.gl/geometry" rel="noreferrer noopener" target="_blank">here</a>。</p><h3 id="TouchDesigner_GLSL_conventions">TouchDesigner GLSL 约定</h3><p>TouchDesigner 作为 GLSL 语言扩展提供的所有函数和 uniform 都遵循这些约定。</p><ul><li>函数名始终以字母 <code dir="ltr"><span>TD</span><span></span></code> 开头。例如 <code dir="ltr"><span>TDLighting</span><span>()</span><span></span></code>。</li></ul><ul><li>Uniform 以字母 <code dir="ltr"><span>uTD</span><span></span></code> 开头。</li></ul><ul><li>Sampler 以字母 <code dir="ltr"><span>sTD</span><span></span></code> 开头。</li></ul><ul><li>Image 以字母 <code dir="ltr"><span>mTD</span><span></span></code> 开头。</li></ul><ul><li>顶点输入属性的命名与 TouchDesigner SOP 接口中相同（P、N、uv）。</li></ul><p>TouchDesigner 提供的大多数 uniform 都包含在 Uniform Block 中。这意味着不再通过 <code dir="ltr"><span>uTDMatrixName</span><span></span></code> 访问单个矩阵，而是将矩阵存储在包含许多矩阵的单个块中，例如 <code dir="ltr"><span>uTDMats</span><span></span></code>，其成员如 <code dir="ltr"><span>uTDMats</span><span>[</span><span>0</span><span>].</span><span>worldCam</span><span></span></code> 和 <code dir="ltr"><span>uTDMats</span><span>[</span><span>0</span><span>].</span><span>projInverse</span><span></span></code>。</p><h2 id="Shader_Stages">着色器阶段</h2><h3 id="Vertex_Shader">顶点着色器</h3><p>在顶点着色器内部，你只能访问一个顶点，不知道其他顶点的位置，也不知道其他顶点的顶点着色器输出会是什么。</p><p>顶点着色器的输入是关于程序正在处理的特定顶点的所有数据。可以获取顶点在 SOP 空间中的位置、纹理坐标、颜色、法线等数据。这些值称为 attribute。attribute 在顶点着色器中使用 <code dir="ltr"><span>in</span><span></span></code> 关键字声明。</p><p>顶点着色器可以输出许多内容。主要输出的是顶点位置（经世界、摄像机和投影矩阵变换后）、颜色和纹理坐标。它也可以使用通过 <code dir="ltr"><span>out</span><span></span></code> 声明的输出变量输出任何其他值。顶点着色器的输出会在该顶点所属图元的表面上线性插值。例如，如果你在线段的第 1 个顶点输出值 0.2、第 2 个顶点输出值 0.4，则在这两点之间中点绘制的像素将获得值 0.3。</p><h3 id="Pixel_Shader">像素着色器</h3><p>像素着色器的输入是顶点着色器的所有输出以及已定义的任何 uniform。顶点着色器的输出已在顶点所构成的多边形上线性插值。像素着色器主要将颜色输出到 Color Buffer。颜色通过声明为 <code dir="ltr"><span>layout</span><span>(</span><span>location</span><span> </span><span>=</span><span> </span><span>0</span><span>)</span><span> </span><span>out</span><span> </span><span>vec4</span><span> </span><span>oFragColor</span><span></span></code> 的变量输出。如果要输出到多个颜色缓冲区，可以声明更多颜色输出，将 <code dir="ltr"><span>location</span><span></span></code> 值设为 1、2、3 等，而不是 0。你也可以将输出声明为数组，例如 <code dir="ltr"><span>layout</span><span>(</span><span>location</span><span> </span><span>=</span><span> </span><span>0</span><span>)</span><span> </span><span>out</span><span> </span><span>vec4</span><span> </span><span>oFragColor</span><span>[</span><span>3</span><span>]</span><span></span></code>。</p><h3 id="Geometry_Shader">几何着色器</h3><p>几何着色器接收单个点图元（点、线或三角形），并输出一组点、线带或三角形带。目前在 TouchDesigner 中，你必须使用的输入图元类型之一要与我们所渲染的内容相匹配：</p><pre><code> layout(points) in;
+ layout(lines_adjacency) in;
+ layout(triangles) in;
+</code></pre><p>目前不支持 <code>lines</code> 或 <code>triangles_adjacency</code> 等其他输入类型。</p><p><b>注意</b> - 在 2018.20000 系列版本中支持 <code>lines</code>，不支持 <code>lines_adjacency</code>，因此 2019.10000 将支持对象切换为 <code>lines_adjacency</code> 的变化不幸地破坏了现有的几何着色器。</p><h2 id="A_Basic_Shader">一个基础着色器</h2><h3 id="Vertex_Shader_2">顶点着色器</h3><p>此顶点着色器只是正确地变换每个顶点，完全交由像素着色器为像素着色：</p><div dir="ltr"><pre><code>void main()
+{
+	// P 是当前顶点的位置
+	// TDDeform() 会返回变形后的 P 位置，位于世界空间。
+	// 把它从世界空间变换到投影空间，以便进行光栅化
+	gl_Position = TDWorldToProj(TDDeform(TDPos()));
+}
+</code></pre></div><h3 id="Pixel_Shader_2">像素着色器</h3><p>此像素着色器只是将每个像素设为红色：</p><div dir="ltr"><pre><code>// 我们需要声明输出片元颜色的名称（这与 GLSL 1.2 不同，那里会自动声明为 gl_FragColor）
+out vec4 fragColor;
+void main()
+{
+	fragColor = vec4(1, 0, 0, 1);
+}
+</code></pre></div><h2 id="Working_with_Geometry_Attributes">使用几何属性</h2><p>以下顶点着色器属性（输入）始终会自动为你声明，可在顶点着色器中使用。你无需自行声明它们。</p><div dir="ltr"><pre><code>vec3 TDPos(); // 顶点位置
+vec3 TDNormal(); // 法线
+vec3 TDTexCoord(uint coordLayer); // 纹理坐标层
+</code></pre></div><p><b>Other Attributes</b> </p><p>你想使用的所有其他属性都需在着色器代码中声明。它们作为自定义属性传入。为将来与 POP 兼容，这些属性应使用 GLSL MAT 上的 'Attributes' 页声明。声明的属性可通过调用 <code>TDAttrib_AttribName()</code> 访问。例如，如果你声明一个名为 'life' 的自定义属性，你将在着色器中用 <code>TDAttrib_life()</code> 访问它。</p><p>为方便起见，<code>TDTexAttrib_AttribName(uint textureLayer)</code> 对 POP 返回 <code>TDAttrib_AttribName()</code>，对 SOP 返回 <code>uv[textureLayer]</code>，这样着色器代码可以更容易在 POP 和 SOP 之间共享</p><p>对 POP 而言，可通过指定顶点索引参数来访问任意顶点的属性值。</p><div dir="ltr"><pre><code>attribType TDAttrib_AttribName(uint arrayIndex, uint vertIndex) // 访问输入几何体属性（必须在 Attributes 页面上声明）
+TDAttrib_AttribName(uint arrayIndex) = TDAttrib_AttribName(arrayIndex, gl_VertexID); // vertIndex 是可选的，默认为 gl_VertexID
+TDAttrib_AttribName() = TDAttrib_AttribName(0, gl_VertexID);
+// 对于点和图元属性，查找是基于顶点进行的；
+
+const uint cTDAttribArraySize_AttribName // 用于数组属性的、带数组大小的常量
+</code></pre></div><p><b>Other POP Attributes</b> </p><p>要按元素索引访问任意 POP 属性，可以使用 Buffers 页：</p><div dir="ltr"><pre><code>attribType TDBuffer_AttribName(uint elementIndex, uint arrayIndex); // 访问在 Buffer 页上声明的 POP 属性缓冲区
+TDBuffer_AttribName(uint elementIndex) = TDBuffer_AttribName(elementIndex, 0); // arrayIndex 可选，默认为 0
+
+const uint TDBufferLength_AttribName(); // 缓冲区长度
+const uint cTDBufferArraySize_AttribName; // 用于数组属性的、带数组大小的常量
+</code></pre></div><h2 id="TouchDesigner_specific_defines">TouchDesigner 特有的 define</h2><p>TouchDesigner 中的着色器会根据若干因素动态重新编译，例如场景中的灯光数量和类型，或此渲染通道中使用的摄像机数量（在 <a href="#Multi-Camera_Rendering">Multi-Camera Rendering</a> 的情况下）。这样做是为了优化，因为迭代次数已知的循环在 GLSL 中要快得多。还提供了一些 define，使最终用户编写的代码能在不同灯光/摄像机数量下正确重新编译。</p><div dir="ltr"><pre><code>// This define will be defined at compile time, and your shader will be recompiled for each combination
+// of lights in use (if it's is used in multiple light configurations). You can use it for things like a loop
+// counter to loop over all lights in the scene, as you will see if you output example code from the Phong MAT.
+// Environment COMPs are counted separately from regular Light COMPs.
+#define TD_NUM_LIGHTS &lt;defined at compile time&gt;
+#define TD_NUM_ENV_LIGHTS &lt;defined at compile time&gt;
+</code></pre></div><div dir="ltr"><pre><code>// On newer hardware multiple cameras can be rendered at the same time. This define will be set to the
+// number of cameras done on this render pass. This may be 1 or more, depending on many factors.
+// Code should be written in a way that should work regardless of what this value is.
+#define TD_NUM_CAMERAS &lt;defined at compiler time&gt;
+</code></pre></div><div dir="ltr"><pre><code>// One of these defines will be set depending on which shader stage is being compiled.
+// This allows shaders to use #ifdef &lt;stageName&gt; and #ifndef &lt;stageName&gt; to either include or
+// omit code based on the current shader stage being included. This also allows for single
+// large DATs to contain all the code for all stages, with each portion #ifdef-ed in for
+// each stage.
+#define TD_VERTEX_SHADER
+#define TD_GEOMETRY_SHADER
+#define TD_PIXEL_SHADER
+#define TD_COMPUTE_SHADER
+</code></pre></div><h2 id="TouchDesigner_specific_Uniforms">TouchDesigner 特有的 Uniform</h2><p>这些是 TouchDesigner 会自动为你设置的 uniform。你无需声明其中任何一个，直接在着色器中使用即可。</p><div dir="ltr"><pre><code>// 通用渲染状态信息
+struct TDGeneral {
+  vec4 ambientColor;  // 环境光颜色（所用所有 Ambient Light COMP 之和）
+  vec4 viewport;      // 视口信息，包含 (x, y, 1.0 / w, 1.0 / h)。x/y/w/h 以像素为单位。
+};
+uniform TDGeneral uTDGeneral;
+// 因此，例如你可以这样获取环境光颜色
+// vec4 ambientColor = uTDGeneral.ambientColor;
+</code></pre></div><div dir="ltr"><pre><code>// 矩阵
+struct TDMatrix
+{
+	mat4 world;			// 世界变换矩阵，是包含该 SOP 的 Object COMP 层级组合。
+						// 从 SOP 空间到世界空间的变换
+	mat4 worldInverse;	// 世界矩阵的逆
+	mat4 worldCam;		// 世界矩阵与相机矩阵的乘积。（Cam * World）
+	mat4 worldCamInverse;
+	mat4 cam;			// 相机变换矩阵，取自用于渲染的 Camera COMP
+	mat4 camInverse;
+	mat4 camProj;		// 相机的变换矩阵与相机 COMP 的投影矩阵，（Proj * Cam）
+	mat4 camProjInverse;
+	mat4 proj;			// 来自 Camera COMP 的投影矩阵。Z 范围为 [0,1]，Vulkan 风格。
+	mat4 projInverse;
+	mat4 worldCamProj;	// 世界、相机和投影矩阵的乘积。（Proj * Cam * World）
+						// 取 SOP 空间中的顶点并放入投影空间
+	mat4 worldCamProjInverse;
+	mat3 worldForNormals;	// 世界矩阵的逆转置，用它把法线
+							// 从 SOP 空间变换到世界空间
+	mat3 camForNormals;		// 相机矩阵的逆转置，用它把法线
+							// 从世界空间变换到相机空间
+	mat3 worldCamForNormals;	// worldCam 矩阵的逆转置，用它把法线
+								// 从 SOP 空间变换到相机空间 inverse(transpose(Cam * World))
+	   
+};
+uniform TDMatrix uTDMats[TD_NUM_CAMERAS];
+// 例如，你可以用这一行代码把 SOP 空间中的顶点变换到相机空间
+// vec4 camSpaceVert = uTDMats[TDCameraIndex()].worldCam * vec4(TDPos(), 1.0);
+</code></pre></div><div dir="ltr"><pre><code>struct TDCameraInfo
+{
+	vec4 nearFar;			// 近/远平面信息，包含 (near, far, far - near, 1.0 / (far - near))
+	vec4 fog;				// 雾信息，如 Camera COMP 中所定义
+							// 包含 (fogStart, fogEnd, 1.0 / (fogEnd - fogStart), fogDensity)
+	vec4 fogColor;			// 雾颜色，如 Camera COMP 中所定义
+	int renderTOPCameraIndex;	// 说明这个相机是 Render TOP 的 'Cameras' 参数中的哪个相机。
+};
+uniform TDCameraInfo uTDCamInfos[TD_NUM_CAMERAS];
+</code></pre></div><p>一般来说，你无需对这些灯光 uniform/sampler 做任何处理，因为在 <code dir="ltr"><span>TDLighting</span><span>(),</span><span> </span><span>TDLightingPBR</span><span>()</span><span> </span><span>and</span><span>,</span><span> </span><span>TDEnvLightingPBR</span><span>()</span><span></span></code> 函数中一切都已为你完成。只有做自定义光照时才需要关心它们。</p><div dir="ltr"><pre><code>struct TDLight
+{
+	vec4 position;		// 光源在世界空间中的位置
+	vec3 direction;		// 光源在世界空间中的方向
+	vec3 diffuse;		// 光源的漫反射颜色
+	vec4 nearFar;		// 光源 View 页面中的近、远设置
+						// 包含 (near, far, far - near, 1.0 / (far - near)
+	vec4 lightSize;		// 光源 Light Size 参数的值
+						// 容器 (light width, light height, light width / light projection width, light height / light projection height)
+	vec4 misc;			// 杂项参数值，目前包含
+						// (Max shadow softness, 0, 0, 0)
+	vec4 coneLookupScaleBias;	// 应用于锥形光的贡献，以创建聚光照明区域
+								// 包含 (coneLookupScale, coneLookupBias, 1.0, 0.0)。
+                                // 如果光源不是锥形光，则包含 (0.0, 0.0, 0.0, 0.0)。
+	vec4 attenScaleBiasRoll;	// 应用于光到点的距离，以得到衰减值
+								// 包含 (attenuation scale, attenuation bias, attenuation rolloff, 0)
+	mat4 shadowMapMatrix;		// 把世界空间中的点变换到阴影贴图光源的投影空间
+								// 同时把投影空间从 [-1, 1] 重新缩放到 [0, 1]，使该值可用于
+								// 在阴影贴图中查找
+	mat4 shadowMapCamMatrix;	// 把世界空间中的点变换到阴影贴图光源的相机空间
+	vec4 shadowMapRes;			// 与此光源关联的阴影贴图分辨率
+								// 包含 (1.0 / width, 1.0 / height, width, height)
+								// 如果光源未使用阴影贴图，则填充 0
+	mat4 projMapMatrix;			// 把世界空间中的点变换到光源的投影贴图空间
+								// 在使用 textureProj() 函数进行投影映射时使用
+} 
+uniform TDLight uTDLights[TD_NUM_LIGHTS];
+</code></pre></div><div dir="ltr"><pre><code>struct TDEnvLight
+{
+	vec3 color;					// 环境光的颜色（不计其环境贴图）
+	mat3 rotate;				// 要应用于环境光的旋转。
+};
+uniform TDEnvLight uTDEnvLights[TD_NUM_ENV_LIGHTS];
+</code></pre></div><div dir="ltr"><pre><code>// 这一项存放方式不同，因为它由存储缓冲对象而非统一缓冲对象支持。
+buffer TDEnvLightBuffer
+{
+	vec3 shCoeffs[9]; // 从环境贴图计算出的球谐系数。用于漫反射 PBR 光照。
+} uTDEnvLightBuffers[TD_ENV_LIGHTS_ARRAY_SIZE];
+</code></pre></div><p>当使用由 <a href="Texture_3D_TOP.html">Texture 3D TOP</a> 创建的 sampler3D，并将 <a href="Texture_3D_TOP.html">Texture 3D TOP</a> 用作循环缓存时，有时需要知道数组中哪个切片是「最新」的切片。最新切片所在的 P 坐标位置由一个与你的 sampler 同名、后缀为 'POffset' 的 uniform 提供。例如，如果你有一个名为 sColorMap 的 uniform，可以声明一个匹配的 <code>sColorMapPOffset</code> uniform，它会自动为你填充。</p><div dir="ltr"><pre><code>uniform float sColorMapPOffset; // sampler3D sColorMap 中指向最新切片的 P 偏移
+</code></pre></div><h2 id="TouchDesigner_specific_Functions">TouchDesigner 特有的函数</h2><p>每个函数的进一步细节在后续章节中给出。</p><h3 id="Vertex_Shader_Only_Functions">仅顶点着色器可用的函数</h3><div dir="ltr"><pre><code>// 把点从世界空间变换到投影空间。
+// 这些函数应始终用于输出到 gl_Position，让 TouchDesigner 根据需要
+// 对值进行自定义操作，以支持特殊运算和投影。
+// 目前进行的额外操作有：
+// 1. 转换为其他投影，例如 FishEye
+// 2. 使用 TDQuadReproject() 转换为四边形重投影
+// 3. 使用 TDPickAdjust() 进行拾取所需的调整。
+// 使用此函数时不应再调用上述函数，因为它会替你完成这些操作。
+// TDWorldToProj() 的 vec4 和 vec3 版本都把 xyz 当作点，而不是向量。
+vec4 TDWorldToProj(vec4 v);
+vec4 TDWorldToProj(vec3 v);
+
+// 这些版本额外接受一个 'uv' 坐标，用于在 Render TOP 中执行 UV Unwrap 时。
+// 如果使用不带 uv 的版本，则会用 TDInstanceTexCoord(TDUVUnwrapCoord()) 获取纹理坐标。
+vec4 TDWorldToProj(vec4 v, vec3 uv);
+vec4 TDWorldToProj(vec3 v, vec3 uv);
+</code></pre></div><div dir="ltr"><pre><code>// 返回此顶点/点的颜色，并正确处理 alpha 预乘。
+// 这取代了过去直接通过 'Cd' 访问的方式。
+vec4 TDPointColor();
+</code></pre></div><div dir="ltr"><pre><code>// 返回当前实例的实例 ID。应始终使用它，而不是直接使用 gl_InstanceID。
+// 更多信息见本文档的 Instancing 部分。
+int TDInstanceID();
+</code></pre></div><div dir="ltr"><pre><code>// 返回此顶点在本批次中对应的相机索引。用于支持多相机渲染。
+// 它始终从 0 开始，且不反映 Render TOP 当前正在使用的是哪个相机。
+// 由于拆分大量相机需要多个批次，该数字每批次都会重置为 0。
+// 要获取与 Render TOP 中所列一致的相机索引，请使用 uTDCamInfos[TDCameraIndex()].renderTOPCameraIndex
+// 或者，在 2022.32790 及以后的版本中使用 TDTrueCameraIndex()。
+int TDCameraIndex();
+</code></pre></div><div dir="ltr"><pre><code>// 适用于 2022.32790 及以后的版本。
+// 返回与 Render TOP 中所列一致的相机索引。
+int TDTrueCameraIndex();
+</code></pre></div><div dir="ltr"><pre><code>// 使用实例化和蒙皮变形来变形点或向量。返回结果位于世界空间。
+// 变形向量时务必使用 *Vec 版本，以获得正确结果。
+// 变形法线时也请使用 *Norm 版本，以确保它仍与表面正确匹配。
+/// These functions will internally call TDSkinnedDeform() and TDInstanceDeform().
+vec4 TDDeform(vec4 pos);
+vec4 TDDeform(vec3 pos);
+vec3 TDDeformVec(vec3 v);
+vec3 TDDeformNorm(vec3 n);
+</code></pre></div><div dir="ltr"><pre><code>// 这些版本允许你控制用于变形的 instanceID。
+vec4 TDDeform(int instanceID, vec3 pos);
+vec3 TDDeformVec(int instanceID, vec3 v);
+vec3 TDDeformNorm(int instanceID, vec3 n);
+</code></pre></div><div dir="ltr"><pre><code>// ** 通常你不需要调用下面任何函数，只需调用 TDDeform 或 TDDeformVec 就会
+// 替你完成所有工作
+// 仅变形的蒙皮或实例化部分
+// *Skinned* 版本返回的位置/向量在 SOP 空间，*Instance* 版本在世界空间。
+vec4 TDSkinnedDeform(vec4 pos);
+vec3 TDSkinnedDeformVec(vec3 vec);
+vec4 TDInstanceDeform(vec4 pos);
+vec3 TDInstanceDeformVec(vec3 vec);
+</code></pre></div><div dir="ltr"><pre><code>// 通常你也不需要调用这些函数，但它们可用于特殊情形
+// 对于实例化函数，如果不提供索引，将使用 TDInstanceID()。
+mat4 TDBoneMat(int boneIndex);
+mat4 TDInstanceMat(int instanceID);
+mat4 TDInstanceMat();
+// 仅返回 3x3 矩阵。如果你只处理向量而不处理位置，它会很有用。
+// 如果两者都用，直接调用 TDInstanceMat() 会更快，并在需要时
+// 把结果转换为 mat3。
+mat3 TDInstanceMat3(int instanceID);
+mat3 TDInstanceMat3();
+</code></pre></div><div dir="ltr"><pre><code>// 要为实例计算纹理坐标（如果在 Geometry COMP 的参数中使用），请使用这些函数
+// 对于纹理坐标，传入的变量 't' 是要被修改/替换的当前纹理坐标
+vec3 TDInstanceTexCoord(int instanceID, vec3 t);
+vec3 TDInstanceTexCoord(vec3 t);
+</code></pre></div><div dir="ltr"><pre><code>// 如果 [[Camera COMP]] 使用了 Quad Reproject 功能，TDWorldToProj() 已经会应用它。
+// 但在某些情况下，你可能在做需要手动应用它的自定义操作。
+// 如果未使用 Quad Reproject，此函数只是原样返回该点。
+vec4 TDQuadReproject(vec4 v, int camIndex);
+</code></pre></div><div dir="ltr"><pre><code>// 适用于 2019.32020 及以后的版本。
+// 如果需要（正在拾取时），TDWorldToProj() 已经会应用拾取调整。
+// 但在某些情况下，你可能在做需要手动应用它的自定义操作。
+// 传给此函数的应该是已经变换到投影空间后的位置。
+// 如果本次渲染未启用拾取，此函数只是原样返回该点。
+vec4 TDPickAdjust(vec4 v, int camIndex);
+</code></pre></div><div dir="ltr"><pre><code>// 返回在 Render TOP 中为 UV unwrap 所选的 uv 坐标
+vec3 TDUVUnwrapCoord();
+</code></pre></div><h3 id="Geometry_Shader_Only_Functions">仅几何着色器可用的函数</h3><div dir="ltr"><pre><code>// 与顶点着色器中的类似，但需要相机索引，因为它
+// 需要通过输入变量传递给几何着色器。
+vec4 TDWorldToProj(vec4 v, vec3 uv, int cameraIndex);\n";
+vec4 TDWorldToProj(vec3 v, vec3 uv, int cameraIndex);\n";
+vec4 TDWorldToProj(vec4 v, int cameraIndex);\n";
+vec4 TDWorldToProj(vec3 v, int cameraIndex);\n";
+vec4 TDQuadReproject(vec4 v, int camIndex);
+</code></pre></div><h3 id="Pixel_Shader_Only_Functions">仅像素着色器可用的函数</h3><div dir="ltr"><pre><code>// 此函数是 gl_FrontFacing 的包装。
+// 之所以需要它，是因为某些 GPU（主要是 macOS 上的 Intel）在
+// gl_FrontFacing 上的功能有问题。
+// 在大多数 GPU 上它只是返回 gl_FrontFacing。在行为有问题的 GPU 上，
+// 则使用位置和法线的替代方法来判断
+// 像素是正面还是背面。
+// 位置和法线应处于同一空间，且法线必须归一化。
+bool TDFrontFacing(vec3 position, vec3 normal);
+</code></pre></div><div dir="ltr"><pre><code>// 调用此函数，让 TouchDesigner 在适当时丢弃一些像素。
+// 它用于顺序无关透明和双抛物面渲染等场景。
+// 为获得最佳性能，请在像素着色器的开头调用它。
+// 如果没有需要它的功能处于活动状态，它什么也不做，因此始终调用是安全的。
+void TDCheckDiscard();
+</code></pre></div><div dir="ltr"><pre><code>// 获取点精灵图元的纹理坐标。
+// 必须使用它而不是 gl_PointCoord，否则坐标可能会被垂直翻转
+// 在某些情况下。
+vec2 TDPointCoord();
+</code></pre></div><div dir="ltr"><pre><code>// 获取此像素修改后的颜色。传入来自顶点着色器的插值点颜色。
+// 此函数通常只是返回传入的参数，但在进行 Geo Text COMP 渲染时，
+// 需要用它来创建文字字形。
+vec4 TDPixelColor(vec4 c);
+</code></pre></div><div dir="ltr"><pre><code>// 调用此函数对当前像素应用 alpha 测试。如果 alpha 测试被禁用，
+// 此函数什么也不做，因此可以安全地始终调用
+void TDAlphaTest(float alphaValue);
+</code></pre></div><div dir="ltr"><pre><code>// 调用它以把 Camera COMP 的雾应用到传入颜色。还需要世界空间顶点位置
+// 如果雾被禁用，此函数什么也不做，因此在着色器末尾始终调用它是安全的
+// 如果雾被禁用，调用它不会带来任何性能影响
+// cameraIndex 应通过插值变量（varying）从顶点着色器传入，其值来自 TDCameraIndex()
+vec4 TDFog(vec4 curColor, vec3 worldSpacePos, int cameraIndex);
+</code></pre></div><div dir="ltr"><pre><code>// 在着色器末尾调用它，对最终颜色应用抖动。如果 Render TOP 参数中
+// 禁用了抖动，此函数什么也不做
+vec4 TDDither(vec4 curColor);
+</code></pre></div><div dir="ltr"><pre><code>// 在把任何颜色写入颜色缓冲之前，先让它通过此函数。
+// 这是必需的，以确保颜色通道输出到颜色缓冲中
+// 正确的通道，这缘于硬件限制，例如硬件可能在内部把仅含 alpha 的
+// 纹理存储为仅含红通道的纹理
+vec4 TDOutputSwizzle(vec4 curColor);
+</code></pre></div><p>TDLighting() 系列函数按灯光逐个调用，以确定该灯光的漫反射和高光贡献。阴影、投影映射都在这些函数内部自动为你处理。</p><ul><li><code dir="ltr"><span>TDPBRResult</span><span> </span><span>or</span><span> </span><span>TDPhongResult</span><span></span></code> 返回结构将被填充结果。</li><li><code dir="ltr"><span>lightIndex</span><span></span></code> 是要计算的灯光索引</li><li><code dir="ltr"><span>worldSpacePos</span><span></span></code> 是世界空间中的顶点位置</li><li><code dir="ltr"><span>shadowStrength</span><span></span></code> 是阴影的标量倍数，用于增强或减弱其效果，例如值 0.5 会使阴影最浓为 50%。</li><li><code dir="ltr"><span>shadowColor</span><span></span></code> 是物体被遮挡时偏移到的颜色 vec3。通常为 vec3(0)。</li><li><code dir="ltr"><span>worldSpaceNorm</span><span></span></code> 是归一化的世界空间法线</li><li><code dir="ltr"><span>vertToCamVec</span><span></span></code> 是从顶点位置指向摄像机位置的归一化向量。</li><li><code dir="ltr"><span>shininess</span><span></span></code> 是高光光泽度指数。</li></ul><h4 id="Physically_Based_(PBR)_Lighting">基于物理的（PBR）光照</h4><div dir="ltr"><pre><code>// 将被光照计算的结果填充
+struct TDPBRResult
+{
+	vec3 diffuse;
+	vec3 specular;
+    // 包含该像素在此灯光下处于阴影中的程度。0 表示无阴影，1 表示完全处于阴影。
+	float shadowStrength;
+};
+</code></pre></div><div dir="ltr"><pre><code>// 用于所有常规光源。应在 0 到 TD_NUM_LIGHTS 的循环中调用
+TDPBRResult TDLightingPBR(
+	int lightIndex,
+	vec3 diffuseColor,
+	vec3 specularColor,
+	vec3 worldSpacePos,
+	vec3 worldSpaceNormal,
+	float shadowStrength,
+	vec3 shadowColor,
+	vec3 vertToCamVec,
+	float roughness);
+</code></pre></div><div dir="ltr"><pre><code>// 用于环境光源。应在 0 到 TD_NUM_ENV_LIGHTS 的循环中调用
+TDPBRResult TDEnvLightingPBR(
+	inout vec3 diffuseContrib,
+	inout vec3 specularContrib,
+	int lightIndex,
+	vec3 diffuseColor,
+	vec3 specularColor,
+	vec3 worldSpaceNormal,
+	vec3 vertToCamVec,
+	float roughness,
+	float ambientOcclusion);
+</code></pre></div><h4 id="Phong_Lighting">Phong 光照</h4><div dir="ltr"><pre><code>// 将被光照计算的结果填充
+struct TDPhongResult
+{
+	vec3 diffuse;
+	vec3 specular;
+	vec3 specular2;
+	// 包含该像素在此灯光下处于阴影中的程度。0 表示无阴影，1 表示完全处于阴影。
+    // 这已经计入返回的漫反射/高光颜色中，但在此还作为额外的
+    // 元信息返回，可用于其他用途
+	float shadowStrength;
+};
+</code></pre></div><div dir="ltr"><pre><code>TDPhongResult TDLighting(
+	int lightIndex,
+	vec3 worldSpacePos,
+	vec3 worldSpaceNorm,
+	float shadowStrength,
+	vec3 shadowColor,
+	vec3 vertToCamVec,
+	float shininess,
+	float shininess2
+);
+</code></pre></div><h4 id="Common_Lighting_Functions">常用光照函数</h4><div dir="ltr"><pre><code>// 通常你不需要使用这些函数，它们会在 TDLighting() 函数中为你调用。
+// 这些函数返回给定索引光源在当前像素处的阴影强度。
+// 还需要世界空间顶点位置来进行计算
+// 如果阴影未使用所选阴影类型进行映射，则返回未定义的结果
+// 没有阴影时返回值为 0，100% 被遮挡时为 1
+// 由于百分比接近过滤，硬阴影在阴影边缘处仍可能有 0 到 1 之间的值
+float TDHardShadow(int lightIndex, vec3 worldSpacePos);
+// 这个版本会应用软阴影，同时执行 25 次搜索步进和 25 个过滤采样。
+float TDSoftShadow(int lightIndex, vec3 worldSpacePos);
+// 允许控制搜索步数和过滤采样数。
+float TDSoftShadow(int lightIndex, vec3 worldSpacePos, int samples, int searchSteps);
+</code></pre></div><div dir="ltr"><pre><code>// 获取给定世界空间顶点位置的投影贴图颜色。
+// 返回的颜色不再应用其他光照计算
+// 如果给定光源索引未使用投影贴图，则返回 'defaultColor'。
+vec4 TDProjMap(int lightIndex, vec3 worldSpacePosition, vec4 defaultColor);
+</code></pre></div><div dir="ltr"><pre><code>// 直接访问环境光源的环境贴图。对于没有该维度贴图的光源，
+// 将返回黑色。
+// 用于基于 2D 贴图的环境光源。
+vec4 TDEnvLightTextureLod(int lightIndex, vec2 coord, float mipLevel);
+// 用于基于立方体贴图的环境光源。
+vec4 TDEnvLightTextureLod(int lightIndex, vec3 coord, float mipLevel);
+</code></pre></div><div dir="ltr"><pre><code>// 用于直接访问阴影贴图。这些函数都访问同一批贴图（按索引），但分别以比较或采样模式设置。
+// 返回值为 1 表示完全处于阴影中，0 表示不在阴影中。
+// 对于不生成阴影的光源索引，这些函数会返回 0。
+// 前两个用于
+// texture(sampler2DShadow, vec3) 或 textureProj(sampler2DShadow, vec4) 函数中，以进行自动深度比较和硬件百分比接近过滤。
+float TDCompareShadowTexture(int lightIndex, vec2 coord, float depth);
+float TDCompareShadowTextureProj(int lightIndex, vec4 coord);
+
+// 后几个用于通过
+// texture(sampler2D, vec2) 或 textureProj(sampler2D, vec3) 直接从阴影贴图获取深度。
+// 如果使用硬阴影，值位于 [0, 1] 投影后深度单位中。
+// 如果使用软阴影，值位于光源的相机空间中（不是正在渲染的相机）。
+float TDShadowTexture(int lightIndex, vec2 coord);
+float TDShadowTextureProj(int lightIndex, vec3 coord);
+</code></pre></div><div dir="ltr"><pre><code>// 在 Light COMP 的 Projection Map 参数中定义的投影贴图。
+// 如果光源未定义投影贴图，该贴图将返回黑色。
+vec4 TDProjTexture(int lightIndex, vec2 coord, float mipMapBias);
+// 使用与 textureProj() 相同的规则采样纹理。
+vec4 TDProjTextureProj(int lightIndex, vec3 coord);
+</code></pre></div><div dir="ltr"><pre><code>// 锥形光从开始衰减直到全黑的衰减渐变。
+// 与 uTDLights[].coneLookupScaleBias 配合使用。
+// 当光源不是锥形光时将返回 1.0。
+float TDConeLookup(int lightIndex, float coord);
+</code></pre></div><h3 id="Common_Functions">常用函数</h3><p>在所有着色器阶段均可用。</p><h4 id="Math_Functions">数学函数</h4><div dir="ltr"><pre><code>// TDMath
+
+// 创建一个旋转矩阵，从朝 +Z 方向开始旋转到 'forward' 向量方向。
+// 传给此函数的 'forward' 和 'up' 向量无需归一化。
+mat3 TDRotateToVector(vec3 forward, vec3 up);
+
+// 创建一个绕 'axis' 旋转给定 'radians' 弧度的旋转矩阵
+// 传给此函数之前，'axis' 向量必须已归一化。
+mat3 TDRotateOnAxis(float radians, vec3 axis);
+
+// 创建分别绕 +X、+Y 和 +Z 轴旋转的旋转矩阵。
+mat3 TDRotateX(float radians);
+mat3 TDRotateY(float radians);
+mat3 TDRotateZ(float radians);
+
+// 为给定的 3 个缩放值创建缩放矩阵。
+mat3 TDScale(float x, float y, float z);
+
+// 为给定的 3 个平移值创建平移矩阵。
+mat4 TDTranslate(float x, float y, float z);
+
+// 一个给出从 0 到 1 的半正弦斜坡的函数。
+// 用 (0, 1) 范围之外的坐标采样时，低于 0 的返回 0，高于 1 的返回 1。
+// 取决于硬件，它可能比使用 GLSL 的 sin() 函数更快。
+float TDSineLookup(float v);
+
+// 创建一个从向量 'from' 旋转到向量 'to' 的旋转矩阵。该解法并不特别稳定，但在某些情况下很有用。
+// 传给此函数之前，'from' 和 'to' 向量必须已归一化。
+mat3 TDCreateRotMatrix(vec3 from, vec3 to);
+
+// 接收一个表面法线、表面的切线，以及一个手性值（-1 或 1）
+// 返回一个矩阵，把向量从切线空间转换到法线和切线所在的空间
+// 调用此函数之前，法线和切线都必须归一化。
+// 由 [[Attribute Create SOP]] 创建的 T 属性的 w 坐标包含手性
+// 该值应按原样传入。
+mat3 TDCreateTBNMatrix(vec3 N, vec3 T, float handedness);
+
+// 在 RGB 和 HSV 色彩空间之间转换
+vec3 TDRGBToHSV(vec3 c);
+vec3 TDHSVToRGB(vec3 c);
+
+// 将 0-1 的等距柱状投影纹理坐标转换为立方体贴图坐标。
+// U 坐标为 0 时对应 +X 面的中间，即沿 vec3(1, Y, 0) 平面。
+// 随着 U 增大，等距柱状投影坐标从 +X 依次转向 +Z、-X 和 -Z。vec3 TDEquirectangularToCubeMap(vec2 mapCoord);
+vec3 TDEquirectangularToCubeMap(vec2 mapCoord);
+
+// 从立方体贴图坐标转换为等距柱状投影坐标
+// 调用此函数前，cubemapCoord 必须归一化。
+vec2 TDCubeMapToEquirectangular(vec3 envMapCoord)
+
+// 在 2019.18140 及之后版本中可用
+// 此版本还会输出一个 mipmap 偏移浮点值。该浮点值应传入 texture() 的 'bias'
+// 参数，用于帮助选择 mipmap 级别。这有助于避免等距柱状投影图
+// 边缘的接缝。
+vec2 TDCubeMapToEquirectangular(vec3 envMapCoord, out float mipMapBias)
+
+// 使用标准亮度权重 (0.2126, 0.7152, 0.0722) 将 RGB 转换为单色
+float TDLuminance(vec3 c);
+
+// 返回在 low 和 high 之间循环的值
+float TDLoop(float val, float low, float high);
+// 返回在 low 和 high 之间折返（zigzag）的值
+float TDZigZag(float val, float low, float high);
+// 返回两个值之间的平均值。
+float TDAverage(float valA, float valB);
+
+// 类似 Math CHOP 中的 remap 功能，将 'value' 从 [low1, high1] 范围重映射到 [low2, high2] 范围。
+float TDRemap(float value, float low1, float high1, float low2, float high2);
+vec2 TDRemap(vec2 value, vec2 low1, vec2 high1, vec2 low2, vec2 high2);
+vec3 TDRemap(vec3 value, vec3 low1, vec3 high1, vec3 low2, vec3 high2);
+vec4 TDRemap(vec4 value, vec4 low1, vec4 high1, vec4 low2, vec4 high2);
+
+// 三平面混合函数。根据法线向量加权，在 3 个正交颜色值之间混合。&lt;code&gt;blendPower&lt;/code&gt; 参数是权重函数使用的指数，用于控制衰减。
+vec4 TDTriplanarBlend(vec3 normal, vec4 xcolor, vec4 ycolor, vec4 zcolor, int blendPower);
+
+// 在给定采样器上执行 Tricubic 和 bicubic 采样/插值。
+// texSize 和 invTexSize 应为纹理的分辨率及其 1.0 / 分辨率。
+vec4 TDBicubicInterpolation(sampler2D tex, vec2 texCoord, vec2 texSize, vec2 invTexSize);
+vec4 TDBicubicInterpolation(sampler2D tex, vec2 texCoord);
+vec4 TDTricubicInterpolation(sampler3D tex, vec3 texCoord, vec3 texSize, vec3 invTexSize);
+vec4 TDTricubicInterpolation(sampler3D tex, vec3 texCoord);
+
+// 从 3D 环境坐标生成用于查找球面贴图的 2D 坐标。
+vec2 TDTexGenSphere(vec3 envMapCoord);
+</code></pre></div><div dir="ltr"><pre><code>// TDQuaternionMath
+// 使用以弧度表示的角度，构建表示绕某轴旋转的四元数。
+vec4 TDAxisAngleToQuaternion(vec3 axis, float angle) ;
+// 从四元数构建 3×3 旋转矩阵。
+mat3 TDQuaternionToRotMatrix(vec4 q);
+// 提取表示 3×3 矩阵旋转的四元数。
+vec4 TDRotMatrixToQuaternion(mat3 rotMat);
+// 使用四元数旋转来旋转向量或点。
+vec3 TDRotateFromQuaternion(vec3 v, vec4 q);
+// 合并两个四元数，以依次应用它们的旋转。
+vec4 TDQuaternionMultiply(vec4 Q1, vec4 Q2);
+// 在两个四元数之间执行球面线性插值。
+vec4 TDSlerpQuaternions(vec4 q0, vec4 q1, float t);
+// 从 4×4 变换矩阵中提取纯旋转分量。
+mat3 TDExtractRotation(mat4 m);
+// 通过四元数 slerp 在两个旋转矩阵之间平滑插值。
+mat3 TDSlerpRotationMatrices(mat3 m0, mat3 m1, float t);
+// 在两个变换矩阵之间插值平移、旋转和缩放。
+mat4 TDInterpolateTransformMatrices(mat4 m0, mat4 m1, float t);
+// 计算把一个向量方向旋转到另一个向量方向的四元数。
+vec4 TDQuaternionFromTo(vec3 from, vec3 to);
+</code></pre></div><h4 id="Noise_Functions">噪声函数</h4><div dir="ltr"><pre><code>// 返回 &lt;code&gt;t*t*t*(t*(t*6.0-15.0)+10.0);&lt;/code&gt;。
+float TDFade(float t);
+
+// Perlin 2D、3D、4D 噪声函数
+float TDPerlinNoise(vec2 P);
+float TDPerlinNoise(vec3 P);
+float TDPerlinNoise(vec4 P);
+
+// Simplex 2D、3D、4D 噪声函数
+float TDSimplexNoise(vec2 P);
+float TDSimplexNoise(vec3 P);
+float TDSimplexNoise(vec4 P);
+
+// TDFade() 函数的导数。返回 &lt;code&gt;30*t*t*(t*(t-2)+1)&lt;/code&gt;
+float TDFadeDeriv(float t);
+
+// TDPerlinNoise() 函数的梯度。该梯度是解析导数，在噪声空间中计算。
+vec4 TDPerlinNoiseDeriv(vec2 P);
+vec4 TDPerlinNoiseDeriv(vec3 P);
+vec4 TDPerlinNoiseDeriv(vec4 P, out float outNoise);
+vec4 TDPerlinNoiseDeriv(vec4 P);
+
+// TDSimplexNoise() 函数的梯度。该梯度是解析导数，在噪声空间中计算。
+vec4 TDSimplexNoiseDeriv(vec2 P);
+vec4 TDSimplexNoiseDeriv(vec3 P);
+vec4 TDSimplexNoiseDeriv(vec4 P, out float outNoise);
+vec4 TDSimplexNoiseDeriv(vec4 P);
+</code></pre></div><h4 id="Color_Space_Functions">色彩空间函数</h4><p><code>TDTransfer*</code> 函数会在颜色数据的线性与非线性传递之间转换。如果传入 vec4，则 RGB 会在执行操作前先按 Alpha 反向预乘，最后再重新乘以 alpha。 </p><div dir="ltr"><pre><code>// TDBasicColorSpace
+vec3 TDTransferLinearToSRGB(vec3 c);
+vec4 TDTransferLinearToSRGB(vec4 c);
+
+vec3 TDTransferSRGBToLinear(vec3 c);
+vec4 TDTransferSRGBToLinear(vec4 c);
+
+// TDColorSpace
+vec3 TDTransferLinearToRec709(vec3 c);
+vec3 TDTransferRec709ToLinear(vec3 c);
+
+vec3 TDTransferLinearToGamma1_8(vec3 c);
+vec3 TDTransferLinearToGamma2_2(vec3 c);
+vec3 TDTransferLinearToGamma2_4(vec3 c);
+vec3 TDTransferLinearToGamma2_6(vec3 c);
+vec3 TDTransferLinearToGamma2_8(vec3 c);
+
+vec3 TDTransferACESproxyToLinear(vec3 c);
+vec3 TDTransferLinearToACESproxy(vec3 c);
+
+vec3 TDTransferGamma1_8ToLinear(vec3 c);
+vec3 TDTransferGamma2_2ToLinear(vec3 c);
+vec3 TDTransferGamma2_4ToLinear(vec3 c);
+vec3 TDTransferGamma2_6ToLinear(vec3 c);
+vec3 TDTransferGamma2_8ToLinear(vec3 c);
+
+// referenceWhiteNits 表示线性数据中值 1.0 所对应的亮度（以 nit 为单位）。
+vec3 TDTransferLinearToST2084PQ(vec3 color, float referenceWhiteNits);
+vec3 TDTransferST2084PQToLinear(vec3 color, float referenceWhiteNits);
+
+vec3 TDTransferBT2100HLGToLinear(vec3 color, float peakNits, float referenceWhiteNits);
+vec3 TDTransferLinearToBT2100HLG(vec3 color, float peakNits, float referenceWhiteNits);
+
+vec3 TDGamutRec709ToRec2020(vec3 c);
+vec3 TDGamutRec2020ToRec709(vec3 c);
+</code></pre></div><h2 id="Working_with_Lights">使用灯光</h2><p>为使着色器尽可能快，大量计算灯光的逻辑根据启用的特性和灯光类型硬编码在着色器中。为 GLSL MAT 编写的着色器会根据场景中灯光的数量和类型，以不同实现的 TDLightingPBR()、TDLighting() 等重新编译。这使得同一个 GLSL MAT 可用于多个不同场景，而无需根据场景中的灯光数量进行修改。这些编译会被缓存，因此每次运行 TD 时，每种光照设置组合只会触发一次编译。</p><p><b>提示：</b> 几何查看器内置灯光，与场景中的灯光对象相互独立。有关如何复现该灯光的信息，参见 <a href="Geometry_Viewer.html">Geometry Viewer</a> 文章。</p><h3 id="Custom_work_with_lights">自定义灯光处理</h3><p>如果决定做自定义灯光处理，本节介绍我们的着色器中大量灯光值的使用方式。</p><h4 id="Knowing_which_variables_correspond_to_which_Light_COMPs">了解哪些变量对应哪些 Light COMP</h4><p>变量会按索引区分不同灯光，从 0 开始。Light 0 是 <a href="Render_TOP.html">Render TOP</a> 中列出的第一盏灯，Light 1 是列出的第二盏，依此类推。如果使用 light* 之类的通配符选择灯光，则从该通配符收集到的灯光将按字母数字顺序排序。</p><p>例如，假设 <a href="Render_TOP.html">Render TOP</a> 的 Light 参数中列出 "/light3 /container1/light* /alight1"，且 /container1/ 有两个 light COMP，名为 light1 和 light2。此时灯光对应的索引如下：<br/> /light3 为索引 0 <br/> /container1/light1 为索引 1 <br/> /container1/light2 为索引 2 <br/> /alight1 为索引 3</p><h4 id="Light_Parameters">灯光参数</h4><p>灯光的所有参数都在 uTDLights 结构中定义，该结构定义于 <a href="https://docs.derivative.ca/Write_a_GLSL_Material#TouchDesigner_specific_Uniforms" rel="noreferrer noopener" target="_blank"> here</a>。</p><h4 id="Cone_Lighting_Technique">锥形光照技术</h4><p>TouchDesigner 内置着色器使用一种自定义的锥形光照技术，你可以在自己的着色器中模仿。锥形光的强度预先计算到 1D 纹理（查找表）中，以减少着色器的工作量。1D 纹理的起始处（纹理坐标 0.0）是锥角边缘处的光强（第一个像素始终为 0）。1D 纹理的末尾（纹理坐标 1.0）是锥形中心处的光强。该查找表通过以下方式访问：</p><div dir="ltr"><pre><code>float TDConeLookup(int lightIndex, float coord);
+</code></pre></div><p>还向着色器提供了第二个辅助 uniform，使在 1D 纹理中查找更容易：</p><div dir="ltr"><pre><code>uTDLights[i].coneLookupScaleBias;
+</code></pre></div><p>要正确查询此查找表，应使用以下算法：</p><div dir="ltr"><pre><code>// 'spot' 是聚光向量
+// 'lightV' 是从光源位置出发、指向
+// 我们要着色的几何体上的点的向量。
+// 这些向量处于哪个空间（相机空间、物体空间）并不重要，
+// 只要它们处于同一空间即可。
+// 求两向量夹角的余弦值，范围在 [-1, 1]
+float spotEffect = dot(spot, lightV);
+// 现在使用特殊的辅助 uniform 重新缩放该值，使其位于 [0,1]
+// 值为 0 表示两向量夹角等于光源的整个
+// 锥角 + 锥角增量
+spotEffect = (spotEffect * uTDLights[i].coneLookupScaleBias.x) + uTDLights[i].coneLookupScaleBias.y;
+// 最后在查找表中查找
+float dimmer = TDConeLookup(i, spotEffect);
+// 现在可以把光照强度乘以 'dimmer'，以根据该像素位于锥形光影响范围内
+// 还是范围外，得到正确的
+// 光照强度
+</code></pre></div><h4 id="Attenuation">衰减</h4><p>衰减在 TDLighting() 函数中已为你处理，但如果你想自己添加，本节说明如何做。</p><p>要确定灯光到空间中某点的衰减，使用此函数。<code>lightDist</code> 是从顶点到灯光的距离。</p><div dir="ltr"><pre><code>// 如果没有衰减则返回 1，如果光完全衰减则返回 0，处于衰减过渡区域则返回两者之间的值。
+float TDAttenuateLight(int lightIndex, float lightDist);
+</code></pre></div><p>TDAttenutateLight 背后的数学如下：</p><p>TouchDesigner 内置着色器使用自定义的衰减技术。与锥形光照类似，会预先为你计算好缩放和偏移，让你能获得正确的衰减光强。该 uniform 为：<br/></p><div dir="ltr"><pre><code>uTDLights[i].attenScaleBiasRoll // 包含 (1 / -(attenEnd - attenStart), attenEnd / (attenEnd - attenStart), attenRolloff)
+</code></pre></div><p>TDAttenutateLight 定义为：</p><div dir="ltr"><pre><code>float TDAttenuateLight(int lightIndex, float lightDist)
+{
+    float lightAtten = lightDist * uTDLights[lightIndex].attenScaleBiasRoll.x;
+    lightAtten += uTDLights[lightIndex].attenScaleBiasRoll.y;
+    lightAtten = clamp(lightAtten, 0.0, 1.0) * 1.57073963
+    lightAtten = sin(lightAtten);
+    lightAtten = pow(lightAtten, uTDLights[lightIndex].attenScaleBiasRoll.z);
+    return lightAtten;
+}
+</code></pre></div><h4 id="Projection_and_Shadow_Mapping">投影与阴影贴图</h4><p>投影映射和阴影贴图在 TDLighting() 函数中已为你处理，但如果你想，也可以用下面的信息自己实现。</p><p>投影和阴影贴图是非常相似的操作。唯一的区别是，投影贴图用于给表面着色，而阴影贴图用于决定该表面是否接收某盏灯的光照。</p><h5 id="Projection_Mapping">投影映射</h5><p>使用 <code>TDProjMap()</code> 函数，它会返回投影贴图颜色，并处理不同的投影类型。</p><h5 id="Shadow_Mapping">阴影贴图</h5><p>使用 <code>TDHardShadow()</code> 或 <code>TDSoftShadow()</code> 手动获取阴影值。</p><h2 id="Multiple_Render_Targets">多渲染目标</h2><p>使用 <a href="Render_TOP.html">Render TOP</a> 中的 '# Of Color Buffers' 参数配合 <a href="Render_Select_TOP.html">Render Select TOP</a>，你可以编写为每个像素输出多个颜色值的 GLSL 着色器。这通过声明并写入如下所示的像素着色器输出实现：</p><div dir="ltr"><pre><code>layout(location = 0) vec4 fragColor[TD_NUM_COLOR_BUFFERS];
+</code></pre></div><p>常量 TD_NUM_COLOR_BUFFERS 会根据渲染设置自动为你设置。确保不要写出所提供缓冲区数量之外，否则可能发生损坏或 GPU 崩溃。</p><h2 id="Multi-Camera_Rendering">多摄像机渲染</h2><p>多摄像机渲染是在一次渲染通道中渲染多台摄像机，它们都看向同一场景。这意味着场景图只遍历一次，从而避免大量图形驱动调用。对于整组要渲染的摄像机，灯光、纹理、材质和绘制调用只需执行一次。此功能受 Nvidia Pascal（Geforce 1000、Quadro P-Series）或 AMD Polaris（Radeon R9、Radeon Pro WX）及更新 GPU 支持。该功能对 VR 渲染很重要，对一次渲染立方体贴图（而不是每面一次）等也很有用。</p><p>如果各摄像机的灯光遮罩不同，多摄像机渲染将无法工作。这种情况下，摄像机会逐通道渲染。</p><p>当 'Cameras' 参数中列出多台摄像机时，<a href="Render_TOP.html">Render TOP</a> 会使用此功能。'Multi-Camera Hint' 参数可帮助控制该特定 Render TOP 如何使用此功能。每台摄像机的渲染结果可以通过 <a href="Render_Select_TOP.html">Render Select TOP</a> 获取。</p><p>Nvidia 将此功能称为 'Simultaneous Multi-Projection'。</p><p>这些 GPU 上的多摄像机功能并非通用，需要一些技巧才能正常工作。因此，你的所有着色器都应使用 TD* 函数，例如 TDWorldToProj()、TDInstanceID()，而不是手动做这些事并使用内置 GLSL 功能。TDFog() 等函数还需要传入摄像机索引，以便为正确的摄像机应用雾效。</p><h2 id="Image_Outputs">图像输出</h2><p>在 <a href="Render_TOP.html#Parameters_-_Images_Page">Render TOP</a> 中，你可以分配额外的图像输出，在渲染期间访问。这些任意尺寸的图像可在任意位置写入和读取（类似 GLSL TOP 的 Compute 着色器工作流），使用 <code>TDImageStore_Name()</code> 和 <code>TDImageLoad_Name()</code>，其中 'Name' 会替换为你为图像输出起的名字。图像会在着色器内自动为你声明，你不应自行声明（像其他 uniform 那样）。这是因为图像 uniform 需要大量额外的装饰。目前在 GLSL MAT 本身中编译时，你的代码会报错，因为那里没有这些图像。你可以在使用 <code>TDImage*</code> 函数的代码周围使用以下方式避免这些编译错误</p><div dir="ltr"><pre><code>#ifdef TD_RENDER_TOP
+// Render TOP only code
+#endif
+</code></pre></div><p>当把 MAT 应用到几何并通过 Render TOP 渲染时，会编译一个新版本的着色器，其中已声明图像。</p><p>应使用这些函数写入和读取图像。'Name' 部分应替换为 Render TOP 中定义的图像输出名称。这些函数取代了 2025.30000 之前直接使用 <code>imageStore()/imageLoad()</code> 的工作流。这一变化是因为读写 sRGB 编码纹理需要 <code>imageStore()/imageLoad()</code> 的特殊处理，因此由这些函数自动为你处理。你也不<b>not</b>需要在使用这些函数前对颜色应用 <code>TDOutputSwizzle()</code>，它会在内部自动为你应用。ivec3 与 uvec3 版本做同样的事，只是为了方便而重复提供。如果图像维度需要少于 3 个坐标，多余的坐标会被忽略。</p><p>如果图像声明时 Array Size 为 0（不是数组），则 arrayIndex 应设为 0。</p><div dir="ltr"><pre><code>void TDImageStore_Name(uint arrayIndex, ivec3 coord, vec4 color);
+void TDImageStore_Name(uint arrayIndex, uvec3 coord, vec4 color);
+vec4 TDImageLoad_Name(uint arrayIndex, ivec3 coord);
+vec4 TDImageLoad_Name(uint arrayIndex, uvec3 coord);
+</code></pre></div><p>例如，如果 Image Output 命名为 'test'，则函数将调用 <code>TDImageStore_test()</code></p><h2 id="Outputting_gl_Position">输出 gl_Position</h2><p>虽然一般来说你可以随意使用内置的 model/view 和投影矩阵变换点/向量，但在输出到 gl_Position 时应使用内置函数。这些函数允许 TouchDesigner 根据渲染设置对值做最终输出处理。例如，为实现优化的 <a href="#Multi-Camera_Rendering">Multi-Camera Rendering</a>，位置需要乘以本次顶点着色器执行所对应的正确摄像机。为给 TouchDesigner 机会做此处理，你应调用内置函数来变换顶点位置：</p><div dir="ltr"><pre><code>vec4 TDWorldToProj(vec4 v);
+vec4 TDWorldToProj(vec3 v);
+</code></pre></div><p>因此，例如在着色器末尾你会这样做：</p><div dir="ltr"><pre><code>gl_Position = TDWorldToProj(worldSpacePosition);
+</code></pre></div><h2 id="Specilization_Constants">特化常量</h2><p>Specialization Constants 是 Vulkan 的新特性，它允许基于整数常量值对代码重新优化，而无需完全重新编译着色器代码。它们适用于为很少变化的值设值，例如着色器中的「模式」，或通过 switch() 或 if() 语句选择的特定代码路径。过去这可能通过 <code>#define</code> 语句或 <code>uniform</code> 来实现。 着色器的特化版本会被缓存并重复使用，但会占用 GPU 资源。因此不应用于不断变化的值，而应用于仅偶尔变化、且取值范围有限的值。</p><p>要定义特化常量，需声明一个带额外 layout() 限定符的常量。</p><div dir="ltr"><pre><code>layout(constant_id = 0) const int SomeMode = 0;
+</code></pre></div><p>然后你可以像使用其他变量一样使用 <code>SomeMode</code>。如果不希望它为 = 0，可以在 <a href="GLSL_TOP.html">GLSL TOP</a>、<a href="GLSL_MAT.html">GLSL MAT</a> 等的「Constants」页上赋予不同的值。 你可以声明多个特化常量，只需为每个赋予自己唯一的 <code>constant_id</code> 值（0、1、2 等）。</p><h2 id="Working_with_Deforms">使用变形</h2><p>目前可应用于几何的变形有两种：<a href="Deforming_Geometry_Skinning.html"> skinned deforms</a> 和实例化变换。</p><p>TouchDesigner 在 GLSL 函数中自动封装了这两种变形的所有工作。变形向量时使用 *Vec 版本。<br/><b>These functions always return the point/vector in World space, not model/SOP.</b></p><div dir="ltr"><pre><code>vec4 TDDeform(vec4 p);
+vec3 TDDeform(vec3 p);
+vec3 TDDeformVec(vec3 v);
+vec3 TDDeformNorm(vec3 v);
+</code></pre></div><p><br/> 作为着色器作者，操作位置和法线等顶点属性是你的工作（因为编写着色器的是你，TouchDesigner 无处插手），因此需要你调用 TDDeform() 函数。一般来说你只需这样简单调用：</p><div dir="ltr"><pre><code>vec4 worldSpaceVert = TDDeform(vec4(TDPos(), 1.0)); 
+vec3 worldSpaceNorm = TDDeformNorm(TDNormal()));
+</code></pre></div><p>不过你也可以直接使用下面声明的函数。</p><h3 id="Skinning_Deforms_(Bone_Deforms)">蒙皮变形（骨骼变形）</h3><p>当你在 GLSL MAT 中启用 Deform 功能时，TouchDesigner 会自动声明一些 attribute、varying、uniform 和函数，供你以与其他 MAT 相同的方式变形几何。使用变形时，重要的是不要重复使用这些保留字，以免编译着色器时发生名称冲突。不过即使不使用变形，下面列出的函数也会被声明，因此着色器代码在变形开启和关闭时都能正确运行。变形关闭时这些函数不做任何事（且对着色器速度无开销）。变形的骨骼矩阵通过 pCaptPath 和 pCaptData 细节属性，结合该帧骨架中骨骼的当前位置来构建。在 SOP 中，'pCapt' 属性为影响该顶点的每根骨骼保存索引/权重对。在 POP 中，这些改为加载到两个名为 'BoneIndices' 和 'BoneWeights' 的属性中。关于蒙皮变形工作原理的更多信息可在此找到： <a href="Deforming_Geometry_Skinning.html">Deforming Geometry (Skinning)</a></p><h4 id="Functions">函数</h4><p>一般来说你无需直接调用这些，它们由 <code dir="ltr"><span>TDDeform</span><span>()</span><span></span></code> 函数调用。</p><p>在顶点着色器中：</p><div dir="ltr"><pre><code>vec4 TDSkinnedDeform(vec4 pos);
+vec3 TDSkinnedDeformVec(vec3 vec);
+</code></pre></div><p>你可以用此函数获取给定矩阵索引的骨骼矩阵：</p><div dir="ltr"><pre><code>mat4 TDBoneMat(int boneIndex);
+</code></pre></div><h3 id="Instancing">实例化</h3><p>当你在 <a href="Geometry_COMP.html">Geometry COMP</a> 的 Instance 页启用实例化时，TDDeform() 函数会根据 XForm CHOP 参数中给定的通道，自动调用正确的底层函数来变换实例。如果不指定 CHOP，则所有实例都会绘制在同一位置，除非你自己变换它们。</p><h4 id="Instance_Index/ID">实例索引/ID</h4><p>要计算实例 ID，使用提供的 TDInstanceID() 函数。不要直接使用 gl_InstanceID，因为由于 <a href="#Multi-Camera_Rendering">Multi-Camera Rendering</a>，实际渲染的实例数可能大于请求的数量。</p><div dir="ltr"><pre><code>int TDInstanceID();
+</code></pre></div><p>由于此函数仅在顶点着色器中可用，如果像素着色器需要它，你需要通过 out/in 传递过去。</p><div dir="ltr"><pre><code>// 在顶点着色器中声明类似这样的内容，并在 main() 中赋值 vInstanceID = TDInstanceID()
+flat out int vInstanceID;
+void main()
+{
+	vInstanceID = TDInstanceID();
+	// 其他顶点主函数内容
+	// ....
+}
+</code></pre></div><p>而在像素着色器中，如果这样声明，你就可以读取该值：</p><div dir="ltr"><pre><code>// 像素着色器
+flat in int vInstanceID;
+</code></pre></div><p>这里声明为 <code dir="ltr"><span>flat</span><span></span></code>，因为 <code dir="ltr"><span>int</span><span></span></code> 变量类型无法在图元上插值。</p><h4 id="Deform_Functions">变形函数</h4><p>一般来说你无需直接调用其中任何一个，它们由 TDDeform() 函数调用。这些函数仅在顶点着色器中可用。</p><p>在顶点着色器中：</p><div dir="ltr"><pre><code>vec4 TDInstanceDeform(vec4 pos);
+vec3 TDInstanceDeformVec(vec3 vec);
+</code></pre></div><p>对于变换，使用以下函数访问这些矩阵：</p><div dir="ltr"><pre><code>mat4 TDInstanceMat(int instanceIndex);
+mat4 TDInstanceMat();
+</code></pre></div><p>这些矩阵包含完整变换，包括 TX、TY、TZ、SX、SY、SZ 以及 Rotate To。</p><h4 id="Attribute_Functions">属性函数</h4><p>修改纹理坐标时，这些函数按实例执行纹理坐标修改。t 是要修改的纹理坐标。不带 instanceIndex 的版本会自动使用当前 gl_InstanceID 的值。</p><div dir="ltr"><pre><code>vec3 TDInstanceTexCoord(int instanceIndex, vec3 t);
+vec3 TDInstanceTexCoord(vec3 t);
+</code></pre></div><p>要修改漫反射颜色，这些函数会在原始漫反射颜色上替换、加上或减去。一般来说你会想把 TDPointColor() 的结果传入这些函数，让它们修改它。如果未使用实例颜色，此函数只会原样返回传入的颜色。</p><div dir="ltr"><pre><code>vec4 TDInstanceColor(vec4 curColor);
+vec4 TDInstanceColor(int instanceIndex, vec4 curColor);
+</code></pre></div><p>自定义实例属性可使用这些函数获取：</p><div dir="ltr"><pre><code>vec4 TDInstanceCustomAttrib0();
+vec4 TDInstanceCustomAttrib0(int instanceIndex);
+vec4 TDInstanceCustomAttrib1();
+vec4 TDInstanceCustomAttrib1(int instanceIndex);
+vec4 TDInstanceCustomAttrib2();
+vec4 TDInstanceCustomAttrib2(int instanceIndex);
+vec4 TDInstanceCustomAttrib3();
+vec4 TDInstanceCustomAttrib3(int instanceIndex);
+</code></pre></div><h4 id="Instance_Texturing">实例纹理化</h4><p>实例纹理允许将更多单独纹理映射到实例上。单次渲染中可用的纹理数量因 GPU 而异。每个纹理的分辨率/像素格式可以不同。它避免了使用 2D Texture Array 将多个图像映射到实例上。一次只支持一种纹理维度（2D、Cube 等）。访问纹理分两步。首先你需要获取当前正在输出的实例的纹理索引。这通过 <code>TDInstanceTextureIndex()</code> 实现。然后你可以在 <code>TDInstanceTexture()</code> 调用中使用该纹理索引，以在传入坐标处获得采样纹理颜色。这些函数有几个变体。在顶点着色器中有可隐式获知当前实例索引并使用它的版本。在顶点和像素着色器中还有可通过参数手动指定实例索引的版本。通常你会在像素着色器中采样纹理，此时你要在顶点着色器中获取纹理索引，然后通过 <code>flat uint</code> in/out 变量传入像素着色器。</p><div dir="ltr"><pre><code>// 仅在顶点着色器中可用
+// 隐式使用当前实例。返回此实例的纹理索引。
+uint TDInstanceTextureIndex();
+// 返回给定 'uv' 处的纹理颜色，隐式使用当前实例索引来决定采样哪个纹理。
+// 你通常不会用到这些版本的 TDInstanceTexture()，因为它们仅在顶点着色器中可用。
+vec4 TDInstanceTexture(vec2 uv);
+vec4 TDInstanceTexture(vec3 uv);
+</code></pre></div><p>如果你需要对使用哪个实例纹理有更多自定义控制，可以改用这些函数：</p><div dir="ltr"><pre><code>// 在所有着色器阶段均可用
+// 给出给定 instanceIndex 对应的 textureIndex。
+uint TDInstanceTextureIndex(int instanceIndex);
+// 在给定 'uv' 处采样纹理 'texIndex'。
+vec4 TDInstanceTexture(uint texIndex, vec3 uv);
+vec4 TDInstanceTexture(uint texIndex, vec2 uv);
+</code></pre></div><p>查看这些代码实际用法的最佳方式，是从正在执行实例纹理的 Phong MAT 输出着色器。</p><h2 id="Point_Sprites">点精灵</h2><p>点精灵现在必须使用 <code dir="ltr"><span>vec2</span><span> </span><span>TDPointCoord</span><span>()</span><span></span></code> 而不是 <code dir="ltr"><span>gl_PointCoord</span><span></span></code> 来获取精灵的纹理坐标。使用 gl_PointCoord 在某些情况下会导致纹理坐标垂直翻转。</p><p>渲染点精灵图元时，你必须写入顶点着色器输出 <code dir="ltr"><span>gl_PointSize</span><span></span></code>。该输出变量决定点精灵渲染时的大小（以像素计）。如果不写入该输出，点的大小将是不确定的。</p><p>每个点精灵会渲染为 <code dir="ltr"><span>gl_PointSize</span><span></span></code> 像素宽的正方形像素块。该像素块在像素着色器中会获得覆盖整个正方形的 0-1 纹理坐标，通过 <code dir="ltr"><span>TDPointCoord</span><span>()</span><span></span></code> 获取。</p><h2 id="Order_Independent_Transparency">顺序无关透明度</h2><p>只需在像素着色器 main() 函数开头添加这一行，即可让着色器支持顺序无关透明度。如果 Render TOP 中未启用顺序无关透明度，此函数将不做任何事。</p><div dir="ltr"><pre><code>TDCheckOrderIndTrans();
+</code></pre></div><h2 id="Dithering">抖动</h2><p>如果在 <a href="Render_TOP.html">Render TOP</a> 中启用了抖动，你可以通过简单调用以下函数将抖动应用到颜色：</p><div dir="ltr"><pre><code>finalColor = TDDither(finalColor);
+</code></pre></div><p>通常你会希望在着色器末尾、即将把值写入输出颜色之前执行。如果 Render TOP 中禁用了抖动，此函数仍然可用（以避免编译错误），但会保持颜色不变。</p><h2 id="Picking">拾取</h2><p>Render Pick DAT 和 CHOP 通过渲染操作完成工作，因此它们需要与着色器交互才能工作。如果你导出 Phong MAT 的着色器，会看到以下行</p><div dir="ltr"><pre><code>#ifndef TD_PICKING_ACTIVE
+	// All the typical shader code
+#else
+	TDWritePickingValues();
+#endif
+</code></pre></div><p>这里发生的关键是：拾取发生时，会设置 define TD_PICKING_ACTIVE，只执行 #else 块内的代码。该函数：</p><div dir="ltr"><pre><code>void TDWritePickingValues();
+</code></pre></div><p>会写入供拾取使用的默认值，Render Pick DAT/CHOP 会读取它们。如果你有以非标准方式改变顶点位置的自定义着色器，或想输出不同类型的信息（如 TDPointColor() 之外的颜色），可以在此函数之后替换已写入的值。可供你使用的值有：</p><div dir="ltr"><pre><code>TDPickVertex {
+	vec3 sopSpacePosition;
+	vec3 worldSpacePosition;
+	vec3 camSpacePosition;
+	vec3 sopSpaceNormal;
+	vec3 worldSpaceNormal;
+	vec3 camSpaceNormal;
+	vec3 uv[1];
+	flat int instanceId;
+	vec4 color;
+} vTDPickVert;
+</code></pre></div><p>因此，例如如果你以不同于标准 TDDeform() 的方式修改顶点位置，可以这样写入新计算的值：<b> Be sure to do this AFTER the call to TDWritePickingValues(), otherwise that call will overwrite your values </b>。</p><div dir="ltr"><pre><code>TDWritePickingValues();
+vTDPickVert.sopSpacePosition = newPosition;
+vTDPickVert.worldSpacePosition = uTDMats[TDCameraIndex()].world * vec4(newPosition, 1.0);
+vTDPickVert.camSpacePosition = uTDMats[TDCameraIndex()].worldCam * vec4(newPosition, 1.0);
+</code></pre></div><p>你不必写入此结构中的所有条目，但为完整起见可以这样做。只有 Render Pick CHOP/DAT 会读取的值（在其参数中选择的）必须填写。</p><p>对于你在 <a href="Render_Pick_CHOP.html">Render Pick CHOP</a> 或 <a href="Render_Pick_DAT.html">Render Pick DAT</a> 中为拾取设置的自定义属性，这些属性在 <code>vTDCustomPickVert</code> 中可用，名称和大小与 Render Pick 节点中定义的一致。</p><h2 id="Shadertoy">Shadertoy</h2><h3 id="VR_Shaders">VR 着色器</h3><p>来自 <a href="http://www.shadertoy.com" rel="noreferrer noopener" target="_blank">Shadertoy</a> 且支持 VR 渲染的着色器会定义一个 <code dir="ltr"><span>mainVR</span><span></span></code> 函数。在 TD 内重建该函数使用的 <code dir="ltr"><span>fragRayOri</span><span></span></code> 和 <code dir="ltr"><span>fragRayDir</span><span></span></code> 变量很简单。在顶点着色器中：</p><div dir="ltr"><pre><code>vec4 worldSpaceVert = TDDeform(TDPos());
+vec4 worldSpaceCamPos = uTDMat.camInverse[3]; // 相机变换矩阵的最后一列即是它的位置
+
+vec3 fragRayOri = worldSpaceCamPos.xyz;
+vec3 fragRayDir = worldSpaceVert.xyz - worldSpaceCamPos.xyz;
+// 使用你自行命名的 'out' 变量把这些变量传给像素着色器
+</code></pre></div><p>而在像素着色器中，你只需将 <code dir="ltr"><span>fragRayDir</span><span></span></code> 传入的任何变量归一化。来自 <code dir="ltr"><span>fragRayOri</span><span></span></code> 的变量可以原样使用。</p><p>要支持这些着色器（通常是光线步进着色器），你需要渲染覆盖整个视口的几何，例如在摄像机周围放置一个球体。</p><h2 id="Other_Notes">其他说明</h2><h3 id="#version_statement">#version 语句</h3><p>#version 语句会自动添加到你的代码中。你的代码不应包含 #version 语句，否则可能发生编译错误。</p><h3 id="#include_statements">#include 语句</h3><p>你可以在一个 DAT 中使用 #include 语句来包含另一个 DAT 中的代码。路径可以是绝对或相对路径。</p><pre><code> #include &lt;/project1/text1&gt;
+ #include &lt;../../geo1/text2&gt;
+ #include "text2"
+</code></pre><h3 id="Diagnosing_crashes_due_to_GLSL">诊断由 GLSL 导致的崩溃</h3><p>如果你在编写 GLSL 代码时遇到整个应用崩溃，可以参考 <a href="Debugging_crashes_triggered_by_GLSL_errors.html">this article</a> 了解诊断这些问题的技巧。</p><h3 id="Changes_from_GLSL_1.20">相对 GLSL 1.20 的变化</h3><p>为 1.20 编写的着色器无法作为 3.30 着色器编译。该语言经过了大幅重构，更改了许多关键函数的名称并替换了大量功能。所有变化都可在前面链接的官方 GLSL 文档中查看。其中一些较重要的变化是：</p><ul><li>移除了 <code dir="ltr"><span>texture1D</span><span>(</span><span>sampler1D</span><span>,</span><span> </span><span>float</span><span>),</span><span> </span><span>texture2D</span><span>(</span><span>sampler2D</span><span>,</span><span> </span><span>vec2</span><span>),</span><span> </span><span>etc</span><span>.</span><span></span></code>。所有纹理采样都使用相同的函数名，无论纹理的维度如何。例如 <code dir="ltr"><span>texture</span><span>(</span><span>sampler1D</span><span>,</span><span> </span><span>float</span><span>),</span><span> </span><span>or</span><span> </span><span>texture</span><span>(</span><span>sampler2D</span><span>,</span><span> </span><span>vec2</span><span>)</span><span></span></code>。</li></ul><ul><li>移除了关键字 <code dir="ltr"><span>varying</span><span></span></code>。改用 <code dir="ltr"><span>in</span><span></span></code> 和 <code dir="ltr"><span>out</span><span></span></code>（取决于值是从着色器输出，还是从上一着色器阶段输入）。示例见本文后续部分。</li></ul><ul><li>移除了关键字 <code dir="ltr"><span>attribute</span><span></span></code>。在顶点着色器中直接使用 <code dir="ltr"><span>in</span><span></span></code> 即可。</li></ul><ul><li>移除了内置 varying <code dir="ltr"><span>gl_TexCoord</span><span>[]</span><span></span></code>。你始终需要自己声明在着色器阶段之间输出和输入的变量。</li></ul><ul><li>移除了 <code dir="ltr"><span>gl_FragColor</span><span></span></code> 和 <code dir="ltr"><span>gl_FragData</span><span>[]</span><span></span></code>。改为使用语法 <code dir="ltr"><span>layout</span><span>(</span><span>location</span><span> </span><span>=</span><span> </span><span>0</span><span>)</span><span> </span><span>vec4</span><span> </span><span>oFragColor</span><span>[</span><span>TD_NUM_COLOR_BUFFERS</span><span>]</span><span></span></code> 命名你自己的颜色输出。</li></ul><ul><li>移除了 <code dir="ltr"><span>gl_Vertex</span><span>,</span><span> </span><span>gl_MultiTexCoord0</span><span>,</span><span> </span><span>gl_Normal</span><span></span></code> 等所有内置 attribute。在 TouchDesigner 中，这些属性可通过自动声明的属性访问，如 <code dir="ltr"><span>in</span><span> </span><span>vec3</span><span> </span><span>TDPos</span><span>();</span><span> </span><span>in</span><span> </span><span>vec3</span><span> </span><span>TDTexCoord</span><span>(</span><span>uint</span><span> </span><span>coordLayer</span><span>);</span><span> </span><span>in</span><span> </span><span>vec3</span><span> </span><span>TDNormal</span><span>();</span><span> </span><span>vec4</span><span> </span><span>TDPointColor</span><span>()</span><span></span></code>。更多细节见 <a href="#Working_with_Geometry_Attributes">later</a>。</li></ul><ul><li>移除了几乎所有内置 uniform，例如矩阵（<code dir="ltr"><span>gl_ModelViewMatrix</span><span>,</span><span> </span><span>gl_ProjectionMatrix</span><span></span></code>）、灯光信息（<code dir="ltr"><span>gl_LightSource</span><span>[]</span><span></span></code>）、雾信息（<code dir="ltr"><span>gl_Fog</span><span></span></code>）。所有这些数据都将通过 TouchDesigner 提供的新方式获得，详见 <a href="#TouchDesigner_specific_Uniforms">later</a>。</li></ul><ul><li>现在支持 sampler 数组，并在 TouchDesigner 中适当地广泛使用。不过这些 sampler 的索引方式有限制，详见你所使用特定版本的 GLSL 规范（例如 3.30 与 4.10 的规则不同）。</li></ul><h3 id="Major_changes_since_TouchDesigner088">自 TouchDesigner088 以来的重大变化</h3><p>099 中 TouchDesigner 的 GLSL API 有大量变化。其中大部分变化是为了更好地支持 <a href="#Multi-Camera_Rendering">Multi-Camera Rendering</a>。这些变化的摘要如下：</p><ul><li>光照和其他工作现在在世界空间而非摄像机空间中完成。这使代码更清晰，因为多摄像机时着色器需要在多个不同的摄像机空间中工作。旧版 GLSL 着色器可通过 <a href="GLSL_TOP.html">GLSL TOPs</a> 的 'Lighting Space' 参数支持，该参数对旧着色器会设为 Camera Space。</li><li>应使用 <code dir="ltr"><span>TDInstanceID</span><span>()</span><span></span></code> 而不是 <code dir="ltr"><span>gl_InstanceID</span><span>/</span><span>uTDInstanceIDOffset</span><span></span></code>。</li><li>在世界空间中进行光照时已移除 <code dir="ltr"><span>uTDMat</span><span></span></code>，改用数组 <code dir="ltr"><span>uTDMats</span><span>[]</span><span></span></code>。</li><li><code dir="ltr"><span>uTDGeneral</span><span></span></code> 结构中的一些值已移到 <code dir="ltr"><span>uTDCamInfos</span><span>[]</span><span></span></code>，因为那些信息是特定于摄像机的。</li><li>某些函数（如 <code dir="ltr"><span>TDFog</span><span>()</span><span></span></code>）需要摄像机索引的概念（在顶点着色器中用 <code dir="ltr"><span>TDCameraIndex</span><span>()</span><span></span></code> 获取）。</li><li>必须调用 <code dir="ltr"><span>TDAlphaTest</span><span>(</span><span>float</span><span>)</span><span></span></code> 来应用 alpha 测试。在 MAT 上禁用 alpha 测试时也可以安全调用，此时它不做任何事。</li><li>在向输出颜色缓冲区写入任何颜色之前，应先让它经过 <code dir="ltr"><span>vec4</span><span> </span><span>TDOutputSwizzle</span><span>(</span><span>vec4</span><span>)</span><span></span></code>。这确保根据通道在输出纹理中的存储方式，通道处于正确位置。例如仅有 Alpha 的纹理在内部可能存储在「仅红色」纹理中，因此输出前需要将 alpha 值 swizzle 到红色通道。</li></ul><h2 id="Related_Articles">相关文章</h2>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Write_a_GLSL_MAT" rel="noreferrer noopener">docs.derivative.ca/Write_a_GLSL_MAT</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
