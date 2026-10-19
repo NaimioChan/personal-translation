@@ -57,4 +57,8 @@ window.PT_LIBRARIES = [
     desc: 'Faust 官方文档（手册、示例、教程、工作坊）的中文译本。',
     source: 'https://faustdoc.grame.fr/',
     updated: '2026-10-19', pages: 57 }
+  { dir: 'touchdesigner-docs', title: 'TouchDesigner 文档',
+    desc: 'TouchDesigner 官方用户指南的中文译本。',
+    source: 'https://docs.derivative.ca/',
+    updated: '2026-10-19', pages: 2022 }
 ];

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>优化渲染几何 - TouchDesigner 文档</title>
+<meta name="description" content="优化渲染几何 —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>优化渲染几何</h1>
+<h2 id="Overview">概述</h2><p>本文介绍在 <a href="Render_TOP.html">Render TOPs</a> 中渲染几何的各个方面。其内容不考虑单个 <a href="SOP.html">SOPs</a> 的计算时间，那是另一个话题。 </p><p>本文介绍 TouchDesigner 中几何渲染的现状。改进一直在进行，因此目前较慢的部分将来可能会变快。 </p><p>渲染几何时有几件事需要考虑。 </p><ul><li>图元类型与图元数量</li><li>顶点数量</li><li>SOP 数量</li></ul><h2 id="The_Quick_Answer">简明答案</h2><p>关于快速几何渲染的简明答案是： </p><ul><li>如果你的几何是静态的，请让它全部为 3 顶点多边形（三角形）或三角形带。</li><li>如果你的几何因 SOP 计算而每帧变化，请让几何为三角形带。务必预先转换成三角形带，因为把几何转换为三角形带的 CPU 开销非常高。</li></ul><h2 id="Geometry_Batches">几何批次</h2><p>渲染几何涉及 5 项主要开销。<br/> 1. CPU 可能需要（也可能不需要）把几何转换为 Vulkan 可渲染的格式。<br/> 2. CPU 需要为即将进行的拷贝准备 GPU 内存。<br/> 3. CPU 需要把几何数据拷贝到 GPU。<br/> 4. CPU 需要告诉 GPU 如何渲染该几何。<br/> 5. GPU 需要渲染该几何。 </p><p>开销 #1 只在某些特殊几何类型中出现，例如元球、bezier/NURBs 曲面和凸多边形。这项开销可以在 SOP 的计算时间中看到。<br/> 开销 #2 也可以在 SOP 计算时间中看到。这项开销通常随几何中的图元数量（而非顶点数）增加。 开销 #3 通常被隐藏，因为它（在可用时）由另一个 CPU 上的另一个线程完成。如果你在性能监视器中看到 "Waiting For VBO Update"，说明另一个线程未能在渲染之前完成几何拷贝，渲染不得不等待该线程结束。<br/><b>Costs #1, #2 and #3 only occur if the SOP is cooking. If your geometry is static you don't need to worry about these costs. <br/><br/></b> </p><p>开销 #4 在 Render TOP 计算时发生。你会在性能监视器中看到 "Rendering a batches of VBOs"，这就是开销 #4。如果几何的格式使 CPU 无法用尽可能少的命令告诉 GPU 如何渲染，这常常会是三维场景中最大的速度瓶颈。一条此类绘制命令的「开销」与几何的复杂度无关。例如，告诉 GPU 渲染一个三角形，与告诉 GPU 渲染 10,000 个三角形的 CPU 开销相同。有些图元类型可以在单条绘制命令中合批（如三角形），有些则不能。了解哪些能、哪些不能，对于在当今 GPU 硬件上获得良好性能很重要。TouchDesigner 会尽力为你自动完成这一工作，但有些类型的图元就是无法自动处理。 </p><p>可以把一条绘制命令看作一个「批次」。减少批次数量可以大幅提高场景的速度。如果几何的格式可以用单条绘制命令渲染，就可以合批。参见下文关于可用单条绘制命令渲染的几何的部分。除此之外，每个 SOP 至少会产生 1 个批次。如果两个 SOP 共用同一材质，且都包含可合批的图元（如三角形），用 Merge SOP 把它们连接起来，就能让整组几何只形成单个批次。 </p><p>开销 #5 与本文是另一个问题，它涉及着色器、像素填充率和光照复杂度。一般来说，无论几何如何指定，开销 #5 都相同。 </p><h2 id="How_Geometry_is_Prepared_for_Rendering">几何如何为渲染做准备</h2><p>SOP 计算完成后，会检查其渲染标记是否打开，或者是否有人正通过查看器查看其几何。只要其中之一为真，SOP 就会更新一个称为 VBO 的东西。VBO 是 GPU 用来渲染几何的一种特殊数据结构。需要把 SOP 的内容拷贝并转换到 VBO 中，几何才能被渲染。 </p><p>虽然 TouchDesigner 支持大量图元类型（管、nurbs、网格等），但 Vulkan 不支持。不同的图元类型需要转换为 Vulkan 支持的图元类型之一。这一转换与拷贝操作可以在性能监视器的 "Updating SOP's VBO" 和 "Waiting for VBO Update" 标题下看到 </p><h3 id="Primitive_Type_and_Primitive_Count">图元类型与图元数量</h3><p>取决于图元类型，几何可能可以分批，也可能不能。如果几何可以分批，图元数量就不会影响速度。如果几何不能分批，图元数量就会对速度有很大影响。事实上，每个未分批的图元都会给渲染带来固定开销（即 2 个图元比渲染 1 个图元慢 2 倍，100 个图元比渲染 1 个图元慢 100 倍）。 </p><ul><li>三角形带 - Vulkan 可以非常快速地渲染三角形带。任意数量的三角形带都可以作为一批渲染。这是通过一种称为三角形带拼接（Triangle Strip Stitching）的技术实现的。 <ul><li>开销 #1：无</li><li>开销 #2：低</li><li>开销 #3：低</li><li>开销 #4：低</li></ul></li></ul><ul><li>3 顶点多边形 - 这些是 Vulkan 支持并可以非常快速渲染的三角形。任意数量的三角形都可以在单一批次中渲染。 <ul><li>开销 #1：无</li><li>开销 #2：高</li><li>开销 #3：高</li><li>开销 #4：低</li></ul></li></ul><ul><li>4 顶点多边形 - 这些会作为 2 个三角形渲染，Vulkan 支持并且可以非常快速渲染。任意数量的四边形都可以在单一批次中渲染。 <ul><li>开销 #1：无</li><li>开销 #2：高</li><li>开销 #3：高</li><li>开销 #4：低</li></ul></li></ul><ul><li>5 个或更多点的多边形 - 由于 Vulkan 不支持具有 N 个点的多边形，这些会被转换为三角形。这可能开销很大。在把数据从 SOP 拷贝到 VBO 时，TouchDesigner 会自动把 <a href="Convex_and_Concave_Polygons.html">Concave Polygons</a> 转换为三角形带，这样所有凹多边形会形成单一批次。不过，在更新 VBO 时，转换确实会带来额外的 CPU 开销。<a href="Convex_and_Concave_Polygons.html">Convex Polygons</a> 需要拆分成更小的多边形，目前尚未针对快速渲染进行优化。</li></ul><p>对于凹多边形 </p><ul><li><ul><li>开销 #1：低</li><li>开销 #2：高</li><li>开销 #3：高</li><li>开销 #4：低</li></ul></li></ul><p>对于凸多边形，或凸凹混合的多边形。 </p><ul><li><ul><li>开销 #1：中</li><li>开销 #2：高</li><li>开销 #3：高</li><li>开销 #4：高</li></ul></li></ul><ul><li>网格（Mesh） - 网格会作为三角形带渲染。此外，借助三角形带拼接，任意数量的网格都可以作为单一批次渲染。 <ul><li>开销 #1：无</li><li>开销 #2：低</li><li>开销 #3：中</li><li>开销 #4：低</li></ul></li></ul><ul><li>Circle、Tube 和 Sphere 图元 - Vulkan 不支持这些图元，因此每个图元都需要创建一组三角形带。每个图元都会作为单独一批渲染。虽然它们使用三角形带渲染，但目前无法受益于三角形带拼接。因此，渲染大量 Circle、Tube 或 Sphere 图元会带来很大的 CPU 开销。 <ul><li>开销 #1：高</li><li>开销 #2：中</li><li>开销 #3：中</li><li>开销 #4：高</li></ul></li></ul><ul><li>粒子 - 粒子会被转换为点/线，或 Point Sprites。任意数量的粒子都可以在单一批次中渲染。 <ul><li>开销 #1：无</li><li>开销 #2：中</li><li>开销 #3：中</li><li>开销 #4：低</li></ul></li></ul><ul><li>NURB/Bezier 曲面和曲线 - 这些曲面首先需要转换为多边形、三角形和三角形带。这一转换有很大的 CPU 开销，同时所有所需的批次也带来 CPU 开销。 <ul><li>开销 #1：高</li><li>开销 #2：中</li><li>开销 #3：中</li><li>开销 #4：高</li></ul></li></ul><ul><li>元球 - 元球会被转换为多边形。转换为多边形有很大的 CPU 开销。不过渲染一个元球应该只需要一批。 <ul><li>开销 #1：高</li><li>开销 #2：中</li><li>开销 #3：高</li><li>开销 #4：低</li></ul></li></ul><p>由多种图元类型混合而成的 SOP 会打乱这一判断。例如，三角形接元球接三角形会形成 3 批；而三角形接三角形接元球只会形成 2 批。本质上，混合多种图元类型无论如何都可能使开销 #4 变高。如果你发现性能监视器中有很大的 'Rendering a Batch of VBO' 条目，就应考虑把几何简化为单一类型的图元，且该类型在开销 #4 上较低。 </p><h3 id="Vertex_Count">顶点数量</h3><p>取决于所使用的着色器类型，顶点数量可能是、也可能不是重要因素。如果你使用的是默认 Phong MAT，或任何顶点着色器开销很低的着色器，顶点数量不太可能影响渲染速度。事实上，高顶点数更可能在导致渲染变慢之前就先导致内存不足。 </p><p>例外情况是当你使用开销很大的顶点着色器时。一个对每个顶点做变形、且骨骼数量*非常*大的材质，或一个做顶点着色器纹理查找的着色器，可能会在顶点数高时受影响，但这仍不太可能。 </p><h3 id="SOP_Count">SOP 数量</h3><p>如前所述，每个 SOP 至少需要 1 批来渲染。在可能的情况下，用 Merge SOP 减少 SOP 数量会同时带来 CPU 和 GPU 的速度提升。不过，如果你的 SOP 每帧都在计算，Merge SOP 可能比额外渲染批次的 CPU 开销更大，因此如果 Merge SOP 会每帧计算，就应避免使用。 </p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Optimize_Geometry_for_Rendering" rel="noreferrer noopener">docs.derivative.ca/Optimize_Geometry_for_Rendering</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

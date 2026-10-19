@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TouchDesigner CUDA API 参考 - TouchDesigner 文档</title>
+<meta name="description" content="TouchDesigner CUDA API 参考 —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>TouchDesigner CUDA API 参考</h1>
+<h2 id="Overview">概述</h2><p>TouchDesigner 与你编写的 .dll 对接所用的 API 是一种调用—应答机制。也就是说，TouchDesigner 会调用你 .dll 中的某些函数，你应在这些函数中填入必要代码，把 TouchDesigner 所需的信息返回给它。大量信息和注释放在 TCUDA_Types.h 文件中而非本文，以确保信息始终与 API 的变更保持同步。</p><h2 id="Enumerated_Types">枚举类型</h2><p>API 定义了许多枚举类型，便于了解结构中某一项的有效取值。例如若结构有一个 <code>TCUDA_DataFormat</code> 类型的成员，从 TCUDA_Types.h 可以看出其有效值为 TCUDA_DATA_FORMAT_UNSIGNED_BYTE 和 TCUDA_DATA_FORMAT_FLOAT。<br/> 这里不讨论各种枚举类型，请查看 TCUDA_Types.h 获取相关信息。</p><h2 id="Structures">结构</h2><p>API 用结构来向 .dll 发送信息并从 .dll 取回信息。</p><p>这里不讨论各种结构，请查看 TCUDA_Types.h 获取相关信息。</p><h3 id="Rules_for_filling_in_the_structures">填写结构的规则</h3><p>你会注意到结构是这样声明的（真实结构可能不同）：</p><pre><code> typedef struct
+ {
+   int reserved[9];
+   union
+   {
+       struct
+       {
+           int         reserved[9];
+       } param;
+       struct
+       {
+           int         reserved[9];
+       } chop;
+       struct
+       {
+           TCUDA_DataFormat    dataFormat;
+           int                 reserved[9];
+       } top;
+       struct
+       {
+           bool        interestedInTransforms;
+           bool        interestedInParameters;
+           union {
+               struct {
+                   int projWidth;
+                   int projHeight;
+               } cam;
+           };
+           int         reserved[6];
+       } obj;
+   } ;
+ } TCUDA_ParamRequestResult;
+</code></pre><p>首先要注意声明了许多 reserved* 成员。它们用来占位，以便日后向这些结构添加更多功能而不破坏旧的 CUDA .dll。绝不要写入这些 reserved* 成员。其次，结构里有一个 union。根据你写入的参数类型，只应写入这个 union 的一个部分。若不知道 C++ 中的 union 是什么，请参考 <a href="http://en.wikipedia.org/wiki/Union_type" rel="noreferrer noopener" target="_blank">this page</a></p><p>例如，若你在回复一个摄像机对象的请求，而结构声明为</p><pre><code> TCUDA_ParamRequestResult *result;
+</code></pre><p>你会像这样写入该结构的各个成员</p><pre><code> result-&gt;obj.interestedInParameters = true
+ result-&gt;obj.cam.projWidth = 512;
+ result-&gt;obj.cam.projHeight = 512;
+</code></pre><p>重要的是不要写入与该参数数据类型不匹配的结构。因此你不会为对象写入 result-&gt;chop 结构。同样，若对象的 subType 不是摄像机，你就不会写入 result-&gt;obj.cam。</p><h2 id="Functions">函数</h2><p>每个函数向 .dll 提供和/或索取特定信息。有些函数必须定义 .dll 才能工作，有些则不必。你的函数声明必须与 API 期望的完全一致，否则会发生意外（比如崩溃）。声明为 <code>const</code> 的参数是提供给你的信息，帮助你决定怎么做，绝不能修改这些结构中的数据。未声明为 <code>const</code> 的参数，则是你填入信息、告诉 TouchDesigner 它想知道的内容的地方。</p><h3 id="Required_Functions">必需函数</h3><pre><code> int tCudaGetAPIVersion()
+</code></pre><p>此函数必须始终返回 TCUDA_API_VERSION。这让 TouchDesigner 知道该 .dll 是针对哪个 API 版本编写的，从而实现向后兼容。</p><p><b>Parameters</b>：无</p><p><b>Return Value</b>：必须返回 TCUDA_API_VERSION，它在 TCUDA_Types.h 中定义。</p><pre><code> bool tCudaGetParamInfo(const TCUDA_NodeInfo *info, const TCUDA_ParamRequest *request, TCUDA_ParamRequestResult *reqResult)
+</code></pre><p>此函数对每个潜在参数调用一次。它在 <code>request</code> 中提供该参数的信息，你想返回的任何信息都填入 <code>reqResult</code> 参数。返回 true 告诉 TouchDesigner 你对此参数感兴趣，返回 false 表示不感兴趣。</p><p><b>Parameters</b>: </p><p><code>info</code> - 指向 TCUDA_NodeInfo 结构的指针，提供当前正在计算的节点的信息。<br/><code>request</code> - 指向 TCUDA_ParamRequest 结构的指针，提供此特定参数的信息。 <code>reqResult</code> - 此结构将包含选项，让你规定该参数如何使用。</p><p><b>Return Value</b>：若将使用该参数返回 true，否则返回 false。</p><pre><code> bool tCudaExecuteKernel(const TCUDA_NodeInfo *info, const int nparams, const TCUDA_ParamInfo **params, const TCUDA_ParamInfo *output)
+</code></pre><p>TouchDesigner 调用此函数时，是要求你用给定参数执行你的 CUDA 内核，并把结果写入 <code>output</code> 结构给出的数据指针。</p><p><b>Parameters</b>: </p><p><code>info</code> - 指向 TCUDA_NodeInfo 结构的指针，提供当前正在计算的节点的信息。<br/><code>nparams</code> - <code>params&gt;</code> 数组中的条目数。<br/><code>params</code> - 一个指针数组，指向可用作 CUDA 内核输入的参数。该数组中列出哪些参数，取决于你从 tCudaGetParamInfo 返回的内容。<br/><code>output</code> - 指向一个结构的指针，该结构包含内核应把输出写到哪里这类信息。根据你的输出设置（数据格式、分辨率、通道数等），该结构的 <code>data</code> 成员将是已分配的、足以存放输出的 CUDA 设备内存。<br/></p><p><b>Return Value</b>：若已执行内核、OP 应从输出更新其数据则返回 true；若什么都没做（因此 OP 不必从输出更新数据）则返回 false。</p><h3 id="Optional_Functions">可选函数</h3><p>你可以选择不定义这些函数。对于可以返回信息的函数，TouchDesigner 会对未定义的函数采用某些默认值。</p><pre><code> void tCudaNodeAttached (const TCUDA_NodeInfo *info)
+</code></pre><p>此函数在节点首次连接到该 .dll 时调用。</p><p><b>Parameters</b>: </p><p><code>info</code> - 指向 TCUDA_NodeInfo 结构的指针，提供正在连接到此 .dll 的节点的信息。<br/></p><p><b>Return Value</b>：无</p><pre><code>  void tCudaNodeDetached(const TCUDA_NodeInfo *info)
+</code></pre><p>此函数在节点从 .dll 断开时调用。发生在节点被删除或加载另一个 .dll 时。</p><p><b>Parameters</b>: </p><p><code>info</code> - 指向 TCUDA_NodeInfo 结构的指针，提供正在连接到此 .dll 的节点的信息。<br/></p><p><b>Return Value</b>：无</p><pre><code>  void tCudaGetGeneralInfo(const TCUDA_NodeInfo *info, TCUDA_GeneralInfo *ginfo)
+</code></pre><p>此函数向 .dll 索取一些它可以自行填写的一般信息。<code>ginfo</code> 将包含默认值，你可以根据希望 OP 如何表现来修改它们。</p><p><b>Parameters</b>: </p><p><code>info</code> - 指向 TCUDA_NodeInfo 结构的指针，提供当前正在计算的节点的信息。<br/><code>ginfo</code> - 指向 TCUDA_GeneralInfo 结构的指针，你可以在其中填入信息。</p><p><b>Return Value</b>：无</p><pre><code>  bool tCudaGetTOPOutputInfo(const TCUDA_NodeInfo *info, TCUDA_TOPOutputInfo *oinfo)
+</code></pre><p><b>Only called if the OP is a TOP.</b> 此函数让你在代码中指定 TOP 的输出，而不必在 Common 页中设置，也不必依赖输入 TOP 的设置。</p><p><b>Parameters</b>: </p><p><code>info</code> - 指向 TCUDA_NodeInfo 结构的指针，提供当前正在计算的节点的信息。<br/><code>oinfo</code> - 在此参数中填入 TOP 期望输出的信息，如分辨率和像素格式。</p><p><b>Return Value</b>：若希望 TouchDesigner 使用这些设置则返回 true；若希望它用 Common 页决定输出设置则返回 false。返回 false 与完全不定义此函数相同。</p><pre><code> void tCudaGetTOPKernelOutputInfo(const TCUDA_NodeInfo *info, TCUDA_TOPKernelOutputInfo *oinfo)
+</code></pre><p><b>Only called if the OP is a TOP.</b> 此函数让你指定内核数据如何输出的选项，如通道顺序或数据格式。若未定义此函数，将使用默认设置（BGRA、8 位无符号字节等）</p><p><b>Parameters</b>: </p><p><code>info</code> - 指向 TCUDA_NodeInfo 结构的指针，提供当前正在计算的节点的信息。<br/><code>oinfo</code> - 在此参数中填入内核期望输出的信息，如通道顺序和数据格式。</p><p><b>Return Value</b>：无</p><h2 id="Other_Important_Concepts">其他重要概念</h2><h3 id="Host_Memory_vs._Device_Memory">主机内存与设备内存</h3><p>CUDA 文档定义了主机内存和设备内存。简而言之，主机内存是 CPU 能访问的内存，你可以在任何 C++ 函数中读写它。传给 tCuda* 函数以及从这些函数返回的所有结构都在主机内存中。设备内存是 CUDA 能访问的内存，只能在 CUDA 内核内部读写。在 CUDA 内核之外的任何地方尝试读写设备内存指针都会导致崩溃。同样，在 CUDA 内核中尝试读写主机内存指针会导致内核无法正确运行。</p><p>TouchDesigner 给你内存指针时，它们会声明为 <code>void*</code>。除指针外，结构还会有一个 <code>dataLocation</code> 成员，告诉你该指针指向主机内存还是设备内存。你需要把这些指针转换为正确的类型并正确使用。例如在 <code>tCudaExecuteKernel</code> 中，<code>output</code> 结构包含一个名为 <code>data</code> 的成员。该指针总是指向设备内存中 CUDA 内核应写入结果的位置。调用内核时你应把这个指针传进去。</p><p>当你拿到主机内存指针时，首先需要把它转换为正确的类型。例如若类型为 TCUDA_DATA_TYPE_FLOAT，你会这样转换第一个参数中的数据指针</p><pre><code> float *flts = (float*)(params[0]-&gt;data);
+</code></pre><p>然后就可以这样访问这些值</p><pre><code> float addition = flts[0] + flts[1]; // 把第一个值和第二个值相加。
+</code></pre><p>把这些值传给 CUDA 内核时，需要逐个传值。不能直接传 <code>flts</code>，因为那是指针，CUDA 会认为它是指向设备内存的指针。</p><h3 id="RGBA_vs._BGRA">RGBA 与 BGRA</h3><p>在 TOP 中工作时你会注意到像素格式写成 <code>TCUDA_PIXEL_FORMAT_RGBA8</code> 这样，但另外还有所谓的通道顺序，通常是 <code>TCUDA_CHAN_BGRA</code>。RGBA8 只是说有 R、G、B 和 A 通道，并不表示它们的顺序。通道顺序说明实际的通道顺序。我们只允许以 BGRA（而非 RGBA）通道顺序处理，因为这是 GPU 原生存储数据的通道顺序，性能更好。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/TouchDesigner_CUDA_API_Reference" rel="noreferrer noopener">docs.derivative.ca/TouchDesigner_CUDA_API_Reference</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

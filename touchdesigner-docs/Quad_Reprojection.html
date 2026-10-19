@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>四边形重投影 - TouchDesigner 文档</title>
+<meta name="description" content="四边形重投影 —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>四边形重投影</h1>
+<h2 id="Overview">概述</h2><p>Quad Reprojection 为任意朝向悬挂的平板电视和 LED 面板渲染像素级精确的透视正确图像。 它是将内容以透视正确方式映射到四边形上的另一种方法。例如，假设有一个物理装置，空中悬挂着一堆朝向和大小各异的白色面板。目标是从房间中某个特定点（通常称为 Sweet Spot）看，让这些面板彼此之间显示出一幅连贯的整体图像，且透视正确。如果你用投影仪把内容映射到这些面板上，你会使用 <a href="https://docs.derivative.ca/Palette:camSchnappr" rel="noreferrer noopener" target="_blank">Palette:camSchnappr</a>，使用面板的虚拟副本，使其相对于虚拟投影仪保持相同的朝向/大小。渲染出场景，然后把它发送到投影仪。如果观看者站在房间中正确的位置，渲染的内容看起来就像漂浮在面板后面或穿过面板。</p><p>然而，如果这些面板是电视或 LED 面板，这种技术就不起作用。每台电视都需要通过自己的信号接收内容。一种快捷方法是使用与投影仪相同的技术，但通过角点固定从渲染输出中取出每台电视的区域，这样每台电视都能收到自己那部分输出。这能行，但会有分辨率和过滤问题。例如，如果 1920x1080 的电视只占渲染图像宽度的 10%，你就需要以 19200 像素宽渲染，才能为该电视提供接近其原生分辨率的内容。如果电视有任何旋转，那么在为该电视生成内容时，会对渲染图像的像素施加过滤。Quad reprojection 允许在渲染时直接为每台电视/面板以像素级精确的方式创建内容。无需后期角点固定，因此能产生更优的图像，并减少因必须超额渲染图像分辨率而产生的 GPU 负载。</p><p>使用 Quad Reproject 的示例可在此处找到：</p><p><a href="https://docs.derivative.ca/File:QuadReproject.toe" rel="noreferrer noopener" target="_blank">File:QuadReproject.toe</a> </p><p>或者，你可以在调色板中找到 <a href="https://docs.derivative.ca/Palette:quadReproject" rel="noreferrer noopener" target="_blank">Palette:quadReproject</a> COMP，它可用于借助 <a href="Camera_COMP.html">Camera COMP</a> 的 Quad Reproject 功能快速设置多个输出。它将为一个或多个屏幕输出像素级精确的纹理。</p><h2 id="Usage">用法</h2><p>要使用 <code>QuadReproject.toe</code>，首先创建与你要映射的物理面板相匹配的几何。将此几何放置在与摄像机相对的位置，摄像机放在你希望作为 Sweet Spot 的位置。为每个面板创建一个新的 Camera COMP，负责以透视正确的方式为该面板渲染内容。将 <a href="Camera_COMP.html">Camera COMP</a> 中的 'Quad Reproject SOP' 参数指向包含该面板几何的 SOP。该 SOP 应位于一个用于在世界中定位它的 COMP 内，因为它的世界位置会被考虑。用面板四角的 4 个点索引填充 'Quad Reproject Points' 参数，索引要与所指 SOP 中的一致。点的顺序应为左下、右下、左上、右上。</p><p>这会使摄像机渲染场景时，如同放大/角点固定该四边形在场景中所覆盖的区域，使其填满整个输出。该操作在顶点着色器中发生，意味着每个像素都是在缩放之后计算，因此每个像素都是为输出原生计算的。每台摄像机渲染的输出随后可以直接发送到电视/面板，无需进一步处理。</p><h2 id="Caveats">注意事项</h2><p>由于这一技巧在顶点着色器中完成，可能会出现一些瑕疵。特别是当四边形与摄像机成锐角时，会出现瑕疵。此外，渲染的几何（即「场景」）应充分细分，以免单个多边形占据渲染输出很大比例。</p><h3 id="Non-rectangular_Quads">非矩形四边形</h3><p>该技术尚未在非矩形或正方形的面板上尝试过。理论上应该可行，但我们还无法验证。请注意，由于 GPU 对非平行四边形四边形的纹理坐标插值方式，非矩形面板的预览在 TouchDesigner 内看起来不会正确。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Quad_Reprojection" rel="noreferrer noopener">docs.derivative.ca/Quad_Reprojection</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

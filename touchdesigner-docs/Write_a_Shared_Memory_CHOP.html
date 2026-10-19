@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write a Shared Memory CHOP - TouchDesigner 文档</title>
+<meta name="description" content="Write a Shared Memory CHOP —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Write a Shared Memory CHOP</h1>
+<p><br/> 本文介绍如何编写外部应用程序与 <a href="Shared_Mem_Out_CHOP.html">Shared Mem Out CHOP</a> 和 <a href="Shared_Mem_In_CHOP.html">Shared Mem In CHOP</a> 对接。 </p><p>在 TouchDesigner 安装目录下，/touch/SharedMem/CHOP 中定义了 CHOP_SharedMemHeader.h 中的头结构，需要在共享内存缓冲区的起始处填入。内存缓冲区应先放该头结构，随后是通道数据和可选的通道名称。 </p><p><b>NOTE: The 'Shared Mem Type' parameter in the CHOP must be set to 'Local' for your app to be able interface with it</b> </p><h2 id="Creating_a_Shared_Memory_Buffer">创建共享内存缓冲区</h2><p>请参阅 <a href="Using_Shared_Memory_in_TouchDesigner.html">Using Shared Memory in TouchDesigner</a> 一文了解如何创建共享内存缓冲区。如果你是发送方，需要创建一个缓冲区，其大小要能容纳头结构、通道数据以及通道名称（如果你要发送名称）。获取头结构的大小只需用 </p><pre><code> sizeof(CHOP_SharedMemHeader)
+</code></pre><p><br/> 通道数据的大小为 </p><pre><code> number of channels * channel length * 4
+</code></pre><p>4，因为这是一个 float 的字节数。 </p><p>通道名称的大小是每个通道名称的长度加上每个通道额外 1 个字节，用于容纳每个通道名称末尾的空字符。例如，如果你有 2 个名为 cha1 和 cha2 的通道，所需大小为 </p><pre><code> 4 + 4 + 2 = 10
+ where the terms are: (length of cha1) + (length of cha2) + (number of channels, for the null characters)
+</code></pre><p>沿用上例，如果通道长度为 5 个采样，那么你需要分配一个字节数至少为以下值的内存缓冲区： </p><pre><code> sizeof(CHOP_SharedMemHeader) + 10 + (2 * 5 * 4)
+</code></pre><p>获得指向该内存的指针后，就可以进行下一步了。 </p><h2 id="Writing/Reading_the_Header">写入/读取头结构</h2><p>你可以在 Touch/SharedMem/CHOP（位于安装 Touch 的目录下）中获取用于描述通过 Shared Mem CHOP 发送数据的头文件。该文件名为 CHOP_SharedMemHeader.h。 </p><p>头结构是共享内存中最先出现的内容。因此你可以把从 UT_SharedMem 获得的指针转换为 CHOP_SharedMemHeader。 </p><pre><code> CHOP_SharedMemHeader *header = (CHOP_SharedMemHeader*)shm-&gt;getMemory();
+</code></pre><p>如果你是发送方，请填写该头结构中的所有字段。有关每个需要填写的字段的更多细节，请参阅该头文件。 </p><p><b>If you are the sender, make sure you fill in all required fields in the header, otherwise the receiver won't know where the data is</b> </p><p>头结构的大多数成员都无需解释。典型用法如下 </p><pre><code> header-&gt;magicNumber = CHOP_SHM_MAGIC_NUMBER; // 必须设置为此值
+ header-&gt;version = CHOP_SHM_VERSION; // 必须设置为此值
+ header-&gt;size = sharedMemSize; // 在创建共享内存时计算得出
+ header-&gt;numChans = numOfChannelsToSend;
+ header-&gt;length = lengthOfEachChannel; // 采样数
+ header-&gt;sampleRate = theSampleRate;
+ header-&gt;namesSent = amISendingNames; // 如果发送通道名则为 1，否则为 0
+ header-&gt;channelDataOffset = sizeof(CHOP_SharedMemHeader);
+ header-&gt;nameDataOffset = header-&gt;channelDataOffset + (header-&gt;numChans * header-&gt;length * 4);
+</code></pre><p>如果你是接收方，可以按需使用头结构中的信息。 </p><h2 id="Reading/Writing_the_channel_data">读取/写入通道数据</h2><p>只需使用头结构中的 getChannelData() 调用，即可获得应读取/写入通道数据的位置指针 </p><pre><code> float *data = header-&gt;getChannelData(); 
+</code></pre><p>通道数据是紧密排列的，每次一个通道。因此第一个通道的采样先出现，紧接着是第二个通道的采样。 </p><p>读取/写入通道数据的典型循环如下 </p><pre><code> float *data = header-&gt;getChannelData(); 
+ for (int i = 0; i &lt; header-&gt;numChans; i++)
+ {
+    // data 指向第 i 个通道的通道数据
+    for (int j = 0; j &lt; header-&gt;length; j++)
+    {
+        // data[j] 是当前通道中的第 j 个采样
+        float sample = data[j];
+        // 对数据做一些处理
+        // 或者，如果你在向共享内存写入数据，就给 data[j] 赋一个值
+    }
+    // 把数据指针向前移动，使其现在指向
+    // 下一个通道的数据
+    data += header-&gt;length;
+ }
+</code></pre><h2 id="Reading/Writing_the_channel_names">读取/写入通道名称</h2><p>如果你要写入通道名称，请确保将头结构的 namesSent 字段设为 1，否则名称会被忽略。如果你不发送名称，通道会保留之前的名称；如果没有之前的名称，则使用从 'chan1' 开始的递增名称。 </p><p>如果你要读取通道名称，请确保头结构的 namesSent 字段为 1，否则读到的会是乱码数据。 </p><p>只需使用头结构中的 getNameData() 调用，即可获得应读取/写入通道名称的位置指针 </p><pre><code> char *names = header-&gt;getNameData(); 
+</code></pre><p>通道名称紧密排列，数据包含一个通道名称、一个空字符，随后紧接下一个通道名称。 </p><p>读取通道名称的典型循环如下： </p><pre><code> char *names = header-&gt;getNameData(); 
+ for (int i = 0; i &lt; header-&gt;numChans; i++)
+ {
+    // names 指向第 i 个通道的名称，因此你可以对它做通常对字符串能做的一切操作
+    // 例如
+    cout &lt;&lt; names &lt;&lt; endl;
+    
+    // 现在把指针前移到下一个通道名
+    // 在指针上加上名称中的字符数，再加上空字符
+    names += strlen(names) + 1;
+ }
+</code></pre><p>写入通道名称的典型循环如下： </p><pre><code> // 此示例假定你有一个名为 myNames 的 char* 数组，其中存放通道名。
+ char *names = header-&gt;getNameData(); 
+ for (int i = 0; i &lt; header-&gt;numChans; i++)
+ {
+    // names 指向第 i 个通道的名称，因此把通道名复制进去，务必在字符串末尾
+    // 包含空字符（memcpy 大小中的 + 1）
+    memcpy(names, myNames[i], strlen(myNames[i]) + 1);
+    
+    // 现在把指针前移到下一个通道名
+    // 在指针上加上名称中的字符数，再加上空字符
+    names += strlen(myNames[i]) + 1;
+ }
+</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Write_a_Shared_Memory_CHOP" rel="noreferrer noopener">docs.derivative.ca/Write_a_Shared_Memory_CHOP</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

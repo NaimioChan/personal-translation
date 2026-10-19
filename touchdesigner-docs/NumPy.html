@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NumPy - TouchDesigner 文档</title>
+<meta name="description" content="NumPy —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>NumPy</h1>
+<p><b>NumPy</b> 是 Python 编程语言的库，为大型多维数组和矩阵增加了支持，并提供了大量用于操作这些数组的高级数学函数。<sup id="cite_ref-1"><a href="#cite_note-1">[1]</a></sup></p><p>广泛使用的计算机视觉库 <a href="OpenCV.html">OpenCV</a> 的 Python 绑定使用 NumPy 数组来存储和操作数据。由于多通道图像就是三维数组，因此索引、切片或用其他数组做遮罩，都是访问图像特定像素的非常高效的方式。NumPy 数组作为 OpenCV 中图像、提取的特征点、滤波核等的通用数据结构，大大简化了编程流程与调试。<sup id="cite_ref-2"><a href="#cite_note-2">[2]</a></sup></p><p>关于 NumPy 的一份不错的通用入门资料见：<a href="https://numpy.org/doc/stable/user/absolute_beginners.html" rel="noreferrer noopener" target="_blank">https://numpy.org/doc/stable/user/absolute_beginners.html</a></p><h2 id="NumPy_and_TouchDesigner">NumPy 与 TouchDesigner</h2><p>TouchDesigner 允许使用 <a href="TOP_Class.html">TOP</a>、<a href="CHOP_Class.html">CHOP</a>、<a href="Channel_Class.html">Channel</a> 和 <a href="Matrix_Class.html">Matrix</a> 类中的方法，轻松在 <a href="TOP.html">TOP</a> 和 <a href="CHOP.html">CHOP</a> 数据与 NumPy 数组之间转换。</p><h3 id="NumPy_and_CHOPs">NumPy 与 CHOP</h3><p>例如，可以把包含所有通道和采样的 CHOP 转换为 NumPy 数组：</p><div dir="ltr"><pre><code># 以 2D NumPy 数组返回此 CHOP 中的所有通道
+# 其宽度等于通道长度（采样数）
+# 高度等于通道数。
+# 数据将以 32 位浮点存储。
+npArray = op('someChop').numpyArray()
+</code></pre></div><p>同样，单个 CHOP 通道也可以转换为 NumPy 数组：</p><div dir="ltr"><pre><code># 将此通道的数据以 NumPy 数组返回
+# 长度等于轨道长度。
+# 数据将以 32 位浮点存储。
+npArray = op('someChop')['chan1'].numpyArray()
+</code></pre></div><p>使用 <a href="Script_CHOP.html">Script CHOP</a> 时，存储在 NumPy 数组中的数据可以转换回 CHOP 通道。此时数组的形状必须为 <code dir="ltr"><span>shape</span><span>(</span><span>numChannels</span><span>,</span> <span>numSamples</span><span>)</span></code>，且数据类型为 float32。<sup id="cite_ref-3"><a href="#cite_note-3">[3]</a></sup></p><p>这里的简单示例在 Script CHOP 中创建 3 个通道，每个通道 20 个采样，并把第二个通道第 11 个采样的值设为 1，其他所有值均为 0：</p><div dir="ltr"><pre><code># 导入 NumPy 库
+import numpy as np
+
+def onCook(scriptOp):
+	scriptOp.clear()
+
+	# 指定通道数和采样数
+	numChannels = 3
+	numSamples = 20
+
+	# 创建一个填充为零的 NumPy 数组
+	# 数据类型必须为 float32 才能用于 CHOP
+	npArray = np.zeros((numChannels, numSamples), dtype=np.float32)
+
+	# 把第 2 个通道的第 11 个采样设为 1.234
+	npArray[1][10] = 1.234
+
+	# 把 NumPy 数组复制到 CHOP 通道中
+	scriptOp.copyNumpyArray(npArray)
+	return
+</code></pre></div><p>举一个更实用的例子：假设有一个 2 通道、10 采样的 CHOP，描述 2D 空间中某些对象的 xy 位置，我们需要计算它们两两之间的欧氏距离。结果将是 10 个通道，每个通道 10 个采样。这里可以利用 NumPy 的 <a href="http://docs.scipy.org/doc/numpy/user/basics.broadcasting.html" rel="noreferrer noopener" target="_blank">broadcasting</a> 功能来简化必要的代码。</p><div dir="ltr"><pre><code># 导入 NumPy 库
+import numpy as np
+
+def onCook(scriptOp):
+	scriptOp.clear()
+	inputs = scriptOp.inputs[0]
+	
+	# 以 NumPy 数组获取输入 CHOP
+	inPos = inputs.numpyArray()
+	
+	# 这会得到一个 numChannels x numSamples 的数组
+	# 我们需要把该数组转置为 numSamples x numChannels 的数组
+	# 以便把各点位置作为成对的值获取
+	# 这相当于 Shuffle CHOP 的 "Swap Channels and Samples"
+	inPos = inPos.T
+	
+	# 使用广播机制，我们可以去掉 for 循环
+	# 并计算所有点之间的距离
+	# https://numpy.org/doc/stable/user/basics.broadcasting.html
+	npDist = np.sqrt(((inPos[:,:,None] - inPos[:,:,None].T) ** 2).sum(1))
+
+	# 把 NumPy 数组复制到 CHOP 中
+	scriptOp.copyNumpyArray(npDist)
+	return
+</code></pre></div><p>更多示例请查看 Script CHOP Snippets。</p><h3 id="NumPy_and_TOPs">NumPy 与 TOP</h3><p>TOP 也有类似的功能。</p><p>TOP 可以简单地读取为 NumPy 数组：</p><div dir="ltr"><pre><code># 以 Python NumPy 数组返回 TOP 图像。
+# 由于 NumPy 数组以行为先索引，像素按 [h, w] 寻址。
+# 目前数据始终为 32 位浮点格式。
+npArray = op('someTop').numpyArray()
+</code></pre></div><p>与 TOPTo CHOP 类似，<code dir="ltr"><span>.</span><span>numpyArray</span><span>()</span></code> 方法有一个参数，可在下一次调用时下载数据，从而避免阻塞 GPU。</p><div dir="ltr"><pre><code># 延迟地以 Python NumPy 数组返回 TOP 图像。
+# 由于 NumPy 数组以行为先索引，像素按 [h, w] 寻址。
+# 目前数据始终为 32 位浮点格式。
+npArray = op('someTop').numpyArray(delayed=True)
+</code></pre></div><p>使用 <a href="Script_TOP.html">Script TOPs</a> 时，用 <code dir="ltr"><span>.</span><span>copyNumpyArray</span><span>()</span></code> 方法把 NumPy 数组写回为纹理。</p><div dir="ltr"><pre><code># 把 script TOP 的输入纹理下载到 NumPy 数组中
+npArray = scriptOp.inputs[0].numpyArray()
+
+# 把 NumPy 数组复制到纹理中
+scriptOp.copyNumpyArray(npArray)
+</code></pre></div><p>在像素格式之间转换时要小心。从输入读取纹理总是会得到 32 位浮点。如果要输出为 8 位定点，需要先把数值乘以 255，再把数组数据类型改为 unit8</p><div dir="ltr"><pre><code># 导入 NumPy 库
+import numpy as np
+def onCook(scriptOp):
+	# 把输入 top 复制到 NumPy 数组中
+	npArray = scriptOp.inputs[0].numpyArray()
+
+	# 8bit 的取值范围是 0 到 255，因此把数组乘以 255
+	npArray *= 255
+
+	# 把数据类型改为 uint8
+	npArray = npArray.astype(np.uint8)
+
+	# 把 NumPy 数组复制到 TOP 纹理中
+	scriptOp.copyNumpyArray(npArray)
+	return
+</code></pre></div><p>更多示例请查看 Script TOP Snippets。</p><h3 id="NumPy_and_the_Matrix_Class">NumPy 与 Matrix 类</h3><p><a href="Matrix_Class.html">Matrix Class</a> 还允许把 TouchDesigner 矩阵复制到 NumPy 数组中，从而可以使用 NumPy 中各种 TouchDesigner 本身没有的矩阵运算。</p><div dir="ltr"><pre><code>import numpy as np
+# 创建单位矩阵
+m = tdu.Matrix()
+
+# 把矩阵转换为 NumPy 数组
+npArray = m.numpyArray()
+
+# 仅输出矩阵的对角线值
+# 将输出 NumPy 数组：array([1., 1., 1., 1.], dtype=float32)
+debug(npArray.diagonal())
+</code></pre></div><h3 id="Converting_NumPy_arrays_to_a_bytearray">将 NumPy 数组转换为 bytearray</h3><p>把 NumPy 数组转换为 Python bytearray 可能很有用。NumPy 通过 <code dir="ltr"><span>.</span><span>tobytes</span><span>()</span></code> 方法支持这一点。<sup id="cite_ref-4"><a href="#cite_note-4">[4]</a></sup></p><div dir="ltr"><pre><code># 把 CHOP 通道加载到 NumPy 数组中
+npArray = op('someCHOP')['chan1'].numpyArray()
+# 把 NumPy 数组转换为 bytearray
+b = npArray.tobytes()
+</code></pre></div><div><ol><li id="cite_note-1"><span><a href="#cite_ref-1">↑</a></span> <span>Wikipedia contributors, 'NumPy', Wikipedia, The Free Encyclopedia, 13 February 2022, 23:28 UTC, &lt;<a href="https://en.wikipedia.org/w/index.php?title=NumPy&amp;oldid=1071707133" rel="noreferrer noopener" target="_blank">https://en.wikipedia.org/w/index.php?title=NumPy&amp;oldid=1071707133</a>&gt; [accessed 22 March 2022]</span> </li><li id="cite_note-2"><span><a href="#cite_ref-2">↑</a></span> <span>Wikipedia contributors, 'NumPy', Wikipedia, The Free Encyclopedia, 13 February 2022, 23:28 UTC, &lt;<a href="https://en.wikipedia.org/w/index.php?title=NumPy&amp;oldid=1071707133#Features" rel="noreferrer noopener" target="_blank">https://en.wikipedia.org/w/index.php?title=NumPy&amp;oldid=1071707133#Features</a>&gt; [accessed 22 March 2022]</span> </li><li id="cite_note-3"><span><a href="#cite_ref-3">↑</a></span> <span><a href="ScriptCHOP_Class.html#Methods">Script CHOP Class</a></span> </li><li id="cite_note-4"><span><a href="#cite_ref-4">↑</a></span> <span><a href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.tobytes.html" rel="noreferrer noopener" target="_blank">https://numpy.org/doc/stable/reference/generated/numpy.ndarray.tobytes.html</a></span> </li></ol></div>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/NumPy" rel="noreferrer noopener">docs.derivative.ca/NumPy</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phong MAT 着色器资源占用 - TouchDesigner 文档</title>
+<meta name="description" content="Phong MAT 着色器资源占用 —— TouchDesigner 官方文档中文译本">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Phong MAT 着色器资源占用</h1>
+<h2 id="Overview">概述</h2><p>每块 GPU 在卡上都有有限的资源可供执行着色器时使用。这些资源限制会影响同一时间能使用多少灯光、骨骼及其他功能。该限制是按物体计算的。只要影响单个物体的灯光数量有限（用 Light Mask 参数控制），你就可以在场景中使用上百盏灯。 </p><h2 id="Varyings">Varying</h2><p>varying 是从顶点着色器传给像素着色器的值。该值按顶点计算，然后在图元上插值（用构成该图元的其他顶点的 varying 来插值）。每个顶点上设置的 uv[3] 属性之所以能正确地为图元做纹理映射，靠的就是这个机制。 </p><p>如今大多数 GPU 有 32 到 40 个可用的 varying。想知道你的显卡有多少，可以查看 $SYS_GFX_GLSL_MAX_VARYINGS 变量，它是一个内置的 <a href="Variables.html">Variable</a>。 </p><p>通过 varying 传递的内容包括位置（灯光位置）、矢量（聚光灯方向、法线）、纹理坐标、投影映射和阴影贴图信息等。 </p><p>取决于着色器中矢量运算的写法，其中一些值可能通过 Uniforms 传给像素着色器，而不是在顶点着色器中计算后再经 varying 传给像素着色器。特别是是否使用法线贴图，会极大改变着色器里的矢量运算，从而导致 varying 用量大不相同。 </p><h3 id="Varying_Usage_when_not_Normal_Mapping">不使用法线贴图时的 varying 用量</h3><p>- 对每盏灯（任意类型），从灯光位置到顶点位置的矢量占用 3 个 varying。<br/> - 对每盏灯（任意类型），如果该灯有衰减，则占用 1 个 varying。<br/> - 对每盏灯（任意类型），如果该灯有阴影贴图（且 MAT 上的阴影强度不为 0），则占用 4 个 varying。<br/> - 对每盏灯（任意类型），如果该灯有投影映射，则占用 3 个 varying。<br/> - 如果开启了镜面反射（镜面颜色不为 (0,0,0)），或使用了 varying alpha，则从摄像机位置到顶点位置的矢量占用 3 个 varying。<br/> - 如果使用了边缘光、漫反射、镜面反射或 varying alpha，则法线矢量占用 3 个 varying。<br/> - 如果使用环境贴图，环境纹理坐标占用 2 个 varying。<br/> - 每套实际用到的纹理坐标占用 2 或 3 个 varying（采样 3D 纹理时为 3 个，否则为 2 个）。如果你用了多种贴图（例如 Color Map 和 Specular Map），但它们使用同一套纹理坐标（例如都用纹理集 0，即 uv[0-2]），那么 varying 用量就只有 2-3 个。它们在像素着色器中采样纹理时共用同样的 varying。<br/></p><h3 id="Varying_Usage_when_Normal_Mapping">使用法线贴图时的 varying 用量</h3><p>- 对每盏灯（任意类型），从灯光位置到顶点位置的矢量占用 3 个 varying。<br/> - 对每盏灯（任意类型），如果该灯有衰减，则占用 1 个 varying。<br/> - 对每盏聚光灯，聚光方向占用 3 个 varying。<br/> - 对每盏灯（任意类型），如果该灯有阴影贴图（且 MAT 上的阴影强度不为 0），则占用 4 个 varying。<br/> - 对每盏灯（任意类型），如果该灯有投影映射，则占用 3 个 varying。<br/> - 如果开启了镜面反射（镜面颜色不为 (0,0,0)），或使用了 varying alpha，则从摄像机位置到顶点位置的矢量占用 3 个 varying。<br/> - 如果使用了边缘光，则法线矢量占用 3 个 varying。其他需要法线的功能，使用的是从法线贴图得到的法线。<br/> - 如果使用环境贴图，环境纹理坐标占用 2 个 varying。<br/> - 每套实际用到的纹理坐标占用 2 或 3 个 varying（采样 3D 纹理时为 3 个，否则为 2 个）。如果你用了多种贴图（例如 Color Map 和 Specular Map），但它们使用同一套纹理坐标（例如都用纹理集 0，即 uv[0-2]），那么 varying 用量就只有 2-3 个。它们在像素着色器中采样纹理时共用同样的 varying。<br/></p><h3 id="If_you_need_more_lights_per_object">如果每个物体需要更多灯光</h3><p>如果每个物体需要的灯光数量超过 GPU 单次渲染所能处理的数量，你可以用 <a href="Render_Pass_TOP.html">Render Pass TOP</a> 以同一摄像机、不同的灯光组合重新渲染同一批几何，然后简单地用 <a href="Add_TOP.html">Add TOP</a> 把第一次和第二次渲染的结果相加。 </p><h2 id="Uniforms">Uniform</h2><p>uniform 是在着色器整个执行过程中保持恒定的值。uniform 的例子包括漫反射、镜面反射和自发光颜色。其他 uniform 包括骨骼矩阵（做变形时）以及灯光颜色之类的灯光信息。 </p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.derivative.ca/Phong_MAT_Shader_Resource_Usage" rel="noreferrer noopener">docs.derivative.ca/Phong_MAT_Shader_Resource_Usage</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
