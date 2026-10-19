@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>将 UndoManager 与 ValueTree 配合使用 - JUCE 教程</title>
+<meta name="description" content="将 UndoManager 与 ValueTree 配合使用：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>将 UndoManager 与 ValueTree 配合使用</h1>
+<p>在你的应用程序中实现撤销/重做操作。使用 <a href="https://docs.juce.com/master/classUndoableAction.html" rel="noreferrer noopener">UndoableAction</a> 对象轻松恢复之前的中间状态，并了解如何将可撤销操作分组为事务。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a>、<a href="https://docs.juce.com/master/classUndoableAction.html" rel="noreferrer noopener">UndoableAction</a>、<a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a>、<a href="https://docs.juce.com/master/classTreeView.html" rel="noreferrer noopener">TreeView</a>、<a href="https://docs.juce.com/master/classTreeViewItem.html" rel="noreferrer noopener">TreeViewItem</a></p>
+<h2>入门</h2>
+<p>本教程假定你已基本了解 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 对象，相关内容在<a href="value-tree.html" rel="noreferrer noopener">教程：ValueTree 类</a>中有所说明。如果你还没有读过，应该先阅读那篇教程。</p>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/UndoManagerValueTreeTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/UndoManagerValueTreeTutorial.zip" rel="noreferrer noopener">ZIP</a> 。解压该项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果你在这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目展示了 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 类与 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 对象的结合使用，说明恢复过去的历史记录有多么容易。它将 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 数据以树结构呈现，使用的是 <a href="https://docs.juce.com/master/classTreeView.html" rel="noreferrer noopener">TreeView</a> 和 <a href="https://docs.juce.com/master/classTreeViewItem.html" rel="noreferrer noopener">TreeViewItem</a> 类。如果你构建并运行该项目，应该会看到类似这样的内容：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_undo_manager_value_tree_screenshot1-1.png" alt="演示项目应用程序窗口">
+<figcaption>演示项目应用程序窗口</figcaption>
+</figure>
+<p>目前，我们可以拖放 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 节点并更改数据结构的层级。我们也可以展开和折叠子节点，但无法撤销和重做所做的更改。让我们尝试使用 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 类来实现该功能。</p>
+<blockquote>
+      <p>这里展示的代码与 JUCE Demo 中的 <strong>ValueTreesDemo</strong> 大致相似。</p>
+    </blockquote>
+<h2>添加撤销/重做按钮</h2>
+<p>让我们首先向用户界面添加两个 <a href="https://docs.juce.com/master/classTextButton.html" rel="noreferrer noopener">TextButton</a> 对象，以实现撤销和重做功能。你应该熟悉 lambda 函数，如果你在这些步骤上需要帮助，可以参考<a href="listeners-and-broadcasters.html" rel="noreferrer noopener">教程：监听器与广播器</a>。</p>
+<p>在 <code>MainContentComponent</code> 类中，为每个按钮声明 <a href="https://docs.juce.com/master/classTextButton.html" rel="noreferrer noopener">TextButton</a> 变量 [1]：</p>
+<pre><code>juce::TreeView tree;
+juce::TextButton undoButton, redoButton; // [1]
+std::unique_ptr&lt;ValueTreeItem&gt; rootItem;</code></pre>
+<p>在构造函数的成员初始化列表中，为 <a href="https://docs.juce.com/master/classTextButton.html" rel="noreferrer noopener">TextButton</a> 对象设置文本 [2]：</p>
+<pre><code>MainContentComponent()
+    : undoButton ("Undo"),
+      redoButton ("Redo") // [2]
+{</code></pre>
+<p>最后，让按钮可见 [3]，并准备要分配给 <a href="https://docs.juce.com/master/classButton.html#a30b76ab312dc7f66e67596ae20540ec2" rel="noreferrer noopener">Button::onClick</a> 辅助对象的 lambda 函数 [4]：</p>
+<pre><code>//...
+addAndMakeVisible (undoButton);
+addAndMakeVisible (redoButton); // [3]
+undoButton.onClick = [this] {};
+redoButton.onClick = [this] {}; // [4]
+setSize (600, 400);</code></pre>
+<p>然后我们可以在 <code>resized()</code> 方法中设置按钮的边界：</p>
+<pre><code>void resized() override
+{
+    // This is called when the MainContentComponent is resized.
+    // If you add any child components, this is where you should
+    // update their positions.
+    auto r = getLocalBounds();
+    auto buttons = r.removeFromBottom (20);
+    undoButton.setBounds (buttons.removeFromLeft (100));
+    redoButton.setBounds (buttons.removeFromLeft (100));
+    tree.setBounds (r);
+}</code></pre>
+<h2>将 UndoManager 实例作为参数传递</h2>
+<p>由于 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 类会自动处理撤销/重做行为，我们只需将 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 实例作为参数传递，以注册 <a href="https://docs.juce.com/master/classUndoableAction.html" rel="noreferrer noopener">UndoableAction</a> 对象。为此，首先声明一个 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 类的实例 [1]：</p>
+<pre><code>juce::UndoManager undoManager; // [1]</code></pre>
+<p>然后分配按钮被点击时要调用的函数，以处理相应的撤销/重做行为。在 lambda 函数中，分别调用 <a href="https://docs.juce.com/master/classUndoManager.html#a39f45c284e8d0df1a0d378e676246931" rel="noreferrer noopener"><code>UndoManager::undo()</code></a> 和 <a href="https://docs.juce.com/master/classUndoManager.html#aaea507a3b9eaea3360c0e393edf69ccb" rel="noreferrer noopener"><code>UndoManager::redo()</code></a>，如下所示：</p>
+<pre><code>addAndMakeVisible (undoButton);
+addAndMakeVisible (redoButton); // [3]
+undoButton.onClick = [this] { undoManager.undo(); };
+redoButton.onClick = [this] { undoManager.redo(); }; // [4]
+setSize (600, 400);</code></pre>
+<p>在 <code>ValueTreeItem</code> 类中，我们也保留对 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 实例的引用 [2]：</p>
+<pre><code>private:
+    juce::ValueTree tree;
+    juce::UndoManager&amp; undoManager; // [2]</code></pre>
+<p>在类构造函数的成员初始化列表中，赋值 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 引用 [3]：</p>
+<pre><code>ValueTreeItem (const juce::ValueTree&amp; v, juce::UndoManager&amp; um)
+    : tree (v), undoManager (um) // [3]
+{</code></pre>
+<p>每当递归创建 ValueTreeItem 的子项时，我们都需要传递 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 实例 [4]：</p>
+<pre><code>void refreshSubItems()
+{
+    clearSubItems();
+    for (auto i = 0; i &lt; tree.getNumChildren(); ++i)
+        addSubItem (new ValueTreeItem (tree.getChild (i), undoManager)); // [4]
+}</code></pre>
+<p>现在，我们可以通过传递 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 实例 [5]，在 <code>MainContentComponent</code> 类中实例化根 ValueTreeItem：</p>
+<pre><code>tree.setDefaultOpenness (true);
+tree.setMultiSelectEnabled (true);
+rootItem.reset (new ValueTreeItem (createRootValueTree(), undoManager)); // [5]
+tree.setRootItem (rootItem.get());</code></pre>
+<p>现在有三个不同的方法需要更新，以注册我们在 <a href="https://docs.juce.com/master/classTreeView.html" rel="noreferrer noopener">TreeView</a> 上执行的更改。</p>
+<pre><code>void itemDropped (const juce::DragAndDropTarget::SourceDetails&amp;, int insertIndex) override
+{
+    juce::OwnedArray&lt;juce::ValueTree&gt; selectedTrees;
+    getSelectedTreeViewItems (*getOwnerView(), selectedTrees);
+    moveItems (*getOwnerView(), selectedTrees, tree, insertIndex, undoManager); // [1]
+}
+static void moveItems (juce::TreeView&amp; treeView, const juce::OwnedArray&lt;juce::ValueTree&gt;&amp; items, juce::ValueTree newParent, int insertIndex, juce::UndoManager&amp; undoManager)
+{</code></pre>
+<pre><code>v.getParent().removeChild (v, &amp;undoManager); // [2]
+newParent.addChild (v, insertIndex, &amp;undoManager); // [3]</code></pre>
+<ul>
+<li>[1]：每当条目被拖放时，将 undoManager 传递给处理移动的静态函数。
+</li>
+<li>[2]：我们需要从先前的父节点中移除子节点，并将该操作注册到 undoManager。
+</li>
+<li>[3]：然后我们可以将子节点添加到新的父节点，并将新操作注册到 undoManager。
+</li>
+</ul>
+<p>通过将 <code>undoManager</code> 引用传递给 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 函数 <code>addChild()</code> 和 <code>removeChild()</code>，我们让 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 替我们执行 <a href="https://docs.juce.com/master/classUndoableAction.html" rel="noreferrer noopener">UndoableAction</a>，方式是在底层调用 <code>perform()</code> 函数。我们将在未来的教程中介绍 <a href="https://docs.juce.com/master/classUndoableAction.html" rel="noreferrer noopener">UndoableAction</a> 对象。</p>
+<blockquote>
+      <p>练习：分别在 <a href="https://docs.juce.com/master/classLabel.html" rel="noreferrer noopener">Label</a> 组件中显示已存储的撤销和重做操作的描述，位置在各自的 <a href="https://docs.juce.com/master/classTextButton.html" rel="noreferrer noopener">TextButton</a> 对象旁边，使用 <code>getUndoDescription()</code> 和 <code>getRedoDescription()</code> 函数。</p>
+    </blockquote>
+<h2>将事件作为事务处理</h2>
+<p><a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 的另一个有用特性是能够将多个操作组合成单个撤销/重做事务。通过在 <code>undoManager</code> 实例上调用 <code>beginNewTransaction()</code> 函数，所有对 <code>perform()</code> 函数的调用都会由 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 组合在一起，直到下一次 <code>beginNewTransaction()</code> 调用。</p>
+<p>作为一个例子，让我们创建一个 <a href="https://docs.juce.com/master/classTimer.html" rel="noreferrer noopener">Timer</a>，定期调用 <code>beginNewTransaction()</code> 函数，并将操作组作为事务存储起来。在 <code>MainContentComponent</code> 中，继承 <a href="https://docs.juce.com/master/classTimer.html" rel="noreferrer noopener">Timer</a> 类以接收定时器回调 [1]：</p>
+<pre><code>class MainContentComponent : public juce::Component,
+                             public juce::DragAndDropContainer,
+                             private juce::Timer // [1]
+{
+public:</code></pre>
+<p>在相应的头文件中声明回调函数 [2]：</p>
+<pre><code>void timerCallback() override // [2]
+{
+    undoManager.beginNewTransaction(); // [4]
+}</code></pre>
+<p>在构造函数中按所需的间隔（以毫秒为单位）启动定时器，该间隔用于分隔各次事务调用 [3]：</p>
+<pre><code>startTimer (500); // [3]
+}</code></pre>
+<p>最后，我们可以在定时器回调 [4] 中调用 <code>beginNewTransaction()</code> 函数，作用在 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 上：</p>
+<pre><code>void timerCallback() override // [2]
+{
+    undoManager.beginNewTransaction(); // [4]
+}</code></pre>
+<blockquote>
+      <p>练习：不使用定时器来分隔操作组，而是每五次撤销/重做操作实现一次事务。</p>
+    </blockquote>
+<blockquote>
+      <p>这个修改版本的源代码可以在演示项目的 <code>UndoManagerTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>完成本教程后，你已经学会了如何恢复应用程序的先前状态。具体来说，我们：</p>
+<ul>
+<li>将 <a href="https://docs.juce.com/master/classUndoableAction.html" rel="noreferrer noopener">UndoableAction</a> 对象存储到 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 对象中。
+</li>
+<li>将 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 实例作为参数传递给 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 访问函数。
+</li>
+<li>将撤销/重做操作组作为事务处理。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="value-tree.html" rel="noreferrer noopener">教程：ValueTree 类</a>
+</li>
+<li><a href="audio-processor-value-tree-state.html" rel="noreferrer noopener">教程：保存与加载插件状态</a>
+</li>
+<li><a href="listeners-and-broadcasters.html" rel="noreferrer noopener">教程：监听器与广播器</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_undo_manager_value_tree/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_undo_manager_value_tree/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSP 入门 - JUCE 教程</title>
+<meta name="description" content="DSP 入门：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>DSP 入门</h1>
+<p>探索数字信号处理与音频缓冲区操作的领域。了解 JUCE DSP 模块的基础知识，以及如何在自己的音频应用和插件中运用它的类。</p>
+<p><strong>难度：</strong>高级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>插件格式：</strong>VST、AU、Standalone<br><strong>类：</strong><a href="https://docs.juce.com/master/classdsp_1_1ProcessorChain.html" rel="noreferrer noopener">dsp::ProcessorChain</a>, <a href="https://docs.juce.com/master/classdsp_1_1Gain.html" rel="noreferrer noopener">dsp::Gain</a>, <a href="https://docs.juce.com/master/classdsp_1_1Oscillator.html" rel="noreferrer noopener">dsp::Oscillator</a>, <a href="https://docs.juce.com/master/classdsp_1_1LadderFilter.html" rel="noreferrer noopener">dsp::LadderFilter</a>, <a href="https://docs.juce.com/master/classdsp_1_1Reverb.html" rel="noreferrer noopener">dsp::Reverb</a></p>
+<blockquote>
+      <p>本项目需要支持 C++14 特性的编译器。较新版本的 Xcode 和 Visual Studio 均包含这一支持。</p>
+    </blockquote>
+<h2>准备工作</h2>
+<p>在阅读本教程之前，请确保你了解合成的基础知识，并已接触过 MPE。如果你想进一步了解 MPE，请查看这篇教程<a href="mpe-introduction.html" rel="noreferrer noopener">教程：构建多复音合成器</a>。</p>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/DSPIntroductionTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/DSPIntroductionTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>该项目按插件设计，但你可以通过在 IDE 中选择合适的部署目标，把它作为独立应用运行。在 Xcode 中，可以在主窗口左上角更改目标，如下面的截图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_standalone_screenshot1.png" alt="在 Xcode 中更改部署目标">
+<figcaption>在 Xcode 中更改部署目标</figcaption>
+</figure>
+<p>演示项目在插件的上半部分提供了一个屏幕 MIDI 键盘，在下半部分通过示波器提供了信号的可视化表示。目前按下琴键时，除非我们提供振荡器的实现，否则插件不会输出任何声音。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_screenshot1.png" alt="演示项目插件窗口">
+<figcaption>演示项目插件窗口</figcaption>
+</figure>
+<blockquote>
+      <p>如果你有 MIDI 控制器，也可以在本教程的整个过程中选择连接它，而不是使用屏幕键盘。</p>
+    </blockquote>
+<h2>什么是 DSP？</h2>
+<p>数字信号处理涉及对数字数据进行操作，以对信号执行某些运算。在数字音频处理中，我们可以在不同的域中处理音频数据：</p>
+<ul>
+<li>时域：一维信号，其分析是相对于时间进行的。
+</li>
+<li>空间域：多维信号，其分析是相对于某个空间进行的。
+</li>
+<li>频域：一个特定的域，用频率来表示时间或空间。
+</li>
+</ul>
+<h3>快速傅里叶变换（FFT）</h3>
+<p>时域或空间域的信号可以通过使用称为傅里叶变换的变换公式转换为频域。这种变换函数的一种常见高效实现是快速傅里叶变换（FFT），你可能会在 JUCE DSP 模块中遇到它。</p>
+<p>FFT 使我们能够把音频信号分解为各个频率，并表示其中每个频率的幅度和相位信息。使用它的逆函数，我们可以把信号还原到原来的域，因此它在处理单个频率成分（例如滤波）时非常有用。</p>
+<h3>有限/无限脉冲响应（FIR/IIR）</h3>
+<p>dsp 中有两种主要的数字滤波器设计：</p>
+<ul>
+<li>有限脉冲响应滤波器（FIR）：一种稳定的设计，它把每个输出采样作为其先前输入采样的函数来处理。FIR 滤波器可以是线性相位的，通常更易于设计，但效率低于 IIR 滤波器。
+</li>
+<li>无限脉冲响应滤波器（IIR）：一种可能不稳定的设计，它把每个输出采样作为其先前输入和输出采样的函数来处理。IIR 滤波器使用先前的输出采样，从而产生内部反馈，设计起来更难，但可能比 FIR 滤波器更高效。
+</li>
+</ul>
+<p>在这些滤波器设计中，有许多不同的传递函数，它们决定了滤波器的锐度以及在过渡频率处出现的纹波量。其中许多设计受模拟滤波器启发，不同的传递函数试图模仿不同的模拟对应物。</p>
+<p>你可以在 JUCE DSP 模块中找到的一些传递函数包括：</p>
+<ul>
+<li>FIR 传递函数：Window、Kaiser、Transition、Least Squares、Half-Band Equiripple。
+</li>
+<li>IIR 传递函数：Butterworth、Chebyshev type 1、Chebyshev type 2、Elliptic、Half-Band Polyphase Allpass。
+</li>
+</ul>
+<p>如果你对这些滤波器设计感兴趣，可以在网上找到大量更深入探讨这一主题的资源，但就本教程的目的而言，我们已经涵盖了入门所需的基础之外的内容。</p>
+<h2>信号处理的生命周期</h2>
+<p>与 <a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a> 及其 <code>prepareToPlay()</code> 和 <code>getNextAudioBlock()</code> 函数的音频应用生命周期类似，我们必须实现派生自 <a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a> 的 <code>AudioEngine</code> 类的 <code>prepare()</code> 和 <code>renderNextBlock()</code> 函数。</p>
+<p>每个 dsp 处理器还必须实现以下方法，以确保正常工作：</p>
+<ul>
+<li><code>prepare()</code>：在处理开始前调用，用于设置采样率和块大小。
+</li>
+<li><code>process()</code>：处理处理上下文中提供的输入和输出缓冲区。
+</li>
+<li><code>reset()</code>：重置处理器的内部状态，必要时带平滑处理。
+</li>
+</ul>
+<h3>处理器链</h3>
+<p>DSP 模块中一个方便的模板类是 <code>juce::dsp::ProcessorChain</code>，它允许我们通过依次自动调用 <code>prepare()</code>、<code>process()</code> 和 <code>reset()</code> 方法，把不同的处理串联起来。</p>
+<p>我们像这样把处理器声明为模板类型：</p>
+<pre><code>juce::dsp::ProcessorChain&lt;juce::dsp::Oscillator&lt;Type&gt;, juce::dsp::Gain&lt;Type&gt;&gt; processorChain;</code></pre>
+<p>然后我们就可以直接在 <code>processorChain</code> 实例上应用所有处理。</p>
+<p>掌握了 dsp 模块工作原理的一些基础知识，让我们开始处理一些信号吧！</p>
+<h2>创建振荡器</h2>
+<p>在 <code>CustomOscillator</code> 类中，按自上而下的顺序定义一个包含 juce::dsp::Oscillator 和 juce::dsp::Gain 处理器的 juce::dsp::ProcessorChain [1]。我们希望增益处理影响振荡器的输出，以便能够削减输出的电平。同时定义一个带有处理器索引的枚举 [2]，以便之后能通过索引清晰地引用相应的处理。</p>
+<pre><code>enum {
+    oscIndex,
+    gainIndex // [2]
+};
+juce::dsp::ProcessorChain&lt;juce::dsp::Oscillator&lt;Type&gt;, juce::dsp::Gain&lt;Type&gt;&gt; processorChain; // [1]
+};</code></pre>
+<p>在 <code>prepare()</code> 函数中，依次调用处理器链中每个处理器的 prepare 函数 [3]。</p>
+<pre><code>void prepare (const juce::dsp::ProcessSpec&amp; spec)
+{
+    processorChain.prepare (spec); // [3]
+}</code></pre>
+<p>在 <code>reset()</code> 函数中，依次调用处理器链中每个处理器的 reset 函数 [4]。</p>
+<pre><code>void reset() noexcept
+{
+    processorChain.reset(); // [4]
+}</code></pre>
+<p>现在我们要定义振荡器用来生成音频信号的周期函数。作为一个简单的例子，我们从正弦波开始。</p>
+<p>在构造函数中，通过提供处理的索引并使用 <code>processorChain.get&lt;&gt;()</code> 方法获取 Oscillator 的引用 [5]。让我们用 lambda 函数和 <code>std::sin</code> 函数来初始化振荡器，为它提供正弦波 [6]。</p>
+<p>查找表会根据所提供的离散点数量来近似计算开销较大的算术运算。在我们的例子中，使用 128 个点。</p>
+<pre><code>public:
+//==============================================================================
+CustomOscillator()
+{
+    auto&amp; osc = processorChain.template get&lt;oscIndex&gt;(); // [5]
+    osc.initialise ([] (Type x) { return std::sin (x); }, 128); // [6]
+}</code></pre>
+<p>要设置振荡器的频率，我们需要像上一步那样再次获取它的引用，并在其上调用 <code>setFrequency()</code> 方法 [7]。</p>
+<pre><code>void setFrequency (Type newValue, bool force = false)
+{
+    auto&amp; osc = processorChain.template get&lt;oscIndex&gt;();
+    osc.setFrequency (newValue, force); // [7]
+}</code></pre>
+<p>对增益处理器及其 <code>setGainLinear()</code> 方法也是同样的过程 [8]。</p>
+<pre><code>void setLevel (Type newValue)
+{
+    auto&amp; gain = processorChain.template get&lt;gainIndex&gt;();
+    gain.setGainLinear (newValue); // [8]
+}</code></pre>
+<p>在 <code>process()</code> 函数中，我们可以依次调用处理器链中每个处理器的 process 函数 [9]。</p>
+<pre><code>template &lt;typename ProcessContext&gt;
+void process (const ProcessContext&amp; context) noexcept
+{
+    processorChain.process (context); // [9]
+}</code></pre>
+<p>如果在 <code>CustomOscillator</code> 类中实现上述更改后运行这段代码，我们应该能听到一个使用 JUCE DSP 模块的简单正弦波合成器。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_screenshot2.png" alt="使用 JUCE DSP 模块的正弦波合成器">
+<figcaption>使用 JUCE DSP 模块的正弦波合成器</figcaption>
+</figure>
+<h2>更改振荡器波形</h2>
+<p>让我们把振荡器波形改为锯齿波，让合成器更有趣一些。</p>
+<p>由于我们无法使用 <code>std</code> 版本的锯齿波函数，需要使用 <code>jmap</code> 函数手动进行值映射。为此，把 <code>-Pi .. Pi</code> 之间的范围映射到 <code>-1 .. 1</code>，从而提供从 -1 到 1 的线性斜坡。由于锯齿波只有 2 个断点，我们只需向查找表提供 2 个离散点。</p>
+<pre><code>public:
+//==============================================================================
+CustomOscillator()
+{
+    auto&amp; osc = processorChain.template get&lt;oscIndex&gt;();
+    osc.initialise ([] (Type x) {
+        return juce::jmap (x,
+            Type (-juce::MathConstants&lt;double&gt;::pi),
+            Type (juce::MathConstants&lt;double&gt;::pi),
+            Type (-1),
+            Type (1));
+    },
+        2);
+}</code></pre>
+<p>运行程序应该会给我们一个不同的、更具侵略性的声音。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_screenshot3.png" alt="使用 JUCE DSP 模块的锯齿波合成器">
+<figcaption>使用 JUCE DSP 模块的锯齿波合成器</figcaption>
+</figure>
+<blockquote>
+      <p>练习：用三角波或方波波形初始化振荡器，听听它的声音。你能实现一个白噪声振荡器吗？</p>
+    </blockquote>
+<h2>添加第二个振荡器</h2>
+<p>大多数模拟合成器都有多个振荡器，而获得更厚实声音的一个常见技巧是添加一个频率略微失谐的第二个振荡器。所以我们通过修改 <code>Voice</code> 类来试试。</p>
+<p>向处理器链添加第二个 CustomOscillator 模板类型 [1]，并在枚举中添加其对应的索引 [2]。</p>
+<pre><code>private:
+//==============================================================================
+juce::HeapBlock&lt;char&gt; heapBlock;
+juce::dsp::AudioBlock&lt;float&gt; tempBlock;
+enum {
+    osc1Index,
+    osc2Index, // [2]
+    masterGainIndex
+};
+juce::dsp::ProcessorChain&lt;CustomOscillator&lt;float&gt;, CustomOscillator&lt;float&gt;, juce::dsp::Gain&lt;float&gt;&gt; processorChain; // [1]
+//...
+};</code></pre>
+<p>在 <code>noteStarted()</code> 函数中，让我们把第二个振荡器的频率设置为当前演奏的音符，并将其音高提高 1% [3]。我们可以让力度与第一个振荡器保持同一水平 [4]。</p>
+<pre><code>void noteStarted() override
+{
+    auto velocity = getCurrentlyPlayingNote().noteOnVelocity.asUnsignedFloat();
+    auto freqHz = (float) getCurrentlyPlayingNote().getFrequencyInHertz();
+    processorChain.get&lt;osc1Index&gt;().setFrequency (freqHz, true);
+    processorChain.get&lt;osc1Index&gt;().setLevel (velocity);
+    processorChain.get&lt;osc2Index&gt;().setFrequency (freqHz * 1.01f, true); // [3]
+    processorChain.get&lt;osc2Index&gt;().setLevel (velocity); // [4]
+}</code></pre>
+<p>在 <code>notePitchbendChanged()</code> 函数中，让我们确保应用弯音时失谐的频率保持不变 [5]。</p>
+<pre><code>void notePitchbendChanged() override
+{
+    auto freqHz = (float) getCurrentlyPlayingNote().getFrequencyInHertz();
+    processorChain.get&lt;osc1Index&gt;().setFrequency (freqHz);
+    processorChain.get&lt;osc2Index&gt;().setFrequency (freqHz * 1.01f); // [5]
+}</code></pre>
+<p>让我们运行程序，听听它听起来怎么样。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_screenshot4.png" alt="带第二个锯齿波振荡器的合成器">
+<figcaption>带第二个锯齿波振荡器的合成器</figcaption>
+</figure>
+<blockquote>
+      <p>练习：添加第三个振荡器，其频率降低 1%。声音会变得更厚实吗？</p>
+    </blockquote>
+<h2>添加梯形滤波器</h2>
+<p>让我们为合成器引入一种滤波器设计。梯形滤波器处理器受 Moog 合成器中一种著名模拟设计的启发，这也是我们将在项目中使用的。到目前为止，你应该已经熟悉向处理器链添加处理器的操作了。</p>
+<p>在 <code>Voice</code> 类中，把 <code>juce::dsp::LadderFilter</code> 添加到处理器链 [1]，并把其对应的索引添加到枚举 [2]。</p>
+<pre><code>juce::HeapBlock&lt;char&gt; heapBlock;
+juce::dsp::AudioBlock&lt;float&gt; tempBlock;
+enum {
+    osc1Index,
+    osc2Index,
+    filterIndex, // [2]
+    masterGainIndex
+};
+juce::dsp::ProcessorChain&lt;CustomOscillator&lt;float&gt;, CustomOscillator&lt;float&gt;, juce::dsp::LadderFilter&lt;float&gt;, juce::dsp::Gain&lt;float&gt;&gt; processorChain; // [1]</code></pre>
+<p>如前所述，获取滤波器处理器的引用，把其截止频率设为 1kHz [3]，谐振设为 0.7 [4]。</p>
+<pre><code>Voice()
+{
+    auto&amp; masterGain = processorChain.get&lt;masterGainIndex&gt;();
+    masterGain.setGainLinear (0.7f);
+    auto&amp; filter = processorChain.get&lt;filterIndex&gt;();
+    filter.setCutoffFrequencyHz (1000.0f); // [3]
+    filter.setResonance (0.7f); // [4]</code></pre>
+<p>现在信号的高频应被衰减，声音更加沉闷。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_screenshot5.png" alt="带梯形滤波器的合成器">
+<figcaption>带梯形滤波器的合成器</figcaption>
+</figure>
+<blockquote>
+      <p>练习：尝试不同的谐振值和截止频率，听听输出。目前滤波器是衰减为 12dB/octave 的低通滤波器。你能把它做成衰减为 24dB/octave 的高通滤波器吗？</p>
+    </blockquote>
+<h2>用 LFO 调制信号</h2>
+<p>现在我们越来越接近经典的模拟合成器声音了，还能有什么呢？当然是调制 LFO。</p>
+<p>低频振荡器作为控制信号，作用于我们想要调制的另一个参数。它的频率通常非常低，低于人耳听觉范围，因此我们不应该像前面的振荡器那样把该振荡器添加到处理器链中。这一次，把新的 Oscillator 声明为 <code>Voice</code> 类中的普通成员变量 [1]。</p>
+<pre><code>static constexpr size_t lfoUpdateRate = 100;
+size_t lfoUpdateCounter = lfoUpdateRate;
+juce::dsp::Oscillator&lt;float&gt; lfo; // [1]</code></pre>
+<p>为了对梯形滤波器的截止频率产生缓慢而平滑的调制变化，在 <code>Voice</code> 构造函数中把 LFO 初始化为正弦波 [2]，速率为 3Hz [3]。</p>
+<pre><code>lfo.initialise ([] (float x) { return std::sin (x); }, 128);
+lfo.setFrequency (3.0f);
+}</code></pre>
+<p>由于我们不需要像音频处理采样率那样频繁地更新 LFO，在 <code>prepare()</code> 函数中用采样率除以 LFO 更新率来设置 LFO 的采样率 [4]。在这种情况下，我们决定以低一百倍的频率更新 LFO。</p>
+<pre><code>void prepare (const juce::dsp::ProcessSpec&amp; spec)
+{
+    tempBlock = juce::dsp::AudioBlock&lt;float&gt; (heapBlock, spec.numChannels, spec.maximumBlockSize);
+    processorChain.prepare (spec);
+    lfo.prepare ({ spec.sampleRate / lfoUpdateRate, spec.maximumBlockSize, spec.numChannels }); // [4]
+}</code></pre>
+<p>在下面的 <code>for()</code> 循环中，我们每 100 个采样才修改一次截止频率。首先调用 <code>processSample()</code> 函数在 LFO 上处理单个采样 [5]，然后将其返回值映射到所需的调制范围 [6]。在这种情况下，我们希望把截止频率从 100Hz 调制到 2kHz。最后，把新的截止频率应用到梯形滤波器 [7]。</p>
+<pre><code>void renderNextBlock (juce::AudioBuffer&lt;float&gt;&amp; outputBuffer, int startSample, int numSamples) override
+{
+    auto output = tempBlock.getSubBlock (0, (size_t) numSamples);
+    output.clear();
+    for (size_t pos = 0; pos &lt; (size_t) numSamples;)
+    {
+        auto max = juce::jmin ((size_t) numSamples - pos, lfoUpdateCounter);
+        auto block = output.getSubBlock (pos, max);
+        juce::dsp::ProcessContextReplacing&lt;float&gt; context (block);
+        processorChain.process (context);
+        pos += max;
+        lfoUpdateCounter -= max;
+        if (lfoUpdateCounter == 0)
+        {
+            lfoUpdateCounter = lfoUpdateRate;
+            auto lfoOut = lfo.processSample (0.0f); // [5]
+            auto curoffFreqHz = juce::jmap (lfoOut, -1.0f, 1.0f, 100.0f, 2000.0f); // [6]
+            processorChain.get&lt;filterIndex&gt;().setCutoffFrequencyHz (curoffFreqHz); // [7]
+        }
+    }
+    juce::dsp::AudioBlock&lt;float&gt; (outputBuffer)
+        .getSubBlock ((size_t) startSample, (size_t) numSamples)
+        .add (tempBlock);
+}</code></pre>
+<p>你现在应该能听到类似 UFO 的警报声。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_screenshot6.png" alt="带 LFO 的合成器">
+<figcaption>带 LFO 的合成器</figcaption>
+</figure>
+<blockquote>
+      <p>练习：尝试调制不同的参数，例如滤波器谐振或振荡器频率。</p>
+    </blockquote>
+<h2>添加简单的混响</h2>
+<p>目前，如果我们演奏合成器，你可能已经注意到声音非常干，所以我们添加一个简单的混响来为信号增加深度。为了把混响应用到整个合成器声音，在 <code>AudioEngine</code> 类中创建一个效果链，并把 <code>juce::dsp::Reverb</code> 模板类型连同其索引 [2] 一起添加到效果链 [1]。</p>
+<pre><code>enum {
+    reverbIndex // [2]
+};
+juce::dsp::ProcessorChain&lt;juce::dsp::Reverb&gt; fxChain; // [1]
+};</code></pre>
+<p>在处理器链上调用 <code>prepare()</code> 函数 [3]。</p>
+<pre><code>void prepare (const juce::dsp::ProcessSpec&amp; spec) noexcept
+{
+    setCurrentPlaybackSampleRate (spec.sampleRate);
+    for (auto* v : voices)
+        dynamic_cast&lt;Voice*&gt; (v)-&gt;prepare (spec);
+    fxChain.prepare (spec); // [3]
+}</code></pre>
+<p>为了处理效果链，我们需要从 <a href="https://docs.juce.com/master/classAudioBuffer.html" rel="noreferrer noopener">AudioBuffer</a> 中获取正确的 AudioBlock，以便把上下文传递给处理链。首先，把 <a href="https://docs.juce.com/master/classAudioBuffer.html" rel="noreferrer noopener">AudioBuffer</a> 转换为可用的 AudioBlock [4]，并使用 <code>getSubBlock()</code> 方法引用要操作的采样中正确的部分 [5]。现在我们可以从这个 AudioBlock 获取处理上下文 [6]，并用它处理效果链 [7]。</p>
+<pre><code>void renderNextSubBlock (juce::AudioBuffer&lt;float&gt;&amp; outputAudio, int startSample, int numSamples) override
+{
+    MPESynthesiser::renderNextSubBlock (outputAudio, startSample, numSamples);
+    auto block = juce::dsp::AudioBlock&lt;float&gt; (outputAudio); // [4]
+    auto blockToUse = block.getSubBlock ((size_t) startSample, (size_t) numSamples); // [5]
+    auto contextToUse = juce::dsp::ProcessContextReplacing&lt;float&gt; (blockToUse); // [6]
+    fxChain.process (contextToUse); // [7]
+}</code></pre>
+<p>合成器现在应该在信号末尾添加了平滑的混响尾音。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_screenshot7.png" alt="带混响的合成器">
+<figcaption>带混响的合成器</figcaption>
+</figure>
+<blockquote>
+      <p>这个修改版本代码的源代码可以在演示项目的 <code>DSPIntroductionTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>总结</h2>
+<p>在本教程中，我们学习了如何操作音频缓冲区，以及如何使用 JUCE DSP 模块处理信号。具体来说，我们：</p>
+<ul>
+<li>使用多个振荡器创建了一个波表合成器。
+</li>
+<li>尝试了不同的波形，包括锯齿波和正弦波。
+</li>
+<li>实现了一个滤波器，并用 LFO 操纵其截止频率。
+</li>
+<li>添加了一个简单的混响，为信号融入空间感。
+</li>
+</ul>
+<blockquote>
+      <p>在这里查看本教程的第 2 部分，以添加失真和卷积：<a href="dsp-convolution.html" rel="noreferrer noopener">教程：通过波形整形与卷积添加失真</a>。跳到本教程的第 3 部分，以添加延迟线：<a href="dsp-delay-line.html" rel="noreferrer noopener">教程：用延迟线创建弦模型</a></p>
+    </blockquote>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>
+</li>
+<li><a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>
+</li>
+<li><a href="synth-db-level-control.html" rel="noreferrer noopener">教程：用分贝控制音频电平</a>
+</li>
+<li><a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>
+</li>
+<li><a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建 MIDI 合成器</a>
+</li>
+<li><a href="mpe-introduction.html" rel="noreferrer noopener">教程：构建多复音合成器</a>
+</li>
+<li><a href="simple-fft.html" rel="noreferrer noopener">教程：快速傅里叶变换</a>
+</li>
+<li><a href="spectrum-analyser.html" rel="noreferrer noopener">教程：实时可视化信号的频率</a>
+</li>
+<li><a href="simd-register-optimisation.html" rel="noreferrer noopener">教程：使用 SIMDRegister 类进行优化</a>
+</li>
+<li><a href="dsp-convolution.html" rel="noreferrer noopener">教程：通过波形整形与卷积添加失真</a>
+</li>
+<li><a href="dsp-delay-line.html" rel="noreferrer noopener">教程：用延迟线创建弦模型</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_dsp_introduction/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_dsp_introduction/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

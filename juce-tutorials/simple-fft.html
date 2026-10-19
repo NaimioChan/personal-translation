@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>快速傅里叶变换 - JUCE 教程</title>
+<meta name="description" content="快速傅里叶变换：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>快速傅里叶变换</h1>
+<p>学习如何使用 DSP 模块的 FFT 类，把输入的音频数据显示为频谱图。理解使用快速傅里叶变换的好处。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classdsp_1_1FFT.html" rel="noreferrer noopener">dsp::FFT</a>, <a href="https://docs.juce.com/master/classImage.html" rel="noreferrer noopener">Image</a>, <a href="https://docs.juce.com/master/classColour.html" rel="noreferrer noopener">Colour</a>, <a href="https://docs.juce.com/master/classFloatVectorOperations.html" rel="noreferrer noopener">FloatVectorOperations</a></p>
+<h2>准备工作</h2>
+<p>在这里下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/SimpleFFTTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/SimpleFFTTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目，并在 Projucer 中打开第一个头文件。</p>
+<blockquote>
+      <p>如果你的操作系统要求你申请访问麦克风的权限（目前是 iOS、Android 和 macOS Mojave），那么你需要在 Projucer 中相应导出器下设置对应的选项，并重新保存项目。</p>
+    </blockquote>
+<p>如果这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>完成之后，演示项目会把输入的音频数据显示为三维频谱图，分别体现在时间（x 轴）、频率（y 轴）和振幅（颜色）三个维度上。屏幕上显示的数值每秒更新 60 次，任意时刻的窗口可能看起来像这样：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_simple_fft_screenshot1.png" alt="演示项目窗口">
+<figcaption>演示项目窗口</figcaption>
+</figure>
+<blockquote>
+      <p>这里给出的代码与 JUCE 示例中的 <strong>SimpleFFTExample</strong> 大致相似。</p>
+    </blockquote>
+<h2>快速傅里叶变换</h2>
+<p>时间域或空间域的信号可以通过一种称为傅里叶变换的变换公式转换为频域。这种变换函数的一种常见高效实现是快速傅里叶变换（Fast Fourier Transform，FFT），它包含在 JUCE DSP 模块中，我们将在本教程中使用它。</p>
+<p>FFT 让我们能够把音频信号分解为它的各个频率，并给出每个频率的幅度和相位信息。使用它的逆函数，我们可以把信号还原到原来的域，这使得它在处理单个频率成分（例如滤波）时非常有用。</p>
+<p>由于本教程只涉及显示音频数据而不进行实际的输出处理，我们关注的是正向 FFT 而不是逆向 FFT。</p>
+<h2>处理音频数据</h2>
+<p>目前我们的应用既不显示也不处理任何输入的音频信号，所以让我们从实现 FFT 开始。</p>
+<h3>FFT 初始化</h3>
+<p>在 <code>SpectrogramComponent</code> 类中，首先为 FFT 实现定义一些有用的常量：</p>
+<pre><code>static constexpr auto fftOrder = 10; // [1]
+static constexpr auto fftSize = 1 &lt;&lt; fftOrder; // [2]
+private:</code></pre>
+<ul>
+<li>[1]：FFT 阶数指定了 FFT 窗口的大小，它要处理的点数等于 2 的阶数次方。这里我们使用 10 阶，将产生一个 2 ^ 10 = 1024 点的 FFT。
+</li>
+<li>[2]：要计算对应的 FFT 大小，我们使用左移位运算符，得到 1024，即二进制数 10000000000。
+</li>
+</ul>
+<p>接下来，声明 FFT 实现所需的私有成员变量，如下所示：</p>
+<pre><code>juce::dsp::FFT forwardFFT; // [3]
+juce::Image spectrogramImage;
+std::array&lt;float, fftSize&gt; fifo; // [4]
+std::array&lt;float, fftSize * 2&gt; fftData; // [5]
+int fifoIndex = 0; // [6]
+bool nextFFTBlockReady = false; // [7]
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SpectrogramComponent)
+};</code></pre>
+<ul>
+<li>[3]：声明一个 <a href="https://docs.juce.com/master/classdsp_1_1FFT.html" rel="noreferrer noopener">dsp::FFT</a> 对象，用于执行正向 FFT。
+</li>
+<li>[4]：大小为 1024 的 fifo 浮点数组将保存输入的音频采样数据。
+</li>
+<li>[5]：大小为 2048 的 fftData 浮点数组将保存 FFT 计算的结果。
+</li>
+<li>[6]：这个临时索引记录 fifo 中的采样数量。
+</li>
+<li>[7]：这个临时布尔值告诉我们下一个 FFT 块是否已准备好被渲染。
+</li>
+</ul>
+<p>现在，在我们的构造函数成员初始化列表中初始化这些变量，如下所示：</p>
+<pre><code>SpectrogramComponent()
+    : forwardFFT (fftOrder),
+      spectrogramImage (juce::Image::RGB, 512, 512, true)
+{</code></pre>
+<p>此时必须用正确的阶数显式初始化 FFT 对象。</p>
+<p>在重写的 <code>getNextAudioBlock()</code> 函数中，我们简单地把当前音频缓冲区块中包含的所有采样推入 fifo，以便稍后处理：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    if (bufferToFill.buffer-&gt;getNumChannels() &gt; 0)
+    {
+        auto* channelData = bufferToFill.buffer-&gt;getReadPointer (0, bufferToFill.startSample);
+        for (auto i = 0; i &lt; bufferToFill.numSamples; ++i)
+            pushNextSampleIntoFifo (channelData[i]);
+    }
+}</code></pre>
+<p>要把采样推入 fifo，请按下面的描述实现 <code>pushNextSampleIntoFifo()</code> 函数：</p>
+<pre><code>void pushNextSampleIntoFifo (float sample) noexcept
+{
+    // if the fifo contains enough data, set a flag to say
+    // that the next line should now be rendered..
+    if (fifoIndex == fftSize) // [8]
+    {
+        if (!nextFFTBlockReady) // [9]
+        {
+            std::fill (fftData.begin(), fftData.end(), 0.0f);
+            std::copy (fifo.begin(), fifo.end(), fftData.begin());
+            nextFFTBlockReady = true;
+        }
+        fifoIndex = 0;
+    }
+    fifo[(size_t) fifoIndex++] = sample; // [9]
+}</code></pre>
+<ul>
+<li>[8]：如果 fifo 中已有足够的数据（这里是 1024 个采样），我们就可以把数据复制到 fftData 数组，交给 FFT 处理。我们还设置一个标志，表示下一行现在应该被渲染，并总是把索引重置为 0，以便重新开始填充 fifo。
+</li>
+<li>[9]：每次调用这个函数时，都会有一个采样被存入 fifo，索引随之递增。
+</li>
+</ul>
+<p>现在 fifo 数据占据了 FFT 输入数组的前半部分，可以处理并显示了。</p>
+<h3>显示频谱图</h3>
+<p>在 <code>drawNextLineOfSpectrogram()</code> 函数中，按下面的说明插入像素绘制实现：</p>
+<pre><code>void drawNextLineOfSpectrogram()
+{
+    auto rightHandEdge = spectrogramImage.getWidth() - 1;
+    auto imageHeight = spectrogramImage.getHeight();
+    // first, shuffle our image leftwards by 1 pixel..
+    spectrogramImage.moveImageSection (0, 0, 1, 0, rightHandEdge, imageHeight); // [1]
+    // then render our FFT data..
+    forwardFFT.performFrequencyOnlyForwardTransform (fftData.data()); // [2]
+    // find the range of values produced, so we can scale our rendering to
+    // show up the detail clearly
+    auto maxLevel = juce::FloatVectorOperations::findMinAndMax (fftData.data(), fftSize / 2); // [3]
+    juce::Image::BitmapData bitmap { spectrogramImage, rightHandEdge, 0, 1, imageHeight, juce::Image::BitmapData::writeOnly }; // [4]
+    for (auto y = 1; y &lt; imageHeight; ++y) // [5]
+    {
+        auto skewedProportionY = 1.0f - std::exp (std::log ((float) y / (float) imageHeight) * 0.2f);
+        auto fftDataIndex = (size_t) juce::jlimit (0, fftSize / 2, (int) (skewedProportionY * fftSize / 2));
+        auto level = juce::jmap (fftData[fftDataIndex], 0.0f, juce::jmax (maxLevel.getEnd(), 1e-5f), 0.0f, 1.0f);
+        bitmap.setPixelColour (0, y, juce::Colour::fromHSV (level, 1.0f, level, 1.0f)); // [6]
+    }
+}</code></pre>
+<ul>
+<li>[1]：首先，使用 <a href="https://docs.juce.com/master/classImage.html" rel="noreferrer noopener">Image</a> 对象上的 <code>moveImageSection()</code> 函数把图像向左移动 1 个像素。把图像区域指定为整个宽度减 1 个像素、整个高度。
+</li>
+<li>[2]：然后，使用 FFT 对象上的 <code>performFrequencyOnlyForwardTransform()</code> 函数、以 fftData 数组作为参数来渲染 FFT 数据。
+</li>
+<li>[3]：找出产生的数值范围，以便缩放渲染结果，清楚地显示出细节。我们可以使用 FloatVectorOperations::findMinAndMax() 函数来完成这一点。
+</li>
+<li>[4]：创建一个 BitmapData 实例，指向频谱图图像最右侧的一列像素。在读取或写入图像中的多个像素时，可以使用 BitmapData 实例在内部缓冲像素值，一次性读取或写入全部像素。这种方法通常比使用 <a href="https://docs.juce.com/master/classImage.html" rel="noreferrer noopener">Image</a> 的成员函数访问单个像素更快。
+</li>
+<li>[5]：现在，在遍历频谱图高度上每个像素的 for 循环中，按采样集成比例地计算电平。为此，我们首先需要对 y 轴做倾斜变换，使用对数刻度来更好地表示频率。然后我们可以把这个缩放因子用于取得正确的数组索引，并用幅度值把它映射到 <code>0.0 .. 1.0</code> 的范围。
+</li>
+<li>[6]：最后，用正确的颜色设置相应的像素，以显示 FFT 数据。
+</li>
+</ul>
+<p>最后一步，使用定时器回调函数更新频谱图，仅当下一个 FFT 块就绪时调用 <code>drawNextLineOfSpectrogram()</code>，重置标志，并使用 <code>repaint()</code> 函数更新 GUI：</p>
+<pre><code>void timerCallback() override
+{
+    if (nextFFTBlockReady)
+    {
+        drawNextLineOfSpectrogram();
+        nextFFTBlockReady = false;
+        repaint();
+    }
+}</code></pre>
+<blockquote>
+      <p>练习：尝试提高 FFT 的分辨率，并改变频谱图更新的速率。</p>
+    </blockquote>
+<blockquote>
+      <p>这个修改版本的源代码可以在演示项目的 <code>SimpleFFTTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>在本教程中，我们学习了如何使用 FFT 函数在频谱图中显示音频数据。具体来说，我们：</p>
+<ul>
+<li>了解了快速傅里叶变换函数的基础知识。
+</li>
+<li>使用 fifo 逐采样处理音频。
+</li>
+<li>在 <a href="https://docs.juce.com/master/classImage.html" rel="noreferrer noopener">Image</a> 对象中逐像素显示数据。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="audio-thumbnail.html" rel="noreferrer noopener">教程：绘制音频波形</a>
+</li>
+<li><a href="playing-sound-files.html" rel="noreferrer noopener">教程：构建音频播放器</a>
+</li>
+<li><a href="processing-audio-input.html" rel="noreferrer noopener">教程：处理音频输入</a>
+</li>
+<li><a href="dsp-introduction.html" rel="noreferrer noopener">教程：DSP 简介</a>
+</li>
+<li><a href="spectrum-analyser.html" rel="noreferrer noopener">教程：实时可视化信号频率</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_simple_fft/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_simple_fft/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

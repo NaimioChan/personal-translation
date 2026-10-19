@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用延迟线创建弦模型 - JUCE 教程</title>
+<meta name="description" content="用延迟线创建弦模型：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>用延迟线创建弦模型</h1>
+<p>通过物理建模实现逼真的弦模型。融入延迟线，在立体声声场中创建错综复杂的回声模式。</p>
+<p><strong>难度：</strong>高级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>插件格式：</strong>VST、AU、Standalone<br><strong>类：</strong><a href="https://docs.juce.com/master/classdsp_1_1ProcessorChain.html" rel="noreferrer noopener">dsp::ProcessorChain</a>, <a href="https://docs.juce.com/master/classdsp_1_1Gain.html" rel="noreferrer noopener">dsp::Gain</a>, <a href="https://docs.juce.com/master/classdsp_1_1Oscillator.html" rel="noreferrer noopener">dsp::Oscillator</a>, <a href="https://docs.juce.com/master/classdsp_1_1Convolution.html" rel="noreferrer noopener">dsp::Convolution</a>, <a href="structdsp_1_1WaveShaper.html" rel="noreferrer noopener">dsp::WaveShaper</a>, <a href="https://docs.juce.com/master/classdsp_1_1Reverb.html" rel="noreferrer noopener">dsp::Reverb</a></p>
+<blockquote>
+      <p>本项目需要支持 C++14 特性的编译器。较新版本的 Xcode 和 Visual Studio 均包含这一支持。</p>
+    </blockquote>
+<h2>准备工作</h2>
+<p>本教程承接<a href="dsp-convolution.html" rel="noreferrer noopener">教程：通过波形整形与卷积添加失真</a>。如果你还没有阅读，应该先阅读那篇教程。</p>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/DSPDelayLineTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/DSPDelayLineTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在 Projucer 中打开第一个头文件。</p>
+<blockquote>
+      <p>如果使用该项目的 PIP 版本，请确保把 <code>Resources</code> 文件夹复制到生成的 Projucer 项目中。</p>
+    </blockquote>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>该项目按插件设计，但你可以通过在 IDE 中选择合适的部署目标，把它作为独立应用运行。在 Xcode 中，可以在主窗口左上角更改目标，如下面的截图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_standalone_screenshot1.png" alt="在 Xcode 中更改部署目标">
+<figcaption>在 Xcode 中更改部署目标</figcaption>
+</figure>
+<p>演示项目在插件的上半部分提供了一个屏幕 MIDI 键盘，在下半部分通过示波器提供了信号的可视化表示。目前按下琴键时，插件会输出带有一些混响和失真的基础振荡器声音。</p>
+<blockquote>
+      <p>你可以随时移除效果，以便清楚地听到教程每个步骤中的变化——在 <code>AudioEngine</code> 类中把效果处理器注释掉即可。</p>
+    </blockquote>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_screenshot1.png" alt="演示项目插件窗口">
+<figcaption>演示项目插件窗口</figcaption>
+</figure>
+<blockquote>
+      <p>如果你有 MIDI 控制器，也可以在本教程的整个过程中选择连接它，而不是使用屏幕键盘。</p>
+    </blockquote>
+<h2>简介</h2>
+<p>在本教程中，我们介绍两个新的 DSP 概念，它们能以不同的方式处理信号：延迟线和物理建模。</p>
+<p>让我们先定义这些 DSP 术语。</p>
+<h3>什么是延迟线？</h3>
+<p>延迟线是 DSP 中的一个基础工具，可用于广泛的应用，包括混响空间模拟、声音合成、滤波器实现以及经典的基于时间的效果，如延迟、合唱、相位器和镶边。</p>
+<p>从根本上说，延迟线非常简单，它允许我们把某个信号延迟若干个采样。通过使用多条延迟线，并在不同时间间隔把各自的信号重新相加，我们可以创造出目前存在的绝大多数数字信号处理。</p>
+<p>在模拟域中，延迟线通过引入实际的物理延长（例如弹簧）来延迟波的传播。在数字域中，延迟线通常使用一种称为环形缓冲区的数据结构来实现。</p>
+<p>环形缓冲区本质上可以实现为一个数组，其索引环绕自身，从而创建一个与采样缓冲区块大小相匹配的环形数据结构。这使我们能够存储前一个块中包含的所有采样，以便在当前块中访问，随后这些采样会被当前采样块覆盖，供下一次迭代使用。</p>
+<p>在本教程中，我们将研究把环形缓冲区作为实现延迟线的方式。</p>
+<h3>什么是物理建模？</h3>
+<p>物理建模指一种依靠数学和物理模型来生成声音的合成方法。与其他合成技术不同，它不以任何采样作为起点，而是通过对材料的研究，专注于声音在物理意义上如何产生。</p>
+<p>其中一种模型称为数字波导，它基于声波在管或管道中传播的物理模型。这些波在边界处的反射可以使用延迟线高效地计算，因此用这种模型可以生成许多乐器（如弦乐器）的声音。</p>
+<h4>波导弦模型</h4>
+<p>简而言之，波导弦模型建立在这一概念之上：振动的弦可以用两列沿相反方向传播并在两个端点反弹的波来建模。这两列波相加后的组合最终模拟了拨弦的理想运动，它们可以用两条延迟线实现：一条前向延迟线和一条后向延迟线。</p>
+<p>然而，这个理想的弦模型永远不会在当前状态下静止，因为没有考虑阻尼。因此，当波在边界处改变方向且极性反转时，我们可以引入一个阻尼因子来减小波的位移。</p>
+<p>在这个模型中还要考虑的其他变量是：应该在何处拨弦，以及应该从何处拾取振动弦的声音。因此，我们必须整合一个拨弦位置（两列波将从该处传播）和一个拾音位置，就像你在空间中的特定位置聆听声音一样。</p>
+<p>最后但同样重要的是，物理弦中会出现一种自然现象：高频比低频衰减得更快。这可以通过简单地在边界的一端添加一个低通滤波器来轻松整合到我们的模型中，以模拟这种衰减时间的差异。</p>
+<p>在本教程中，我们将使用延迟线来实现这个数字波导模型，以模拟在相连弦的边界处反射的波的拨弦。</p>
+<h2>实现延迟线</h2>
+<p>让我们先用 vector 把一条简单的延迟线实现为环形缓冲区。</p>
+<p>在 <code>DelayLine</code> 类中，已经定义了几个不言自明的辅助函数以方便实现，例如 <code>size()</code> 和 <code>resize()</code> 方法、一个 <code>clear()</code> 函数，以及一个检索缓冲区中最近最少使用的采样的 <code>back()</code> 函数。</p>
+<p>我们首先实现 <code>push()</code> 函数，它通过覆盖最近最少添加的采样来添加一个新采样 [1]，并通过按环形缓冲区的大小环绕索引来更新最近最少使用的索引变量 [2]：</p>
+<pre><code>void push (Type valueToAdd) noexcept
+{
+    rawData[leastRecentIndex] = valueToAdd; // [1]
+    leastRecentIndex = leastRecentIndex == 0 ? size() - 1 : leastRecentIndex - 1; // [2]
+}</code></pre>
+<p>然后我们完成 <code>get()</code> 函数，返回位于函数参数所指定偏移处的采样，同时确保索引环绕 vector [3]。注意这里我们确保延迟不超过缓冲区的大小。</p>
+<pre><code>Type get (size_t delayInSamples) const noexcept
+{
+    jassert (delayInSamples &gt;= 0 &amp;&amp; delayInSamples &lt; size());
+    return rawData[(leastRecentIndex + 1 + delayInSamples) % size()]; // [3]
+}</code></pre>
+<p>接下来，我们填充 <code>set()</code> 函数，对函数参数所指定偏移处的采样赋值，同时确保索引环绕 vector [4]。这里同样确保延迟不超过缓冲区的大小。</p>
+<pre><code>void set (size_t delayInSamples, Type newValue) noexcept
+{
+    jassert (delayInSamples &gt;= 0 &amp;&amp; delayInSamples &lt; size());
+    rawData[(leastRecentIndex + 1 + delayInSamples) % size()] = newValue; // [4]
+}</code></pre>
+<p>这样我们就完成了简单延迟线的实现。</p>
+<h2>集成延迟效果</h2>
+<p>实现了基本的延迟线类后，让我们把一个立体声延迟效果集成到信号链中。</p>
+<p>在 <code>Delay</code> 类中，有多个参数可以调整以改变延迟效果的行为，包括各个声道的延迟时间、允许的最大延迟时间、效果的干/湿电平以及反馈量。</p>
+<p>使用这些参数和延迟线的实现，我们可以按需创建各种各样的延迟效果，但让我们先从构造函数中定义的默认参数开始：</p>
+<pre><code>{
+public:
+    //==============================================================================
+    Delay()
+    {
+        setMaxDelayTime (2.0f);
+        setDelayTime (0, 0.7f);
+        setDelayTime (1, 0.5f);
+        setWetLevel (0.8f);
+        setFeedback (0.5f);
+    }</code></pre>
+<p>这些辅助函数主要设置相应的成员变量来存储参数，但其中一些还需要调整数据结构的大小，以适应参数的变化。</p>
+<p>其中一个例子是下面定义的 <code>setMaxDelayTime()</code> 函数，它调用 <code>updateDelayLineSize()</code> 辅助函数 [1]：</p>
+<pre><code>void setMaxDelayTime (Type newValue)
+{
+    jassert (newValue &gt; Type (0));
+    maxDelayTime = newValue;
+    updateDelayLineSize(); // [1]
+}</code></pre>
+<p>完成下面的函数，它通过调整 vector 的大小 [2]，确保所有延迟线的环形缓冲区都足够大，能够容纳直到最大延迟时间的任何延迟时间：</p>
+<pre><code>void updateDelayLineSize()
+{
+    auto delayLineSizeSamples = (size_t) std::ceil (maxDelayTime * sampleRate);
+    for (auto&amp; dline : delayLines)
+        dline.resize (delayLineSizeSamples); // [2]
+}</code></pre>
+<p>另一个值得注意的情况是各声道的 <code>setDelayTime()</code> 函数，其中参数变化会如下调用 <code>updateDelayTime()</code> 辅助函数 [3]：</p>
+<pre><code>void setDelayTime (size_t channel, Type newValue)
+{
+    if (channel &gt;= getNumChannels())
+    {
+        jassertfalse;
+        return;
+    }
+    jassert (newValue &gt;= Type (0));
+    delayTimes[channel] = newValue;
+    updateDelayTime(); // [3]
+}</code></pre>
+<p>实现这个辅助函数，它根据新的参数变化重新计算所有声道的以采样为单位的延迟时间 [4]：</p>
+<pre><code>void updateDelayTime() noexcept
+{
+    for (size_t ch = 0; ch &lt; maxNumChannels; ++ch)
+        delayTimesSample[ch] = (size_t) juce::roundToInt (delayTimes[ch] * sampleRate);
+}</code></pre>
+<p>在 <code>reset()</code> 函数中，我们重置每个声道的滤波器 [5]（我们将在本教程的下一节中使用它），并清除延迟线中残留的任何旧采样 [6]：</p>
+<pre><code>void reset() noexcept
+{
+    for (auto&amp; f : filters)
+        f.reset(); // [5]
+    for (auto&amp; dline : delayLines)
+        dline.clear(); // [6]
+}</code></pre>
+<p>在 <code>prepare()</code> 函数中，我们确保延迟线的大小 [7] 和以采样为单位的延迟时间 [8] 仍然正确（以防采样率在采样块之间发生了变化），并暂时用一个低通滤波器初始化滤波器 [9]：</p>
+<pre><code>void prepare (const juce::dsp::ProcessSpec&amp; spec)
+{
+    jassert (spec.numChannels &lt;= maxNumChannels);
+    sampleRate = (Type) spec.sampleRate;
+    updateDelayLineSize(); // [7]
+    updateDelayTime(); // [8]
+    filterCoefs = juce::dsp::IIR::Coefficients&lt;Type&gt;::makeFirstOrderLowPass (sampleRate, Type (1e3)); // [9]
+    for (auto&amp; f : filters)
+    {
+        f.prepare (spec);
+        f.coefficients = filterCoefs;
+    }
+}</code></pre>
+<p>现在让我们处理 <code>process()</code> 函数，真正实现延迟效果：</p>
+<pre><code>template &lt;typename ProcessContext&gt;
+void process (const ProcessContext&amp; context) noexcept
+{
+    auto&amp; inputBlock = context.getInputBlock();
+    auto&amp; outputBlock = context.getOutputBlock();
+    auto numSamples = outputBlock.getNumSamples();
+    auto numChannels = outputBlock.getNumChannels();
+    jassert (inputBlock.getNumSamples() == numSamples);
+    jassert (inputBlock.getNumChannels() == numChannels);
+    for (size_t ch = 0; ch &lt; numChannels; ++ch)
+    {
+        auto* input = inputBlock.getChannelPointer (ch);
+        auto* output = outputBlock.getChannelPointer (ch);
+        auto&amp; dline = delayLines[ch];
+        auto delayTime = delayTimesSample[ch];
+        auto&amp; filter = filters[ch];
+        for (size_t i = 0; i &lt; numSamples; ++i)
+        {
+            auto delayedSample = dline.get (delayTime); // [10]
+            auto inputSample = input[i]; // [11]
+            auto dlineInputSample = std::tanh (inputSample + feedback * delayedSample); // [12]
+            dline.push (dlineInputSample); // [13]
+            auto outputSample = inputSample + wetLevel * delayedSample; // [14]
+            output[i] = outputSample; // [15]
+        }
+    }
+}</code></pre>
+<ul>
+<li>[10]：首先，对于每个声道缓冲区块中的每个采样，从对应的延迟线中取出延迟采样。
+</li>
+<li>[11]：然后从输入块中获取当前采样。
+</li>
+<li>[12]：接下来，用 <code>std::tanh()</code> 把输入采样与按反馈参数加权的延迟线输出混合，计算要推入延迟线的采样。双曲正切函数使我们能够平滑地组合两个信号，而不会对求和后的采样造成削波，并提供自然的衰减。
+</li>
+<li>[13]：然后我们把上一步计算出的采样推入延迟线。
+</li>
+<li>[14]：最后，把输入采样与按干/湿参数加权的延迟线输出混合，计算出输出采样。
+</li>
+<li>[15]：然后把该采样赋值到输出块。
+</li>
+</ul>
+<p>如果在 <code>Delay</code> 类中实现上述更改后运行这段代码，我们应该能听到振荡器信号上的延迟效果。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_delay_line_screenshot1.png" alt="对振荡器信号进行延迟">
+<figcaption>对振荡器信号进行延迟</figcaption>
+</figure>
+<blockquote>
+      <p>练习：尝试不同的延迟参数，注意延迟模式在立体声声场中如何演变。</p>
+    </blockquote>
+<h2>对延迟效果进行滤波</h2>
+<p>大多数延迟效果在信号重复和衰减时会对信号进行滤波，以提供更逼真的声音，就像自然界中发生的那样。所以让我们对延迟的声音施加一些滤波。</p>
+<p>这可以很容易地实现，只需在 <code>Delay</code> 类的 <code>process()</code> 函数中更改一行，如下所示：</p>
+<pre><code>template &lt;typename ProcessContext&gt;
+void process (const ProcessContext&amp; context) noexcept
+{
+    //...
+    for (size_t ch = 0; ch &lt; numChannels; ++ch)
+    {
+        //...
+        for (size_t i = 0; i &lt; numSamples; ++i)
+        {
+            auto delayedSample = filter.processSample (dline.get (delayTime)); // [1]
+            auto inputSample = input[i];
+            auto dlineInputSample = std::tanh (inputSample + feedback * delayedSample);
+            dline.push (dlineInputSample);
+            auto outputSample = inputSample + wetLevel * delayedSample;
+            output[i] = outputSample;
+        }
+    }
+}</code></pre>
+<p>这里我们只需把来自延迟线的延迟采样传给滤波器对象，并在其上调用 <code>processSample()</code> 函数 [1]。</p>
+<p>在 <code>prepare()</code> 函数中，通过替换系数并调用 <code>makeFirstOrderHighPass()</code> 函数 [2]，把滤波器类型改为高通滤波器，如下所示：</p>
+<pre><code>void prepare (const juce::dsp::ProcessSpec&amp; spec)
+{
+    //...
+    filterCoefs = juce::dsp::IIR::Coefficients&lt;Type&gt;::makeFirstOrderHighPass (sampleRate, Type (1e3)); // [2]
+    //...
+}</code></pre>
+<p>随着重复次数增加，运行程序应该会给我们一个更明亮的延迟声音。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_delay_line_screenshot2.png" alt="对延迟信号进行滤波">
+<figcaption>对延迟信号进行滤波</figcaption>
+</figure>
+<blockquote>
+      <p>练习：尝试不同类型的滤波器来处理延迟的声音，注意重复信号的声音如何变化。</p>
+    </blockquote>
+<h2>集成波导弦模型</h2>
+<p>由于我们已方便地为延迟效果实现了延迟线，我们可以使用同一个类、同样的数据结构来集成波导弦模型。</p>
+<p>在 <code>WaveguideString</code> 类中，有多个参数可以调整以改变弦模型的行为，包括触发位置、拾音位置以及弦阻尼的衰减时间。</p>
+<p>默认参数在构造函数中定义，它们进而设置相应的成员变量，如下所示：</p>
+<pre><code>public:
+//==============================================================================
+WaveguideString()
+{
+    setTriggerPosition (Type (0.2));
+    setPickupPosition (Type (0.8));
+    setDecayTime (Type (0.5));
+}</code></pre>
+<p>这些辅助函数还会调用 <code>updateParameters()</code> 函数，该函数初始化各种变量，例如延迟线的大小、相对于延迟线的拾音索引、相对于前向延迟线的触发索引、滤波器系数，以及基于衰减时间的衰减系数。</p>
+<p>如下所述添加这个辅助函数的实现：</p>
+<pre><code>void updateParameters()
+{
+    auto length = (size_t) juce::roundToInt (sampleRateHz / freqHz); // [1]
+    forwardDelayLine.resize (length);
+    backwardDelayLine.resize (length);
+    forwardPickupIndex = (size_t) juce::roundToInt (jmap (pickupPos, Type (0), Type (length / 2 - 1))); // [2]
+    backwardPickupIndex = length - 1 - forwardPickupIndex;
+    forwardTriggerIndex = (size_t) juce::roundToInt (jmap (triggerPos, Type (0), Type (length / 2 - 1))); // [3]
+    filter.coefficients = juce::dsp::IIR::Coefficients&lt;Type&gt;::makeFirstOrderLowPass (sampleRateHz, 4 * freqHz); // [4]
+    decayCoef = juce::jmap (decayTime, std::pow (Type (0.999), Type (length)), std::pow (Type (0.99999), Type (length))); // [5]
+    reset();
+}</code></pre>
+<ul>
+<li>[1]：首先，我们把延迟线的大小调整为采样率除以所演奏音符的基频。这源于这样一个事实：基频等于采样频率除以循环中所需的采样数。
+</li>
+<li>[2]：接下来，我们把 <code>0.0 .. 1.0</code> 范围内的变量映射到 0 到延迟线长度一半的范围，从而得到前向延迟线上拾音位置的索引。这是为了容纳完整的周期，其中包括行波的两个方向以及极性翻转。后向延迟线上拾音位置的索引则通过取前向索引的相反值来计算。
+</li>
+<li>[3]：前向延迟线上触发位置的索引以同样的方式从 <code>0.0 .. 1.0</code> 范围映射到 0 到延迟线长度一半的范围。
+</li>
+<li>[4]：然后，模拟衰减行为的低通滤波器的系数被设置为比基频高四倍的频率。
+</li>
+<li>[5]：最后，通过把 <code>0.0 .. 1.0</code> 范围映射到 <code>0.999^length</code> 到 <code>0.99999^length</code> 的范围，由衰减时间计算出衰减系数。这会产生接近 1 的值，描绘了物理振动弦上实际发生的极小阻尼。
+</li>
+</ul>
+<p>在 <code>reset()</code> 函数中，我们重置延迟线，以清除残留的任何旧采样：</p>
+<pre><code>void reset() noexcept
+{
+    forwardDelayLine.clear();
+    backwardDelayLine.clear();
+}</code></pre>
+<p>在 <code>prepare()</code> 函数中，我们创建一个临时音频块，稍后将用于处理 [6]，并通过再次调用 <code>updateParameters()</code> 函数 [7]，确保参数仍然正确（以防采样率在采样块之间发生了变化）：</p>
+<pre><code>void prepare (const juce::dsp::ProcessSpec&amp; spec)
+{
+    sampleRateHz = (Type) spec.sampleRate;
+    tempBlock = juce::dsp::AudioBlock&lt;float&gt; (heapBlock, spec.numChannels, spec.maximumBlockSize); // [6]
+    filter.prepare (spec);
+    updateParameters(); // [7]
+}</code></pre>
+<p>为了触发拨弦引起的弦激励，我们必须设置由两条延迟线表示的两列波的初始位移。</p>
+<p>为此，在 <code>trigger()</code> 函数中，首先在从延迟线起点到触发位置索引所包含的采样之间迭代，通过把索引映射到递增的值（最大达到音符力度的一半）来计算每个采样的值，并把它们按相反方向赋值到延迟线 [8]。对触发位置索引到延迟线末端之间包含的采样做同样的处理，值从音符力度的一半递减 [9]。</p>
+<pre><code>void trigger (Type velocity) noexcept
+{
+    jassert (velocity &gt;= Type (0) &amp;&amp; velocity &lt;= Type (1));
+    for (size_t i = 0; i &lt;= forwardTriggerIndex; ++i) // [8]
+    {
+        auto value = juce::jmap (Type (i), Type (0), Type (forwardTriggerIndex), Type (0), velocity / 2);
+        forwardDelayLine.set (i, value);
+        backwardDelayLine.set (getDelayLineLength() - 1 - i, value);
+    }
+    for (size_t i = forwardTriggerIndex; i &lt; getDelayLineLength(); ++i) // [9]
+    {
+        auto value = juce::jmap (Type (i), Type (forwardTriggerIndex), Type (getDelayLineLength() - 1), velocity / 2, Type (0));
+        forwardDelayLine.set (i, value);
+        backwardDelayLine.set (getDelayLineLength() - 1 - i, value);
+    }
+}</code></pre>
+<p>为了在一个缓冲区块中生成所有采样，我们声明一个只返回一次采样生成迭代的辅助函数，如下所示：</p>
+<pre><code>Type processSample() noexcept
+{
+    auto forwardOut = forwardDelayLine.back(); // [10]
+    auto backwardOut = backwardDelayLine.back(); // [11]
+    forwardDelayLine.push (-backwardOut); // [12]
+    backwardDelayLine.push (-decayCoef * filter.processSample (forwardOut)); // [13]
+    return forwardDelayLine.get (forwardPickupIndex) + backwardDelayLine.get (backwardPickupIndex); // [14]
+}</code></pre>
+<ul>
+<li>[10]：首先，我们通过调用前面声明的 <code>back()</code> 函数，从前向延迟线的环形缓冲区中取出最近最少使用的采样。
+</li>
+<li>[11]：我们对后向延迟线的最近最少使用的采样做同样的处理。
+</li>
+<li>[12]：接下来，我们必须通过反转极性，把这个位于后向延迟线边界处的最后一个采样推入前向延迟线。
+</li>
+<li>[13]：然后，我们对另一条延迟线做同样的处理，但这一次先用低通滤波器对采样滤波，并乘以衰减系数以施加阻尼，然后再反转极性并把采样推入环形缓冲区。
+</li>
+<li>[14]：最后，我们通过对两条延迟线在各自拾音索引处的信号求和，返回从拾音位置录制的采样。
+</li>
+</ul>
+<p>在 <code>process()</code> 函数中，只需通过调用 <code>processSample()</code> 辅助函数处理缓冲区块中的所有采样，并把值赋给之前创建的临时块 [15]。然后把采样复制到音频块的所有声道 [16]，并把临时块的内容连同输入块中包含的原始内容一起添加到输出块 [17]。</p>
+<pre><code>template &lt;typename ProcessContext&gt;
+void process (const ProcessContext&amp; context) noexcept
+{
+    auto&amp;&amp; outBlock = context.getOutputBlock();
+    auto numSamples = outBlock.getNumSamples();
+    auto* dst = tempBlock.getChannelPointer (0);
+    for (size_t i = 0; i &lt; numSamples; ++i) // [15]
+        dst[i] = processSample();
+    for (size_t ch = 1; ch &lt; tempBlock.getNumChannels(); ++ch) // [16]
+        juce::FloatVectorOperations::copy (tempBlock.getChannelPointer (ch),
+            tempBlock.getChannelPointer (0),
+            (int) numSamples);
+    outBlock.copyFrom (context.getInputBlock()).add (tempBlock.getSubBlock (0, outBlock.getNumSamples()));
+}</code></pre>
+<p>在 <code>Voice</code> 类中，向处理器链添加一个 <code>WaveguideString</code> 处理器 [18]，并在枚举中添加其对应的索引 [19]。</p>
+<pre><code>enum {
+    oscIndex,
+    stringIndex, // [19]
+    masterGainIndex
+};
+juce::dsp::ProcessorChain&lt;CustomOscillator&lt;float&gt;, WaveguideString&lt;float&gt;, juce::dsp::Gain&lt;float&gt;&gt; processorChain; // [18]
+};</code></pre>
+<p>在 <code>noteStarted()</code> 函数中，移除设置振荡器电平的那一行，因为我们将使用波导弦模型来生成声音。从处理器链中获取弦模型的引用 [20]，把弦的基频设置为所演奏音符的频率 [21]，并用音符力度调用 <code>trigger()</code> 函数来触发拨弦 [22]。</p>
+<pre><code>void noteStarted() override
+{
+    auto velocity = getCurrentlyPlayingNote().noteOnVelocity.asUnsignedFloat();
+    auto freqHz = (float) getCurrentlyPlayingNote().getFrequencyInHertz();
+    processorChain.get&lt;oscIndex&gt;().setFrequency (freqHz, true);
+    // processorChain.get&lt;oscIndex&gt;().setLevel (velocity);
+    auto&amp; stringModel = processorChain.get&lt;stringIndex&gt;(); // [20]
+    stringModel.setFrequency (freqHz); // [21]
+    stringModel.trigger (velocity); // [22]
+}</code></pre>
+<p>让我们运行程序，听听它听起来怎么样。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_delay_line_screenshot3.png" alt="对波导弦信号进行延迟">
+<figcaption>对波导弦信号进行延迟</figcaption>
+</figure>
+<blockquote>
+      <p>练习：尝试不同的波导参数，例如拾音/触发位置和衰减时间，以及滤波器类型，注意它如何影响生成的弦声。</p>
+    </blockquote>
+<blockquote>
+      <p>这个修改版本代码的源代码可以在演示项目的 <code>DSPDelayLineTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>总结</h2>
+<p>在本教程中，我们学习了如何实现弦模型和延迟线。具体来说，我们：</p>
+<ul>
+<li>学习了物理建模和延迟线的基础知识。
+</li>
+<li>实现了一条延迟线，用作简单的基于时间的效果的基础。
+</li>
+<li>集成了延迟线，在立体声中创建有趣的延迟效果。
+</li>
+<li>基于物理建模技术集成了一个波导弦模型。
+</li>
+</ul>
+<blockquote>
+      <p>返回本教程的第 1 部分，复习振荡器和滤波器：<a href="dsp-introduction.html" rel="noreferrer noopener">教程：DSP 入门</a>。跳回本教程的第 2 部分，理解失真和卷积：<a href="dsp-convolution.html" rel="noreferrer noopener">教程：通过波形整形与卷积添加失真</a></p>
+    </blockquote>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="simple-fft.html" rel="noreferrer noopener">教程：快速傅里叶变换</a>
+</li>
+<li><a href="spectrum-analyser.html" rel="noreferrer noopener">教程：实时可视化信号的频率</a>
+</li>
+<li><a href="simd-register-optimisation.html" rel="noreferrer noopener">教程：使用 SIMDRegister 类进行优化</a>
+</li>
+<li><a href="dsp-introduction.html" rel="noreferrer noopener">教程：DSP 入门</a>
+</li>
+<li><a href="dsp-convolution.html" rel="noreferrer noopener">教程：通过波形整形与卷积添加失真</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_dsp_delay_line/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_dsp_delay_line/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

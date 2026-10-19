@@ -44,5 +44,9 @@ window.PT_LIBRARIES = [
   { dir: 'musicdsp-docs', title: 'musicdsp.org 文档',
     desc: 'musicdsp.org 算法、想法与代码片段存档的中文译本。',
     source: 'https://www.musicdsp.org/en/latest/index.html',
-    updated: '2026-10-18', pages: 262 }
+    updated: '2026-10-18', pages: 262 },
+  { dir: 'juce-tutorials', title: 'JUCE 教程',
+    desc: 'JUCE 官方教程的中文译本。',
+    source: 'https://juce.com/learn/tutorials/',
+    updated: '2026-10-18', pages: 62 }
 ];

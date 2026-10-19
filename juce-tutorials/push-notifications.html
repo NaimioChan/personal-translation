@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>桌面与移动设备上的推送通知 - JUCE 教程</title>
+<meta name="description" content="桌面与移动设备上的推送通知：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>桌面与移动设备上的推送通知</h1>
+<p>在你的桌面和移动应用程序中触发本地与远程通知。了解如何从远程服务器向 macOS/iOS 和 Android 设备发送推送通知。</p>
+<p><strong>难度：</strong>高级<br><strong>平台：</strong>macOS、iOS、Android<br><strong>类：</strong><a href="structPushNotifications_1_1Listener.html" rel="noreferrer noopener">PushNotifications::Listener</a>、<a href="structPushNotifications_1_1Notification.html" rel="noreferrer noopener">PushNotifications::Notification</a>、<a href="structPushNotifications_1_1Channel.html" rel="noreferrer noopener">PushNotifications::Channel</a>、<a href="structPushNotifications_1_1Settings.html" rel="noreferrer noopener">PushNotifications::Settings</a></p>
+<blockquote>
+      <p>本项目在 macOS/iOS 上需要 Apple Developer 账户，在 Android 上需要 Google Firebase 账户。如果你需要这方面的帮助，请按照 <a href="https://developer.apple.com/account/" rel="noreferrer noopener">Apple Developer</a> 和 <a href="https://console.firebase.google.com/" rel="noreferrer noopener">Google Firebase</a> 网站上的说明开通这些账户。
+本项目还需要实体设备来测试推送通知，因为模拟器不支持远程测试。请确保你已准备好一台设备。
+推送通知支持的功能会因平台和操作系统版本而异。对于 macOS，远程通知最低需要 10.7，本地通知最低需要 10.8。对于 Android，远程通知最低需要 API 14（Ice Cream Sandwich），通知渠道最低需要 27。本教程的最低 SDK 版本为 23，但你可以将其改为 14 或更高。</p>
+    </blockquote>
+<h2>入门</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/PushNotificationsTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/PushNotificationsTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目并在 Projucer 中打开第一个头文件。</p>
+<blockquote>
+      <p>如果使用本项目的 PIP 版本，请确保将 <code>Resources</code> 文件夹复制到生成的 Projucer 项目中。</p>
+    </blockquote>
+<p>如果你需要这一步的帮助，请参阅 <a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>该项目提供一个完整的用户界面，用于发送和接收本地与远程通知。界面上显示独立的表格来组织通知参数和标识符。如果我们在 iOS 模拟器中运行移动应用程序，窗口应大致如下：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot1.png" alt="iOS 上演示项目的应用窗口">
+<figcaption>iOS 上演示项目的应用窗口</figcaption>
+</figure>
+<blockquote>
+      <p>这里展示的代码与 JUCE Examples 中的 <strong>PushNotificationsDemo</strong> 大体相似。</p>
+    </blockquote>
+<h2>初始设置</h2>
+<p>为使本项目正常运行，我们必须在相应部署平台的开发者控制台中执行一些初始设置步骤。首先在 Projucer 中为推送通知授予相应权限。在 macOS 和 iOS 下，确保启用 <strong>Push Notifications capability</strong> 字段。在 Android 下，确保启用 <strong>Remote Notifications</strong> 字段。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot2_ios.png" alt="iOS 上的项目设置窗口">
+<figcaption>iOS 上的项目设置窗口</figcaption>
+</figure>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot2_android.png" alt="Android 上的项目设置窗口">
+<figcaption>Android 上的项目设置窗口</figcaption>
+</figure>
+<p>我们还需要为 macOS 和 iOS 分别指定自定义的 Xcode 资源文件夹，以便将资源打包进可执行文件，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot2_resources_macos.png" alt="macOS 上的自定义资源">
+<figcaption>macOS 上的自定义资源</figcaption>
+</figure>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot2_resources_ios.png" alt="iOS 上的自定义资源">
+<figcaption>iOS 上的自定义资源</figcaption>
+</figure>
+<p>最后，在 Android 上，我们必须在“Debug”和“Release”两个导出器设置中，将想要添加进可执行文件的每个资源分别指定为原始资源，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot2_resources_android_debug.png" alt="Android 上的原始资源（Debug）">
+<figcaption>Android 上的原始资源（Debug）</figcaption>
+</figure>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot2_resources_android_release.png" alt="Android 上的原始资源（Release）">
+<figcaption>Android 上的原始资源（Release）</figcaption>
+</figure>
+<p>所需的完整资源列表如下：</p>
+<pre><code>../Resources/sounds/demonstrative.mp3
+../Resources/sounds/isntit.mp3
+../Resources/sounds/jinglebellssms.mp3
+../Resources/sounds/served.mp3
+../Resources/sounds/solemn.mp3
+../Resources/images/ic_stat_name.png
+../Resources/images/ic_stat_name2.png
+../Resources/images/ic_stat_name3.png
+../Resources/images/ic_stat_name4.png
+../Resources/images/ic_stat_name5.png</code></pre>
+<p>在保存项目并在你常用的 IDE 中打开时，Projucer 会自动将所需的授权添加到你的部署目标中。</p>
+<h3>Apple Developer</h3>
+<blockquote>
+      <p>如果开发 Android 版本，请跳到下一节 Google Firebase 查看说明。</p>
+    </blockquote>
+<p>在 macOS 和 iOS 上，你需要在 Xcode 中使用你的 Apple Developer 账户登录并选择开发团队，以便为应用程序签名。为你的项目选择一个唯一的 bundle ID。Xcode 应会自动为你提供签名证书和描述文件，如下方截图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot3.png" alt="Xcode 中的通用设置窗口">
+<figcaption>Xcode 中的通用设置窗口</figcaption>
+</figure>
+<p>还要确保在 <strong>Capabilities</strong> 设置窗口中已勾选并批准正确的应用功能。你应看到如下相同的信息（注意 macOS 上没有 Background Modes 部分）：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot4.png" alt="Xcode 中的 Capabilities 设置窗口">
+<figcaption>Xcode 中的 Capabilities 设置窗口</figcaption>
+</figure>
+<h3>Pusher</h3>
+<p>为了在 iOS 上测试远程通知，我们需要一个使用 Apple Push Notification Service（APNs）发送通知的服务器或应用程序。我们可以利用 Google Firebase 来测试（就像在 Android 端所做的那样），但所幸有一个更简单的方案：使用名为 <a href="https://github.com/noodlewerk/NWPusher" rel="noreferrer noopener">Pusher</a> 的应用。出于本教程的目的，我们推荐这个应用程序，但你也可以使用任何其他使用 APNs 的服务。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_pusher_screenshot1.png" alt="用于测试远程通知的 Pusher 应用">
+<figcaption>用于测试远程通知的 Pusher 应用</figcaption>
+</figure>
+<h3>生成 SSL 证书</h3>
+<p>为了使用 Pusher 应用发送推送通知，我们需要生成一个 SSL 证书。为此，请登录你的 Apple Developer 账户，并在 <strong>Certificates, IDs &amp; Profiles</strong> 页面导航到你的应用 ID。点击列表底部的 <strong>Edit</strong> 按钮，你应该就能配置推送通知服务。按照网站上的说明创建证书，如下方截图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot5.png" alt="在 Apple Developer 门户上生成 SSL 证书">
+<figcaption>在 Apple Developer 门户上生成 SSL 证书</figcaption>
+</figure>
+<p>证书生成并下载后，双击它将其添加到钥匙串。你可以在 Pusher 应用的证书下拉菜单中选中它，因为它会从你的钥匙串中自动列出。</p>
+<h3>Google Firebase</h3>
+<blockquote>
+      <p>如果开发 macOS/iOS 版本，请回到上一节 Apple Developer 查看说明。</p>
+    </blockquote>
+<p>出于本教程的目的，我们使用 Google Firebase 在 Android 上测试远程通知。首先，在 Firebase 控制台中创建一个新项目，并向项目中添加一个 Android 应用。为你的项目选择一个唯一的包名。如果你导航到项目设置中的 <strong>Cloud Messaging</strong> 选项卡，就可以在以下界面中访问服务器发送者 ID：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot6.png" alt="Google Firebase 中的服务器发送者 ID">
+<figcaption>Google Firebase 中的服务器发送者 ID</figcaption>
+</figure>
+<p>将此发送者 ID 填入 <code>MainContentComponent</code> 构造函数的以下代码片段中：</p>
+<pre><code>#if JUCE_ANDROID
+remoteView.sendRemoteMessageButton.onClick = [this] {
+    juce::StringPairArray data;
+    data.set ("key1", "value1");
+    data.set ("key2", "value2");
+    static int id = 100;
+    juce::PushNotifications::getInstance()-&gt;sendUpstreamMessage ("XXXXXXXXXXXX", // Insert sender ID here
+        "com.juce.pushnotificationstutorial",
+        juce::String (id++),
+        "standardType",
+        3600,
+        data);
+};</code></pre>
+<blockquote>
+      <p>确保 Google Firebase 中的 bundle ID 与项目设置中的一致（全部小写）。</p>
+    </blockquote>
+<h3>生成 google-services.json 文件</h3>
+<p>我们还需要下载用于 Android 远程通知的 Firebase 配置文件。导航到项目设置中的 <strong>General</strong> 选项卡，点击下载 <strong>google-services.json</strong>，如下方截图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot7.png" alt="从 Google Firebase 下载 json 文件">
+<figcaption>从 Google Firebase 下载 json 文件</figcaption>
+</figure>
+<p>将该文件复制到你的 JUCE 项目目录中，并在 Android 导出器设置下的 <strong>Remote Notifications Config File</strong> 字段中填入 google-services.json 文件的相对路径：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_push_notifications_screenshot8.png" alt="导出器设置中 google-services 文件的路径">
+<figcaption>导出器设置中 google-services 文件的路径</figcaption>
+</figure>
+<blockquote>
+      <p>你也可以在“Debug”和“Release”部分下分别为每个目标指定 google-services.json 的路径。这些设置将覆盖 Android 主导出器部分中的设置。</p>
+    </blockquote>
+<p>至此推送通知的设置应已完成，我们终于可以开始将这些功能实现到应用中。</p>
+<h2>通知类型</h2>
+<p>无论应用是否正在运行，通知都可用于向用户传达相关内容。它们可以仅显示一条消息、显示对话框，甚至播放声音。一般来说，所有相关平台上主要有两种通知类型：</p>
+<ul>
+<li>本地：由系统在本地触发，不需要互联网连接，并且可以由应用安排即使在应用不活跃时也会触发。
+</li>
+<li>远程：由远程服务器推送，需要互联网连接，但可以根据从客户设备接收到的数据随时发送。
+</li>
+</ul>
+<p>我们先来看可以在应用内触发的简单本地通知。</p>
+<h2>注册为监听器</h2>
+<p>JUCE 中的 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 类以<a href="https://en.wikipedia.org/wiki/Singleton_pattern" rel="noreferrer noopener">单例</a>方式实现，其全局实例可以随时通过 <code>PushNotifications::getInstance()</code> 函数访问。<a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 类提供异步接口，操作结果通过 <a href="structPushNotifications_1_1Listener.html" rel="noreferrer noopener">PushNotifications::Listener</a> 接口传递。只需向 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 实例注册监听器即可接收回调。因此，在 <code>MainContentComponent</code> 类中，我们继承 <a href="structPushNotifications_1_1Listener.html" rel="noreferrer noopener">PushNotifications::Listener</a> [1]：</p>
+<pre><code>class MainContentComponent : public juce::Component,
+                             private juce::ChangeListener,
+                             private juce::ComponentListener,
+                             private juce::PushNotifications::Listener // [1]
+{</code></pre>
+<p>在 <code>MainContentComponent</code> 类的构造函数中，我们将本类作为监听器添加到 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 实例 [2]：</p>
+<pre><code>juce::PushNotifications::getInstance()-&gt;addListener (this); // [2]</code></pre>
+<p>我们还要确保在类析构函数中取消订阅，如下所示 [3]：</p>
+<pre><code>~MainContentComponent() override
+{
+    juce::PushNotifications::getInstance()-&gt;removeListener (this); // [3]
+}</code></pre>
+<h2>请求权限</h2>
+<p>在发送任何类型的通知之前，我们首先需要向用户请求许可。该许可只在应用首次启动时请求一次，设置会一直保存，直到应用被删除或用户在系统设置中撤销权限。因此，良好的做法是在每次应用启动时请求权限，并且仅在尚未授予权限时才要求用户授予。在 macOS/iOS 上，我们调用 <code>requestPermissionsWithSettings()</code> 函数，它接受一个 <a href="structPushNotifications_1_1Settings.html" rel="noreferrer noopener">PushNotifications::Settings</a> 对象作为参数 [4]。在 Android 上，我们调用 <code>setupChannels()</code> 函数，它接受一个 <a href="structPushNotifications_1_1ChannelGroup.html" rel="noreferrer noopener">PushNotifications::ChannelGroup</a> 对象和若干 <a href="structPushNotifications_1_1Channel.html" rel="noreferrer noopener">PushNotifications::Channel</a> 对象作为参数 [5]。</p>
+<pre><code>#if JUCE_IOS || JUCE_MAC
+paramControls.fireInComboBox.onChange = [this] { delayNotification(); };
+juce::PushNotifications::getInstance()-&gt;requestPermissionsWithSettings (getNotificationSettings()); // [4]
+#elif JUCE_ANDROID
+juce::PushNotifications::ChannelGroup cg { "demoGroup", "demo group" };
+juce::PushNotifications::getInstance()-&gt;setupChannels ({ { cg } }, getAndroidChannels()); // [5]
+#endif
+}</code></pre>
+<blockquote>
+      <p>注意，setupChannels() 仅从 Android Oreo（API 26）起才需要，在更早的 Android 版本上会被忽略。</p>
+    </blockquote>
+<h3>在 macOS/iOS 上请求权限</h3>
+<p>我们先来看 macOS/iOS 这一侧。</p>
+<p>我们需要请求三种不同类型的权限，即提醒、标记和声音。为便于这项初始化，我们创建了一个 <code>getNotificationSettings()</code> 函数并在其中插入这段代码。在 <a href="structPushNotifications_1_1Settings.html" rel="noreferrer noopener">PushNotifications::Settings</a> 对象上设置相应变量以允许这些功能 [6]。如果你部署到 macOS，这就是你需要请求的全部内容，可以直接从函数返回。但在 iOS 上，我们必须定义如下的 Action 和 Category 对象：</p>
+<ul>
+<li>Action：表示可以作为按钮或文本输入呈现在通知中的操作。
+</li>
+<li>Category：表示一组在通知中一起出现的操作。
+</li>
+</ul>
+<p>在同一个函数中，按如下方式定义操作和类别：</p>
+<pre><code>static juce::PushNotifications::Settings getNotificationSettings()
+{
+    juce::PushNotifications::Settings settings; // [6]
+    settings.allowAlert = true;
+    settings.allowBadge = true;
+    settings.allowSound = true;
+#if JUCE_IOS
+    using Action = juce::PushNotifications::Settings::Action;
+    using Category = juce::PushNotifications::Settings::Category;
+    Action okAction;
+    okAction.identifier = "okAction";
+    okAction.title = "OK!";
+    okAction.style = Action::button;
+    okAction.triggerInBackground = true;
+    Action cancelAction;
+    cancelAction.identifier = "cancelAction";
+    cancelAction.title = "Cancel";
+    cancelAction.style = Action::button;
+    cancelAction.triggerInBackground = true;
+    cancelAction.destructive = true;
+    Action textAction;
+    textAction.identifier = "textAction";
+    textAction.title = "Enter text";
+    textAction.style = Action::text;
+    textAction.triggerInBackground = true;
+    textAction.destructive = false;
+    textAction.textInputButtonText = "Ok";
+    textAction.textInputPlaceholder = "Enter text...";
+    Category okCategory;
+    okCategory.identifier = "okCategory";
+    okCategory.actions = { okAction };
+    Category okCancelCategory;
+    okCancelCategory.identifier = "okCancelCategory";
+    okCancelCategory.actions = { okAction, cancelAction };
+    Category textCategory;
+    textCategory.identifier = "textCategory";
+    textCategory.actions = { textAction };
+    textCategory.sendDismissAction = true;
+    settings.categories = { okCategory, okCancelCategory, textCategory }; // [7]
+#endif
+    return settings;
+}</code></pre>
+<p>这里我们创建了三个不同的操作和三个不同的类别：</p>
+<ul>
+<li>OK 操作：将操作样式指定为按钮，标题为合适的“OK”，并在后台触发。
+</li>
+<li>Cancel 操作：将操作样式指定为按钮，标题为合适的“Cancel”，在后台触发，并显示为破坏性操作。
+</li>
+<li>Text 操作：将操作样式指定为文本输入，带有合适的占位符和按钮文本，并在后台触发。
+</li>
+<li>OK 类别：仅表示“OK 操作”。
+</li>
+<li>OK/Cancel 类别：表示“OK 操作”和“Cancel 操作”。
+</li>
+<li>Text 类别：仅表示“Text 操作”，并指定将发送一个关闭操作。
+</li>
+</ul>
+<p>所有这些类别都在 <a href="structPushNotifications_1_1Settings.html" rel="noreferrer noopener">PushNotifications::Settings</a> 对象中返回 [7]。</p>
+<h3>在 Android 上请求权限</h3>
+<p>现在我们来看 Android 这一侧。</p>
+<p>我们可以定义不同重要程度的渠道，并为它们设置相应参数，而这些渠道又可以归属于渠道组，从而在视觉上分隔通知。为便于这项初始化，我们创建了一个 <code>getAndroidChannels()</code> 函数并在其中插入这段代码。创建三个不同的 <a href="structPushNotifications_1_1Channel.html" rel="noreferrer noopener">PushNotifications::Channel</a> 对象以指定不同参数 [8]：</p>
+<pre><code>static juce::Array&lt;juce::PushNotifications::Channel&gt; getAndroidChannels()
+{
+    using Channel = juce::PushNotifications::Channel;
+    Channel ch1, ch2, ch3;
+    ch1.identifier = "1";
+    ch1.name = "HighImportance";
+    ch1.importance = juce::PushNotifications::Channel::max;
+    ch1.lockScreenAppearance = juce::PushNotifications::Notification::showCompletely;
+    ch1.description = "High Priority Channel for important stuff";
+    ch1.groupId = "demoGroup";
+    ch1.ledColour = juce::Colours::red;
+    ch1.bypassDoNotDisturb = true;
+    ch1.canShowBadge = true;
+    ch1.enableLights = true;
+    ch1.enableVibration = true;
+    ch1.soundToPlay = juce::URL ("demonstrative");
+    ch1.vibrationPattern = { 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200 };
+    ch2.identifier = "2";
+    ch2.name = "MediumImportance";
+    ch2.importance = juce::PushNotifications::Channel::normal;
+    ch2.lockScreenAppearance = juce::PushNotifications::Notification::showPartially;
+    ch2.description = "Medium Priority Channel for standard stuff";
+    ch2.groupId = "demoGroup";
+    ch2.ledColour = juce::Colours::yellow;
+    ch2.canShowBadge = true;
+    ch2.enableLights = true;
+    ch2.enableVibration = true;
+    ch2.soundToPlay = juce::URL ("default_os_sound");
+    ch2.vibrationPattern = { 1000, 1000 };
+    ch3.identifier = "3";
+    ch3.name = "LowImportance";
+    ch3.importance = juce::PushNotifications::Channel::min;
+    ch3.lockScreenAppearance = juce::PushNotifications::Notification::dontShow;
+    ch3.description = "Low Priority Channel for silly stuff";
+    ch3.groupId = "demoGroup";
+    return { ch1, ch2, ch3 };
+}</code></pre>
+<ul>
+<li>渠道 1：表示通知中的最高重要程度。我们可以指定参数，例如颜色为红色、绕过“勿扰模式”、启用自定义振动模式，甚至播放自定义声音文件。
+</li>
+<li>渠道 2：表示通知中的中等重要程度。这次我们指定颜色为黄色、启用不同的振动模式，并播放不同的自定义声音文件。
+</li>
+<li>渠道 3：表示通知中的最低重要程度。我们决定对它们保留默认参数。
+</li>
+</ul>
+<p>所有这些渠道都作为 <a href="structPushNotifications_1_1Channel.html" rel="noreferrer noopener">PushNotifications::Channel</a> 对象数组返回，它们属于同一个 <a href="structPushNotifications_1_1ChannelGroup.html" rel="noreferrer noopener">PushNotifications::ChannelGroup</a> [9]。</p>
+<blockquote>
+      <p>getAndroidChannels() 的实现必须正确配置渠道，每个渠道至少提供标识符、名称和组 ID。</p>
+    </blockquote>
+<blockquote>
+      <p>练习：请随意试验并更改这些设置，以熟悉这些平台上的通知权限。</p>
+    </blockquote>
+<p>至此，所有平台上的通知设置都已完成。</p>
+<h2>本地通知</h2>
+<p>当用户点击本地通知选项卡中的发送按钮时，会调用以下 <code>sendLocalNotification()</code> 函数。该函数首先创建一个 <a href="structPushNotifications_1_1Notification.html" rel="noreferrer noopener">PushNotifications::Notification</a> 对象，随后我们用用户界面输入中的相应参数填充它 [1]。如果通知对象因参数不正确而无效，出于本教程的目的，我们会可选地显示一条消息 [2]。否则，如果对象有效，我们可以在 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 实例上调用 <code>sendLocalNotification()</code> 函数 [3]。</p>
+<pre><code>void sendLocalNotification()
+{
+    juce::PushNotifications::Notification n; // [1]
+    fillRequiredParams (n); // [4]
+    fillOptionalParamsOne (n);
+#if JUCE_ANDROID
+    fillOptionalParamsTwo (n);
+    fillOptionalParamsThree (n);
+#endif
+    if (!n.isValid()) // [2]
+    {
+#if JUCE_IOS
+        juce::String requiredFields = "identifier (from iOS 10), title, body and category";
+#elif JUCE_ANDROID
+        juce::String requiredFields = "channel ID (from Android O), title, body and icon";
+#else
+        juce::String requiredFields = "all required fields";
+#endif
+        juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon,
+            "Incorrect notifications setup",
+            "Please make sure that "
+                + requiredFields + " are set.");
+        return;
+    }
+    juce::PushNotifications::getInstance()-&gt;sendLocalNotification (n); // [3]
+}</code></pre>
+<p>目前，我们将重点关注在 <code>fillRequiredParams()</code> 函数中填写的必需参数，我们在该函数中把先前定义的 <a href="structPushNotifications_1_1Notification.html" rel="noreferrer noopener">PushNotifications::Notification</a> 对象作为参数传入 [4]。</p>
+<blockquote>
+      <p>如果你对推送通知的可选参数感兴趣，请参阅本教程最后一节“自定义通知”，我们将在那里深入介绍。</p>
+    </blockquote>
+<pre><code>void fillRequiredParams (juce::PushNotifications::Notification&amp; n)
+{
+    n.identifier = paramControls.identifierEditor.getText(); // [5.1]
+    n.title = paramControls.titleEditor.getText(); // [5.2]
+    n.body = paramControls.bodyEditor.getText(); // [5.3]
+#if JUCE_IOS
+    n.category = paramControls.categoryComboBox.getText(); // [6.1]
+#elif JUCE_ANDROID || JUCE_MAC
+    #if JUCE_MAC
+    juce::String prefix = "images/";
+    juce::String extension = ".png";
+    #else
+    juce::String prefix;
+    juce::String extension;
+    #endif
+    if (paramControls.iconComboBox.getSelectedItemIndex() == 0) // [7]
+        n.icon = prefix + "ic_stat_name" + extension;
+    else if (paramControls.iconComboBox.getSelectedItemIndex() == 1)
+        n.icon = prefix + "ic_stat_name2" + extension;
+    else if (paramControls.iconComboBox.getSelectedItemIndex() == 2)
+        n.icon = prefix + "ic_stat_name3" + extension;
+    else if (paramControls.iconComboBox.getSelectedItemIndex() == 3)
+        n.icon = prefix + "ic_stat_name4" + extension;
+    else if (paramControls.iconComboBox.getSelectedItemIndex() == 4)
+        n.icon = prefix + "ic_stat_name5" + extension;
+#endif
+#if JUCE_ANDROID
+    // Note: this is not strictly speaking required param, just doing it here because it is the fastest way!
+    n.publicVersion = new juce::PushNotifications::Notification(); // [8]
+    n.publicVersion-&gt;identifier = "blahblahblah";
+    n.publicVersion-&gt;title = "Public title!";
+    n.publicVersion-&gt;body = "Public body!";
+    n.publicVersion-&gt;icon = n.icon;
+    n.channelId = String (paramControls.channelIdComboBox.getSelectedItemIndex() + 1); // [6.2]
+#endif
+}</code></pre>
+<p>在所有平台上，通知都由三个主要参数定义，我们从必需参数选项卡的用户输入中设置它们：</p>
+<ul>
+<li>标识符 [5.1]：用于在内部标识通知的唯一 ID。通常不向用户显示。
+</li>
+<li>标题 [5.2]：通知的标题，显示在气泡顶部。
+</li>
+<li>正文 [5.3]：通知的内容，如果被截断可以展开以显示全部内容。
+</li>
+</ul>
+<p>在 macOS/iOS 上，我们还会提供通知类别，以选择要显示哪些操作 [6.1]。在 Android 上，我们指定渠道编号以指定通知的重要程度 [6.2]。</p>
+<p>在 macOS 和 Android 上，我们需要提供一个图标以显示在通知中，并确保路径是平台特定的 [7]。最后在 Android 上，如有需要，我们可以选择性地提供通知的另一个版本，用于在设备锁屏上显示 [8]。</p>
+<p>本地通知的实现相当简单，所以我们现在深入了解一下远程通知。</p>
+<h2>远程通知</h2>
+<blockquote>
+      <p>本节仅在实体设备上有效。不要在模拟器上尝试，因为它无法正常运行。</p>
+    </blockquote>
+<p>为了在 macOS/iOS 上接收远程通知，我们首先需要获取一个设备令牌，之后将其填入 Pusher 应用程序以发送测试通知。该令牌可能随时变化，因此建议在每次应用启动时获取新令牌。这在按钮的 lambda 函数中完成，通过调用 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 实例上的 <code>getDeviceToken()</code> 函数 [1]：</p>
+<pre><code>remoteView.getDeviceTokenButton.onClick = [] {
+    juce::String token = juce::PushNotifications::getInstance()-&gt;getDeviceToken();
+    DBG ("token = " + token);
+    if (token.isEmpty())
+        showRemoteInstructions();
+    else
+        juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon, "Device token", token);
+};</code></pre>
+<p>如预期的那样，每当令牌刷新时，都会触发名为 <code>deviceTokenRefreshed()</code> 的回调函数来通知我们这一变化：</p>
+<pre><code>void deviceTokenRefreshed (const juce::String&amp; token) override
+{
+    juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon,
+        "Device token refreshed",
+        token);
+}</code></pre>
+<h3>macOS/iOS 上的远程通知</h3>
+<p>我们转到 Pusher，看看如何在 macOS/iOS 上向我们的应用发送推送通知。从调试器复制新的设备令牌并启动 Pusher 应用。将令牌粘贴到相应的 <strong>Device push token</strong> 字段中，并确保在下拉菜单中选中了正确的证书。</p>
+<p>在下面的文本字段中，我们可以使用 <a href="https://docs.juce.com/master/classJSON.html" rel="noreferrer noopener">JSON</a> 格式以负载字典的形式创建推送通知。一个简单的通知大致如下：</p>
+<pre><code>{
+  "aps": {
+    "alert": "Test Push Notification",
+    "badge": 1,
+    "sound": "default"
+  },
+  "juce": "tutorial",
+  "foo": "bar"
+}</code></pre>
+<p>第一个名为“aps”的元素将包含我们通知的基本信息。在上面的示例中，它描述了提醒内容、标记数量和触发时要播放的声音。我们还可以发送应用程序特定的数据，如示例中“aps”元素之后的键/值对所示。</p>
+<p>在第二个负载示例中，我们自定义提醒内容，使其除标题字段外还包含更多信息，例如正文和操作按钮。我们还决定在触发通知时播放自定义声音文件：</p>
+<pre><code>{
+  "aps": {
+    "alert": {
+      "title": "Test Push Notification",
+      "body": "Hello World!",
+      "action-loc-key": "OK"
+    },
+    "badge": 2,
+    "sound": "demonstrative.caf"
+  }
+}</code></pre>
+<p>在第三个示例中，我们利用 <a href="structPushNotifications_1_1Settings.html" rel="noreferrer noopener">PushNotifications::Settings</a> 中定义的通知类别来轻松定义操作。我们还通过设置 <code>content-available</code> 属性，指示操作系统在后台静默投递该通知：</p>
+<pre><code>{
+  "aps": {
+    "category": "okCategory",
+    "alert": "Test Push Notification",
+    "badge": 3,
+    "content-available": 1
+  },
+  "foobar": ["foo", "bar"]
+}</code></pre>
+<blockquote>
+      <p>练习：试验不同的负载参数，看看它们在应用内是如何被接收的。你能在通知正文中显示图片吗？</p>
+    </blockquote>
+<h3>Android 上的远程通知</h3>
+<p>现在我们切换到 Android 这一侧，并使用 Google Firebase 控制台。在控制台中，导航到 <strong>Grow &gt; Notifications</strong> 选项卡，点击 <strong>Compose message</strong>。在随后的窗口中，你可以填写消息信息，并选择要将通知发送到哪个目标。</p>
+<p>在 Android 上，我们还可以从应用向服务器发送上行消息，以传达重要的用户数据。这通过将一个键/值对字典定义为 <a href="https://docs.juce.com/master/classStringPairArray.html" rel="noreferrer noopener">StringPairArray</a> 对象 [1]，并在 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 实例上调用 <code>sendUpstreamMessage()</code> 函数 [2] 来完成：</p>
+<pre><code>remoteView.sendRemoteMessageButton.onClick = [this] {
+    juce::StringPairArray data; // [1]
+    data.set ("key1", "value1");
+    data.set ("key2", "value2");
+    static int id = 100;
+    juce::PushNotifications::getInstance()-&gt;sendUpstreamMessage ("XXXXXXXXXXXX", // Insert sender ID here
+        "com.juce.pushnotificationstutorial",
+        String (id++),
+        "standardType",
+        3600,
+        data); // [2]
+};</code></pre>
+<p>遗憾的是，为此我们需要每次都将先前设置的服务器发送者 ID 显式作为参数传入。</p>
+<p>当向上行服务器发送消息时，如果请求成功，我们可以期待通过以下 <code>upstreamMessageSent()</code> 函数收到回调：</p>
+<pre><code>void upstreamMessageSent (const juce::String&amp; messageId) override
+{
+    juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon,
+        "Upstream message sent",
+        "Message id: " + messageId);
+}</code></pre>
+<p>但如果请求不成功，我们则会通过 <code>upstreamMessageSendingError()</code> 函数收到回调：</p>
+<pre><code>void upstreamMessageSendingError (const juce::String&amp; messageId, const juce::String&amp; error) override
+{
+    juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon,
+        "Upstream message sending error",
+        "Message id: " + messageId
+            + "nerror: " + error);
+}</code></pre>
+<p>如果 Google Firebase 收到过多消息，它可能会开始从待处理消息队列中删除它们。发生这种情况时，我们会通过 <code>remoteNotificationsDeleted()</code> 函数收到通知：</p>
+<pre><code>void remoteNotificationsDeleted() override
+{
+    juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon,
+        "Remote notifications deleted",
+        "Some of the pending messages were removed!");
+}</code></pre>
+<p>在 Android 上，我们还可以分别在 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 实例上调用 <code>subscribeToTopic()</code> 和 <code>unsubscribeFromTopic()</code> 函数来订阅和取消订阅特定主题。在这个示例中，我们选择订阅和取消订阅“sports”主题：</p>
+<pre><code>remoteView.subscribeToSportsButton.onClick = [this] { juce::PushNotifications::getInstance()-&gt;subscribeToTopic ("sports"); };
+remoteView.unsubscribeFromSportsButton.onClick = [this] { juce::PushNotifications::getInstance()-&gt;unsubscribeFromTopic ("sports"); };</code></pre>
+<h2>处理接收到的通知</h2>
+<p>当用户对通知执行操作时，可以调用多种不同的回调。确切行为可能因平台和操作系统版本而异，因此请参阅 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 类的文档以获取详细说明。</p>
+<p>每当用户按下通知时，都会调用 <code>handleNotification()</code> 回调函数。通常你会使用该函数根据 ID 处理来自通知的信息，但出于本教程的目的，我们只是简单地显示一个包含三个主要参数的消息框，如下所示：</p>
+<pre><code>void handleNotification (bool isLocalNotification, const juce::PushNotifications::Notification&amp; n) override
+{
+    juce::ignoreUnused (isLocalNotification);
+    juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon,
+        "Received notification",
+        "ID: " + n.identifier
+            + ", title: " + n.title
+            + ", body: " + n.body);
+}</code></pre>
+<p>每当用户对通知执行操作（例如按下按钮或输入文本）时，都会调用 <code>handleNotificationAction()</code> 回调函数。该回调包含与操作类型相关的附加信息，以及例如文本输入形式的可选响应。在这种情况下，我们还需要通过将通知标识符作为参数传给 <code>removeDeliveredNotification()</code> 函数并在 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 实例上调用它，手动从历史记录中移除该通知 [9]：</p>
+<pre><code>void handleNotificationAction (bool isLocalNotification,
+    const juce::PushNotifications::Notification&amp; n,
+    const juce::String&amp; actionIdentifier,
+    const juce::String&amp; optionalResponse) override
+{
+    juce::ignoreUnused (isLocalNotification);
+    juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon,
+        "Received notification action",
+        "ID: " + n.identifier
+            + ", title: " + n.title
+            + ", body: " + n.body
+            + ", action: " + actionIdentifier
+            + ", optionalResponse: " + optionalResponse);
+    juce::PushNotifications::getInstance()-&gt;removeDeliveredNotification (n.identifier);
+}</code></pre>
+<p>顾名思义，以下回调在用户于响应本地通知之前将其关闭时触发，我们会像之前一样显示相同的消息框：</p>
+<pre><code>void localNotificationDismissedByUser (const juce::PushNotifications::Notification&amp; n) override
+{
+    juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon,
+        "Notification dismissed by a user",
+        "ID: " + n.identifier
+            + ", title: " + n.title
+            + ", body: " + n.body);
+}</code></pre>
+<p>如果用户忽略通知或不对其执行操作，该通知会留在设备通知区域的已投递列表中。要获取已投递通知的列表，我们可以在 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 实例上调用 <code>getDeliveredNotifications()</code> 函数。随后会调用名为 <code>deliveredNotificationsListReceived()</code> 的回调函数，我们可以通过如下方式在消息框中显示该列表来处理它：</p>
+<pre><code>void deliveredNotificationsListReceived (const juce::Array&lt;juce::PushNotifications::Notification&gt;&amp; notifs) override
+{
+    juce::String text = "Received notifications: ";
+    for (auto&amp; n : notifs)
+        text &lt;&lt; "(" &lt;&lt; n.identifier &lt;&lt; ", " &lt;&lt; n.title &lt;&lt; ", " &lt;&lt; n.body &lt;&lt; "), ";
+    juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon, "Received notification list", text);
+}</code></pre>
+<p>在 macOS/iOS 上，应用程序可以安排本地通知在将来某个时刻触发。当在 <a href="https://docs.juce.com/master/classPushNotifications.html" rel="noreferrer noopener">PushNotifications</a> 实例上调用 <code>getPendingLocalNotifications()</code> 函数时，这个便捷的回调函数 <code>pendingLocalNotificationsListReceived()</code> 将接收到一个待处理通知数组：</p>
+<pre><code>void pendingLocalNotificationsListReceived (const juce::Array&lt;juce::PushNotifications::Notification&gt;&amp; notifs) override
+{
+    juce::String text = "Pending notifications: ";
+    for (auto&amp; n : notifs)
+        text &lt;&lt; "(" &lt;&lt; n.identifier &lt;&lt; ", " &lt;&lt; n.title &lt;&lt; ", " &lt;&lt; n.body &lt;&lt; "), ";
+    juce::NativeMessageBox::showMessageBoxAsync (juce::AlertWindow::InfoIcon, "Pending notification list", text);
+}</code></pre>
+<blockquote>
+      <p>练习：试验不同的参数并在消息框中显示它们。你能在回调消息框中显示通知图标吗？</p>
+    </blockquote>
+<p>本教程的核心内容已经演示完毕，<a href="structPushNotifications_1_1Listener.html" rel="noreferrer noopener">PushNotifications::Listener</a> 类的所有回调函数都已重写，但如果你想进一步了解可选的通知参数，请继续阅读！</p>
+<h2>自定义通知</h2>
+<p>除本教程目前介绍的参数之外，通知还有众多可以设置的可选参数。这个可选章节将详细介绍这些参数。</p>
+<p>在 <code>sendLocalNotification()</code> 函数中调用的第一个函数会填充所有平台都支持的一些可选参数：</p>
+<pre><code>void fillOptionalParamsOne (juce::PushNotifications::Notification&amp; n)
+{
+    n.subtitle = paramControls.subtitleEditor.getText(); // [1.1]
+    n.badgeNumber = paramControls.badgeNumberComboBox.getSelectedItemIndex(); // [1.2]
+    if (paramControls.soundToPlayComboBox.getSelectedItemIndex() &gt; 0)
+        n.soundToPlay = juce::URL (paramControls.soundToPlayComboBox.getItemText (paramControls.soundToPlayComboBox.getSelectedItemIndex())); // [1.3]
+    n.properties = juce::JSON::parse (paramControls.propertiesEditor.getText()); // [1.4]
+#if JUCE_IOS || JUCE_MAC
+    n.triggerIntervalSec = double (paramControls.fireInComboBox.getSelectedItemIndex() * 10);
+    n.repeat = paramControls.repeatButton.getToggleState();
+#elif JUCE_ANDROID
+    n.badgeIconType = (juce::PushNotifications::Notification::BadgeIconType) paramControls.badgeIconComboBox.getSelectedItemIndex(); // [2.1]
+    n.tickerText = paramControls.tickerTextEditor.getText(); // [2.2]
+    n.shouldAutoCancel = paramControls.autoCancelButton.getToggleState(); // [2.3]
+    n.alertOnlyOnce = paramControls.alertOnlyOnceButton.getToggleState(); // [2.4]
+#endif
+#if JUCE_ANDROID || JUCE_MAC
+    if (paramControls.actionsComboBox.getSelectedItemIndex() == 1)
+    {
+        juce::PushNotifications::Notification::Action a, a2;
+        a.style = juce::PushNotifications::Notification::Action::button;
+        a2.style = juce::PushNotifications::Notification::Action::button;
+        a.title = a.identifier = "Ok";
+        a2.title = a2.identifier = "Cancel";
+        n.actions.add (a);
+        n.actions.add (a2);
+    }
+    else if (paramControls.actionsComboBox.getSelectedItemIndex() == 2)
+    {
+        juce::PushNotifications::Notification::Action a, a2;
+        a.title = a.identifier = "Input Text Here";
+        a2.title = a2.identifier = "No";
+        a.style = juce::PushNotifications::Notification::Action::text;
+        a2.style = juce::PushNotifications::Notification::Action::button;
+        a.icon = "ic_stat_name4";
+        a2.icon = "ic_stat_name5";
+        a.textInputPlaceholder = "placeholder text ...";
+        n.actions.add (a);
+        n.actions.add (a2);
+    }
+    else if (paramControls.actionsComboBox.getSelectedItemIndex() == 3)
+    {
+        juce::PushNotifications::Notification::Action a, a2;
+        a.title = a.identifier = "Ok";
+        a2.title = a2.identifier = "Cancel";
+        a.style = juce::PushNotifications::Notification::Action::button;
+        a2.style = juce::PushNotifications::Notification::Action::button;
+        a.icon = "ic_stat_name4";
+        a2.icon = "ic_stat_name5";
+        n.actions.add (a);
+        n.actions.add (a2);
+    }
+    else if (paramControls.actionsComboBox.getSelectedItemIndex() == 4)
+    {
+        juce::PushNotifications::Notification::Action a, a2;
+        a.title = a.identifier = "Input Text Here";
+        a2.title = a2.identifier = "No";
+        a.style = juce::PushNotifications::Notification::Action::text;
+        a2.style = juce::PushNotifications::Notification::Action::button;
+        a.icon = "ic_stat_name4";
+        a2.icon = "ic_stat_name5";
+        a.textInputPlaceholder = "placeholder text ...";
+        a.allowedResponses.add ("Response 1");
+        a.allowedResponses.add ("Response 2");
+        a.allowedResponses.add ("Response 3");
+        n.actions.add (a);
+        n.actions.add (a2);
+    }
+#endif
+}</code></pre>
+<ul>
+<li>副标题 [1.1]：可在通知中显示的附加文本。
+</li>
+<li>标记数量 [1.2]：表示标记图标中显示的数字，该数字会与其他已投递通知的标记数字相加。
+</li>
+<li>声音 [1.3]：触发通知时播放的自定义声音。如果希望通知静音，可以将此字段留空，或使用“default_os_sound”触发系统默认声音。
+</li>
+<li>属性 [1.4]：可作为字典传递的附加属性。
+</li>
+</ul>
+<p>在 macOS 和 iOS 上，你还可以将通知的触发延迟指定的秒数，并决定重复该通知。在 Android 上，你可以提供一张大图以显示在通知内容中，并指定以下附加参数：</p>
+<ul>
+<li>标记图标类型 [2.1]：标记图标的大小，或是否要隐藏它。
+</li>
+<li>滚动文本 [2.2]：用于辅助功能的附加文本。
+</li>
+<li>自动取消 [2.3]：点击通知时是否应取消该通知。
+</li>
+<li>仅提醒一次 [2.4]：通知是否应仅在尚未显示时才发出声音和振动。
+</li>
+</ul>
+<p>如果你希望在通知中显示操作按钮（就像在 iOS 上那样），在 Android 和 macOS 上我们必须手动定义它们。此设置本质上与使用 <a href="structPushNotifications_1_1Settings.html" rel="noreferrer noopener">PushNotifications::Settings</a> 对象的 iOS 设置类似，因此我们不再详述。</p>
+<p>接下来的几组参数仅适用于 Android。</p>
+<pre><code>void fillOptionalParamsTwo (juce::PushNotifications::Notification&amp; n)
+{
+    using Notification = juce::PushNotifications::Notification;
+    Notification::Progress progress;
+    progress.max = paramControls.progressMaxComboBox.getSelectedItemIndex() * 10;
+    progress.current = paramControls.progressCurrentComboBox.getSelectedItemIndex() * 10;
+    progress.indeterminate = paramControls.progressIndeterminateButton.getToggleState();
+    n.progress = progress; // [3.1]
+    n.person = paramControls.personEditor.getText(); // [3.2]
+    n.type = Notification::Type (paramControls.categoryComboBox.getSelectedItemIndex()); // [3.3]
+    n.priority = Notification::Priority (paramControls.priorityComboBox.getSelectedItemIndex() - 2); // [3.4]
+    n.lockScreenAppearance = Notification::LockScreenAppearance (paramControls.lockScreenVisibilityComboBox.getSelectedItemIndex() - 1); // [3.5]
+    n.groupId = paramControls.groupIdEditor.getText(); // [3.6]
+    n.groupSortKey = paramControls.sortKeyEditor.getText();
+    n.groupSummary = paramControls.groupSummaryButton.getToggleState();
+    n.groupAlertBehaviour = Notification::GroupAlertBehaviour (paramControls.groupAlertBehaviourComboBox.getSelectedItemIndex());
+}</code></pre>
+<ul>
+<li>进度 [3.1]：<a href="https://docs.juce.com/master/classDisplays.html" rel="noreferrer noopener">Displays</a> 显示进度的特定类型通知。
+</li>
+<li>人员 [3.2]：将通知与特定人员关联。这在消息类应用中可能很有用。
+</li>
+<li>类型 [3.3]：指定通知的类别，以便操作系统更好地处理其外观。
+</li>
+<li>优先级 [3.4]：向操作系统指定通知的优先级，以便更好地处理其外观。
+</li>
+<li>锁屏外观 [3.5]：是否在锁屏上显示或隐藏该通知。
+</li>
+<li>分组 [3.6]：指定与通知分组相关的参数，例如排序顺序、分组摘要和分组提醒行为。
+</li>
+</ul>
+<pre><code>void fillOptionalParamsThree (juce::PushNotifications::Notification&amp; n)
+{
+    n.accentColour = paramControls.accentColourButton.findColour (juce::TextButton::buttonColourId, false); // [4.1]
+    n.ledColour = paramControls.ledColourButton.findColour (juce::TextButton::buttonColourId, false); // [4.2]
+    using Notification = juce::PushNotifications::Notification;
+    Notification::LedBlinkPattern ledBlinkPattern;
+    ledBlinkPattern.msToBeOn = paramControls.ledMsToBeOnComboBox.getSelectedItemIndex() * 200;
+    ledBlinkPattern.msToBeOff = paramControls.ledMsToBeOffComboBox.getSelectedItemIndex() * 200;
+    n.ledBlinkPattern = ledBlinkPattern; // [4.3]
+    juce::Array&lt;int&gt; vibrationPattern;
+    if (paramControls.vibratorMsToBeOnComboBox.getSelectedItemIndex() &gt; 0 &amp;&amp; paramControls.vibratorMsToBeOffComboBox.getSelectedItemIndex() &gt; 0)
+    {
+        vibrationPattern.add (paramControls.vibratorMsToBeOffComboBox.getSelectedItemIndex() * 500);
+        vibrationPattern.add (paramControls.vibratorMsToBeOnComboBox.getSelectedItemIndex() * 500);
+        vibrationPattern.add (2 * paramControls.vibratorMsToBeOffComboBox.getSelectedItemIndex() * 500);
+        vibrationPattern.add (2 * paramControls.vibratorMsToBeOnComboBox.getSelectedItemIndex() * 500);
+    }
+    n.vibrationPattern = vibrationPattern; // [4.4]
+    n.localOnly = paramControls.localOnlyButton.getToggleState(); // [4.5]
+    n.ongoing = paramControls.ongoingButton.getToggleState(); // [4.6]
+    n.timestampVisibility = Notification::TimestampVisibility (paramControls.timestampVisibilityComboBox.getSelectedItemIndex()); // [4.7]
+    if (paramControls.timeoutAfterComboBox.getSelectedItemIndex() &gt; 0)
+    {
+        auto index = paramControls.timeoutAfterComboBox.getSelectedItemIndex();
+        n.timeoutAfterMs = index * 1000 + 4000; // [4.8]
+    }
+}</code></pre>
+<ul>
+<li>强调色 [4.1]：更改通知的强调色。
+</li>
+<li>LED 颜色 [4.2]：更改设备背面物理 LED 的颜色。
+</li>
+<li>LED 闪烁模式 [4.3]：允许自定义物理 LED 的闪烁模式。
+</li>
+<li>振动模式 [4.4]：允许自定义物理设备的振动模式。
+</li>
+<li>本地 [4.5]：是否应将通知广播到其他已连接的用户设备。
+</li>
+<li>持续 [4.6]：是否允许用户关闭该通知，还是只能由系统手动关闭。
+</li>
+<li>时间戳 [4.7]：在通知中显示时间戳还是计时器。
+</li>
+<li>超时 [4.8]：指定通知在尚未被取消时自动取消的时间。
+</li>
+</ul>
+<blockquote>
+      <p>此修改版本的源代码可在演示项目的 <code>PushNotificationsTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>在本教程中，我们学习了如何在移动设备和桌面上处理推送通知。具体来说，我们：</p>
+<ul>
+<li>涵盖了不同部署平台的初步设置。
+</li>
+<li>向系统请求用户权限以允许通知。
+</li>
+<li>在应用内以本地通知的形式显示了简单消息。
+</li>
+<li>处理了从远程服务器发送的推送通知。
+</li>
+<li>通过显示图片和播放声音来自定义通知。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="android-studio.html" rel="noreferrer noopener">教程：Android 入门</a>
+</li>
+<li><a href="android-screen-sizes.html" rel="noreferrer noopener">教程：管理 Android 屏幕尺寸</a>
+</li>
+<li><a href="analytics-collection.html" rel="noreferrer noopener">教程：应用分析数据收集</a>
+</li>
+<li><a href="in-app-purchases.html" rel="noreferrer noopener">教程：桌面与移动设备上的应用内购买</a>
+</li>
+<li><a href="app-plugin-packaging.html" rel="noreferrer noopener">教程：打包应用或插件以便分发</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_push_notifications/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_push_notifications/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

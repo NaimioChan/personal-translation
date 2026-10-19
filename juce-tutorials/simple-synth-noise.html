@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>构建白噪声发生器 - JUCE 教程</title>
+<meta name="description" content="构建白噪声发生器：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>构建白噪声发生器</h1>
+<p>本教程介绍简单的合成与音频输出。这是理解 JUCE 中音频应用（以及插件）概念的关键。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a>, <a href="structAudioSourceChannelInfo.html" rel="noreferrer noopener">AudioSourceChannelInfo</a>, <a href="https://docs.juce.com/master/classAudioBuffer.html" rel="noreferrer noopener">AudioBuffer</a>, <a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a></p>
+<h2>准备工作</h2>
+<p>在这里下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/SimpleSynthNoiseTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/SimpleSynthNoiseTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<p>本教程假定你熟悉数字音频的基本原理。特别是，你应该了解音频信号如何用采样来表示。你还应该熟悉这一语境下的<em>采样率</em>概念（你可能把它称为<em>取样率</em>、<em>采样频率</em>或其他类似术语）。</p>
+<h2>演示项目</h2>
+<p>演示项目是使用 <a href="https://juce.com/projucer" rel="noreferrer noopener">The Projucer</a> 的 <strong>Audio Application</strong> 模板创建的。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_simple_synth_noise_screenshot1.png" alt="在 The Projucer 中高亮显示的 Audio Application 模板。">
+<figcaption>在 The Projucer 中高亮显示的 Audio Application 模板。</figcaption>
+</figure>
+<p>对于你自己在 JUCE 中的音频应用来说，这是一个有用的起点。演示项目合成白噪声，并通过目标设备的默认音频硬件播放。</p>
+<h2>Audio Application 模板</h2>
+<p>本教程只实现音频输出。音频输入以及对音频输入数据的实时处理在其他教程中探讨。Audio Application 模板与 GUI Application 模板非常相似，区别在于：</p>
+<ul>
+<li><code>MainContentComponent</code> 类继承自 <a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a> 类，而不是 <a href="https://docs.juce.com/master/classComponent.html" rel="noreferrer noopener">Component</a> 类。
+</li>
+<li>除了默认添加到项目中的其他音频相关模块之外，项目中还会添加 <code>juce_audio_utils</code> 模块。
+</li>
+</ul>
+<p>Audio Application 模板可用于简单的应用，例如这里给出的示例。它也可以扩展到更复杂的应用，基本上任何需要直接与目标设备音频硬件交互的应用都可以。使用 JUCE 创建音频插件在其他教程中探讨。</p>
+<h3>音频应用的生命周期</h3>
+<p><a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a> 类是一个抽象基类，它有三个<a href="http://www.learncpp.com/cpp-tutorial/126-pure-virtual-functions-abstract-base-classes-and-interface-classes/" rel="noreferrer noopener">纯虚</a>函数，代表我们音频应用的生命周期，我们<em>必须</em>在派生类中实现它们：</p>
+<ul>
+<li><a href="https://docs.juce.com/master/classAudioAppComponent.html#a70634aa3ffaf6e7ff0d233e5933a063d" rel="noreferrer noopener">AudioAppComponent::prepareToPlay()</a>：在音频处理开始之前调用。
+</li>
+<li><a href="https://docs.juce.com/master/classAudioAppComponent.html#a588d9b990fc308774215548959e0fc50" rel="noreferrer noopener">AudioAppComponent::releaseResources()</a>：音频处理结束时调用。
+</li>
+<li><a href="https://docs.juce.com/master/classAudioAppComponent.html#aec5e36e694a5bd2edae903d1079166b1" rel="noreferrer noopener">AudioAppComponent::getNextAudioBlock()</a>：每次音频硬件需要新的音频数据块时调用。
+</li>
+</ul>
+<p>在这三个函数中，最重要的也许是 <a href="https://docs.juce.com/master/classAudioAppComponent.html#aec5e36e694a5bd2edae903d1079166b1" rel="noreferrer noopener">AudioAppComponent::getNextAudioBlock()</a>，因为你的 JUCE 音频应用就在这里生成或处理音频。要理解它的工作原理，我们需要稍微了解现代计算机如何生成音频。音频硬件每秒需要为每个声道生成一定数量的采样。CD 音质的采样率是 44.1kHz，这意味着每秒每个声道需要向音频硬件发送 44100 个采样用于播放。采样并不是一次一个地传给音频硬件，而是放在包含一定数量采样的缓冲区（或块）中传递。例如，在 44.1kHz、块大小为 441 的情况下，我们的 <a href="https://docs.juce.com/master/classAudioAppComponent.html#aec5e36e694a5bd2edae903d1079166b1" rel="noreferrer noopener">AudioAppComponent::getNextAudioBlock()</a> 函数每秒会被调用 100 次。</p>
+<blockquote>
+      <p>上面使用 441 个采样的缓冲区大小，只是为了让讲解中的算术更简单。在实践中，441 这样的缓冲区大小并不常见。硬件缓冲区大小几乎肯定是偶数，而且往往取 2 的幂（256、512、1024 等）。重要的是，你的应用要准备好处理<em>任何</em>缓冲区大小。关于采样率和缓冲区大小设置的更多信息，参见<a href="audio-device-manager.html" rel="noreferrer noopener">教程：AudioDeviceManager 类</a>。</p>
+    </blockquote>
+<p>本质上，我们的 <a href="https://docs.juce.com/master/classAudioAppComponent.html#aec5e36e694a5bd2edae903d1079166b1" rel="noreferrer noopener">AudioAppComponent::getNextAudioBlock()</a> 是在为音频硬件的<em>音频回调</em>提供服务。需要注意，这个函数会从另一个线程（大多数情况下是<em>音频线程</em>）调用。</p>
+<p>为了让我们的 JUCE 音频应用正常工作，还有两个重要的函数。这一次我们需要调用它们，而不是实现它们：</p>
+<ul>
+<li><a href="https://docs.juce.com/master/classAudioAppComponent.html#a1cb6b457848fa80df7efc39cf095d465" rel="noreferrer noopener">AudioAppComponent::setAudioChannels()</a>：我们必须调用它来注册所需的输入和输出声道数。通常我们在构造函数中这样做。这个函数进而会触发应用中音频处理的启动。
+</li>
+<li><a href="https://docs.juce.com/master/classAudioAppComponent.html#a40f1e657f048d02c5d065de566a84d92" rel="noreferrer noopener">AudioAppComponent::shutdownAudio()</a>：我们必须调用它来关闭音频系统。通常我们在析构函数中这样做。
+</li>
+</ul>
+<h3>初始化音频应用</h3>
+<p>现在，我们通过更详细地考察音频应用的生命周期，来探讨这个简单的噪声发生器实现。构造函数需要设置 <a href="https://docs.juce.com/master/classComponent.html" rel="noreferrer noopener">Component</a> 对象的大小（参见<a href="main-component.html" rel="noreferrer noopener">教程：主组件</a>）。我们还需要初始化至少一个音频输出：</p>
+<pre><code>MainContentComponent()
+{
+    setSize (800, 600);
+    setAudioChannels (0, 2); // no inputs, two outputs
+}</code></pre>
+<p>如上所述，调用 <a href="https://docs.juce.com/master/classAudioAppComponent.html#a1cb6b457848fa80df7efc39cf095d465" rel="noreferrer noopener">AudioAppComponent::setAudioChannels()</a> 函数会触发音频系统启动。特别是，它会调用 <code>prepareToPlay()</code> 函数：</p>
+<pre><code>void prepareToPlay (int samplesPerBlockExpected, double sampleRate) override
+{
+    juce::String message;
+    message &lt;&lt; "Preparing to play audio...\n";
+    message &lt;&lt; " samplesPerBlockExpected = " &lt;&lt; samplesPerBlockExpected &lt;&lt; "\n";
+    message &lt;&lt; " sampleRate = " &lt;&lt; sampleRate;
+    juce::Logger::getCurrentLogger()-&gt;writeToLog (message);
+}</code></pre>
+<p>在这个例子中，我们其实不需要在这里做任何事，但因为它是一个<a href="http://www.learncpp.com/cpp-tutorial/126-pure-virtual-functions-abstract-base-classes-and-interface-classes/" rel="noreferrer noopener">纯虚</a>函数，我们<em>必须</em>至少实现一个空函数。这里我们记录一些此时可以获得的、关于目标设备音频系统的有用信息。<code>samplesPerBlockExpected</code> 参数顾名思义，就是当 <code>getNextAudioBlock()</code> 函数每次请求一块音频时，我们预期会被要求提供的音频缓冲区大小（以采样为单位）。这个缓冲区大小在不同回调之间可能变化，但它是一个很好的参考。<code>sampleRate</code> 参数告诉我们硬件当前的采样率。如果我们做的是与频率相关的事情，比如合成音调（参见<a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>）或使用均衡，就会需要这个参数。如果使用延迟效果，我们也需要知道采样率。而生成噪声不需要这些信息。</p>
+<h3>生成音频数据</h3>
+<p>调用 <code>prepareToPlay()</code> 函数之后不久，音频线程就会开始通过 <a href="https://docs.juce.com/master/classAudioAppComponent.html#aec5e36e694a5bd2edae903d1079166b1" rel="noreferrer noopener">AudioAppComponent::getNextAudioBlock()</a> 函数请求音频块。这个函数接收一个 <code>bufferToFill</code> 参数，它是一个 <a href="structAudioSourceChannelInfo.html" rel="noreferrer noopener">AudioSourceChannelInfo</a> 结构体。<a href="structAudioSourceChannelInfo.html" rel="noreferrer noopener">AudioSourceChannelInfo</a> 结构体包含一个多声道的音频采样缓冲区。它还包含两个整数值，用于指定本次调用应处理该缓冲区的哪个区域。更详细地说，<a href="structAudioSourceChannelInfo.html" rel="noreferrer noopener">AudioSourceChannelInfo</a> 包含以下成员：</p>
+<ul>
+<li><code>AudioSampleBuffer* buffer</code>：AudioSampleBuffer 对象是一个多声道音频数据缓冲区，本质上是一个由 <code>float</code> 值构成的多维数组。当 <code>getNextAudioBlock()</code> 函数被调用时，这个缓冲区中包含着来自目标设备音频输入的任何音频数据（如果我们请求了音频输入）。当 <code>getNextAudioBlock()</code> 函数返回时，我们必须已经把缓冲区中相关部分填入了想要播放的音频。
+</li>
+<li><code>int startSample</code>：这是缓冲区中的采样索引，<code>getNextAudioBlock()</code> 函数应从该位置开始读取或写入音频。
+</li>
+<li><code>int numSamples</code>：这是缓冲区中应读取或写入的采样数量。
+</li>
+</ul>
+<p>以浮点值存储的音频数据非常直观。音频信号的每个采样都存储为一个标称范围在 ±1.0 之间的值。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_simple_synth_noise_graph1.png" alt="满量程的 ±1.0 正弦波。">
+<figcaption>满量程的 ±1.0 正弦波。</figcaption>
+</figure>
+<p>像这样峰值电平为 ±1.0 时，输出会<em>非常</em>响。事实上，这是音频系统在不发生削波的情况下能产生的最大音量。通常，我们需要输出的音频不应超过这个 ±1.0 的上限（不过中间处理阶段超出该上限也没问题，只要最终输出更低即可）。</p>
+<h3>AudioSampleBuffer 类</h3>
+<p>虽然 AudioSampleBuffer 类（从最基本的层面看）只是一个由 <code>float</code> 值构成的多声道数组，但它提供了一组处理音频数据的有用函数。其中许多函数会在后续教程中介绍，这里我们用到以下函数：</p>
+<ul>
+<li><a href="https://docs.juce.com/master/classAudioBuffer.html#a3a9ecde91bf5b96871ce3a474c1d831f" rel="noreferrer noopener">AudioSampleBuffer::getNumChannels()</a>：它返回缓冲区中存储的音频声道数。在这里，该值应与我们之前调用 <a href="https://docs.juce.com/master/classAudioAppComponent.html#a1cb6b457848fa80df7efc39cf095d465" rel="noreferrer noopener">AudioAppComponent::setAudioChannels()</a> 函数时请求的输出声道数一致。（该值始终是输入声道数与输出声道数中的较大者。）
+</li>
+<li><a href="https://docs.juce.com/master/classAudioBuffer.html#a10cfe91eb4965895bc258cee02409d3b" rel="noreferrer noopener">AudioSampleBuffer::getWritePointer()</a>：它返回指向特定采样偏移处 <code>float</code> 值缓冲区的指针。
+</li>
+</ul>
+<p>要让这个简单的应用生成白噪声，我们需要用随机值填充缓冲区中请求的部分。为此，我们可以遍历缓冲区中的各个声道，找到该声道在缓冲区中的起始采样，然后把所需数量的采样写入缓冲区：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    for (auto channel = 0; channel &lt; bufferToFill.buffer-&gt;getNumChannels(); ++channel)
+    {
+        // Get a pointer to the start sample in the buffer for this audio output channel
+        auto* buffer = bufferToFill.buffer-&gt;getWritePointer (channel, bufferToFill.startSample);
+        // Fill the required number of samples with noise between -0.125 and +0.125
+        for (auto sample = 0; sample &lt; bufferToFill.numSamples; ++sample)
+            buffer[sample] = random.nextFloat() * 0.25f - 0.125f;
+    }
+}</code></pre>
+<h3>使用 Random 类生成白噪声</h3>
+<p>这里我们使用 <a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a> 类来生成随机值（参见<a href="random.html" rel="noreferrer noopener">教程：Random 类</a>）。要生成白噪声，我们需要生成围绕零均匀分布的随机数。这里我们生成 -0.125 到 +0.125 之间的随机值：先调用 <a href="https://docs.juce.com/master/classRandom.html#aec88d4e5cf44faaa038f6cfb41e96406" rel="noreferrer noopener">Random::nextFloat()</a> 函数，它生成 0 到 1 之间的值；然后把结果乘以 0.25 并减去 0.125。（关于这一过程的更多信息，参见<a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>。）注意我们没有使用 <a href="https://docs.juce.com/master/classRandom.html#ad7d9d42dd0efbb68d569e975b0778518" rel="noreferrer noopener">Random::getSystemRandom()</a> 函数获取共享的<em>系统</em> <a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a> 对象，就像其他教程（<a href="random.html" rel="noreferrer noopener">教程：Random 类</a>）那样。这是因为我们是在音频线程上调用 <a href="https://docs.juce.com/master/classRandom.html#aec88d4e5cf44faaa038f6cfb41e96406" rel="noreferrer noopener">Random::nextFloat()</a> 函数。我们需要创建自己的 <a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a> 对象，否则这些值可能会被使用该共享 <a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a> 对象的其他线程破坏。为此，一个 <a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a> 类的实例被添加到我们的 <code>MainContentComponent</code> 类中：</p>
+<pre><code>private:
+juce::Random random;
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
+};</code></pre>
+<h3>关闭音频应用</h3>
+<p>应用关闭时会调用析构函数。此时我们应该调用 <a href="https://docs.juce.com/master/classAudioAppComponent.html#a40f1e657f048d02c5d065de566a84d92" rel="noreferrer noopener">AudioAppComponent::shutdownAudio()</a> 函数：</p>
+<pre><code>~MainContentComponent() override
+{
+    shutdownAudio();
+}</code></pre>
+<p>调用 <a href="https://docs.juce.com/master/classAudioAppComponent.html#a40f1e657f048d02c5d065de566a84d92" rel="noreferrer noopener">AudioAppComponent::shutdownAudio()</a> 函数会进而导致 <a href="https://docs.juce.com/master/classAudioAppComponent.html#a588d9b990fc308774215548959e0fc50" rel="noreferrer noopener">AudioAppComponent::releaseResources()</a> 函数被调用。如果我们在音频处理运行期间分配了资源（例如分配了内存或打开了某些文件），这里是释放资源的好地方。在这个例子中，我们不需要任何额外资源，只用一条简单的消息记录该函数调用：</p>
+<pre><code>void releaseResources() override
+{
+    juce::Logger::getCurrentLogger()-&gt;writeToLog ("Releasing audio resources");
+}</code></pre>
+<blockquote>
+      <p>练习：尝试更改音频输出的数量。注意单声道噪声听起来与立体声噪声有细微差别。如果你有多声道声卡，也许能生成两个以上声道的噪声。你还可以尝试更改生成噪声的电平。例如，要生成电平为 0.1 的噪声，需要把随机生成的值乘以 0.2 再减去 0.1。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>本教程介绍了 Audio Application 模板所使用的 <a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a> 类，用它来生成音频。我们涵盖了以下主题：</p>
+<ul>
+<li>初始化并关闭音频系统。
+</li>
+<li>响应音频回调写入音频数据。
+</li>
+<li>使用 <a href="structAudioSourceChannelInfo.html" rel="noreferrer noopener">AudioSourceChannelInfo</a> 结构体和 AudioSampleBuffer 类。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="audio-device-manager.html" rel="noreferrer noopener">教程：AudioDeviceManager 类</a>
+</li>
+<li><a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>
+</li>
+<li><a href="synth-db-level-control.html" rel="noreferrer noopener">教程：使用分贝控制音频电平</a>
+</li>
+<li><a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>
+</li>
+<li><a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建 MIDI 合成器</a>
+</li>
+<li><a href="wavetable-synth.html" rel="noreferrer noopener">教程：波表合成</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_simple_synth_noise/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_simple_synth_noise/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

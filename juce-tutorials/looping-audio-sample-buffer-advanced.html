@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用 AudioSampleBuffer 类循环播放音频（进阶） - JUCE 教程</title>
+<meta name="description" content="使用 AudioSampleBuffer 类循环播放音频（进阶）：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>使用 AudioSampleBuffer 类循环播放音频（进阶）</h1>
+<p>本教程展示如何使用线程安全的技术播放并循环存储在 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象中的音频。同时还介绍了一种在后台线程加载音频数据的技术。</p>
+<p><strong>难度：</strong>高级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classReferenceCountedObject.html" rel="noreferrer noopener">ReferenceCountedObject</a>, <a href="https://docs.juce.com/master/classReferenceCountedArray.html" rel="noreferrer noopener">ReferenceCountedArray</a>, <a href="https://docs.juce.com/master/classThread.html" rel="noreferrer noopener">Thread</a>, <a href="https://docs.juce.com/master/classAudioBuffer.html" rel="noreferrer noopener">AudioBuffer</a></p>
+<h2>入门</h2>
+<p>本教程接续<a href="looping-audio-sample-buffer.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频</a>。如果你还没有读过，应该先阅读那篇教程。</p>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/LoopingAudioSampleBufferAdvancedTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/LoopingAudioSampleBufferAdvancedTutorial.zip" rel="noreferrer noopener">ZIP</a> 。解压项目并在 Projucer 中打开第一个头文件。</p>
+<p>如果你在这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目实现了与<a href="looping-audio-sample-buffer.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频</a>中演示项目类似的行为。它允许用户打开一个音频文件，将其加载到缓冲区并循环播放。本教程的一个主要区别是音频系统保持运行，而不是每次浏览文件时都关闭它。这是通过使用一些有用的类以线程安全的方式在线程之间通信来实现的。</p>
+<h2>线程安全的技术</h2>
+<p>你应该还记得在<a href="looping-audio-sample-buffer.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频</a>中，我们如何解决音频线程和消息线程访问可能不完整或已损坏数据的潜在问题。就在浏览文件之前，我们关闭音频系统。然后，一旦选择了文件，我们打开文件并重启音频系统。在真实应用中，这显然是一种不切实际且笨拙的方法！</p>
+<h3>引用计数对象</h3>
+<p><a href="https://docs.juce.com/master/classReferenceCountedObject.html" rel="noreferrer noopener">ReferenceCountedObject</a> 类是在线程之间传递消息和数据的有用工具。这里，我们把 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象和播放位置存储在一个 <a href="https://docs.juce.com/master/classReferenceCountedObject.html" rel="noreferrer noopener">ReferenceCountedObject</a> 类中。为了便于调试，也为了帮助说明该类如何工作，我们还包含了一个 <code>name</code> 成员（尽管严格来说这并不是该类运作所必需的）：</p>
+<pre><code>class ReferenceCountedBuffer : public juce::ReferenceCountedObject
+{
+public:
+    typedef juce::ReferenceCountedObjectPtr&lt;ReferenceCountedBuffer&gt; Ptr;
+    ReferenceCountedBuffer (const juce::String&amp; nameToUse,
+        int numChannels,
+        int numSamples)
+        : name (nameToUse),
+          buffer (numChannels, numSamples)
+    {
+        DBG (juce::String ("Buffer named '") + name + "' constructed. numChannels = " + juce::String (numChannels) + ", numSamples = " + juce::String (numSamples));
+    }
+    ~ReferenceCountedBuffer()
+    {
+        DBG (juce::String ("Buffer named '") + name + "' destroyed");
+    }
+    juce::AudioSampleBuffer* getAudioSampleBuffer()
+    {
+        return &amp;buffer;
+    }
+    int position = 0;
+private:
+    juce::String name;
+    juce::AudioSampleBuffer buffer;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ReferenceCountedBuffer)
+};</code></pre>
+<p>类顶部的 <code>typedef</code> 是实现 <a href="https://docs.juce.com/master/classReferenceCountedObject.html" rel="noreferrer noopener">ReferenceCountedObject</a> 子类的重要部分。我们不是把 <code>ReferenceCountedBuffer</code> 对象存储在裸指针中，而是存储在 <code>ReferenceCountedBuffer::Ptr</code> 类型中。正是它管理对象的引用计数（按需递增和递减）及其生命周期（引用计数归零时删除对象）。我们还可以使用 <a href="https://docs.juce.com/master/classReferenceCountedArray.html" rel="noreferrer noopener">ReferenceCountedArray</a> 类存储一个 <code>ReferenceCountedBuffer</code> 对象数组。</p>
+<p>在我们的 <code>MainContentComponent</code> 类中，我们既存储了一个数组，也存储了一个实例：</p>
+<pre><code>juce::SpinLock mutex;
+juce::ReferenceCountedArray&lt;ReferenceCountedBuffer&gt; buffers;
+ReferenceCountedBuffer::Ptr currentBuffer;</code></pre>
+<p><code>buffers</code> 成员在数组中保留我们的缓冲区，直到我们完全确定音频线程不再需要它们。<code>currentBuffer</code> 成员保存当前选中的缓冲区。</p>
+<h3>实现后台线程</h3>
+<p>我们的 <code>MainContentComponent</code> 类继承自 <a href="https://docs.juce.com/master/classThread.html" rel="noreferrer noopener">Thread</a> 类：</p>
+<pre><code>class MainContentComponent : public juce::AudioAppComponent,
+                             private juce::Thread
+{
+public:</code></pre>
+<p>它用于实现我们的后台线程。我们重写的 <a href="https://docs.juce.com/master/classThread.html#aae90dfabab3e1776cf01a26e7ee3a620" rel="noreferrer noopener">Thread::run()</a> 函数如下：</p>
+<pre><code>void run() override
+{
+    while (!threadShouldExit())
+    {
+        checkForBuffersToFree();
+        wait (500);
+    }
+}</code></pre>
+<p>这里我们检查是否有需要释放的缓冲区，然后线程等待 500ms 或被唤醒（使用 <a href="https://docs.juce.com/master/classThread.html#a0b4d5a1ffaa35cc13f323a0524012a2b" rel="noreferrer noopener">Thread::notify()</a> 函数）。本质上，这意味着检查至少每 500ms 发生一次。<code>checkForBuffersToFree()</code> 函数会搜索我们的 <code>buffers</code> 数组，看看是否有缓冲区可以释放：</p>
+<pre><code>void checkForBuffersToFree()
+{
+    for (auto i = buffers.size(); --i &gt;= 0;) // [1]
+    {
+        ReferenceCountedBuffer::Ptr buffer (buffers.getUnchecked (i)); // [2]
+        if (buffer-&gt;getReferenceCount() == 2) // [3]
+            buffers.remove (i);
+    }
+}</code></pre>
+<ul>
+<li>[1]：在这些情况下，记住要反向遍历数组是很有用的。如果我们在遍历数组时删除元素，就更容易避免破坏数组索引访问。
+</li>
+<li>[2]：这会保留指定索引处缓冲区的一份副本。
+</li>
+<li>[3]：如果此时引用计数等于 2，我们就知道音频线程不可能正在使用该缓冲区，可以将其从数组中移除。这两个引用中的一个在 <code>buffers</code> 中，另一个在局部 <code>buffer</code> 变量中。被移除的缓冲区会在 <code>buffer</code> 变量离开作用域时自行删除（因为这将是最后一个剩余的引用）。
+</li>
+</ul>
+<p>当然，我们需要在应用启动时启动线程，这在 <code>MainContentComponent</code> 构造函数中完成：</p>
+<pre><code>startThread();
+}</code></pre>
+<h3>打开文件</h3>
+<p>我们的 <code>openButtonClicked()</code> 函数与<a href="looping-audio-sample-buffer.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频</a>中的 <code>openButtonClicked()</code> 函数类似，只有一些细微差别：</p>
+<pre><code>void openButtonClicked()
+{
+    chooser = std::make_unique&lt;juce::FileChooser&gt; ("Select a Wave file shorter than 2 seconds to play...",
+        juce::File {},
+        "*.wav");
+    auto chooserFlags = juce::FileBrowserComponent::openMode
+                        | juce::FileBrowserComponent::canSelectFiles;
+    chooser-&gt;launchAsync (chooserFlags, [this] (const juce::FileChooser&amp; fc) {
+        auto file = fc.getResult();
+        if (file == juce::File {})
+            return;
+        std::unique_ptr&lt;juce::AudioFormatReader&gt; reader (formatManager.createReaderFor (file));
+        if (reader != nullptr)
+        {
+            auto duration = (float) reader-&gt;lengthInSamples / reader-&gt;sampleRate;
+            if (duration &lt; 2)
+            {
+                ReferenceCountedBuffer::Ptr newBuffer = new ReferenceCountedBuffer (file.getFileName(),
+                    (int) reader-&gt;numChannels,
+                    (int) reader-&gt;lengthInSamples);
+                reader-&gt;read (newBuffer-&gt;getAudioSampleBuffer(), 0, (int) reader-&gt;lengthInSamples, 0, true, true);
+                {
+                    const juce::SpinLock::ScopedLockType lock (mutex);
+                    currentBuffer = newBuffer;
+                }
+                buffers.add (newBuffer);
+            }
+            else
+            {
+                // handle the error that the file is 2 seconds or longer..
+            }
+        }
+    });
+}</code></pre>
+<p>以下是差别：</p>
+<ul>
+<li>分配 <code>ReferenceCountedBuffer</code> 类的新实例。
+</li>
+<li>把音频数据读入它所包含的 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象。
+</li>
+<li>使其成为当前缓冲区。
+</li>
+<li>将其添加到我们的缓冲区数组。
+</li>
+</ul>
+<p>要清除当前缓冲区，我们只需把它的值设为 <code>nullptr</code> ：</p>
+<pre><code>void clearButtonClicked()
+{
+    const juce::SpinLock::ScopedLockType lock (mutex);
+    currentBuffer = nullptr;
+}</code></pre>
+<h3>播放缓冲区</h3>
+<p>我们的 <code>getNextAudioBlock()</code> 函数与<a href="looping-audio-sample-buffer.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频</a>中的 <code>getNextAudioBlock()</code> 函数类似，只是我们需要访问当前的 <code>ReferenceCountedBuffer</code> 对象及其包含的 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象。</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto retainedCurrentBuffer = [&amp;]() -&gt; ReferenceCountedBuffer::Ptr // [4]
+    {
+        const juce::SpinLock::ScopedTryLockType lock (mutex);
+        if (lock.isLocked())
+            return currentBuffer;
+        return nullptr;
+    }();
+    if (retainedCurrentBuffer == nullptr) // [5]
+    {
+        bufferToFill.clearActiveBufferRegion();
+        return;
+    }
+    auto* currentAudioSampleBuffer = retainedCurrentBuffer-&gt;getAudioSampleBuffer(); // [6]
+    auto position = retainedCurrentBuffer-&gt;position; // [7]
+    auto numInputChannels = currentAudioSampleBuffer-&gt;getNumChannels();
+    auto numOutputChannels = bufferToFill.buffer-&gt;getNumChannels();
+    auto outputSamplesRemaining = bufferToFill.numSamples;
+    auto outputSamplesOffset = 0;
+    while (outputSamplesRemaining &gt; 0)
+    {
+        auto bufferSamplesRemaining = currentAudioSampleBuffer-&gt;getNumSamples() - position;
+        auto samplesThisTime = juce::jmin (outputSamplesRemaining, bufferSamplesRemaining);
+        for (auto channel = 0; channel &lt; numOutputChannels; ++channel)
+        {
+            bufferToFill.buffer-&gt;copyFrom (channel,
+                bufferToFill.startSample + outputSamplesOffset,
+                *currentAudioSampleBuffer,
+                channel % numInputChannels,
+                position,
+                samplesThisTime);
+        }
+        outputSamplesRemaining -= samplesThisTime;
+        outputSamplesOffset += samplesThisTime;
+        position += samplesThisTime;
+        if (position == currentAudioSampleBuffer-&gt;getNumSamples())
+            position = 0;
+    }
+    retainedCurrentBuffer-&gt;position = position; // [8]
+}</code></pre>
+<p>重要的变化是：</p>
+<ul>
+<li>[4]：我们保留 <code>currentBuffer</code> 成员的一份副本。在这个函数中此点之后，<code>currentBuffer</code> 成员是否在另一个线程上被改变就无关紧要了，因为我们已经取得了本地副本。注意我们这里使用尝试锁定，这样在另一个线程正在修改 <code>currentBuffer</code> 时，音频线程不会卡在等待访问它上。
+</li>
+<li>[5]：如果我们取得副本时 <code>currentBuffer</code> 成员为空，我们输出静音。
+</li>
+<li>[6]：我们访问 <code>ReferenceCountedBuffer</code> 对象内的 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象。
+</li>
+<li>[7]：我们获取缓冲区的当前播放位置。
+</li>
+<li>[8]：修改当前播放位置后，我们把它存回 <code>ReferenceCountedBuffer</code> 对象。
+</li>
+</ul>
+<p>该算法确保 <code>ReferenceCountedBuffer</code> 对象不会在音频线程上被删除。在音频线程上分配或释放内存不是好主意。<code>ReferenceCountedBuffer</code> 对象只会在我们的后台线程上被删除。</p>
+<h2>在后台线程读取音频</h2>
+<p>我们的应用仍然在消息线程上读取音频数据。这并不理想，因为这会阻塞消息线程，而大文件可能需要一些时间才能加载。事实上，我们也可以使用后台线程来执行这项任务。</p>
+<h3>将文件路径传递给后台线程</h3>
+<p>首先，向 <code>MainContentComponent</code> 类添加以下成员：</p>
+<pre><code>juce::CriticalSection pathMutex;
+juce::String chosenPath;</code></pre>
+<p>现在修改 <code>openButtonClicked()</code> 函数，把文件的完整路径<em>交换</em>到这个成员中。交换字符串在技术上不是线程安全的，所以我们还需要加锁，以确保在这个线程使用 <code>chosenPath</code> 时没有其他线程试图修改它。</p>
+<pre><code>void openButtonClicked()
+{
+    chooser = std::make_unique&lt;juce::FileChooser&gt; ("Select a Wave file shorter than 2 seconds to play...",
+        juce::File {},
+        "*.wav");
+    auto chooserFlags = juce::FileBrowserComponent::openMode
+                        | juce::FileBrowserComponent::canSelectFiles;
+    chooser-&gt;launchAsync (chooserFlags, [this] (const juce::FileChooser&amp; fc) {
+        auto file = fc.getResult();
+        if (file == juce::File {})
+            return;
+        auto path = file.getFullPathName();
+        {
+            const juce::ScopedLock lock (pathMutex);
+            chosenPath.swapWith (path);
+        }
+        notify();
+    });
+}</code></pre>
+<p>这里我们还唤醒后台线程，因为我们将要在后台线程上调用函数来打开文件。</p>
+<h3>从后台线程访问路径</h3>
+<p>我们的 <code>run()</code> 函数应更新如下：</p>
+<pre><code>void run() override
+{
+    while (!threadShouldExit())
+    {
+        checkForPathToOpen();
+        checkForBuffersToFree();
+        wait (500);
+    }
+}</code></pre>
+<p><code>checkForPathToOpen()</code> 函数通过把 <code>chosenPath</code> 成员交换到局部变量来检查它。同样，交换不是线程安全的，因此在访问 <code>chosenPath</code> 之前我们必须加锁。</p>
+<pre><code>void checkForPathToOpen()
+{
+    juce::String pathToOpen;
+    {
+        const juce::ScopedLock lock (pathMutex);
+        pathToOpen.swapWith (chosenPath);
+    }
+    if (pathToOpen.isNotEmpty())
+    {
+        juce::File file (pathToOpen);
+        std::unique_ptr&lt;juce::AudioFormatReader&gt; reader (formatManager.createReaderFor (file));
+        if (reader.get() != nullptr)
+        {
+            auto duration = (float) reader-&gt;lengthInSamples / reader-&gt;sampleRate;
+            if (duration &lt; 2)
+            {
+                ReferenceCountedBuffer::Ptr newBuffer = new ReferenceCountedBuffer (file.getFileName(),
+                    (int) reader-&gt;numChannels,
+                    (int) reader-&gt;lengthInSamples);
+                reader-&gt;read (newBuffer-&gt;getAudioSampleBuffer(), 0, (int) reader-&gt;lengthInSamples, 0, true, true);
+                {
+                    const juce::SpinLock::ScopedLockType lock (mutex);
+                    currentBuffer = newBuffer;
+                }
+                buffers.add (newBuffer);
+            }
+            else
+            {
+                // handle the error that the file is 2 seconds or longer..
+            }
+        }
+    }
+}</code></pre>
+<p>如果 <code>pathToOpen</code> 变量是空字符串，我们就知道没有新文件要打开。这个函数中其余代码对你来说应该很熟悉。</p>
+<p>再次运行应用，它应该仍能正常工作。</p>
+<blockquote>
+      <p>本节的最终代码可以在演示项目的 <code>LoopingAudioSampleBufferAdvancedTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>本教程介绍了一些在线程之间传递数据的有用技术，尤其是在音频应用中。阅读本教程后，你应该能够：</p>
+<ul>
+<li>实现 <a href="https://docs.juce.com/master/classReferenceCountedObject.html" rel="noreferrer noopener">ReferenceCountedObject</a> 类的子类。
+</li>
+<li>在多线程应用中维护 <a href="https://docs.juce.com/master/classReferenceCountedObject.html" rel="noreferrer noopener">ReferenceCountedObject</a> 的生命周期。
+</li>
+<li>实现后台线程来执行诸如删除不再需要的对象和执行文件读取操作等任务。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="playing-sound-files.html" rel="noreferrer noopener">教程：构建音频播放器</a>
+</li>
+<li><a href="processing-audio-input.html" rel="noreferrer noopener">教程：处理音频输入</a>
+</li>
+<li><a href="audio-thumbnail.html" rel="noreferrer noopener">教程：绘制音频波形</a>
+</li>
+<li><a href="looping-audio-sample-buffer.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_looping_audio_sample_buffer_advanced/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_looping_audio_sample_buffer_advanced/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

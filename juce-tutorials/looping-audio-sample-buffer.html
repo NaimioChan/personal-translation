@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用 AudioSampleBuffer 类循环播放音频 - JUCE 教程</title>
+<meta name="description" content="使用 AudioSampleBuffer 类循环播放音频：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>使用 AudioSampleBuffer 类循环播放音频</h1>
+<p>本教程展示如何播放并循环存储在 AudioSampleBuffer 对象中的音频。对于处理已录制音频数据的采样应用来说，这是一个有用的基础。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classAudioBuffer.html" rel="noreferrer noopener">AudioBuffer</a>, <a href="https://docs.juce.com/master/classAudioFormatReader.html" rel="noreferrer noopener">AudioFormatReader</a>, <a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a></p>
+<h2>入门</h2>
+<blockquote>
+      <p>本教程假定你已完成<a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>和<a href="playing-sound-files.html" rel="noreferrer noopener">教程：构建音频播放器</a>。如果还没有，你应该先阅读这些内容。</p>
+    </blockquote>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/LoopingAudioSampleBufferTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/LoopingAudioSampleBufferTutorial.zip" rel="noreferrer noopener">ZIP</a> 。解压项目并在 Projucer 中打开第一个头文件。</p>
+<p>如果你在这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>本教程的演示项目允许用户打开声音文件，把整个文件读入一个 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象，并循环播放它。在<a href="playing-sound-files.html" rel="noreferrer noopener">教程：构建音频播放器</a>中，我们使用连接到 <a href="https://docs.juce.com/master/classAudioTransportSource.html" rel="noreferrer noopener">AudioTransportSource</a> 对象的 <a href="https://docs.juce.com/master/classAudioFormatReaderSource.html" rel="noreferrer noopener">AudioFormatReaderSource</a> 对象来播放声音。用这种方法也可以实现循环：启用 <a href="https://docs.juce.com/master/classAudioFormatReaderSource.html" rel="noreferrer noopener">AudioFormatReaderSource</a> 对象的循环标志——使用 <a href="https://docs.juce.com/master/classAudioFormatReaderSource.html#a15d8af211ce8cfcbc0c4aaac143b303e" rel="noreferrer noopener">AudioFormatReaderSource::setLooping()</a> 函数。</p>
+<p>本教程讨论所涉及的所有代码都在演示项目的 <code>MainContentComponent</code> 类中。</p>
+<h2>将采样数据加载到内存</h2>
+<p>在很多情况下，使用内置的声音文件播放类可能更好。有时你可能需要自己来做，本教程介绍其中一些技术。采样器应用通常这样把声音文件数据加载到内存中，尤其是当声音相对较短时（示例参见 <a href="https://docs.juce.com/master/classSamplerSound.html" rel="noreferrer noopener">SamplerSound</a> 类）。合成声音也可以通过把波表存储在 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象中，并以适当的速率循环播放来产生所需的音高。<a href="wavetable-synth.html" rel="noreferrer noopener">教程：波表合成</a>对此进行了探讨。</p>
+<p>本教程还强调了在把文件访问与音频线程上的音频处理结合起来时可能遇到的一些多线程问题。其中一些问题表面上看起来简单，但往往需要谨慎应用的技术才能避免崩溃和音频毛刺。这些技术将在<a href="looping-audio-sample-buffer-advanced.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频（进阶）</a>中进一步探讨。</p>
+<h3>为什么有长度限制？</h3>
+<p>演示项目把你可加载的声音文件长度限制在 2 秒以内。这个限制相当随意，但大致有两个原因：</p>
+<ol>
+<li>如果整个文件非常大，你的计算机可能会耗尽物理内存。当然，在真实应用中你可以使用高得多的限制。一个 2 秒的立体声音频文件，采样率为 44.1kHz，加载到 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象中只占用 705,600 字节内存。（见注释）
+</li>
+<li>即使加载相当短的文件，所花的时间也并非微不足道。
+</li>
+</ol>
+<p>关于第 1 点：如果我们超过计算机拥有的物理内存量，它可能开始使用虚拟内存（即硬盘等二级存储）。这就完全违背了把数据加载到内存中的初衷！当然，在某些设备上，如果内存耗尽，该操作可能直接失败。</p>
+<p>关于第 2 点：我们让示例保持简单，在 <a href="https://docs.juce.com/master/classFileChooser.html#a546ef74bcd139b67a90e4459cd591d21" rel="noreferrer noopener">FileChooser::browseForFileToOpen()</a> 函数返回用户选择的文件之后，直接加载音频数据。这意味着<em>消息线程</em>将被阻塞，直到所有音频都从磁盘读入 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象。即使声音很短，我们也确实应该在后台线程上做这件事，以尽可能保持用户界面的响应性。对于长声音，延迟和无响应会非常明显。增加另一个（后台）线程会增加本示例的复杂度。有关如何以这种方式在后台线程加载文件的示例，请参见<a href="looping-audio-sample-buffer-advanced.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频（进阶）</a>。</p>
+<blockquote>
+      <p>练习：为保持简单，演示项目在你尝试加载较长文件时不会报告错误——它只是失败。添加这样的错误报告留作你的额外练习。</p>
+    </blockquote>
+<h3>读取声音文件</h3>
+<p>当用户点击<strong>打开…</strong>按钮时，会向他们显示文件选择器。然后整个文件被读入我们 <code>MainContentComponent</code> 类中的 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 成员 <code>fileBuffer</code>。</p>
+<pre><code>void openButtonClicked()
+{
+    shutdownAudio(); // [1]
+    chooser = std::make_unique&lt;juce::FileChooser&gt; ("Select a Wave file shorter than 2 seconds to play...",
+        juce::File {},
+        "*.wav");
+    auto chooserFlags = juce::FileBrowserComponent::openMode
+                        | juce::FileBrowserComponent::canSelectFiles;
+    chooser-&gt;launchAsync (chooserFlags, [this] (const juce::FileChooser&amp; fc) {
+        auto file = fc.getResult();
+        if (file == juce::File {})
+            return;
+        std::unique_ptr&lt;juce::AudioFormatReader&gt; reader (formatManager.createReaderFor (file)); // [2]
+        if (reader.get() != nullptr)
+        {
+            auto duration = (float) reader-&gt;lengthInSamples / reader-&gt;sampleRate; // [3]
+            if (duration &lt; 2)
+            {
+                fileBuffer.setSize ((int) reader-&gt;numChannels, (int) reader-&gt;lengthInSamples); // [4]
+                reader-&gt;read (&amp;fileBuffer, // [5]
+                    0, // [5.1]
+                    (int) reader-&gt;lengthInSamples, // [5.2]
+                    0, // [5.3]
+                    true, // [5.4]
+                    true); // [5.5]
+                position = 0; // [6]
+                setAudioChannels (0, (int) reader-&gt;numChannels); // [7]
+            }
+            else
+            {
+                // handle the error that the file is 2 seconds or longer..
+            }
+        }
+    });
+}</code></pre>
+<ul>
+<li>[1]：注意，每次打开新文件时，我们都会为 <a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a> 对象关闭音频系统。这是为了避免前面暗示的一些多线程问题。音频系统关闭后，就不会有危险：当我们还处于 <a href="https://docs.juce.com/master/classButton.html#a30b76ab312dc7f66e67596ae20540ec2" rel="noreferrer noopener">Button::onClick</a> lambda 函数调用中时（该函数会从<em>消息线程</em>调用这个 <code>openButtonClicked()</code> 函数），我们的 <code>getNextAudioBlock()</code> 函数不会在<em>音频线程</em>上被调用。
+</li>
+<li>[2]：这里我们使用 <a href="https://docs.juce.com/master/classAudioFormatManager.html" rel="noreferrer noopener">AudioFormatManager</a> 对象创建 <a href="https://docs.juce.com/master/classAudioFormatReader.html" rel="noreferrer noopener">AudioFormatReader</a> 对象。注意，我们将其存储在 std::unique_ptr 对象中，因为我们需要自己管理这个对象。（在<a href="playing-sound-files.html" rel="noreferrer noopener">教程：构建音频播放器</a>中，我们把 <a href="https://docs.juce.com/master/classAudioFormatReader.html" rel="noreferrer noopener">AudioFormatReader</a> 对象交给 <a href="https://docs.juce.com/master/classAudioFormatReaderSource.html" rel="noreferrer noopener">AudioFormatReaderSource</a> 对象替我们管理。）该操作可能无法创建读取器对象，因此我们必须在下一行检查 <code>reader</code> 指针不是 <code>nullptr</code> 值。
+</li>
+<li>[3]：这里我们通过用文件长度（以采样计）除以其采样率来计算声音文件的时长。我们在下一行检查它小于 2 秒。
+</li>
+<li>[4]：这里我们使用 <a href="https://docs.juce.com/master/classAudioFormatReader.html" rel="noreferrer noopener">AudioFormatReader</a> 对象中的通道数和长度，调用 <a href="https://docs.juce.com/master/classAudioBuffer.html#a4434de94aa03d7db6d7ef06977ddf0ac" rel="noreferrer noopener">AudioSampleBuffer::setSize()</a> 函数来调整 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象的大小。
+</li>
+<li>[5]：这里我们使用 <a href="https://docs.juce.com/master/classAudioFormatReader.html#ad180e2b06c2a10c0ca399c3231b155c0" rel="noreferrer noopener">AudioFormatReader::read()</a> 函数把音频数据从 <a href="https://docs.juce.com/master/classAudioFormatReader.html" rel="noreferrer noopener">AudioFormatReader</a> 对象读入我们的 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> <code>fileBuffer</code> 成员。参数为：
+
+<ul><li>[5.1]：<a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象中数据开始写入的目标起始采样。</li><li>[5.2]：要读取的采样数。</li><li>[5.3]：<a href="https://docs.juce.com/master/classAudioFormatReader.html" rel="noreferrer noopener">AudioFormatReader</a> 对象中开始读取的起始采样。</li><li>[5.4]：对于立体声（或其他双通道）文件，该标志指示是否读取左通道。</li><li>[5.5]：对于立体声文件，该标志指示是否读取右通道。</li></ul>
+</li>
+<li>[6]：播放时需要保存缓冲区中最近的读取位置。这里把 <code>position</code> 成员重置为零。
+</li>
+<li>[7]：这里重新启动音频系统。此时我们有机会使用声音文件中的通道数，尝试把音频设备配置为相同数量的通道。
+</li>
+</ul>
+<h2>处理音频</h2>
+<p>在 <code>getNextAudioBlock()</code> 函数中，从 <code>fileBuffer</code> <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 成员读取适当数量的采样，并写入 <a href="structAudioSourceChannelInfo.html" rel="noreferrer noopener">AudioSourceChannelInfo</a> 结构体中的 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象。</p>
+<p>从文件读取音频数据时，我们用 <code>position</code> 成员跟踪当前读取位置（注意在为指定采样块处理完所有通道之后更新它）：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto numInputChannels = fileBuffer.getNumChannels();
+    auto numOutputChannels = bufferToFill.buffer-&gt;getNumChannels();
+    auto outputSamplesRemaining = bufferToFill.numSamples; // [8]
+    auto outputSamplesOffset = bufferToFill.startSample; // [9]
+    while (outputSamplesRemaining &gt; 0)
+    {
+        auto bufferSamplesRemaining = fileBuffer.getNumSamples() - position; // [10]
+        auto samplesThisTime = juce::jmin (outputSamplesRemaining, bufferSamplesRemaining); // [11]
+        for (auto channel = 0; channel &lt; numOutputChannels; ++channel)
+        {
+            bufferToFill.buffer-&gt;copyFrom (channel, // [12]
+                outputSamplesOffset, // [12.1]
+                fileBuffer, // [12.2]
+                channel % numInputChannels, // [12.3]
+                position, // [12.4]
+                samplesThisTime); // [12.5]
+        }
+        outputSamplesRemaining -= samplesThisTime; // [13]
+        outputSamplesOffset += samplesThisTime; // [14]
+        position += samplesThisTime; // [15]
+        if (position == fileBuffer.getNumSamples())
+            position = 0; // [16]
+    }
+}</code></pre>
+<ul>
+<li>[8]：<code>outputSamplesRemaining</code> 变量存储 <code>getNextAudioBlock()</code> 函数需要输出的采样总数，取自 <a href="structAudioSourceChannelInfo.html" rel="noreferrer noopener">AudioSourceChannelInfo</a> 结构体。我们用它检查是否需要退出下一行开始的 <code>while()</code> 循环。
+</li>
+<li>[9]：我们还复制了 <a href="structAudioSourceChannelInfo.html#a42e88ccc05d4893015e2415785390259" rel="noreferrer noopener">AudioSourceChannelInfo::startSample</a> 值，用作目标缓冲区内的偏移量。
+</li>
+<li>[10]：这里我们计算正在读取的缓冲区中还剩多少采样。
+</li>
+<li>[11]：对于 <code>while()</code> 循环的这一轮，我们需要输出本次调用 <code>getNextAudioBlock()</code> 的剩余采样与缓冲区中剩余采样两者中的较小值——使用 <a href="group__juce__core-maths.html#gae8394cdf11279b266f4aa741758c1669" rel="noreferrer noopener">jmin()</a> 函数。如果该值小于本次调用 <code>getNextAudioBlock()</code> 的采样总数，那么在退出之前还会再执行一轮 <code>while()</code> 循环。
+</li>
+<li>[12]：对每个输出通道，我们使用 <a href="https://docs.juce.com/master/classAudioBuffer.html#a9ec751bfa23564c011bf3940ca17b743" rel="noreferrer noopener">AudioSampleBuffer::copyFrom()</a> 函数把一个缓冲区的一个通道的数据段复制到另一个缓冲区的一个通道。这里我们指定目标通道索引。
+
+<ul><li>[12.1]：目标缓冲区内的采样偏移量。</li><li>[12.2]：要复制的源 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象。</li><li>[12.3]：源缓冲区的通道索引。如果源缓冲区的通道数少于目标缓冲区，我们使用这个取模计算。例如，单声道源缓冲区意味着这里始终为零，把相同数据复制到每个输出通道。</li><li>[12.4]：源缓冲区中开始读取的位置。</li><li>[12.5]：我们先前计算出的要读取的采样数。</li></ul>
+</li>
+<li>[13]：现在从 <code>outputSamplesRemaining</code> 变量中减去我们刚处理的采样数。
+</li>
+<li>[14]：把 <code>outputSamplesOffset</code> 增加相同的量，以防 <code>while()</code> 循环还有下一轮。
+</li>
+<li>[15]：也把 <code>position</code> 成员偏移相同的量。
+</li>
+<li>[16]：最后，检查 <code>position</code> 成员是否到达 <code>fileBuffer</code> <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象的末尾，如有必要则将其重置为零以形成循环。
+</li>
+</ul>
+<blockquote>
+      <p>练习：添加一个电平滑块来控制音频文件的播放电平（参见<a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>）。你可以使用 <a href="https://docs.juce.com/master/classAudioBuffer.html#a9ffc61d339e455d4bddc7cf055a63ee3" rel="noreferrer noopener">AudioSampleBuffer::applyGain()</a> 或 <a href="https://docs.juce.com/master/classAudioBuffer.html#ab0542e5b626b36087f0054e795695682" rel="noreferrer noopener">AudioSampleBuffer::applyGainRamp()</a> 函数对 <a href="group__juce__audio__basics-buffers.html#gab339ebab0d3b10c91c0d47c8fd2e50d2" rel="noreferrer noopener">AudioSampleBuffer</a> 对象中的数据应用增益。</p>
+    </blockquote>
+<h2>多线程问题</h2>
+<p>如前所述，本教程通过在用户每次点击<strong>打开…</strong>按钮时关闭并重启音频来避免多线程问题。但如果我们不这样做会怎样——可能发生什么？有很多事情可能出错，所有这些都与以下事实有关：<code>getNextAudioBlock()</code> 和 <code>openButtonClicked()</code> 两个函数可能在不同线程中同时运行。以下是一些例子：</p>
+<ul>
+<li>假设应用已经在播放音频文件，用户点击<strong>打开…</strong>按钮并选择了一个新文件。假设音频线程在 [4] 和 [5] 之间中断了这个函数。缓冲区已被调整大小，但数据尚未写入缓冲区。缓冲区可能仍包含上一个文件的音频数据，但这取决于调整大小时是否需要移动缓冲区的内存。无论哪种情况，我们大概都会听到毛刺。
+</li>
+<li><code>getNextAudioBlock()</code> 函数可能被 <code>openButtonClicked()</code> 函数中的代码中断。假设这发生在 [11]之后，而 <code>openButtonClicked()</code> 函数刚刚执行到 [4]。缓冲区可能被调整为比原来更短，但我们在前几行已经计算好了起始点。这可能导致内存访问错误，应用可能崩溃。
+</li>
+<li><code>getNextAudioBlock()</code> 函数可能在调用 <a href="https://docs.juce.com/master/classAudioBuffer.html#a9ec751bfa23564c011bf3940ca17b743" rel="noreferrer noopener">AudioSampleBuffer::copyFrom()</a> 函数时被中断。同样，取决于它的实现，我们最终可能访问不该访问的内存。
+</li>
+</ul>
+<blockquote>
+      <p>还有其他一些事情可能出错。你可能熟悉使用<a href="https://en.wikipedia.org/wiki/Critical_section" rel="noreferrer noopener">临界区</a>来同步线程之间的内存访问。这只是一个可能的解决方案，但在音频代码中使用<a href="https://en.wikipedia.org/wiki/Critical_section" rel="noreferrer noopener">临界区</a>要小心，因为它可能导致<a href="https://en.wikipedia.org/wiki/Priority_inversion" rel="noreferrer noopener">优先级反转</a>，从而造成音频丢音。我们在<a href="looping-audio-sample-buffer-advanced.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频（进阶）</a>中研究了一种避免临界区的方案。</p>
+    </blockquote>
+<h2>注释</h2>
+<p>44.1kHz 的 2 秒立体声音频在 AudioSampleBuffer 对象中会占用 705,600 字节，因为有：</p>
+<ul>
+<li>2 个通道
+</li>
+<li>2 秒
+</li>
+<li>44,100 个采样
+</li>
+<li>每采样 4 字节（使用 <code>float</code> 类型）
+</li>
+</ul>
+<p>把它们相乘，结果是：<code>2 x 2 x 44100 x 4 = 705600</code></p>
+<h2>小结</h2>
+<p>本教程介绍了：</p>
+<ul>
+<li>如何直接从声音文件读取音频数据。
+</li>
+<li>如何把数据复制到缓冲区用于播放。
+</li>
+<li>使用波表缓冲区的简单采样器应用与合成器的基础。
+</li>
+<li>音频应用中存在的一些潜在多线程问题。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="playing-sound-files.html" rel="noreferrer noopener">教程：构建音频播放器</a>
+</li>
+<li><a href="processing-audio-input.html" rel="noreferrer noopener">教程：处理音频输入</a>
+</li>
+<li><a href="audio-thumbnail.html" rel="noreferrer noopener">教程：绘制音频波形</a>
+</li>
+<li><a href="looping-audio-sample-buffer-advanced.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频（进阶）</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_looping_audio_sample_buffer/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_looping_audio_sample_buffer/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

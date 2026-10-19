@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>应用分析数据收集 - JUCE 教程</title>
+<meta name="description" content="应用分析数据收集：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>应用分析数据收集</h1>
+<p>在JUCE应用中收集用户的应用使用数据。使用analytics模块将分析事件发送到Google Analytics。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux、iOS、Android<br><strong>类：</strong><a href="https://docs.juce.com/master/classThreadedAnalyticsDestination.html" rel="noreferrer noopener">ThreadedAnalyticsDestination</a>、<a href="https://docs.juce.com/master/classButtonTracker.html" rel="noreferrer noopener">ButtonTracker</a>、<a href="https://docs.juce.com/master/classWebInputStream.html" rel="noreferrer noopener">WebInputStream</a>、<a href="https://docs.juce.com/master/classCriticalSection.html" rel="noreferrer noopener">CriticalSection</a>、<a href="https://docs.juce.com/master/classCriticalSection.html#a4d398019b977a4c2151c6f1e2a06210b" rel="noreferrer noopener">CriticalSection::ScopedLockType</a></p>
+<blockquote>
+      <p>本项目需要一个Google Analytics账号。如果你在这方面需要帮助，请按照<a href="https://support.google.com/analytics/" rel="noreferrer noopener">Google Analytics网站</a>上的说明开设账号。</p>
+    </blockquote>
+<h2>入门</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/AnalyticsCollectionTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/AnalyticsCollectionTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在Projucer中打开第一个头文件。</p>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer第1部分：Projucer入门</a>。</p>
+<p>请确保你已经记下Google Analytics API密钥并准备好，以便本教程能够完整运行。</p>
+<h2>演示项目</h2>
+<p>演示项目展示了一个非常简单的界面，其中有两个按钮，按下时会发送分析事件。由于API密钥尚未设置，在实现之前Google不会收到任何事件。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_analytics_collection_screenshot1.png" alt="演示项目的应用窗口">
+<figcaption>演示项目的应用窗口</figcaption>
+</figure>
+<blockquote>
+      <p>本项目使用Google Analytics来跟踪应用分析数据，但你也可以将其应用到任何你想使用的其他服务。这里给出的代码与JUCE示例中的<strong>AnalyticsCollection</strong>大体相似。</p>
+    </blockquote>
+<h2>事件的构成</h2>
+<p>事件描述用户如何与应用中的内容进行交互，并被发送到分析跟踪系统。为了更好地对交互进行分类和筛选，事件使用以下关键词来组织：</p>
+<ul>
+<li>类别：描述在分析报告中被归为一组的事件。
+</li>
+<li>操作：指定为触发该事件而执行的操作。
+</li>
+<li>标签：说明与用户交互的具体对象的附加信息。
+</li>
+<li>值：<a href="https://docs.juce.com/master/classOptional.html" rel="noreferrer noopener">可选</a>的整数，为相关事件提供数值数据。
+</li>
+</ul>
+<p>所有事件都会随一个唯一的用户ID、一个时间戳以及上面提到的关键词一起发送。此外，用户还可以被分组到不同类别中，以更好地描述他们的身份，例如beta测试人员或开发者。</p>
+<h2>设置API密钥</h2>
+<p>要让项目正常工作，第一步是设置Google Analytics API密钥。你可以在Google Analytics仪表板中这里找到跟踪ID：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_analytics_collection_screenshot2.png" alt="Google Analytics跟踪ID">
+<figcaption>Google Analytics跟踪ID</figcaption>
+</figure>
+<p>复制这个ID，并替换<code>GoogleAnalyticsDestination</code>类中的<code>apiKey</code>占位变量：</p>
+<pre><code>apiKey = "UA-XXXXXXXXX-1";</code></pre>
+<blockquote>
+      <p>理想情况下，这个API密钥不应在你的二进制发行版中可见，因为一旦被发现，可能会有各种恶意用途，并可能用垃圾数据污染你的分析数据。防止这种情况的一种方法是在运行时动态获取API密钥（例如从你自己的服务器获取）。</p>
+    </blockquote>
+<h2>跟踪应用启动</h2>
+<p>我们首先从跟踪与用户无关的信息（例如应用启动）开始，并定义分析系统将要使用的固定用户信息。在<code>MainContentComponent</code>类的构造函数中，我们首先通过调用<code>Analytics::getInstance()</code>获取<a href="https://docs.juce.com/master/classAnalytics.html" rel="noreferrer noopener">Analytics</a>单例的引用。</p>
+<p>然后我们可以通过<code>setUserID()</code>为该用户选择一个唯一标识符来设置用户ID [1]。注意不要在这个标识符中包含任何敏感的个人信息。我们还可以通过调用<code>setUserProperties()</code>，使用<a href="https://docs.juce.com/master/classStringPairArray.html" rel="noreferrer noopener">StringPairArray</a>为该用户设置用户组 [2]。</p>
+<p>为了能够接收事件，我们需要为<a href="https://docs.juce.com/master/classAnalytics.html" rel="noreferrer noopener">Analytics</a>实例指定至少一个目标。如果需要，我们也可以选择添加多个目标。在本例中，我们向该单例添加一个GoogleAnalyticsDestination类的实例 [3]。</p>
+<p>由于<code>MainContentComponent</code>构造函数在MainWindow实例化时会被调用，我们可以在该组件被MainWindow拥有的那一刻使用<code>logEvent()</code>函数记录这个事件 [4]。</p>
+<pre><code>MainContentComponent()
+{
+    // Add an analytics identifier for the user. Make sure you don't accidentally
+    // collect identifiable information if you haven't asked for permission!
+    juce::Analytics::getInstance()-&gt;setUserId ("AnonUser1234"); // [1]
+    // Add any other constant user information.
+    juce::StringPairArray userData;
+    userData.set ("group", "beta");
+    juce::Analytics::getInstance()-&gt;setUserProperties (userData); // [2]
+    // Add any analytics destinations we want to use to the Analytics singleton.
+    juce::Analytics::getInstance()-&gt;addDestination (new GoogleAnalyticsDestination()); // [3]
+    // The event type here should probably be DemoAnalyticsEventTypes::sessionStart
+    // in a more advanced app.
+    juce::Analytics::getInstance()-&gt;logEvent ("startup", {}, DemoAnalyticsEventTypes::event); // [4]</code></pre>
+<p>同样，我们可以在<code>MainContentComponent</code>析构函数中，在MainWindow被删除的那一刻记录关闭事件 [5]。</p>
+<pre><code>~MainContentComponent() override
+{
+    // The event type here should probably be DemoAnalyticsEventTypes::sessionEnd
+    // in a more advanced app.
+    juce::Analytics::getInstance()-&gt;logEvent ("shutdown", {}, DemoAnalyticsEventTypes::event); // [5]
+}</code></pre>
+<h2>跟踪按钮行为</h2>
+<p>为了给特定的用户操作添加跟踪，我们需要定义希望记录和发送哪些用户交互。幸运的是，要记录按钮行为，我们可以使用JUCE analytics模块中包含的一个便捷类<a href="https://docs.juce.com/master/classButtonTracker.html" rel="noreferrer noopener">ButtonTracker</a>，它会自动为我们处理这件事。</p>
+<p>我们首先在<code>MainContentComponent</code>类中声明一个<a href="https://docs.juce.com/master/classButtonTracker.html" rel="noreferrer noopener">ButtonTracker</a>作为成员变量 [1]。</p>
+<pre><code>juce::TextButton eventButton { "Press me!" }, crashButton { "Simulate crash!" };
+std::unique_ptr&lt;juce::ButtonTracker&gt; logEventButtonPress; // [1]
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
+};</code></pre>
+<p>现在在MainContentComponent构造函数中，我们可以通过将想要跟踪的特定<a href="https://docs.juce.com/master/classTextButton.html" rel="noreferrer noopener">TextButton</a>对象作为参数传给<a href="https://docs.juce.com/master/classButtonTracker.html" rel="noreferrer noopener">ButtonTracker</a>构造函数来将其关联起来。我们还会设置事件触发时要发送的事件类别和操作属性 [2]。</p>
+<pre><code>juce::StringPairArray logButtonPressParameters;
+logButtonPressParameters.set ("id", "a");
+logEventButtonPress.reset (new juce::ButtonTracker (eventButton, "button_press", logButtonPressParameters)); // [2]
+}</code></pre>
+<blockquote>
+      <p>练习：创建额外的GUI组件，并使用不同的事件参数在它们上面实现跟踪。</p>
+    </blockquote>
+<h2>发送事件</h2>
+<p>JUCE analytics模块在专用线程上处理事件记录，并定期分批发送分析数据。因此，我们需要暂时将事件存储在本地存储中，直到数据被发送。在本教程的剩余部分，我们将在<code>GoogleAnalyticsDestination</code>类中工作。</p>
+<p>我们首先需要在应用程序数据目录中指定一个位置来存储分析事件数据。为此，我们使用特殊位置<a href="https://docs.juce.com/master/classFile.html#a3e19cafabb03c5838160263a6e76313da0c9f89d8dc9f9f32c9eb42428385351d" rel="noreferrer noopener"><code>File::userApplicationDataDirectory</code></a>来找到正确的位置，并导航到我们应用对应的应用程序文件夹 [1]。如果该位置不存在，我们就创建该文件夹 [2]，并将文件路径保存为以XML为扩展名的文件名 [3]。</p>
+<p>现在我们可以通过使用<code>startAnalyticsThread()</code>函数并指定批次之间的事件等待时间（以毫秒为单位）来启动线程 [4]。</p>
+<pre><code>GoogleAnalyticsDestination()
+    : ThreadedAnalyticsDestination ("GoogleAnalyticsThread")
+{
+    {
+        // Choose where to save any unsent events.
+        auto appDataDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                              .getChildFile (juce::JUCEApplication::getInstance()-&gt;getApplicationName()); // [1]
+        if (!appDataDir.exists())
+            appDataDir.createDirectory(); // [2]
+        savedEventsFile = appDataDir.getChildFile ("analytics_events.xml"); // [3]
+    }</code></pre>
+<pre><code>startAnalyticsThread (initialPeriodMs); // [4]
+}</code></pre>
+<p>在类的析构函数中，我们必须确保最后一批事件能够被发送，而不会让应用程序被操作系统杀掉。为此，我们在停止线程之前先让线程休眠一个批次周期，然后在1秒后强制停止它。这样就有足够的时间进行最后一次发送尝试，同时不会过多延长应用程序的关闭时间。</p>
+<pre><code>~GoogleAnalyticsDestination() override
+{
+    // Here we sleep so that our background thread has a chance to send the
+    // last lot of batched events. Be careful - if your app takes too long to
+    // shut down then some operating systems will kill it forcibly!
+    juce::Thread::sleep (initialPeriodMs); // [5]
+    stopAnalyticsThread (1000); // [6]
+}</code></pre>
+<p>我们可以通过重写<code>getMaximumBatchSize()</code>函数来提供每批发送的最大事件数，如下所示：</p>
+<pre><code>int getMaximumBatchSize() override { return 20; }</code></pre>
+<h3>格式化HTTP请求</h3>
+<p>现在我们需要构造正确的HTTP请求，以将这些事件记录到分析服务器。例如在按钮按下行为的情况下，我们要构造的<a href="https://docs.juce.com/master/classURL.html" rel="noreferrer noopener">URL</a>及其对应的POST数据大致如下所示：</p>
+<pre><code>POST /batch HTTP/1.1
+Host: www.google-analytics.com
+v=1 // Version Number
+&amp;aip=1 // Anonymise IP
+&amp;tid=UA-XXXXXXXXX-1 // Tracking ID
+&amp;t=event // Log Type
+&amp;ec=button_press // Event Category
+&amp;ea=a // Event Action
+&amp;cid=AnonUser1234 // User ID</code></pre>
+<ul>
+<li>[v]：批量记录API的版本。
+</li>
+<li>[aip]：发送者的IP地址被匿名化。
+</li>
+<li>[tid]：对应应用的跟踪ID。
+</li>
+<li>[t]：分析系统的记录类型。
+</li>
+<li>[ec]：所记录事件的类别标识符。
+</li>
+<li>[ea]：所记录事件的操作标识符。
+</li>
+<li>[cid]：对应用户的用户ID。
+</li>
+</ul>
+<p>在典型的应用生命周期中，批量记录器会首先在应用程序启动时处理appStarted事件。然后当用户点击按钮时，我们记录button_press事件，最后在应用程序退出时记录appStopped事件。</p>
+<p>为了应对这3种记录场景，我们需要在<code>logBatchedEvents()</code>函数中构造不同的请求：</p>
+<pre><code>bool logBatchedEvents (const juce::Array&lt;AnalyticsEvent&gt;&amp; events) override
+{
+    // Send events to Google Analytics.
+    juce::String appData ("v=1&amp;aip=1&amp;tid=" + apiKey); // [1]
+    juce::StringArray postData;
+    for (auto&amp; event : events) // [2]
+    {
+        juce::StringPairArray data;
+        switch (event.eventType)
+        {
+            case (DemoAnalyticsEventTypes::event):
+            {
+                data.set ("t", "event");
+                if (event.name == "startup")
+                {
+                    data.set ("ec", "info");
+                    data.set ("ea", "appStarted");
+                }
+                else if (event.name == "shutdown")
+                {
+                    data.set ("ec", "info");
+                    data.set ("ea", "appStopped");
+                }
+                else if (event.name == "button_press")
+                {
+                    data.set ("ec", "button_press");
+                    data.set ("ea", event.parameters["id"]);
+                }
+                else if (event.name == "crash")
+                {
+                    data.set ("ec", "crash");
+                    data.set ("ea", "crash");
+                }
+                else
+                {
+                    jassertfalse;
+                    continue;
+                }
+                break;
+            }
+            default:
+            {
+                // Unknown event type! In this demo app we're just using a
+                // single event type, but in a real app you probably want to
+                // handle multiple ones.
+                jassertfalse;
+                break;
+            }
+        }
+        data.set ("cid", event.userID); // [3]
+        juce::StringArray eventData;
+        for (auto&amp; key : data.getAllKeys()) // [4]
+            eventData.add (key + "=" + juce::URL::addEscapeChars (data[key], true));
+        postData.add (appData + "&amp;" + eventData.joinIntoString ("&amp;")); // [5]
+    }
+    auto url = juce::URL ("https://www.google-analytics.com/batch")
+                   .withPOSTData (postData.joinIntoString ("n")); // [6]</code></pre>
+<ul>
+<li>[1]：我们首先将版本号、匿名化IP和跟踪ID添加到appData字符串变量中。
+</li>
+<li>[2]：然后对于批次中的每个事件，我们确定相关事件的类型，以设置其类别和操作属性。如果事件是启动或关闭，我们将事件类别设为“info”，并分别将操作属性设为“appStarted”或“appStopped”。如果事件是按钮按下，我们将事件类别设为“button_press”，并从<a href="https://docs.juce.com/master/classButtonTracker.html" rel="noreferrer noopener">ButtonTracker</a>的id参数中获取其操作属性。
+</li>
+<li>[3]：我们还为要记录的事件设置用户ID。
+</li>
+<li>[4]：现在对于所有单独的<a href="https://docs.juce.com/master/classStringPairArray.html" rel="noreferrer noopener">StringPairArray</a>条目，我们在键和对应的值之间插入等号将它们连接起来，并对<a href="https://docs.juce.com/master/classURL.html" rel="noreferrer noopener">URL</a>中的任何特殊字符进行转义。
+</li>
+<li>[5]：最后，我们可以用&符号将所有事件参数连接在一起，并将最初的appData内容前置到最前面。
+</li>
+<li>[6]：最终用逐行追加的POST数据构造<a href="https://docs.juce.com/master/classURL.html" rel="noreferrer noopener">URL</a>。这样我们就能在单个HTTP请求中发送多个事件。
+</li>
+</ul>
+<blockquote>
+      <p>练习：修改上面的代码，以处理所有事件属性，包括标签和值属性。</p>
+    </blockquote>
+<p>现在<a href="https://docs.juce.com/master/classURL.html" rel="noreferrer noopener">URL</a>已经准备好了，我们需要通过创建<a href="https://docs.juce.com/master/classWebInputStream.html" rel="noreferrer noopener">WebInputStream</a>将请求发送到服务器。我们首先必须锁定声明为成员变量webStreamCreation的<a href="https://docs.juce.com/master/classCriticalSection.html" rel="noreferrer noopener">CriticalSection</a>互斥锁。使用ScopedLock对象可以让我们自动为花括号界定的一段代码加锁和解锁 [1]。</p>
+<p>如果之前由于应用程序终止而调用过<code>stopLoggingEvents()</code>函数，我们就立即返回，不尝试初始化<a href="https://docs.juce.com/master/classWebInputStream.html" rel="noreferrer noopener">WebInputStream</a> [2]。否则，我们可以将之前构造的<a href="https://docs.juce.com/master/classURL.html" rel="noreferrer noopener">URL</a>作为参数，并以POST作为方法，在std::unique_ptr中创建它 [3]。</p>
+<p>然后我们可以连接到指定的<a href="https://docs.juce.com/master/classURL.html" rel="noreferrer noopener">URL</a>，并使用<a href="https://docs.juce.com/master/classWebInputStream.html" rel="noreferrer noopener">WebInputStream</a>上的<code>connect()</code>函数执行请求 [4]。如果响应成功，我们就从函数中返回成功。否则，我们通过将之前的周期乘以2来为批次周期设置指数衰减，并从函数中返回失败 [5]。</p>
+<pre><code>{
+    const juce::ScopedLock lock (webStreamCreation); // [1]
+    if (shouldExit) // [2]
+        return false;
+    webStream.reset (new juce::WebInputStream (url, true)); // [3]
+}
+auto success = webStream-&gt;connect (nullptr); // [4]
+// Do an exponential backoff if we failed to connect.
+if (success)
+    periodMs = initialPeriodMs;
+else
+    periodMs *= 2;
+setBatchPeriod (periodMs); // [5]
+return success;
+}</code></pre>
+<p>当应用程序关闭时，如果有并发运行的<a href="https://docs.juce.com/master/classWebInputStream.html" rel="noreferrer noopener">WebInputStream</a>连接，我们需要取消它们。通过首先使用ScopedLock从同一个<a href="https://docs.juce.com/master/classCriticalSection.html" rel="noreferrer noopener">CriticalSection</a>对象获取锁，我们确保<code>logBatchedEvents()</code>函数中之前遇到的临界区代码已经结束 [1]。将shouldExit布尔值设为true可防止随后创建任何新连接 [2]。然后如果存在任何<a href="https://docs.juce.com/master/classWebInputStream.html" rel="noreferrer noopener">WebInputStream</a>连接，我们最终可以使用<code>cancel()</code>函数取消它们 [3]。</p>
+<pre><code>void stopLoggingEvents() override
+{
+    const juce::ScopedLock lock (webStreamCreation); // [1]
+    shouldExit = true; // [2]
+    if (webStream.get() != nullptr) // [3]
+        webStream-&gt;cancel();
+}</code></pre>
+<p>这就完成了本教程中处理事件记录的部分。然而，如果事件数据传输失败并且应用程序终止，我们目前无法跟踪未记录的事件。</p>
+<h2>保存和恢复未记录的事件</h2>
+<p>本节将介绍在连接丢失的情况下，如何使用XML文件将任何未记录的事件存储到磁盘。</p>
+<p>对于单次按钮按下，存储未记录事件信息的XML文档大致如下所示：</p>
+<pre><code>&lt;?xml version="1.0" ?&gt;
+&lt;events&gt; // Root XML element for the whole document.
+&lt;google_analytics_event
+    name="button_press"
+    type="event"
+    timestamp="xxxx"
+    user_id="AnonUser1234"
+  &gt; // Event node with name, type, timestamp and user ID.
+&lt;parameters id="a" /&gt; // Parameters related to the parent event.
+&lt;user_properties group="beta" /&gt; // Properties for the user in the parent event.
+&lt;/google_analytics_event&gt;
+//...
+&lt;/events&gt;</code></pre>
+<p>我们来看看分别处理保存和恢复事件的<code>saveUnloggedEvents()</code>和<code>restoreUnloggedEvents()</code>函数。<code>saveUnloggedEvents()</code>函数将根据上面所示的格式构建XML结构，并将内容保存到XML文件中：</p>
+<pre><code>void saveUnloggedEvents (const std::deque&lt;AnalyticsEvent&gt;&amp; eventsToSave) override
+{
+    // Save unsent events to disk. Here we use XML as a serialisation format, but
+    // you can use anything else as long as the restoreUnloggedEvents method can
+    // restore events from disk. If you're saving very large numbers of events then
+    // a binary format may be more suitable if it is faster - remember that this
+    // method is called on app shutdown so it needs to complete quickly!
+    juce::XmlDocument previouslySavedEvents (savedEventsFile);
+    std::unique_ptr&lt;juce::XmlElement&gt; xml (previouslySavedEvents.getDocumentElement()); // [1]
+    if (xml.get() == nullptr || xml-&gt;getTagName() != "events") // [2]
+        xml.reset (new juce::XmlElement ("events"));
+    for (auto&amp; event : eventsToSave)
+    {
+        auto* xmlEvent = new juce::XmlElement ("google_analytics_event"); // [3]
+        xmlEvent-&gt;setAttribute ("name", event.name);
+        xmlEvent-&gt;setAttribute ("type", event.eventType);
+        xmlEvent-&gt;setAttribute ("timestamp", (int) event.timestamp);
+        xmlEvent-&gt;setAttribute ("user_id", event.userID);
+        auto* parameters = new juce::XmlElement ("parameters"); // [4]
+        for (auto&amp; key : event.parameters.getAllKeys())
+            parameters-&gt;setAttribute (key, event.parameters[key]);
+        xmlEvent-&gt;addChildElement (parameters);
+        auto* userProperties = new juce::XmlElement ("user_properties"); // [5]
+        for (auto&amp; key : event.userProperties.getAllKeys())
+            userProperties-&gt;setAttribute (key, event.userProperties[key]);
+        xmlEvent-&gt;addChildElement (userProperties);
+        xml-&gt;addChildElement (xmlEvent); // [6]
+    }
+    xml-&gt;writeTo (savedEventsFile); // [7]
+}</code></pre>
+<ul>
+<li>[1]：首先，我们从之前定义的文件位置所存储的XML文件中检索任何之前保存的事件，并基于它构建一个<a href="https://docs.juce.com/master/classXmlElement.html" rel="noreferrer noopener">XmlElement</a>。
+</li>
+<li>[2]：如果<a href="https://docs.juce.com/master/classXmlElement.html" rel="noreferrer noopener">XmlElement</a>不存在或没有根“events”节点，我们就创建它。
+</li>
+<li>[3]：对于队列中的每个未保存事件，我们创建一个“google_analytics_event”节点，并将事件名称、类型、时间戳和用户ID作为属性。
+</li>
+<li>[4]：我们还将创建一个“parameters”节点作为先前创建的节点的子节点，并将事件参数作为其属性。
+</li>
+<li>[5]：在同一层级上，我们创建一个“user_properties”节点作为子节点，并将用户属性作为其属性。
+</li>
+<li>[6]：然后我们可以将各个事件节点作为子节点添加到根“events”节点。
+</li>
+<li>[7]：最后，我们将XML结构写入XML文件并存储这些事件。
+</li>
+</ul>
+<p>另一方面，<code>restoreUnloggedEvents()</code>函数则会读取基于先前所示相同格式的XML结构，并填充事件队列：</p>
+<pre><code>void restoreUnloggedEvents (std::deque&lt;AnalyticsEvent&gt;&amp; restoredEventQueue) override
+{
+    juce::XmlDocument savedEvents (savedEventsFile);
+    std::unique_ptr&lt;juce::XmlElement&gt; xml (savedEvents.getDocumentElement()); // [1]
+    if (xml.get() == nullptr || xml-&gt;getTagName() != "events") // [2]
+        return;
+    auto numEvents = xml-&gt;getNumChildElements();
+    for (auto iEvent = 0; iEvent &lt; numEvents; ++iEvent)
+    {
+        auto* xmlEvent = xml-&gt;getChildElement (iEvent); // [3]
+        juce::StringPairArray parameters;
+        auto* xmlParameters = xmlEvent-&gt;getChildByName ("parameters"); // [4]
+        auto numParameters = xmlParameters-&gt;getNumAttributes();
+        for (auto iParam = 0; iParam &lt; numParameters; ++iParam)
+            parameters.set (xmlParameters-&gt;getAttributeName (iParam),
+                xmlParameters-&gt;getAttributeValue (iParam));
+        juce::StringPairArray userProperties;
+        auto* xmlUserProperties = xmlEvent-&gt;getChildByName ("user_properties"); // [5]
+        auto numUserProperties = xmlUserProperties-&gt;getNumAttributes();
+        for (auto iProp = 0; iProp &lt; numUserProperties; ++iProp)
+            userProperties.set (xmlUserProperties-&gt;getAttributeName (iProp),
+                xmlUserProperties-&gt;getAttributeValue (iProp));
+        restoredEventQueue.push_back ({ xmlEvent-&gt;getStringAttribute ("name"), // [6]
+            xmlEvent-&gt;getIntAttribute ("type"),
+            static_cast&lt;juce::uint32&gt; (xmlEvent-&gt;getIntAttribute ("timestamp")),
+            parameters,
+            xmlEvent-&gt;getStringAttribute ("user_id"),
+            userProperties });
+    }
+    savedEventsFile.deleteFile(); // [7]
+}</code></pre>
+<ul>
+<li>[1]：与之前一样，我们从之前定义的文件位置所存储的XML文件中检索任何之前保存的事件，并基于它构建一个<a href="https://docs.juce.com/master/classXmlElement.html" rel="noreferrer noopener">XmlElement</a>。
+</li>
+<li>[2]：如果<a href="https://docs.juce.com/master/classXmlElement.html" rel="noreferrer noopener">XmlElement</a>不存在或没有根“events”节点，我们就从函数返回，因为没有什么可做的。
+</li>
+<li>[3]：我们首先从根父节点中检索一个要解析的事件子节点。
+</li>
+<li>[4]：对于子“parameters”节点中的每个属性，我们设置一个键/值对，并将其添加到<a href="https://docs.juce.com/master/classStringPairArray.html" rel="noreferrer noopener">StringPairArray</a>。
+</li>
+<li>[5]：对于子“user_properties”节点中的每个属性，我们设置一个键/值对，并将其添加到<a href="https://docs.juce.com/master/classStringPairArray.html" rel="noreferrer noopener">StringPairArray</a>。
+</li>
+<li>[6]：然后我们可以通过设置<a href="https://docs.juce.com/master/classStringPairArray.html" rel="noreferrer noopener">StringPairArray</a>对象中对应的参数，将各个事件推回事件队列。
+</li>
+<li>[7]：最后，完成后我们从磁盘删除XML文件。
+</li>
+</ul>
+<blockquote>
+      <p>我们使用XML作为序列化格式，但如果需要保存大量未保存的事件，二进制格式会更高效。</p>
+    </blockquote>
+<blockquote>
+      <p>练习：以不同的序列化格式保存和恢复未记录的事件，例如<a href="https://docs.juce.com/master/classJSON.html" rel="noreferrer noopener">JSON</a>或二进制格式。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>在本教程中，我们学习了如何使用Google Analytics和JUCE analytics模块跟踪使用数据。具体来说，我们：</p>
+<ul>
+<li>在单独的线程上将分析事件发送到Google Analytics。
+</li>
+<li>在XML文档中本地存储未发送的事件。
+</li>
+<li>从XML文档中恢复已保存的事件到事件队列。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="android-studio.html" rel="noreferrer noopener">教程：Android入门</a>
+</li>
+<li><a href="android-screen-sizes.html" rel="noreferrer noopener">教程：管理Android屏幕尺寸</a>
+</li>
+<li><a href="in-app-purchases.html" rel="noreferrer noopener">教程：桌面和移动设备上的应用内购买</a>
+</li>
+<li><a href="push-notifications.html" rel="noreferrer noopener">教程：桌面和移动设备上的推送通知</a>
+</li>
+<li><a href="app-plugin-packaging.html" rel="noreferrer noopener">教程：打包你的应用或插件以便分发</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_analytics_collection/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_analytics_collection/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

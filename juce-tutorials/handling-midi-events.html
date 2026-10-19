@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>处理 MIDI 事件 - JUCE 教程</title>
+<meta name="description" content="处理 MIDI 事件：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>处理 MIDI 事件</h1>
+<p>本教程演示如何处理 MIDI 输入事件。除了处理来自外部源的 MIDI 数据，还会介绍一个屏幕键盘组件。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a>、<a href="https://docs.juce.com/master/classMidiMessage.html" rel="noreferrer noopener">MidiMessage</a>、<a href="https://docs.juce.com/master/classMidiInputCallback.html" rel="noreferrer noopener">MidiInputCallback</a>、<a href="https://docs.juce.com/master/classComboBox.html" rel="noreferrer noopener">ComboBox</a>、<a href="https://docs.juce.com/master/classMidiKeyboardComponent.html" rel="noreferrer noopener">MidiKeyboardComponent</a>、<a href="https://docs.juce.com/master/classMidiKeyboardState.html" rel="noreferrer noopener">MidiKeyboardState</a>、<a href="https://docs.juce.com/master/classCallbackMessage.html" rel="noreferrer noopener">CallbackMessage</a>、<a href="https://docs.juce.com/master/classScopedValueSetter.html" rel="noreferrer noopener">ScopedValueSetter</a></p>
+<h2>准备工作</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/HandlingMidiEventsTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/HandlingMidiEventsTutorial.zip" rel="noreferrer noopener">ZIP</a> 。解压项目，在 Projucer 中打开第一个头文件。</p>
+<p>如果你在这一步需要帮助，参见<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<blockquote>
+      <p>理想情况下，你的电脑上应连接一个外部 MIDI 源。如果没有，某种虚拟 MIDI 源（在电脑上创建虚拟 MIDI 端口）也会有帮助。</p>
+    </blockquote>
+<h2>演示项目</h2>
+<p>演示项目提供了一个屏幕 MIDI 键盘，并允许用户通过组合框选择一个硬件设备 MIDI 输入。从这两个来源收到的 MIDI 事件都会显示在窗口下半部分。如下图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_handling_midi_events_screenshot1.png" alt="应用程序窗口">
+<figcaption>应用程序窗口</figcaption>
+</figure>
+<h2>MIDI 输入</h2>
+<p>本教程演示如何在基础应用程序中处理 MIDI 输入。JUCE 让查找已连接的硬件 MIDI 接口列表变得很容易。它还提供了 <a href="https://docs.juce.com/master/classMidiKeyboardComponent.html" rel="noreferrer noopener">MidiKeyboardComponent</a> 类，让你可以显示一个屏幕键盘。首先，看看 <code>MainContentComponent</code> 类中的成员变量：</p>
+<pre><code>juce::AudioDeviceManager deviceManager; // [1]
+juce::ComboBox midiInputList; // [2]
+juce::Label midiInputListLabel;
+int lastInputIndex = 0; // [3]
+bool isAddingFromMidiInput = false; // [4]
+juce::MidiKeyboardState keyboardState; // [5]
+juce::MidiKeyboardComponent keyboardComponent; // [6]
+juce::TextEditor midiMessagesBox;
+double startTime;</code></pre>
+<ul>
+<li>[1]：我们使用 <a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a> 类查找哪些 MIDI 输入设备已启用。
+</li>
+<li>[2]：我们在这个组合框中显示 MIDI 输入设备的名称，供用户选择。
+</li>
+<li>[3]：当用户选择另一个输入时，用它注销之前选中的 MIDI 输入。
+</li>
+<li>[4]：这个标志用于表示 MIDI 数据来自外部源，而不是在屏幕键盘上的鼠标点击。
+</li>
+<li>[5]：<a href="https://docs.juce.com/master/classMidiKeyboardState.html" rel="noreferrer noopener">MidiKeyboardState</a> 类跟踪当前按下了哪些 MIDI 键。
+</li>
+<li>[6]：这是屏幕键盘组件。
+</li>
+</ul>
+<p>在 <code>MainContentComponent</code> 构造函数中，我们初始化 [3]、[4] 和 [6]。我们还记录了应用程序的启动时间，以便相对于它显示 MIDI 数据的时间戳。</p>
+<pre><code>MainContentComponent()
+    : keyboardComponent (keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard),
+      startTime (juce::Time::getMillisecondCounterHiRes() * 0.001)
+{</code></pre>
+<p>我们必须传入一个 <a href="https://docs.juce.com/master/classMidiKeyboardState.html" rel="noreferrer noopener">MidiKeyboardState</a> 对象来初始化 <a href="https://docs.juce.com/master/classMidiKeyboardComponent.html" rel="noreferrer noopener">MidiKeyboardComponent</a> 对象。而且，由于这些是静态分配的对象，<a href="https://docs.juce.com/master/classMidiKeyboardState.html" rel="noreferrer noopener">MidiKeyboardState</a> 必须列在成员变量的前面。</p>
+<h3>MIDI 输入列表</h3>
+<p>包含 MIDI 输入列表的组合框，是通过 <a href="https://docs.juce.com/master/classMidiInput.html" rel="noreferrer noopener">MidiInput</a> 类使用 MidiInput::getDevices() 函数获取连接到电脑的 MIDI 输入列表来填充的：</p>
+<pre><code>addAndMakeVisible (midiInputList);
+midiInputList.setTextWhenNoChoicesAvailable ("No MIDI Inputs Enabled");
+auto midiInputs = juce::MidiInput::getAvailableDevices();
+juce::StringArray midiInputNames;
+for (auto input : midiInputs)
+    midiInputNames.add (input.name);
+midiInputList.addItemList (midiInputNames, 1);
+midiInputList.onChange = [this] { setMidiInput (midiInputList.getSelectedItemIndex()); };
+// find the first enabled device and use that by default
+for (auto input : midiInputs)
+{
+    if (deviceManager.isMidiInputDeviceEnabled (input.identifier))
+    {
+        setMidiInput (midiInputs.indexOf (input));
+        break;
+    }
+}
+// if no enabled devices were found just use the first one in the list
+if (midiInputList.getSelectedId() == 0)
+    setMidiInput (0);</code></pre>
+<p>如果用户更改了选中的 MIDI 输入，赋给 <a href="https://docs.juce.com/master/classComboBox.html#a9cf2e20990541b9fbb539cd4a8e0ac4e" rel="noreferrer noopener">ComboBox::onChange</a> 辅助对象的 lambda 函数就会被调用：</p>
+<pre><code>midiInputList.onChange = [this] { setMidiInput (midiInputList.getSelectedItemIndex()); };</code></pre>
+<p><code>setMidiInput()</code> 函数让应用程序开始监听选中的设备。如果该设备当前处于禁用状态，它还会启用该设备：</p>
+<pre><code>void setMidiInput (int index)
+{
+    auto list = juce::MidiInput::getAvailableDevices();
+    deviceManager.removeMidiInputDeviceCallback (list[lastInputIndex].identifier, this);
+    auto newInput = list[index];
+    if (!deviceManager.isMidiInputDeviceEnabled (newInput.identifier))
+        deviceManager.setMidiInputDeviceEnabled (newInput.identifier, true);
+    deviceManager.addMidiInputDeviceCallback (newInput.identifier, this);
+    midiInputList.setSelectedId (index + 1, juce::dontSendNotification);
+    lastInputIndex = index;
+}</code></pre>
+<h3>处理外部 MIDI 输入</h3>
+<p>我们实现 <a href="https://docs.juce.com/master/classMidiInputCallback.html#acdf6d7e27b96a50fe06922737f0d082e" rel="noreferrer noopener">MidiInputCallback::handleIncomingMidiMessage()</a> <a href="http://www.learncpp.com/cpp-tutorial/126-pure-virtual-functions-abstract-base-classes-and-interface-classes/" rel="noreferrer noopener">纯虚</a>函数。它会更新键盘状态（进而更新 <a href="https://docs.juce.com/master/classMidiKeyboardComponent.html" rel="noreferrer noopener">MidiKeyboardComponent</a> 对象）：</p>
+<pre><code>void handleIncomingMidiMessage (juce::MidiInput* source, const juce::MidiMessage&amp; message) override
+{
+    const juce::ScopedValueSetter&lt;bool&gt; scopedInputFlag (isAddingFromMidiInput, true);
+    keyboardState.processNextMidiEvent (message);
+    postMessageToList (message, source-&gt;getName());
+}</code></pre>
+<p>注意，<code>scopedInputFlag</code> 变量使用了 <a href="https://docs.juce.com/master/classScopedValueSetter.html" rel="noreferrer noopener">ScopedValueSetter</a> 类。它会做以下几件事：</p>
+<ul>
+<li>保存 <code>isAddingFromMidiInput</code> 成员的当前状态。
+</li>
+<li>把 <code>isAddingFromMidiInput</code> 成员设为 true。
+</li>
+<li>函数退出时，把 <code>isAddingFromMidiInput</code> 成员恢复为函数开始时的状态。
+</li>
+</ul>
+<h3>MIDI 键盘状态与组件</h3>
+<p>在 <code>MainContentComponent</code> 构造函数中，<a href="https://docs.juce.com/master/classMidiKeyboardComponent.html" rel="noreferrer noopener">MidiKeyboardComponent</a> 对象被添加到父组件 <code>MainContentComponent</code> 中并设为可见。我们还监听了 <a href="https://docs.juce.com/master/classMidiKeyboardState.html" rel="noreferrer noopener">MidiKeyboardState</a> 对象（<em>不是</em>组件）：</p>
+<pre><code>addAndMakeVisible (keyboardComponent);
+keyboardState.addListener (this);</code></pre>
+<p>MidiKeyboardStateListener 类有两个必须实现的<a href="http://www.learncpp.com/cpp-tutorial/126-pure-virtual-functions-abstract-base-classes-and-interface-classes/" rel="noreferrer noopener">纯虚</a>函数，即 <a href="https://docs.juce.com/master/classMidiKeyboardState_1_1Listener.html#a854381a64354389e0cb2c15ec1fb4b01" rel="noreferrer noopener">MidiKeyboardStateListener::handleNoteOn()</a> 和 <a href="https://docs.juce.com/master/classMidiKeyboardState_1_1Listener.html#aedc74bd79578cb19edba66d38e9a93cf" rel="noreferrer noopener">MidiKeyboardStateListener::handleNoteOff()</a> 函数。</p>
+<pre><code>void handleNoteOn (juce::MidiKeyboardState*, int midiChannel, int midiNoteNumber, float velocity) override
+{
+    if (!isAddingFromMidiInput)
+    {
+        auto m = juce::MidiMessage::noteOn (midiChannel, midiNoteNumber, velocity);
+        m.setTimeStamp (juce::Time::getMillisecondCounterHiRes() * 0.001);
+        postMessageToList (m, "On-Screen Keyboard");
+    }
+}
+void handleNoteOff (juce::MidiKeyboardState*, int midiChannel, int midiNoteNumber, float /*velocity*/) override
+{
+    if (!isAddingFromMidiInput)
+    {
+        auto m = juce::MidiMessage::noteOff (midiChannel, midiNoteNumber);
+        m.setTimeStamp (juce::Time::getMillisecondCounterHiRes() * 0.001);
+        postMessageToList (m, "On-Screen Keyboard");
+    }
+}</code></pre>
+<p>这里可以看到 <code>isAddingFromMidiInput</code> 成员的用法。它防止从硬件输入到达的事件被重复投递到我们的列表。</p>
+<h3>把消息投递到列表</h3>
+<p><code>postMessageToList()</code> 函数乍看之下可能有点不寻常：</p>
+<pre><code>void postMessageToList (const juce::MidiMessage&amp; message, const juce::String&amp; source)
+{
+    (new IncomingMessageCallback (this, message, source))-&gt;post();
+}</code></pre>
+<p><code>IncomingMessageCallback</code> 类是 <a href="https://docs.juce.com/master/classCallbackMessage.html" rel="noreferrer noopener">CallbackMessage</a> 类的子类。我们必须使用它，因为无法确定 <code>postMessageToList()</code> 函数会从哪个线程被调用。如果用户点击 <a href="https://docs.juce.com/master/classMidiKeyboardComponent.html" rel="noreferrer noopener">MidiKeyboardComponent</a> 对象，它会从消息线程被调用。但如果数据来自外部 MIDI 源，它就会从后台 MIDI 线程（可能是操作系统线程）被调用。</p>
+<p><a href="https://docs.juce.com/master/classCallbackMessage.html" rel="noreferrer noopener">CallbackMessage</a> 类提供了一种在消息线程上调用函数的方式。<a href="https://docs.juce.com/master/classCallbackMessage.html" rel="noreferrer noopener">CallbackMessage</a> 类是一种 <a href="https://docs.juce.com/master/classReferenceCountedObject.html" rel="noreferrer noopener">ReferenceCountedObject</a> 类。这就是为什么我们（表面上）不需要把 <code>IncomingMessageCallback</code> 对象保存在任何地方。实际上，<code>IncomingMessageCallback::post()</code> 函数（也就是 <a href="https://docs.juce.com/master/classMessageManager_1_1MessageBase.html#a2bcdf57123967a59650bd46543906796" rel="noreferrer noopener">MessageManager::MessageBase::post()</a> 函数）会把该对象添加到一个由 <a href="https://docs.juce.com/master/classMessageManager.html" rel="noreferrer noopener">MessageManager</a> 类处理的队列中。<a href="https://docs.juce.com/master/classMessageManager.html" rel="noreferrer noopener">MessageManager</a> 类最终会在队列中找到这个对象，并在消息线程上调用 <code>IncomingMessageCallback::messageCallback()</code> 函数。该函数被调用后，<code>IncomingMessageCallback</code> 对象就会被删除。因此，这个对象的生命周期（几乎）是自动管理的。</p>
+<blockquote>
+      <p>之所以确实需要这样做，只是因为我们得把数据发送到消息线程。在 MIDI 应用程序中，某种线程间通信很可能是必需的，但具体实现取决于实际情况。</p>
+    </blockquote>
+<h3>显示消息</h3>
+<p><code>addMessageToList()</code> 和 <code>getMidiMessageDescription()</code> 函数与<a href="midi-message.html" rel="noreferrer noopener">教程：创建 MIDI 数据</a>中的同名函数非常相似。主要区别在于我们记录了 MIDI 消息的来源 [7]（哪个硬件输入，或屏幕键盘）：</p>
+<pre><code>void addMessageToList (const juce::MidiMessage&amp; message, const juce::String&amp; source)
+{
+    auto time = message.getTimeStamp() - startTime;
+    auto hours = ((int) (time / 3600.0)) % 24;
+    auto minutes = ((int) (time / 60.0)) % 60;
+    auto seconds = ((int) time) % 60;
+    auto millis = ((int) (time * 1000.0)) % 1000;
+    auto timecode = juce::String::formatted ("%02d:%02d:%02d.%03d",
+        hours,
+        minutes,
+        seconds,
+        millis);
+    auto description = getMidiMessageDescription (message);
+    juce::String midiMessageString (timecode + " - " + description + " (" + source + ")"); // [7]
+    logMessage (midiMessageString);
+}</code></pre>
+<blockquote>
+      <p>练习：在用户界面中添加一些滑块，用于发送并响应调制轮（CC1）和弯音轮之类的消息。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>本教程介绍了一些用于处理和显示 MIDI 输入事件的类。具体来说，你应该能够：</p>
+<ul>
+<li>列出可用的 MIDI 输入设备。
+</li>
+<li>创建 MIDI 输入设备菜单。
+</li>
+<li>监听到达硬件输入的 MIDI。
+</li>
+<li>使用 <a href="https://docs.juce.com/master/classMidiKeyboardComponent.html" rel="noreferrer noopener">MidiKeyboardComponent</a> 类显示 MIDI 音符数据。
+</li>
+<li>使用 <a href="https://docs.juce.com/master/classCallbackMessage.html" rel="noreferrer noopener">CallbackMessage</a> 类把来自其他线程的消息投递到消息线程上处理。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="audio-device-manager.html" rel="noreferrer noopener">教程：AudioDeviceManager 类</a>
+</li>
+<li><a href="midi-message.html" rel="noreferrer noopener">教程：创建 MIDI 数据</a>
+</li>
+<li><a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建一个 MIDI 合成器</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_handling_midi_events/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_handling_midi_events/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
