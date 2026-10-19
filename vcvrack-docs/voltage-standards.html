@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>电压标准 - VCV Rack 手册</title>
+<meta name="description" content="VCV Rack 官方手册《电压标准》的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>电压标准</h1>
+<p>在 Rack 中，patch 线缆所承载的输入与输出值以电压（V）为单位。
+你可以使用 VCV Scope 之类的模块测量绝对电压电平。</p>
+<p>Rack 尽可能精确地模拟 Eurorack 标准，但这会带来两个问题：Eurorack 中真正的“标准”极少（唯一的规则就是总能找到一个打破规则的模块），而且数字（有限采样率）与模拟（无限采样率）之间存在一些差异。</p>
+<h2 id="Levels">电平</h2>
+<p>振荡器与 CV 发生器通常应产生 <math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>10</mn><mtext> </mtext><msub><mi>V</mi><mrow><mi>p</mi><mi>p</mi></mrow></msub></mrow><annotation encoding="application/x-tex">10\, V_{pp}</annotation></semantics></math>（峰峰值）的信号。
+这意味着音频输出通常应为 <strong>±5 V</strong>（在施加带限之前），而 CV 调制源通常应为 <strong>0 到 10 V</strong>（单极性 CV）或 <strong>±5 V</strong>（双极性 CV）。</p>
+<p>绝对分贝测量应使用 dBFS（相对于满刻度的分贝），满刻度为 <strong>-10 到 10 V</strong>，不过也可以直接标注为“dB”。</p>
+<ul>
+<li>0 dBFS：10 V</li>
+<li>0 dBV（电压，很少使用）：1 V</li>
+<li>0 dbVU（用于 VU 表）：按硬件惯例为 -18 dBFS</li>
+</ul>
+<h2 id="Output-Saturation">输出饱和</h2>
+<p>在 Eurorack 中，电源提供 <strong>-12 到 12 V</strong>。
+不应产生超出此范围的电压，因为这在 Eurorack 中基本无法获得。
+此外，±12 V 电源轨上的保护二极管通常会把范围降到约 ±11.7 V。</p>
+<p>不过，如果你出于简化或性能考虑不想模拟模拟输出饱和，那完全没问题。
+相比使用硬削波 <code>clamp(out, -1.f, 1.f)</code>，允许电压超出此范围要好得多，因为最好的情况是它们会被下游模块衰减，而最坏的情况是它们会被 Core 中的 Audio 模块硬削波。</p>
+<p>如果你的模块能够对输入施加 &gt;1 倍的增益，那么对输出进行饱和处理是个好主意。</p>
+<h2 id="Triggers-and-Gates">触发与门信号</h2>
+<p>在 Eurorack 中，许多模块是通过达到特定的上升斜率阈值来触发的。
+然而，由于<a href="https://en.wikipedia.org/wiki/Gibbs_phenomenon" rel="noreferrer noopener">吉布斯现象</a>，如果触发源是带限的（例如使用虚拟 VCO 的方波作为触发输入，或通过音频接口输入硬件触发信号），数字仿真会错误地多次重新触发。</p>
+<p>因此，Rack 中的触发输入应使用<a href="https://en.wikipedia.org/wiki/Schmitt_trigger" rel="noreferrer noopener">施密特触发器</a>来触发，低阈值约为 <strong>0.1 V</strong>，高阈值约为 <strong>1 到 2 V</strong>。
+Rack 插件可以用 <code>dsp::SchmittTrigger</code> 配合 <code>schmittTrigger.process(x, 0.1f, 1.f)</code> 实现这一点。</p>
+<p>触发源应产生 <strong>10 V</strong>、持续时间为 <strong>1 ms</strong> 的信号。
+保持这一时长的简单方法是使用 <code>dsp::PulseGenerator</code> 配合 <code>pulseGenerator.trigger(1e-3f)</code>。</p>
+<p>门信号在激活时应产生 <strong>10 V</strong>。</p>
+<h2 id="Timing">时序</h2>
+<p>Rack 中的每根线缆都会使其承载的信号从输出端口到输入端口延迟 1 个采样。
+这意味着，如果两个信号链路中线缆的数量不同，那么同时产生的两个信号并不保证同时到达各自的目的地。
+例如，一个脉冲经过工具模块再送到音序器的 CLOCK 输入，会比同一个脉冲直接送到音序器的 RESET 输入晚一个采样到达。
+这会导致音序器复位到第 1 步，并在一个采样之后前进到第 2 步，这是不希望出现的行为。</p>
+<p>因此，带有 CLOCK 和 RESET 输入（或类似变体）的模块，在收到 RESET 触发后的 <strong>1 ms</strong> 内应忽略 CLOCK 触发。
+你可以使用 <code>dsp::Timer</code> 来跟踪时间。</p>
+<h2 id="Pitch-and-Frequencies">音高与频率</h2>
+<p>模块应使用 <strong>1 V/oct</strong>（每八度 1 伏）标准来对频率信息进行 CV 控制。
+在此标准下，频率 <math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>f</mi></mrow><annotation encoding="application/x-tex">f</annotation></semantics></math> 与电压 <math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi></mrow><annotation encoding="application/x-tex">V</annotation></semantics></math> 之间的关系为 <math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>f</mi><mo>=</mo><msub><mi>f</mi><mn>0</mn></msub><mo>⋅</mo><msup><mn>2</mn><mi>V</mi></msup></mrow><annotation encoding="application/x-tex">f = f_0 \cdot 2^{V}</annotation></semantics></math>，其中 <math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>f</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">f_0</annotation></semantics></math> 是基准频率。
+你的模块可能有一个频率旋钮，它会给 <math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi></mrow><annotation encoding="application/x-tex">V</annotation></semantics></math> 带来偏移。
+在默认位置，音频速率的振荡器应使用由<a href="https://en.wikipedia.org/wiki/Scientific_pitch_notation" rel="noreferrer noopener">国际音高记号</a>定义的 C4 音（“中央 C”，MIDI 音符号 60，<math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>f</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">f_0</annotation></semantics></math> = 261.6256 Hz = <code>dsp::FREQ_C4</code>）作为基准。
+低频振荡器与时钟发生器应使用 120 BPM（<math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>f</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">f_0</annotation></semantics></math> = 2 Hz）。</p>
+<h2 id="NaNs-and-Infinity">NaN 与无穷</h2>
+<p>如果你的模块在仅给出有限输入时可能产生 <a href="https://en.wikipedia.org/wiki/NaN" rel="noreferrer noopener">NaN</a> 或无穷的输出值（例如不稳定的 IIR 滤波器或混响），那么它应进行检查并在出现这种情况时返回 0：<code>std::isfinite(out) ? out : 0.f</code>。</p>
+<h2 id="Polyphony">复音</h2>
+<p>如果你的模块支持复音输入或具有复音输出，那么它可以被视为“复音模块”，因此请在模块的 manifest 中添加“Polyphonic”标签。
+建议支持最多 16 个通道，这是 Rack 允许的最大值。</p>
+<p>通常，模块中的每个声音都可以抽象为一个“引擎”。
+活动引擎的数量 <math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi></mrow><annotation encoding="application/x-tex">N</annotation></semantics></math> 应由“主”输入的通道数决定（例如 VCO 的 1 V/oct 输入、滤波器的音频输入、包络发生器的门信号输入等）。
+所有其他具有 <math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>M</mi></mrow><annotation encoding="application/x-tex">M</annotation></semantics></math> 个通道的次要输入应遵循以下规则：</p>
+<ul>
+<li>如果是单声道（<math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>M</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">M = 1</annotation></semantics></math>），其电压应复制到所有引擎。</li>
+<li>如果是复音且通道足够（<math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>M</mi><mo>≥</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">M \geq N</annotation></semantics></math>），每个通道的电压应在各自对应的引擎中使用。</li>
+<li>如果是复音但通道不足（<math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mo>&lt;</mo><mi>M</mi><mo>&lt;</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">1 &lt; M &lt; N</annotation></semantics></math>），越界的引擎应复制 0 V。</li>
+</ul>
+<p>所有这些行为都由 <code>Port::getPolyVoltage(c)</code> 提供。</p>
+<p>单声道模块应优雅地处理复音输入：</p>
+<ul>
+<li>对于仅用于音频的输入，将所有通道的电压相加（例如使用 <code>Port::getVoltageSum()</code>）</li>
+<li>对于用于 CV 或音频/CV 混合的输入，使用第一个通道的电压（例如使用 <code>Port::getVoltage()</code>）</li>
+</ul>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://vcvrack.com/manual/VoltageStandards" rel="noreferrer noopener">vcvrack.com/manual/VoltageStandards</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

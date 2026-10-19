@@ -56,9 +56,13 @@ window.PT_LIBRARIES = [
   { dir: 'faust-docs', title: 'Faust 文档',
     desc: 'Faust 官方文档（手册、示例、教程、工作坊）的中文译本。',
     source: 'https://faustdoc.grame.fr/',
-    updated: '2026-10-19', pages: 57 }
+    updated: '2026-10-19', pages: 57 },
   { dir: 'touchdesigner-docs', title: 'TouchDesigner 文档',
     desc: 'TouchDesigner 官方用户指南的中文译本。',
     source: 'https://docs.derivative.ca/',
-    updated: '2026-10-19', pages: 2022 }
+    updated: '2026-10-19', pages: 2022 },
+  { dir: 'vcvrack-docs', title: 'VCV Rack 手册',
+    desc: 'VCV Rack 官方手册的中文译本。',
+    source: 'https://vcvrack.com/manual/',
+    updated: '2026-10-19', pages: 22 }
 ];

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>将 v1 插件迁移到 v2 - VCV Rack 手册</title>
+<meta name="description" content="VCV Rack 官方手册《将 v1 插件迁移到 v2》的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>将 v1 插件迁移到 v2</h1>
+<p>VCV Rack 2 的 API 在设计上几乎与 v1 插件保持向后兼容。
+这意味着 90% 的插件只需要更新版本号并重新编译（改 1 行，15 秒的工作量）。</p>
+<p>对于另外 10% 使用了高级或尚不稳定 API 特性的插件，升级到 v2 同样简单，只需按下面几步做查找替换即可。</p>
+<p>此外，Rack 2 还提供了一些新的可选增强特性，插件开发者可以用它们提升插件的易用性，详见<a href="#3-New-optional-v2-API-features">第 3 节</a>。</p>
+<h3 id="1-1-Update-plugin-json-version-string-to-v2">1.1) 把 <code>plugin.json</code> 的版本字符串更新为 v2</h3>
+<p>插件的主版本号（<code>MAJOR.MINOR.REVISION</code>）必须与 Rack 的主版本号一致，因此请把插件的 <code>plugin.json</code> 清单中的版本号改为 <code>2</code>。
+例如，把</p>
+<pre><code class="language-json">{
+  &quot;slug&quot;: &quot;Fundamental&quot;,
+  &quot;version&quot;: &quot;1.2.3&quot;,
+  ...
+</code></pre>
+<p>改为</p>
+<pre><code class="language-json">{
+  &quot;slug&quot;: &quot;Fundamental&quot;,
+  &quot;version&quot;: &quot;2.0.0&quot;,
+  ...
+</code></pre>
+<p>如果愿意，次版本号和修订号可以保持不变，例如 <code>2.2.3</code>。</p>
+<p>下载最新的 <a href="https://vcvrack.com/downloads/" rel="noreferrer noopener">Rack 2 SDK</a>。
+清理并编译插件。</p>
+<pre><code class="language-bash">export RACK_DIR=/path/to/Rack-SDK
+make clean
+make dist
+</code></pre>
+<p>如果插件编译成功，可以直接跳到<a href="#2-Potential-runtime-bugs">可能出现的运行时 bug</a>。
+如果编译失败，请继续阅读，以解决可能的错误或警告。</p>
+<h3 id="1-2-ParamWidget-paramQuantity-has-been-replaced-by-getParamQuantity">1.2) <code>ParamWidget::paramQuantity</code> 已由 <code>getParamQuantity()</code> 取代</h3>
+<p>如果你的 <code>ParamWidget</code> 方法使用了 <code>paramQuantity</code> 成员变量，请改用对应的 getter 方法，或在方法开头加上这一行。</p>
+<pre><code class="language-cpp">ParamQuantity* paramQuantity = getParamQuantity();
+</code></pre>
+<h3 id="1-3-ParamWidget-reset-and-ParamWidget-randomize-has-been-removed">1.3) 已移除 <code>ParamWidget::reset()</code> 与 <code>ParamWidget::randomize()</code></h3>
+<p>如果你希望在用户重置/随机化模块时，禁止某个特定参数被重置或随机化，请在 <code>Module</code> 构造函数中设置这些属性。</p>
+<pre><code class="language-cpp">getParamQuantity(MY_PARAM)-&gt;resetEnabled = false;
+getParamQuantity(MY_PARAM)-&gt;randomizeEnabled = false;
+</code></pre>
+<p>另一种做法是在 <code>Module</code> 类中重写下列方法，为<em>所有</em>参数和内部状态实现自定义行为。</p>
+<pre><code class="language-cpp">void onReset(const ResetEvent&amp; e) override {
+	params[MY_PARAM].setValue(0.f);
+	// ...
+
+	// 如需包含默认行为，请调用父类方法
+	// Module::onReset(e);
+}
+
+void onRandomize(const RandomizeEvent&amp; e) override {
+	params[MY_PARAM].setValue(random::uniform());
+	// ...
+
+	// 如需包含默认行为，请调用父类方法
+	// Module::onRandomize(e);
+}
+</code></pre>
+<p>如果你的插件仍然有构建错误，请在 <a href="https://community.vcvrack.com/c/development/8" rel="noreferrer noopener">VCV 开发者论坛</a>发帖，或联系 <a href="https://vcvrack.com/support" rel="noreferrer noopener">VCV 支持</a>，描述你的构建错误。</p>
+<h2 id="2-Potential-runtime-bugs">2) 可能出现的运行时 bug</h2>
+<p>测试时你可能会遇到以下问题。</p>
+<h3 id="2-1-Don-t-store-Font-and-Image-references-across-multiple-frames">2.1) 不要跨帧保存 <code>Font</code> 与 <code>Image</code> 引用</h3>
+<p>Rack 的 DAW 插件版本在插件编辑器窗口每次关闭后重新打开时，都会使用不同的 OpenGL 上下文。
+这意味着，如果你在控件的构造函数中用 <code>font = APP-&gt;window-&gt;loadFont(...)</code> 或 <code>image = APP-&gt;window-&gt;loadImage(...)</code> 加载并保存了 <code>Font</code> 或 <code>Image</code>，那么窗口之后重新打开时，它的 OpenGL 引用就会失效。</p>
+<p>正确的做法是只保存路径，并在 <code>draw()</code> 中每一帧重新获取字体/图像。示例：</p>
+<pre><code class="language-cpp">void draw(const DrawArgs&amp; args) override {
+	std::shared_ptr&lt;Font&gt; font = APP-&gt;window-&gt;loadFont(fontPath);
+	if (font) {
+		nvgFontFaceId(args.vg, font-&gt;handle);
+		...
+	}
+}
+
+</code></pre>
+<p><code>loadFont()</code> 和 <code>loadImage()</code> 会按路径缓存字体/图像，因此该操作可以高效地在 <code>draw()</code> 中每帧调用。</p>
+<h2 id="3-New-optional-v2-API-features">3) v2 API 新增的可选特性</h2>
+<p>以下 Rack 2 的新 API 特性并非必需，但可以提升模块的易用性。</p>
+<h3 id="3-1-Add-Port-and-Light-labels">3.1) 为 Port 与 Light 添加标签</h3>
+<p>为端口和灯添加名称，它们会显示在工具提示中。</p>
+<p>例如，在 <code>Module</code> 构造函数中：</p>
+<pre><code class="language-cpp">configInput(PITCH_INPUT, &quot;1V/oct pitch&quot;);
+configOutput(SIN_OUTPUT, &quot;Sine&quot;);
+configLight(PHASE_LIGHT, &quot;Phase&quot;);
+</code></pre>
+<h3 id="3-2-Replace-configParam-with-configButton-or-configSwitch-as-applicable">3.2) 视情况用 <code>configButton()</code> 或 <code>configSwitch()</code> 替换 <code>configParam()</code></h3>
+<p>对于瞬时按钮（momentary button）和多状态开关，向用户显示一个实数参数并没有太大意义。</p>
+<p>此时应使用 <code>configButton()</code> 隐藏右键菜单中的数值输入框，或用 <code>configSwitch()</code> 提供一组选项。</p>
+<pre><code class="language-cpp">configButton(TAP_PARAM);
+configSwitch(SYNC_PARAM, 0, 1, 0, &quot;Sync mode&quot;, {&quot;Soft&quot;, &quot;Hard&quot;});
+</code></pre>
+<h3 id="3-3-Add-bypass-routes">3.3) 添加旁通路由</h3>
+<p>如果模块被用户旁通（通过右键菜单或快捷键），你可以把某些输入直接路由到输出，跳过所有处理。
+这对滤波器或混响，甚至分频器或量化器都很合理，但对 VCO 不合理，因为 VCO 是产生信号而不是处理信号。</p>
+<p>例如，在 <code>Module</code> 构造函数中：</p>
+<pre><code class="language-cpp">configBypass(LEFT_INPUT, LEFT_OUTPUT);
+configBypass(RIGHT_INPUT, RIGHT_OUTPUT);
+</code></pre>
+<p>另一种做法是重写 <code>Module::processBypass()</code> 来实现自定义的旁通行为。</p>
+<h3 id="3-4-Store-large-data-in-the-module-s-patch-storage-directory">3.4) 把大数据存放在模块的 patch storage 目录</h3>
+<p>不要在 <code>toJson/fromJson()</code> 方法中序列化大（&gt;100 KB）缓冲区，那可能会让 UI 卡顿；请改为读写 <code>createPatchStorageDirectory()</code> 和 <code>getPatchStorageDirectory()</code> 返回的目录。</p>
+<p>示例：</p>
+<pre><code class="language-cpp">void onAdd(const AddEvent&amp; e) override {
+	std::string path = system::join(createPatchStorageDirectory(), &quot;wavetable.wav&quot;);
+	// 读取文件...
+}
+
+void onSave(const SaveEvent&amp; e) override {
+	std::string path = system::join(createPatchStorageDirectory(), &quot;wavetable.wav&quot;);
+	// 写入文件...
+}
+</code></pre>
+<p>注意：不能在 <code>Module</code> 构造函数中调用这些方法，因为此时模块尚未加入 Engine。</p>
+<h3 id="3-5-Draw-custom-light-like-widgets-at-full-brightness">3.5) 以全亮度绘制自定义的类灯控件</h3>
+<img src="https://vcvrack.com/manual/images/dark-scope.png" class="float-right" alt="">
+<p>Rack 2 允许用户降低机架的亮度，同时让灯保持全亮度。</p>
+<p>如果你的自定义控件应当发光，请重写 <code>Widget::drawLayer()</code>，并在 layer 1 上绘制：</p>
+<pre><code class="language-cpp">void drawLayer(const DrawArgs&amp; args, int layer) override {
+	if (layer == 1) {
+		...
+	}
+	Widget::drawLayer(args, layer);
+}
+</code></pre>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://vcvrack.com/manual/Migrate2" rel="noreferrer noopener">vcvrack.com/manual/Migrate2</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
