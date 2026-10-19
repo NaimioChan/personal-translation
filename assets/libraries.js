@@ -64,5 +64,9 @@ window.PT_LIBRARIES = [
   { dir: 'vcvrack-docs', title: 'VCV Rack 手册',
     desc: 'VCV Rack 官方手册的中文译本。',
     source: 'https://vcvrack.com/manual/',
-    updated: '2026-10-19', pages: 22 }
+    updated: '2026-10-19', pages: 22 },
+  { dir: 'vst3-dev-portal', title: 'VST 3 开发者门户',
+    desc: 'Steinberg VST 3 开发者门户的中文译本。',
+    source: 'https://steinbergmedia.github.io/vst3_dev_portal/',
+    updated: '2026-10-19', pages: 161 }
 ];

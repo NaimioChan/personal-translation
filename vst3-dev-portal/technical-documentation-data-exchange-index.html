@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据交换 - VST 3 开发者门户</title>
+<meta name="description" content="数据交换 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="data-exchange">数据交换</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#introduction">引言</a></li>
+<li><a href="#the-data-exchange-api">数据交换 API</a><ul>
+<li><a href="#idataexchangehandler">IDataExchangeHandler</a><ul>
+<li><a href="#opening-a-queue">打开队列</a></li>
+<li><a href="#sending-data">发送数据</a></li>
+<li><a href="#closing-a-queue">关闭队列</a></li>
+<li><a href="#what-to-do-when-the-queue-is-full-and-no-block-can-be-locked">队列已满且无法锁定任何块时该怎么办？</a></li>
+</ul>
+</li>
+<li><a href="#idataexchangereceiver">IDataExchangeReceiver</a></li>
+</ul>
+</li>
+</ul>
+<p><strong>相关页面：</strong></p>
+<ul>
+<li><a href="tutorials-data-exchange.html">数据交换教程</a></li>
+</ul>
+<hr/>
+<h2 id="introduction">引言</h2>
+<p>在现代插件中，UI 表示与音频处理不直接共享任何数据。这消除了未定义行为，因为它们运行在不同的线程中，任何直接共享的数据都需要由互斥锁保护。但互斥锁没有确定的运行时间，可能把音频线程阻塞过久，造成可听见的爆音，这种情况必须避免。</p>
+<p>在 UI 与音频处理之间共享数据的另一个问题在于：音频在被送往监听音箱或耳机之前就已经处理完毕。如果没有同步，可视表示会比它所代表的声音更早显示。为了同步可视表示与音频信号的处理，UI 必须把可视数据排队，直到声音被听到的时刻到来。</p>
+<p>对于由宿主自动化的参数，这个问题已经得到解决。宿主会延迟把参数变更发送给编辑控制器，使其与可听的音频保持同步。</p>
+<p>但参数能传输的数据量有限，这对于简单的峰值 VU 表显示可能足够，用它来呈现 FFT 曲线则是一场噩梦。</p>
+<p>SDK 的 3.7.9 版本包含新的 <em>数据交换</em> API，可以安全高效地从实时处理函数向控制器发送数据。</p>
+<p>由于该 API 需要宿主支持，而且并非所有宿主从一开始就提供此 API，SDK 包含一个向后兼容层：如果可用，就直接使用该 API；否则使用基于 IMessage API 的替代方法来模拟该 API。用法见<a href="tutorials-data-exchange.html">教程</a>。</p>
+<h2 id="the-data-exchange-api">数据交换 API</h2>
+<p>该 API 由两个接口组成：需要由宿主实现的 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IDataExchangeHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IDataExchangeHandler</a>，以及需要由插件实现的 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IDataExchangeReceiver.html" target="_blank" rel="noreferrer noopener">Vst:: IDataExchangeReceiver</a>。</p>
+<h3 id="idataexchangehandler">IDataExchangeHandler</h3>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IDataExchangeHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IDataExchangeHandler</a> 实现了从音频处理器的实时音频上下文到编辑控制器的非实时音频上下文的直接且线程安全的连接。当编辑控制器需要来自音频处理的连续数据用于可视化或其他「使用场景」时，应使用它。为了绕开主线程上的瓶颈，可以把连接配置为在后台线程上调用编辑控制器，参见下文的 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IDataExchangeReceiver.html" target="_blank" rel="noreferrer noopener">Vst:: IDataExchangeReceiver</a>。</p>
+<h4 id="opening-a-queue">打开队列</h4>
+<p>插件的主要操作是在插件被激活之前通过 handler 打开一个队列（但当插件采用推荐的编辑控制器与音频处理器分离方式时，必须先通过 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IConnectionPoint.html" target="_blank" rel="noreferrer noopener">Vst:: IConnectionPoint</a> 连接到编辑控制器）。最好的位置是 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#aefb5731b94dbc899a4a7e9cd1c96e6a2" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setupProcessing</a> 方法，因为这里也是插件获知采样率和最大块大小的地方，插件可能需要用它们来计算队列的块大小。队列被打开时，编辑控制器会收到通知，控制器可以决定它希望在主线程还是后台线程接收数据。</p>
+<h4 id="sending-data">发送数据</h4>
+<p>在 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#a6b98eb31cf38ba96a28b303c13c64e13" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::process</a> 调用中，插件现在可以从 handler 锁定一个块并填充它。完成后，它可以通过 handler 释放该块，handler 随后把块发送给编辑控制器。编辑控制器随后根据队列的设置，在主线程或后台线程上接收该块。宿主保证在插件被停用之前所有块都已发送。</p>
+<h4 id="closing-a-queue">关闭队列</h4>
+<p>音频处理器必须关闭已打开的队列。这需要在停用处理器之后、在它与编辑控制器断开连接之前完成（见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IConnectionPoint.html" target="_blank" rel="noreferrer noopener">Vst:: IConnectionPoint</a>）。</p>
+<h4 id="what-to-do-when-the-queue-is-full-and-no-block-can-be-locked">队列已满且无法锁定任何块时该怎么办？</h4>
+<p>插件需要为这种情况做好准备，因为整体系统中的约束可能导致队列过度填满。如果必须把信息传给控制器，可以声明一个隐藏参数，把它设为特殊值，并在音频处理方法中发送该参数变更。</p>
+<h3 id="idataexchangereceiver">IDataExchangeReceiver</h3>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IDataExchangeReceiver.html" target="_blank" rel="noreferrer noopener">Vst:: IDataExchangeReceiver</a> 接口必须由插件的编辑控制器实现。当处理器打开交换队列时，宿主会调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IDataExchangeReceiver.html#a64d0de322b49fd27b815e10947d98f65" target="_blank" rel="noreferrer noopener">queueOpened</a> 方法。之后当处理器关闭队列时，宿主会调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IDataExchangeReceiver.html#a37b2181ff0ae9bdc0a6feee03b65df42" target="_blank" rel="noreferrer noopener">queueClosed</a> 方法。</p>
+<p>队列打开期间，只要处理器发送了数据，宿主就会调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IDataExchangeReceiver.html#af8c495fafdf429794e5b58709a403eaf" target="_blank" rel="noreferrer noopener">onDataExchangeBlocksReceived</a> 方法。</p>
+<p>编辑控制器可以在调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IDataExchangeReceiver.html#a64d0de322b49fd27b815e10947d98f65" target="_blank" rel="noreferrer noopener">queueOpened</a> 时决定宿主应在后台线程还是 UI 线程上传递数据。</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/Data+Exchange/Index.html" rel="noreferrer noopener">Technical+Documentation/Data+Exchange/Index.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>编写你的第一个插件 - VST 3 开发者门户</title>
+<meta name="description" content="编写你的第一个插件 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="code-your-first-plug-in">编写你的第一个插件</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#goal">目标</a></li>
+<li><a href="#part-1-coding-your-plug-in">第 1 部分：编写你的插件</a><ul>
+<li><a href="#add-a-parameter-gain">添加一个参数：Gain</a></li>
+<li><a href="#add-the-process-applying-the-gain">添加应用增益的处理</a></li>
+<li><a href="#add-storerestore-state">添加状态的保存 / 恢复</a></li>
+</ul>
+</li>
+<li><a href="#part-2-advanced-steps">第 2 部分：进阶步骤</a><ul>
+<li><a href="#add-an-event-input">添加一个事件输入</a></li>
+<li><a href="#add-a-mono-audio-side-chain">添加一个单声道音频侧链</a></li>
+</ul>
+</li>
+</ul>
+<hr/>
+<h2 id="goal">目标</h2>
+<p>在上一教程 <a href="tutorials-generate-new-plug-in-with-project-generator.html">用项目生成器 App 生成新插件</a> 的基础上，本教程讲解如何编写音频插件代码以及如何添加一些基本功能。</p>
+<p>最终产物是一个音频插件，它可以对音频信号计算增益，并能加载到 <strong>Cubase</strong>、<strong>WaveLab</strong> 等 <strong>VST 3</strong> 宿主中。</p>
+<hr/>
+<h2 id="part-1-coding-your-plug-in">第 1 部分：编写你的插件</h2>
+<p>现在你有了一个自动生成的插件框架。以下各节说明如何添加新参数及其相关的处理算法，以及保存 / 加载工程或预设、创建专用用户界面等其他具体功能。</p>
+<p>一个 <strong>VST 3</strong> 插件包含两个主要类：<em>PlugProcessor</em>（执行处理和状态持久化）和 <em>PlugController</em>（负责与 DAW 通信、处理参数和 UI）。</p>
+<h3 id="add-a-parameter-gain">添加一个参数：Gain</h3>
+<p>在这个基础插件示例中，我们将添加一个 Gain 参数，用来改变通过插件的音频的音量。</p>
+<p>为此，每个 <strong>VST 3</strong> 参数都需要一个唯一标识符（一个数字）。</p>
+<ol>
+<li>打开文件 <em>plugids.h</em>，输入一个新 id <strong>kParamGainId</strong>。在本例中，例如为它指定唯一数字 <strong>102</strong>。</li>
+</ol>
+<p><strong>plugids.h</strong></p>
+<pre><code class="language-c++">#include "pluginterfaces/vst/vsttypes.h"
+
+enum GainParams : Steinberg::Vst::ParamID
+{
+    kParamGainId = 102, // 应当是唯一的 id……
+};
+</code></pre>
+<ol start="2">
+<li>打开 <em>plugcontroller.cpp</em> 文件，用 <strong>parameters.addParameter</strong> 添加这个增益参数</li>
+</ol>
+<p><strong>plugcontroller.cpp</strong></p>
+<pre><code class="language-c++">// 包含定义了一些 id 的文件
+#include "plugids.h"
+
+//----------------------------------------------------------------------------
+tresult PLUGIN_API PlugController::initialize (FUnknown*context)
+{
+    tresult result = EditController::initialize (context);
+    if (result != kResultOk)
+    {
+        return result;
+    }
+
+    //---创建参数------------
+    parameters.addParameter (STR16 ("Gain"), STR16 ("dB"), 0, .5, Vst::ParameterInfo::kCanAutomate, GainParams::kParamGainId, 0);
+
+    return kResultTrue;
+}
+</code></pre>
+<blockquote>
+<p>ⓘ <strong>注意</strong>\</p>
+<ul>
+<li>我们添加了 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ParameterInfo.html#ae3a5143ca8d0e271dbc259645a4ae645af38562ef6dde00a339d67f9be4ec3a31" target="_blank" rel="noreferrer noopener"><em>kCanAutomate</em></a> 标志，它告知 DAW / 宿主该参数可以被自动化。</li>
+<li><strong>VST 3</strong> 参数始终是归一化的（其值为 <strong>[0.0, 1.0]</strong> 之间的浮点数），这里其默认值设为 <strong>0.5</strong>。</li>
+</ul>
+</blockquote>
+<ol start="3">
+<li>现在为这个新参数改造处理器部分。打开 <em>plugprocessor.h</em> 文件，添加一个增益值 <strong>Vst::ParamValue mGain</strong>。该值用于处理中施加增益。</li>
+</ol>
+<p><strong>plugprocessor.h</strong></p>
+<pre><code class="language-c++">// ...
+static FUnknown* createInstance (void*)
+{
+    return (Steinberg::Vst::IAudioProcessor*)new PlugProcessor ();
+}
+protected:
+    Steinberg::Vst::ParamValue mGain = 1.;
+// ...
+</code></pre>
+<h3 id="add-the-process-applying-the-gain">添加应用增益的处理</h3>
+<ol>
+<li>我们需要从宿主取得所需的值来设置内部的 <strong>mGain</strong>。这是 process 方法的第一步。在 <em>data.inputParameterChanges</em> 结构中解析来自宿主的参数变化，针对当前要处理的音频块。<br/> ⓘ 别忘了 <strong>#include "public.sdk/source/vst/vstaudioprocessoralgo.h</strong>：它要加在 <em>plugprocessor.cpp</em> 文件顶部！<br/> 这里包含了一些用于访问音频缓冲区的辅助函数。</li>
+</ol>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">#include "pluginterfaces/vst/ivstparameterchanges.h"
+#include "public.sdk/source/vst/vstaudioprocessoralgo.h"
+
+//----------------------------------------------------------------------------
+tresult PLUGIN_API PlugProcessor::process (Vst::ProcessData&amp;data)
+{
+    //--- 首先：读取输入的参数变化-----------
+    if (data.inputParameterChanges)
+    {
+        // 针对由其 ID 定义的每个参数
+        int32 numParamsChanged = data.inputParameterChanges-&gt;getParameterCount ();
+        for (int32 index = 0; index &lt; numParamsChanged; index++)
+        {
+            // 对于这个参数，我们可以遍历值变化的列表（每个音频块可能有 1 个或更多！）
+            // 在本例中，我们只取最后一个值（getPointCount - 1）
+            Vst::IParamValueQueue* paramQueue = data.inputParameterChanges-&gt;getParameterData (index);
+            if (paramQueue)
+            {
+                Vst::ParamValue value;
+                int32 sampleOffset;
+                int32 numPoints = paramQueue-&gt;getPointCount ();
+                switch (paramQueue-&gt;getParameterId ())
+                {
+                    case GainParams::kParamGainId:
+                        if (paramQueue-&gt;getPoint (numPoints - 1, sampleOffset, value) == kResultTrue)
+                            mGain = value;
+                        break;
+                }
+            }
+        }
+    }
+    // ....
+}
+</code></pre>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> <strong>data.inputParameterChanges</strong> 在一个处理音频块内对同一参数可能包含不止 <strong>1</strong> 个变化。这里我们只取列表中的最后一个变化，并将其应用到我们的 <strong>mGain</strong>。</p>
+</blockquote>
+<ol start="2">
+<li>真正的处理部分：</li>
+</ol>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">// ...
+
+//-- Flush 情形：我们只需要更新参数，无法进行处理
+if (data.numInputs == 0 || data.numSamples == 0)
+    return kResultOk;
+
+//--- 这里，你必须实现自己的处理
+int32 numChannels = data.inputs[0].numChannels;
+
+//---使用辅助函数（vstaudioprocessoralgo.h）获取音频缓冲区-------------
+uint32 sampleFramesSize = getSampleFramesSizeInBytes(processSetup, data.numSamples);
+void** in = getChannelBuffersPointer (processSetup, data.inputs[0]);
+void** out = getChannelBuffersPointer (processSetup, data.outputs[0]);
+
+// 这里可以检查静音标志
+// 现在我们要产生输出
+// 把我们的输出标记为非静音
+data.outputs[0].silenceFlags = 0;
+
+float gain = mGain;
+// 对每个通道（左和右）
+for (int32 i = 0; i &lt; numChannels; i++)
+{
+    int32 samples = data.numSamples;
+    Vst::Sample32* ptrIn = (Vst::Sample32*)in[i];
+    Vst::Sample32* ptrOut = (Vst::Sample32*)out[i];
+    Vst::Sample32 tmp;
+    // 对此通道中的每个采样
+    while (--samples &gt;= 0)
+    {
+        // 施加增益
+        tmp = (*ptrIn++) * gain;
+        (*ptrOut++) = tmp;
+    }
+}
+//...
+</code></pre>
+<ol start="3">
+<li><strong>VST 3</strong> 提供了一种方式，让宿主告知插件其输入为静音（使用 <strong>VST 3</strong> 的<a href="technical-documentation-change-history-3.0.0-silence-flags.html">静音标志</a>）：</li>
+</ol>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">// 这里可以检查静音标志
+//---检查是否静音---------------
+// 通常我们必须检查每个通道（这里做了简化）
+if (data.inputs[0].silenceFlags != 0)
+{
+    // 也把输出标记为静音
+    data.outputs[0].silenceFlags = data.inputs[0].silenceFlags;
+
+    // 插件必须确保：如果它设置了静音标志，输出缓冲区就应当是清零的
+    for (int32 i = 0; i &lt; numChannels; i++)
+    {
+       // 如果缓冲区相同则无需清零（在这种情况下输入缓冲区
+        // 已由宿主清零）
+        if (in[i] != out[i])
+        {
+            memset (out[i], 0, sampleFramesSize);
+        }
+    }
+    // 此时无事可做
+    return kResultOk;
+}</code></pre>
+<h3 id="add-storerestore-state">添加状态的保存 / 恢复</h3>
+<p><em>Processor</em> 部分代表插件的状态，因此由它负责实现宿主用来保存 / 加载工程和预设的 <strong>getState</strong> / <strong>setState</strong> 方法。<em>Controller</em> 部分也会取得 <em>Processor</em> 的状态，通过其 <strong>setComponentState</strong> 方法，这使其参数也能同步（例如供 UI 使用）。</p>
+<ol>
+<li>在 <em>plugprocessor.cpp</em> 文件中，把 <strong>mGain</strong> 的值加入宿主提供的状态流 —— 通过 <strong>getState</strong> 方法，它会将其保存为工程或预设。<br/> 可以使用辅助类 <strong>IBStreamer</strong> 来处理宿主提供的 <strong>IBStream</strong>。</li>
+</ol>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">// 在文件顶部添加这个 include
+#include "base/source/fstreamer.h"
+
+//-----------------------------------------------------------------------
+tresult PLUGIN_API PlugProcessor::getState (IBStream* state)
+{
+    // 这里我们需要保存模型（预设或工程）
+    float toSaveParam1 = mGain;
+    IBStreamer streamer (state, kLittleEndian);
+    streamer.writeFloat (toSaveParam1);
+    return kResultOk;
+}
+</code></pre>
+<ol start="2">
+<li>在 <strong>setState</strong> 方法中，插件从宿主接收新的状态，该方法在加载工程或预设之后被调用。</li>
+</ol>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API PlugProcessor::setState (IBStream* state)
+{
+    if (!state)
+        return kResultFalse;
+
+    // 在加载预设或工程时调用，模型必须重新加载
+    IBStreamer streamer (state, kLittleEndian);
+    float savedParam1 = 0.f;
+    if (streamer.readFloat (savedParam1) == false)
+        return kResultFalse;
+    mGain = savedParam1;
+
+    return kResultOk;
+}
+</code></pre>
+<ol start="3">
+<li>在 <strong>setComponentState</strong> 方法中，插件的 <em>Controller</em> 部分会收到与 <strong>PlugProcessor::setState</strong> 中所用相同的状态。<strong>PlugController::setComponentState</strong> 在 <strong>PlugProcessor::setState</strong> 之后立即被调用。</li>
+</ol>
+<p><strong>plugcontroller.cpp</strong></p>
+<pre><code class="language-c++">// 在文件顶部添加这个 include
+#include "base/source/fstreamer.h"
+
+//-----------------------------------------------------------------------
+tresult PLUGIN_API PlugController::setComponentState (IBStream* state)
+{
+	// 这里，你取得组件（Processor 部分）的状态
+	if (!state)
+		return kResultFalse;
+
+    IBStreamer streamer (state, kLittleEndian);
+    float savedParam1 = 0.f;
+    if (streamer.readFloat (savedParam1) == false)
+        return kResultFalse;
+
+	// 与我们的参数同步
+	if (auto param = parameters.getParameter (GainParams::kParamGainId))
+		param-&gt;setNormalized (savedParam1);
+
+    return kResultOk;
+}
+</code></pre>
+<hr/>
+<h2 id="part-2-advanced-steps">第 2 部分：进阶步骤</h2>
+<h3 id="add-an-event-input">添加一个事件输入</h3>
+<p>在本例中，我们想用弹奏的「MIDI」事件（noteOn）的力度来修改当前的 Gain 系数。</p>
+<ol>
+<li>如果你的插件不仅需要接收音频，还需要接收事件（例如 MIDI），就必须添加一个事件输入。为此，只需用 <a href="https://steinbergmedia.github.io/vst3_doc/vstsdk/classSteinberg_1_1Vst_1_1AudioEffect.html#a98a16757564b1a077d82e2b2decc2ad8" target="_blank" rel="noreferrer noopener">addEventInput</a> 在处理器的 <strong>initialize</strong> 方法中添加事件输入：</li>
+</ol>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API PlugProcessor::initialize (FUnknown* context)
+{
+    //---始终先初始化父类-------
+    tresult result = AudioEffect::initialize (context);
+    // 如果一切正常，则继续
+    if (result != kResultOk)
+    {
+        return result;
+    }
+
+    //....
+
+    //---创建事件输入 / 输出总线（1 条总线，只有 1 个通道）------
+    addEventInput (STR16 ("Event In"), 1);
+
+    return kResultOk;
+}
+</code></pre>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 在本例中，我们添加 1 条输入事件总线，只在一个通道上接收。如果你需要接收有区分的事件，例如来自不同通道的事件，只需按下面的方式修改：</p>
+<p>addEventInput (STR16 ("Event In"), 4); // 这里是 4 个通道</p>
+</blockquote>
+<ol start="2">
+<li>我们创建一个新的内部值 <strong>mGainReduction</strong>（不导出给宿主），它由弹奏的 <em>noteOn</em> 的力度改变，这样你敲得越重，增益衰减就越大（这正是本插件想要的效果）：</li>
+</ol>
+<p><strong>plugprocessor.h</strong></p>
+<pre><code class="language-c++">// ...
+static FUnknown* createInstance (void*)
+{
+    return (Steinberg::Vst::IAudioProcessor*)new PlugProcessor ();
+}
+protected:
+    Steinberg::Vst::ParamValue mGain= 1.;
+    Steinberg::Vst::ParamValue mGainReduction = 0.;
+// ...
+</code></pre>
+<ol start="3">
+<li>现在我们要在 process 方法中接收事件变化：</li>
+</ol>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API PlugProcessor::process (ProcessData&amp; data)
+{
+    //--- 首先：读取输入的参数变化-----------
+    //...
+
+    //---其次：读取输入事件-------------
+    // 取得所有事件变化的列表
+    Vst::IEventList* eventList = data.inputEvents;
+    if (eventList)
+    {
+        int32 numEvent = eventList-&gt;getEventCount ();
+        for (int32 i = 0; i &lt; numEvent; i++)
+        {
+            Vst::Event event;
+            if (eventList-&gt;getEvent (i, event) == kResultOk)
+            {
+                // 这里我们不关心事件的通道信息
+                switch (event.type)
+                {
+                    //----------------------
+                    case Vst::Event::kNoteOnEvent:
+                        // 用力度作为增益调制量：力度最大（1）会导致音频静音
+                        mGainReduction = event.noteOn.velocity; // 值在 0 到 1 之间
+                        break;
+                    
+                    //----------------------
+                    case Vst::Event::kNoteOffEvent:
+                        // noteOff 重置增益调制量
+                        mGainReduction = 0.f;
+                        break;
+                }
+            }
+        }
+    }
+</code></pre>
+<ol start="4">
+<li>在真正的处理部分中使用这个 <strong>mGainReduction</strong>：</li>
+</ol>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">//----------------------------------------------------------------------------
+tresult PLUGIN_API PlugProcessor::process (Vst::ProcessData&amp;data)
+{
+    //....
+
+    float gain = mGain - mGainReduction;
+    if (gain &lt; 0.f)  // 增益应当始终为正或零
+        gain = 0.f;
+
+    // 对每个通道（左和右）
+    for (int32 i = 0; i &lt; numChannels; i++)
+    {
+        int32 samples = data.numSamples;
+        Vst::Sample32* ptrIn = (Vst::Sample32*)in[i];
+        Vst::Sample32* ptrOut = (Vst::Sample32*)out[i];
+        Vst::Sample32 tmp;
+        // 对此通道中的每个采样
+        while (--samples &gt;= 0)
+        {
+            // 施加增益
+            tmp = (*ptrIn++) * gain;
+            (*ptrOut++) = tmp;
+        }
+    }
+    //...
+}
+</code></pre>
+<h3 id="add-a-mono-audio-side-chain">添加一个单声道音频<a href="https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical+Documentation/Change+History/3.0.0/Multiple+Dynamic+IO.html#what-is-a-side-chain" target="_blank" rel="noreferrer noopener">侧链</a></h3>
+<p>在本例中，我们想用一个<a href="https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical+Documentation/Change+History/3.0.0/Multiple+Dynamic+IO.html#what-is-a-side-chain" target="_blank" rel="noreferrer noopener">侧链</a>音频输入来调制主音频输入。</p>
+<ol>
+<li>首先，添加一个新的侧链音频输入（busType: <em><strong>kAux</strong></em>），位置在处理器的 <strong>initialize</strong> 调用中：</li>
+</ol>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API PlugProcessor::initialize (FUnknown*context)
+{
+    //---始终先初始化父类-------
+    tresult result = AudioEffect::initialize (context);
+    // 如果一切正常，则继续
+    if (result != kResultOk)
+    {
+        return result;
+    }
+
+    //....
+
+    //---创建事件输入 / 输出总线（1 条总线，只有 1 个通道）------
+    addEventInput (STR16 ("Event In"), 1);
+
+    // 创建一条单声道侧链输入总线
+    addAudioInput (STR16 ("Mono Aux In"), Steinberg::Vst::SpeakerArr::kMono, Steinberg::Vst::kAux, 0);
+
+    return kResultOk;
+}
+</code></pre>
+<ol start="2">
+<li>我们要确保侧链按单声道输入来处理。为此需要覆写 <strong>AudioEffect::setBusArrangements</strong> 函数：</li>
+</ol>
+<p><strong>plugprocessor.h</strong></p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+class PlugProcessor: public AudioEffect
+{
+public:
+    PlugProcessor ();
+    
+    //...
+    // 覆写此函数
+    Steinberg::tresult PLUGIN_API setBusArrangements (Steinberg::Vst::SpeakerArrangement* inputs,
+                                                    Steinberg::int32 numIns,
+                                                    Steinberg::Vst::SpeakerArrangement* outputs,
+                                                    Steinberg::int32 numOuts) SMTG_OVERRIDE;
+    //...
+};
+</code></pre>
+<p><strong>plugprocessor.cpp</strong></p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API PlugProcessor::setBusArrangements(Vst::SpeakerArrangement* inputs, int32 numIns,
+                                                    Vst::SpeakerArrangement* outputs,
+                                                    int32 numOuts)
+{
+    // 第一个输入是主输入，第二个是侧链输入
+    // 确保我们有 2 个输入和 1 个输出
+    if (numIns == 2 &amp;&amp; numOuts == 1)
+    {
+        // 我们只支持主输入的通道数与输出相同的情况
+        if (Vst::SpeakerArr::getChannelCount (inputs[0]) != Vst::SpeakerArr::getChannelCount (outputs[0]))
+            return kResultFalse;
+
+        // 我们接受主输入和输出的所有排列
+        // 然后应用它们
+        getAudioInput (0)-&gt;setArrangement (inputs[0]);
+        getAudioOutput (0)-&gt;setArrangement (outputs[0]);
+
+        // 现在检查侧链是否为单声道（本例只支持单声道侧链）
+        if (Vst::SpeakerArr::getChannelCount (inputs[1]) != 1)
+            return kResultFalse;
+
+        // 好，侧链是单声道，我们返回 kResultTrue 表示接受
+        return kResultTrue;
+    }
+
+    // 我们不接受宿主的这种要求：返回 kResultFalse ！
+    return kResultFalse;
+}
+</code></pre>
+<ol start="3">
+<li>改造我们的 process，把侧链输入用作调制：</li>
+</ol>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API PlugProcessor::process (ProcessData&amp; data)
+{
+    //--- 首先：读取输入的参数变化-----------
+    //...
+
+    //---其次：读取输入事件-------------
+    //...
+
+    float gain = mGain - mGainReduction;
+    if (gain &lt; 0.f)  // 增益应当始终为正或零
+        gain = 0.f;
+
+    void** auxIn = nullptr;
+    
+    // 检查侧链输入是否已激活
+    bool auxActive = false;
+    if (getAudioInput (1)-&gt;isActive ())
+    {
+        auxIn = getChannelBuffersPointer (processSetup, data.inputs[1]);
+        auxActive = true;
+    }
+    if (auxActive)
+    {
+        // 对每个通道（左和右）
+        for (int32 i = 0; i &lt; numChannels; i++)
+        {
+            int32 samples = data.numSamples;
+            Vst::Sample32* ptrIn = (Vst::Sample32*)in[i];
+            Vst::Sample32* ptrOut = (Vst::Sample32*)out[i];
+            // 侧链是单声道，所以取 auxIn[0]：索引 0
+            Vst::Sample32* ptrAux = (Vst::Sample32*)auxIn[0];
+            Vst::Sample32 tmp;
+
+            // 对此通道中的每个采样
+            while (--samples &gt;= 0)
+            {
+                // 施加调制和增益
+                tmp = (*ptrIn++) * (*ptrAux++) * gain;
+                (*ptrOut++) = tmp;
+            }
+        }
+    }
+    else
+    {
+        // 对每个通道（左和右）
+        for (int32 i = 0; i &lt; numChannels; i++)
+        {
+            int32 samples = data.numSamples;
+            Vst::Sample32* ptrIn = (Vst::Sample32*)in[i];
+            Vst::Sample32* ptrOut = (Vst::Sample32*)out[i];
+            Vst::Sample32 tmp;
+            // 对此通道中的每个采样
+            while (--samples &gt;= 0)
+            {
+                // 施加增益
+                tmp = (*ptrIn++) * gain;
+                (*ptrOut++) = tmp;
+            }
+        }
+    }</code></pre>
+<p>就这样！</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Tutorials/Code+your+first+plug-in.html" rel="noreferrer noopener">Tutorials/Code+your+first+plug-in.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

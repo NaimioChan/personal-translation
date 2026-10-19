@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[3.1.0] 脏状态、打开编辑器请求与 UI 分组编辑支持 - VST 3 开发者门户</title>
+<meta name="description" content="[3.1.0] 脏状态、打开编辑器请求与 UI 分组编辑支持 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="310-dirty-state-open-editor-request-and-ui-group-editing-support">[3.1.0] 脏状态、打开编辑器请求与 UI 分组编辑支持</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#introduction">引言</a></li>
+<li><a href="#dirty-state-support">脏状态支持</a></li>
+<li><a href="#open-editor-request-support">打开编辑器请求支持</a></li>
+<li><a href="#ui-group-editing">UI 组编辑</a><ul>
+<li><a href="#examples-of-different-use-cases">不同用例的示例</a></li>
+</ul>
+</li>
+</ul>
+<hr/>
+<h2 id="introduction">引言</h2>
+<p>改进插件在宿主中的集成（脏状态、请求打开编辑器、组编辑）。</p>
+<p>为编辑控制器扩展的宿主回调接口 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler2.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler2</a>。</p>
+<ul>
+<li>[host imp]</li>
+<li>[扩展 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler</a>]</li>
+<li>[发布于：3.1.0]</li>
+<li>[optional]</li>
+</ul>
+<h2 id="dirty-state-support">脏状态支持</h2>
+<p>这使插件能够告知宿主其内部状态是否为脏状态。如果设为 true，意味着在保存之后又发生了进一步更改（除参数更改之外）。这种情况下，宿主应在退出前保存。</p>
+<pre><code class="language-c++">void MyPluginController::informHostAboutMyDirtyState (bool dirty)
+{
+    if (auto componentHandler2 = Steinberg::U::cast&lt;IComponentHandler2&gt; (componentHandler))
+        componentHandler2-&gt;setDirty (dirty);
+}
+</code></pre>
+<h2 id="open-editor-request-support">打开编辑器请求支持</h2>
+<p>请求宿主在下次可能时打开插件的编辑器。你应使用此方式，而不是显示警告框并阻塞程序流程（尤其是在加载项目时）。</p>
+<pre><code class="language-c++">void MyPluginController::requestHostToOpenEditor()
+{
+    if (auto componentHandler2 = Steinberg::U::cast&lt;IComponentHandler2&gt; (componentHandler))
+        componentHandler2-&gt;requestOpenEditor ();
+}
+</code></pre>
+<h2 id="ui-group-editing">UI 组编辑</h2>
+<p>这部分处理来自插件 UI 的参数组编辑。它封装了一组：</p>
+<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a8456ad739430267a12dda11a53fe9223" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler::beginEdit</a></li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a135d4e76355ef0ba0a4162a0546d5f93" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler::performEdit</a></li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#ae380206486b11f000cad7c0d9b6e877c" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler::endEdit</a></li>
+</ul>
+<p>函数（参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler</a>），在写入自动化时它们应在宿主中使用相同的时间戳，从而可以更好地同步一次性发生的多个参数更改。</p>
+<h3 id="examples-of-different-use-cases">不同用例的示例</h3>
+<pre><code class="language-c++">//--------------------------------------
+// 我们在 editcontroller 中...
+// 对于多个开关按钮的情况（关联的 ParamID 为 1 和 3）
+// 鼠标按下时：
+hostHandler2-&gt;startGroupEdit ();
+hostHandler-&gt;beginEdit (1);
+hostHandler-&gt;beginEdit (3);
+hostHandler-&gt;performEdit (1, 1.0);
+hostHandler-&gt;performEdit (3, 0.0); // 例如与 paramID 1 相反
+//....
+// 鼠标松开时：
+hostHandler-&gt;endEdit (1);
+hostHandler-&gt;endEdit (3);
+hostHandler2-&gt;finishGroupEdit ();
+//....
+//....
+//--------------------------------------
+// 对于多个推子的情况（关联的 ParamID 为 1 和 3）
+// 鼠标按下时：
+hostHandler2-&gt;startGroupEdit ();
+hostHandler-&gt;beginEdit (1);
+hostHandler-&gt;beginEdit (3);
+hostHandler2-&gt;finishGroupEdit ();
+//....
+// 鼠标移动时：
+hostHandler2-&gt;startGroupEdit ();
+hostHandler-&gt;performEdit (1, x); // x 是所需的值
+hostHandler-&gt;performEdit (3, x);
+hostHandler2-&gt;finishGroupEdit ();
+//....
+// 鼠标松开时：
+hostHandler2-&gt;startGroupEdit ();
+hostHandler-&gt;endEdit (1);
+hostHandler-&gt;endEdit (3);
+hostHandler2-&gt;finishGroupEdit ();
+</code></pre>
+<p>另见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler</a>、<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html" target="_blank" rel="noreferrer noopener">Vst:: IEditController</a>。</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/Change+History/3.1.0/IComponentHandler2.html" rel="noreferrer noopener">Technical+Documentation/Change+History/3.1.0/IComponentHandler2.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

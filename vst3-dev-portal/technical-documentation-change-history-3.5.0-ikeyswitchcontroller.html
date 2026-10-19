@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[3.5.0] 键位切换 - VST 3 开发者门户</title>
+<meta name="description" content="[3.5.0] 键位切换 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="350-key-switch">[3.5.0] 键位切换</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#introduction">引言</a></li>
+<li><a href="#how-does-it-work">它是如何工作的？</a></li>
+</ul>
+<p><strong>相关页面：</strong></p>
+<ul>
+<li><a href="technical-documentation-change-history-3.5.0-inoteexpressioncontroller.html">[3.5.0] 音符表达式</a></li>
+</ul>
+<hr/>
+<h2 id="introduction">引言</h2>
+<p>允许插件与宿主之间就当前使用了哪些键位切换进行信息交换。</p>
+<p>扩展的插件接口 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html" target="_blank" rel="noreferrer noopener">Vst:: IEditController</a>，用于键位切换支持：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IKeyswitchController.html" target="_blank" rel="noreferrer noopener">Vst:: IKeyswitchController</a></p>
+<ul>
+<li>[plug imp]</li>
+<li>[extends <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html" target="_blank" rel="noreferrer noopener">Vst:: IEditController</a>]</li>
+<li>[发布于：3.5.0]</li>
+<li>[optional]</li>
+</ul>
+<p>一些乐器插件支持键位切换功能，允许用户在演奏音符时在不同分层音色之间切换。为此，用户必须在演奏新音符之前按下与目标分层关联的特定按键。</p>
+<p>一个典型例子是带小提琴音色的采样播放器插件，它可以包含不同的分层或奏法：pizzicato、legato、tremolo 等。在演奏新音符之前按下和/或保持某个特定按键（例如 C-1），插件就会选择演奏 pizzicato；使用 D-1 则演奏 legato，依此类推。</p>
+<p>借助 <a href="https://www.steinberg.net/de/technology/" target="_blank" rel="noreferrer noopener">VST Expression Map</a>（Steinberg 在 Cubase 5 中引入），这些键位切换可以在乐谱编辑器中使用，把某个符号（奏法）关联到一个音符。每次演奏该音符时，就会使用相应的键位切换（作为 noteOn 事件发送给插件）。</p>
+<p><a href="https://www.youtube.com/watch?v=D5dj1v6EL2M" target="_blank" rel="noreferrer noopener"><img alt="getting_started_vid_7" src="https://i.ytimg.com/vi/D5dj1v6EL2M/maxresdefault.jpg"/></a></p>
+<p>为了帮助创建这样的映射，VST 3.5 定义了一个新接口 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IKeyswitchController.html" target="_blank" rel="noreferrer noopener">Vst:: IKeyswitchController</a>。如果某个（乐器）插件支持该接口，宿主就可以从插件那里获取事件总线给定通道当前使用的键位切换集合（megatrigg / 奏法：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1KeyswitchInfo.html" target="_blank" rel="noreferrer noopener">Vst::KeyswitchInfo</a>），然后自动使用它们（就像在 <strong>Cubase 6</strong> 中那样）来创建 <a href="https://o.steinberg.net/en/support/content_and_accessories/expression_maps_for_vst_expression.html" target="_blank" rel="noreferrer noopener">VST Expression Map</a>。</p>
+<h2 id="how-does-it-work">它是如何工作的？</h2>
+<p>以下是分步示例。我们需要一个带 1 个事件总线的插件，它是单音色的（1 通道），并支持 2 个键位切换：</p>
+<ol>
+<li>该乐器插件应有一个输入事件总线（也可以是更多个）：</li>
+</ol>
+<pre><code class="language-c++">//------------------------------------------------------------------
+tresult PLUGIN_API MyExampleProcessor::initialize (FUnknown* context)
+{
+    //---始终初始化父类-------
+    tresult result = AudioEffect::initialize (context);
+    if (result == kResultTrue)
+    {
+        // 我们需要一个立体声输出
+        addAudioOutput (STR16 ("Stereo Output"), SpeakerArr::kStereo);
+
+        // 创建事件输入总线（1 个总线，仅 1 个通道）
+        addEventInput (STR16 ("Event Input"), 1);
+    }
+    return result;
+}
+</code></pre>
+<ol start="2">
+<li>控制器应具有 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IKeyswitchController.html" target="_blank" rel="noreferrer noopener">Vst:: IKeyswitchController</a> 接口，以下为类声明中的写法：</li>
+</ol>
+<pre><code class="language-c++">//------------------------------------------------------------------
+class MyExampleController: public EditController, public IKeyswitchController
+{
+public:
+    //...
+    //---来自 IKeyswitchController
+    virtual int32 PLUGIN_API getKeyswitchCount (int32 busIndex, int16 channel);
+    virtual tresult PLUGIN_API getKeyswitchInfo (int32 busIndex, int16 channel, int32 keySwitchIndex, KeyswitchInfo&amp; info);
+    //...
+
+    OBJ_METHODS (MyExampleController, EditController)
+    DEFINE_INTERFACES
+        DEF_INTERFACE (IKeyswitchController)
+    END_DEFINE_INTERFACES (EditController)
+
+    REFCOUNT_METHODS(EditController)
+    //...
+};
+</code></pre>
+<ol start="3">
+<li>现在我们必须实现 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IKeyswitchController.html" target="_blank" rel="noreferrer noopener">Vst:: IKeyswitchController</a> 接口（只有 2 个函数）；在我们的示例中，<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IKeyswitchController.html#aa98a707edb1b58d05da0c50e38983a4e" target="_blank" rel="noreferrer noopener">Vst:: IKeyswitchController::getKeyswitchCount</a> 应返回 2（2 个键位切换）：</li>
+</ol>
+<pre><code class="language-c++">//------------------------------------------------------------------
+int32 MyExampleController::getKeyswitchCount (int32 busIndex, int16 channel)
+{
+    // 我们只接受第一个总线和 1 个通道
+    if (busIndex == 0 &amp;&amp; channel == 0)
+        return 2;
+    return 0;
+}
+</code></pre>
+<ol start="4">
+<li>然后，我们必须实现 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IKeyswitchController.html#a8193190849039a70d08b084241d29e38" target="_blank" rel="noreferrer noopener">Vst:: IKeyswitchController::getKeyswitchInfo</a>，它让宿主了解插件支持什么：</li>
+</ol>
+<pre><code class="language-c++">//------------------------------------------------------------------
+tresult PLUGIN_API MyExampleController::getKeyswitchInfo (int32 busIndex, int16 channel, int32 keySwitchIndex, KeyswitchInfo&amp; info)
+{
+    // 我们只接受第一个总线和 1 个通道，并且只支持 2 个键位切换
+    if (busIndex == 0 &amp;&amp; channel == 0 &amp;&amp; (keySwitchIndex == 0 || keySwitchIndex == 1)
+    {
+        memset (&amp;info, 0, sizeof (KeyswitchInfo));
+
+        // 这种情况下，我们希望键位切换在演奏期间保持按下
+        info.typeId = kKeyRangeTypeID;
+
+        // 我们可以用 keyRemapped 让键位切换更易用（靠近乐器可用的键位范围）
+        // 注意不要使键位切换与真实按键（演奏音）重叠
+
+        if (keySwitchIndex == 0)
+        {
+            USTRING ("Accentuation").copyTo (info.title, 128);
+            USTRING ("Acc").copyTo (info.shortTitle, 128);
+
+            // 如果用户持续按住 C-1 或 C#-1 或 C-0，则应演奏 Accentuation 音色
+            info.keyswitchMin = 12; // C-1
+            info.keyswitchMax = 13; // C#-1
+            info.keyRemapped  = 24; // C-0
+        }
+        else
+        {
+            USTRING ("Softly").copyTo (info.title, 128);
+            USTRING ("Soft").copyTo (info.shortTitle, 128);
+
+            // 如果用户持续按住 D-1 或 D#-1 或 D-0，则应演奏 Softly 音色
+            info.keyswitchMin = 14; // D-1
+            info.keyswitchMax = 15; // D#-1
+            info.keyRemapped  = 26; // D-0
+        }
+
+        info.unitID = -1; // 未使用
+        info.flags = 0;  // 未使用
+
+        return kResultTrue;
+    }
+    return kResultFalse;
+}
+</code></pre>
+<ol start="5">
+<li>最后一步，在处理器组件中，我们必须调整 process 调用，以切换到所需的奏法：</li>
+</ol>
+<pre><code class="language-c++">//------------------------------------------------------------------
+tresult MyExampleProcessor::process (ProcessData&amp; data)
+{
+    // ....
+
+    // 获取输入事件队列
+    IEventList* inputEvents = data.inputEvents;
+    if (inputEvents)
+    {
+        Event e;
+        int32 numEvents = inputEvents-&gt;getEventCount ();
+
+        // 遍历每个事件进行检查..
+        for (int32 i = 0; i &lt; numEvents; i++)
+        {
+            if (inputEvents-&gt;getEvent (i, e) == kResultTrue)
+            {
+                switch (e.type)
+                {
+                    //-----------------------
+                    case Event::kNoteOnEvent:
+                    {
+                        // 这里是音符开
+                        // 检查这是否是键位切换
+                        switch (e.noteOn.pitch)
+                        {
+                            // Accentuation 键位切换
+                            case 12:
+                            case 13:
+                            case 24:
+                                currentLayer = kAccentuationLayer;
+                                break;
+
+                            // Softly 键位切换
+                            case 14:
+                            case 15:
+                            case 26:
+                                currentLayer = kSoftlyLayer;
+                                break;
+
+                            default:
+                                // 在当前层中演奏该音符
+                                // ...
+                        }
+                    }   break;
+
+                    //-----------------------
+                    case Event::kNoteOffEvent:
+                    {
+                        // 检查键位切换是否已释放
+                        switch (e.noteOff.pitch)
+                        {
+                            // Accentuation 键位切换
+                            case 12:
+                            case 13:
+                            case 24:
+                            case 14:
+                            case 15:
+                            case 26:
+                                currentLayer = kDefaultLayer;
+                                break;
+                            default:
+                                // 已释放的音符……
+                                //...
+                        }
+                    }   break;
+                    //....
+                }
+            }
+        }
+    }
+    //...
+}
+</code></pre>
+<p>就是这样！</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/Change+History/3.5.0/IKeyswitchController.html" rel="noreferrer noopener">Technical+Documentation/Change+History/3.5.0/IKeyswitchController.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>处理 - VST 3 开发者门户</title>
+<meta name="description" content="处理 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="processing">处理</h1>
+<ul>
+<li><a href="#q-how-does-audio-processing-bypass-work">问：音频处理旁通如何工作？</a></li>
+<li><a href="#q-can-the-maximum-sample-block-size-change-while-the-plug-in-is-processing">问：插件处理期间最大采样块大小会改变吗？</a></li>
+<li><a href="#q-can-the-sample-rate-change-while-the-plug-in-is-processing">问：插件处理期间采样率会改变吗？</a></li>
+<li><a href="#q-can-the-host-call-the-process-function-without-audio-buffers">问：宿主可以在没有音频缓冲区的情况下调用 process 函数吗？</a></li>
+<li><a href="#q-what-is-a-side-chain">问：什么是侧链？</a></li>
+<li><a href="#q-how-can-i-implement-a-side-chain-path-into-my-plug-in">问：如何在插件中实现侧链路径？</a></li>
+<li><a href="#q-my-plug-in-is-capable-of-processing-all-possible-channel-configurations">问：我的插件能够处理所有可能的通道配置。</a></li>
+<li><a href="#q-how-are-speaker-arrangement-settings-handled-for-fx-plug-ins">问：FX 插件的扬声器布置设置如何处理？</a></li>
+<li><a href="#q-my-plug-in-has-mono-input-and-stereo-output-how-does-vst-3-handle-this">问：我的插件是单声道输入、立体声输出。VST 3 如何处理这种情况？</a></li>
+<li><a href="#q-how-does-it-work-with-silence-flags">问：静音标志是如何工作的？</a></li>
+<li><a href="#q-how-report-to-the-host-that-the-plug-in-latency-has-changed">问：如何向宿主报告插件延迟已改变？</a></li>
+<li><a href="#q-how-report-to-the-host-that-the-plug-in-arrangement-has-changed">问：如何向宿主报告插件布置已改变？</a></li>
+<li>问：<a href="#q-can-vst-iaudioprocessorsetprocessing-be-called-without-any-vst-iaudioprocessorprocess-call">Vst:: IAudioProcessor::setProcessing 可以在没有任何 Vst:: IAudioProcessor::process 调用的情况下被调用吗？</a></li>
+<li><a href="#q-how-to-make-sure-that-a-plug-in-is-always-processed">问：如何确保插件始终被处理？</a></li>
+<li><a href="#q-can-icomponentgetstatesetstate-be-called-during-processing">问：可以在处理期间调用 IComponent::getState()/setState() 吗？</a></li>
+<li><a href="#q-how-can-a-plug-in-be-informed-that-it-is-currently-processed-in-offline-processing">问：如何告知插件它当前正在离线处理中被处理？</a></li>
+<li><a href="#q-what-should-i-not-call-in-the-realtime-process-function">问：在实时 process 函数中不应调用什么？</a></li>
+</ul>
+<hr/>
+<h2 id="q-how-does-audio-processing-bypass-work">问：音频处理旁通如何工作？</h2>
+<p>为了实现音频处理旁通，插件可以导出一个额外且专门标记了 kIsBypass 属性的参数。当用户在宿主中启用插件旁通时，就像所有参数变更一样，该变更会作为传给 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#a6b98eb31cf38ba96a28b303c13c64e13" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::process</a> 方法的参数数据的一部分被发送。</p>
+<p>旁通功能的实现完全由插件负责：</p>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#a6b98eb31cf38ba96a28b303c13c64e13" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::process</a> 方法仍会继续被调用。插件必须自行处理无爆音的切换（渐变/淡入/淡出、并行处理或算法切换）；如果插件有延迟，还必须提供延迟动作，并确保输出缓冲区提供输入缓冲区的副本（可能带延迟）。当指针相同且插件没有延迟时，无需把输入缓冲区复制到输出缓冲区！</p>
+<p>插件可以选择像处理其他参数一样，以逐采样精确（使用参数变更的 sampleOffset）或基于音频块（音频块长度过大 > 1024 时不推荐）的方式处理旁通。</p>
+<p>旁通期间 process 仍会被调用，但若由于某种原因没有调用，宿主可能会发起一次 flush（使用带空音频缓冲区的 process 调用）。</p>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 插件需要像其他参数一样，把旁通参数保存在其状态中。</p>
+</blockquote>
+<p>问：如果关联的总线已停用，宿主还必须提供有效的已初始化音频缓冲区吗？</p>
+<p>在正确实现的宿主中，如果宿主中存在某个输入或输出总线，而它与插件断开连接，插件将收到断开连接的信息（总线激活）。</p>
+<p>此外，输入总线已断开的插件会继续收到默认的静音缓冲区；同样，输出总线已断开的插件，如果其后还有已激活的总线，会继续收到默认的 nirvana 缓冲区。当这些停用的总线是最后的总线（输入或输出）时，宿主无需提供关联的 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1AudioBusBuffers.html" target="_blank" rel="noreferrer noopener">AudioBusBuffers</a>，此时插件应检查 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessData.html#a852a74fc4e461ef086bac048313d2de9" target="_blank" rel="noreferrer noopener">numInputs</a> 与 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessData.html#a1338255f88bad5cf4fb714c71f92b61a" target="_blank" rel="noreferrer noopener">numOutputs</a>，并且不处理这些总线。</p>
+<p>下表显示了缓冲区是否可用，取决于哪些总线被激活：</p>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: left">输入/输出总线</th><th style="text-align: left">索引 0（kMain）</th><th style="text-align: left">索引 1（kAux）</th><th style="text-align: left">索引 2（kAux）</th></tr></thead><tbody>
+<tr><td style="text-align: left">总线已激活</td><td style="text-align: left">是</td><td style="text-align: left">否</td><td style="text-align: left">是</td></tr>
+<tr><td style="text-align: left">缓冲区</td><td style="text-align: left">可用</td><td style="text-align: left">可用</td><td style="text-align: left">可用</td></tr>
+<tr><td style="text-align: left"></td><td style="text-align: left"></td><td style="text-align: left"></td><td style="text-align: left"></td></tr>
+</tbody></table>
+</div><div class="table-wrapper"><table><thead><tr><th style="text-align: left">输入/输出总线</th><th style="text-align: left">索引 0（kMain）</th><th style="text-align: left">索引 1（kAux）</th><th style="text-align: left">索引 2（kAux）</th></tr></thead><tbody>
+<tr><td style="text-align: left">总线已激活</td><td style="text-align: left">是</td><td style="text-align: left">是</td><td style="text-align: left">否</td></tr>
+<tr><td style="text-align: left">缓冲区</td><td style="text-align: left">可用</td><td style="text-align: left">可用</td><td style="text-align: left">可选</td></tr>
+<tr><td style="text-align: left"></td><td style="text-align: left"></td><td style="text-align: left"></td><td style="text-align: left"></td></tr>
+</tbody></table>
+</div>
+<hr/>
+<h2 id="q-can-the-maximum-sample-block-size-change-while-the-plug-in-is-processing">问：插件处理期间最大采样块大小会改变吗？</h2>
+<p>最大采样块大小（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessSetup.html#a41cd06a0c942a1b3f283092b893d0de3" target="_blank" rel="noreferrer noopener">maxSamplesPerBlock</a>）可以在插件生命周期内改变，但音频组件处于活动状态时不行。因此，插件处于活动状态时，最大采样块大小（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessSetup.html#a41cd06a0c942a1b3f283092b893d0de3" target="_blank" rel="noreferrer noopener">maxSamplesPerBlock</a>）绝不能在处理调用期间或调用之间改变。</p>
+<p>如果宿主改变了最大采样块大小，它会专门调用以下序列：</p>
+<pre><code class="language-c++">Vst::IAudioProcessor::process (...);
+Vst::IAudioProcessor::setProcessing (false);
+Vst::IAudioProcessor::setActive (false);
+
+Vst::IAudioProcessor::setupProcessing (...);
+
+Vst::IAudioProcessor::setActive (true);
+Vst::IAudioProcessor::setProcessing (true);
+Vst::IAudioProcessor::process (...);
+</code></pre>
+<p>注意，<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessData.html" target="_blank" rel="noreferrer noopener">ProcessData</a>-><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessData.html#aeb42971a4bd34d7baa27cff8d7e3cf26" target="_blank" rel="noreferrer noopener">numSamples</a> 表示一次 process 调用中使用了多少个采样，它可以逐次调用变化，但绝不会大于 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessSetup.html#a41cd06a0c942a1b3f283092b893d0de3" target="_blank" rel="noreferrer noopener">maxSamplesPerBlock</a>。</p>
+<hr/>
+<h2 id="q-can-the-sample-rate-change-while-the-plug-in-is-processing">问：插件处理期间采样率会改变吗？</h2>
+<p>不会。与 <a href="#q-can-the-maximum-sample-block-size-change-while-the-plug-in-is-processing">问：插件处理期间最大采样块大小会改变吗？</a> 相同。</p>
+<hr/>
+<h2 id="q-can-the-host-call-the-process-function-without-audio-buffers">问：宿主可以在没有音频缓冲区的情况下调用 process 函数吗？</h2>
+<p>可以，宿主可以在没有缓冲区的情况下调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#a6b98eb31cf38ba96a28b303c13c64e13" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::process</a>（numInputs 与 numOutputs 置零），以便 flush 参数（从宿主到插件）。</p>
+<hr/>
+<h2 id="q-what-is-a-side-chain">问：什么是侧链？</h2>
+<p>参见 <a href="technical-documentation-change-history-3.0.0-multiple-dynamic-io.html">[3.0.0] 多动态 I/O 支持</a></p>
+<hr/>
+<h2 id="q-how-can-i-implement-a-side-chain-path-into-my-plug-in">问：如何在插件中实现侧链路径？</h2>
+<p>参见 <a href="technical-documentation-change-history-3.0.0-multiple-dynamic-io.html">[3.0.0] 多动态 I/O 支持</a></p>
+<hr/>
+<h2 id="q-my-plug-in-is-capable-of-processing-all-possible-channel-configurations">问：我的插件能够处理所有可能的通道配置。</h2>
+<p>参见 <a href="technical-documentation-change-history-3.0.0-multiple-dynamic-io.html">[3.0.0] 多动态 I/O 支持</a></p>
+<hr/>
+<h2 id="q-how-are-speaker-arrangement-settings-handled-for-fx-plug-ins">问：FX 插件的扬声器布置设置如何处理？</h2>
+<p>参见 <a href="technical-documentation-change-history-3.0.0-multiple-dynamic-io.html">[3.0.0] 多动态 I/O 支持</a></p>
+<hr/>
+<h2 id="q-my-plug-in-has-mono-input-and-stereo-output-how-does-vst-3-handle-this">问：我的插件是单声道输入、立体声输出。VST 3 如何处理这种情况？</h2>
+<p>参见 <a href="technical-documentation-change-history-3.0.0-multiple-dynamic-io.html">[3.0.0] 多动态 I/O 支持</a></p>
+<hr/>
+<h2 id="q-how-does-it-work-with-silence-flags">问：静音标志是如何工作的？</h2>
+<p>参见 <a href="technical-documentation-change-history-3.0.0-silence-flags.html">[3.0.0] 静音标志支持</a> 以及关于 <a href="tutorials-how-to-use-the-silence-flags.html">如何使用静音标志</a> 的教程。</p>
+<hr/>
+<h2 id="q-how-report-to-the-host-that-the-plug-in-latency-has-changed">问：如何向宿主报告插件延迟已改变？</h2>
+<p>插件应通过 editController 调用其组件处理器的 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a1f283573728cf0807224c5ebdf3ec3a6" target="_blank" rel="noreferrer noopener">restartComponent</a> 函数，并带上标志 kLatencyChanged：</p>
+<pre><code class="language-c++">componentHandler-&gt;restartComponent (kLatencyChanged);
+</code></pre>
+<p>宿主将调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#af8884671ccefe68e0a86e72413a0fcf8" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::getLatencySamples()</a> 以检查新的延迟，并在支持时调整其延迟补偿。</p>
+<hr/>
+<h2 id="q-how-report-to-the-host-that-the-plug-in-arrangement-has-changed">问：如何向宿主报告插件布置已改变？</h2>
+<p>参见 <a href="technical-documentation-change-history-3.0.0-multiple-dynamic-io.html">[3.0.0] 多动态 I/O 支持</a></p>
+<hr/>
+<h2 id="q-can-vst-iaudioprocessorsetprocessing-be-called-without-any-vst-iaudioprocessorprocess-call">问：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#af252fd721b195b793f3a5dfffc069401" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setProcessing</a> 可以在没有任何 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#a6b98eb31cf38ba96a28b303c13c64e13" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::process</a> 调用的情况下被调用吗？</h2>
+<p>可以，这取决于 DAW 如何支持其处理，以下调用序列是合法的：</p>
+<pre><code class="language-c++">Vst::IAudioProcessor::process (...);
+Vst::IAudioProcessor::setProcessing (false);
+Vst::IAudioProcessor::setProcessing (true);
+// 此处没有调用 process，DAW 中间可能发生了某些事情
+Vst::IAudioProcessor::setProcessing (false);
+Vst::IAudioProcessor::setProcessing (true);
+Vst::IAudioProcessor::process (...);
+</code></pre>
+<hr/>
+<h2 id="q-how-to-make-sure-that-a-plug-in-is-always-processed">问：如何确保插件始终被处理？</h2>
+<p>如果你的插件始终产生声音而不需要任何音频输入，可以把类别 “Generator” 添加到 subCategories（例如使用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/group__plugType.html#ga09060af560cf34b87e14d5dbd839ad52" target="_blank" rel="noreferrer noopener">kFxGenerator</a>），或者在函数 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#abb6b16a66b2356a4038a778b815dbbf3" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::getTailSamples</a> 中返回 kInfiniteTail</p>
+<hr/>
+<h2 id="q-can-icomponentgetstatesetstate-be-called-during-processing">问：可以在处理期间调用 IComponent::getState()/setState() 吗？</h2>
+<p>可以，当插件在实时上下文中使用时，setState 与 getState 通常从 <strong>UI 线程</strong> 调用；在离线上下文中，set/getState 可以在与 process 调用相同的线程中调用。关于在哪种状态下会调用哪些接口的更多信息，请查看工作流程图「音频处理器调用序列」。</p>
+<hr/>
+<h2 id="q-how-can-a-plug-in-be-informed-that-it-is-currently-processed-in-offline-processing">问：如何告知插件它当前正在离线处理中被处理？</h2>
+<p>当插件在离线处理上下文中使用（例如 <strong>Cubase 9.5</strong>/<strong>Nuendo 8</strong> 的功能：直接离线处理）时，其组件会以 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a4618e7358890d549f990010bea4a4137" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setIoMode</a>（Vst::kOfflineProcessing）初始化（参见 The Simple Mode）。离线处理模式（在 process 调用中传入）用于以下情况：</p>
+<ul>
+<li>用户导出音频（缩混）</li>
+<li>直接离线处理功能</li>
+</ul>
+<p>通过 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a4618e7358890d549f990010bea4a4137" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setIoMode</a>（Vst::kOfflineProcessing），你可以区分导出与 DOP（直接离线处理）。</p>
+<p><a href="https://www.youtube.com/watch?v=62yMkHRfd2I" target="_blank" rel="noreferrer noopener"><img alt="getting_started_vid_1" src="https://i.ytimg.com/vi/62yMkHRfd2I/maxresdefault.jpg"/></a></p>
+<p>自 <strong>Cubase 9.5</strong> 起支持直接离线处理</p>
+<hr/>
+<h2 id="q-what-should-i-not-call-in-the-realtime-process-function">问：在实时 process 函数中不应调用什么？</h2>
+<p>一个良好的做法是避免在这个关键的实时 process 中调用任何库函数。如果必须使用，请检查它们是否为实时操作而设计，且不包含任何加锁机制。避免任何文件系统访问、网络和 UI 调用、内存分配与释放；使用可能在后台分配内存的 STL 容器时要小心，优先使用非阻塞内存池之类的模式，并把需要内存/文件/网络访问的任务交给 UI/定时器线程处理。也请查看 <a href="technical-documentation-workflow-diagrams-audio-processor-call-sequence.html">音频处理器调用序列</a>。</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/FAQ/Processing.html" rel="noreferrer noopener">FAQ/Processing.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
