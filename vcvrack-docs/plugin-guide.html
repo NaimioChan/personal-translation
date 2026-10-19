@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>插件 API 指南 - VCV Rack 手册</title>
+<meta name="description" content="VCV Rack 官方手册《插件 API 指南》的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>插件 API 指南</h1>
+<p>Rack 的插件 API 提供了许多可选功能，用于提升模块的易用性与性能。
+本指南结合示例与技巧概述这些功能。</p>
+<p>完整 API 参考见 <a href="https://github.com/VCVRack/Rack/tree/v2/include" rel="noreferrer noopener">GitHub 上的 Rack 头文件</a>或自动生成的 <a href="https://vcvrack.com/docs-v2/" rel="noreferrer noopener">Doxygen 文档</a>。</p>
+<ul>
+<li><a href="#Module-configuration">模块配置</a>
+<ul>
+<li><a href="#Inputs-outputs-and-lights">输入、输出与灯</a></li>
+<li><a href="#Parameters">参数</a></li>
+<li><a href="#Bypass">旁通</a></li>
+</ul>
+</li>
+<li><a href="#Module-events">模块事件</a></li>
+<li><a href="#Data-serialization">数据序列化</a>
+<ul>
+<li><a href="#JSON">JSON</a></li>
+<li><a href="#Patch-storage">Patch 存储</a></li>
+<li><a href="#Plugin-settings">插件设置</a></li>
+</ul>
+</li>
+<li><a href="#Context-menu">上下文菜单</a></li>
+<li><a href="#Expanders">扩展模块</a>
+<ul>
+<li><a href="#Messages">消息</a></li>
+</ul>
+</li>
+<li><a href="#Dark-panels">深色面板</a></li>
+<li><a href="#Custom-widgets">自定义控件</a>
+<ul>
+<li><a href="#Text">文本</a></li>
+<li><a href="#Self-illuminating-layer">自发光图层</a></li>
+<li><a href="#Framebuffer">帧缓冲</a></li>
+</ul>
+</li>
+<li><a href="#Polyphony">复音</a></li>
+<li><a href="#SIMD-library">SIMD 库</a></li>
+<li><a href="#DSP-library">DSP 库</a></li>
+</ul>
+<h2 id="Module-configuration">模块配置</h2>
+<p>用 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module"><code>config(numParams, numInputs, numOutputs, numLights)</code></a> 配置好 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module"><code>Module</code></a> 子类之后，就可以在 <code>Module</code> 的构造函数中配置每个组件的标签与行为。</p>
+<h4 id="Inputs-outputs-and-lights">输入、输出与灯</h4>
+<p>用 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module.html#a7d791b3f277d56b46c3b6ed24e9f39a3"><code>configInput()</code></a>、<a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module.html#a904aa894c242751074f80bc607dc1dc7"><code>configOutput()</code></a> 和 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module#a4be4c41165a9360579b425486c34575e"><code>configLight()</code></a> 为输入、输出和灯的提示框添加标签。
+例如：</p>
+<pre><code class="language-cpp">configInput(PITCH_INPUT, &quot;Pitch (1V/octave)&quot;);
+configOutput(SINE_OUTPUT, &quot;Sine&quot;);
+configLight(PHASE_LIGHT, &quot;Phase&quot;);
+</code></pre>
+<p>提示框会自动追加 "input"、"output" 和 "light" 字样，因此不要在标签字符串中包含它们。</p>
+<p>灯的提示框通常没有必要，因此建议仅在灯的含义不明显时才添加。</p>
+<h4 id="Parameters">参数</h4>
+<p><a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module.html#a4905284329147332b7418b2df5af0442"><code>configParam()</code></a> 方法设置参数的范围、默认值、标签、单位和显示刻度。
+以下是几个示例。</p>
+<pre><code class="language-cpp">// 旋钮：最小值（拧到最左）为 0，最大值（拧到最右）为 1，默认（初始）值为 0.5。
+configParam(SIMPLE_PARAM, 0.f, 1.f, 0.5f, &quot;Simple&quot;);
+
+// 单位标签，用于在提示框中显示 &quot;10 V&quot; 或 &quot;0 V&quot; 这样的字符串。
+// 建议在前面加一个空格，把数字与单位分开。
+configParam(OFFSET_PARAM, -10.f, 10.f, 0.f, &quot;Offset&quot;, &quot; V&quot;);
+
+// 把显示值乘以 100，并追加百分号。
+configParam(PERCENT_PARAM, -1.f, 1.f, 0.f, &quot;Percent&quot;, &quot;%&quot;, 0.f, 100.f);
+
+// 在值为 0 时显示 &quot;261.62 Hz&quot;，即中央 C。
+// 1V/倍频程使用以 2 为底的指数。
+configParam(PITCH_PARAM, -5.f, 5.f, 0.f, &quot;Pitch (1V/octave)&quot;, &quot; Hz&quot;, 2, dsp::FREQ_C4);
+
+// 值 0 显示 &quot;-inf dB&quot;，值 2 显示 &quot;6.02 dB&quot;，值 1 为默认的 &quot;0 dB&quot;。
+// 使用以 10 为底的对数（用 -10 编码），乘数为 20 dB。
+configParam(GAIN_PARAM, 0.f, 2.f, 1.f, &quot;Gain&quot;, &quot; dB&quot;, -10, 20);
+</code></pre>
+<p><a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module.html#a25f7f5f680583c8f7e026e8a794a3663"><code>configSwitch()</code></a> 方法适用于为每个值显示标签的多模式开关。
+用户可以通过右键单击开关直接选择每个选项。</p>
+<pre><code class="language-cpp">// 三档开关（取值 0 到 2），默认 &quot;Hi-fi&quot;。
+configSwitch(QUALITY_PARAM, 0.f, 2.f, 0.f, &quot;Quality&quot;, {&quot;Hi-fi&quot;, &quot;Mid-fi&quot;, &quot;Lo-fi&quot;});
+</code></pre>
+<p><a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module#a8e675363fbae0de396cc9708ef048612"><code>configButton()</code></a> 与 <code>configSwitch()</code> 类似，但没有标签，范围为 0 到 1，默认值为 0。
+这适用于瞬态开关。</p>
+<pre><code class="language-cpp">configButton(GATE_PARAM, &quot;Gate&quot;);
+</code></pre>
+<p>如果需要在提示框中传达额外信息，可以选择为任意组件添加一行描述。</p>
+<pre><code class="language-cpp">getParamQuantity(SEND_PARAM)-&gt;description = &quot;Pre-fader&quot;;
+getOutputInfo(PINK_NOISE_OUTPUT)-&gt;description = &quot;-3 dB/octave power density&quot;;
+</code></pre>
+<h4 id="Bypass">旁通</h4>
+<p>用户可以通过模块的上下文菜单或快捷键旁通模块，这会禁用模块的 DSP 处理，并可选择将某些输入直接路由到某些输出，就像在它们之间接上了跳线。
+你（模块开发者）可以用 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module#a14cc40a1321050aa9821b544cb1b3179"><code>configBypass()</code></a> 配置这些旁通路由。</p>
+<p>只有当模块对输入信号施加效果并将其传递到输出时，才应为端口配置旁通路由。
+例如：</p>
+<ul>
+<li>音频输入 → 低通滤波器输出</li>
+<li>CV 输入 → 反相 CV 输出</li>
+<li>门信号输入 → 延迟门信号输出</li>
+</ul>
+<p>以下路由在旁通时则不适用：</p>
+<ul>
+<li>音高 CV 输入 → 正弦音频输出。信号类型不相关，用户也不想听音高 CV 信号。</li>
+<li>通道 1 输入 → 混音器输出。混音器不是效果器，用户很可能想静音混音器输出，而不是将所有通道单位增益混合。</li>
+<li>时钟输入 → 音序器触发输出。用户很可能想静音所有触发输出，而不是每个时钟步都产生一个触发。</li>
+</ul>
+<p>除这些例子外，旁通路由可能带有主观性，因此请考虑用户最期望、最不意外的旁通行为。</p>
+<p>以下示例在模块被旁通时，将两个立体声输入分别路由到对应的立体声输出。</p>
+<pre><code class="language-cpp">configBypass(LEFT_INPUT, LEFT_OUTPUT);
+configBypass(RIGHT_INPUT, RIGHT_OUTPUT);
+</code></pre>
+<p>覆写 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module.html#a2b73dc775dabb1e12fbd3ea0bcde17bd"><code>processBypass()</code></a> 可以实现更复杂的旁通路由，它与 <code>process()</code> 相同，但在模块被旁通时调用。</p>
+<p>为扩展上述示例，你可能想实现左到右归一化，而这无法用 <code>configBypass()</code> 实现。</p>
+<pre><code class="language-cpp">struct MyModule : Module {
+	...
+
+	void processBypass(const ProcessArgs&amp; args) override {
+		// 注意：不支持复音
+		float left = getInput(LEFT_INPUT).getVoltage();
+		// 若右输入未连接，则把左输入路由到右输出
+		float right = getInput(RIGHT_INPUT).isConnected() ? getInput(RIGHT_INPUT).getVoltage() : left;
+		getOutput(LEFT_OUTPUT).setVoltage(left);
+		getOutput(RIGHT_OUTPUT).setVoltage(right);
+	}
+};
+</code></pre>
+<h2 id="Module-events">模块事件</h2>
+<p>有时你需要处理模块上发生的特定事件，例如用户重置或随机化模块，或引擎采样率发生变化。
+覆写相应的 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module#a8aad8af723176a3aa4db40a77fe84c28"><code>Module::on*()</code></a> 方法，并记得调用父类的方法，除非你想替换其默认行为。
+例如：</p>
+<pre><code class="language-cpp">struct MyModule : Module {
+	...
+
+	void onReset(const ResetEvent&amp; e) override {
+		// 重置所有参数
+		Module::onReset(e);
+		// 重置自定义状态变量
+		...
+	}
+
+	void onRandomize(const ResetEvent&amp; e) override {
+		// 随机化所有参数
+		Module::onRandomize(e);
+
+		// 或者删掉上面这行，自己随机化参数。
+		params[MY_PARAM].setValue(random::uniform());
+
+		// 随机化自定义状态变量
+		...
+	}
+
+	void onSampleRateChange(const SampleRateChangeEvent&amp; e) override {
+		Module::onSampleRateChange(e);
+		// 更改自定义状态变量的采样率
+		...
+	}
+};
+</code></pre>
+<p>线程安全说明：尽管事件、<code>process()</code> 以及 <code>dataToJson()/dataFromJson()</code> 等 <code>Module</code> 方法可能由不同线程调用，但它们是互斥的，即 Rack 从不会同时从多个线程调用任何 <code>Module</code> 方法。</p>
+<h2 id="Data-serialization">数据序列化</h2>
+<p>当用户关闭 VCV Rack 或保存 patch 时，所有模块的状态都会保存到文件。
+Rack 会自动保存所有参数（如旋钮、滑块和开关）的值，但如果你在 <code>Module</code> 实例变量中存储额外的状态数据，就必须自己编写代码来保存/加载这些数据。</p>
+<h4 id="JSON">JSON</h4>
+<p>通过在 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module"><code>Module</code></a> 子类中覆写 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module#a776c0845ed14be7ff1ba3370e89d605c"><code>dataToJson()</code></a> 和 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module#a86c0e4d7ec04951283d7454d756f78ab"><code>dataFromJson()</code></a> 方法，可以在 <a href="https://www.json.org/" rel="noreferrer noopener">JSON</a> 对象中存储和读取自定义数据。
+例如，如果你的模块使用 <code>int mode</code> 实例变量，以下代码可以保存/加载它。</p>
+<pre><code class="language-cpp">struct MyModule : Module {
+	...
+
+	json_t* dataToJson() override {
+		json_t* rootJ = json_object();
+		json_object_set_new(rootJ, &quot;mode&quot;, json_integer(mode));
+		return rootJ;
+	}
+
+	void dataFromJson(json_t* rootJ) override {
+		json_t* modeJ = json_object_get(rootJ, &quot;mode&quot;);
+		if (modeJ)
+			mode = json_integer_value(modeJ);
+	}
+};
+</code></pre>
+<p>使用 <a href="https://jansson.readthedocs.io/en/latest/apiref.html" rel="noreferrer noopener">Jansson</a> 库，JSON 可以存储/读取多种 C++ 数据类型：</p>
+<ul>
+<li><code>bool</code>：<a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_boolean" rel="noreferrer noopener"><code>json_boolean()</code></a> / <a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_boolean_value" rel="noreferrer noopener"><code>json_boolean_value()</code></a></li>
+<li><code>const char*</code>：<a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_string" rel="noreferrer noopener"><code>json_string()</code></a> / <a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_string_value" rel="noreferrer noopener"><code>json_string_value()</code></a></li>
+<li><code>int64_t</code>：<a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_integer" rel="noreferrer noopener"><code>json_integer()</code></a> / <a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_integer_value" rel="noreferrer noopener"><code>json_integer_value()</code></a></li>
+<li><code>double</code>：<a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_real" rel="noreferrer noopener"><code>json_real()</code></a> / <a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_number_value" rel="noreferrer noopener"><code>json_number_value()</code></a> <em>注意：不推荐使用 <code>json_real_value()</code>，因为它无法解析整数值。</em></li>
+<li>数组：<a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_array" rel="noreferrer noopener"><code>json_array()</code></a> 和 <a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_array_set_new" rel="noreferrer noopener"><code>json_array_set_new()</code></a> / <a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_array_foreach" rel="noreferrer noopener"><code>json_array_foreach()</code></a></li>
+<li>以字符串为键的对象：<a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_object" rel="noreferrer noopener"><code>json_object()</code></a> 和 <a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_object_set_new" rel="noreferrer noopener"><code>json_object_set_new()</code></a> / <a href="https://jansson.readthedocs.io/en/latest/apiref.html#c.json_object_foreach" rel="noreferrer noopener"><code>json_object_foreach()</code></a></li>
+</ul>
+<h4 id="Patch-storage">Patch 存储</h4>
+<p>如果你的模块需要保存/加载大量数据（约 &gt;100 kB），JSON 序列化在自动保存时（默认每 15 秒）可能会阻塞主线程。
+为解决这个问题，模块实例可以请求拥有自己的按 patch 存储目录，在其中创建任意大小的文件（甚至数 GB 的录音），并随时读写。
+当用户保存 patch 时，VCV Rack 会将所有模块的 patch 存储压缩到单个 <code>.vcv</code> 文件中。</p>
+<p>模块可以用 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module#a375c082688aeac8b158907f4c54608e2"><code>createPatchStorageDirectory()</code></a> 方法创建其 patch 存储目录，并使用返回值构建文件路径。
+通常只需在保存 patch 或模块添加到机架时保存/加载文件。
+例如：</p>
+<pre><code class="language-cpp">struct MyModule : Module {
+	...
+
+	void onAdd(const AddEvent&amp; e) override {
+		std::string path = system::join(getPatchStorageDirectory(), &quot;recording.wav&quot;);
+		// 从文件加载。如果模块刚创建，文件可能并不存在。
+		...
+	}
+
+	void onSave(const SaveEvent&amp; e) override {
+		std::string path = system::join(createPatchStorageDirectory(), &quot;recording.wav&quot;);
+		// 保存到文件。
+		...
+	}
+};
+</code></pre>
+<p>可以在 <code>Module::process()</code> 中访问 patch 文件，但这样做可能阻塞 DSP 线程，导致音频卡顿。
+建议只在模块事件方法或自己的 worker 线程中访问它们。</p>
+<h4 id="Plugin-settings">插件设置</h4>
+<p>如果你的插件需要保存/加载插件级数据（如设置），可以在 <code>plugin.cpp</code> 文件中实现 <a href="https://vcvrack.com/docs-v2/callbacks_8hpp#ada7e5b3f047bd1f5bc79d1d72d191560"><code>settingsToJson()</code></a> 和 <a href="https://vcvrack.com/docs-v2/callbacks_8hpp#abfd4ccfe5aa5928b72293d3ec2f97a29"><code>settingsFromJson()</code></a>。
+该 JSON 对象存储在 <code>&lt;Rack user folder&gt;/settings.json</code> 中，并在退出时以及定期（默认每 15 秒）自动保存。</p>
+<p>例如，要保存 <code>int theme</code> 全局变量，将以下代码添加到 <code>plugin.cpp</code> 的根作用域。</p>
+<pre><code class="language-cpp">json_t* settingsToJson() {
+	json_t* rootJ = json_object();
+	json_object_set_new(rootJ, &quot;theme&quot;, json_integer(theme));
+	return rootJ;
+}
+
+void settingsFromJson(json_t* rootJ) {
+	json_t* themeJ = json_object_get(rootJ, &quot;theme&quot;);
+	if (themeJ)
+		theme = json_integer_value(themeJ);
+}
+</code></pre>
+<h2 id="Context-menu">上下文菜单</h2>
+<img src="https://vcvrack.com/manual/images/modulemenu.png" width="261" class="float-right" alt="">
+<p>当用户右键单击模块面板时，会弹出上下文菜单，包含 "Initialize"、"Randomize"、"Delete" 等熟悉操作。
+你可以在末尾添加自定义菜单项，以提供面板上没有的设置。</p>
+<p>要将菜单项追加到模块的上下文菜单，请覆写 <a href="https://vcvrack.com/docs-v2/structrack_1_1app_1_1ModuleWidget#a74e147e0b5e6eb5bb36454f2b5731b41"><code>ModuleWidget::appendContextMenu()</code></a>。
+用 <a href="https://vcvrack.com/docs-v2/namespacerack#a0119655cbe1761f11d8007d1e2988d45"><code>create*()</code></a> 辅助函数创建具体的菜单项，并用 <code>menu-&gt;addChild()</code> 将它们添加到菜单。</p>
+<p>以下代码示例演示了可追加到模块上下文菜单的大多数菜单项类型。
+要在菜单项被点击或展开时运行自定义代码，请使用按值捕获变量的 <a href="https://en.cppreference.com/w/cpp/language/lambda" rel="noreferrer noopener">lambda</a>：<code>[=]() {...}</code>。</p>
+<pre><code class="language-cpp">struct MyModuleWidget : ModuleWidget {
+	...
+
+	void appendContextMenu(Menu* menu) override {
+		MyModule* module = getModule&lt;MyModule&gt;();
+
+		menu-&gt;addChild(new MenuSeparator);
+
+		menu-&gt;addChild(createMenuLabel(&quot;Editor settings&quot;));
+
+		menu-&gt;addChild(createMenuItem(&quot;Load sample&quot;, &quot;kick.wav&quot;,
+			[=]() {
+				module-&gt;loadSample();
+			}
+		));
+
+		// 控制 bool 型的 Module::loop
+		menu-&gt;addChild(createBoolPtrMenuItem(&quot;Loop&quot;, &quot;&quot;, &amp;module-&gt;loop));
+
+		menu-&gt;addChild(createSubmenuItem(&quot;Edit&quot;, &quot;&quot;,
+			[=](Menu* menu) {
+				menu-&gt;addChild(createMenuItem(&quot;Copy&quot;, &quot;&quot;, [=]() {copy();}));
+				menu-&gt;addChild(createMenuItem(&quot;Paste&quot;, &quot;&quot;, [=]() {paste();}));
+			}
+		));
+
+		// 控制 int 型的 Module::mode
+		menu-&gt;addChild(createIndexPtrSubmenuItem(&quot;Mode&quot;,
+			{&quot;Hi-fi&quot;, &quot;Mid-fi&quot;, &quot;Lo-fi&quot;},
+			&amp;module-&gt;mode
+		));
+	}
+};
+</code></pre>
+<p>建议先添加一个 <a href="https://vcvrack.com/docs-v2/structrack_1_1ui_1_1MenuSeparator"><code>MenuSeparator</code></a>，以便在视觉上将自定义菜单项与常见菜单项分开。</p>
+<h2 id="Expanders">扩展模块</h2>
+<img src="https://vcvrack.com/manual/images/expanders.png" width="180" class="float-right" alt="">
+<p>一些 Eurorack 硬件模块可以通过面板后的总线电缆与相邻模块通信。
+这可用于通过额外的端口和参数扩展模块的功能。</p>
+<p>同样，在 VCV Rack 中，模块可以直接与紧贴其左侧或右侧的模块通信。
+例如，<a href="https://library.vcvrack.com/Grayscale/Permutation12" rel="noreferrer noopener">Grayscale Permutation</a> 可以将其门信息发送给 <a href="https://library.vcvrack.com/Grayscale/Variant" rel="noreferrer noopener">Grayscale Variant</a> 以生成 CV 信号（如图）。</p>
+<p>要从主 <code>Module</code> 访问相邻模块，必须检查其是否存在及其型号。
+确认后，就可以在主模块中实现其完整的 DSP 算法。
+在此例中，当 <code>MyExpander</code> 模块与主模块右侧相接时，我们访问它。</p>
+<pre><code class="language-cpp">Module* rightModule = getRightExpander().module;
+if (rightModule &amp;&amp; rightModule-&gt;getModel() == modelMyExpander) {
+	// 现在可以确定 rightModule 就是 MyExpander。
+	// 我们可以处理它的参数、端口和灯。
+	float in = rightModule-&gt;getInput(MyExpander::AUDIO_INPUT).getVoltage();
+	float gain = rightModule-&gt;getParam(MyExpander::GAIN_PARAM).getValue();
+	rightModule-&gt;getOutput(MyExpander::AUDIO_OUTPUT).setVoltage(in * gain);
+}
+</code></pre>
+<p>扩展模块可以覆写 <a href="https://vcvrack.com/docs-v2/structrack_1_1engine_1_1Module#aa5e49d1bd7247b2d244645aad1b4b62c"><code>onExpanderChange()</code></a>，在断开连接时清除其输出和灯。</p>
+<h4 id="Messages">消息</h4>
+<p>你可能更希望 <code>MyExpander</code> 拥有自己独立的 <code>process()</code> 方法。
+然而，如果任一模块试图直接访问另一模块的实例变量，其 <code>process()</code> 调用可能发生在另一模块 <code>process()</code> 调用之前、之后或期间（若启用多线程）。
+这可能导致延迟不一致（0 或 1 个引擎帧）或读取到损坏的数据。</p>
+<p>解决方案是使用扩展模块"消息"，它是二进制数据的双缓冲。
+这确保数据始终以 1 个引擎帧的延迟共享。</p>
+<p>要从主模块向扩展模块发送数据（如 <code>float</code> 或结构体），在扩展模块中添加两份副本，并将其地址指定为扩展模块的消息缓冲区。</p>
+<pre><code class="language-cpp">struct MyExpander : Module {
+	...
+	float value[2] = {};
+
+	MyExpander() {
+		...
+		getLeftExpander().producerMessage = &amp;value[0];
+		getLeftExpander().consumerMessage = &amp;value[1];
+	}
+};
+</code></pre>
+<p>然后在主模块中，在需要时发送生产者消息。</p>
+<pre><code class="language-cpp">Module* rightModule = getRightExpander().module;
+if (rightModule &amp;&amp; rightModule-&gt;getModel() == modelMyExpander) {
+	// 取出生产者消息，并转换成正确的指针类型。
+	float* value = (float*) rightModule-&gt;getLeftExpander().producerMessage;
+
+	// 写入缓冲区
+	*value = 42.f;
+
+	// 请求 Rack 引擎在下一个引擎帧翻转双缓冲。
+	rightModule-&gt;getLeftExpander().requestMessageFlip();
+}
+</code></pre>
+<p>在 Rack 的下一个引擎帧，<code>MyExpander</code> 的生产者与消费者消息指针将交换，因此先前产生的值可供扩展模块的 <code>process()</code> 方法消费。</p>
+<pre><code class="language-cpp">float* value = (float*) getLeftExpander().consumerMessage;
+</code></pre>
+<p>现在你可以读取缓冲区，以处理 <code>MyExpander</code> 的输出或灯。</p>
+<h2 id="Dark-panels">深色面板</h2>
+<img src="https://vcvrack.com/manual/images/VCO-dark.png" height="190" class="float-right" alt="">
+<p>自 Rack 2.4 起，用户可以通过启用 "View &gt; Use dark panels if available" 请求模块使用深色主题面板。</p>
+<p>要提供深色面板主题，为 <a href="https://vcvrack.com/docs-v2/namespacerack.html#a52d026e6482fc2720b109f30f5131e8b"><code>createPanel()</code></a> 添加第二个参数，指向深色 SVG 文件的路径。</p>
+<pre><code class="language-cpp">setPanel(createPanel(
+	asset::plugin(pluginInstance, &quot;res/VCO.svg&quot;),
+	asset::plugin(pluginInstance, &quot;res/VCO-dark.svg&quot;)
+));
+</code></pre>
+<p>可以选择用 <a href="https://vcvrack.com/docs-v2/structrack_1_1componentlibrary_1_1ThemedScrew"><code>ThemedScrew</code></a> 替换 <code>ScrewSilver</code>，用 <a href="https://vcvrack.com/docs-v2/structrack_1_1componentlibrary_1_1ThemedPJ301MPort"><code>ThemedPJ301MPort</code></a> 替换 <code>PJ301MPort</code>，以更好地匹配面板。</p>
+<p>对于自定义深色控件，可以子类化 <a href="https://vcvrack.com/docs-v2/structrack_1_1app_1_1ThemedSvgScrew.html"><code>ThemedSvgScrew</code></a> 或 <a href="https://vcvrack.com/docs-v2/structrack_1_1app_1_1ThemedSvgPort.html"><code>ThemedSvgPort</code></a>。
+也可以在自定义代码中读取 <a href="https://vcvrack.com/docs-v2/namespacerack_1_1settings#aab01d71690f045f156ffbc68b31852c9"><code>bool settings::preferDarkPanel</code></a> 的值。</p>
+<p>如果你的面板已经是深色主题，可以忽略此功能，或将浅色主题面板作为默认。</p>
+<h2 id="Custom-widgets">自定义控件</h2>
+<img src="https://vcvrack.com/manual/images/widget.png" width="262" class="float-right" alt="">
+<p>一些模块包含显示波形、可视化或其他动态元素的显示屏。
+你可以通过子类化 <a href="https://vcvrack.com/docs-v2/structrack_1_1widget_1_1Widget"><code>Widget</code></a> 并覆写其 <a href="https://vcvrack.com/docs-v2/structrack_1_1widget_1_1Widget#ad5eb118a56b940e3822e7f7e7197cb39"><code>draw()</code></a> 方法来创建这些显示屏。
+形状、线条、颜色和文本可以使用 <a href="https://github.com/memononen/nanovg/blob/master/src/nanovg.h" rel="noreferrer noopener">NanoVG</a> API 绘制。</p>
+<p>以下代码示例演示向 <code>args.vg</code> 变量访问的 NanoVG 上下文绘制。</p>
+<pre><code class="language-cpp">struct MyWidget : Widget {
+	void draw(const DrawArgs&amp; args) override {
+		// 按此控件的尺寸绘制一个黄色矩形
+		nvgFillColor(args.vg, nvgRGBf(1.0, 1.0, 0.0));
+		nvgBeginPath(args.vg);
+		nvgRect(args.vg, 0.0, 0.0, box.size.x, box.size.y);
+		nvgFill(args.vg);
+
+		// 绘制一个蓝色描边的三角形
+		nvgStrokeColor(args.vg, nvgRGBf(1.0, 0.0, 0.0));
+		nvgStrokeWidth(args.vg, 5.0);
+		nvgLineJoin(args.vg, NVG_MITER);
+		nvgBeginPath(args.vg);
+		nvgMoveTo(args.vg, 10.0, 90.0);
+		nvgLineTo(args.vg, 90.0, 90.0);
+		nvgLineTo(args.vg, 50.0, 10.0);
+		nvgClosePath(args.vg);
+		nvgStroke(args.vg);
+
+		// 绘制一个蓝色圆
+		nvgFillColor(args.vg, nvgRGBf(0.0, 0.0, 1.0));
+		nvgBeginPath(args.vg);
+		nvgCircle(args.vg, 70.0, 50.0, 20.0);
+		nvgFill(args.vg);
+	}
+};
+</code></pre>
+<p>将控件添加到 <code>ModuleWidget</code> 构造函数中。</p>
+<pre><code class="language-cpp">MyWidget* myWidget = createWidget&lt;MyWidget&gt;(Vec(20, 20));
+myWidget-&gt;setSize(Vec(100, 100));
+addChild(myWidget);
+</code></pre>
+<p>VCV 模块如 <a href="https://library.vcvrack.com/Fundamental/Scope" rel="noreferrer noopener">VCV Scope</a> 和 <a href="https://library.vcvrack.com/Fundamental/ADSR" rel="noreferrer noopener">VCV ADSR EG</a> 使用 <a href="https://vcvrack.com/docs-v2/structrack_1_1app_1_1LedDisplay"><code>LedDisplay</code></a> 的子类而不是 <code>Widget</code>，以便为其类 LED 屏幕的显示屏提供更美观、更一致的起点。</p>
+<h4 id="Text">文本</h4>
+<p>静态文本可以直接写在 <a href="panel.html">SVG 模块面板</a>上，但有时需要在自定义控件上显示动态文本。
+例如，信号测量模块可以显示每秒更新的电压值。</p>
+<p>VCV Rack 包含若干字体，其路径可通过 <code>asset::system(&quot;res/fonts/...&quot;)</code> 获取。
+或者，你可以用 <code>asset::plugin(pluginInstance, &quot;res/...&quot;)</code> 包含并使用自己的 TTF 字体。</p>
+<p>要在 <code>Widget</code> 的 <code>draw()</code> 方法中渲染文本，每帧从 Rack 的缓存中加载字体，并使用 NanoVG 设置位置、大小、对齐方式等并绘制文本。</p>
+<pre><code class="language-cpp">void draw(const DrawArgs&amp; args) override {
+	// 从缓存加载字体
+	std::string fontPath = asset::plugin(pluginInstance, &quot;res/MyFont.ttf&quot;);
+	std::shared_ptr&lt;Font&gt; font = APP-&gt;window-&gt;loadFont(fontPath);
+	// 字体加载失败时不要绘制文本
+	if (font) {
+		// 选择字体句柄
+		nvgFontFaceId(args.vg, font-&gt;handle);
+		// 设置字号与对齐
+		nvgFontSize(args.vg, 16.0);
+		nvgTextAlign(args.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+
+		// 生成你的文本
+		float voltage = 42.f;
+		std::string text = string::f(&quot;%6.2f V&quot;, voltage);
+		// 在某个位置绘制文本
+		nvgText(args.vg, 100.0, 100.0, text.c_str(), NULL);
+	}
+}
+</code></pre>
+<p>避免在 <code>Widget</code> 中跨多帧存储 <code>Font</code> 实例，因为它们与 Rack 的 <code>Window</code> 对象绑定，而该对象可能被销毁并重新创建。</p>
+<h4 id="Self-illuminating-layer">自发光图层</h4>
+<p>Rack 的"房间"亮度可以在 "View" 菜单中调低，只显示灯等自发光对象。
+这些对象通过覆写 <a href="https://vcvrack.com/docs-v2/structrack_1_1widget_1_1Widget#a0e4df7c5187704287932d0ca8ad8c948"><code>drawLayer()</code></a> 方法绘制在图层 1 上。</p>
+<pre><code class="language-cpp">void drawLayer(const DrawArgs&amp; args, int layer) override {
+	if (layer == 1) {
+		// 在这里调用 NanoVG 函数，把图形绘制到自发光图层上。
+		...
+	}
+	// 记得调用父类的方法。
+	Widget::drawLayer(args, layer);
+}
+</code></pre>
+<h4 id="Framebuffer">帧缓冲</h4>
+<p>VCV Rack 每个屏幕帧都会调用 <code>Widget::draw()</code> 方法，因此包含大量路径和文本的复杂控件会消耗大量 CPU/GPU。
+如果你的自定义控件不需要每帧重绘，可以用 GPU 帧缓冲缓存其光栅化结果。</p>
+<p>为此，将控件放入 <a href="https://vcvrack.com/docs-v2/structrack_1_1widget_1_1FramebufferWidget"><code>FramebufferWidget</code></a> 中。</p>
+<pre><code class="language-cpp">FramebufferWidget* myWidgetFb = new FramebufferWidget;
+addChild(myWidgetFb);
+
+MyWidget* myWidget = createWidget&lt;MyWidget&gt;(Vec(20, 20));
+myWidget-&gt;setSize(Vec(100, 100));
+myWidgetFb-&gt;addChild(myWidget);
+</code></pre>
+<p>然后在需要重绘子控件时，将帧缓冲标记为"脏"。</p>
+<pre><code class="language-cpp">myWidgetFb-&gt;setDirty();
+</code></pre>
+<p>（或者，分发一个 <a href="https://vcvrack.com/docs-v2/structrack_1_1widget_1_1Widget_1_1DirtyEvent"><code>DirtyEvent</code></a>。）</p>
+<p>常见模式是让自定义控件创建自己的子 <code>FramebufferWidget</code>，其中包含其他自定义控件。
+顶层控件管理帧缓冲，在子控件需要重绘时将其标记为脏。</p>
+<h2 id="Polyphony">复音</h2>
+<p>VCV Rack 中的电缆可以是<a href="polyphony.html">复音的</a>，最多承载 16 路电压信号。
+要支持复音，模块的 <code>process()</code> 代码必须从输入端口读取每个通道，并向输出端口写入每个通道。
+参见 <a href="voltage-standards.html#Polyphony">VCV 复音标准</a>，了解处理复音电缆的正确行为。</p>
+<p>要为<a href="https://vcvrack.com/manual/PluginDevelopmentTutorial#Implementing-the-DSP-kernel" rel="noreferrer noopener">教程中的"正弦振荡器"示例</a>添加复音支持，将所有 DSP 状态变量改为 16 元素数组。</p>
+<pre><code class="language-cpp">// 把所有相位初始化为 0。
+float phase[16] = {};
+</code></pre>
+<p>然后将 <code>process()</code> 方法重写为遍历每个通道。</p>
+<pre><code class="language-cpp">void process(const ProcessArgs &amp;args) override {
+	// 从&quot;主&quot;输入获取所需的通道数。
+	// 若该输入未连接，getChannels() 返回 0，但我们仍应产生 1 个通道的输出。
+	int channels = std::max(1, inputs[PITCH_INPUT].getChannels());
+
+	// 遍历每个活动通道。
+	for (int c = 0; c &lt; channels; c++) {
+		float pitch = params[PITCH_PARAM].getValue();
+		// 使用 getPolyVoltage(c)，这样单音输入会作用于所有通道。
+		pitch += inputs[PITCH_INPUT].getPolyVoltage(c);
+		float freq = dsp::FREQ_C4 * std::pow(2.f, pitch);
+
+		phase[c] += freq * args.sampleTime;
+		if (phase[c] &gt;= 1.f)
+			phase[c] -= 1.f;
+
+		float sine = std::sin(2.f * M_PI * phase);
+		// 通过第二个参数设置第 c 个通道。
+		outputs[SINE_OUTPUT].setVoltage(5.f * sine, c);
+	}
+
+	// 设置每个输出的通道数。
+	outputs[SINE_OUTPUT].setChannels(channels);
+}
+</code></pre>
+<p>提示：如果模块使用多个实例变量，可以将每个通道的状态组织为结构体数组。</p>
+<pre><code class="language-cpp">struct OscillatorEngine {
+	float phase = 0.f;
+};
+OscillatorEngine engines[16];
+</code></pre>
+<p>然后可以在 for 循环中用以下方式访问每个引擎：</p>
+<pre><code class="language-cpp">OscillatorEngine&amp; engine = engines[c];
+engine.phase = ...
+</code></pre>
+<h2 id="SIMD-library">SIMD 库</h2>
+<p>现代 CPU 能够使用 <a href="https://en.wikipedia.org/wiki/Single_instruction,_multiple_data" rel="noreferrer noopener">SIMD（单指令多数据）</a>指令集，用一条指令操作多个值。
+例如，与其用 4 条顺序指令执行</p>
+<pre><code class="language-cpp">a[0] += 1;
+a[1] += 1;
+a[2] += 1;
+a[3] += 1;
+</code></pre>
+<p>不如使用一条 4 元素 SIMD 指令并行完成所有操作，因此在受 CPU 限制的算法中可预期约 4 倍的性能提升。
+（实际加速通常更小，原因包括内存瓶颈、指令吞吐瓶颈、<a href="https://en.wikipedia.org/wiki/Amdahl%27s_law" rel="noreferrer noopener">阿姆达尔定律</a>等。）</p>
+<p>x64 上的 VCV Rack 最高支持 SSE4.2 扩展，可对 32 位浮点或整数的 4 元素向量进行操作。
+Rack 的 SIMD 库包含 <code>simd::float_4</code> 和 <code>simd::int32_4</code> 数据类型，其行为类似 <code>float</code> 和 <code>int32_t</code> 值的 4 元素数组。
+不过，你可以用 <code>+ - * / += -= *= /=</code> 等运算符将这些数组当作单个（标量）值处理。
+<code>sin()</code>、<code>exp()</code> 和 <code>floor()</code> 等若干数学函数也可用于 <code>float_4</code>。</p>
+<p>可以用索引表示法 <code>a[i]</code> 访问 SIMD 数组元素，但频繁这样做会抵消 SIMD 的优势。
+性能会降到与串行非 SIMD 代码一样慢。</p>
+<p>我们可以用 SIMD 类型重写上一节的"正弦振荡器"示例。
+用 4 个 <code>float_4</code> 值代替 16 个 <code>float</code> 值。</p>
+<pre><code class="language-cpp">using simd::float_4;
+float_4 phase[4] = {};
+</code></pre>
+<p>然后将循环重写为一次处理 4 个通道。</p>
+<pre><code class="language-cpp">void process(const ProcessArgs &amp;args) override {
+	int channels = std::max(1, inputs[PITCH_INPUT].getChannels());
+
+	// 每次遍历 4 个通道组成的向量，而不是一次一个通道。
+	for (int c = 0; c &lt; channels; c += 4) {
+		float_4 pitch = params[PITCH_PARAM].getValue();
+		// 从通道 c 开始取出 4 个电压组成的向量。
+		pitch += inputs[PITCH_INPUT].getPolyVoltageSimd&lt;float_4&gt;(c);
+		// 使用 simd:: 命名空间下的数学函数，而不是 std:: 的。
+		float_t freq = dsp::FREQ_C4 * simd::pow(2.f, pitch);
+
+		// 大多数算术运算符都为 float_4 类型做了重载。
+		// 这里把一个 float_4 与一个浮点标量相乘。
+		phase[c / 4] += freq * args.sampleTime;
+		// 不能对 SIMD 元素做分支，否则会失去它们的性能优势。
+		// 取而代之，想办法在不分支的前提下得到相同结果。
+		phase[c / 4] -= simd::trunc(phase[c / 4]);
+
+		float_4 sine = simd::sin(2.f * M_PI * phase);
+		outputs[SINE_OUTPUT].setVoltageSimd(5.f * sine, c);
+	}
+
+	// 设置每个输出的通道数。
+	outputs[SINE_OUTPUT].setChannels(channels);
+}
+</code></pre>
+<p>虽然跨多个复音通道的 SIMD 并行化是常见做法，你也可以对单个通道内的计算应用并行化。
+卷积、滤波器和立体声/四声道处理都能从 SIMD 优化中受益。</p>
+<h2 id="DSP-library">DSP 库</h2>
+<p>Rack 的 API 包含若干 DSP 头文件，例如：</p>
+<ul>
+<li><a href="https://vcvrack.com/docs-v2/dsp_2common_8hpp">常用函数与常量</a></li>
+<li><a href="https://vcvrack.com/docs-v2/digital_8hpp">触发检测器、脉冲发生器等数字工具</a></li>
+<li><a href="https://vcvrack.com/docs-v2/approx_8hpp">常用数学函数的快速近似</a></li>
+<li><a href="https://vcvrack.com/docs-v2/fft_8hpp">FFT（快速傅里叶变换）</a></li>
+<li><a href="https://vcvrack.com/docs-v2/resampler_8hpp">采样率转换器</a></li>
+<li><a href="https://vcvrack.com/docs-v2/ode_8hpp">ODE（常微分方程）求解器</a></li>
+<li><a href="https://vcvrack.com/docs-v2/filter_8hpp">常用滤波器处理器</a></li>
+</ul>
+<p>为进一步优化上面的"正弦振荡器"示例，我们可以将 <code>simd::pow(2.f, pitch)</code> 替换为 <code>dsp::exp2_taylor5(pitch)</code>，它以足够的精度近似 <math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mn>2</mn><mi>x</mi></msup></mrow><annotation encoding="application/x-tex">2^x</annotation></semantics></math>，可用于电压到频率转换而无听感误差。</p>
+<p>VCV 一直在寻找更多工具加入其 DSP 库。
+如果你有需求，请通过 <a href="https://vcvrack.com/support">VCV Support</a> 告知我们。</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://vcvrack.com/manual/PluginGuide" rel="noreferrer noopener">vcvrack.com/manual/PluginGuide</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
