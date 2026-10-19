@@ -48,5 +48,9 @@ window.PT_LIBRARIES = [
   { dir: 'juce-tutorials', title: 'JUCE 教程',
     desc: 'JUCE 官方教程的中文译本。',
     source: 'https://juce.com/learn/tutorials/',
-    updated: '2026-10-18', pages: 62 }
+    updated: '2026-10-18', pages: 62 },
+  { dir: 'juce-docs', title: 'JUCE 参考文档',
+    desc: 'JUCE 官方 API 参考文档的中文译本。',
+    source: 'https://docs.juce.com/master/index.html',
+    updated: '2026-10-19', pages: 1160 }
 ];
