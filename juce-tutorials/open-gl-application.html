@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>构建 OpenGL 应用程序 - JUCE 教程</title>
+<meta name="description" content="构建 OpenGL 应用程序：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>构建 OpenGL 应用程序</h1>
+<p>了解如何在JUCE应用程序中将OpenGL作为高性能渲染库使用。在你的音频应用和插件中渲染精美的2D和3D图形。</p>
+<p><strong>难度：</strong>高级<br><strong>平台：</strong>Windows、macOS、Linux、iOS、Android<br><strong>类：</strong><a href="https://docs.juce.com/master/classOpenGLAppComponent.html" rel="noreferrer noopener">OpenGLAppComponent</a>、<a href="https://docs.juce.com/master/classOpenGLContext.html" rel="noreferrer noopener">OpenGLContext</a>、<a href="https://docs.juce.com/master/classOpenGLShaderProgram.html" rel="noreferrer noopener">OpenGLShaderProgram</a>、<a href="https://docs.juce.com/master/classOpenGLHelpers.html" rel="noreferrer noopener">OpenGLHelpers</a>、<a href="https://docs.juce.com/master/classMatrix3D.html" rel="noreferrer noopener">Matrix3D</a>、<a href="https://docs.juce.com/master/classVector3D.html" rel="noreferrer noopener">Vector3D</a></p>
+<h2>入门</h2>
+<p>本教程假定你已对OpenGL图形库有基本了解。如果你不熟悉<a href="https://en.wikipedia.org/wiki/OpenGL" rel="noreferrer noopener">OpenGL</a>，应先在<a href="https://www.opengl.org" rel="noreferrer noopener">此处</a>了解它。</p>
+<p>在此处下载本教程的示例项目：<a href="https://docs.juce.com/tutorials/PIPs/OpenGLAppTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/OpenGLAppTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目并在Projucer中打开第一个头文件。</p>
+<blockquote>
+      <p>如果使用本项目的PIP版本，请务必把<code>Resources</code>文件夹复制到生成的Projucer项目中。</p>
+    </blockquote>
+<p>如果你在这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer第1部分：Projucer入门</a>。</p>
+<h2>示例项目</h2>
+<p>示例项目通过解析Wavefront「.obj」文件，以3D图形显示标准的OpenGL茶壶对象，如下方截图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_open_gl_application_screenshot1.png" alt="示例项目应用窗口">
+<figcaption>示例项目应用窗口</figcaption>
+</figure>
+<blockquote>
+      <p>这里给出的代码与JUCE示例中的<strong>OpenGLAppExample</strong>大致相似。</p>
+    </blockquote>
+<h2>OpenGL应用程序剖析</h2>
+<p>尽管OpenGL API是一个强大且通用的库，能在许多不同的平台和构建环境中工作，但3D渲染的原理在所有应用程序中都保持相似。我们在此探讨的一些术语是理解OpenGL如何执行渲染例程的基础：</p>
+<ul>
+<li>GL上下文：上下文在初始化阶段设置一次，以平台特定的方式描述图形渲染器的GL设置，并加载应用程序中要使用的必要OpenGL函数。
+</li>
+<li>投影矩阵：投影矩阵让我们能把3D对象转换到2D平面，以便场景在屏幕上渲染。
+</li>
+<li>视图矩阵：视图矩阵让我们能在3D环境中执行几何变换，把对象放置在场景中。
+</li>
+<li>着色器：为了定制对象的外观，着色器用于描述材质的属性，例如我们的表面有多光亮或多反光，以及光照和阴影在我们的3D对象上如何呈现。
+</li>
+<li>顶点：它们代表定义我们试图在场景中渲染的3D对象的3D点。它们在顶点着色器中使用。
+</li>
+<li>片元：它们代表通过插值存在于顶点之间的像素。它们在片元着色器或像素着色器中使用。
+</li>
+<li>属性：它们描述在着色器语言中使用的顶点参数，例如颜色和纹理坐标。
+</li>
+<li>uniform：它们描述在着色器语言中使用的全局参数，但在不同着色器程序之间保持不变。
+</li>
+<li>varying：它们描述在顶点着色器程序和片元着色器程序之间共享的参数。
+</li>
+<li>形状：它们封装了我们最终要在应用程序中渲染的多边形。在本例中，就是茶壶。
+</li>
+</ul>
+<h2>OpenGL着色语言</h2>
+<p>OpenGL着色语言即GLSL，是一种C风格的语言，让你可以直接控制多个操作系统和硬件显卡上的图形渲染管线。使用GLSL，我们可以编写称为着色器的小程序来描述对象的外观。无论我们使用的是OpenGL还是专为智能手机和平板电脑等嵌入式系统设计的子集库OpenGL ES，语言语法都保持不变，但需要考虑性能方面的因素。</p>
+<p>例如，本教程中使用的顶点着色器如下所示：</p>
+<pre><code>// OpenGL and OpenGL ES
+attribute vec4 position;
+attribute vec4 sourceColour;
+attribute vec2 textureCoordIn;
+uniform mat4 projectionMatrix;
+uniform mat4 viewMatrix;
+varying vec4 destinationColour;
+varying vec2 textureCoordOut;
+void main()
+{
+destinationColour = sourceColour;
+textureCoordOut = textureCoordIn;
+gl_Position = projectionMatrix * viewMatrix * position;
+}</code></pre>
+<p>而本教程中使用的片元着色器如下所示：</p>
+<pre><code>// OpenGL
+varying vec4 destinationColour;
+varying vec2 textureCoordOut;
+void main()
+{
+    vec4 colour = vec4 (0.95, 0.57, 0.03, 0.7);
+    gl_FragColor = colour;
+}
+// OpenGL ES
+varying lowp vec4 destinationColour;
+varying lowp vec2 textureCoordOut;
+void main()
+{
+    lowp vec4 colour = vec4 (0.95, 0.57, 0.03, 0.7);
+    gl_FragColor = colour;
+}</code></pre>
+<p>如你所见，着色器相当简单，OpenGL与OpenGL ES着色器之间的差异也很小。这里使用的GLSL类型、变量和函数如下：</p>
+<ul>
+<li><code>vec2/vec4</code>：表示具有2个或4个分量的浮点向量。
+</li>
+<li><code>mat4</code>：表示一个4×4浮点矩阵。
+</li>
+<li><code>lowp</code>：为OpenGL ES指定较低精度的数据类型。
+</li>
+<li><code>attribute</code>：表示特定于顶点的参数。
+</li>
+<li><code>uniform</code>：表示描述GL环境的全局参数。
+</li>
+<li><code>varying</code>：表示顶点着色器与片元着色器之间共享的参数。
+</li>
+<li><code>gl_Position</code>：变换后的顶点位置，供顶点着色器执行顶点操作。
+</li>
+<li><code>gl_FragColor</code>：供片元着色器执行片元操作的颜色。
+</li>
+<li><code>main()</code>：主函数，顶点或片元着色器的计算在这里执行。
+</li>
+</ul>
+<h2>OpenGLAppComponent类</h2>
+<p>在JUCE中，<a href="https://docs.juce.com/master/classOpenGLAppComponent.html" rel="noreferrer noopener">OpenGLAppComponent</a>类与<a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a>类非常相似，但它用于图形应用程序。继承<a href="https://docs.juce.com/master/classOpenGLAppComponent.html" rel="noreferrer noopener">OpenGLAppComponent</a>类时，我们必须重写几个函数，即：</p>
+<ul>
+<li>initialise()：此函数准备渲染所需的任何GL对象，例如着色器。
+</li>
+<li>render()：render函数由OpenGL渲染器调用，投影矩阵和视图矩阵就在这里计算，以绘制OpenGL上下文。
+</li>
+<li>shutdown()：此函数清除用于渲染的任何GL对象，例如着色器。
+</li>
+<li>shutdownOpenGL()：在我们子类的析构函数中，必须调用此函数，以便在类被销毁之前关闭GL系统。
+</li>
+</ul>
+<p>现在我们已经探索了OpenGL的基础知识，让我们开始实现茶壶渲染！</p>
+<h2>计算投影矩阵和视图矩阵</h2>
+<p>为了将投影矩阵和视图矩阵的计算解耦，我们创建两个辅助函数来返回这些矩阵，以供后续使用。</p>
+<p>首先，我们使用视锥体和屏幕边界计算投影矩阵，如下所示：</p>
+<pre><code>juce::Matrix3D&lt;float&gt; getProjectionMatrix() const
+{
+    auto w = 1.0f / (0.5f + 0.1f); // [1]
+    auto h = w * getLocalBounds().toFloat().getAspectRatio (false); // [2]
+    return juce::Matrix3D&lt;float&gt;::fromFrustum (-w, w, -h, h, 4.0f, 30.0f); // [3]
+}</code></pre>
+<p>视锥体是用两个平行平面切割多边形后得到的形状，<a href="https://docs.juce.com/master/classMatrix3D.html" rel="noreferrer noopener">Matrix3D</a>类提供了一个方便的函数<code>fromFrustum()</code>，可以从视锥体返回矩阵。在上面的函数中：</p>
+<ul>
+<li>[1]：我们首先声明一个宽度变量，用对我们的场景有效的任意数值来定义近平面上的视锥体宽度的一半。
+</li>
+<li>[2]：然后声明一个高度变量，根据屏幕比例和宽度变量来定义近平面上的视锥体高度的一半。
+</li>
+<li>[3]：最后我们以宽度、高度、近平面和远平面距离作为参数使用<code>fromFrustum()</code>函数来获取投影矩阵。这给我们一个透视投影，而不是正交投影。
+</li>
+</ul>
+<p>接下来，我们使用旋转矩阵计算视图矩阵，以让茶壶动起来，如下所示：</p>
+<pre><code>juce::Matrix3D&lt;float&gt; getViewMatrix() const
+{
+    auto viewMatrix = juce::Matrix3D&lt;float&gt;::fromTranslation ({ 0.0f, 0.0f, -10.0f }); // [4]
+    auto rotationMatrix = viewMatrix.rotation ({ -0.3f,
+        5.0f * std::sin ((float) getFrameCounter() * 0.01f),
+        0.0f }); // [5]
+    return viewMatrix * rotationMatrix; // [6]
+}</code></pre>
+<ul>
+<li>[4]：首先我们创建一个由向量平移的单位矩阵，把矩阵向场景深处推10个单位。这把我们的茶壶放在屏幕正中央，但稍微偏远了一点。
+</li>
+<li>[5]：然后我们根据前面定义的矩阵创建一个旋转矩阵，根据渲染帧计数让茶壶绕y轴旋转。这还会让旋转以正弦函数的速率来回改变方向。
+</li>
+<li>[6]：最后我们通过相乘这些矩阵来应用旋转，并返回视图矩阵。
+</li>
+</ul>
+<p>数学计算部分已完成，接下来我们可以开始编写着色器程序了。</p>
+<h2>编写OpenGL着色器</h2>
+<p>让我们先定义一些有用的成员变量，我们将在整个教程代码库中使用它们：</p>
+<pre><code>juce::String vertexShader;
+juce::String fragmentShader;
+std::unique_ptr&lt;juce::OpenGLShaderProgram&gt; shader;
+std::unique_ptr&lt;Shape&gt; shape;
+std::unique_ptr&lt;Attributes&gt; attributes;
+std::unique_ptr&lt;Uniforms&gt; uniforms;
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
+};</code></pre>
+<p>这里我们定义了几个指向形状、属性和uniform的指针，我们将在本GL上下文中使用它们，还定义了一个管理着色器程序的<a href="https://docs.juce.com/master/classOpenGLShaderProgram.html" rel="noreferrer noopener">OpenGLShaderProgram</a>对象。我们还用两个char指针来定义顶点着色器和片元着色器，如下一步所示：</p>
+<pre><code>void createShaders()
+{
+    vertexShader = R"(
+ attribute vec4 position;
+ attribute vec4 sourceColour;
+ attribute vec2 textureCoordIn;
+ uniform mat4 projectionMatrix;
+ uniform mat4 viewMatrix;
+ varying vec4 destinationColour;
+ varying vec2 textureCoordOut;
+ void main()
+ {
+ destinationColour = sourceColour;
+ textureCoordOut = textureCoordIn;
+ gl_Position = projectionMatrix * viewMatrix * position;
+ })";
+    fragmentShader =
+#if JUCE_OPENGL_ES
+        R"(varying lowp vec4 destinationColour;
+ varying lowp vec2 textureCoordOut;)"
+#else
+        R"(varying vec4 destinationColour;
+ varying vec2 textureCoordOut;)"
+#endif
+        R"(
+ void main()
+ {)"
+#if JUCE_OPENGL_ES
+        R"( lowp vec4 colour = vec4(0.95, 0.57, 0.03, 0.7);)"
+#else
+        R"( vec4 colour = vec4(0.95, 0.57, 0.03, 0.7);)"
+#endif
+        R"( gl_FragColor = colour;
+ })";</code></pre>
+<p>在<code>createShaders()</code>函数中，我们首先通过插入换行符，把前面展示的着色器复制到char指针中。这个函数稍后会在<a href="https://docs.juce.com/master/classOpenGLAppComponent.html" rel="noreferrer noopener">OpenGLAppComponent</a>的<code>initialise()</code>函数中被调用。顶点着色器本质上通过把「gl_Position」变量设置为变换矩阵的乘积（即投影矩阵之后紧跟视图矩阵），来设置形状中每个顶点的位置。至于片元着色器，像素的颜色通过把「gl_FragColor」变量设置为指定的颜色来指定。</p>
+<p>在<code>createShaders()</code>函数的后半部分，我们在当前GL上下文中创建一个新的着色器程序 [1]，并执行一些初始化，如下所示：</p>
+<pre><code>std::unique_ptr&lt;juce::OpenGLShaderProgram&gt; newShader (new juce::OpenGLShaderProgram (openGLContext)); // [1]
+juce::String statusText;
+if (newShader-&gt;addVertexShader (juce::OpenGLHelpers::translateVertexShaderToV3 (vertexShader)) // [2]
+    &amp;&amp; newShader-&gt;addFragmentShader (juce::OpenGLHelpers::translateFragmentShaderToV3 (fragmentShader))
+    &amp;&amp; newShader-&gt;link())
+{
+    shape.reset();
+    attributes.reset();
+    uniforms.reset();
+    shader.reset (newShader.release()); // [3]
+    shader-&gt;use();
+    shape.reset (new Shape());
+    attributes.reset (new Attributes (*shader));
+    uniforms.reset (new Uniforms (*shader));
+    statusText = "GLSL: v" + juce::String (juce::OpenGLShaderProgram::getLanguageVersion(), 2);
+}
+else
+{
+    statusText = newShader-&gt;getLastError(); // [4]
+}
+}</code></pre>
+<ul>
+<li>[2]：我们首先添加顶点着色器，然后是片元着色器，并尝试把编译后的着色器链接成单个程序。
+</li>
+<li>[3]：如果着色器的编译和链接成功，我们可以清空shape、attributes和uniforms指针，把新创建的着色器赋给着色器程序指针，并为shape、attributes和uniforms指针实例化新对象。
+</li>
+<li>[4]：我们还可以选择跟踪初始化状态，以防着色器编译失败。
+</li>
+</ul>
+<p>现在让我们定义有用的结构体来表示顶点、属性、uniform和形状。</p>
+<h3>Vertex结构体</h3>
+<p>为了表示一个顶点，我们需要四个重要的变量，如下所示：</p>
+<pre><code>struct Vertex
+{
+    float position[3];
+    float normal[3];
+    float colour[4];
+    float texCoord[2];
+};</code></pre>
+<ul>
+<li>位置：position数组表示顶点在3D局部空间中的位置。
+</li>
+<li>法线：normal数组表示该顶点的法线向量方向，由相邻面的法线计算得出。
+</li>
+<li>颜色：colour数组以RGBA格式表示顶点的颜色。
+</li>
+<li>纹理坐标：如果使用了纹理，它表示要在该顶点上使用的纹理的2D坐标。
+</li>
+</ul>
+<h3>Attributes结构体</h3>
+<p>attributes结构体本质上是一个容器类，用于把多个<a href="structOpenGLShaderProgram_1_1Attribute.html" rel="noreferrer noopener">OpenGLShaderProgram::Attribute</a>对象放在一起，我们存储的属性在此定义：</p>
+<pre><code>std::unique_ptr&lt;juce::OpenGLShaderProgram::Attribute&gt; position, normal, sourceColour, textureCoordIn;</code></pre>
+<p>它们与前面定义的Vertex结构体中的变量完全对应，因为属性旨在描述顶点着色器程序中的顶点参数。</p>
+<p>如你所料，我们在构造函数中通过把着色器程序作为参数传入，调用下一步定义的私有辅助函数来创建这些属性：</p>
+<pre><code>explicit Attributes (juce::OpenGLShaderProgram&amp; shaderProgram)
+{
+    position.reset (createAttribute (shaderProgram, "position"));
+    normal.reset (createAttribute (shaderProgram, "normal"));
+    sourceColour.reset (createAttribute (shaderProgram, "sourceColour"));
+    textureCoordIn.reset (createAttribute (shaderProgram, "textureCoordIn"));
+}</code></pre>
+<p>该辅助函数会调用<a href="structOpenGLShaderProgram_1_1Attribute.html" rel="noreferrer noopener">OpenGLShaderProgram::Attribute</a>构造函数来实例化新对象：</p>
+<pre><code>private:
+static juce::OpenGLShaderProgram::Attribute* createAttribute (juce::OpenGLShaderProgram&amp; shader,
+    const juce::String&amp; attributeName)
+{
+    using namespace ::juce::gl;
+    if (glGetAttribLocation (shader.getProgramID(), attributeName.toRawUTF8()) &lt; 0)
+        return nullptr;
+    return new juce::OpenGLShaderProgram::Attribute (shader, attributeName.toRawUTF8());
+}</code></pre>
+<p>不过，在上面的代码中，我们首先使用<code>glGetAttribLocation()</code>函数检查该属性是否存在于着色器程序中。如果返回的数字是 -1，我们就中止属性的实例化。</p>
+<p>在<code>enable()</code>函数中，通过调用<code>glVertexAttribPointer()</code>和<code>glEnableVertexAttribArray()</code>函数（在检查它们是否存在之后）激活所有属性，如下所示：</p>
+<pre><code>void enable()
+{
+    using namespace ::juce::gl;
+    if (position.get() != nullptr)
+    {
+        glVertexAttribPointer (position-&gt;attributeID, 3, GL_FLOAT, GL_FALSE, sizeof (Vertex), nullptr);
+        glEnableVertexAttribArray (position-&gt;attributeID);
+    }
+    if (normal.get() != nullptr)
+    {
+        glVertexAttribPointer (normal-&gt;attributeID, 3, GL_FLOAT, GL_FALSE, sizeof (Vertex), (GLvoid*) (sizeof (float) * 3));
+        glEnableVertexAttribArray (normal-&gt;attributeID);
+    }
+    if (sourceColour.get() != nullptr)
+    {
+        glVertexAttribPointer (sourceColour-&gt;attributeID, 4, GL_FLOAT, GL_FALSE, sizeof (Vertex), (GLvoid*) (sizeof (float) * 6));
+        glEnableVertexAttribArray (sourceColour-&gt;attributeID);
+    }
+    if (textureCoordIn.get() != nullptr)
+    {
+        glVertexAttribPointer (textureCoordIn-&gt;attributeID, 2, GL_FLOAT, GL_FALSE, sizeof (Vertex), (GLvoid*) (sizeof (float) * 10));
+        glEnableVertexAttribArray (textureCoordIn-&gt;attributeID);
+    }
+}</code></pre>
+<p><code>glVertexAttribPointer()</code>函数定义顶点属性数据的数组，包含数据的索引、大小和类型等信息。注意最后一个参数指定了数据相对于结构体中前面定义的其他属性的累积偏移量。然后<code>glEnableVertexAttribArray()</code>函数启用实际的数组，以便在上下文中使用。</p>
+<p>在<code>disable()</code>函数中，我们通过对所有属性调用<code>glDisableVertexAttribArray()</code>函数来做完全相反的操作：</p>
+<pre><code>void disable()
+{
+    using namespace ::juce::gl;
+    if (position.get() != nullptr)
+        glDisableVertexAttribArray (position-&gt;attributeID);
+    if (normal.get() != nullptr)
+        glDisableVertexAttribArray (normal-&gt;attributeID);
+    if (sourceColour.get() != nullptr)
+        glDisableVertexAttribArray (sourceColour-&gt;attributeID);
+    if (textureCoordIn.get() != nullptr)
+        glDisableVertexAttribArray (textureCoordIn-&gt;attributeID);
+}</code></pre>
+<h3>Uniforms结构体</h3>
+<p>uniforms结构体同样以相同的方式包含多个<a href="structOpenGLShaderProgram_1_1Uniform.html" rel="noreferrer noopener">OpenGLShaderProgram::Uniform</a>对象，如此处所定义：</p>
+<pre><code>std::unique_ptr&lt;juce::OpenGLShaderProgram::Uniform&gt; projectionMatrix, viewMatrix;</code></pre>
+<p>它们与前面在顶点着色器程序中定义的矩阵变量完全对应。</p>
+<p>如你所料，我们在构造函数中通过把着色器程序作为参数传入，调用下一步定义的私有辅助函数来创建这些属性：</p>
+<pre><code>explicit Uniforms (juce::OpenGLShaderProgram&amp; shaderProgram)
+{
+    projectionMatrix.reset (createUniform (shaderProgram, "projectionMatrix"));
+    viewMatrix.reset (createUniform (shaderProgram, "viewMatrix"));
+}</code></pre>
+<p>该辅助函数会调用<a href="structOpenGLShaderProgram_1_1Uniform.html" rel="noreferrer noopener">OpenGLShaderProgram::Uniform</a>构造函数来实例化新对象：</p>
+<pre><code>private:
+static juce::OpenGLShaderProgram::Uniform* createUniform (juce::OpenGLShaderProgram&amp; shaderProgram,
+    const juce::String&amp; uniformName)
+{
+    using namespace ::juce::gl;
+    if (glGetUniformLocation (shaderProgram.getProgramID(), uniformName.toRawUTF8()) &lt; 0)
+        return nullptr;
+    return new juce::OpenGLShaderProgram::Uniform (shaderProgram, uniformName.toRawUTF8());
+}
+};</code></pre>
+<p>不过，在上面的代码中，我们首先使用<code>glGetUniformLocation()</code>函数检查该uniform是否存在于着色器程序中。如果返回的数字是 -1，我们就中止uniform的实例化。</p>
+<h3>Shape结构体</h3>
+<p>shape结构体是我们用OpenGL术语定义茶壶对象的地方。成员变量用于存储茶壶模型的Wavefront Obj文件，以及一个在下面作为子结构定义的顶点缓冲区数组：</p>
+<pre><code>WavefrontObjFile shapeFile;
+juce::OwnedArray&lt;VertexBuffer&gt; vertexBuffers;</code></pre>
+<p>让我们先看看顶点缓冲区是如何定义的。它本质上包含网格中索引的总数，以及一个顶点缓冲区和一个索引缓冲区，为后续渲染做准备：</p>
+<pre><code>GLuint vertexBuffer, indexBuffer;
+int numIndices;
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VertexBuffer)
+};</code></pre>
+<p>类构造函数按以下方式初始化顶点缓冲区：</p>
+<pre><code>explicit VertexBuffer (WavefrontObjFile::Shape&amp; aShape)
+{
+    using namespace ::juce::gl;
+    numIndices = aShape.mesh.indices.size(); // [1]
+    glGenBuffers (1, &amp;vertexBuffer); // [2]
+    glBindBuffer (GL_ARRAY_BUFFER, vertexBuffer);
+    juce::Array&lt;Vertex&gt; vertices;
+    createVertexListFromMesh (aShape.mesh, vertices, juce::Colours::green); // [3]
+    glBufferData (GL_ARRAY_BUFFER, // [4]
+        static_cast&lt;GLsizeiptr&gt; (static_cast&lt;size_t&gt; (vertices.size()) * sizeof (Vertex)),
+        vertices.getRawDataPointer(),
+        GL_STATIC_DRAW);
+    glGenBuffers (1, &amp;indexBuffer); // [5]
+    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+    glBufferData (GL_ELEMENT_ARRAY_BUFFER,
+        static_cast&lt;GLsizeiptr&gt; (static_cast&lt;size_t&gt; (numIndices) * sizeof (juce::uint32)),
+        aShape.mesh.indices.getRawDataPointer(),
+        GL_STATIC_DRAW);
+}</code></pre>
+<ul>
+<li>[1]：我们首先获取要绘制的网格中的索引数量。
+</li>
+<li>[2]：然后我们用<code>glGenBuffers()</code>函数为单个顶点缓冲区生成缓冲区对象名称，并用<code>glBindBuffer()</code>函数把顶点属性绑定到它。
+</li>
+<li>[3]：使用下面定义的辅助函数，我们从茶壶网格创建顶点列表。
+</li>
+<li>[4]：接着我们可以通过调用<code>glBufferData()</code>函数把顶点列表复制到顶点缓冲区。
+</li>
+<li>[5]：最后我们对索引缓冲区做同样的事：生成缓冲区对象名称，把顶点数组索引绑定到它，并把索引复制到索引缓冲区。
+</li>
+</ul>
+<p>从顶点列表创建网格的辅助函数定义如下：</p>
+<pre><code>static void createVertexListFromMesh (const WavefrontObjFile::Mesh&amp; mesh, juce::Array&lt;Vertex&gt;&amp; list, juce::Colour colour)
+{
+    auto scale = 0.2f; // [6]
+    WavefrontObjFile::TextureCoord defaultTexCoord { 0.5f, 0.5f };
+    WavefrontObjFile::Vertex defaultNormal { 0.5f, 0.5f, 0.5f };
+    for (auto i = 0; i &lt; mesh.vertices.size(); ++i) // [7]
+    {
+        const auto&amp; v = mesh.vertices.getReference (i);
+        const auto&amp; n = i &lt; mesh.normals.size() ? mesh.normals.getReference (i) : defaultNormal;
+        const auto&amp; tc = i &lt; mesh.textureCoords.size() ? mesh.textureCoords.getReference (i) : defaultTexCoord;
+        list.add ({ {
+                        scale * v.x,
+                        scale * v.y,
+                        scale * v.z,
+                    },
+            {
+                scale * n.x,
+                scale * n.y,
+                scale * n.z,
+            },
+            { colour.getFloatRed(), colour.getFloatGreen(), colour.getFloatBlue(), colour.getFloatAlpha() },
+            { tc.x, tc.y } }); // [8]
+    }
+}</code></pre>
+<ul>
+<li>[6]：我们首先定义几个局部变量，用于网格缩放、默认纹理坐标和默认法线向量。
+</li>
+<li>[7]：然后对网格中的每个顶点，我们获取顶点位置、法线向量和纹理坐标的引用，以创建我们前面定义的新Vertex对象。
+</li>
+<li>[8]：在创建的Vertex对象上，我们缩放位置和法线向量，赋予一个占位的绿色，最后把它添加到顶点列表中。
+</li>
+</ul>
+<p>在析构函数中，我们通过对每个变量调用<code>glDeleteBuffers()</code>函数来删除顶点缓冲区和索引缓冲区：</p>
+<pre><code>~VertexBuffer()
+{
+    using namespace ::juce::gl;
+    glDeleteBuffers (1, &amp;vertexBuffer);
+    glDeleteBuffers (1, &amp;indexBuffer);
+}</code></pre>
+<p>下面定义的<code>bind()</code>函数在绘制形状时被调用，它使用<code>glBindBuffer()</code>函数绑定顶点缓冲区和索引缓冲区：</p>
+<pre><code>void bind()
+{
+    using namespace ::juce::gl;
+    glBindBuffer (GL_ARRAY_BUFFER, vertexBuffer);
+    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+}</code></pre>
+<p>现在让我们回到shape构造函数，茶壶的二进制数据在这里被加载到WavefrontObjFile变量中：</p>
+<pre><code>Shape()
+{
+    auto dir = juce::File::getCurrentWorkingDirectory();
+    int numTries = 0;
+    while (!dir.getChildFile ("Resources").exists() &amp;&amp; numTries++ &lt; 15)
+        dir = dir.getParentDirectory();
+    if (shapeFile.load (dir.getChildFile ("Resources").getChildFile ("teapot.obj")).wasOk())
+        for (auto* s : shapeFile.shapes)
+            vertexBuffers.add (new VertexBuffer (*s));
+}</code></pre>
+<blockquote>
+      <p>请确保「teapot.obj」文件存在于你项目的<code>Resources</code>文件夹中。</p>
+    </blockquote>
+<p>如果加载成功，我们可以遍历WavefrontObjFile对象中包含的每个形状，创建一个新的VertexBuffer对象并把它添加到顶点缓冲区数组中。</p>
+<p>最后，我们实现一个<code>draw()</code>函数，它稍后会在<a href="https://docs.juce.com/master/classOpenGLAppComponent.html" rel="noreferrer noopener">OpenGLAppComponent</a>的<code>render()</code>函数中被调用，定义如下：</p>
+<pre><code>void draw (Attributes&amp; glAttributes)
+{
+    using namespace ::juce::gl;
+    for (auto* vertexBuffer : vertexBuffers)
+    {
+        vertexBuffer-&gt;bind();
+        glAttributes.enable();
+        glDrawElements (GL_TRIANGLES, vertexBuffer-&gt;numIndices, GL_UNSIGNED_INT, nullptr);
+        glAttributes.disable();
+    }
+}</code></pre>
+<p>对于成员变量数组中的每个顶点缓冲区，我们首先调用<code>bind()</code>函数把顶点缓冲区和索引缓冲区绑定到GL上下文。然后我们对每个属性调用前面定义的<code>enable()</code>函数，用数据填充数组。最后，<code>glDrawElements</code>函数把顶点缓冲区中包含的每三个顶点作为三角形绘制出来，之后属性被禁用并清空。</p>
+<h2>整合所有内容</h2>
+<p>现在我们已经有了渲染茶壶所需的所有组件，所以让我们把它们整合起来。</p>
+<p>如前所述，我们的应用继承自<a href="https://docs.juce.com/master/classOpenGLAppComponent.html" rel="noreferrer noopener">OpenGLAppComponent</a>类，如<code>MainContentComponent</code>类中所示：</p>
+<pre><code>class MainContentComponent : public juce::OpenGLAppComponent
+{
+public:</code></pre>
+<p>在类构造函数中，我们照常用<code>setSize()</code>函数设置窗口的大小：</p>
+<pre><code>MainContentComponent()
+{
+    setSize (800, 600);
+}</code></pre>
+<p>在类析构函数中，我们通过调用<code>shutdownOpenGL()</code>函数确保在类被销毁之前关闭OpenGL系统：</p>
+<pre><code>~MainContentComponent() override
+{
+    shutdownOpenGL();
+}</code></pre>
+<p>如前所述，<a href="https://docs.juce.com/master/classOpenGLAppComponent.html" rel="noreferrer noopener">OpenGLAppComponent</a>类提供启动和关闭函数，以便于我们实现图形应用程序。在<code>initialise()</code>函数中，我们调用前面定义的辅助函数<code>createShaders()</code>来准备顶点着色器和片元着色器，如下所示：</p>
+<pre><code>void initialise() override
+{
+    createShaders();
+}</code></pre>
+<p>至于<code>shutdown()</code>函数，我们通过把所有成员变量指针设为null来确保没有泄漏，如此处所示：</p>
+<pre><code>void shutdown() override
+{
+    shader.reset();
+    shape.reset();
+    attributes.reset();
+    uniforms.reset();
+}</code></pre>
+<p>接下来，我们通过重写<a href="https://docs.juce.com/master/classOpenGLAppComponent.html#af4e76e80318343d5302be7af6bf4cdbc" rel="noreferrer noopener"><code>OpenGLAppComponent::render()</code></a>函数来执行实际的渲染，如下所述：</p>
+<pre><code>void render() override
+{
+    using namespace ::juce::gl;
+    jassert (juce::OpenGLHelpers::isContextActive());
+    auto desktopScale = (float) openGLContext.getRenderingScale(); // [1]
+    juce::OpenGLHelpers::clear (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId)); // [2]
+    glEnable (GL_BLEND); // [3]
+    glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glViewport (0,
+        0,
+        juce::roundToInt (desktopScale * (float) getWidth()),
+        juce::roundToInt (desktopScale * (float) getHeight())); // [4]
+    shader-&gt;use(); // [5]
+    if (uniforms-&gt;projectionMatrix.get() != nullptr) // [6]
+        uniforms-&gt;projectionMatrix-&gt;setMatrix4 (getProjectionMatrix().mat, 1, false);
+    if (uniforms-&gt;viewMatrix.get() != nullptr) // [7]
+        uniforms-&gt;viewMatrix-&gt;setMatrix4 (getViewMatrix().mat, 1, false);
+    shape-&gt;draw (*attributes); // [8]
+    // Reset the element buffers so child Components draw correctly
+    glBindBuffer (GL_ARRAY_BUFFER, 0); // [9]
+    glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0);
+}</code></pre>
+<ul>
+<li>[1]：首先使用<a href="https://docs.juce.com/master/classOpenGLHelpers.html#aeb9c20e316e3aa59046a4fe4cb2562f8" rel="noreferrer noopener"><code>OpenGLHelpers::isContextActive()</code></a>函数检查GL上下文是否处于活动状态，以便我们获取渲染显示的缩放因子。
+</li>
+<li>[2]：然后我们可以用适当的观感颜色绘制背景来清除显示。
+</li>
+<li>[3]：这超出了本教程的范围，但<code>glEnable()</code>函数会激活「GL_BLEND」选项，它把计算得到的片元颜色与颜色缓冲区的值进行混合。混合方法在<code>glBlendFunc()</code>函数中通过指定透明度计算来设定。
+</li>
+<li>[4]：<code>glViewport()</code>函数通过把宽度和高度乘以渲染显示缩放因子，设置GL窗口相对于设备屏幕的视口。
+</li>
+<li>[5]：通过在着色器指针上调用<code>use()</code>函数，我们指定在这个GL上下文中要使用哪个着色器。
+</li>
+<li>[6]：我们把来自辅助函数的投影矩阵设置为uniform变量，以供着色器计算。
+</li>
+<li>[7]：我们同样把来自辅助函数的视图矩阵设置为uniform变量，以供着色器计算。
+</li>
+<li>[8]：最后，我们在shape指针上调用前面定义的<code>draw()</code>函数，以指定的属性作为参数，在GL上下文中渲染茶壶。
+</li>
+<li>[9]：我们还要通过在GL上下文中使用<code>glBindBuffer()</code>函数，确保清空顶点属性和顶点数组索引。
+</li>
+</ul>
+<blockquote>
+      <p>所有带「gl」前缀的函数都包含在你开发机器的OpenGL库中，而不是JUCE库中。</p>
+    </blockquote>
+<h2>总结</h2>
+<p>在本教程中，我们学习了如何设置一个OpenGL JUCE应用程序。具体来说，我们：</p>
+<ul>
+<li>了解了<a href="https://docs.juce.com/master/classOpenGLAppComponent.html" rel="noreferrer noopener">OpenGLAppComponent</a>类的功能。
+</li>
+<li>把Wavefront Obj文件加载到OpenGL渲染器中。
+</li>
+<li>计算了投影矩阵和视图矩阵。
+</li>
+<li>配置了<a href="https://docs.juce.com/master/classOpenGLContext.html" rel="noreferrer noopener">OpenGLContext</a>，并使用着色器渲染外观。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="main-window.html" rel="noreferrer noopener">教程：应用程序窗口</a>
+</li>
+<li><a href="main-component.html" rel="noreferrer noopener">教程：主组件</a>
+</li>
+<li><a href="graphics-class.html" rel="noreferrer noopener">教程：Graphics类</a>
+</li>
+<li><a href="component-parents-children.html" rel="noreferrer noopener">教程：父组件与子组件</a>
+</li>
+<li><a href="animation.html" rel="noreferrer noopener">教程：几何动画</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_open_gl_application/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_open_gl_application/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

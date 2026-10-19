@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文件读取 - JUCE 教程</title>
+<meta name="description" content="文件读取：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>文件读取</h1>
+<p>打开并读取文本文件和二进制文件中的数据。</p>
+<p><strong>难度：</strong>初级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classFile.html" rel="noreferrer noopener">File</a>、<a href="https://docs.juce.com/master/classFileInputStream.html" rel="noreferrer noopener">FileInputStream</a>、<a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>、<a href="https://docs.juce.com/master/classTextEditor.html" rel="noreferrer noopener">TextEditor</a>、<a href="https://docs.juce.com/master/classString.html" rel="noreferrer noopener">String</a>、<a href="https://docs.juce.com/master/classMemoryBlock.html" rel="noreferrer noopener">MemoryBlock</a></p>
+<h2>入门</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/FileReadingTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/FileReadingTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在Projucer中打开第一个头文件。</p>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer第1部分：Projucer入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目呈现一个简单的窗口，允许你使用<a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>对象选择文件。该文件被打开、作为字符串读取，并显示在<a href="https://docs.juce.com/master/classTextEditor.html" rel="noreferrer noopener">TextEditor</a>组件中。</p>
+<h2>JUCE中的文件</h2>
+<p>本教程说明使用JUCE读取文件的基本技术。文件是跨平台开发中需要小心处理的一个方面，因为不同操作系统上的文件系统有时工作方式差异很大。作为使用JUCE的开发者，你无法完全避免这些问题，但JUCE让不同平台上的体验更加一致，并且当它发现你的代码做了可能导致问题的操作时，通常会在调试构建中触发断言。</p>
+<h3>File类</h3>
+<p>JUCE中的<a href="https://docs.juce.com/master/classFile.html" rel="noreferrer noopener">File</a>类表示文件或目录的<em>绝对</em>路径（无论它是否实际存在）。创建<a href="https://docs.juce.com/master/classFile.html" rel="noreferrer noopener">File</a>对象最简单的方法是传入一个包含绝对路径的<a href="https://docs.juce.com/master/classString.html" rel="noreferrer noopener">String</a>。例如，在macOS、Linux或Android上，以下是一个绝对路径：</p>
+<pre><code>juce::File path ("/path/to/file.txt");</code></pre>
+<p>但<a href="https://docs.juce.com/master/classFile.html" rel="noreferrer noopener">File</a>类提供了操作路径的方法，例如请求相对于父目录的子文件、获取父目录等等。例如，上面的代码可以使用<a href="https://docs.juce.com/master/classFile.html#a087bb8f0a60069234b13ab965fb5014a" rel="noreferrer noopener">File::getChildFile()</a>函数像这样重写：</p>
+<pre><code>juce::File path (File ("/path").getChildFile ("to").getChildFile ("file.txt"));</code></pre>
+<p>在这个例子中代码变得更冗长，但在实际场景中，通常需要从同一目录访问多个文件。因此，将父目录存储在一个<a href="https://docs.juce.com/master/classFile.html" rel="noreferrer noopener">File</a>对象中，并在需要时请求子文件是合理的。</p>
+<p>在Windows上，等效的绝对路径可能是：</p>
+<pre><code>juce::File path ("C:\path\to\file.txt");</code></pre>
+<p>处理子目录和父目录在每个平台上都是相同的。JUCE处理平台差异（例如路径分隔符）。</p>
+<h3>FilenameComponent类</h3>
+<p>在本教程中，我们将使用<a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>对象，让用户通过标准操作系统窗口选择文件。我们可以给<a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>对象附加一个监听器（参见<a href="listeners-and-broadcasters.html" rel="noreferrer noopener">教程：监听器与广播器</a>），当文件改变时，我们可以将当前选择的文件作为<a href="https://docs.juce.com/master/classFile.html" rel="noreferrer noopener">File</a>对象获取。</p>
+<p><a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>对象显示一个包含绝对路径的文本框。它还提供一个按钮，让用户从操作系统中选择文件。还有一个包含最近使用文件列表的下拉菜单。这在使用过程中会自动填充，但也可以手动添加这些最近使用的文件（例如，硬编码到你的应用程序中或来自首选项文件）。</p>
+<p>正如我们稍后将看到的，<a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>构造函数有相当多的参数——而且它没有默认构造函数。在这种情况下，将子组件存储在std::unique<em>ptr对象中通常更容易。（因为这意味着它们不必在构造函数的类初始化列表中初始化。）我们还需要一个<a href="https://docs.juce.com/master/classTextEditor.html" rel="noreferrer noopener">TextEditor</a>组件，用来显示文件的内容。<a href="https://docs.juce.com/master/classTextEditor.html" rel="noreferrer noopener">TextEditor</a>类确实</em>有默认构造函数，但为了保持一致，我们把两个组件对象都存储在std::unique_ptr对象中：</p>
+<pre><code>std::unique_ptr&lt;juce::FilenameComponent&gt; fileComp;
+std::unique_ptr&lt;juce::TextEditor&gt; textContent;</code></pre>
+<p>在我们的<code>MainContentComponent</code>构造函数中，我们分配一个新的<a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>对象，并用一些适合打开文件的设置初始化它（因为<a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>类也可以用于选择保存文件的位置）。在这个构造函数中，我们可以提供一个希望能够选择的文件后缀列表（例如<code>"*.txt;*.foo"</code>）。我们也可以强制指定后缀（这对保存文件更有用）。在这两个参数中，我们传入空字符串，这意味着不会执行任何过滤。其他参数不言自明，定义了我们希望<a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>对象表现的其他方式（参见代码中的注释）：</p>
+<pre><code>MainContentComponent()
+{
+    fileComp.reset (new juce::FilenameComponent ("fileComp",
+        {}, // current file
+        false, // can edit file name,
+        false, // is directory,
+        false, // is for saving,
+        {}, // browser wildcard suffix,
+        {}, // enforced suffix,
+        "Select file to open")); // text when nothing selected
+    addAndMakeVisible (fileComp.get());
+    fileComp-&gt;addListener (this);</code></pre>
+<p>在<a href="https://docs.juce.com/master/classFilenameComponentListener.html" rel="noreferrer noopener">FilenameComponentListener</a>回调中，我们获取当前选择的文件并传给我们的<code>readFile()</code>函数：</p>
+<pre><code>void filenameComponentChanged (juce::FilenameComponent* fileComponentThatHasChanged) override
+{
+    if (fileComponentThatHasChanged == fileComp.get())
+        readFile (fileComp-&gt;getCurrentFile());
+}</code></pre>
+<p>在接下来的每个示例中，<code>readFile()</code>函数将以不同方式读取所选文件。但我们需要一个地方来显示结果，所以我们也在<code>MainContentComponent</code>构造函数中设置了一个<a href="https://docs.juce.com/master/classTextEditor.html" rel="noreferrer noopener">TextEditor</a>组件：</p>
+<pre><code>textContent.reset (new juce::TextEditor());
+addAndMakeVisible (textContent.get());
+textContent-&gt;setMultiLine (true);
+textContent-&gt;setReadOnly (true);
+textContent-&gt;setCaretVisible (false);
+setSize (600, 400);
+}</code></pre>
+<h3>将整个文件读入字符串</h3>
+<p>虽然<a href="https://docs.juce.com/master/classFile.html" rel="noreferrer noopener">File</a>类主要设计用于存储和操作文件路径，但有几个便捷函数能以非常简单的方式读取文件。例如，<a href="https://docs.juce.com/master/classFile.html#a07b95f6831ee4ed5b49241ce6af8539d" rel="noreferrer noopener">File::loadFileAsString()</a>函数正如其名：它将整个文件读入一个<a href="https://docs.juce.com/master/classString.html" rel="noreferrer noopener">String</a>对象。当然，如果所选文件不是文本文件，那么结果可能无法理解（不过JUCE不会崩溃）。该函数可以检测并读取UTF-8和UTF-16格式：</p>
+<pre><code>void readFile (const juce::File&amp; fileToRead)
+{
+    if (!fileToRead.existsAsFile()) // [1]
+        return;
+    auto fileText = fileToRead.loadFileAsString();
+    textContent-&gt;setText (fileText);
+}</code></pre>
+<p>注意我们检查了所选文件是否实际存在[1]。由于我们是从操作系统选择文件，这不应该失败，但在处理文件时进行这类检查是良好的做法。运行应用并加载演示项目<code>Resources</code>目录中提供的<code>juce.txt</code>文本文件。结果将如下面的截图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_file_reading_screenshot1.png" alt="读取并显示一个文本文件">
+<figcaption>读取并显示一个文本文件</figcaption>
+</figure>
+<p>还有一个等效的函数——<a href="https://docs.juce.com/master/classFile.html#a889b8b0784b4f97c5bf93ffc24c3650d" rel="noreferrer noopener">File::loadFileAsData()</a>——用于将整个文件读入<a href="https://docs.juce.com/master/classMemoryBlock.html" rel="noreferrer noopener">MemoryBlock</a>对象。</p>
+<h3>逐行读取文件</h3>
+<p>要更好地控制文件读取过程，你需要使用<a href="https://docs.juce.com/master/classFileInputStream.html" rel="noreferrer noopener">FileInputStream</a>对象。一种方法是通过向<a href="https://docs.juce.com/master/classFileInputStream.html" rel="noreferrer noopener">FileInputStream</a>的构造函数传入表示要读取文件的<a href="https://docs.juce.com/master/classFile.html" rel="noreferrer noopener">File</a>对象来构造该对象[2]。</p>
+<blockquote>
+      <p><a href="https://docs.juce.com/master/classFileInputStream.html" rel="noreferrer noopener">FileInputStream</a>类是<a href="https://docs.juce.com/master/classInputStream.html" rel="noreferrer noopener">InputStream</a>类的子类，它是读取数据的流的基类。</p>
+    </blockquote>
+<p>添加以下代码：</p>
+<pre><code>void readFile (const juce::File&amp; fileToRead)
+{
+    if (!fileToRead.existsAsFile())
+        return; // file doesn't exist
+    juce::FileInputStream inputStream (fileToRead); // [2]
+    if (!inputStream.openedOk())
+        return; // failed to open</code></pre>
+<p>我们将逐行读取文件，但还要检测以“*”字符开头的行。然后我们用不同的字体格式化这些行，将这些行用作其他文本的标题。添加以下代码：</p>
+<pre><code>textContent-&gt;clear();
+auto normalFont = textContent-&gt;getFont();
+auto titleFont = normalFont.withHeight (normalFont.getHeight() * 1.5f).boldened();
+juce::String asterix ("*");</code></pre>
+<p>下一部分是在<code>while()</code>循环中从<code>inputStream</code>对象读取数据，直到流被耗尽[3]。添加这段代码：</p>
+<pre><code>while (!inputStream.isExhausted()) // [3]
+{
+    auto line = inputStream.readNextLine();
+    if (line.startsWith (asterix))
+    {
+        line = line.removeCharacters (asterix);
+        textContent-&gt;setFont (titleFont);
+    }
+    else
+    {
+        textContent-&gt;setFont (normalFont);
+    }
+    // append the text to the textContent
+    textContent-&gt;insertTextAtCaret (line + juce::newLine);
+}
+}</code></pre>
+<p>你可以看到，这段代码：</p>
+<ul>
+<li>使用<a href="https://docs.juce.com/master/classInputStream.html#af16acc8f2fd769adb559a781ece8e903" rel="noreferrer noopener">InputStream::readNextLine()</a>函数读取一行，
+</li>
+<li>检查该行是否以“*”开头，
+</li>
+<li>相应地设置<code>textContent</code>对象的字体，
+</li>
+<li>如有必要，移除任何“*”字符，并且
+</li>
+<li>将该行文本追加到<code>textContent</code>对象。
+</li>
+</ul>
+<p>加载同一个<code>juce.txt</code>文件应该得到类似下面截图的结果：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_file_reading_screenshot2.png" alt="逐行读取文件">
+<figcaption>逐行读取文件</figcaption>
+</figure>
+<blockquote>
+      <p>本小节示例的代码可以在演示项目的<code>FileReadingTutorial_02.h</code>文件中找到。</p>
+    </blockquote>
+<h3>逐字节读取文件</h3>
+<p><a href="https://docs.juce.com/master/classInputStream.html" rel="noreferrer noopener">InputStream</a>以及<a href="https://docs.juce.com/master/classFileInputStream.html" rel="noreferrer noopener">FileInputStream</a>类也有以更小片段读取文件的函数，甚至可以一次读取一个字节。为了说明这一点，让我们加载一个文本文件，并用不同的颜色显示每个单词。首先让我们添加一个生成随机颜色的函数。添加这个函数，它生成随机颜色，但将亮度限制在指定的最小值（这是为了确保颜色在黑色背景上可见）：</p>
+<pre><code>static juce::Colour getRandomColour (float minBrightness)
+{
+    auto&amp; random = juce::Random::getSystemRandom();
+    juce::Colour colour ((juce::uint8) random.nextInt (256),
+        (juce::uint8) random.nextInt (256),
+        (juce::uint8) random.nextInt (256));
+    return colour.getBrightness() &gt;= minBrightness ? colour
+                                                   : colour.withBrightness (minBrightness);
+}</code></pre>
+<p>现在让我们添加一个从<a href="https://docs.juce.com/master/classFileInputStream.html" rel="noreferrer noopener">FileInputStream</a>对象读取数据直到遇到空格字符的函数。它将返回直到并包括空格的文本。它使用<a href="https://docs.juce.com/master/classMemoryBlock.html" rel="noreferrer noopener">MemoryBlock</a>类创建一个小内存缓冲区，然后使用<a href="https://docs.juce.com/master/classInputStream.html#a2e5944641712d84b6da2eee5d394326a" rel="noreferrer noopener">InputStream::readByte()</a>函数从<code>inputStream</code>对象一次读取一个字节：</p>
+<pre><code>static juce::String readUpToNextSpace (juce::FileInputStream&amp; inputStream)
+{
+    juce::MemoryBlock buffer (256);
+    auto* data = static_cast&lt;char*&gt; (buffer.getData());
+    size_t i = 0;
+    while ((data[i] = inputStream.readByte()) != 0 &amp;&amp; i &lt; buffer.getSize())
+        if (data[i++] == ' ')
+            break;
+    return juce::String::fromUTF8 (data, (int) i); // [4]
+}</code></pre>
+<p><a href="https://docs.juce.com/master/classString.html#aa0116dc51d7bdd363d14c72bba60060a" rel="noreferrer noopener">String::fromUTF8()</a>[4]函数尝试将原始二进制数据转换为<a href="https://docs.juce.com/master/classString.html" rel="noreferrer noopener">String</a>对象。</p>
+<p>最后，在我们的<code>readFile()</code>函数中，我们使用<code>readUpToNextSpace</code>函数从文本文件中读取单词，直到流被耗尽。添加以下代码：</p>
+<pre><code>void readFile (const juce::File&amp; fileToRead)
+{
+    if (!fileToRead.existsAsFile())
+        return; // file doesn't exist
+    juce::FileInputStream inputStream (fileToRead);
+    if (!inputStream.openedOk())
+        return; // failed to open
+    textContent-&gt;clear();
+    while (!inputStream.isExhausted())
+    {
+        auto nextWord = readUpToNextSpace (inputStream);
+        textContent-&gt;setColour (juce::TextEditor::textColourId, getRandomColour (0.75f));
+        textContent-&gt;insertTextAtCaret (nextWord);
+    }
+}</code></pre>
+<p>运行这段代码将得到类似下面截图的结果。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_file_reading_screenshot3.png" alt="以更小的片段读取文件">
+<figcaption>以更小的片段读取文件</figcaption>
+</figure>
+<blockquote>
+      <p>本小节示例的代码可以在演示项目的<code>FileReadingTutorial_03.h</code>文件中找到。</p>
+    </blockquote>
+<p>创建<a href="https://docs.juce.com/master/classFileInputStream.html" rel="noreferrer noopener">FileInputStream</a>对象的另一种方法是使用<a href="https://docs.juce.com/master/classFile.html#a668db4b90ac7839c70f0a9ac22124c29" rel="noreferrer noopener">File::createInputStream()</a>函数。该函数在堆上返回一个<a href="https://docs.juce.com/master/classFileInputStream.html" rel="noreferrer noopener">FileInputStream</a>对象，使用<code>new</code>运算符分配。这意味着在你完成后释放该对象<em>非常</em>重要。理想情况下，你应该为此使用std::unique_ptr对象。这里的一个细微差别是，如果文件流打开失败，<a href="https://docs.juce.com/master/classFile.html#a668db4b90ac7839c70f0a9ac22124c29" rel="noreferrer noopener">File::createInputStream()</a>函数将返回<code>nullptr</code>值。以下代码展示了在这种情况下你应该使用的典型模式：</p>
+<pre><code>void readFile (const juce::File&amp; fileToRead)
+{
+    if (!fileToRead.existsAsFile())
+        return; // file doesn't exist
+    if (std::unique_ptr&lt;juce::FileInputStream&gt; inputStream { fileToRead.createInputStream() })
+    {
+        textContent-&gt;clear();
+        while (!inputStream-&gt;isExhausted())
+        {
+            auto nextWord = readUpToNextSpace (*inputStream);
+            textContent-&gt;setColour (juce::TextEditor::textColourId, getRandomColour (0.75f));
+            textContent-&gt;insertTextAtCaret (nextWord);
+        }
+    }
+}</code></pre>
+<blockquote>
+      <p>练习：你可能会注意到，某些行末尾单词的颜色与下一行开头单词的颜色相同。这是因为我们只把空格字符作为分隔符来查找。修改代码，同时查找换行、回车和制表符。（这些字符是<code>'\n'</code>、<code>'\r'</code>和<code>'\t'</code>。）</p>
+    </blockquote>
+<h2>读取二进制数据</h2>
+<p>在本教程中，我们研究了从文件中读取字符串数据。除了从文件读取单个字节外，<a href="https://docs.juce.com/master/classInputStream.html" rel="noreferrer noopener">InputStream</a>类还包含读取其他基本类型的函数。例如：</p>
+<ul>
+<li><a href="https://docs.juce.com/master/classInputStream.html#a59eb456ebfbe9d4c7fdfd4c14337e19a" rel="noreferrer noopener">InputStream::readInt()</a>——从流中读取一个<code>int</code>（32位）。
+</li>
+<li><a href="https://docs.juce.com/master/classInputStream.html#a0c4b0f9f1fa9515fea5a98d2ffe7ae02" rel="noreferrer noopener">InputStream::readShort()</a>——从流中读取一个<code>short</code>（16位）整数。
+</li>
+<li><a href="https://docs.juce.com/master/classInputStream.html#a46d7f191f1872bc27550db3fa0733f59" rel="noreferrer noopener">InputStream::readFloat()</a>——从流中读取一个<code>float</code>（32位）。
+</li>
+</ul>
+<p>这些都使用小端字节序读取多字节值。要以大端值读取它们，有替代版本——例如，<a href="https://docs.juce.com/master/classInputStream.html#a84ab1bcc547eee621c4c6c2502af808d" rel="noreferrer noopener">InputStream::readIntBigEndian()</a>函数。你还可以使用<a href="https://docs.juce.com/master/classInputStream.html#aa5350c414bad6b97ae3b463a3401c0d6" rel="noreferrer noopener">InputStream::read()</a>或<a href="https://docs.juce.com/master/classInputStream.html#a7708d25af96e8d8b937a4642dcf55a23" rel="noreferrer noopener">InputStream::readIntoMemoryBlock()</a>函数从流中读取一块数据。</p>
+<p>如果你需要读取现有的二进制格式文件，或者确实需要将数据存储为二进制，这些函数很有用。在大多数情况下，使用XML（通过<a href="https://docs.juce.com/master/classXmlDocument.html" rel="noreferrer noopener">XmlDocument</a>和<a href="https://docs.juce.com/master/classXmlElement.html" rel="noreferrer noopener">XmlElement</a>类）或<a href="https://docs.juce.com/master/classJSON.html" rel="noreferrer noopener">JSON</a>（通过将数据存储在var对象中）来存储和读取数据可能更可取。</p>
+<h2>小结</h2>
+<p>本教程通过以各种方式读取文本文件，介绍了使用JUCE的简单文件读取技术。特别是你应该能够：</p>
+<ul>
+<li>使用<a href="https://docs.juce.com/master/classFilenameComponent.html" rel="noreferrer noopener">FilenameComponent</a>和<a href="https://docs.juce.com/master/classFilenameComponentListener.html" rel="noreferrer noopener">FilenameComponentListener</a>存储文件路径，并为用户提供选择文件的方法。
+</li>
+<li>将文件的全部内容读入<a href="https://docs.juce.com/master/classString.html" rel="noreferrer noopener">String</a>对象。
+</li>
+<li>使用适当的<a href="https://docs.juce.com/master/classInputStream.html" rel="noreferrer noopener">InputStream</a>函数以更小的片段读取文件。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="colours.html" rel="noreferrer noopener">教程：JUCE中的颜色</a>
+</li>
+<li><a href="label.html" rel="noreferrer noopener">教程：Label类</a>
+</li>
+<li><a href="playing-sound-files.html" rel="noreferrer noopener">教程：构建音频播放器</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_file_reading/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_file_reading/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

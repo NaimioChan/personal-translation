@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>构建多复音合成器（MPE） - JUCE 教程</title>
+<meta name="description" content="构建多复音合成器（MPE）：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>构建多复音合成器（MPE）</h1>
+<p>了解 MPE 标准的基础知识，以及如何实现支持 MPE 的合成器。把你的应用程序连接到 ROLI Seaboard Rise 吧！</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a>、<a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a>、<a href="structMPENote.html" rel="noreferrer noopener">MPENote</a>、<a href="https://docs.juce.com/master/classMPEValue.html" rel="noreferrer noopener">MPEValue</a>、<a href="https://docs.juce.com/master/classSmoothedValue.html" rel="noreferrer noopener">SmoothedValue</a></p>
+<h2>准备工作</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/MPEIntroductionTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/MPEIntroductionTutorial.zip" rel="noreferrer noopener">ZIP</a> 。解压项目，在 Projucer 中打开第一个头文件。</p>
+<p>如果你在这一步需要帮助，参见<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<blockquote>
+      <p>建议先阅读<a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建一个 MIDI 合成器</a>，因为本教程多处会以它作为参照。</p>
+    </blockquote>
+<h2>演示项目</h2>
+<p>演示项目是 <code>JUCE/examples</code> 目录中 <code>MPEDemo</code> 项目的简化版本。为了充分学习本教程，你需要一个兼容 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 的控制器。<a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 代表 <em>MIDI 复音表情</em>（MIDI Polyphonic Expression），这是一项新规范，用于在音频产品之间传递多维数据。</p>
+<p>这类兼容 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 的设备包括 ROLI 自家的 Seaboard 系列（例如 <a href="https://roli.com/products/seaboard-rise" rel="noreferrer noopener">Seaboard RISE</a> ）。</p>
+<blockquote>
+      <p>除非你的控制器发送 MIDI 通道压力和连续控制器 74（<em>音色</em>）的方式与 <a href="https://roli.com/products/seaboard-rise" rel="noreferrer noopener">Seaboard RISE</a> 相同，否则合成器的声音可能会非常轻。</p>
+    </blockquote>
+<p>把 <a href="https://roli.com/products/seaboard-rise" rel="noreferrer noopener">Seaboard RISE</a> 连接到电脑后，演示应用程序的窗口应该类似下图：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_mpe_introduction_screenshot1.png" alt="演示应用程序">
+<figcaption>演示应用程序</figcaption>
+</figure>
+<p>你需要启用其中一个 MIDI 输入（这里可以看到 <a href="https://roli.com/products/seaboard-rise" rel="noreferrer noopener">Seaboard RISE</a> 作为选项出现）。</p>
+<h3>可视化器</h3>
+<p>在兼容 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 的设备上演奏的任何音符都会在窗口下半部分可视化。如下图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_mpe_introduction_screenshot2.png" alt="可视化器">
+<figcaption>可视化器</figcaption>
+</figure>
+<p><a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 的一个关键特性是：每个新的 MIDI 音符事件都会被分配自己的 MIDI 通道，而不是把某个控制器键盘的所有音符都分配到同一个 MIDI 通道。这样，每个音符都可以通过控制变化消息、弯音消息等独立控制。在 JUCE 对 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 的实现中，正在发声的音符由 <a href="structMPENote.html" rel="noreferrer noopener">MPENote</a> 对象表示。<a href="structMPENote.html" rel="noreferrer noopener">MPENote</a> 对象封装以下数据：</p>
+<ul>
+<li>音符的 MIDI 通道。
+</li>
+<li>音符的初始 MIDI 音高值。
+</li>
+<li>音符开力度（或<em>击打</em>）。
+</li>
+<li>音符的弯音值：由该音符的 MIDI 通道上收到的 MIDI 弯音消息得出。
+</li>
+<li>音符的压力值：由该音符的 MIDI 通道上收到的 MIDI 通道压力消息得出。
+</li>
+<li>音符的<em>音色</em>：通常由该音符的 MIDI 通道上控制器 74 的控制器消息得出。
+</li>
+<li>音符关力度（或<em>抬起</em>）：只有在收到音符关事件之后、且发声尚未结束时才有效。
+</li>
+</ul>
+<p>在没有音符发声时，可以看到可视化器呈现的是传统 MIDI 键盘布局。在演示应用程序中，每个音符在可视化器中这样表示：</p>
+<ul>
+<li>灰色实心圆表示音符开力度（力度越大，圆越大）。
+</li>
+<li>音符的 MIDI 通道显示在圆内「+」符号的上方；
+</li>
+<li>初始 MIDI 音名显示在「+」符号的下方。
+</li>
+<li>叠加的白色圆表示该音符当前的压力（同样，压力越大，圆越大）。
+</li>
+<li>音符的水平位置由原始音符以及施加到该音符上的弯音决定。
+</li>
+<li>音符的垂直位置由该音符的<em>音色</em>参数决定（来自该音符 MIDI 通道上的 MIDI 控制器 74）。
+</li>
+</ul>
+<h3>其他设置</h3>
+<p>在深入探讨本应用程序所演示的 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 规范的其他方面之前，先看看我们的应用程序用到的其他一些内容。</p>
+<p>首先，我们的 <code>MainComponent</code> 类继承自 <a href="https://docs.juce.com/master/classAudioIODeviceCallback.html" rel="noreferrer noopener">AudioIODeviceCallback</a> [1] 和 <a href="https://docs.juce.com/master/classMidiInputCallback.html" rel="noreferrer noopener">MidiInputCallback</a> [2] 类：</p>
+<pre><code>class MainComponent : public juce::Component,
+                      private juce::AudioIODeviceCallback, // [1]
+                      private juce::MidiInputCallback // [2]
+{
+public:</code></pre>
+<p><code>MainComponent</code> 类中还有一些重要的成员：</p>
+<pre><code>juce::AudioDeviceManager audioDeviceManager; // [3]
+juce::AudioDeviceSelectorComponent audioSetupComp; // [4]
+Visualiser visualiserComp;
+juce::Viewport visualiserViewport;
+juce::MPEInstrument visualiserInstrument;
+juce::MPESynthesiser synth;
+juce::MidiMessageCollector midiCollector; // [5]
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
+};</code></pre>
+<p><a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a> [3] 类负责电脑上的音频和 MIDI 配置，而 <a href="https://docs.juce.com/master/classAudioDeviceSelectorComponent.html" rel="noreferrer noopener">AudioDeviceSelectorComponent</a> [4] 类让我们可以通过图形用户界面进行配置（参见<a href="audio-device-manager.html" rel="noreferrer noopener">教程：AudioDeviceManager 类</a>）。<a href="https://docs.juce.com/master/classMidiMessageCollector.html" rel="noreferrer noopener">MidiMessageCollector</a> [5] 类让我们可以在音频回调中轻松地把消息收集成带时间戳的 MIDI 消息块（参见<a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建一个 MIDI 合成器</a>）。</p>
+<p>重要的是 <a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a> 对象要列在最前面，因为我们要把它传给 <a href="https://docs.juce.com/master/classAudioDeviceSelectorComponent.html" rel="noreferrer noopener">AudioDeviceSelectorComponent</a> 对象的构造函数：</p>
+<pre><code>MainComponent()
+    : audioSetupComp (audioDeviceManager, 0, 0, 0, 256,
+          true, // showMidiInputOptions must be true
+          true,
+          true,
+          false)</code></pre>
+<p>注意传给 <a href="https://docs.juce.com/master/classAudioDeviceSelectorComponent.html" rel="noreferrer noopener">AudioDeviceSelectorComponent</a> 构造函数的另一个重要参数：<code>showMidiInputOptions</code> 必须为 <code>true</code>，才会显示可用的 MIDI 输入。</p>
+<p>我们设置 <a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a> 对象的方式与<a href="audio-device-manager.html" rel="noreferrer noopener">教程：AudioDeviceManager 类</a>类似，但还需要添加一个 MIDI 输入回调 [6]：</p>
+<pre><code>audioDeviceManager.initialise (0, 2, nullptr, true, {}, nullptr);
+audioDeviceManager.addMidiInputDeviceCallback ({}, this); // [6]
+audioDeviceManager.addAudioCallback (this);</code></pre>
+<h4>MIDI 输入回调</h4>
+<p>当从用户界面中任一活动的 MIDI 输入收到每条 MIDI 消息时，都会调用 <code>handleIncomingMidiMessage()</code>：</p>
+<pre><code>void handleIncomingMidiMessage (juce::MidiInput* /*source*/,
+    const juce::MidiMessage&amp; message) override
+{
+    visualiserInstrument.processNextMidiEvent (message);
+    midiCollector.addMessageToQueue (message);
+}</code></pre>
+<p>这里我们把每条 MIDI 消息同时传给两者：</p>
+<ul>
+<li>我们的 <code>visualiserInstrument</code> 成员——用于驱动可视化器显示；以及
+</li>
+<li><code>midiCollector</code> 成员——它再把消息在音频回调中传给合成器。
+</li>
+</ul>
+<h4>音频回调</h4>
+<p>在任何音频回调发生之前，我们需要在 <code>audioDeviceAboutToStart()</code> 函数中告知 <code>synth</code> 和 <code>midiCollector</code> 成员设备的采样率：</p>
+<pre><code>void audioDeviceAboutToStart (juce::AudioIODevice* device) override
+{
+    auto sampleRate = device-&gt;getCurrentSampleRate();
+    midiCollector.reset (sampleRate);
+    synth.setCurrentPlaybackSampleRate (sampleRate);
+}</code></pre>
+<p><code>audioDeviceIOCallbackWithContext()</code> 函数看起来没有做任何 MPE 特有的工作：</p>
+<pre><code>void audioDeviceIOCallbackWithContext (const float* const* /*inputChannelData*/,
+    int /*numInputChannels*/,
+    float* const* outputChannelData,
+    int numOutputChannels,
+    int numSamples,
+    const juce::AudioIODeviceCallbackContext&amp; /*context*/) override
+{
+    // make buffer
+    juce::AudioBuffer&lt;float&gt; buffer (outputChannelData, numOutputChannels, numSamples);
+    // clear it to silence
+    buffer.clear();
+    juce::MidiBuffer incomingMidi;
+    // get the MIDI messages for this audio block
+    midiCollector.removeNextBlockOfMessages (incomingMidi, numSamples);
+    // synthesise the block
+    synth.renderNextBlock (buffer, incomingMidi, 0, numSamples);
+}</code></pre>
+<blockquote>
+      <p>事实上，这与<a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建一个 MIDI 合成器</a>中的 <code>SynthAudioSource::getNextAudioBlock()</code> 函数相当相似。</p>
+    </blockquote>
+<h2>MPE 核心类</h2>
+<p>所有 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 特有的处理都由 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 类完成：<a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a>、<a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a>、<a href="https://docs.juce.com/master/classMPESynthesiserVoice.html" rel="noreferrer noopener">MPESynthesiserVoice</a>、<a href="https://docs.juce.com/master/classMPEValue.html" rel="noreferrer noopener">MPEValue</a> 和 <a href="structMPENote.html" rel="noreferrer noopener">MPENote</a>（前面已经提到过）。</p>
+<h3>MPEInstrument 类</h3>
+<p><a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 类按照 MPE 规范维护当前正在发声的音符状态。<a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 对象可以挂接一个或多个监听器，并能在音符发生变化时广播这些变化。你只需把 MIDI 数据喂给 <a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 对象，其余它都会处理。</p>
+<p>在 <code>MainComponent</code> 构造函数中，我们把 <a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 配置为<em>传统模式</em>，并把默认弯音范围设为 24 个半音：</p>
+<pre><code>visualiserInstrument.enableLegacyMode (24);</code></pre>
+<p>这个特殊模式用于向后兼容非 MPE 的 MIDI 设备，此时乐器会忽略当前的 MPE 区域布局。</p>
+<blockquote>
+      <p>参见<a href="mpe-zones.html" rel="noreferrer noopener">教程：理解 MPE 区域</a>，了解使用<em>区域</em>和<em>区域布局</em>的更灵活方法。</p>
+    </blockquote>
+<p>在 <code>MainComponent::handleIncomingMidiMessage()</code> 函数中，我们把 MIDI 消息传给 <code>visualiserInstrument</code> 对象：</p>
+<pre><code>visualiserInstrument.processNextMidiEvent (message);</code></pre>
+<p>在这个例子中，我们直接使用 <a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 对象，因为需要它来更新可视化器显示。就音频合成而言，我们不需要再创建一个单独的 <a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 对象。<a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a> 对象内部包含一个 <a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 对象，用来驱动合成器。</p>
+<h3>MPESynthesiser 类</h3>
+<p>我们把 <a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a> 设置为与 <code>visualiserInstrument</code> 对象相同的配置（传统模式，弯音范围 24 个半音）：</p>
+<pre><code>synth.enableLegacyMode (24);
+synth.setVoiceStealingEnabled (false);</code></pre>
+<p><a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a> 类也可以替我们处理声部抢占，但正如这里所示，我们把它关掉了。启用声部抢占后，如果合成器的声部用尽又需要演奏另一个音符，它会尝试接管一个已有的声部。</p>
+<p>正如我们在 <code>MainComponent::audioDeviceAboutToStart()</code> 函数中已经看到的，需要设置 <a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a> 对象的采样率才能正常工作：</p>
+<pre><code>synth.setCurrentPlaybackSampleRate (sampleRate);</code></pre>
+<p>也正如我们在 <code>MainComponent::audioDeviceIOCallback()</code> 函数中已经看到的，我们只需传给它一个 <a href="https://docs.juce.com/master/classMidiBuffer.html" rel="noreferrer noopener">MidiBuffer</a> 对象，其中包含我们希望它用于执行合成操作的消息：</p>
+<pre><code>synth.renderNextBlock (buffer, incomingMidi, 0, numSamples);</code></pre>
+<h3>MPESynthesiserVoice 类</h3>
+<p>通常可以直接使用 <a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a> 和 <a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 类本身（不过如果你需要覆盖某些行为，这两个类都可以作为基类）。要使用 <a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a> 类，你<em>必须</em>覆盖的最重要的类是 <a href="https://docs.juce.com/master/classMPESynthesiserVoice.html" rel="noreferrer noopener">MPESynthesiserVoice</a> 类。它实际上负责从合成器的各声部生成音频信号。</p>
+<blockquote>
+      <p>这类似于配合 <a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a> 类使用的 <a href="https://docs.juce.com/master/classSynthesiserVoice.html" rel="noreferrer noopener">SynthesiserVoice</a> 类，但它经过定制以实现 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 规范。参见<a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建一个 MIDI 合成器</a>。</p>
+    </blockquote>
+<p>我们的声部类代码位于演示项目的 <code>MPEDemoSynthVoice</code> 类中。这里我们让 <code>MPEDemoSynthVoice</code> 类继承自 <a href="https://docs.juce.com/master/classMPESynthesiserVoice.html" rel="noreferrer noopener">MPESynthesiserVoice</a> 类：</p>
+<pre><code>class MPEDemoSynthVoice : public juce::MPESynthesiserVoice
+{</code></pre>
+<p>我们有一些成员变量，用于跟踪控制所生成音调的电平、音色和频率的值。特别是，我们使用了 <a href="https://docs.juce.com/master/classSmoothedValue.html" rel="noreferrer noopener">SmoothedValue</a> 类，它非常适合平滑信号中原本会由数值变化引起的不连续（参见<a href="sine-synth.html" rel="noreferrer noopener">教程：构建一个正弦波合成器</a>）。</p>
+<pre><code>juce::SmoothedValue&lt;double&gt; level, timbre, frequency;
+double phase = 0.0;
+double phaseDelta = 0.0;
+double tailOff = 0.0;
+// some useful constants
+static constexpr auto maxLevel = 0.05;
+static constexpr auto maxLevelDb = 31.0;
+static constexpr auto smoothingLengthInSeconds = 0.01;
+};</code></pre>
+<h4>启动与停止声部</h4>
+<p>使用 <a href="https://docs.juce.com/master/classMPESynthesiserVoice.html" rel="noreferrer noopener">MPESynthesiserVoice</a> 类的关键在于访问其 <a href="https://docs.juce.com/master/classMPESynthesiserVoice.html#aea34fcbdb3fa0961f73d5f9a1f34e255" rel="noreferrer noopener">MPESynthesiserVoice::currentlyPlayingNote</a>（受保护）<a href="structMPENote.html" rel="noreferrer noopener">MPENote</a> 成员，从而在各个回调中获取关于该音符的控制信息。例如，我们这样覆盖 <a href="https://docs.juce.com/master/classMPESynthesiserVoice.html#ae10c1cdfb37208b96b56863d47a3a193" rel="noreferrer noopener">MPESynthesiserVoice::noteStarted()</a> 函数：</p>
+<pre><code>void noteStarted() override
+{
+    jassert (currentlyPlayingNote.isValid());
+    jassert (currentlyPlayingNote.keyState == juce::MPENote::keyDown
+             || currentlyPlayingNote.keyState == juce::MPENote::keyDownAndSustained);
+    // get data from the current MPENote
+    level.setTargetValue (currentlyPlayingNote.pressure.asUnsignedFloat());
+    frequency.setTargetValue (currentlyPlayingNote.getFrequencyInHertz());
+    timbre.setTargetValue (currentlyPlayingNote.timbre.asUnsignedFloat());
+    phase = 0.0;
+    auto cyclesPerSample = frequency.getNextValue() / currentSampleRate;
+    phaseDelta = 2.0 * juce::MathConstants&lt;double&gt;::pi * cyclesPerSample;
+    tailOff = 0.0;
+}</code></pre>
+<p>以下「五个维度」以 <a href="https://docs.juce.com/master/classMPEValue.html" rel="noreferrer noopener">MPEValue</a> 对象的形式存储在 <a href="structMPENote.html" rel="noreferrer noopener">MPENote</a> 对象中：</p>
+<ul>
+<li><em>音符开力度</em>：存放在 [MPENote::noteOnVelocity](structMPENote.html#a9322650db7f2e76cec724746d1a75c1a “音符开的力度（「击打」）。”) 成员中
+</li>
+<li><em>弯音</em>：存放在 <a href="structMPENote.html#aebfdbfc173bc19cc97b97659c412078f" rel="noreferrer noopener">MPENote::pitchbend</a> 成员中
+</li>
+<li><em>压力</em>：存放在 <a href="structMPENote.html#af04939884198c48da9927e76e4f3ff90" rel="noreferrer noopener">MPENote::pressure</a> 成员中
+</li>
+<li><em>音色</em>：存放在 <a href="structMPENote.html#aea15b7b7d5b9c55cbf7d479aa8e46a90" rel="noreferrer noopener">MPENote::timbre</a> 成员中
+</li>
+<li><em>音符关力度</em>：存放在 [MPENote::noteOffVelocity](structMPENote.html#a9e46888c40a2d3eaf4b8c5129b21de6e “收到音符关之后，音符的释放力度（「抬起」）。”) 成员中
+</li>
+</ul>
+<p><a href="https://docs.juce.com/master/classMPEValue.html" rel="noreferrer noopener">MPEValue</a> 对象让从 7 位或 14 位 MIDI 值源创建值变得容易，也便于把这些值获取为 0..1 或 -1..+1 范围内的浮点值。</p>
+<blockquote>
+      <p><a href="https://docs.juce.com/master/classMPEValue.html" rel="noreferrer noopener">MPEValue</a> 类内部以 14 位范围存储该值。</p>
+    </blockquote>
+<p><code>MainComponent::noteStopped()</code> 函数会触发音符包络的「释放」（或者按请求立即停止）：</p>
+<pre><code>void noteStopped (bool allowTailOff) override
+{
+    jassert (currentlyPlayingNote.keyState == juce::MPENote::off);
+    if (allowTailOff)
+    {
+        // start a tail-off by setting this flag. The render callback will pick up on
+        // this and do a fade out, calling clearCurrentNote() when it's finished.
+        if (tailOff == 0.0) // we only need to begin a tail-off if it's not already doing so - the
+            // stopNote method could be called more than once.
+            tailOff = 1.0;
+    }
+    else
+    {
+        // we're being told to stop playing immediately, so reset everything..
+        clearCurrentNote();
+        phaseDelta = 0.0;
+    }
+}</code></pre>
+<blockquote>
+      <p><code>SineWaveVoice::stopNote()</code> 函数与<a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建一个 MIDI 合成器</a>中的对应函数非常相似。这里没有任何 MPE 特有的内容。</p>
+    </blockquote>
+<blockquote>
+      <p>练习：修改 <code>MainComponent::noteStopped()</code> 函数，让音符关力度（<em>抬起</em>）可以影响音符的释放速率。抬起越快，释放时间应越短。</p>
+    </blockquote>
+<h4>参数变化</h4>
+<p>有一些回调会在该音符的压力、弯音或音色发生变化时通知我们：</p>
+<pre><code>void notePressureChanged() override
+{
+    level.setTargetValue (currentlyPlayingNote.pressure.asUnsignedFloat());
+}
+void notePitchbendChanged() override
+{
+    frequency.setTargetValue (currentlyPlayingNote.getFrequencyInHertz());
+}
+void noteTimbreChanged() override
+{
+    timbre.setTargetValue (currentlyPlayingNote.timbre.asUnsignedFloat());
+}</code></pre>
+<p>同样，我们访问 <a href="https://docs.juce.com/master/classMPESynthesiserVoice.html#aea34fcbdb3fa0961f73d5f9a1f34e255" rel="noreferrer noopener">MPESynthesiserVoice::currentlyPlayingNote</a> 成员来获取这些参数各自当前的值。</p>
+<h4>生成音频</h4>
+<p><code>MainComponent::renderNextBlock()</code> 实际生成音频信号，把这个声部的信号混合到传入的缓冲区中：</p>
+<pre><code>void renderNextBlock (juce::AudioBuffer&lt;float&gt;&amp; outputBuffer,
+    int startSample,
+    int numSamples) override
+{
+    if (phaseDelta != 0.0)
+    {
+        if (tailOff &gt; 0.0)
+        {
+            while (--numSamples &gt;= 0)
+            {
+                auto currentSample = getNextSample() * (float) tailOff;
+                for (auto i = outputBuffer.getNumChannels(); --i &gt;= 0;)
+                    outputBuffer.addSample (i, startSample, currentSample);
+                ++startSample;
+                tailOff *= 0.99;
+                if (tailOff &lt;= 0.005)
+                {
+                    clearCurrentNote();
+                    phaseDelta = 0.0;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            while (--numSamples &gt;= 0)
+            {
+                auto currentSample = getNextSample();
+                for (auto i = outputBuffer.getNumChannels(); --i &gt;= 0;)
+                    outputBuffer.addSample (i, startSample, currentSample);
+                ++startSample;
+            }
+        }
+    }
+}</code></pre>
+<p>它调用 <code>MainComponent::getNextSample()</code> 生成波形：</p>
+<pre><code>float getNextSample() noexcept
+{
+    auto levelDb = (level.getNextValue() - 1.0) * maxLevelDb;
+    auto amplitude = std::pow (10.0f, 0.05f * levelDb) * maxLevel;
+    // timbre is used to blend between a sine and a square.
+    auto f1 = std::sin (phase);
+    auto f2 = std::copysign (1.0, f1);
+    auto a2 = timbre.getNextValue();
+    auto a1 = 1.0 - a2;
+    auto nextSample = float (amplitude * ((a1 * f1) + (a2 * f2)));
+    auto cyclesPerSample = frequency.getNextValue() / currentSampleRate;
+    phaseDelta = 2.0 * juce::MathConstants&lt;double&gt;::pi * cyclesPerSample;
+    phase = std::fmod (phase + phaseDelta, 2.0 * juce::MathConstants&lt;double&gt;::pi);
+    return nextSample;
+}</code></pre>
+<p>endcode</p>
+<p>它只是根据<em>音色</em>参数的值，在正弦波和（未限带的）方波之间交叉淡化。</p>
+<blockquote>
+      <p>练习：修改 <code>MPEDemoSynthVoice</code> 类，使其响应<em>音色</em>参数，在两个相差一个八度的正弦波之间交叉淡化。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>本教程介绍了 JUCE 中一些基于 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 的类。现在你应该知道：</p>
+<ul>
+<li><a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 是什么。
+</li>
+<li>兼容 <a href="https://support.roli.com/article/what-is-mpe/" rel="noreferrer noopener">MPE</a> 的设备会把每个音符分配到各自的 MIDI 通道。
+</li>
+<li><a href="structMPENote.html" rel="noreferrer noopener">MPENote</a> 类如何存储音符的信息，包括其 MIDI 通道、原始音符编号、力度、弯音等。
+</li>
+<li><a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 类维护当前正在发声的音符状态。
+</li>
+<li><a href="https://docs.juce.com/master/classMPESynthesiser.html" rel="noreferrer noopener">MPESynthesiser</a> 类内部包含一个 <a href="https://docs.juce.com/master/classMPEInstrument.html" rel="noreferrer noopener">MPEInstrument</a> 对象，用来驱动合成器。
+</li>
+<li>你必须实现一个继承自 <a href="https://docs.juce.com/master/classMPESynthesiserVoice.html" rel="noreferrer noopener">MPESynthesiserVoice</a> 类的类，来实现合成器的音频代码。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="mpe-zones.html" rel="noreferrer noopener">教程：理解 MPE 区域</a>
+</li>
+<li><a href="handling-midi-events.html" rel="noreferrer noopener">教程：处理 MIDI 事件</a>
+</li>
+<li><a href="midi-message.html" rel="noreferrer noopener">教程：创建 MIDI 数据</a>
+</li>
+<li><a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建一个 MIDI 合成器</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_mpe_introduction/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_mpe_introduction/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

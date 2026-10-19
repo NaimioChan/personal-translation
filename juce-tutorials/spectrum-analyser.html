@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>实时可视化信号频率 - JUCE 教程</title>
+<meta name="description" content="实时可视化信号频率：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>实时可视化信号频率</h1>
+<p>学习如何使用 DSP 模块的 FFT 类，把输入的音频数据显示为频谱分析器。理解使用窗函数的好处。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classdsp_1_1FFT.html" rel="noreferrer noopener">dsp::FFT</a>, <a href="https://docs.juce.com/master/classdsp_1_1WindowingFunction.html" rel="noreferrer noopener">dsp::WindowingFunction</a>, <a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a></p>
+<h2>准备工作</h2>
+<p>本教程是<a href="simple-fft.html" rel="noreferrer noopener">教程：快速傅里叶变换</a>的后续内容。如果你还没有阅读，应该先读那篇教程。</p>
+<p>在这里下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/SpectrumAnalyserTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/SpectrumAnalyserTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目，并在 Projucer 中打开第一个头文件。</p>
+<blockquote>
+      <p>如果你的操作系统要求你申请访问麦克风的权限（目前是 iOS、Android 和 macOS Mojave），那么你需要在 Projucer 中相应导出器下设置对应的选项，并重新保存项目。</p>
+    </blockquote>
+<p>如果这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>完成之后，演示项目会把输入的音频数据显示为二维频谱分析器，分别体现在频率（x 轴）和振幅（y 轴）两个维度上。屏幕上显示的数值每秒更新 30 次，任意时刻的窗口可能看起来像这样：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_spectrum_analyser_screenshot1.png" alt="演示项目窗口">
+<figcaption>演示项目窗口</figcaption>
+</figure>
+<h2>窗函数</h2>
+<p>正如<a href="simple-fft.html" rel="noreferrer noopener">教程：快速傅里叶变换</a>中所见，快速傅里叶变换让我们能够把时间域信号转换为频域，以便处理某个信号的各个频率成分。</p>
+<p>然而，傅里叶变换的一个局限是，当它在有限时间间隔内应用时（例如音频应用的音频缓冲区块中），这种变换会表现出所谓的频谱泄漏，即在该频率的两侧开始出现新的频率成分。这是因为信号的采样部分可能没有落在波形的自然周期上，实际上相当于对信号做了截断。</p>
+<p>在分析两个频率相近、幅度也相近的正弦波，以及两个频率相差较大、幅度也相差较大的正弦波时，频谱泄漏尤其成问题。当正弦波的频率和幅度都很接近时，泄漏会使它们彼此难以区分。另一方面，如果正弦波的频率和幅度相差很远，最强成分的泄漏会掩盖最弱成分的存在。</p>
+<p>为了减小频谱泄漏的影响，我们可以在执行傅里叶变换之前对信号应用窗函数，而根据窗函数类型的不同，对输出的影响也会不同。下面是 JUCE DSP 模块中可用的一些窗函数及其特性：</p>
+<ul>
+<li>矩形窗：动态范围最低，分辨率最高。相当于不加窗。
+</li>
+<li>Hamming：动态范围一般，分辨率良好。通常用于窄带应用。
+</li>
+<li>Hann：动态范围良好，分辨率一般。通常用于窄带应用。
+</li>
+<li>Blackman：动态范围最高，分辨率最低。通常用于宽带应用。
+</li>
+</ul>
+<h2>处理音频数据</h2>
+<p>目前我们的应用既不显示也不处理任何输入的音频信号，所以让我们从实现 FFT 开始。</p>
+<h3>FFT 初始化</h3>
+<p>在 <code>AnalyserComponent</code> 类中，首先声明一个枚举作为公有成员，为 FFT 实现定义有用的常量：</p>
+<pre><code>enum {
+    fftOrder = 11, // [1]
+    fftSize = 1 &lt;&lt; fftOrder, // [2]
+    scopeSize = 512 // [3]
+};</code></pre>
+<ul>
+<li>[1]：FFT 阶数指定了 FFT 窗口的大小，它要处理的点数等于 2 的阶数次方。这里我们使用 11 阶，将产生一个 2 ^ 11 = 2048 点的 FFT。
+</li>
+<li>[2]：要计算对应的 FFT 大小，我们使用左移位运算符，得到 2048，即二进制数 100000000000。
+</li>
+<li>[3]：我们还将频谱可视化表示中的点数设为 512 的示波器尺寸。
+</li>
+</ul>
+<p>接下来，声明 FFT 实现所需的私有成员变量，如下所示：</p>
+<pre><code>private:
+    juce::dsp::FFT forwardFFT; // [4]
+    juce::dsp::WindowingFunction&lt;float&gt; window; // [5]
+    float fifo[fftSize]; // [6]
+    float fftData[2 * fftSize]; // [7]
+    int fifoIndex = 0; // [8]
+    bool nextFFTBlockReady = false; // [9]
+    float scopeData[scopeSize]; // [10]
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnalyserComponent)
+};</code></pre>
+<ul>
+<li>[4]：声明一个 <a href="https://docs.juce.com/master/classdsp_1_1FFT.html" rel="noreferrer noopener">dsp::FFT</a> 对象，用于执行正向 FFT。
+</li>
+<li>[5]：同时声明一个 <a href="https://docs.juce.com/master/classdsp_1_1WindowingFunction.html" rel="noreferrer noopener">dsp::WindowingFunction</a> 对象，用于对信号应用窗函数。
+</li>
+<li>[6]：大小为 2048 的 fifo 浮点数组将保存输入的音频采样数据。
+</li>
+<li>[7]：大小为 4096 的 fftData 浮点数组将保存 FFT 计算的结果。
+</li>
+<li>[8]：这个临时索引记录 fifo 中的采样数量。
+</li>
+<li>[9]：这个临时布尔值告诉我们下一个 FFT 块是否已准备好被渲染。
+</li>
+<li>[10]：大小为 512 的 scopeData 浮点数组将保存要在屏幕上显示的点。
+</li>
+</ul>
+<p>现在，在我们的构造函数成员初始化列表中初始化这些变量，如下所示：</p>
+<pre><code>AnalyserComponent()
+    : forwardFFT (fftOrder),
+      window (fftSize, juce::dsp::WindowingFunction&lt;float&gt;::hann)
+{</code></pre>
+<p>此时必须用正确的阶数显式初始化 FFT 对象，并且可以选择窗函数。这里我们决定使用 Hann 函数，但你也可以随意选择其他的。</p>
+<p>在重写的 <code>getNextAudioBlock()</code> 函数中，我们简单地把当前音频缓冲区块中包含的所有采样推入 fifo，以便稍后处理：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    if (bufferToFill.buffer-&gt;getNumChannels() &gt; 0)
+    {
+        auto* channelData = bufferToFill.buffer-&gt;getReadPointer (0, bufferToFill.startSample);
+        for (auto i = 0; i &lt; bufferToFill.numSamples; ++i)
+            pushNextSampleIntoFifo (channelData[i]);
+    }
+}</code></pre>
+<p>要把采样推入 fifo，请按下面的描述实现 <code>pushNextSampleIntoFifo()</code> 函数：</p>
+<pre><code>void pushNextSampleIntoFifo (float sample) noexcept
+{
+    // if the fifo contains enough data, set a flag to say
+    // that the next frame should now be rendered..
+    if (fifoIndex == fftSize) // [11]
+    {
+        if (!nextFFTBlockReady) // [12]
+        {
+            juce::zeromem (fftData, sizeof (fftData));
+            memcpy (fftData, fifo, sizeof (fifo));
+            nextFFTBlockReady = true;
+        }
+        fifoIndex = 0;
+    }
+    fifo[fifoIndex++] = sample; // [12]
+}</code></pre>
+<ul>
+<li>[11]：如果 fifo 中已有足够的数据（这里是 2048 个采样），我们就可以把数据复制到 fftData 数组，交给 FFT 处理。我们还设置一个标志，表示下一帧现在应该被渲染，并总是把索引重置为 0，以便重新开始填充 fifo。
+</li>
+<li>[12]：每次调用这个函数时，都会有一个采样被存入 fifo，索引随之递增。
+</li>
+</ul>
+<p>现在 fifo 数据占据了 FFT 输入数组的前半部分，可以处理并显示了。</p>
+<h3>显示分析器</h3>
+<p>在 <code>drawNextFrameOfSpectrum()</code> 函数中，按下面的说明插入帧绘制实现：</p>
+<pre><code>void drawNextFrameOfSpectrum()
+{
+    // first apply a windowing function to our data
+    window.multiplyWithWindowingTable (fftData, fftSize); // [1]
+    // then render our FFT data..
+    forwardFFT.performFrequencyOnlyForwardTransform (fftData); // [2]
+    auto mindB = -100.0f;
+    auto maxdB = 0.0f;
+    for (int i = 0; i &lt; scopeSize; ++i) // [3]
+    {
+        auto skewedProportionX = 1.0f - std::exp (std::log (1.0f - (float) i / (float) scopeSize) * 0.2f);
+        auto fftDataIndex = juce::jlimit (0, fftSize / 2, (int) (skewedProportionX * (float) fftSize * 0.5f));
+        auto level = juce::jmap (juce::jlimit (mindB, maxdB, juce::Decibels::gainToDecibels (fftData[fftDataIndex]) - juce::Decibels::gainToDecibels ((float) fftSize)),
+            mindB,
+            maxdB,
+            0.0f,
+            1.0f);
+        scopeData[i] = level; // [4]
+    }
+}</code></pre>
+<ul>
+<li>[1]：首先，对输入数据应用窗函数，方法是调用 window 对象上的 <code>multiplyWithWindowingTable()</code> 函数，并把数据作为参数传入。
+</li>
+<li>[2]：然后，使用 FFT 对象上的 <code>performFrequencyOnlyForwardTransform()</code> 函数、以 fftData 数组作为参数来渲染 FFT 数据。
+</li>
+<li>[3]：现在，在遍历示波器宽度上每个点的 for 循环中，按期望的最小和最大分贝值成比例地计算电平。为此，我们首先需要对 x 轴做倾斜变换，使用对数刻度来更好地表示频率。然后我们可以把这个缩放因子用于取得正确的数组索引，并用幅度值把它映射到 <code>0.0 .. 1.0</code> 的范围。
+</li>
+<li>[4]：最后，用正确的幅度设置相应的点，为绘制过程做好准备。
+</li>
+</ul>
+<p>使用定时器回调函数更新分析器，仅当下一个 FFT 块就绪时调用 <code>drawNextFrameOfSpectrum()</code>，重置标志，并使用 <code>repaint()</code> 函数更新 GUI：</p>
+<pre><code>void timerCallback() override
+{
+    if (nextFFTBlockReady)
+    {
+        drawNextFrameOfSpectrum();
+        nextFFTBlockReady = false;
+        repaint();
+    }
+}</code></pre>
+<p>最后一步，<code>paint()</code> 回调会在发起 <code>repaint()</code> 请求时调用我们的辅助函数 <code>drawFrame()</code>，帧可以按如下方式绘制：</p>
+<pre><code>void drawFrame (juce::Graphics&amp; g)
+{
+    for (int i = 1; i &lt; scopeSize; ++i)
+    {
+        auto width = getLocalBounds().getWidth();
+        auto height = getLocalBounds().getHeight();
+        g.drawLine ({ (float) juce::jmap (i - 1, 0, scopeSize - 1, 0, width),
+            juce::jmap (scopeData[i - 1], 0.0f, 1.0f, (float) height, 0.0f),
+            (float) juce::jmap (i, 0, scopeSize - 1, 0, width),
+            juce::jmap (scopeData[i], 0.0f, 1.0f, (float) height, 0.0f) });
+    }
+}</code></pre>
+<p>这里，对于数组中除第一个点之外的每个点，我们通过把示波器的尺寸映射到屏幕边界的尺寸，在前一个点和当前点之间画一条线。</p>
+<blockquote>
+      <p>练习：尝试改变 FFT 使用的窗函数，注意频谱分析器的反应有多么不同。</p>
+    </blockquote>
+<blockquote>
+      <p>这个修改版本的源代码可以在演示项目的 <code>SpectrumAnalyserTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>在本教程中，我们学习了如何使用窗函数和 FFT 在频谱分析器中显示音频数据。具体来说，我们：</p>
+<ul>
+<li>了解了窗函数的基础知识。
+</li>
+<li>使用 fifo 逐采样处理音频。
+</li>
+<li>通过在采样点之间画线来显示数据。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="audio-thumbnail.html" rel="noreferrer noopener">教程：绘制音频波形</a>
+</li>
+<li><a href="playing-sound-files.html" rel="noreferrer noopener">教程：构建音频播放器</a>
+</li>
+<li><a href="processing-audio-input.html" rel="noreferrer noopener">教程：处理音频输入</a>
+</li>
+<li><a href="dsp-introduction.html" rel="noreferrer noopener">教程：DSP 简介</a>
+</li>
+<li><a href="simple-fft.html" rel="noreferrer noopener">教程：快速傅里叶变换</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_spectrum_analyser/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_spectrum_analyser/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

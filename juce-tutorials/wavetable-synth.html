@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>波表合成 - JUCE 教程</title>
+<meta name="description" content="波表合成：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>波表合成</h1>
+<p>用波表优化你的合成器振荡器。使用波表管理正弦波振荡器的状态，并把数据写入音频输出。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classAudioBuffer.html" rel="noreferrer noopener">AudioBuffer</a>, <a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a>, <a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a>, <a href="structMathConstants.html" rel="noreferrer noopener">MathConstants</a></p>
+<h2>准备工作</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/WavetableSynthTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/WavetableSynthTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目只是生成一堆随机的正弦波谐波，并通过立体声输出。用户界面让我们能够比较振荡器的传统实现与使用波表的实现，从而监测 CPU 占用。</p>
+<p>为了正确评估和比较不同实现的 CPU 占用，我们将以 <strong>Release</strong> 配置运行应用，而不是测试和开发期间常用的 <strong>Debug</strong> 配置。以 <strong>Release</strong> 模式构建项目后，编译器就能尽可能优化代码，例如从代码中移除断言和注释，以及内联函数。</p>
+<p>要在 Xcode 中更改构建配置，首先点击界面左上角的部署目标，然后依次进入 <strong>Edit Scheme…</strong>，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_wavetable_synth_screenshot1.png" alt="编辑 scheme">
+<figcaption>编辑 scheme</figcaption>
+</figure>
+<p>在弹出的窗口中，在 <strong>Build Configuration</strong> 组合框中选择 <strong>Release</strong>，如截图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_wavetable_synth_screenshot2.png" alt="更改构建配置">
+<figcaption>更改构建配置</figcaption>
+</figure>
+<p>现在你的应用将在编译器进行大量优化后运行，CPU 占用应该会显著降低。</p>
+<h2>波表</h2>
+<p>波表合成是一种使用查找表的合成方法，查找表中预先填入了周期波形，用于生成振荡器，从而不必为每个计算出的采样生成相同的波形。波表用你选择的周期波形初始化，并且可以指定这些波形的分辨率。在获取要输出的正确采样值时，如果表中的采样数与音频缓冲区块中的采样数及其对应的请求频率不匹配，就通过在两个波表采样之间插值来求得该值。</p>
+<p>举个例子，假设我们要从波表中查找正弦波。我们首先会为一个正弦波周期创建波表，例如分辨率为 128 个采样点。然后对于缓冲区块中的每个采样，我们可以结合采样率、要演奏的请求频率、波表的分辨率以及波形当前的相位或角度，计算出正确的插值采样，从而取得正弦波采样值。</p>
+<p>在深入波表之前，我们先从一个简单的正弦波振荡器实现开始。</p>
+<h2>正弦波振荡器</h2>
+<blockquote>
+      <p>本节内容在<a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>中有更详细的讲解，如果你需要这些步骤的帮助，请先参阅该教程。</p>
+    </blockquote>
+<p>在 <code>SineOscillator</code> 类中，我们维护两个成员变量，分别存储波形周期中当前的角度或相位，以及根据频率和采样率在每个周期之间需要递增的角度增量：</p>
+<pre><code>class SineOscillator
+{
+public:
+    SineOscillator() {}
+    //...
+private:
+    float currentAngle = 0.0f, angleDelta = 0.0f;
+};</code></pre>
+<p><code>setFrequency()</code> 函数让我们能够计算角度增量：先把频率除以采样率，再把结果乘以 2pi，即一个周期以弧度表示的长度：</p>
+<pre><code>void setFrequency (float frequency, float sampleRate)
+{
+    auto cyclesPerSample = frequency / sampleRate;
+    angleDelta = cyclesPerSample * juce::MathConstants&lt;float&gt;::twoPi;
+}</code></pre>
+<p><code>getNextSample()</code> 函数由<a href="https://docs.juce.com/master/classAudioSource.html" rel="noreferrer noopener">AudioSource</a>的 <code>getNextAudioBlock()</code> 函数对缓冲区中的每个采样调用，用于从振荡器取得采样值。这里我们用 <code>std::sin()</code> 函数计算采样值，把当前角度作为参数传入，并通过调用后面定义的辅助函数 <code>updateAngle()</code> 更新当前角度：</p>
+<pre><code>forcedinline float getNextSample() noexcept
+{
+    auto currentSample = std::sin (currentAngle);
+    updateAngle();
+    return currentSample;
+}</code></pre>
+<p>角度的更新方式是：用在设置频率时先前算出的角度增量递增当前角度，并在角度超过 2pi 时把该值回绕：</p>
+<pre><code>forcedinline void updateAngle() noexcept
+{
+    currentAngle += angleDelta;
+    if (currentAngle &gt;= juce::MathConstants&lt;float&gt;::twoPi)
+        currentAngle -= juce::MathConstants&lt;float&gt;::twoPi;
+}</code></pre>
+<p>现在我们转到 <code>MainContentComponent</code> 类的实现。</p>
+<p>我们用一个私有成员变量维护输出的总电平，另一个维护振荡器数组，如下所示：</p>
+<pre><code>class MainContentComponent : public juce::AudioAppComponent,
+                             public juce::Timer
+{
+    //...
+private:
+    //...
+    float level = 0.0f;
+    juce::OwnedArray&lt;SineOscillator&gt; oscillators;
+    //...
+};</code></pre>
+<p>在 <code>prepareToPlay()</code> 函数中，我们必须初始化振荡器，并根据采样率设置它们要演奏的频率，如下所示：</p>
+<pre><code>void prepareToPlay (int, double sampleRate) override
+{
+    auto numberOfOscillators = 200; // [1]
+    for (auto i = 0; i &lt; numberOfOscillators; ++i)
+    {
+        auto* oscillator = new SineOscillator(); // [2]
+        auto midiNote = juce::Random::getSystemRandom().nextDouble() * 36.0 + 48.0; // [3]
+        auto frequency = 440.0 * pow (2.0, (midiNote - 69.0) / 12.0); // [4]
+        oscillator-&gt;setFrequency ((float) frequency, (float) sampleRate); // [5]
+        oscillators.add (oscillator);
+    }
+    level = 0.25f / (float) numberOfOscillators; // [6]
+}</code></pre>
+<ul>
+<li>[1]：首先我们定义大量振荡器，以评估这样的数量带来的 CPU 负载。
+</li>
+<li>[2]：对于每个振荡器，我们实例化一个新的 <code>SineOscillator</code> 对象，它生成一个正弦波声部。
+</li>
+<li>[3]：我们还用<a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a>类随机选择一个 MIDI 音符：把可能的最低音符上移 4 个八度，并从该最低音符起定义一个 3 个八度的范围。
+</li>
+<li>[4]：为了计算该 MIDI 音符的频率，我们用一个简单的数学公式求出与 A440 频率相乘的系数。由于已知 A440 的 MIDI 音符编号是 69，用该 MIDI 音符减去 69 就得到与 A440 的半音距离，然后把它代入以下公式：<code>440 * 2 ^ (d / 12)</code>
+</li>
+<li>[5]：然后，我们把频率和采样率作为参数传给 <code>setFrequency()</code> 函数，设置振荡器的频率。我们还会把该振荡器加入振荡器数组。
+</li>
+<li>[6]：最后，我们用一个较小的增益值除以振荡器数量来定义输出电平，以免把如此大量的振荡器采样相加时信号削波。
+</li>
+</ul>
+<p>在 <code>getNextAudioBlock()</code> 函数中，我们只是把所有振荡器的采样相加，并把结果写入输出缓冲区，如下所示：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto* leftBuffer = bufferToFill.buffer-&gt;getWritePointer (0, bufferToFill.startSample); // [7]
+    auto* rightBuffer = bufferToFill.buffer-&gt;getWritePointer (1, bufferToFill.startSample);
+    bufferToFill.clearActiveBufferRegion();
+    for (auto oscillatorIndex = 0; oscillatorIndex &lt; oscillators.size(); ++oscillatorIndex)
+    {
+        auto* oscillator = oscillators.getUnchecked (oscillatorIndex); // [8]
+        for (auto sample = 0; sample &lt; bufferToFill.numSamples; ++sample)
+        {
+            auto levelSample = oscillator-&gt;getNextSample() * level; // [9]
+            leftBuffer[sample] += levelSample; // [10]
+            rightBuffer[sample] += levelSample;
+        }
+    }
+}</code></pre>
+<ul>
+<li>[7]：首先，我们取得左右声道的指针，用于写入输出缓冲区。
+</li>
+<li>[8]：对于数组中的每个振荡器，我们取得指向该振荡器实例的指针。
+</li>
+<li>[9]：然后对于音频采样缓冲区中的每个采样，我们取得正弦波采样，并用 level 变量调整增益。
+</li>
+<li>[10]：最后，我们可以把这个采样值加到左右声道的采样上，并与其他振荡器的信号相加。
+</li>
+</ul>
+<p>如果现在运行应用，我们应该能听到由叠加正弦波构成的随机噪声。</p>
+<blockquote>
+      <p>练习：不要生成随机的 MIDI 音符，而是找出某个和弦的 MIDI 音符，并从该和弦中生成随机音符。</p>
+    </blockquote>
+<h2>波表振荡器</h2>
+<p>让我们把振荡器的实现改为波表合成方法。</p>
+<p>在 <code>MainContentComponent</code> 类中，添加一个 AudioSampleBuffer 成员变量，用于保存我们单个正弦波周期的波表值 [1]。我们还用位移运算符把波表分辨率定义为一个 128 采样的常量 [2]：</p>
+<pre><code>private:
+    juce::Label cpuUsageLabel;
+    juce::Label cpuUsageText;
+    const unsigned int tableSize = 1 &lt;&lt; 7; // [2]
+    float level = 0.0f;
+    juce::AudioSampleBuffer sineTable; // [1]
+    juce::OwnedArray&lt;WavetableOscillator&gt; oscillators;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
+};</code></pre>
+<p>定义一个新函数 <code>createWavetable()</code>，它将在 <code>MainContentComponent</code> 构造函数中、开始音频处理之前被调用。</p>
+<pre><code>void createWavetable()
+{
+    sineTable.setSize (1, (int) tableSize);
+    auto* samples = sineTable.getWritePointer (0); // [3]
+    auto angleDelta = juce::MathConstants&lt;double&gt;::twoPi / (double) (tableSize - 1); // [4]
+    auto currentAngle = 0.0;
+    for (unsigned int i = 0; i &lt; tableSize; ++i)
+    {
+        auto sample = std::sin (currentAngle); // [5]
+        samples[i] = (float) sample;
+        currentAngle += angleDelta;
+    }
+}</code></pre>
+<ul>
+<li>[3]：在这个函数中，通过调用 <code>setSize()</code> 方法初始化 AudioSampleBuffer，指定我们只需要一个声道，且采样数等于表大小，在我们的情况下分辨率是 128。然后取得该单声道缓冲区的写指针。
+</li>
+<li>[4]：接下来，与前一部分类似地计算角度增量，但这次使用表大小，因此是用完整的 2pi 周期除以 127。
+</li>
+<li>[5]：现在，对波表中的每个点，用 <code>std::sin()</code> 函数取得正弦波值，把该值赋给缓冲区采样，并按增量值递增当前角度。
+</li>
+</ul>
+<p>在 <code>MainContentComponent</code> 构造函数中添加这个函数调用，如下所示：</p>
+<pre><code>MainContentComponent()
+{
+    cpuUsageLabel.setText ("CPU Usage", juce::dontSendNotification);
+    cpuUsageText.setJustificationType (juce::Justification::right);
+    addAndMakeVisible (cpuUsageLabel);
+    addAndMakeVisible (cpuUsageText);
+    createWavetable();
+    setSize (400, 200);
+    setAudioChannels (0, 2); // no inputs, two outputs
+    startTimer (50);
+}</code></pre>
+<p>现在波表应该包含一个完整正弦波周期的 128 个采样。</p>
+<p>在 <code>prepareToPlay()</code> 函数的 for() 循环中，把下面这一行改为实例化 <code>WavetableOscillator</code> 对象，而不是 <code>SineOscillator</code> 对象：</p>
+<pre><code>for (auto i = 0; i &lt; numberOfOscillators; ++i)
+{
+    auto* oscillator = new WavetableOscillator (sineTable);</code></pre>
+<p>这个构造函数把用于生成声音的波表作为参数，因此要相应地新建一个 <code>WavetableOscillator</code> 类，如下所示：</p>
+<pre><code>class WavetableOscillator
+{
+public:
+    WavetableOscillator (const juce::AudioSampleBuffer&amp; wavetableToUse)
+        : wavetable (wavetableToUse)
+    {
+        jassert (wavetable.getNumChannels() == 1);
+    }</code></pre>
+<pre><code>private:
+    const juce::AudioSampleBuffer&amp; wavetable;
+    float currentIndex = 0.0f, tableDelta = 0.0f;
+};</code></pre>
+<p>不要维护波形周期的当前角度和角度增量，而是定义两个成员变量，分别存储当前的波表索引和波表的角度增量。另外，定义一个 AudioSampleBuffer 变量，用于保存要使用的波表的引用。</p>
+<p><code>setFrequency()</code> 函数（属于 <code>WavetableOscillator</code> 类）与之前实现的版本相当相似，区别在于角度增量是用波表大小计算的，而不是用 2pi 弧度的完整周期，如下所示：</p>
+<pre><code>void setFrequency (float frequency, float sampleRate)
+{
+    auto tableSizeOverSampleRate = (float) wavetable.getNumSamples() / sampleRate;
+    tableDelta = frequency * tableSizeOverSampleRate;
+}</code></pre>
+<p><code>getNextSample()</code> 函数就是进行波表值之间插值、以取得正确采样值的地方。</p>
+<pre><code>forcedinline float getNextSample() noexcept
+{
+    auto tableSize = (unsigned int) wavetable.getNumSamples();
+    auto index0 = (unsigned int) currentIndex; // [6]
+    auto index1 = index0 == (tableSize - 1) ? (unsigned int) 0 : index0 + 1;
+    auto frac = currentIndex - (float) index0; // [7]
+    auto* table = wavetable.getReadPointer (0); // [8]
+    auto value0 = table[index0];
+    auto value1 = table[index1];
+    auto currentSample = value0 + frac * (value1 - value0); // [9]
+    if ((currentIndex += tableDelta) &gt; (float) tableSize) // [10]
+        currentIndex -= (float) tableSize;
+    return currentSample;
+}</code></pre>
+<ul>
+<li>[6]：首先，暂时保存波表中夹住我们要取的采样值的两个索引。如果较高的索引超出波表大小，就把该值回绕到表的开头。
+</li>
+<li>[7]：接下来，用实际当前采样减去截断后的较低索引，计算出两个索引之间的插值分数。这应该给出一个介于 <code>0 .. 1</code> 之间的值，用来定义该分数。
+</li>
+<li>[8]：然后取得指向 AudioSampleBuffer 的指针，读取这两个索引处的值并暂时保存。
+</li>
+<li>[9]：然后用标准插值公式和先前算出的分数值取得插值后的采样值。
+</li>
+<li>[10]：最后，递增表的角度增量，并在该值超过表大小时把它回绕。
+</li>
+</ul>
+<p>运行应用时，这个实现应该给我们相同的输出声音。</p>
+<blockquote>
+      <p>练习：修改振荡器的数量，观察 CPU 占用的变化。</p>
+    </blockquote>
+<blockquote>
+      <p>这个修改版代码的源代码可以在演示项目的 <code>WavetableSynthTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>回绕波表</h2>
+<p>如果你仔细观察了前面的代码，可能会注意到我们的波表中缺少一个值。最后一个值被跳过了，因为它回绕到了第一个值，而这两个值恰好相同。所以我们现在来修正它。</p>
+<p>在 <code>WavetableOscillator</code> 构造函数中，把表大小变量赋值为波表分辨率减一，并相应地定义该成员变量，如下所示：</p>
+<pre><code>class WavetableOscillator
+{
+public:
+    WavetableOscillator (const juce::AudioSampleBuffer&amp; wavetableToUse)
+        : wavetable (wavetableToUse),
+          tableSize (wavetable.getNumSamples() - 1)
+    {
+        jassert (wavetable.getNumChannels() == 1);
+    }</code></pre>
+<pre><code>private:
+    const juce::AudioSampleBuffer&amp; wavetable;
+    const int tableSize;
+    float currentIndex = 0.0f, tableDelta = 0.0f;
+};</code></pre>
+<p><code>setFrequency()</code> 函数需要改用这个变量来更新，注意表的角度增量会稍微小一些：</p>
+<pre><code>void setFrequency (float frequency, float sampleRate)
+{
+    auto tableSizeOverSampleRate = (float) tableSize / sampleRate;
+    tableDelta = frequency * tableSizeOverSampleRate;
+}</code></pre>
+<p><code>getNextSample()</code> 函数基本保持不变，只是我们不再需要对较高的索引做回绕，因为下一步我们会增大表的尺寸：</p>
+<pre><code>forcedinline float getNextSample() noexcept
+{
+    auto index0 = (unsigned int) currentIndex;
+    auto index1 = index0 + 1;</code></pre>
+<p>这里与之前不同，我们把分辨率设得比定义值大 1，并把最后一个采样设为与第一个采样相同：</p>
+<pre><code>void createWavetable()
+{
+    sineTable.setSize (1, (int) tableSize + 1);
+    auto* samples = sineTable.getWritePointer (0);</code></pre>
+<pre><code>samples[tableSize] = samples[0];
+}</code></pre>
+<p>这使我们能够减少处理调用中的回绕条件，并把这份负载转移到 <code>createWavetable()</code> 函数上，而该函数只在应用启动时调用一次。</p>
+<p>结果听起来应该与前一节相同，但注意 CPU 占用略有下降。</p>
+<blockquote>
+      <p>练习：你能找到进一步优化这段代码的方法吗？DSP 中的每个算术运算都会影响性能，所以你应该尽量消除尽可能多的运算。</p>
+    </blockquote>
+<blockquote>
+      <p>这个修改版代码的源代码可以在演示项目的 <code>WavetableSynthTutorial_03.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>选择谐波</h2>
+<p>与其输出随机的正弦波声音，不如通过显式设置谐波来创建一个和谐的正弦波。</p>
+<p>修改 <code>createWavetable()</code> 函数，把谐波合成到正弦波的波表采样中，如下所示：</p>
+<pre><code>void createWavetable()
+{
+    sineTable.setSize (1, (int) tableSize + 1);
+    sineTable.clear();
+    auto* samples = sineTable.getWritePointer (0);
+    int harmonics[] = { 1, 3, 5, 6, 7, 9, 13, 15 };
+    float harmonicWeights[] = { 0.5f, 0.1f, 0.05f, 0.125f, 0.09f, 0.005f, 0.002f, 0.001f }; // [1]
+    jassert (juce::numElementsInArray (harmonics) == juce::numElementsInArray (harmonicWeights));
+    for (auto harmonic = 0; harmonic &lt; juce::numElementsInArray (harmonics); ++harmonic)
+    {
+        auto angleDelta = juce::MathConstants&lt;double&gt;::twoPi / (double) (tableSize - 1) * harmonics[harmonic]; // [2]
+        auto currentAngle = 0.0;
+        for (unsigned int i = 0; i &lt; tableSize; ++i)
+        {
+            auto sample = std::sin (currentAngle);
+            samples[i] += (float) sample * harmonicWeights[harmonic]; // [3]
+            currentAngle += angleDelta;
+        }
+    }
+    samples[tableSize] = samples[0];
+}</code></pre>
+<ul>
+<li>[1]：定义两个数组，分别描述奇次谐波的序号及其对应的权重。
+</li>
+<li>[2]：对每个谐波，用完整的 2pi 周期乘以谐波次数再除以表大小，计算出角度增量。这实际上是把生成的频率乘以谐波次数。
+</li>
+<li>[3]：对表中的每个采样，从当前角度取得正弦值，用对应的谐波权重调整增益后把该值加到缓冲区中已有的采样上，并按增量值递增当前角度。
+</li>
+</ul>
+<pre><code>void prepareToPlay (int, double sampleRate) override
+{
+    auto numberOfOscillators = 10;</code></pre>
+<p>最后，在 <code>prepareToPlay()</code> 函数中把振荡器数量减少到 10，并运行应用听听结果。</p>
+<blockquote>
+      <p>练习：把谐波改为偶次序列，注意产生声音的音色变化。奇次与偶次混合的序列又如何？</p>
+    </blockquote>
+<blockquote>
+      <p>由于你正在向音频信号添加更高频率的成分，需要注意混叠效应！处理这些超出了本教程的范围，但阅读奈奎斯特—香农采样定理和升采样（upsampling）的相关内容会是不错的起点。</p>
+    </blockquote>
+<blockquote>
+      <p>这个修改版代码的源代码可以在演示项目的 <code>WavetableSynthTutorial_04.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>说明</h2>
+<p>本教程探讨了如何从正弦波创建波表，但基本上你可以存储任何类型的周期波形，只要第一个采样与最后一个采样相同。</p>
+<blockquote>
+      <p>练习：修改 <code>createWavetable()</code> 函数，生成并存储不同类型的波形，例如方波、三角波或锯齿波。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>本教程中，我们学习了如何实现波表合成器。具体来说，我们：</p>
+<ul>
+<li>把正弦波振荡器转换为波表振荡器。
+</li>
+<li>相应地优化了使用数百个振荡器时的 CPU 占用。
+</li>
+<li>把同一振荡器的随机谐波写入音频输出。
+</li>
+<li>通过选择谐波及其权重创建了和谐的声音。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>
+</li>
+<li><a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>
+</li>
+<li><a href="synth-db-level-control.html" rel="noreferrer noopener">教程：使用分贝控制音频电平</a>
+</li>
+<li><a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>
+</li>
+<li><a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建 MIDI 合成器</a>
+</li>
+<li><a href="looping-audio-sample-buffer.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频</a>
+</li>
+<li><a href="looping-audio-sample-buffer-advanced.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频（进阶）</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_wavetable_synth/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_wavetable_synth/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

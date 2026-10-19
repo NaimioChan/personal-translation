@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>控制音频电平 - JUCE 教程</title>
+<meta name="description" content="控制音频电平：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>控制音频电平</h1>
+<p>本教程展示如何处理音频以改变其输出电平。这是通过处理底层的音频采样数据实现的。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a>, <a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a>, <a href="structAudioSourceChannelInfo.html" rel="noreferrer noopener">AudioSourceChannelInfo</a>, <a href="https://docs.juce.com/master/classAudioBuffer.html" rel="noreferrer noopener">AudioBuffer</a>, <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a></p>
+<h2>准备工作</h2>
+<blockquote>
+      <p>本教程是[教程：构建白噪声发生器](/tutorials/tutorial_simple_synth_noise/)的后续内容，你应该先阅读并理解那篇教程。它还假定你熟悉如何操作 [Slider](https://docs.juce.com/master/classSlider.html “用于更改数值的滑块控件。”) 对象（参见[教程：Slider 类](/tutorials/tutorial_slider_values/)）。</p>
+    </blockquote>
+<p>在这里下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/SynthLevelControlTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/SynthLevelControlTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目呈现一个窗口，其中包含一个滑块，用于控制白噪声发生器的输出电平。下面的截图展示了这一点。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_level_control_screenshot1-1.png" alt="演示项目主窗口，显示电平控制滑块。">
+<figcaption>演示项目主窗口，显示电平控制滑块。</figcaption>
+</figure>
+<p>在 IDE 中运行项目，确认你确实可以控制所生成白噪声的电平。</p>
+<h2>以乘法实现电平控制</h2>
+<p>查看代码时，你可能会注意到我们的 <code>MainContentComponent</code> 类<em>并未</em>继承 <a href="https://docs.juce.com/master/classSlider.html#a1977aeac9b4363e8ed0cac0ac103055a" rel="noreferrer noopener">Slider::Listener</a> 类。实际上，我们是在 <code>getNextAudioBlock()</code> 函数被调用时立即获取滑块的值：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto level = (float) levelSlider.getValue();</code></pre>
+<p>这种技术在这样简单的应用中可以接受，但在更复杂的应用中，你几乎肯定想用另一种技术。更好的做法是把控制音频处理系统的值存放在应用的「数据模型」中，而不是仅仅依赖 UI 控件来存储这些值。</p>
+<blockquote>
+      <p>虽然调用 <a href="https://docs.juce.com/master/classSlider.html#a288c6f5c7a76100a1e7526e002e10eb5" rel="noreferrer noopener">Slider::getValue()</a> 是可以接受的（即便在 <code>getNextAudioBlock()</code> 函数中），但你<em>绝不能</em>调用 <a href="https://docs.juce.com/master/classSlider.html#a430a5c4e56b39dd622f5800f787e0822" rel="noreferrer noopener">Slider::setValue()</a>，尤其是在 <code>getNextAudioBlock()</code> 函数中。因为这段代码运行在音频线程上。你不能从音频线程做任何改变 UI 对象状态的事情，不过查询 UI 对象的状态是可以的，只要确信这些查询没有副作用。</p>
+    </blockquote>
+<p>为了按滑块指定的电平生成白噪声，我们需要做一些基本的算术运算。<a href="https://docs.juce.com/master/classRandom.html#aec88d4e5cf44faaa038f6cfb41e96406" rel="noreferrer noopener">Random::nextFloat()</a> 函数总是生成 0.0 到 1.0 之间的值。如果把它画成音频波形，大致如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_level_control_graph1.png" alt="在 0.0 到 1.0 之间生成的随机数">
+<figcaption>在 0.0 到 1.0 之间生成的随机数</figcaption>
+</figure>
+<p>一种简单的做法是先把噪声缩放，使其始终落在 -1.0 到 1.0 之间。为此，我们可以乘以 2.0 再减去 1.0。这样得到的信号如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_level_control_graph2-1.png" alt="在 -1.0 到 1.0 之间生成的随机数">
+<figcaption>在 -1.0 到 1.0 之间生成的随机数</figcaption>
+</figure>
+<p>在 <code>getNextAudioBlock()</code> 函数中，代码实现如下：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto level = (float) levelSlider.getValue();
+    for (auto channel = 0; channel &lt; bufferToFill.buffer-&gt;getNumChannels(); ++channel)
+    {
+        auto* buffer = bufferToFill.buffer-&gt;getWritePointer (channel, bufferToFill.startSample);
+        for (auto sample = 0; sample &lt; bufferToFill.numSamples; ++sample)
+        {
+            auto noise = random.nextFloat() * 2.0f - 1.0f;
+            buffer[sample] = noise * level;
+        }
+    }
+}</code></pre>
+<h3>一处小优化</h3>
+<p>减少算术运算的次数常常是 DSP 的目标。在这个例子中，我们可以省去每个采样的一次乘法运算。为此，我们可以先把 0.0 到 1.0 之间的值乘以所需输出电平的<em>两倍</em>。假设我们希望电平为 0.25。如果把随机值乘以 0.5，就会得到类似这样的结果：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_level_control_graph3-1.png" alt="缩放到 0.0 到 0.5 之间的随机数">
+<figcaption>缩放到 0.0 到 0.5 之间的随机数</figcaption>
+</figure>
+<p>最后，我们需要对随机值做偏移，使其以零为中心。为此，我们减去等于所乘值一半的数值。这当然就是原来的电平值。最终结果大致如下：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_level_control_graph4-1.png" alt="经缩放和偏移后落在 -0.25 到 0.25 之间的随机数">
+<figcaption>经缩放和偏移后落在 -0.25 到 0.25 之间的随机数</figcaption>
+</figure>
+<p>这可以在 <code>getNextAudioBlock()</code> 函数中用代码实现，你会看到现在每个采样少了一次乘法运算：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto level = (float) levelSlider.getValue();
+    auto levelScale = level * 2.0f;
+    for (auto channel = 0; channel &lt; bufferToFill.buffer-&gt;getNumChannels(); ++channel)
+    {
+        auto* buffer = bufferToFill.buffer-&gt;getWritePointer (channel, bufferToFill.startSample);
+        for (auto sample = 0; sample &lt; bufferToFill.numSamples; ++sample)
+            buffer[sample] = random.nextFloat() * levelScale - level;
+    }
+}</code></pre>
+<blockquote>
+      <p>这个修订版本的代码可以在演示项目的 <code>SynthLevelControlTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<p>这个实现还剩下一个问题：电平只在每个生成的音频块中更新为一个新的常量值。在这个例子中听不出来（因为源声音是白噪声）。如果把它用于大多数音频内容，这种技术就会引入音频瑕疵。这是因为电平值可能在每个音频块之间相当突然地跳变，而不是在音频块内部平滑变化。避免这些瑕疵（例如电平变化时可听见的爆裂声）的技术在其他教程中探讨（参见<a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>）。</p>
+<blockquote>
+      <p>练习：
+在用户界面中添加第二个滑块。用第一个滑块控制左声道的电平，用第二个滑块控制右声道的电平。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>本教程演示了如何控制音频信号的电平。我们涵盖了以下主题：</p>
+<ul>
+<li>通过把信号值乘以所需输出电平来修改信号的电平。
+</li>
+<li>使用滑块控制音频电平。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="slider-values.html" rel="noreferrer noopener">教程：Slider 类</a>
+</li>
+<li><a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>
+</li>
+<li><a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>
+</li>
+<li><a href="synth-db-level-control.html" rel="noreferrer noopener">教程：使用分贝控制音频电平</a>
+</li>
+<li><a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建 MIDI 合成器</a>
+</li>
+<li><a href="wavetable-synth.html" rel="noreferrer noopener">教程：波表合成</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_synth_level_control/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_synth_level_control/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>通过在线注册解锁插件 - JUCE 教程</title>
+<meta name="description" content="通过在线注册解锁插件：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>通过在线注册解锁插件</h1>
+<p>通过锁定应用和插件的访问权限直到获得授权，提升它们的安全性。学习如何为用户提供一种机制，通过在线注册密钥来解锁你的插件。</p>
+<p><strong>难度：</strong>高级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classOnlineUnlockStatus.html" rel="noreferrer noopener">OnlineUnlockStatus</a>、<a href="https://docs.juce.com/master/classOnlineUnlockForm.html" rel="noreferrer noopener">OnlineUnlockForm</a>、<a href="https://docs.juce.com/master/classKeyGeneration.html" rel="noreferrer noopener">KeyGeneration</a>、<a href="https://docs.juce.com/master/classRSAKey.html" rel="noreferrer noopener">RSAKey</a>、<a href="https://docs.juce.com/master/classTracktionMarketplaceStatus.html" rel="noreferrer noopener">TracktionMarketplaceStatus</a></p>
+<blockquote>
+      <p>本教程假定你具备RSA密码学、证书、网络协议和PHP语法的基本知识。</p>
+    </blockquote>
+<h2>入门</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/OnlineUnlockStatusTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/OnlineUnlockStatusTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在Projucer中打开第一个头文件。</p>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer第1部分：Projucer入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目展示了一个非常简单的界面，其中有两个按钮，其中一个用于通过注册解锁对另一个按钮的访问。当按下“Unlock”按钮时，会打开一个注册表单，以便用户输入凭据。目前，在我们开始实现后端服务器之前，注册过程会失败。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot1.png" alt="处于锁定状态的应用窗口">
+<figcaption>处于锁定状态的应用窗口</figcaption>
+</figure>
+<p>在成功实现并授权应用之后，你应该会在本教程结束时看到应用如下的已解锁状态。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot2.png" alt="已解锁的应用窗口">
+<figcaption>已解锁的应用窗口</figcaption>
+</figure>
+<h2>简介</h2>
+<p>作为插件制造商，插件被黑客破解、甚至未经你同意就被免费传播，有时会令人沮丧。尽管要让应用完全抵御此类威胁可能很困难，但仍有办法让黑客的这一过程变得更加繁琐。有时你可能想为用户提供试用期，让他们在决定购买之前试用产品，或者为免费版用户限制某些功能。</p>
+<p>根据制造商的不同，改善插件安全性的方法也各不相同：有些可能使用第三方授权方案，例如PACE的iLok，它需要一根物理USB加密狗来携带许可证；或者使用专有系统，通过将凭据与远程Web服务器上的数据库进行比对来授权用户。</p>
+<p>在本教程中，我们来看第二种方法：通过Web服务器授权来注册插件。这种方法的优点是它既能在线工作，也能离线工作，而且不需要物理设备来完成注册。然而，由于插件会在机器上注册一段时间，与PACE那种每次插件启动都需要授权的方案相比，这种技术更容易受到破解。</p>
+<p>那么服务器授权是如何工作的呢？如果机器连接到互联网，我们可以执行所谓的在线授权：插件通过安全连接发送用户凭据，并向服务器查询许可证密钥。如果用户确实被验证已购买该产品，服务器会将一个密钥文件发送回机器，插件便可解锁。另一方面，如果机器处于离线状态，用户仍然可以通过另一台联网的计算机从Web服务器下载密钥文件，然后将该密钥文件复制并通过加载到插件中应用到离线机器。</p>
+<h3>RSA加密</h3>
+<p>现在我们来简单谈谈密码学。我们如何确保信息在双方之间传输时不被篡改？我们使用一种广泛使用的安全加密算法RSA来确保这一点。RSA的原理是使用质数创建一对密钥，其中一个是公钥，另一个是私钥。公钥可以公开共享，用于加密消息。私钥由接收方保密保存，用于解密消息。</p>
+<p>由于RSA的设计方式，只有私钥所有者才能解密由匹配密钥对中对应公钥加密的消息。这个场景可以用下图来描述：Bob知道公钥，Alice拥有私钥，Eve是试图拦截消息的第三方：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2025/02/dot_inline_dotgraph_8.svg" alt="">
+</figure>
+<p>在上述情况中，Eve无法读取Bob的消息，因为她没有用于解密消息的私钥。她仍然可以使用公钥向Alice发送加密消息，但这对于想要拦截Bob消息的Eve来说毫无用处。这通常是RSA最常见的用例，即某一方想要发送秘密消息，但这并不是RSA在插件注册过程中的使用方式。</p>
+<p>用于插件认证的RSA还有一种替代场景，即使用私钥加密消息，使用公钥解密。这个场景可以用下图来描述：Bob是安装了插件的机器，Alice是用于注册的认证Web服务器，Eve是试图入侵插件的第三方：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2025/02/dot_inline_dotgraph_9.svg" alt="">
+</figure>
+<p>在这种情况下，任何拥有公钥的人都可以解密由Alice用私钥加密的消息，包括Bob和Eve。然而，如果Eve试图在没有匹配密钥对中对应私钥的情况下向Bob发送加密消息，Bob将能够通过用公钥解密来检查消息的真实性。然后他可以验证结果确实是有效的，因为数据会包含乱码，因此Eve无法冒充Alice。</p>
+<p>与此类似，插件认证可以简单地通过检查服务器发送的消息是否有效来完成，前提是服务器仅在凭据与数据库匹配时才发送响应。幸运的是，所有这些加密和解密过程都由JUCE库通过<a href="https://docs.juce.com/master/classKeyGeneration.html" rel="noreferrer noopener">KeyGeneration</a>和<a href="https://docs.juce.com/master/classRSAKey.html" rel="noreferrer noopener">RSAKey</a>等类为我们处理好了。</p>
+<p>现在我们已经理解了RSA加密的工作原理，让我们开始在演示项目中实现注册机制。</p>
+<h2>实现marketplace状态</h2>
+<p>为了方便在机器上使用应用的客户端与授权应用的注册服务器之间进行通信，JUCE库提供了一个充当接口的基类，称为<a href="https://docs.juce.com/master/classOnlineUnlockStatus.html" rel="noreferrer noopener">OnlineUnlockStatus</a>类。该类为管理应用所安装的当前机器的注册状态提供了基础。</p>
+<p>实现特定商店marketplace的第一步是从<a href="https://docs.juce.com/master/classOnlineUnlockStatus.html" rel="noreferrer noopener">OnlineUnlockStatus</a>类继承，<a href="https://docs.juce.com/master/classTracktionMarketplaceStatus.html" rel="noreferrer noopener">TracktionMarketplaceStatus</a>类中描述了如何实现这个子类的示例。由于该实现是专门为Tracktion marketplace设计的，我们需要创建自己的独立子类，但我们会借用处理服务器响应的代码，因为这部分可以保持完全相同。</p>
+<p>我们先来看看<code>TutorialMarketplaceStatus</code>类的实现，它派生自<a href="https://docs.juce.com/master/classOnlineUnlockStatus.html" rel="noreferrer noopener">OnlineUnlockStatus</a>类。请注意，为简单起见，<code>readReplyFromWebserver()</code>和<code>userCancelled()</code>函数是从<a href="https://docs.juce.com/master/classTracktionMarketplaceStatus.html" rel="noreferrer noopener">TracktionMarketplaceStatus</a>实现中复制的。</p>
+<p>现在需要填充基类中其余的虚函数，以完成我们自己的marketplace实现。</p>
+<p>在<code>getProductID()</code>函数中插入你应用的产品ID，并确保该ID稍后与服务器上的产品ID匹配：</p>
+<pre><code>juce::String getProductID() override
+{
+    return "TestApp";
+}</code></pre>
+<p>下面的<code>doesProductIDMatch()</code>函数应验证服务器发送的ID是否与上一步插入的产品ID匹配：</p>
+<pre><code>bool doesProductIDMatch (const juce::String&amp; returnedIDFromServer) override
+{
+    return getProductID() == returnedIDFromServer;
+}</code></pre>
+<p>接下来，在<code>getWebsiteName()</code>函数中插入你网站的名称。此信息仅用于在联系服务器时向用户显示域名。</p>
+<pre><code>juce::String getWebsiteName() override
+{
+    return "juce.com";
+}</code></pre>
+<p>下一个函数很重要，因为这是在尝试授权应用时要联系的地址，它应指向marketplace服务器。就本教程而言，我们指向“localhost”或“127.0.0.1”IP地址，因为测试服务器将在我们的机器上本地运行。它指向的页面以PHP扩展名结尾，因为为简单起见，服务器将使用PHP语言。</p>
+<pre><code>juce::URL getServerAuthenticationURL() override
+{
+    return juce::URL ("https://localhost:8443/auth.php");
+}</code></pre>
+<blockquote>
+      <p>请注意，与服务器通信所使用的协议必须是HTTPS，因为认证过程只能通过安全连接进行。8443端口反映了这一选择，它表示默认的SSL端口。</p>
+    </blockquote>
+<p>当注册过程开始时，客户端应用将使用用户提供的凭据请求认证，服务器将回复一条加密消息。这条包含解锁应用密钥文件的消息，只能使用与服务器端加密消息所用RSA私钥相对应的RSA公钥来解密。</p>
+<p><code>getPublicKey()</code>函数必须返回这个公钥，并将在本教程后面的密钥生成步骤中填写。先按如下方式准备好该函数，暂时将字段留空：</p>
+<pre><code>juce::RSAKey getPublicKey() override
+{
+    return juce::RSAKey ("INSERT_PUBLIC_KEY_HERE");
+}</code></pre>
+<p><code>TutorialMarketplaceStatus</code>类现在拥有了与marketplace服务器通信并获取密钥所需的全部信息。</p>
+<h2>提供注册表单</h2>
+<p>有几种方式可以显示注册表单供用户在应用或插件中填写。我们既可以在界面上覆盖一个常规的<a href="https://docs.juce.com/master/classComponent.html" rel="noreferrer noopener">Component</a>，也可以在主窗口上方弹出一个<a href="https://docs.juce.com/master/classDialogWindow.html" rel="noreferrer noopener">DialogWindow</a>。在开发插件时强烈不建议使用后一种方式，因为这会在验证插件时冻结简单的扫描例程，而且如果DAW在注册窗口仍然活动时关闭插件，也会引起问题。</p>
+<p>因此在本节中，我们选择前一种方式，以确保同时兼容应用和插件。为了简化实现注册用户界面的过程，JUCE库提供了<a href="https://docs.juce.com/master/classOnlineUnlockForm.html" rel="noreferrer noopener">OnlineUnlockForm</a>类，它显示电子邮件和密码两个字段，并与<a href="https://docs.juce.com/master/classOnlineUnlockStatus.html" rel="noreferrer noopener">OnlineUnlockStatus</a>类配合提供无缝的注册实现。</p>
+<p>创建一个名为<code>TutorialUnlockForm</code>的类，并按如下方式派生自<a href="https://docs.juce.com/master/classOnlineUnlockForm.html" rel="noreferrer noopener">OnlineUnlockForm</a>：</p>
+<pre><code>class TutorialUnlockForm : public juce::OnlineUnlockForm
+{
+public:
+    TutorialUnlockForm (TutorialMarketplaceStatus&amp; status)
+        : OnlineUnlockForm (status, "Please provide your email and password.")
+    {
+    }</code></pre>
+<p>在这里我们还传入了对上一节实现的<code>TutorialMarketplaceStatus</code>类的引用，并在类构造函数中提供一条描述性消息来指示用户。</p>
+<p>在<code>MainContentComponent</code>中，声明三个私有成员变量，分别是一个<code>TutorialMarketplaceStatus</code>实例和一个<code>TutorialUnlockForm</code>对象，以及一个用于存储应用是否已解锁的布尔值。</p>
+<pre><code>TutorialMarketplaceStatus marketplaceStatus;
+TutorialUnlockForm unlockForm;
+bool isUnlocked = false;
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
+};</code></pre>
+<p>修改构造函数，通过传入<code>TutorialMarketplaceStatus</code>对象来初始化<code>TutorialUnlockForm</code>，并将该表单作为子<a href="https://docs.juce.com/master/classComponent.html" rel="noreferrer noopener">Component</a>添加，如下所示：</p>
+<pre><code>class MainContentComponent : public juce::Component,
+                             private juce::Timer
+{
+public:
+    //==============================================================================
+    MainContentComponent()
+        : unlockForm (marketplaceStatus)
+    {</code></pre>
+<pre><code>addChildComponent (unlockForm);
+setSize (400, 250);
+startTimer (100);
+}</code></pre>
+<p>请注意，这里我们还继承自<a href="https://docs.juce.com/master/classTimer.html" rel="noreferrer noopener">Timer</a>类并调用<code>startTimer()</code>函数，稍后将用它来检查应用是否已解锁。</p>
+<p>在<code>resized()</code>方法中，通过调用<code>centreWithSize()</code>函数将表单的尺寸设置为覆盖界面的大部分区域，如下所示：</p>
+<pre><code>void resized() override
+{
+    unlockForm.centreWithSize (300, 200);</code></pre>
+<p><code>showForm()</code>辅助函数将在用户按下“Unlock”按钮时被调用。由于该<a href="https://docs.juce.com/master/classComponent.html" rel="noreferrer noopener">Component</a>只是通过<code>addChildComponent()</code>函数而不是<code>addAndMakeVisible()</code>添加的，表单默认是隐藏的，因此这里只需调用<code>setVisible()</code>来显示表单：</p>
+<pre><code>void showForm()
+{
+    unlockForm.setVisible (true);
+}</code></pre>
+<p>当注册过程被取消或成功时，需要关闭表单，<a href="https://docs.juce.com/master/classOnlineUnlockForm.html" rel="noreferrer noopener">OnlineUnlockForm</a>类会自动调用<code>dismiss()</code>回调来完成这件事。在<code>TutorialUnlockForm</code>声明中重写此函数，只需调用<code>setVisible()</code>来隐藏该<a href="https://docs.juce.com/master/classComponent.html" rel="noreferrer noopener">Component</a>：</p>
+<pre><code>void dismiss() override
+{
+    setVisible (false);
+}
+};</code></pre>
+<p>正如之前在<code>MainContentComponent</code>的构造函数中所见，启动了一个定时器，用于在<code>timerCallback()</code>函数中定期检查应用是否已成功解锁：</p>
+<pre><code>void timerCallback() override
+{
+    if (!isUnlocked &amp;&amp; marketplaceStatus.isUnlocked())
+    {
+        isUnlocked = true;
+        unlockApp();
+    }
+}</code></pre>
+<p>这里我们用<code>isUnlocked</code>局部变量检查应用是否仍处于锁定状态，如果是，则通过<code>isUnlocked()</code>函数询问<a href="https://docs.juce.com/master/classOnlineUnlockStatus.html" rel="noreferrer noopener">OnlineUnlockStatus</a>实例应用是否仍被锁定。如果应用已获得授权，我们就切换该局部变量以防止后续迭代，并调用下面的<code>unlockApp()</code>辅助函数：</p>
+<pre><code>void unlockApp()
+{
+    secretButton.setEnabled (true);
+    unlockButton.setEnabled (false);
+    unlockLabel.setText ("Status: Unlocked", juce::dontSendNotification);
+    unlockLabel.setColour (juce::Label::textColourId, juce::Colours::green);
+}</code></pre>
+<p>该函数只是启用访问秘密功能的按钮，禁用解锁应用的按钮，同时显示新的授权状态。</p>
+<p>最后，当用户点击秘密功能按钮时会调用<code>checkFeature()</code>函数，模拟已解锁应用的行为：</p>
+<pre><code>void checkFeature()
+{
+    if (marketplaceStatus.isUnlocked())
+        DBG ("App unlocked!");
+    else
+        DBG ("Beware of hackers!");
+}</code></pre>
+<p>这个函数很重要，因为它为我们的应用提供了另一层安全保护。请注意，该函数会再次通过<a href="https://docs.juce.com/master/classOnlineUnlockStatus.html" rel="noreferrer noopener">OnlineUnlockStatus</a>实例检查应用是否仍处于解锁状态。这样做的原因是，黑客不仅需要破解这个函数才能解锁应用，还需要替换你应用代码中该函数的所有实例，才能完全突破应用的受限功能。</p>
+<blockquote>
+      <p>因此，建议在代码中尽可能多的地方检查应用的授权状态，以提供更健壮的安全机制。</p>
+    </blockquote>
+<p>现在如果我们运行应用，就可以显示注册表单了。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot3.png" alt="注册表单">
+<figcaption>注册表单</figcaption>
+</figure>
+<p>然而，如果我们尝试用任意电子邮件和密码组合注册应用，将会看到以下错误消息：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot4.png" alt="连接问题对话框">
+<figcaption>连接问题对话框</figcaption>
+</figure>
+<p>这是因为应用无法连接到认证服务器，该设置将在本教程的下一节中介绍。</p>
+<blockquote>
+      <p>这个修改版本代码的源代码可以在演示项目的<code>OnlineUnlockStatusTutorial_02.h</code>文件中找到。</p>
+    </blockquote>
+<h2>搭建后端服务器</h2>
+<blockquote>
+      <p>本节介绍在macOS和Windows上使用PHP搭建本地测试服务器的步骤，但你可以随意使用任何类型的后端服务器，无论是Java、Ruby还是Python等等……</p>
+    </blockquote>
+<p>由于<a href="https://docs.juce.com/master/classOnlineUnlockStatus.html" rel="noreferrer noopener">OnlineUnlockStatus</a>类以XML格式处理来自服务器的回复，我们必须使用PHP提供XML响应。应用会将凭据发送到我们<code>TutorialMarketplaceStatus</code>实现的<code>getServerAuthenticationURL()</code>函数中提供的<a href="https://docs.juce.com/master/classURL.html" rel="noreferrer noopener">URL</a>，该URL在本教程第一节中定义为“https://localhost:8443/auth.php”。</p>
+<p>因此，让我们看看演示项目<code>Resources</code>文件夹中提供的<code>auth.php</code>文件，并研究响应是如何用PHP编写的：</p>
+<pre><code>&lt;?php
+function sendResponse() // [1]
+{
+    $response = '&lt;?xml version="1.0" encoding="utf-8"?&gt;'; // [2]
+    if ($_POST['email'] === 'test@example.com' and $_POST['pw'] === 'test') // [3] {
+        $response .=
+            '&lt;MESSAGE message="Thanks for registering our product!"&gt;&lt;KEY&gt;INSERT_KEY_HERE&lt;/KEY&gt;&lt;/MESSAGE&gt;';
+    } else {
+        $response .=
+            '&lt;ERROR error="Sorry, we were not able to authorise your request. Please provide a valid email address and password."&gt;&lt;/ERROR&gt;';
+    }
+    return $response;
+}
+header('Content-type: text/xml; charset=utf-8'); // [4]
+echo sendResponse();
+?&gt;</code></pre>
+<ul>
+<li>[1]：我们首先定义一个名为<code>sendResponse()</code>的函数，稍后将调用它来显示XML内容。
+</li>
+<li>[2]：然后我们通过将元数据头赋值给一个本地PHP变量来准备一个XML文档。
+</li>
+<li>[3]：接下来，我们通过比较通过POST收到的测试电子邮件和密码字符串，检查凭据是否与测试用户相对应。如果凭据匹配，我们就追加成功消息以及一个加密的密钥文件（我们将在下一节中插入）。否则，我们追加一条错误消息，说明授权失败的原因。
+</li>
+<li>[4]：最后，我们设置响应头以指示内容是XML格式，并使用<code>echo</code>函数发送响应。
+</li>
+</ul>
+<p>此时，如果我们决定在本地运行服务器并尝试从应用联系授权服务器，我们会收到一条安全警告，告诉我们连接不是私密或安全的。为了让<a href="https://docs.juce.com/master/classOnlineUnlockStatus.html" rel="noreferrer noopener">OnlineUnlockStatus</a>实例安全地发送凭据，我们需要使用SSL通过HTTPS协议创建安全连接。</p>
+<p>为了在本地进行测试，我们可以创建一个自签名证书，并使用隧道通过HTTPS访问底层不安全的HTTP协议。</p>
+<blockquote>
+      <p>确保你的计算机上安装了OpenSSL、PHP和“stunnel”以测试后端服务器。OpenSSL是生成自签名证书所必需的，PHP提供了一个可以在你机器上本地运行的内置Web服务器，而“stunnel”允许你将安全连接隧道到其中。</p>
+    </blockquote>
+<p>导航到项目的<code>Resources</code>文件夹，并在终端中运行以下命令创建自签名证书：</p>
+<pre><code>// Creates an RSA key and certificate pair.
+// macOS
+openssl req -new -newkey rsa:4096 -x509 -nodes -sha256 -days 365 -keyout stunnel.key -out stunnel.cert
+// Windows
+C:\path-to-openssl\openssl req -new -newkey rsa:4096 -x509 -nodes -sha256 -days 365 -keyout stunnel.key -out stunnel.cert</code></pre>
+<p>当提示你提供证书信息时，除了通用名称（CN）条目外，跳过所有字段，在该条目中应输入“localhost”。</p>
+<blockquote>
+      <p>确保域名没有拼写错误，因为这会在连接服务器时引起问题。</p>
+    </blockquote>
+<p>这将使用SHA-256哈希算法和一年的有效期，创建两个文件，构成一对RSA 4096位密钥和证书。X.509标准表示我们感兴趣的自签名策略。为简单起见，我们将生成的密钥和证书文件合并为一个PEM文件，如下所示：</p>
+<pre><code>// Combines the key and certificate into a PEM file.
+// macOS
+cat stunnel.key stunnel.cert &gt; stunnel.pem
+// Windows
+type stunnel.key stunnel.cert &gt; stunnel.pem</code></pre>
+<p>在macOS上，双击<code>Finder</code>中的PEM文件，将证书添加到你的钥匙串。这将打开位于<code>Applications/Utilities</code>文件夹中的<code>Keychain Access</code>应用。在列表中双击新添加的证书以打开详细视图，并展开<strong>Trust</strong>视图。选择“Always Trust”选项，以允许你的mac当前用户账号信任该证书，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot5.png" alt="自签名证书">
+<figcaption>自签名证书</figcaption>
+</figure>
+<p>在Windows上，在<code>Run</code>提示符中输入“MMC”打开<code>Microsoft Management Console</code>，导航到<strong>File &gt; Add Snap-in…</strong>并选择“Certificates”。点击<strong>Add</strong>为当前用户添加证书，然后点击<strong>OK</strong>完成。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot9.png" alt="添加证书管理单元">
+<figcaption>添加证书管理单元</figcaption>
+</figure>
+<p>然后，通过导航到左侧面板中的相应文件夹，并从菜单中选择<strong>Action &gt; All Tasks &gt; Import…</strong>，将自签名证书导入<strong>Trusted Root Certification Authorities &gt; Certificates</strong>。你将被引导完成定位证书的步骤，此时应选择扩展名为<code>.cert</code>的文件，因为这是MMC接受的格式。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot10.png" alt="导入证书">
+<figcaption>导入证书</figcaption>
+</figure>
+<blockquote>
+      <p>不要在实际应用中使用自签名证书或隧道，因为这被认为不如CA签名的证书安全。此方法仅用于演示目的。</p>
+    </blockquote>
+<p>接下来，让我们通过打开演示项目<code>Resources</code>文件夹中提供的<code>stunnel.conf</code>文件来配置隧道协议：</p>
+<pre><code>[https]
+accept = 8443
+connect = 8080
+cert = stunnel.pem
+TIMEOUTclose = 0</code></pre>
+<p>这里我们定义了用于连接的传入和传出端口，以及上一步创建的用于保护链路的证书文件。应用将尝试连接到8443端口，隧道将链接到PHP服务器运行的8080端口。</p>
+<p>我们最终可以通过导航到<code>Resources</code>目录并在终端中运行以下命令来启动服务器：</p>
+<pre><code>// Starts the built in PHP web server and tunnels a secure connection.
+// macOS
+php -S localhost:8080 &amp; stunnel stunnel.conf
+// Windows
+C:\path-to-php\php -S 127.0.0.1:8080 &amp; C:\path-to-stunnel\stunnel stunnel.conf</code></pre>
+<p>这将启动本地服务器到8080端口，并将连接隧道到8443端口，供应用安全访问。在你喜欢的浏览器中打开认证<a href="https://docs.juce.com/master/classURL.html" rel="noreferrer noopener">URL</a>“https://localhost:8443/auth.php”，以检查服务器是否正在运行。你应该会看到<code>auth.php</code>文件中声明的错误消息，形式为XML响应。</p>
+<p>如果一切正常，启动应用并通过提交任意电子邮件和密码组合尝试授权。你收到的错误消息应与之前的尝试不同，并且应与浏览器中显示的消息一致，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot6.png" alt="错误消息对话框">
+<figcaption>错误消息对话框</figcaption>
+</figure>
+<p>这意味着应用已成功联系服务器并处理响应，但我们仍然需要生成并发送正确的密钥文件来解锁应用。</p>
+<p>通过按键盘上的“Ctrl+C”停止服务器，或运行以下命令停止服务器和隧道：</p>
+<pre><code>// Stops any running PHP server processes and the HTTPS to HTTP tunneling.
+// macOS
+killall php &amp; killall stunnel
+// Windows
+taskkill /f /im php.exe &amp; taskkill /f /im stunnel.exe</code></pre>
+<h2>生成安全密钥</h2>
+<p>让我们来看看作为最后一步的生成安全密钥。</p>
+<p>你会在项目的<code>Resources</code>文件夹中找到一个名为<code>KeyGenerator</code>的辅助控制台应用，它将生成一个RSA密钥对，用于认证此应用。每个应用或插件只需生成一次密钥，因为这些密钥可以在项目的整个生命周期内保持不变（除非私钥以某种方式泄露，这种情况下必须创建新的密钥对）。</p>
+<p>如果我们看看<code>KeyGenerator</code>应用的<code>main()</code>函数，可以看到它所做的就是用256位的密钥长度调用<a href="https://docs.juce.com/master/classRSAKey.html" rel="noreferrer noopener">RSAKey</a>类的<code>createKeyPair()</code>函数，并将结果打印到屏幕上：</p>
+<pre><code>juce::RSAKey publicKey;
+juce::RSAKey privateKey;
+juce::RSAKey::createKeyPair (publicKey, privateKey, 256);
+std::cout &lt;&lt; "Public Key: " &lt;&lt; publicKey.toString() &lt;&lt; std::endl
+          &lt;&lt; "Private Key: " &lt;&lt; privateKey.toString() &lt;&lt; std::endl
+          &lt;&lt; std::endl;</code></pre>
+<p>构建<code>KeyGenerator</code>应用并运行以下命令以获取密钥：</p>
+<pre><code>// Run the program and copy the keys.
+// macOS
+./KeyGenerator
+// Windows
+KeyGenerator.exe</code></pre>
+<p>将上一步中的公钥复制并粘贴到<code>TutorialMarketplaceStatus</code>类的<code>getPublicKey()</code>函数中：</p>
+<pre><code>return juce::RSAKey ("INSERT_PUBLIC_KEY_HERE");</code></pre>
+<p>只要消息是真实的并且是使用匹配的私钥加密的，这将允许应用解密来自服务器的消息。</p>
+<p>为了让服务器在应用请求时生成真实的密钥文件，它必须拥有上一步生成的私钥来加密消息。在实际生产场景中，密钥生成步骤必须以编程方式在服务器上完成，但就本教程而言，我们将手动执行此步骤，并将密钥文件复制粘贴到PHP脚本中。</p>
+<p>再次导航到<code>Resources</code>文件夹，找到另一个名为<code>Unlocker</code>的辅助控制台应用。它将通过调用<a href="https://docs.juce.com/master/classKeyGeneration.html" rel="noreferrer noopener">KeyGeneration</a>类的<code>generateKeyFile()</code>函数来创建解锁应用所需的密钥文件：</p>
+<pre><code>// args[0]: app-name
+// args[1]: user-email
+// args[2]: username
+// args[3]: machine-numbers
+// args[4]: private-key
+std::cout &lt;&lt; juce::KeyGeneration::generateKeyFile (args[0], args[1], args[2], args[3], juce::RSAKey (args[4])) &lt;&lt; std::endl;</code></pre>
+<p>该函数接受应用名称、用户电子邮件和用户名、被授权使用的机器ID以及用于加密消息的RSA私钥作为参数。你可以在运行演示项目时通过检查尝试注册时的调试器日志找到对应的机器ID。</p>
+<p>构建<code>Unlocker</code>应用并运行以下命令以获取加密的密钥文件：</p>
+<pre><code>// Run the program and copy the key.
+// macOS
+./Unlocker TestApp test@example.com testuser INSERT_MACHINE_ID_HERE INSERT_PRIVATE_KEY_HERE
+// Windows
+Unlocker.exe TestApp test@example.com testuser INSERT_MACHINE_ID_HERE INSERT_PRIVATE_KEY_HERE</code></pre>
+<p>将上一步中以“#”字符开头的密钥文件复制并粘贴到PHP脚本的<code>sendResponse()</code>函数中，并在操作时包含“#”字符：</p>
+<pre><code>$response .= '&lt;MESSAGE message="Thanks for registering our product!"&gt;&lt;KEY&gt;INSERT_KEY_HERE&lt;/KEY&gt;&lt;/MESSAGE&gt;';</code></pre>
+<p>启动服务器，然后运行应用，通过提交PHP脚本中定义的适当电子邮件和密码组合来尝试授权：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot7.png" alt="填写凭据">
+<figcaption>填写凭据</figcaption>
+</figure>
+<p>如果一切顺利，你应该会看到以下成功消息，并且应用应在注册表单自行关闭后解锁：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_online_unlock_status_screenshot8.png" alt="注册成功对话框">
+<figcaption>注册成功对话框</figcaption>
+</figure>
+<h2>小结</h2>
+<p>在本教程中，我们学习了如何通过在线注册解锁插件。具体来说，我们：</p>
+<ul>
+<li>理解了RSA密码学的原理。
+</li>
+<li>为用户提供了通过表单解锁应用的界面。
+</li>
+<li>为应用的解锁机制生成了安全密钥。
+</li>
+<li>构建了一个简单的安全本地服务器来充当后端。
+</li>
+<li>根据注册状态解锁应用的功能。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="app-plugin-packaging.html" rel="noreferrer noopener">教程：打包你的应用或插件以便分发</a>
+</li>
+<li><a href="analytics-collection.html" rel="noreferrer noopener">教程：应用分析数据收集</a>
+</li>
+<li><a href="in-app-purchases.html" rel="noreferrer noopener">教程：桌面和移动设备上的应用内购买</a>
+</li>
+<li><a href="push-notifications.html" rel="noreferrer noopener">教程：桌面和移动设备上的推送通知</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_online_unlock_status/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_online_unlock_status/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

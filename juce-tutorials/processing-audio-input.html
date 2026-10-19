@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>处理音频输入 - JUCE 教程</title>
+<meta name="description" content="处理音频输入：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>处理音频输入</h1>
+<p>本教程展示如何处理音频输入并将其传递到音频输出。</p>
+<p><strong>难度：</strong>初级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classRandom.html" rel="noreferrer noopener">Random</a>, <a href="https://docs.juce.com/master/classBigInteger.html" rel="noreferrer noopener">BigInteger</a>, <a href="https://docs.juce.com/master/classAudioBuffer.html" rel="noreferrer noopener">AudioBuffer</a></p>
+<h2>入门</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/ProcessingAudioInputTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/ProcessingAudioInputTutorial.zip" rel="noreferrer noopener">ZIP</a> 。解压项目并在 Projucer 中打开第一个头文件。</p>
+<blockquote>
+      <p>如果你的操作系统要求你请求访问麦克风的权限（目前是 iOS、Android 和 macOS Mojave），那么你需要在 Projucer 中相关导出器下设置相应的选项，并重新保存项目。</p>
+    </blockquote>
+<p>如果你在这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目用白噪声调制输入信号。白噪声的电平可以改变，这会影响整体输出的电平（生成白噪声所用的技术参见<a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>）。结果是一个非常“模糊”的输入信号版本。</p>
+<blockquote>
+      <p>运行应用时要小心避免反馈（不过这种效果可能相当有趣！）。</p>
+    </blockquote>
+<p>最好使用单独的麦克风和耳机。当然，你需要某种音频输入设备，项目才能正常工作。</p>
+<h2>音频输入</h2>
+<p>本教程使用 <a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a> 类作为演示项目应用的基础。在其他教程中，我们在 <code>getNextAudioBlock()</code> 函数内生成音频——参见<a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>、<a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>和<a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>。在本教程中，我们读取音频输入，同时也输出音频。在 <code>MainContentComponent</code> 构造函数中，我们请求两个音频输入和两个音频输出：</p>
+<pre><code>setAudioChannels (2, 2);</code></pre>
+<blockquote>
+      <p>实际可用的输入或输出数量可能少于我们请求的数量。</p>
+    </blockquote>
+<h3>复用缓冲区</h3>
+<p>重要的是要知道，输入缓冲区和输出缓冲区并不是完全分开的。输入和输出使用的是同一个缓冲区。你可以通过在 <code>getNextAudioBlock()</code> 函数中临时注释掉所有代码来验证这一点。如果随后运行应用，音频输入会直接传递到输出。在 <code>getNextAudioBlock()</code> 函数中，<code>bufferToFill</code> 结构体内 <a href="https://docs.juce.com/master/classAudioBuffer.html" rel="noreferrer noopener">AudioSampleBuffer</a> 对象的通道数可能大于输入通道数、输出通道数，或两者都大于。重要的是只访问那些属于你所请求的输入和输出通道数<em>并且</em>实际可用的数据。特别是，如果你的输入通道多于输出通道，你<em>绝不能</em>修改那些应包含只读数据的通道。</p>
+<h3>获取活动通道</h3>
+<p>在 <code>getNextAudioBlock()</code> 函数中，我们获得表示活动输入和输出通道列表的 <a href="https://docs.juce.com/master/classBigInteger.html" rel="noreferrer noopener">BigInteger</a> 对象，形式为<em>位掩码</em>（这类似于 <a href="http://www.cplusplus.com/reference/bitset/bitset/" rel="noreferrer noopener">std::bitset</a> 类，或使用 <a href="http://www.cplusplus.com/reference/vector/vector-bool/" rel="noreferrer noopener">std::vector&lt;bool&gt;</a> 对象）。在这些 <a href="https://docs.juce.com/master/classBigInteger.html" rel="noreferrer noopener">BigInteger</a> 对象中，通道由构成 <a href="https://docs.juce.com/master/classBigInteger.html" rel="noreferrer noopener">BigInteger</a> 值的位中的 0（非活动）或 1（活动）表示。</p>
+<blockquote>
+      <p>关于可对 <a href="https://docs.juce.com/master/classBigInteger.html" rel="noreferrer noopener">BigInteger</a> 对象执行的其他操作，请参见<a href="big-integer.html" rel="noreferrer noopener">教程：BigInteger 类</a>。</p>
+    </blockquote>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto* device = deviceManager.getCurrentAudioDevice();
+    auto activeInputChannels = device-&gt;getActiveInputChannels();
+    auto activeOutputChannels = device-&gt;getActiveOutputChannels();</code></pre>
+<p>为了算出需要遍历的最大通道数，我们可以检查 <a href="https://docs.juce.com/master/classBigInteger.html" rel="noreferrer noopener">BigInteger</a> 对象中的位，找出编号最高的位。最大通道数将是该编号加一。</p>
+<pre><code>auto maxInputChannels = activeInputChannels.getHighestBit() + 1;
+auto maxOutputChannels = activeOutputChannels.getHighestBit() + 1;</code></pre>
+<p>然后从我们的电平滑块获取所需的电平，接着逐个处理每个输出通道来处理音频。如果最大输入通道数为零（即使我们请求了两个通道，如果硬件没有音频输入，也可能出现这种情况），那么我们绝不能尝试处理音频。在这种情况下，我们只需将输出通道缓冲区置零（以输出静音）。单个输出通道也可能处于非活动状态，因此我们检查该通道的状态，如果它非活动，也为该通道输出静音：</p>
+<pre><code>auto level = (float) levelSlider.getValue();
+for (auto channel = 0; channel &lt; maxOutputChannels; ++channel)
+{
+    if ((!activeOutputChannels[channel]) || maxInputChannels == 0)
+    {
+        bufferToFill.buffer-&gt;clear (channel, bufferToFill.startSample, bufferToFill.numSamples);
+    }</code></pre>
+<p>然后我们继续把输入数据处理到输出：</p>
+<pre><code>else
+{
+    auto actualInputChannel = channel % maxInputChannels; // [1]
+    if (!activeInputChannels[channel]) // [2]
+    {
+        bufferToFill.buffer-&gt;clear (channel, bufferToFill.startSample, bufferToFill.numSamples);
+    }
+    else // [3]
+    {
+        auto* inBuffer = bufferToFill.buffer-&gt;getReadPointer (actualInputChannel,
+            bufferToFill.startSample);
+        auto* outBuffer = bufferToFill.buffer-&gt;getWritePointer (channel, bufferToFill.startSample);
+        for (auto sample = 0; sample &lt; bufferToFill.numSamples; ++sample)
+        {
+            auto noise = (random.nextFloat() * 2.0f) - 1.0f;
+            outBuffer[sample] = inBuffer[sample] + (inBuffer[sample] * noise * level);
+        }
+    }
+}
+}
+}</code></pre>
+<p>代码应该相当不言自明，但这里有几个要点：</p>
+<ul>
+<li>[1]：我们请求的输出通道可能多于输入通道，因此应用需要决定如何处理这些额外的输出。在这个例子中，如果输出多于输入，我们只是重复输入通道。（为此，我们使用取模运算符，根据可用输入通道数来“环绕”对输入通道的访问。）在其他应用中，当输出通道多于输入通道时，对编号较高的通道输出静音可能更合适。
+</li>
+<li>[2]：单个输入通道可能处于非活动状态，因此这种情况下我们也输出静音。
+</li>
+<li>[3]：最后这个代码块<em>实际上</em>执行了处理！这里我们获得指向输入和输出缓冲区采样的指针，并给输入采样加上一些噪声。
+</li>
+</ul>
+<blockquote>
+      <p>练习：在这个例子中，我们不像<a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>那样对幅度变化做平滑处理。部分原因是为了让示例保持简单，但无论如何你大概也听不出由于爆音效果带来的额外毛刺。修改代码，使其只输出按电平滑块值缩放的输入通道，但同时平滑电平变化，从而不产生毛刺。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>本教程介绍了在 JUCE 应用中处理来自音频输入的音频。具体来说，你现在应该知道：</p>
+<ul>
+<li>如何设置音频应用，使其能够访问计算机音频输入硬件中的音频。
+</li>
+<li>输入缓冲区和输出缓冲区是共享的。
+</li>
+<li>如何处理活动和非活动通道。
+</li>
+<li>在输入和输出通道数不同的情况下，如何推理该做什么。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="audio-device-manager.html" rel="noreferrer noopener">教程：AudioDeviceManager 类</a>
+</li>
+<li><a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>
+</li>
+<li><a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>
+</li>
+<li><a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_processing_audio_input/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_processing_audio_input/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

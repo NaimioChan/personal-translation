@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>构建正弦波合成器 - JUCE 教程</title>
+<meta name="description" content="构建正弦波合成器：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>构建正弦波合成器</h1>
+<p>本教程介绍简单的正弦波合成。我们展示如何管理正弦波振荡器的状态，以及如何把数据写入音频输出。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a>, <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a>, <a href="structMathConstants.html" rel="noreferrer noopener">MathConstants</a></p>
+<h2>准备工作</h2>
+<blockquote>
+      <p>本教程承接<a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>，你应该先阅读并理解该教程。</p>
+    </blockquote>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/SineSynthTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/SineSynthTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目基于 Projucer 的 Audio Application 模板。它向用户呈现一个滑块，用于控制正弦波的频率。</p>
+<h2>生成正弦波</h2>
+<p>本教程使用标准库函数 <code>std::sin()</code> 合成正弦波。为了使用它，我们需要为正弦波生成维护状态，即存储当前的<em>相位角</em>，以及每输出一个采样时相位角需要增加的量。每个采样的这个变化量（“delta”）的大小取决于输出的采样率以及我们要生成的正弦波频率。</p>
+<blockquote>
+      <p>大多数合成器应用和插件很可能不会使用 <code>std::sin()</code> 函数，因为它大概不是最高效的技术。通常会用<a href="https://en.wikipedia.org/wiki/Table-lookup_synthesis" rel="noreferrer noopener">波表</a>，参见<a href="wavetable-synth.html" rel="noreferrer noopener">教程：波表合成</a>。波表还允许使用正弦波以外的波形。</p>
+    </blockquote>
+<h3>维护状态</h3>
+<p>在 <code>MainContentComponent</code> 类中，我们存储三个 <code>double</code> 成员 [1]：</p>
+<pre><code>double currentSampleRate = 0.0, currentAngle = 0.0, angleDelta = 0.0; // [1]</code></pre>
+<p>我们有一个简单的函数来更新 <code>angleDelta</code> 成员：</p>
+<pre><code>void updateAngleDelta()
+{
+    auto cyclesPerSample = frequencySlider.getValue() / currentSampleRate; // [2]
+    angleDelta = cyclesPerSample * 2.0 * juce::MathConstants&lt;double&gt;::pi; // [3]
+}</code></pre>
+<ul>
+<li>[2]：首先，我们计算每输出一个采样需要完成多少个周期。
+</li>
+<li>[3]：然后把它乘以一个完整正弦波周期的长度，即 <code>2pi</code> 弧度。
+</li>
+</ul>
+<p>在这个函数能正确工作之前，我们需要知道输出的采样率。这是因为我们需要知道采样的生成频率，以便确定每个采样所需的变化量。采样率通过 <a href="https://docs.juce.com/master/classAudioAppComponent.html#a70634aa3ffaf6e7ff0d233e5933a063d" rel="noreferrer noopener">AudioAppComponent::prepareToPlay()</a> 回调函数传给我们：</p>
+<pre><code>void prepareToPlay (int, double sampleRate) override
+{
+    currentSampleRate = sampleRate;
+    updateAngleDelta();
+}</code></pre>
+<p>这里我们保存采样率值的一份副本，并在一开始调用 <code>updateAngleDelta()</code> 函数。</p>
+<h3>使用滑块的值</h3>
+<p>当应用运行时移动滑块，我们需要再次更新 <code>angleDelta</code> 成员：</p>
+<pre><code>frequencySlider.onValueChange = [this] {
+    if (currentSampleRate &gt; 0.0)
+        updateAngleDelta();
+};</code></pre>
+<p>这里我们先检查采样率是否有效，然后再调用 <code>updateAngleDelta()</code> 函数。</p>
+<h3>输出音频</h3>
+<p>在 <code>getNextAudioBlock()</code> 回调中，我们需要生成实际的正弦波并把它写入输出：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto level = 0.125f;
+    auto* leftBuffer = bufferToFill.buffer-&gt;getWritePointer (0, bufferToFill.startSample);
+    auto* rightBuffer = bufferToFill.buffer-&gt;getWritePointer (1, bufferToFill.startSample);
+    for (auto sample = 0; sample &lt; bufferToFill.numSamples; ++sample)
+    {
+        auto currentSample = (float) std::sin (currentAngle);
+        currentAngle += angleDelta;
+        leftBuffer[sample] = currentSample * level;
+        rightBuffer[sample] = currentSample * level;
+    }
+}</code></pre>
+<p>对于每个输出采样，我们计算当前角度的正弦函数，然后为下一个采样递增角度。注意我们把电平降到 <code>0.125</code>，因为满幅正弦波会非常响！我们本可以（也许应该）在当前角度值达到 <code>2pi</code> 时把它<em>回绕</em>到零。由于更大的值仍然返回有效结果，我们实际上可以避免这个计算。我们会得到类似下图所示的结果：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_sine_graph1-1.png" alt="满幅 ±1.0 的正弦波，显示以弧度表示的相位角。">
+<figcaption>满幅 ±1.0 的正弦波，显示以弧度表示的相位角。</figcaption>
+</figure>
+<h3>滑块的配置</h3>
+<p>你可能已经注意到滑块的值是非线性变化的（如果没有注意到，你现在就应该试一下）。事实上，这些变化是对数的。这使我们对较小的值有更高的分辨率，对较大的值有较低的分辨率。在控制频率值时，这通常是合适的（因为在音乐上，我们听到的是频率之间比值的相等变化，而不是相等的线性变化）。这是通过 <a href="https://docs.juce.com/master/classSlider.html#a2d948c662c1f636810d3125d8b3f0d47" rel="noreferrer noopener">Slider::setSkewFactorFromMidPoint()</a> 函数配置的 [4]。我们的滑块范围设为 <code>50..5000</code>，因此把滑块轨道的中心设为代表 <code>500</code>，就意味着滑块最小值到中心、中心到滑块最大值之间是相等的音乐音程：</p>
+<pre><code>MainContentComponent()
+{
+    addAndMakeVisible (frequencySlider);
+    frequencySlider.setRange (50.0, 5000.0);
+    frequencySlider.setSkewFactorFromMidPoint (500.0); // [4]</code></pre>
+<p>滑块的<em>偏斜因子</em>可以直接用 <a href="https://docs.juce.com/master/classSlider.html#aba8fe3610e7198bd4c1f2804736bfbf2" rel="noreferrer noopener">Slider::setSkewFactor()</a> 函数设置，不过通常更容易考虑你希望在中间点得到什么值。</p>
+<blockquote>
+      <p>练习：向应用再添加一个滑块，用于控制正弦波的电平。注意让电平远低于 <code>1.0</code>——最大值取 <code>0.25</code> 应该没问题。</p>
+    </blockquote>
+<h2>平滑频率变化</h2>
+<p>你可能会注意到——尤其是在较高频率时——移动滑块会产生一些可听见、而且多半是不想要的瑕疵。这是因为滑块实际上是以离散的步进变化的，而快速移动滑块时这些步进相当大。除此之外，滑块频率只在每个音频块更新一次，因此这些变化的具体影响取决于硬件的块大小。</p>
+<h3>用于平滑的状态成员</h3>
+<p>让我们给类添加两个成员，一个存储当前用于合成的频率，另一个是用户通过移动滑块请求的<em>目标</em>频率。然后我们可以在这两个值之间较缓慢地渐变，以消除瑕疵：</p>
+<pre><code>double currentFrequency = 500.0, targetFrequency = 500.0; // [5]</code></pre>
+<p>我们同时初始化这两个值 [5]。我们还可以把滑块初始化为相同的值 [6]：</p>
+<pre><code>MainContentComponent()
+{
+    addAndMakeVisible (frequencySlider);
+    frequencySlider.setRange (50.0, 5000.0);
+    frequencySlider.setSkewFactorFromMidPoint (500.0);
+    frequencySlider.setValue (currentFrequency, juce::dontSendNotification); // [6]</code></pre>
+<h3>更新合成代码</h3>
+<p>这个算法工作方式的关键在于检查当前值和目标值是否相同。如果相同，我们就可以直接使用原来的代码，因为 <code>angleDelta</code> 成员不需要改变。如果当前值和目标值不同，那么我们就需要在每个采样更新 <code>angleDelta</code> 成员，同时让当前值逐渐接近目标值。</p>
+<blockquote>
+      <p>在这个示例中，我们只是把输出缓冲区中的采样数作为渐变的持续时间。这意味着在缓冲区尺寸很小时，你可能仍会听到瑕疵。</p>
+    </blockquote>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto level = 0.125f;
+    auto* leftBuffer = bufferToFill.buffer-&gt;getWritePointer (0, bufferToFill.startSample);
+    auto* rightBuffer = bufferToFill.buffer-&gt;getWritePointer (1, bufferToFill.startSample);
+    auto localTargetFrequency = targetFrequency;
+    if (!juce::approximatelyEqual (localTargetFrequency, currentFrequency)) // [7]
+    {
+        auto frequencyIncrement = (localTargetFrequency - currentFrequency) / bufferToFill.numSamples; // [8]
+        for (auto sample = 0; sample &lt; bufferToFill.numSamples; ++sample)
+        {
+            auto currentSample = (float) std::sin (currentAngle);
+            currentFrequency += frequencyIncrement; // [9]
+            updateAngleDelta(); // [10]
+            currentAngle += angleDelta;
+            leftBuffer[sample] = currentSample * level;
+            rightBuffer[sample] = currentSample * level;
+        }
+        currentFrequency = localTargetFrequency;
+    }
+    else // [11]
+    {
+        for (auto sample = 0; sample &lt; bufferToFill.numSamples; ++sample)
+        {
+            auto currentSample = (float) std::sin (currentAngle);
+            currentAngle += angleDelta;
+            leftBuffer[sample] = currentSample * level;
+            rightBuffer[sample] = currentSample * level;
+        }
+    }
+}</code></pre>
+<ul>
+<li>[7]：检查我们的目标值是否与当前值不同。注意我们取了目标值的局部副本，以防在这个函数运行期间滑块在消息线程上改变了该值。
+</li>
+<li>[8]：计算每个采样所需的增量。
+</li>
+<li>[9]：递增当前频率。
+</li>
+<li>[10]：基于这个新频率更新 <code>deltaAngle</code> 成员。
+</li>
+<li>[11]：否则就直接使用原来的代码。
+</li>
+</ul>
+<blockquote>
+      <p>这段代码的形式采用了 <a href="https://en.wikipedia.org/wiki/Digital_signal_processing" rel="noreferrer noopener">DSP</a> 代码的典型模式。我们尽可能避免在内层 <code>for()</code> 循环中使用条件语句。取而代之的是，把条件测试放在循环之外，并根据参数是否在变化使用两个不同但相当相似的循环。</p>
+    </blockquote>
+<p>最后，我们需要更新 <a href="https://docs.juce.com/master/classSlider.html#a680d007f6a824a28a60aa05b4045e794" rel="noreferrer noopener">Slider::onValueChange</a> 辅助对象，使它只更新目标值：</p>
+<pre><code>frequencySlider.onValueChange = [this] { targetFrequency = frequencySlider.getValue(); };</code></pre>
+<p>就是这样！现在试试看，移动滑块产生的瑕疵应该已经消除了。</p>
+<blockquote>
+      <p>练习：为你之前在练习中添加的电平滑块控件也加上平滑处理。</p>
+    </blockquote>
+<h2>说明</h2>
+<ul>
+<li>不把相位角回绕到 <code>2pi</code> 可能并非在所有情况下都理想。如果使用 <code>float</code> 而不是 <code>double</code> 变量，那么当前角度值变得很大时，计算会出现一些不精确。通过在 <code>2pi</code> 处不回绕相位，<code>std::sin()</code> 函数的表现与简单的波表技术相比相当不错。相关探讨参见<a href="wavetable-synth.html" rel="noreferrer noopener">教程：波表合成</a>。
+</li>
+</ul>
+<h2>小结</h2>
+<p>本教程介绍了一些合成和控制正弦波的基本方法。我们讨论了：</p>
+<ul>
+<li>维护正弦波振荡器状态所需的基本变量。
+</li>
+<li>如何设置这些变量以产生期望的结果。
+</li>
+<li>如何平滑参数变化以避免音频瑕疵。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="slider-values.html" rel="noreferrer noopener">教程：Slider 类</a>
+</li>
+<li><a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>
+</li>
+<li><a href="synth-db-level-control.html" rel="noreferrer noopener">教程：使用分贝控制音频电平</a>
+</li>
+<li><a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>
+</li>
+<li><a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建 MIDI 合成器</a>
+</li>
+<li><a href="wavetable-synth.html" rel="noreferrer noopener">教程：波表合成</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_sine_synth/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_sine_synth/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

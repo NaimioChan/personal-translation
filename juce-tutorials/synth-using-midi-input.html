@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>构建 MIDI 合成器 - JUCE 教程</title>
+<meta name="description" content="构建 MIDI 合成器：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>构建 MIDI 合成器</h1>
+<p>本教程实现一个响应 MIDI 输入的复音正弦波合成器。它用到了<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>类及相关类。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>, <a href="https://docs.juce.com/master/classSynthesiserVoice.html" rel="noreferrer noopener">SynthesiserVoice</a>, <a href="https://docs.juce.com/master/classSynthesiserSound.html" rel="noreferrer noopener">SynthesiserSound</a>, <a href="https://docs.juce.com/master/classAudioSource.html" rel="noreferrer noopener">AudioSource</a>, <a href="https://docs.juce.com/master/classMidiMessageCollector.html" rel="noreferrer noopener">MidiMessageCollector</a></p>
+<h2>准备工作</h2>
+<blockquote>
+      <p>你应该熟悉如何在 JUCE 中处理 MIDI 输入，以及如何生成正弦波。参见<a href="handling-midi-events.html" rel="noreferrer noopener">教程：处理 MIDI 事件</a>和<a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>。</p>
+    </blockquote>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/SynthUsingMidiInputTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/SynthUsingMidiInputTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目呈现一个屏幕键盘，可用于演奏一个简单的正弦波合成器。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_using_midi_input_screenshot1.png" alt="包含 MidiKeyboardComponent 的应用程序窗口">
+<figcaption>包含 MidiKeyboardComponent 的应用程序窗口</figcaption>
+</figure>
+<p>使用电脑键盘上的按键可以控制屏幕键盘（用 A、S、D、F 等键控制 C、D、E、F 等音符）。这使你能够以复音方式演奏合成器。</p>
+<h2>Synthesiser 类</h2>
+<p>本教程使用 JUCE 的<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>类实现一个复音合成器。这向你展示了在自己的应用中用自定义音色定制合成器所需的全部基本要素。要让这一切工作起来需要多个类，除了我们标准的 <code>MainContentComponent</code> 类之外，还有：</p>
+<ul>
+<li><code>SynthAudioSource</code>：它实现了一个名为 <code>SynthAudioSource</code> 的自定义<a href="https://docs.juce.com/master/classAudioSource.html" rel="noreferrer noopener">AudioSource</a>类，其中包含<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>类本身。它输出合成器的全部音频。
+</li>
+<li><code>SineWaveVoice</code>：这是一个名为 <code>SineWaveVoice</code> 的自定义<a href="https://docs.juce.com/master/classSynthesiserVoice.html" rel="noreferrer noopener">SynthesiserVoice</a>类。声部类负责渲染合成器的一个声部，并在<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>对象中把它与其他正在发声的声部混合。声部类的单个实例渲染一个声部。
+</li>
+<li><code>SineWaveSound</code>：它包含一个名为 <code>SineWaveSound</code> 的自定义<a href="https://docs.juce.com/master/classSynthesiserSound.html" rel="noreferrer noopener">SynthesiserSound</a>类。音色类实际上是对可以作为声部创建的音色的描述。例如，它可能包含采样器声部的采样数据，或波表合成器的波表数据。
+</li>
+</ul>
+<h3>设置键盘</h3>
+<p>我们的 <code>MainContentComponent</code> 类包含以下数据成员。</p>
+<pre><code>juce::MidiKeyboardState keyboardState;
+SynthAudioSource synthAudioSource;
+juce::MidiKeyboardComponent keyboardComponent;
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
+};</code></pre>
+<p><code>synthAudioSource</code> 和 <code>keyboardComponent</code> 成员在 <code>MainContentComponent</code> 构造函数中初始化。</p>
+<pre><code>MainContentComponent()
+    : synthAudioSource (keyboardState),
+      keyboardComponent (keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
+{
+    addAndMakeVisible (keyboardComponent);
+    setAudioChannels (0, 2);
+    setSize (600, 160);
+    startTimer (400);
+}</code></pre>
+<p>有关更多信息，参见<a href="handling-midi-events.html" rel="noreferrer noopener">教程：处理 MIDI 事件</a>中的 <a href="https://docs.juce.com/master/classMidiKeyboardComponent.html" rel="noreferrer noopener">MidiKeyboardComponent</a> 类。</p>
+<p>为了能够用电脑键盘演奏屏幕键盘，我们在应用启动后立即获取键盘焦点。为此我们使用一个在 400 毫秒后触发的简单定时器：</p>
+<pre><code>void timerCallback() override
+{
+    keyboardComponent.grabKeyboardFocus();
+    stopTimer();
+}</code></pre>
+<h3>AudioAppComponent 函数</h3>
+<p>应用使用<a href="https://docs.juce.com/master/classAudioAppComponent.html" rel="noreferrer noopener">AudioAppComponent</a>搭建一个简单的音频应用（最基本的应用参见<a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>）。三个必需的<a href="http://www.learncpp.com/cpp-tutorial/126-pure-virtual-functions-abstract-base-classes-and-interface-classes/" rel="noreferrer noopener">纯虚</a>函数只是调用我们自定义<a href="https://docs.juce.com/master/classAudioSource.html" rel="noreferrer noopener">AudioSource</a>类中对应的函数：</p>
+<pre><code>void prepareToPlay (int samplesPerBlockExpected, double sampleRate) override
+{
+    synthAudioSource.prepareToPlay (samplesPerBlockExpected, sampleRate);
+}
+void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    synthAudioSource.getNextAudioBlock (bufferToFill);
+}
+void releaseResources() override
+{
+    synthAudioSource.releaseResources();
+}</code></pre>
+<h3>SynthAudioSource 类</h3>
+<p><code>SynthAudioSource</code> 类做的工作稍多一些：</p>
+<pre><code>class SynthAudioSource : public juce::AudioSource
+{
+public:
+    SynthAudioSource (juce::MidiKeyboardState&amp; keyState)
+        : keyboardState (keyState)
+    {
+        for (auto i = 0; i &lt; 4; ++i) // [1]
+            synth.addVoice (new SineWaveVoice());
+        synth.addSound (new SineWaveSound()); // [2]
+    }
+    void setUsingSineWaveSound()
+    {
+        synth.clearSounds();
+    }
+    void prepareToPlay (int /*samplesPerBlockExpected*/, double sampleRate) override
+    {
+        synth.setCurrentPlaybackSampleRate (sampleRate); // [3]
+    }
+    void releaseResources() override {}
+    void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+    {
+        bufferToFill.clearActiveBufferRegion();
+        juce::MidiBuffer incomingMidi;
+        keyboardState.processNextMidiBuffer (incomingMidi, bufferToFill.startSample, bufferToFill.numSamples, true); // [4]
+        synth.renderNextBlock (*bufferToFill.buffer, incomingMidi, bufferToFill.startSample, bufferToFill.numSamples); // [5]
+    }
+private:
+    juce::MidiKeyboardState&amp; keyboardState;
+    juce::Synthesiser synth;
+};</code></pre>
+<ul>
+<li>[1]：我们向合成器添加一些声部。添加的声部数量决定了合成器的复音数。
+</li>
+<li>[2]：我们添加音色，让合成器知道它可以演奏哪些音色。
+</li>
+<li>[3]：合成器需要知道音频输出的采样率。
+</li>
+<li>[4]：在 <code>getNextAudioBlock()</code> 函数中，我们从<a href="https://docs.juce.com/master/classMidiKeyboardState.html" rel="noreferrer noopener">MidiKeyboardState</a>对象取出 MIDI 数据缓冲区。
+</li>
+<li>[5]：这些 MIDI 缓冲区被传递给合成器，合成器将利用音符开、音符关消息（以及其他 MIDI 通道声音消息）的时间戳来渲染各个声部。
+</li>
+</ul>
+<blockquote>
+      <p><a href="https://docs.juce.com/master/classSynthesiserVoice.html" rel="noreferrer noopener">SynthesiserVoice</a>对象必须添加到一个且仅一个<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>对象中。<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>对象负责管理这些声部的生命周期。</p>
+    </blockquote>
+<p><a href="https://docs.juce.com/master/classSynthesiserSound.html" rel="noreferrer noopener">SynthesiserSound</a>对象可以在多个<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>对象之间共享，如果你愿意的话。<a href="https://docs.juce.com/master/classSynthesiserSound.html" rel="noreferrer noopener">SynthesiserSound</a>类是一种<a href="https://docs.juce.com/master/classReferenceCountedObject.html" rel="noreferrer noopener">ReferenceCountedObject</a>类，因此<a href="https://docs.juce.com/master/classSynthesiserSound.html" rel="noreferrer noopener">SynthesiserSound</a>对象的生命周期是自动管理的。</p>
+<blockquote>
+      <p>如果你需要保存指向<a href="https://docs.juce.com/master/classSynthesiserSound.html" rel="noreferrer noopener">SynthesiserSound</a>对象的指针，应该把它存放在 <code>YourSoundClass::Ptr</code> 变量中，这样内存管理才能正常工作。</p>
+    </blockquote>
+<h3>SineWaveSound 类</h3>
+<p>我们的音色类非常简单，甚至不需要包含任何数据。它只需要报告这个音色是否应在特定的 MIDI 通道以及该通道上的特定音符或音符范围上演奏。在我们的简单情况下，它对这两个函数都只返回 <code>true</code>：<code>appliesToNote()</code> 和 <code>appliesToChannel()</code>。如上所述，音色类可能正是你存储创建音色所需数据（例如波表）的地方。</p>
+<pre><code>struct SineWaveSound : public juce::SynthesiserSound
+{
+    SineWaveSound() {}
+    bool appliesToNote (int) override { return true; }
+    bool appliesToChannel (int) override { return true; }
+};</code></pre>
+<h3>正弦波声部状态</h3>
+<p><code>SineWaveVoice</code> 类稍微复杂一些。它需要维护合成器其中一个声部的状态。对于我们的正弦波，需要这些数据成员：</p>
+<pre><code>private:
+    double currentAngle = 0.0, angleDelta = 0.0, level = 0.0, tailOff = 0.0;
+};</code></pre>
+<p>前三个成员的信息参见<a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>。<code>tailOff</code> 成员用于给每个声部的振幅包络一个稍柔和的<em>释放</em>。这使每个声部在结尾处轻微淡出，而不是突然停止。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_using_midi_input_graph1.png" alt="指数释放包络">
+<figcaption>指数释放包络</figcaption>
+</figure>
+<h3>检查可以演奏哪个音色</h3>
+<p><a href="https://docs.juce.com/master/classSynthesiserVoice.html#aa9fb097ca96dc39fae8e6f7b9139df9f" rel="noreferrer noopener">SynthesiserVoice::canPlaySound()</a> 函数必须被重写，以返回该声部能否演奏某个音色。在这个情况下我们本可以直接返回 <code>true</code>，但我们的示例演示了如何用 <code>dynamic_cast</code> 检查传入的音色类的类型。</p>
+<pre><code>bool canPlaySound (juce::SynthesiserSound* sound) override
+{
+    return dynamic_cast&lt;SineWaveSound*&gt; (sound) != nullptr;
+}</code></pre>
+<h3>启动声部</h3>
+<p>声部由拥有它的合成器调用我们的 <a href="https://docs.juce.com/master/classSynthesiserVoice.html#af3b872622dd9bb540030420189175762" rel="noreferrer noopener">SynthesiserVoice::startNote()</a> 函数来启动，这个函数我们必须重写：</p>
+<pre><code>void startNote (int midiNoteNumber, float velocity, juce::SynthesiserSound*, int /*currentPitchWheelPosition*/) override
+{
+    currentAngle = 0.0;
+    level = velocity * 0.15;
+    tailOff = 0.0;
+    auto cyclesPerSecond = juce::MidiMessage::getMidiNoteInHertz (midiNoteNumber);
+    auto cyclesPerSample = cyclesPerSecond / getSampleRate();
+    angleDelta = cyclesPerSample * 2.0 * juce::MathConstants&lt;double&gt;::pi;
+}</code></pre>
+<p>同样，其中大部分内容你应该已经从<a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>中熟悉了。<code>tailOff</code> 值在每个声部开始时设为零。我们还用 MIDI 音符开事件的力度来控制声部的电平。</p>
+<h3>渲染声部</h3>
+<p><a href="https://docs.juce.com/master/classSynthesiserVoice.html#a72ab7856c1e7651b1ce955388645a0a1" rel="noreferrer noopener">SynthesiserVoice::renderNextBlock()</a> 函数必须被重写以生成音频。</p>
+<pre><code>void renderNextBlock (juce::AudioSampleBuffer&amp; outputBuffer, int startSample, int numSamples) override
+{
+    if (angleDelta != 0.0)
+    {
+        if (tailOff &gt; 0.0) // [7]
+        {
+            while (--numSamples &gt;= 0)
+            {
+                auto currentSample = (float) (std::sin (currentAngle) * level * tailOff);
+                for (auto i = outputBuffer.getNumChannels(); --i &gt;= 0;)
+                    outputBuffer.addSample (i, startSample, currentSample);
+                currentAngle += angleDelta;
+                ++startSample;
+                tailOff *= 0.99; // [8]
+                if (tailOff &lt;= 0.005)
+                {
+                    clearCurrentNote(); // [9]
+                    angleDelta = 0.0;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            while (--numSamples &gt;= 0) // [6]
+            {
+                auto currentSample = (float) (std::sin (currentAngle) * level);
+                for (auto i = outputBuffer.getNumChannels(); --i &gt;= 0;)
+                    outputBuffer.addSample (i, startSample, currentSample);
+                currentAngle += angleDelta;
+                ++startSample;
+            }
+        }
+    }
+}</code></pre>
+<ul>
+<li>[6]：这个循环用于声部的<em>正常</em>状态，即按键被按住的期间。注意我们使用了 <a href="https://docs.juce.com/master/classAudioBuffer.html#ab46e9ad400252255daa1086b354454b8" rel="noreferrer noopener">AudioSampleBuffer::addSample()</a> 函数，它把 <code>currentSample</code> 值与索引 <code>startSample</code> 处已有的值混合。这是因为合成器会遍历所有声部。每个声部都有责任把自己的输出与缓冲区当前的内容混合。
+</li>
+<li>[7]：按键释放后，<code>tailOff</code> 值会大于零。可以看到合成算法是类似的。
+</li>
+<li>[8]：我们使用简单的指数衰减包络形状。
+</li>
+<li>[9]：当 <code>tailOff</code> 值很小时，我们判定该声部已结束。此时我们<em>必须</em>调用 <a href="https://docs.juce.com/master/classSynthesiserVoice.html#a55d1e7a062f8dc9a6cd78526b0da049c" rel="noreferrer noopener">SynthesiserVoice::clearCurrentNote()</a> 函数，以便声部被重置并可供再次使用。
+</li>
+</ul>
+<blockquote>
+      <p>注意 <code>startSample</code> 参数<em>非常</em>重要。合成器很可能在某个输出块的中间调用 <code>renderNextBlock()</code> 函数。这是因为音符可能从任意采样开始。这些开始时间基于接收到的 MIDI 数据的时间戳。</p>
+    </blockquote>
+<h3>停止声部</h3>
+<p>声部由拥有它的合成器调用我们的 <a href="https://docs.juce.com/master/classSynthesiserVoice.html#ae1faf9289de24cdeb1d42289754601e6" rel="noreferrer noopener">SynthesiserVoice::stopNote()</a> 函数来停止，这个函数我们必须重写：</p>
+<pre><code>void stopNote (float /*velocity*/, bool allowTailOff) override
+{
+    if (allowTailOff)
+    {
+        if (tailOff == 0.0)
+            tailOff = 1.0;
+    }
+    else
+    {
+        clearCurrentNote();
+        angleDelta = 0.0;
+    }
+}</code></pre>
+<p>它可能包含来自 MIDI 音符关消息的力度信息，但在许多情况下我们可以忽略它。我们可能被要求立即停止声部，此时我们直接调用 <a href="https://docs.juce.com/master/classSynthesiserVoice.html#a55d1e7a062f8dc9a6cd78526b0da049c" rel="noreferrer noopener">SynthesiserVoice::clearCurrentNote()</a> 函数。在正常情况下，合成器会让我们的声部自然结束。在我们的情况下，我们使用简单的拖尾包络。我们通过把 <code>tailOff</code> 成员设为 <code>1.0</code> 来触发拖尾。</p>
+<blockquote>
+      <p>练习：尝试给声部添加较慢的起音，使它们不会突然开始。</p>
+    </blockquote>
+<h2>添加外部 MIDI 输入</h2>
+<p>让我们添加功能，使外部 MIDI 源也能控制我们的合成器，而不只是屏幕键盘。</p>
+<blockquote>
+      <p>你大概需要在 macOS、Windows 或 Linux 这样的桌面平台上尝试，而不是在移动平台上。</p>
+    </blockquote>
+<h3>为 SynthAudioSource 提供 MIDI 输入</h3>
+<p>首先把一个<a href="https://docs.juce.com/master/classMidiMessageCollector.html" rel="noreferrer noopener">MidiMessageCollector</a>对象添加为 <code>SynthAudioSource</code> 类的成员。它提供了一个可以发送 MIDI 消息、并且 <code>SynthAudioSource</code> 类可以使用这些消息的地方：</p>
+<pre><code>juce::MidiMessageCollector midiCollector;
+};</code></pre>
+<p>为了处理 MIDI 数据的时间戳，<a href="https://docs.juce.com/master/classMidiMessageCollector.html" rel="noreferrer noopener">MidiMessageCollector</a>类需要知道音频采样率。在 <code>SynthAudioSource::prepareToPlay()</code> 函数中设置它 [10]：</p>
+<pre><code>void prepareToPlay (int /*samplesPerBlockExpected*/, double sampleRate) override
+{
+    synth.setCurrentPlaybackSampleRate (sampleRate);
+    midiCollector.reset (sampleRate); // [10]
+}</code></pre>
+<p>然后你可以用 <a href="https://docs.juce.com/master/classMidiMessageCollector.html#ac72b6cf4965e63b90d1a2402b73b1798" rel="noreferrer noopener">MidiMessageCollector::removeNextBlockOfMessages()</a> 函数为每个音频块取出 MIDI 消息 [11]：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    bufferToFill.clearActiveBufferRegion();
+    juce::MidiBuffer incomingMidi;
+    midiCollector.removeNextBlockOfMessages (incomingMidi, bufferToFill.numSamples); // [11]
+    keyboardState.processNextMidiBuffer (incomingMidi, bufferToFill.startSample, bufferToFill.numSamples, true);
+    synth.renderNextBlock (*bufferToFill.buffer, incomingMidi, bufferToFill.startSample, bufferToFill.numSamples);
+}</code></pre>
+<p>我们需要从 <code>SynthAudioSource</code> 类外部访问这个<a href="https://docs.juce.com/master/classMidiMessageCollector.html" rel="noreferrer noopener">MidiMessageCollector</a>对象，所以给 <code>SynthAudioSource</code> 类添加一个访问器，如下所示：</p>
+<pre><code>juce::MidiMessageCollector* getMidiCollector()
+{
+    return &amp;midiCollector;
+}</code></pre>
+<p>在我们的 <code>MainContentComponent</code> 类中，我们会把这个<a href="https://docs.juce.com/master/classMidiMessageCollector.html" rel="noreferrer noopener">MidiMessageCollector</a>对象作为<a href="https://docs.juce.com/master/classMidiInputCallback.html" rel="noreferrer noopener">MidiInputCallback</a>对象添加到应用的<a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a>对象上。</p>
+<h3>列出 MIDI 输入</h3>
+<p>为了向用户呈现 MIDI 输入设备列表，我们将使用<a href="handling-midi-events.html" rel="noreferrer noopener">教程：处理 MIDI 事件</a>中的一些代码。给 <code>MainContentComponent</code> 类添加一些成员：</p>
+<pre><code>juce::ComboBox midiInputList;
+juce::Label midiInputListLabel;
+int lastInputIndex = 0;</code></pre>
+<p>然后把以下代码添加到 <code>MainContentComponent</code> 构造函数中。</p>
+<pre><code>addAndMakeVisible (midiInputListLabel);
+midiInputListLabel.setText ("MIDI Input:", juce::dontSendNotification);
+midiInputListLabel.attachToComponent (&amp;midiInputList, true);
+auto midiInputs = juce::MidiInput::getAvailableDevices();
+addAndMakeVisible (midiInputList);
+midiInputList.setTextWhenNoChoicesAvailable ("No MIDI Inputs Enabled");
+juce::StringArray midiInputNames;
+for (auto input : midiInputs)
+    midiInputNames.add (input.name);
+midiInputList.addItemList (midiInputNames, 1);
+midiInputList.onChange = [this] { setMidiInput (midiInputList.getSelectedItemIndex()); };
+for (auto input : midiInputs)
+{
+    if (deviceManager.isMidiInputDeviceEnabled (input.identifier))
+    {
+        setMidiInput (midiInputs.indexOf (input));
+        break;
+    }
+}
+if (midiInputList.getSelectedId() == 0)
+    setMidiInput (0);</code></pre>
+<p>添加上面代码中调用的 <code>setMidiInput()</code> 函数：</p>
+<pre><code>void setMidiInput (int index)
+{
+    auto list = juce::MidiInput::getAvailableDevices();
+    deviceManager.removeMidiInputDeviceCallback (list[lastInputIndex].identifier,
+        synthAudioSource.getMidiCollector()); // [12]
+    auto newInput = list[index];
+    if (!deviceManager.isMidiInputDeviceEnabled (newInput.identifier))
+        deviceManager.setMidiInputDeviceEnabled (newInput.identifier, true);
+    deviceManager.addMidiInputDeviceCallback (newInput.identifier, synthAudioSource.getMidiCollector()); // [13]
+    midiInputList.setSelectedId (index + 1, juce::dontSendNotification);
+    lastInputIndex = index;
+}</code></pre>
+<p>注意，我们把 <code>SynthAudioSource</code> 对象中的<a href="https://docs.juce.com/master/classMidiMessageCollector.html" rel="noreferrer noopener">MidiMessageCollector</a>对象作为<a href="https://docs.juce.com/master/classMidiInputCallback.html" rel="noreferrer noopener">MidiInputCallback</a>对象 [13] 添加到指定的 MIDI 输入设备上。如果用户通过组合框改变了所选设备，我们还需要为之前选中的 MIDI 输入设备移除先前的<a href="https://docs.juce.com/master/classMidiInputCallback.html" rel="noreferrer noopener">MidiInputCallback</a>对象 [12]。</p>
+<p>我们需要在 <code>resized()</code> 函数中定位这个<a href="https://docs.juce.com/master/classComboBox.html" rel="noreferrer noopener">ComboBox</a>对象，并调整<a href="https://docs.juce.com/master/classMidiKeyboardComponent.html" rel="noreferrer noopener">MidiKeyboardComponent</a>对象的位置：</p>
+<pre><code>void resized() override
+{
+    midiInputList.setBounds (200, 10, getWidth() - 210, 20);
+    keyboardComponent.setBounds (10, 40, getWidth() - 20, getHeight() - 50);
+}</code></pre>
+<p>再次运行应用，它看起来应该像这样：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_using_midi_input_screenshot2.png" alt="显示 MIDI 输入设备列表的应用程序窗口">
+<figcaption>显示 MIDI 输入设备列表的应用程序窗口</figcaption>
+</figure>
+<p>当然，列出的设备取决于你具体的系统配置。</p>
+<blockquote>
+      <p>这个修改版应用的源代码可以在演示项目的 <code>SynthUsingMidiInputTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<blockquote>
+      <p>练习：尝试添加一个滑块，用于控制每个声部拖尾的长度。如果你在前面的练习中添加了起音，也可以再加一个滑块来控制起音的长度。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>本教程介绍了<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>类。读完本教程后，你应该能够：</p>
+<ul>
+<li>设置<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>类，把它放在<a href="https://docs.juce.com/master/classAudioSource.html" rel="noreferrer noopener">AudioSource</a>子类中，用于生成音频。
+</li>
+<li>创建合适的<a href="https://docs.juce.com/master/classSynthesiserVoice.html" rel="noreferrer noopener">SynthesiserVoice</a>和<a href="https://docs.juce.com/master/classSynthesiserSound.html" rel="noreferrer noopener">SynthesiserSound</a>类，并把它们添加到<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>对象中。
+</li>
+<li>把来自屏幕键盘和外部 MIDI 源的 MIDI 消息发送到<a href="https://docs.juce.com/master/classSynthesiser.html" rel="noreferrer noopener">Synthesiser</a>对象。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="handling-midi-events.html" rel="noreferrer noopener">教程：处理 MIDI 事件</a>
+</li>
+<li><a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>
+</li>
+<li><a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>
+</li>
+<li><a href="synth-db-level-control.html" rel="noreferrer noopener">教程：使用分贝控制音频电平</a>
+</li>
+<li><a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>
+</li>
+<li><a href="wavetable-synth.html" rel="noreferrer noopener">教程：波表合成</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_synth_using_midi_input/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_synth_using_midi_input/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

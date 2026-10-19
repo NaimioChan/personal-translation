@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>级联插件效果 - JUCE 教程</title>
+<meta name="description" content="级联插件效果：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>级联插件效果</h1>
+<p>通过使用<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>学习如何以菊花链方式串联音频处理器或插件，从而创建你自己的通道条。了解如何在插件和独立应用程序两种情境下使用<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>、<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>、<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>、<a href="https://docs.juce.com/master/classAudioProcessorGraph_1_1AudioGraphIOProcessor.html" rel="noreferrer noopener">AudioProcessorGraph::AudioGraphIOProcessor</a>、<a href="https://docs.juce.com/master/classAudioProcessorGraph_1_1Node.html" rel="noreferrer noopener">AudioProcessorGraph::Node</a>、<a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a></p>
+<h2>入门</h2>
+<p>在此下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/AudioProcessorGraphTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/AudioProcessorGraphTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目并在 Projucer 中打开第一个头文件。</p>
+<p>如果你在这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目模拟一个通道条，其中可以串联应用不同的音频处理器。它提供三个可单独旁路的插槽，以及三种可选的处理器，包括振荡器、增益控制和滤波器。插件对传入的音频进行处理，并把修改后的信号传递到输出。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_audio_processor_graph_screenshot1.png" alt="通道条插件窗口">
+<figcaption>通道条插件窗口</figcaption>
+</figure>
+<h2>设置 AudioProcessorGraph</h2>
+<p><a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>是一种特殊类型的<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>，它允许我们把多个<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>对象作为图中的节点连接起来，并播放组合处理后的结果。为了把图节点连接起来，我们必须按照希望处理音频信号的顺序，在节点的通道之间添加连接。</p>
+<p><a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>类还为图中音频和 midi 信号的输入与输出处理提供了特殊的节点类型。通道条的一个示例图在正确连接后大致如下：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2025/02/tutorial_audio_processor_graph.svg" alt="">
+</figure>
+<p>我们先设置主<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>，让它接收传入信号，并把这些信号未经处理地送回到相应的输出。</p>
+<p>为了减少本教程中频繁使用的嵌套类的字符数，我们首先在<code>TutorialProcessor</code>类中为 AudioGraphIOProcessor 类和 Node 类声明<code>using</code>，如下所示：</p>
+<pre><code>using AudioGraphIOProcessor = juce::AudioProcessorGraph::AudioGraphIOProcessor;
+using Node = juce::AudioProcessorGraph::Node;</code></pre>
+<p>然后我们使用缩短后的类名声明以下私有成员变量：</p>
+<pre><code>std::unique_ptr&lt;juce::AudioProcessorGraph&gt; mainProcessor;</code></pre>
+<pre><code>Node::Ptr audioInputNode;
+Node::Ptr audioOutputNode;
+Node::Ptr midiInputNode;
+Node::Ptr midiOutputNode;</code></pre>
+<p>在这里我们创建指向主<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>的指针，以及稍后会在图中实例化的输入和输出处理器节点。</p>
+<p>接下来，在<code>TutorialProcessor</code>构造函数中，我们设置插件的默认总线属性，并实例化主<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>，如下所示：</p>
+<pre><code>TutorialProcessor()
+    : AudioProcessor (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo(), true).withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      mainProcessor (new juce::AudioProcessorGraph()),</code></pre>
+<p>由于我们处理的是插件，因此需要实现 isBusesLayoutSupported() 回调，以告知插件宿主或 DAW 我们支持哪些通道集。在这个示例中，我们决定只支持单声道到单声道以及立体声到立体声的配置，如下所示：</p>
+<pre><code>bool isBusesLayoutSupported (const BusesLayout&amp; layouts) const override
+{
+    if (layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
+        || layouts.getMainOutputChannelSet() == juce::AudioChannelSet::disabled())
+        return false;
+    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
+        &amp;&amp; layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+        return false;
+    return layouts.getMainInputChannelSet() == layouts.getMainOutputChannelSet();
+}</code></pre>
+<blockquote>
+      <p>如果你想进一步了解插件的总线布局，请参阅<a href="audio-bus-layouts.html" rel="noreferrer noopener">教程：为你的插件配置正确的总线布局</a>。</p>
+    </blockquote>
+<p>为了让<code>TutorialProcessor</code>能够通过所提供的图处理音频，我们必须重写<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>类中执行信号处理的三个主要函数，即 prepareToPlay()、releaseResources() 和 processBlock()，并在<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>上调用相同的对应函数。</p>
+<p>我们从 prepareToPlay() 函数开始。首先，我们通过调用 setPlayConfigDetails() 函数，把 I/O 通道数、采样率和每个块的采样数告知<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>，如下所示：</p>
+<pre><code>void prepareToPlay (double sampleRate, int samplesPerBlock) override
+{
+    mainProcessor-&gt;setPlayConfigDetails (getMainBusNumInputChannels(),
+        getMainBusNumOutputChannels(),
+        sampleRate,
+        samplesPerBlock);
+    mainProcessor-&gt;prepareToPlay (sampleRate, samplesPerBlock);
+    initialiseGraph();
+}</code></pre>
+<p>然后我们用相同的信息在<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>上调用 prepareToPlay() 函数，并调用稍后定义的<code>initialiseGraph()</code>辅助函数，以创建并连接图中的节点。</p>
+<p>releaseResources() 函数不言自明，它只是简单地在<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>实例上调用同名函数：</p>
+<pre><code>void releaseResources() override
+{
+    mainProcessor-&gt;releaseResources();
+}</code></pre>
+<p>最后在 processBlock() 函数中，我们清空可能包含垃圾数据的任何额外通道中的采样以防万一，并调用稍后定义的<code>updateGraph()</code>辅助函数，在通道条配置发生变化时重建图。processBlock() 函数最终在函数末尾于<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>上调用：</p>
+<pre><code>void processBlock (juce::AudioSampleBuffer&amp; buffer, juce::MidiBuffer&amp; midiMessages) override
+{
+    for (int i = getTotalNumInputChannels(); i &lt; getTotalNumOutputChannels(); ++i)
+        buffer.clear (i, 0, buffer.getNumSamples());
+    updateGraph();
+    mainProcessor-&gt;processBlock (buffer, midiMessages);
+}</code></pre>
+<p>之前在 prepareToPlay() 回调中调用的<code>initialiseGraph()</code>函数，首先清除<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>中先前存在的所有节点和连接。这也会处理删除与图中被删除节点相关联的相应<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>实例。然后我们继续为图的 I/O 实例化 AudioGraphIOProcessor 对象，并把这些<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>对象作为节点添加到图中。</p>
+<pre><code>void initialiseGraph()
+{
+    mainProcessor-&gt;clear();
+    audioInputNode = mainProcessor-&gt;addNode (std::make_unique&lt;AudioGraphIOProcessor&gt; (AudioGraphIOProcessor::audioInputNode));
+    audioOutputNode = mainProcessor-&gt;addNode (std::make_unique&lt;AudioGraphIOProcessor&gt; (AudioGraphIOProcessor::audioOutputNode));
+    midiInputNode = mainProcessor-&gt;addNode (std::make_unique&lt;AudioGraphIOProcessor&gt; (AudioGraphIOProcessor::midiInputNode));
+    midiOutputNode = mainProcessor-&gt;addNode (std::make_unique&lt;AudioGraphIOProcessor&gt; (AudioGraphIOProcessor::midiOutputNode));
+    connectAudioNodes();
+    connectMidiNodes();
+}</code></pre>
+<p>我们仍需在新创建的图节点之间添加连接以传递音频/midi 数据，这由以下辅助函数完成：</p>
+<pre><code>void connectAudioNodes()
+{
+    for (int channel = 0; channel &lt; 2; ++channel)
+        mainProcessor-&gt;addConnection ({ { audioInputNode-&gt;nodeID, channel },
+            { audioOutputNode-&gt;nodeID, channel } });
+}</code></pre>
+<p>这里我们通过传入希望连接的源节点和目标节点（以 Connection 对象的形式），在<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>实例上调用 addConnection() 函数。这些连接需要 nodeID 和通道索引来建立适当的连接，并且对所有需要的通道重复整个过程。</p>
+<pre><code>void connectMidiNodes()
+{
+    mainProcessor-&gt;addConnection ({ { midiInputNode-&gt;nodeID, juce::AudioProcessorGraph::midiChannelIndex },
+        { midiOutputNode-&gt;nodeID, juce::AudioProcessorGraph::midiChannelIndex } });
+}</code></pre>
+<p>midi I/O 节点也做同样的处理，只是通道索引参数不同。由于 midi 信号不通过常规音频通道发送，我们必须提供一个特殊通道索引，它在<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>类中被指定为一个枚举。</p>
+<p>在教程的这个阶段，我们应该能够听到信号未经改变地通过图。</p>
+<blockquote>
+      <p>在使用内置输入和输出测试插件时，要小心刺耳的啸叫反馈。你可以使用耳机来避免这个问题。</p>
+    </blockquote>
+<h2>实现不同的处理器</h2>
+<p>在教程的这一部分，我们创建可在通道条插件中使用的不同处理器，以改变传入的音频信号。你可以随意创建额外的处理器，或按自己的喜好定制下面这些处理器。</p>
+<p>为了避免为想要创建的不同处理器重复编写代码，我们先声明一个<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>基类，由各个处理器继承，并且为简单起见只重写一次必要的函数。</p>
+<pre><code>class ProcessorBase : public juce::AudioProcessor
+{
+public:
+    //==============================================================================
+    ProcessorBase()
+        : AudioProcessor (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo()).withOutput ("Output", juce::AudioChannelSet::stereo()))
+    {
+    }
+    //==============================================================================
+    void prepareToPlay (double, int) override {}
+    void releaseResources() override {}
+    void processBlock (juce::AudioSampleBuffer&amp;, juce::MidiBuffer&amp;) override {}
+    //==============================================================================
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    //==============================================================================
+    const juce::String getName() const override { return {}; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    double getTailLengthSeconds() const override { return 0; }
+    //==============================================================================
+    int getNumPrograms() override { return 0; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&amp;) override {}
+    //==============================================================================
+    void getStateInformation (juce::MemoryBlock&amp;) override {}
+    void setStateInformation (const void*, int) override {}
+private:
+    //==============================================================================
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ProcessorBase)
+};</code></pre>
+<blockquote>
+      <p>以下三个处理器将使用 DSP 模块来简化实现，如果你想进一步了解 DSP，可以参阅<a href="dsp-introduction.html" rel="noreferrer noopener">教程：DSP 简介</a>以获得更深入的讲解。</p>
+    </blockquote>
+<h3>实现一个振荡器</h3>
+<p>第一个处理器是一个简单的振荡器，它以 440Hz 生成恒定的正弦波音调。</p>
+<p>我们从先前定义的<code>ProcessorBase</code>派生<code>OscillatorProcessor</code>类，重写 getName() 函数以提供有意义的名称，并声明 DSP 模块中的<a href="https://docs.juce.com/master/classdsp_1_1Oscillator.html" rel="noreferrer noopener">dsp::Oscillator</a>对象：</p>
+<pre><code>class OscillatorProcessor : public ProcessorBase
+{
+public:
+    //...
+    const juce::String getName() const override { return "Oscillator"; }
+private:
+    juce::dsp::Oscillator&lt;float&gt; oscillator;
+};</code></pre>
+<p>在构造函数中，我们分别对<a href="https://docs.juce.com/master/classdsp_1_1Oscillator.html" rel="noreferrer noopener">dsp::Oscillator</a>对象调用 setFrequency() 和 initialise() 函数，设置振荡器的频率和波形，如下所示：</p>
+<pre><code>OscillatorProcessor()
+{
+    oscillator.setFrequency (440.0f);
+    oscillator.initialise ([] (float x) { return std::sin (x); });
+}</code></pre>
+<p>在 prepareToPlay() 函数中，我们创建一个<a href="structdsp_1_1ProcessSpec.html" rel="noreferrer noopener">dsp::ProcessSpec</a>对象，向<a href="https://docs.juce.com/master/classdsp_1_1Oscillator.html" rel="noreferrer noopener">dsp::Oscillator</a>对象描述采样率和每个块的采样数，并通过调用其 prepare() 函数传入这些规格，如下所示：</p>
+<pre><code>void prepareToPlay (double sampleRate, int samplesPerBlock) override
+{
+    juce::dsp::ProcessSpec spec { sampleRate, static_cast&lt;juce::uint32&gt; (samplesPerBlock), 2 };
+    oscillator.prepare (spec);
+}</code></pre>
+<p>接下来，在 processBlock() 函数中，我们从作为参数传入的 AudioSampleBuffer 创建一个<a href="https://docs.juce.com/master/classdsp_1_1AudioBlock.html" rel="noreferrer noopener">dsp::AudioBlock</a>对象，并由它声明处理上下文为<a href="structdsp_1_1ProcessContextReplacing.html" rel="noreferrer noopener">dsp::ProcessContextReplacing</a>对象，随后把它传给<a href="https://docs.juce.com/master/classdsp_1_1Oscillator.html" rel="noreferrer noopener">dsp::Oscillator</a>对象的 process() 函数，如下所示：</p>
+<pre><code>void processBlock (juce::AudioSampleBuffer&amp; buffer, juce::MidiBuffer&amp;) override
+{
+    juce::dsp::AudioBlock&lt;float&gt; block (buffer);
+    juce::dsp::ProcessContextReplacing&lt;float&gt; context (block);
+    oscillator.process (context);
+}</code></pre>
+<p>最后，要重置<a href="https://docs.juce.com/master/classdsp_1_1Oscillator.html" rel="noreferrer noopener">dsp::Oscillator</a>对象的状态，我们可以重写<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>的 reset() 函数并在其上调用同名函数：</p>
+<pre><code>void reset() override
+{
+    oscillator.reset();
+}</code></pre>
+<p>现在我们有了一个可以在通道条插件中使用的振荡器。</p>
+<blockquote>
+      <p>练习：修改振荡器的 initialise() 函数以产生不同的波形，并改变目标频率。</p>
+    </blockquote>
+<h3>实现增益控制</h3>
+<p>第二个处理器是一个简单的增益控制，它把传入信号衰减 -6dB。</p>
+<p>我们从先前定义的<code>ProcessorBase</code>派生<code>GainProcessor</code>类，重写 getName() 函数以提供有意义的名称，并声明 DSP 模块中的<a href="https://docs.juce.com/master/classdsp_1_1Gain.html" rel="noreferrer noopener">dsp::Gain</a>对象：</p>
+<pre><code>class GainProcessor : public ProcessorBase
+{
+public:
+    //...
+    const juce::String getName() const override { return "Gain"; }
+private:
+    juce::dsp::Gain&lt;float&gt; gain;
+};</code></pre>
+<p>在构造函数中，我们对<a href="https://docs.juce.com/master/classdsp_1_1Gain.html" rel="noreferrer noopener">dsp::Gain</a>对象调用 setGainDecibels() 函数，以分贝为单位设置增益控制的增益，如下所示：</p>
+<pre><code>GainProcessor()
+{
+    gain.setGainDecibels (-6.0f);
+}</code></pre>
+<p>在 prepareToPlay() 函数中，我们创建一个<a href="structdsp_1_1ProcessSpec.html" rel="noreferrer noopener">dsp::ProcessSpec</a>对象，向<a href="https://docs.juce.com/master/classdsp_1_1Gain.html" rel="noreferrer noopener">dsp::Gain</a>对象描述采样率、每个块的采样数和通道数，并通过调用其 prepare() 函数传入这些规格，如下所示：</p>
+<pre><code>void prepareToPlay (double sampleRate, int samplesPerBlock) override
+{
+    juce::dsp::ProcessSpec spec { sampleRate, static_cast&lt;juce::uint32&gt; (samplesPerBlock), 2 };
+    gain.prepare (spec);
+}</code></pre>
+<p>接下来，在 processBlock() 函数中，我们从作为参数传入的 AudioSampleBuffer 创建一个<a href="https://docs.juce.com/master/classdsp_1_1AudioBlock.html" rel="noreferrer noopener">dsp::AudioBlock</a>对象，并由它声明处理上下文为<a href="structdsp_1_1ProcessContextReplacing.html" rel="noreferrer noopener">dsp::ProcessContextReplacing</a>对象，随后把它传给<a href="https://docs.juce.com/master/classdsp_1_1Gain.html" rel="noreferrer noopener">dsp::Gain</a>对象的 process() 函数，如下所示：</p>
+<pre><code>void processBlock (juce::AudioSampleBuffer&amp; buffer, juce::MidiBuffer&amp;) override
+{
+    juce::dsp::AudioBlock&lt;float&gt; block (buffer);
+    juce::dsp::ProcessContextReplacing&lt;float&gt; context (block);
+    gain.process (context);
+}</code></pre>
+<p>最后，要重置<a href="https://docs.juce.com/master/classdsp_1_1Gain.html" rel="noreferrer noopener">dsp::Gain</a>对象的状态，我们可以重写<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>的 reset() 函数并在其上调用同名函数：</p>
+<pre><code>void reset() override
+{
+    gain.reset();
+}</code></pre>
+<p>现在我们有了一个可以在通道条插件中使用的增益控制。</p>
+<blockquote>
+      <p>练习：修改增益控制的 setGainDecibels() 函数，进一步降低增益或提升信号。（提升时注意电平！）</p>
+    </blockquote>
+<h3>实现滤波器</h3>
+<p>第三个处理器是一个简单的高通滤波器，它衰减 1kHz 以下的频率。</p>
+<p>我们从先前定义的<code>ProcessorBase</code>派生<code>FilterProcessor</code>类，重写 getName() 函数以提供有意义的名称，并声明 DSP 模块中的<a href="structdsp_1_1ProcessorDuplicator.html" rel="noreferrer noopener">dsp::ProcessorDuplicator</a>对象。这使我们能够使用<a href="https://docs.juce.com/master/classdsp_1_1IIR_1_1Filter.html" rel="noreferrer noopener">dsp::IIR::Filter</a>类的单声道处理器，并通过把其共享状态作为<a href="structdsp_1_1IIR_1_1Coefficients.html" rel="noreferrer noopener">dsp::IIR::Coefficients</a>类提供，将其转换为多通道版本：</p>
+<pre><code>class FilterProcessor : public ProcessorBase
+{
+public:
+    FilterProcessor() {}
+    //...
+    const juce::String getName() const override { return "Filter"; }
+private:
+    juce::dsp::ProcessorDuplicator&lt;juce::dsp::IIR::Filter&lt;float&gt;, juce::dsp::IIR::Coefficients&lt;float&gt;&gt; filter;
+};</code></pre>
+<p>在 prepareToPlay() 函数中，我们首先使用 makeHighPass() 函数生成滤波器所用的系数，并将其作为共享处理状态赋给 duplicator。然后我们创建一个<a href="structdsp_1_1ProcessSpec.html" rel="noreferrer noopener">dsp::ProcessSpec</a>对象，向<a href="structdsp_1_1ProcessorDuplicator.html" rel="noreferrer noopener">dsp::ProcessorDuplicator</a>对象描述采样率、每个块的采样数和通道数，并通过调用其 prepare() 函数传入这些规格，如下所示：</p>
+<pre><code>void prepareToPlay (double sampleRate, int samplesPerBlock) override
+{
+    *filter.state = *juce::dsp::IIR::Coefficients&lt;float&gt;::makeHighPass (sampleRate, 1000.0f);
+    juce::dsp::ProcessSpec spec { sampleRate, static_cast&lt;juce::uint32&gt; (samplesPerBlock), 2 };
+    filter.prepare (spec);
+}</code></pre>
+<p>接下来，在 processBlock() 函数中，我们从作为参数传入的 AudioSampleBuffer 创建一个<a href="https://docs.juce.com/master/classdsp_1_1AudioBlock.html" rel="noreferrer noopener">dsp::AudioBlock</a>对象，并由它声明处理上下文为<a href="structdsp_1_1ProcessContextReplacing.html" rel="noreferrer noopener">dsp::ProcessContextReplacing</a>对象，随后把它传给<a href="structdsp_1_1ProcessorDuplicator.html" rel="noreferrer noopener">dsp::ProcessorDuplicator</a>对象的 process() 函数，如下所示：</p>
+<pre><code>void processBlock (juce::AudioSampleBuffer&amp; buffer, juce::MidiBuffer&amp;) override
+{
+    juce::dsp::AudioBlock&lt;float&gt; block (buffer);
+    juce::dsp::ProcessContextReplacing&lt;float&gt; context (block);
+    filter.process (context);
+}</code></pre>
+<p>最后，要重置<a href="structdsp_1_1ProcessorDuplicator.html" rel="noreferrer noopener">dsp::ProcessorDuplicator</a>对象的状态，我们可以重写<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>的 reset() 函数并在其上调用同名函数：</p>
+<pre><code>void reset() override
+{
+    filter.reset();
+}</code></pre>
+<p>现在我们有了一个可以在通道条插件中使用的滤波器。</p>
+<blockquote>
+      <p>练习：修改滤波器的系数，以产生具有不同截止频率和共振的低通或带通滤波器。</p>
+    </blockquote>
+<h2>把图节点连接起来</h2>
+<p>现在我们已经实现了多个可在<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>中使用的处理器，接下来根据用户的选择把它们连接起来。</p>
+<p>在<code>TutorialProcessor</code>类中，我们添加三个<a href="https://docs.juce.com/master/classAudioParameterChoice.html" rel="noreferrer noopener">AudioParameterChoice</a>和四个<a href="https://docs.juce.com/master/classAudioParameterBool.html" rel="noreferrer noopener">AudioParameterBool</a>指针作为私有成员变量，用于存储通道条中选择的参数及其相应的旁路状态。我们还声明指向三个处理器插槽的节点指针（稍后在图中实例化时使用），并为了方便把可选项作为<a href="https://docs.juce.com/master/classStringArray.html" rel="noreferrer noopener">StringArray</a>提供。</p>
+<pre><code>juce::StringArray processorChoices { "Empty", "Oscillator", "Gain", "Filter" };
+std::unique_ptr&lt;juce::AudioProcessorGraph&gt; mainProcessor;
+juce::AudioParameterBool* muteInput;
+juce::AudioParameterChoice* processorSlot1;
+juce::AudioParameterChoice* processorSlot2;
+juce::AudioParameterChoice* processorSlot3;
+juce::AudioParameterBool* bypassSlot1;
+juce::AudioParameterBool* bypassSlot2;
+juce::AudioParameterBool* bypassSlot3;
+Node::Ptr audioInputNode;
+Node::Ptr audioOutputNode;
+Node::Ptr midiInputNode;
+Node::Ptr midiOutputNode;
+Node::Ptr slot1Node;
+Node::Ptr slot2Node;
+Node::Ptr slot3Node;
+//==============================================================================
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TutorialProcessor)
+};</code></pre>
+<p>然后在构造函数中，我们可以实例化音频参数并调用 addParameter() 函数，告知<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>插件中应提供哪些参数。</p>
+<pre><code>TutorialProcessor()
+    : AudioProcessor (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo(), true).withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      mainProcessor (new juce::AudioProcessorGraph()),
+      muteInput (new juce::AudioParameterBool ("mute", "Mute Input", true)),
+      processorSlot1 (new juce::AudioParameterChoice ("slot1", "Slot 1", processorChoices, 0)),
+      processorSlot2 (new juce::AudioParameterChoice ("slot2", "Slot 2", processorChoices, 0)),
+      processorSlot3 (new juce::AudioParameterChoice ("slot3", "Slot 3", processorChoices, 0)),
+      bypassSlot1 (new juce::AudioParameterBool ("bypass1", "Bypass 1", false)),
+      bypassSlot2 (new juce::AudioParameterBool ("bypass2", "Bypass 2", false)),
+      bypassSlot3 (new juce::AudioParameterBool ("bypass3", "Bypass 3", false))
+{
+    addParameter (muteInput);
+    addParameter (processorSlot1);
+    addParameter (processorSlot2);
+    addParameter (processorSlot3);
+    addParameter (bypassSlot1);
+    addParameter (bypassSlot2);
+    addParameter (bypassSlot3);
+}</code></pre>
+<p>本教程使用<a href="https://docs.juce.com/master/classGenericAudioProcessorEditor.html" rel="noreferrer noopener">GenericAudioProcessorEditor</a>类，它会自动创建一个<a href="https://docs.juce.com/master/classComboBox.html" rel="noreferrer noopener">ComboBox</a>来对应插件处理器中每个属于<a href="https://docs.juce.com/master/classAudioParameterChoice.html" rel="noreferrer noopener">AudioParameterChoice</a>类型的参数，并创建一个<a href="https://docs.juce.com/master/classToggleButton.html" rel="noreferrer noopener">ToggleButton</a>来对应每个<a href="https://docs.juce.com/master/classAudioParameterBool.html" rel="noreferrer noopener">AudioParameterBool</a>类型。</p>
+<blockquote>
+      <p>要进一步了解音频参数以及如何定制它们，请参阅<a href="audio-parameter.html" rel="noreferrer noopener">教程：添加插件参数</a>。若想使用更顺畅、更优雅的参数保存与加载方法，可以看看<a href="audio-processor-value-tree-state.html" rel="noreferrer noopener">教程：保存和加载你的插件状态</a>。</p>
+    </blockquote>
+<p>在教程的第一部分设置<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>时，我们注意到在<code>TutorialProcessor</code>类的 processBlock() 回调中调用了<code>updateGraph()</code>辅助函数。该函数的目的是根据用户当前选择的选项，重新实例化适当的<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>对象和节点并重新连接图，从而更新图。下面我们来实现这个辅助函数：</p>
+<pre><code>void updateGraph()
+{
+    bool hasChanged = false;
+    juce::Array&lt;juce::AudioParameterChoice*&gt; choices { processorSlot1,
+        processorSlot2,
+        processorSlot3 };
+    juce::Array&lt;juce::AudioParameterBool*&gt; bypasses { bypassSlot1,
+        bypassSlot2,
+        bypassSlot3 };
+    juce::ReferenceCountedArray&lt;Node&gt; slots;
+    slots.add (slot1Node);
+    slots.add (slot2Node);
+    slots.add (slot3Node);</code></pre>
+<p>该函数首先声明一个局部变量，表示图的状态以及自上次音频块处理迭代以来它是否发生变化。它还创建数组，以便遍历处理器选项、旁路状态及其在图中对应的节点。</p>
+<p>在下一部分，我们遍历三个可用的处理器插槽，并检查每个<a href="https://docs.juce.com/master/classAudioParameterChoice.html" rel="noreferrer noopener">AudioParameterChoice</a>对象所选的选项，如下所示：</p>
+<pre><code>for (int i = 0; i &lt; 3; ++i)
+{
+    auto&amp; choice = choices.getReference (i);
+    auto slot = slots.getUnchecked (i);
+    if (choice-&gt;getIndex() == 0) // [1]
+    {
+        if (slot != nullptr)
+        {
+            mainProcessor-&gt;removeNode (slot.get());
+            slots.set (i, nullptr);
+            hasChanged = true;
+        }
+    }
+    else if (choice-&gt;getIndex() == 1) // [2]
+    {
+        if (slot != nullptr)
+        {
+            if (slot-&gt;getProcessor()-&gt;getName() == "Oscillator")
+                continue;
+            mainProcessor-&gt;removeNode (slot.get());
+        }
+        slots.set (i, mainProcessor-&gt;addNode (std::make_unique&lt;OscillatorProcessor&gt;()));
+        hasChanged = true;
+    }
+    else if (choice-&gt;getIndex() == 2) // [3]
+    {
+        if (slot != nullptr)
+        {
+            if (slot-&gt;getProcessor()-&gt;getName() == "Gain")
+                continue;
+            mainProcessor-&gt;removeNode (slot.get());
+        }
+        slots.set (i, mainProcessor-&gt;addNode (std::make_unique&lt;GainProcessor&gt;()));
+        hasChanged = true;
+    }
+    else if (choice-&gt;getIndex() == 3) // [4]
+    {
+        if (slot != nullptr)
+        {
+            if (slot-&gt;getProcessor()-&gt;getName() == "Filter")
+                continue;
+            mainProcessor-&gt;removeNode (slot.get());
+        }
+        slots.set (i, mainProcessor-&gt;addNode (std::make_unique&lt;FilterProcessor&gt;()));
+        hasChanged = true;
+    }
+}</code></pre>
+<ul>
+<li>[1]：如果选项保持「Empty」状态，我们首先检查该节点此前是否已实例化为其他处理器；如果是，则把该节点从图中移除，清除对该节点的引用，并把<code>hasChanged</code>标志设为 true。否则，状态没有变化，图无需重建。
+</li>
+<li>[2]：如果用户选择「Oscillator」状态，我们首先检查当前实例化的节点是否已经是振荡器处理器；如果是，则状态没有变化，我们继续处理下一个插槽。否则，如果插槽已被占用，我们就把该节点从图中移除，通过实例化振荡器把引用设为新节点，并把<code>hasChanged</code>标志设为 true。
+</li>
+<li>[3]：我们对「Gain」状态做同样的处理，并在必要时实例化一个增益处理器。
+</li>
+<li>[4]：同样，我们对「Filter」状态重复相同过程，并在需要时实例化一个滤波器处理器。
+</li>
+</ul>
+<p>下一部分仅在图的状态发生变化时执行，我们开始如下连接节点：</p>
+<pre><code>if (hasChanged)
+{
+    for (auto connection : mainProcessor-&gt;getConnections()) // [5]
+        mainProcessor-&gt;removeConnection (connection);
+    juce::ReferenceCountedArray&lt;Node&gt; activeSlots;
+    for (auto slot : slots)
+    {
+        if (slot != nullptr)
+        {
+            activeSlots.add (slot); // [6]
+            slot-&gt;getProcessor()-&gt;setPlayConfigDetails (getMainBusNumInputChannels(),
+                getMainBusNumOutputChannels(),
+                getSampleRate(),
+                getBlockSize());
+        }
+    }
+    if (activeSlots.isEmpty()) // [7]
+    {
+        connectAudioNodes();
+    }
+    else
+    {
+        for (int i = 0; i &lt; activeSlots.size() - 1; ++i) // [8]
+        {
+            for (int channel = 0; channel &lt; 2; ++channel)
+                mainProcessor-&gt;addConnection ({ { activeSlots.getUnchecked (i)-&gt;nodeID, channel },
+                    { activeSlots.getUnchecked (i + 1)-&gt;nodeID, channel } });
+        }
+        for (int channel = 0; channel &lt; 2; ++channel) // [9]
+        {
+            mainProcessor-&gt;addConnection ({ { audioInputNode-&gt;nodeID, channel },
+                { activeSlots.getFirst()-&gt;nodeID, channel } });
+            mainProcessor-&gt;addConnection ({ { activeSlots.getLast()-&gt;nodeID, channel },
+                { audioOutputNode-&gt;nodeID, channel } });
+        }
+    }
+    connectMidiNodes();
+    for (auto node : mainProcessor-&gt;getNodes()) // [10]
+        node-&gt;getProcessor()-&gt;enableAllBuses();
+}</code></pre>
+<ul>
+<li>[5]：首先我们移除图中的所有连接，以从空白状态开始。
+</li>
+<li>[6]：然后我们遍历插槽，检查其中是否在图中有一个<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>节点。如果是，就把该节点添加到活动节点的临时数组中，并确保在相应的处理器实例上调用 setPlayConfigDetails() 函数，传入通道、采样率和块大小信息，以便为后续处理准备好该节点。
+</li>
+<li>[7]：接下来，如果没有找到活动插槽，这意味着所有选项都处于「Empty」状态，音频 I/O 处理器节点可以直接连接在一起。
+</li>
+<li>[8]：否则，这意味着至少有一个节点应位于音频 I/O 处理器节点之间。因此我们可以按插槽编号升序把活动插槽连接起来。请注意，这里需要的连接对数量只是活动插槽数量减一。
+</li>
+<li>[9]：然后我们可以把音频输入处理器节点连接到链中的第一个活动插槽，并把最后一个活动插槽连接到音频输出处理器节点，从而完成图的连接。
+</li>
+<li>[10]：最后，我们把 midi I/O 节点连接起来，并确保音频处理器中的所有总线都已启用。
+</li>
+</ul>
+<pre><code>for (int i = 0; i &lt; 3; ++i)
+{
+    auto slot = slots.getUnchecked (i);
+    auto&amp; bypass = bypasses.getReference (i);
+    if (slot != nullptr)
+        slot-&gt;setBypassed (bypass-&gt;get());
+}
+audioInputNode-&gt;setBypassed (muteInput-&gt;get());
+slot1Node = slots.getUnchecked (0);
+slot2Node = slots.getUnchecked (1);
+slot3Node = slots.getUnchecked (2);
+}</code></pre>
+<p>在<code>updateGraph()</code>辅助函数的最后一部分，我们通过检查插槽是否处于活动状态来处理处理器的旁路状态，并在复选框被勾选时旁路该<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>。我们还检查是否要静音输入，以避免测试时的反馈环路。然后，我们把新创建的节点重新赋给它们对应的插槽，供下一次迭代使用。</p>
+<p>插件现在应该可以通过图中的已加载处理器处理传入音频来运行了。</p>
+<blockquote>
+      <p>练习：创建一个你选择的额外处理器节点，并将其添加到<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>中。（例如一个处理 midi 消息的处理器。）</p>
+    </blockquote>
+<h2>把插件转换为应用程序</h2>
+<p>如果你有兴趣在独立应用中使用<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>，这个可选小节将详细探讨这一点。</p>
+<p>首先，我们必须把主<code>TutorialProcessor</code>类改为<a href="https://docs.juce.com/master/classComponent.html" rel="noreferrer noopener">Component</a>的子类，而不是<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>。为了与其它 JUCE GUI 应用程序的命名约定保持一致，我们还将类名改为<code>MainComponent</code>，如下所示：</p>
+<pre><code>class MainComponent : public juce::Component,
+                      private juce::Timer
+{
+public:</code></pre>
+<blockquote>
+      <p>如果使用 PIP 文件来跟随本教程，请确保修改「mainClass」和「type」字段以反映这一变化，并相应地修改「dependencies」字段。如果使用项目的 ZIP 版本，请确保<code>Main.cpp</code>文件遵循「GUI Application」模板格式。</p>
+    </blockquote>
+<p>创建插件时，所有 IO 设备管理和播放功能都由宿主控制，因此我们不必担心这些设置。然而，在独立应用程序中，我们必须自己管理这些。这就是为什么我们声明<a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a>和<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>作为<code>MainComponent</code>类中的私有成员变量，以便让我们的<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>与系统上可用的音频 IO 设备之间能够通信。</p>
+<pre><code>juce::AudioDeviceManager deviceManager;
+juce::AudioProcessorPlayer player;</code></pre>
+<p><a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a>是一个方便的类，它在所有平台上管理音频和 midi 设备，而<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>允许通过<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>轻松播放。</p>
+<p>在构造函数中，我们不再初始化插件参数，而是创建常规的 GUI 组件，并如下初始化<a href="https://docs.juce.com/master/classAudioDeviceManager.html" rel="noreferrer noopener">AudioDeviceManager</a>和<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>：</p>
+<pre><code>MainComponent()
+    : mainProcessor (new juce::AudioProcessorGraph())
+{</code></pre>
+<pre><code>auto inputDevice = juce::MidiInput::getDefaultDevice();
+auto outputDevice = juce::MidiOutput::getDefaultDevice();
+mainProcessor-&gt;enableAllBuses();
+deviceManager.initialiseWithDefaultDevices (2, 2); // [1]
+deviceManager.addAudioCallback (&amp;player); // [2]
+deviceManager.setMidiInputDeviceEnabled (inputDevice.identifier, true);
+deviceManager.addMidiInputDeviceCallback (inputDevice.identifier, &amp;player); // [3]
+deviceManager.setDefaultMidiOutputDevice (outputDevice.identifier);
+initialiseGraph();
+player.setProcessor (mainProcessor.get()); // [4]
+setSize (600, 400);
+startTimer (100);
+}</code></pre>
+<p>这里我们首先用默认音频设备以及各两个输入和输出初始化设备管理器 [1]。然后我们把<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>作为音频回调添加到设备管理器 [2]，并通过使用默认 midi 设备把它作为 midi 回调添加 [3]。在图初始化之后，我们可以把<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>设为要播放的处理器，方法是在<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>上调用 setProcessor() 函数 [4]。</p>
+<pre><code>~MainComponent() override
+{
+    auto device = juce::MidiInput::getDefaultDevice();
+    deviceManager.removeAudioCallback (&amp;player);
+    deviceManager.setMidiInputDeviceEnabled (device.identifier, false);
+    deviceManager.removeMidiInputDeviceCallback (device.identifier, &amp;player);
+}</code></pre>
+<p>然后在析构函数中，我们确保在应用程序关闭时把<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>从音频和 midi 回调中移除。</p>
+<p>注意，与插件实现不同，<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>会自动处理音频，因此它会替我们在<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>上调用 prepareToPlay() 和 processBlock() 函数。</p>
+<p>然而，我们仍然需要找到一种在用户更改参数时更新图的方法，我们通过让<code>MainComponent</code>派生自<a href="https://docs.juce.com/master/classTimer.html" rel="noreferrer noopener">Timer</a>类并重写 timerCallback() 函数来实现，如下所示：</p>
+<pre><code>void timerCallback() override { updateGraph(); }</code></pre>
+<blockquote>
+      <p>使用定时器回调并不是最高效的解决方案，通常最佳实践是注册为相应组件的监听器。</p>
+    </blockquote>
+<p>最后，我们修改<code>updateGraph()</code>函数，改为从<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>而不是主<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>设置播放配置详情，因为在我们的独立应用场景中后者已被<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>取代：</p>
+<pre><code>for (auto slot : slots)
+{
+    if (slot != nullptr)
+    {
+        activeSlots.add (slot);
+        slot-&gt;getProcessor()-&gt;setPlayConfigDetails (mainProcessor-&gt;getMainBusNumInputChannels(),
+            mainProcessor-&gt;getMainBusNumOutputChannels(),
+            mainProcessor-&gt;getSampleRate(),
+            mainProcessor-&gt;getBlockSize());
+    }
+}</code></pre>
+<p>完成这些更改后，你的插件现在应该可以作为应用程序运行了。</p>
+<blockquote>
+      <p>同样，在使用内置输入和输出测试应用时要小心刺耳的啸叫反馈。你可以使用耳机来避免这个问题。</p>
+    </blockquote>
+<blockquote>
+      <p>这个修改版插件的源代码可以在演示项目的<code>AudioProcessorGraphTutorial_02.h</code>文件中找到。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>在本教程中，我们学习了如何操作<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>来级联插件的效果。具体来说，我们：</p>
+<ul>
+<li>构建了一个包含一系列音频处理器的通道条。
+</li>
+<li>学习了如何连接<a href="https://docs.juce.com/master/classAudioProcessorGraph.html" rel="noreferrer noopener">AudioProcessorGraph</a>中的节点。
+</li>
+<li>使用<a href="https://docs.juce.com/master/classAudioProcessorPlayer.html" rel="noreferrer noopener">AudioProcessorPlayer</a>从图创建了一个独立应用。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="audio-parameter.html" rel="noreferrer noopener">教程：添加插件参数</a>
+</li>
+<li><a href="audio-processor-value-tree-state.html" rel="noreferrer noopener">教程：保存和加载你的插件状态</a>
+</li>
+<li><a href="audio-bus-layouts.html" rel="noreferrer noopener">教程：为你的插件配置正确的总线布局</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_audio_processor_graph/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_audio_processor_graph/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

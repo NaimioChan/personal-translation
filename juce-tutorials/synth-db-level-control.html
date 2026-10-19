@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用分贝控制音频电平 - JUCE 教程</title>
+<meta name="description" content="使用分贝控制音频电平：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>使用分贝控制音频电平</h1>
+<p>本教程介绍如何通过分贝刻度处理音频以改变其输出电平。在音频应用中，这是向用户呈现音频电平值更常见的方式。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>, <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a>, <a href="https://docs.juce.com/master/classString.html" rel="noreferrer noopener">String</a></p>
+<h2>准备工作</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/SynthDecibelLevelControlTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/SynthDecibelLevelControlTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<blockquote>
+      <p>本教程承接<a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>。在继续之前，你应该已经学习过该教程。</p>
+    </blockquote>
+<h2>演示项目</h2>
+<p>与<a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>的演示项目类似，本教程的演示项目呈现的窗口中也只有一个滑块。这一次，滑块的值用<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>表示。这个<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>值需要在用于音频处理算法之前转换为线性增益值。大多数音频应用都用<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>向用户表示增益，因为在对数值进行变化（或比较）时，这通常<em>感觉</em>更自然。演示项目的用户界面如下图所示。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_synth_db_level_control_screenshot1.png" alt="演示项目主窗口，以分贝显示控制滑块。">
+<figcaption>演示项目主窗口，以分贝显示控制滑块。</figcaption>
+</figure>
+<h2>创建自定义滑块</h2>
+<p>注意这一次滑块旁边显示的文本不仅显示<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>值，还显示后缀“dB”。这是通过创建一个继承自<a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a>类的自定义滑块类 <code>DecibelSlider</code> 实现的。在这个自定义滑块类中，文本框界面被定制为以<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>显示数值。虽然可以为<a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a>对象文本框中显示的文本添加后缀，只需使用 <a href="https://docs.juce.com/master/classSlider.html#ac416a101b5d9a504f61e2f50dc593f61" rel="noreferrer noopener">Slider::setTextValueSuffix()</a> 函数，但我们还需要另一项定制。那就是定制数值的转换方式，以便在电平降得很低时显示 <strong>-INF dB</strong>。</p>
+<blockquote>
+      <p><em>INF</em> 指<em>无穷大</em>（infinity），在我们的应用中 -INF dB 被当作静音处理。</p>
+    </blockquote>
+<h3>Decibels 类</h3>
+<p><a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>类包含若干静态函数，用于在<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>值与线性增益之间转换。它还提供了一种把<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>值转换为<a href="https://docs.juce.com/master/classString.html" rel="noreferrer noopener">String</a>对象的简便方法。例如，我们重写虚函数 <a href="https://docs.juce.com/master/classSlider.html#a5a1693166d0815f812202b1a3a6eb202" rel="noreferrer noopener">Slider::getTextFromValue()</a>，在其中使用 <a href="https://docs.juce.com/master/classDecibels.html#a808a763495ccbe5d504fbd501bb85e0d" rel="noreferrer noopener">Decibels::toString()</a> 函数（在 <code>DecibelSlider</code> 类中），如下所示：</p>
+<pre><code>juce::String getTextFromValue (double value) override
+{
+    return juce::Decibels::toString (value);
+}</code></pre>
+<p>这使我们的 <code>DecibelSlider</code> 类能够针对给定的滑块值，在其文本框中显示合适的文本。</p>
+<p><a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>类没有把<a href="https://docs.juce.com/master/classString.html" rel="noreferrer noopener">String</a>对象转换回<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>值的函数，所以我们需要自己写一个。这里我们重写 <a href="https://docs.juce.com/master/classSlider.html#a532774d3294a058784f7d4291b33b720" rel="noreferrer noopener">Slider::getValueFromText()</a> 虚函数（同样在 <code>DecibelSlider</code> 类中）：</p>
+<pre><code>double getValueFromText (const juce::String&amp; text) override
+{
+    auto minusInfinitydB = -100.0;
+    auto decibelText = text.upToFirstOccurrenceOf ("dB", false, false).trim(); // [1]
+    return decibelText.equalsIgnoreCase ("-INF") ? minusInfinitydB
+                                                 : decibelText.getDoubleValue(); // [2]
+}</code></pre>
+<p>这使用户能够在文本框中输入数值，并让该数值经过检查后转换为滑块的合法值。为此我们：</p>
+<ul>
+<li>[1]：从文本中去掉“dB”后缀（如果存在），并修剪文本以删除开头和结尾的空白字符（使用 <a href="https://docs.juce.com/master/classString.html#a5ed648f71d99bb8aef15e8ba35422a30" rel="noreferrer noopener">String::trim()</a> 函数）。
+</li>
+<li>[2]：检查剩余文本是否为“-INF”，若是则返回 -100（这是<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>中 -INF dB 的默认值，<a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>类就使用这个值，相关讨论见本教程的“说明”部分）。否则把剩余文本转换为 <code>double</code> 值并返回。
+</li>
+</ul>
+<h2>使用滑块的值</h2>
+<p>在<a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>中，我们直接在 <code>getNextAudioBlock()</code> 函数里访问滑块的值。由于从<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>到线性增益的转换涉及一些可能很耗 CPU 的运算，最好避免过于频繁地执行转换，尤其是在音频线程上。在本教程的演示项目中，我们有一个 <code>float</code> 成员 <code>level</code> 存放在 <code>MainContentComponent</code> 类中，并在滑块变化时通过监听器更新这个值。</p>
+<p>我们在构造函数中把 <code>level</code> 成员初始化为零，并把它转换为<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>（使用 <a href="https://docs.juce.com/master/classDecibels.html#a2a2c7152fe5560836cd81e6d167da537" rel="noreferrer noopener">Decibels::gainToDecibels()</a> 函数），从而（使用 <a href="https://docs.juce.com/master/classSlider.html#a430a5c4e56b39dd622f5800f787e0822" rel="noreferrer noopener">Slider::setValue()</a> 函数）给滑块一个初始位置，如下所示：</p>
+<pre><code>MainContentComponent()
+{</code></pre>
+<pre><code>decibelSlider.setValue (juce::Decibels::gainToDecibels (level));
+decibelLabel.setText ("Noise Level in dB", juce::dontSendNotification);</code></pre>
+<h3>把分贝转换为线性增益</h3>
+<p>在 <a href="https://docs.juce.com/master/classSlider.html#a680d007f6a824a28a60aa05b4045e794" rel="noreferrer noopener">Slider::onValueChange</a> 辅助对象的 lambda 函数中，我们执行从滑块所用的<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>刻度到音频处理所需的线性增益值的转换：</p>
+<pre><code>decibelSlider.onValueChange = [this] { level = juce::Decibels::decibelsToGain ((float) decibelSlider.getValue()); };</code></pre>
+<p>当我们在构造函数中用 <a href="https://docs.juce.com/master/classSlider.html#a430a5c4e56b39dd622f5800f787e0822" rel="noreferrer noopener">Slider::setValue()</a> 函数首次设置滑块的值时，这个函数会被调用。它会在值变化时调用赋给 <a href="https://docs.juce.com/master/classSlider.html#a680d007f6a824a28a60aa05b4045e794" rel="noreferrer noopener">Slider::onValueChange</a> 辅助对象的 lambda 函数，我们的 <code>level</code> 成员就会被正确设置。</p>
+<blockquote>
+      <p>练习：向 <code>MainContentComponent</code> 类再添加一个<a href="https://docs.juce.com/master/classLabel.html" rel="noreferrer noopener">Label</a>对象，用于显示线性增益值。——向 <code>MainContentComponent</code> 类再添加一个<a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a>对象，显示线性增益值，使用户能够用任一个滑块查看和指定噪声电平。移动任一个滑块时，两个滑块都应正确更新。（不同单位之间转换的简单示例参见<a href="slider-values.html" rel="noreferrer noopener">教程：Slider 类</a>。）</p>
+    </blockquote>
+<h3>处理音频</h3>
+<p>在 <code>MainContentComponent::getNextAudioBlock()</code> 中，我们处理音频：</p>
+<pre><code>void getNextAudioBlock (const juce::AudioSourceChannelInfo&amp; bufferToFill) override
+{
+    auto currentLevel = level;
+    auto levelScale = currentLevel * 2.0f;
+    for (auto channel = 0; channel &lt; bufferToFill.buffer-&gt;getNumChannels(); ++channel)
+    {
+        auto* buffer = bufferToFill.buffer-&gt;getWritePointer (channel, bufferToFill.startSample);
+        for (auto sample = 0; sample &lt; bufferToFill.numSamples; ++sample)
+            buffer[sample] = random.nextFloat() * levelScale - currentLevel;
+    }
+}</code></pre>
+<p>注意，这与<a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>中的 <code>getNextAudioBlock()</code> 函数几乎相同，<em>只是</em>我们先取一份 <code>level</code> 值的函数局部副本，然后像之前那样计算 <code>levelScale</code> 值。</p>
+<h3>这种方法的问题</h3>
+<p>这种方法的一个问题是，<code>level</code> 变量可能在音频线程执行期间突然改变值（在这里是指两次 <code>getNextAudioBlock</code> 调用之间）。这类变化通常会引入音频瑕疵，例如可听见的爆裂声。为避免这种情况，在实际的合成器中，我们希望 <code>level</code> 值能够平滑变化。实现这一点的技巧在其他教程中探讨（参见<a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>）。</p>
+<p>另一个问题与线程安全有关。在一个线程（GUI 线程）中写入像 <code>level</code> 这样的成员变量，同时从另一个线程（音频线程）读取同一个值，如果不进行线程同步（无论是通过临界区还是使用原子操作），在 C++ 中严格来说属于未定义行为。这些问题超出了本教程的范围，将在以后的教程中讨论。在这个特定情况下，我们不必过于担心，因为在典型的架构（x86、x86_64、ARM）上，读写单个 <code>float</code> 是原子操作：读写不会相互交错，通常是安全的。</p>
+<p>再进一步想，可能会想通过把 <code>levelScale</code> 也变成成员变量来进一步优化代码（这样就不必在每次调用 <code>getNextAudioBlock()</code> 函数时计算它）。但这样一来，这两个成员变量就不再作为单个原子操作更新了。当然，对此也有解决办法，但这超出了本教程的范围。</p>
+<h2>说明</h2>
+<p>本教程演示项目中的代码假设我们希望把 -100 dB 或更低的值视为 -INF dB（即线性增益值为零）。这个 -100 dB 是<a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>类使用的默认值，但你可以在它的计算中覆盖这个值。方法是向<a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>类中的每个函数提供一个额外参数，指定哪个值应被视为 -INF dB。例如，要在 <code>MainContentComponent</code> 构造函数中更新滑块值时把 -96 dB（及以下）视为 -INF dB，我们可以这样做：</p>
+<pre><code>decibelSlider.setValue (juce::Decibels::gainToDecibels (level, -96.0f));</code></pre>
+<p>当然，我们需要确保应用的所有部分对 -INF dB 使用相同的值。演示项目的代码有一个潜在问题，因为 <code>-100.0</code> 被硬编码在我们的 <code>DecibelSlider::getValueFromText()</code> 函数中。如果<a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>类（因某种原因）改变了它的默认值，我们的代码就会失效。不幸的是，这个默认值是<a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>类的私有成员，因此我们无法向<a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>类查询它的默认值。相反，我们需要指定自己的默认值，并在各处统一使用它。</p>
+<blockquote>
+      <p>练习：修改演示项目，把 -INF 的自定义默认值指定为 -96 dB。你需要同时更新 <code>DecibelSlider</code> 类和 <code>MainContentComponent</code> 类。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>本教程介绍了：</p>
+<ul>
+<li><a href="https://docs.juce.com/master/classDecibels.html" rel="noreferrer noopener">Decibels</a>类。
+</li>
+<li>在<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>刻度和线性增益之间来回转换。
+</li>
+<li>创建用于以<a href="https://en.wikipedia.org/wiki/Decibel" rel="noreferrer noopener">分贝</a>刻度显示数值的自定义滑块。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="slider-values.html" rel="noreferrer noopener">教程：Slider 类</a>
+</li>
+<li><a href="simple-synth-noise.html" rel="noreferrer noopener">教程：构建白噪声发生器</a>
+</li>
+<li><a href="sine-synth.html" rel="noreferrer noopener">教程：构建正弦波合成器</a>
+</li>
+<li><a href="synth-level-control.html" rel="noreferrer noopener">教程：控制音频电平</a>
+</li>
+<li><a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建 MIDI 合成器</a>
+</li>
+<li><a href="wavetable-synth.html" rel="noreferrer noopener">教程：波表合成</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_synth_db_level_control/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_synth_db_level_control/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

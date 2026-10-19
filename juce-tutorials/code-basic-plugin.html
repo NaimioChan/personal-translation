@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>创建一个基础音频/MIDI 插件，第 2 部分（编写插件代码） - JUCE 教程</title>
+<meta name="description" content="创建一个基础音频/MIDI 插件，第 2 部分（编写插件代码）：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>创建一个基础音频/MIDI 插件，第 2 部分（编写插件代码）</h1>
+<p>本教程接续<a href="create-projucer-basic-plugin.html" rel="noreferrer noopener">教程：创建一个基础音频/MIDI 插件，第 1 部分：项目搭建</a>，将带你从一个干净的项目出发，最终得到一个功能完整（虽然相当简单）的插件，它能够响应传入的 MIDI 音符。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>插件格式：</strong>VST、VST3、AU、Standalone<br><strong>类：</strong><a href="https://docs.juce.com/master/classAudioProcessorEditor.html" rel="noreferrer noopener">AudioProcessorEditor</a>、<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a>、<a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a>、<a href="https://docs.juce.com/master/classMidiMessage.html" rel="noreferrer noopener">MidiMessage</a>、<a href="https://docs.juce.com/master/classMidiBuffer.html" rel="noreferrer noopener">MidiBuffer</a></p>
+<h2>准备工作</h2>
+<p>启动 Projucer，创建一个名为 <strong>TutorialPlugin</strong> 的新音频插件项目。如果你不记得怎么操作，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>整体认识</h2>
+<p>新建的音频插件项目包含两个主要的类：<code>PluginProcessor</code> 负责音频和 MIDI 的输入输出以及处理逻辑，<code>PluginEditor</code> 负责屏幕上的各种 GUI 控件或可视化显示。</p>
+<p>在这两者之间传递信息时，最好把处理器看作编辑器的父级。插件处理器只有一个，而编辑器可以创建多个。每个编辑器都持有对处理器的引用，因此它可以编辑或访问音频线程中的信息和参数。编辑器的职责是在这个处理器线程上设置和获取信息，而不是反过来。</p>
+<p>我们要在 <code>PluginProcessor.cpp</code> 文件中修改的主要函数是 <code>processBlock()</code> 方法。它负责接收并向插件输出音频和 MIDI 数据。我们要在 <code>PluginEditor.cpp</code> 文件中修改的主要函数是构造函数，我们在其中初始化并设置窗口和 GUI 对象，另外还有 <code>paint()</code> 方法，我们可以在其中绘制额外的控件和自定义 GUI 组件。</p>
+<p>编辑器构造函数目前只有一个方法调用——<code>setSize (400, 300)</code>——它设置插件窗口的大小。让我们为这个简单的应用做一个 <code>(200, 200)</code> 的较小窗口。</p>
+<pre><code>TutorialPluginAudioProcessorEditor::TutorialPluginAudioProcessorEditor (TutorialPluginAudioProcessor&amp; p)
+    : AudioProcessorEditor (&amp;p), audioProcessor (p)
+{
+    // This is where our plugin’s editor size is set.
+    setSize (200, 200);
+}</code></pre>
+<h3>创建一个简单的 GUI 控件</h3>
+<p>我们将创建一个滑块对象，用来改变传入的 MIDI 消息的音量。</p>
+<p>在编辑器的头文件中新建一个 <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a> 对象，名为 <code>midiVolume</code> [1]：</p>
+<pre><code>class TutorialPluginAudioProcessorEditor : public juce::AudioProcessorEditor
+{
+public:
+    TutorialPluginAudioProcessorEditor (TutorialPluginAudioProcessor&amp;);
+    ~TutorialPluginAudioProcessorEditor();
+    //===================================================================
+    void paint (juce::Graphics&amp;) override;
+    void resized() override;
+private:
+    // This reference is provided as a quick way for your editor to
+    // access the processor object that created it.
+    TutorialPluginAudioProcessor&amp; audioProcessor;
+    juce::Slider midiVolume; // [1]
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TutorialPluginAudioProcessorEditor)
+};</code></pre>
+<blockquote>
+      <p><a href="https://docs.juce.com/master/classAudioProcessorEditor.html" rel="noreferrer noopener">AudioProcessorEditor</a> 在音频插件中扮演的角色，与<em>主内容组件</em>在独立应用中所扮演的角色相同。参见<a href="main-component.html" rel="noreferrer noopener">教程：主组件</a>。</p>
+    </blockquote>
+<p>我们可以在编辑器构造函数中用各种函数设置这个滑块的属性。我们还必须调用 <code>addAndMakeVisible (&amp;midiVolume)</code>，把滑块附加到编辑器上。滑块有许多不同的样式和参数，可以在你自己的项目中试用和试验。在本教程中，请调整滑块参数，使编辑器构造函数看起来像这样：</p>
+<pre><code>TutorialPluginAudioProcessorEditor::TutorialPluginAudioProcessorEditor (TutorialPluginAudioProcessor&amp; p)
+    : AudioProcessorEditor (&amp;p), audioProcessor (p)
+{
+    // This is where our plugin’s editor size is set.
+    setSize (200, 200);
+    // these define the parameters of our slider object
+    midiVolume.setSliderStyle (juce::Slider::LinearBarVertical);
+    midiVolume.setRange (0.0, 127.0, 1.0);
+    midiVolume.setTextBoxStyle (juce::Slider::NoTextBox, false, 90, 0);
+    midiVolume.setPopupDisplayEnabled (true, false, this);
+    midiVolume.setTextValueSuffix (" Volume");
+    midiVolume.setValue (1.0);
+    // this function adds the slider to the editor
+    addAndMakeVisible (&amp;midiVolume);
+}</code></pre>
+<p>JUCE 窗口有一个名为 <code>resized()</code> 的方法，它会在窗口初始化时被调用一次，此后每当用户改变窗口大小时（如果启用了调整大小）也会被调用。这是设置滑块（以及其他 GUI 组件）大小和位置的好地方，这样它们就可以相对于窗口边界进行定位。</p>
+<pre><code>void TutorialPluginAudioProcessorEditor::resized()
+{
+    // sets the position and size of the slider with arguments (x, y, width, height)
+    midiVolume.setBounds (40, 30, 20, getHeight() - 60);
+}</code></pre>
+<p>我们再把 <code>paint()</code> 函数中的 <code>"Hello World"</code> 文本改成 <code>"Midi Volume"</code>，并把它移到顶部。所有自定义形状和 GUI 元素都在这个函数中绘制到窗口上。</p>
+<pre><code>void TutorialPluginAudioProcessorEditor::paint (juce::Graphics&amp; g)
+{
+    // fill the whole window white
+    g.fillAll (juce::Colours::white);
+    // set the current drawing colour to black
+    g.setColour (juce::Colours::black);
+    // set the font size and draw text to the screen
+    g.setFont (15.0f);
+    g.drawFittedText ("Midi Volume", 0, 0, getWidth(), 30, juce::Justification::centred, 1);
+}</code></pre>
+<blockquote>
+      <p>你可以进一步了解组件及其 <code>paint()</code> 和 <code>resized()</code> 方法，详见<a href="graphics-class.html" rel="noreferrer noopener">教程：Graphics 类</a>和<a href="component-parents-children.html" rel="noreferrer noopener">教程：父组件与子组件</a>。</p>
+    </blockquote>
+<p>运行这个程序后，插件在宿主编辑器中应该看起来像这样：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_code_basic_plugin_1.png" alt="">
+</figure>
+<h3>把控制信息传递给处理器类</h3>
+<p>我们现在有了一个可以调节的控件，但它实际上什么也没有控制。我们需要拦截传入的 MIDI 数据，用滑块的音量替换音符开启的音量，而这要在处理器中完成。为了让滑块的值能够在处理器线程上控制 MIDI 效果，我们需要在处理器线程上新建一个变量，供滑块修改。</p>
+<p>在处理器类的头文件中新建一个名为 <code>noteOnVel</code> 的公有 float 变量。这就是我们将用滑块来设置的变量。</p>
+<pre><code>public:
+float noteOnVel;</code></pre>
+<p>每当滑块发生变化时，我们都需要设置这个值。为此我们使用滑块监听器回调函数。任何类都可以继承滑块监听器功能，但就本教程而言，我们会把这一功能添加到编辑器类中。</p>
+<blockquote>
+      <p>关于监听器更深入的说明，请参阅<a href="listeners-and-broadcasters.html" rel="noreferrer noopener">教程：监听器与广播器</a>。</p>
+    </blockquote>
+<p>添加继承 [2] 和默认回调函数 [3]，让编辑器类看起来像这样：</p>
+<pre><code>class TutorialPluginAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                           private juce::Slider::Listener // [2]
+{
+public:
+    TutorialPluginAudioProcessorEditor (TutorialPluginAudioProcessor&amp;);
+    ~TutorialPluginAudioProcessorEditor();
+    //==================================================================
+    // This is just a standard Juce paint method...
+    void paint (juce::Graphics&amp; g) override;
+    void resized() override;
+private:
+    void sliderValueChanged (juce::Slider* slider) override; // [3]
+    //==================================================================
+    // This reference is provided as a quick way for your editor to
+    // access the processor object that created it.
+    TutorialPluginAudioProcessor&amp; audioProcessor;
+    juce::Slider midiVolume;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TutorialPluginAudioProcessorEditor)
+};</code></pre>
+<p>现在我们在编辑器构造函数中为音量滑块添加滑块监听器：</p>
+<pre><code>TutorialPluginAudioProcessorEditor::TutorialPluginAudioProcessorEditor (TutorialPluginAudioProcessor&amp; p)
+    : AudioProcessorEditor (&amp;p), audioProcessor (p)
+{
+    // ...
+    // add the listener to the slider
+    midiVolume.addListener (this);
+}</code></pre>
+<p>……然后插入监听器函数，用它设置处理器的公有音量变量：</p>
+<pre><code>void TutorialPluginAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
+{
+    audioProcessor.noteOnVel = midiVolume.getValue();
+}</code></pre>
+<p>现在我们有了一个滑块，可以控制处理器类中的变量。接下来我们需要用这个处理器变量来改变 MIDI 数据。</p>
+<h3>修改 MIDI 音符</h3>
+<p>处理器类中的 <code>processBlock()</code> 方法会实时接收并产生 MIDI 缓冲区和音频缓冲区。我们将遍历 MIDI 缓冲区，拦截 <code>noteOn</code> 类型的信号，并把它们的力度设置为我们滑块的值。</p>
+<p>所有 MIDI 消息都会经过这个函数。要在消息经过时修改 MIDI，我们新建一个 <a href="https://docs.juce.com/master/classMidiBuffer.html" rel="noreferrer noopener">MidiBuffer</a> 对象，命名为 <code>processedMidi</code>，把修改后的 MIDI 信号追加到这个新缓冲区，最后再与原始缓冲区交换（这样可以避免直接修改带来的问题）。删除 <code>processBlock()</code> 方法中现有的代码（这些代码处理音频缓冲区，本教程用不到），替换为下面的代码。</p>
+<pre><code>void TutorialPluginAudioProcessor::processBlock (juce::AudioBuffer&lt;float&gt;&amp; buffer, juce::MidiBuffer&amp; midiMessages)
+{
+    buffer.clear();
+    juce::MidiBuffer processedMidi;
+    for (const auto metadata : midiMessages)
+    {
+        auto message = metadata.getMessage();
+        const auto time = metadata.samplePosition;
+        if (message.isNoteOn())
+        {
+            message = juce::MidiMessage::noteOn (message.getChannel(),
+                message.getNoteNumber(),
+                (juce::uint8) noteOnVel);
+        }
+        processedMidi.addEvent (message, time);
+    }
+    midiMessages.swapWith (processedMidi);
+}</code></pre>
+<p>在宿主环境中运行插件，你会看到所有经过我们插件的 MIDI 音符开启信号，其力度值都变成了用滑块设定的值。上面的 <code>if()</code> 语句同样可以用来修改其他类型的传入 MIDI 信号，并对它们施加各种变换和效果。借助这些方法，你可以构建更复杂的效果和 GUI。</p>
+<blockquote>
+      <p>练习：尝试使用按钮、滑块等其他 GUI 组件，查看 JUCE DemoRunner 以感受 JUCE 的能力，并回头查阅 API 文档获取更多信息。</p>
+    </blockquote>
+<blockquote>
+      <p>使用传入的 MIDI 音符生成音频将在后续教程中介绍（参见<a href="synth-using-midi-input.html" rel="noreferrer noopener">教程：构建 MIDI 合成器</a>）。目前，请先看看 <code>AudioPluginDemo</code>，它位于 <code>JUCE/examples/Plugins</code>。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>读完本教程后，你应该能够：</p>
+<ul>
+<li>创建一个带基础 GUI 的音频插件，
+</li>
+<li>让你的插件接收 MIDI 数据。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>
+</li>
+<li><a href="create-projucer-basic-plugin.html" rel="noreferrer noopener">教程：创建一个基础音频/MIDI 插件，第 1 部分：项目搭建</a>
+</li>
+<li><a href="plugin-examples.html" rel="noreferrer noopener">教程：插件示例</a>
+</li>
+<li><a href="audio-bus-layouts.html" rel="noreferrer noopener">教程：为插件配置正确的总线布局</a>
+</li>
+<li><a href="main-component.html" rel="noreferrer noopener">教程：主组件</a>
+</li>
+<li><a href="graphics-class.html" rel="noreferrer noopener">教程：Graphics 类</a>
+</li>
+<li><a href="component-parents-children.html" rel="noreferrer noopener">教程：父组件与子组件</a>
+</li>
+<li><a href="listeners-and-broadcasters.html" rel="noreferrer noopener">教程：监听器与广播器</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_code_basic_plugin/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_code_basic_plugin/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>保存与加载插件状态 - JUCE 教程</title>
+<meta name="description" content="保存与加载插件状态：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>保存与加载插件状态</h1>
+<p>自动管理你的插件参数。存储和访问参数变得轻而易举，尤其是让构建有效的用户界面容易得多。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a>、<a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a>、<a href="https://docs.juce.com/master/classXmlElement.html" rel="noreferrer noopener">XmlElement</a></p>
+<h2>入门</h2>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/AudioProcessorValueTreeStateTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/AudioProcessorValueTreeStateTutorial.zip" rel="noreferrer noopener">ZIP</a> 。解压该项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果你在这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<p>你还应该知道如何使用 JUCE 构建音频插件，并将其加载到你偏好的音频宿主（例如数字音频工作站）中。入门介绍请参阅<a href="create-projucer-basic-plugin.html" rel="noreferrer noopener">教程：创建基本的音频/MIDI 插件，第 1 部分：设置</a>。理想情况下，你还应该阅读<a href="audio-parameter.html" rel="noreferrer noopener">教程：添加插件参数</a>，作为音频处理器参数的入门。</p>
+<h2>演示项目</h2>
+<p>演示项目大致基于 <code>JUCE/examples/Plugins</code> 目录中的 <em>GainPlugin</em> 项目。该插件使用单个参数改变输入信号的增益。除此之外，它还有一个相位反转*参数，用于反转输入信号的相位。</p>
+<h2>增益处理器</h2>
+<p><code>TutorialProcessor</code> 类中的大部分代码与使用 <strong>Audio Plug-In</strong> 项目模板时 Projucer 生成的代码相同。为简单起见，我们将处理器代码打包到单个 <code>.h</code> 文件中，而不是拆分到 <code>.cpp</code> 和 <code>.h</code> 文件中。处理器的编辑器位于 <code>GenericEditor</code> 类中。</p>
+<p>使用 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 类管理插件参数有几个优点：</p>
+<ul>
+<li><a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 类本身提供撤销支持。
+</li>
+<li><a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 对象已经支持序列化和反序列化（到 XML）。
+</li>
+<li><a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 对象可以附加监听器。这意味着 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 类几乎可以自动连接到滑块和按钮，以线程安全的方式让 UI 和处理器状态保持同步。
+</li>
+</ul>
+<p>要使用 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 对象，你可以在处理器类中存储一个：</p>
+<pre><code>private:
+//==============================================================================
+juce::AudioProcessorValueTreeState parameters;</code></pre>
+<p>你可以将 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 对象存储在其他地方，但必须注意每个 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 对象必须：</p>
+<ul>
+<li>只附加到一个处理器；并且
+</li>
+<li>与处理器具有相同的生命周期（因为它们之间会相互依赖）。
+</li>
+</ul>
+<p>将 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 对象存储在处理器类中，可以更容易地确保满足这些要求。</p>
+<p><a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 构造函数需要一个对其将要附加到的 <a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a> 子类的引用、一个指向 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 对象的指针、一个 <a href="https://docs.juce.com/master/classIdentifier.html" rel="noreferrer noopener">Identifier</a> 用于标识 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a>，以及一个包含要管理的参数的 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState_1_1ParameterLayout.html" rel="noreferrer noopener">AudioProcessorValueTreeState::ParameterLayout</a>。</p>
+<pre><code>AudioProcessorValueTreeState (AudioProcessor&amp; processorToConnectTo,
+    UndoManager* undoManagerToUse,
+    const juce::Identifier&amp; valueTreeType,
+    ParameterLayout parameterLayout);</code></pre>
+<p>在这个例子中，我们将为 <a href="https://docs.juce.com/master/classUndoManager.html" rel="noreferrer noopener">UndoManager</a> 对象使用 <code>nullptr</code> 值，因为本教程不会实现撤销支持。<code>nullptr</code> 值表示我们不想使用撤销支持。</p>
+<h3>配置参数</h3>
+<p><a href="https://docs.juce.com/master/classAudioProcessorValueTreeState_1_1ParameterLayout.html" rel="noreferrer noopener">AudioProcessorValueTreeState::ParameterLayout</a> 参数（即 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 的参数）包含我们插件的参数。<a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 可以管理任何派生自 <a href="https://docs.juce.com/master/classRangedAudioParameter.html" rel="noreferrer noopener">RangedAudioParameter</a> 的参数，并且 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState_1_1ParameterLayout.html" rel="noreferrer noopener">AudioProcessorValueTreeState::ParameterLayout</a> 构造函数可以接受数量可变的 <a href="https://docs.juce.com/master/classRangedAudioParameter.html" rel="noreferrer noopener">RangedAudioParameter</a> 子类，或包含 RangedAudioParameters 的 AudioProcessorParameterGroups。</p>
+<p>参数和组使用 std::unique_ptr 传递，因为 APVTS 将取得参数和组的所有权。</p>
+<p>JUCE 内置的参数类型，也就是我们在<a href="audio-parameter.html" rel="noreferrer noopener">教程：添加插件参数</a>中使用过的那些，都是 <a href="https://docs.juce.com/master/classRangedAudioParameter.html" rel="noreferrer noopener">RangedAudioParameter</a> 的子类，因此我们在这里也可以使用它们。</p>
+<pre><code>TutorialProcessor()
+    : parameters (*this, nullptr, juce::Identifier ("APVTSTutorial"),
+          {
+              std::make_unique&lt;juce::AudioParameterFloat&gt; ("gain", // parameterID
+                  "Gain", // parameter name
+                  0.0f, // minimum value
+                  1.0f, // maximum value
+                  0.5f), // default value
+              std::make_unique&lt;juce::AudioParameterBool&gt; ("invertPhase", // parameterID
+                  "Invert Phase", // parameter name
+                  false) // default value
+          })
+{</code></pre>
+<p>将参数添加到 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 也会自动将它们添加到所附加的 <a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a> 中。</p>
+<p><em>参数 ID</em>应该是该参数的唯一标识符。可以把它想成变量名；它可以包含字母数字字符和下划线，但不能包含空格。<em>参数名称</em>是将显示在屏幕上的名称。</p>
+<h3>执行增益处理</h3>
+<p>为帮助避免信号中出现咔嗒声，我们对增益变化和信号相位变化进行平滑处理。为此，我们在处理器中存储先前计算出的增益值 [1]：</p>
+<pre><code>private:
+//==============================================================================
+juce::AudioProcessorValueTreeState parameters;
+float previousGain; // [1]
+std::atomic&lt;float&gt;* phaseParameter = nullptr;
+std::atomic&lt;float&gt;* gainParameter = nullptr;
+//==============================================================================
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TutorialProcessor)
+};</code></pre>
+<p>我们还在构造函数末尾存储指向参数的指针，以便之后对它们解引用：</p>
+<pre><code>phaseParameter = parameters.getRawParameterValue ("invertPhase");
+gainParameter = parameters.getRawParameterValue ("gain");</code></pre>
+<p>这些变化在 <code>TutorialProcessor::prepareToPlay()</code> 函数中初始化：</p>
+<pre><code>void prepareToPlay (double, int) override
+{
+    auto phase = *phaseParameter &lt; 0.5f ? 1.0f : -1.0f;
+    previousGain = *gainParameter * phase;
+}</code></pre>
+<p>这里我们计算相位反转因子（+1 或 -1），并将其乘以增益，为第一次处理回调做好准备。你可以看到，我们使用 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html#a645123ccd146258f28d77b6095169c91" rel="noreferrer noopener">AudioProcessorValueTreeState::getRawParameterValue()</a> 函数获取指向表示参数值的 <code>float</code> 的指针。我们对其解引用来获取实际值。处理在 <code>TutorialProcessor::processBlock()</code> 函数中执行：</p>
+<pre><code>void processBlock (juce::AudioSampleBuffer&amp; buffer, juce::MidiBuffer&amp;) override
+{
+    auto phase = *phaseParameter &lt; 0.5f ? 1.0f : -1.0f;
+    auto currentGain = *gainParameter * phase;
+    if (juce::approximatelyEqual (currentGain, previousGain))
+    {
+        buffer.applyGain (currentGain);
+    }
+    else
+    {
+        buffer.applyGainRamp (0, buffer.getNumSamples(), previousGain, currentGain);
+        previousGain = currentGain;
+    }
+}</code></pre>
+<p>你可以看到，如果值没有变化，我们只需应用一个恒定增益。如果值发生了变化，我们就应用增益渐变，然后更新 <code>previousGain</code> 值以供下次使用。</p>
+<h3>存储与读取参数</h3>
+<p>除了提供处理音频的例程之外，你还需要提供将插件的<em>整个</em>状态存储到内存块中以及从中读取的方法。这应包括所有参数的当前值，但如有需要也可以包含其他状态信息（例如，如果你的插件要处理文件，它可能会存储文件路径）。</p>
+<p>使用 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 对象存储插件状态使这件事变得非常简单，因为 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 对象可以轻松地与 XML 相互转换。</p>
+<p><a href="https://docs.juce.com/master/classAudioProcessor.html#a5d79591b367a7c0516e4ef4d1d6c32b2" rel="noreferrer noopener">AudioProcessor::getStateInformation()</a> 回调要求你的插件将其状态存储到 <a href="https://docs.juce.com/master/classMemoryBlock.html" rel="noreferrer noopener">MemoryBlock</a> 对象中。要通过 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 对象以 XML 完成这件事，代码很简单：</p>
+<pre><code>void getStateInformation (juce::MemoryBlock&amp; destData) override
+{
+    auto state = parameters.copyState();
+    std::unique_ptr&lt;juce::XmlElement&gt; xml (state.createXml());
+    copyXmlToBinary (*xml, destData);
+}</code></pre>
+<p>所创建的 <a href="https://docs.juce.com/master/classXmlElement.html" rel="noreferrer noopener">XmlElement</a> 对象的<em>标签名</em>将是“APVTSTutorial”，也就是我们之前用来初始化 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> 对象的名称。</p>
+<p>从 XML 恢复状态几乎同样简单：</p>
+<pre><code>void setStateInformation (const void* data, int sizeInBytes) override
+{
+    std::unique_ptr&lt;juce::XmlElement&gt; xmlState (getXmlFromBinary (data, sizeInBytes));
+    if (xmlState.get() != nullptr)
+        if (xmlState-&gt;hasTagName (parameters.state.getType()))
+            parameters.replaceState (juce::ValueTree::fromXml (*xmlState));
+}</code></pre>
+<p>这里我们加入了一些错误检查以确保安全。我们还通过检查 XML 元素的<em>标签名</em>，确认 ValueTree 生成的 XML 与插件所需的 <a href="https://docs.juce.com/master/classValueTree.html" rel="noreferrer noopener">ValueTree</a> <em>类型</em>一致。</p>
+<h2>增益编辑器</h2>
+<p>看看项目中的 <code>GenericEditor</code> 类。你可能注意到 <code>GenericEditor</code> 类的声明非常简单：</p>
+<pre><code>class GenericEditor : public juce::AudioProcessorEditor
+{
+public:</code></pre>
+<p>你可能以为我们需要继承 <a href="https://docs.juce.com/master/classSlider.html#a1977aeac9b4363e8ed0cac0ac103055a" rel="noreferrer noopener">Slider::Listener</a> 类和 <a href="https://docs.juce.com/master/classButton_1_1Listener.html" rel="noreferrer noopener">Button::Listener</a> 类，才能响应滑块和按钮的交互。但这同样是使用 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 类的好处之一。我们可以改用 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 类中的<em>附加</em>类。</p>
+<h3>组件附加</h3>
+<p>实际上，由于这些类的名称可能变得非常长，我们为我们需要的每个附加类都包含了一个 <code>typedef</code>：</p>
+<pre><code>typedef juce::AudioProcessorValueTreeState::SliderAttachment SliderAttachment;
+typedef juce::AudioProcessorValueTreeState::ButtonAttachment ButtonAttachment;</code></pre>
+<p>我们的 <code>GenericEditor</code> 类包含若干成员，包括一个滑块、一个切换按钮，以及其中一些附加对象：</p>
+<pre><code>private:
+    juce::AudioProcessorValueTreeState&amp; valueTreeState;
+    juce::Label gainLabel;
+    juce::Slider gainSlider;
+    std::unique_ptr&lt;SliderAttachment&gt; gainAttachment;
+    juce::ToggleButton invertButton;
+    std::unique_ptr&lt;ButtonAttachment&gt; invertAttachment;
+};</code></pre>
+<p>我们还需要引用 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 对象，因此我们也保留了对它的引用。</p>
+<p>我们的 <code>GenericEditor</code> 类的构造函数会设置这些对象：</p>
+<pre><code>GenericEditor (juce::AudioProcessor&amp; parent, juce::AudioProcessorValueTreeState&amp; vts)
+    : AudioProcessorEditor (parent),
+      valueTreeState (vts)
+{
+    gainLabel.setText ("Gain", juce::dontSendNotification);
+    addAndMakeVisible (gainLabel);
+    addAndMakeVisible (gainSlider);
+    gainAttachment.reset (new SliderAttachment (valueTreeState, "gain", gainSlider));
+    invertButton.setButtonText ("Invert Phase");
+    addAndMakeVisible (invertButton);
+    invertAttachment.reset (new ButtonAttachment (valueTreeState, "invertPhase", invertButton));
+    setSize (paramSliderWidth + paramLabelWidth, juce::jmax (100, paramControlHeight * 2));
+}</code></pre>
+<p>它由我们处理器的 <code>TutorialProcessor::createEditor()</code> 函数调用：</p>
+<pre><code>juce::AudioProcessorEditor* createEditor() override { return new GenericEditor (*this, parameters); }</code></pre>
+<p>你可能注意到，我们甚至不需要设置滑块的取值范围。这是由 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState_1_1SliderAttachment.html" rel="noreferrer noopener">SliderAttachment</a> 类自动完成的。我们只需将 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a>、<em>参数 ID</em>以及它应附加到的 <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a> 对象传给<em>附加</em>对象的构造函数。</p>
+<blockquote>
+      <p>我们仍然保留 <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a> 对象的所有权。你应确保<em>附加</em>类与 <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a> 对象具有相同的生命周期。</p>
+    </blockquote>
+<p><a href="https://docs.juce.com/master/classAudioProcessorValueTreeState_1_1ButtonAttachment.html" rel="noreferrer noopener">ButtonAttachment</a> 类仍然需要我们提供按钮名称。（而 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState_1_1ComboBoxAttachment.html" rel="noreferrer noopener">AudioProcessorValueTreeState::ComboBoxAttachment</a> 类可以附加到 <a href="https://docs.juce.com/master/classComboBox.html" rel="noreferrer noopener">ComboBox</a> 对象，它需要我们手动填充 <a href="https://docs.juce.com/master/classComboBox.html" rel="noreferrer noopener">ComboBox</a>。）</p>
+<blockquote>
+      <p>练习：将插件改为仅支持 2 声道主总线，并添加一个声道交换参数，用于可选地交换左右声道。——仍然使用仅支持 2 声道的插件，添加一个平衡参数来平衡左右声道的电平。</p>
+    </blockquote>
+<h2>以编程方式添加参数</h2>
+<p>你也可以通过调用 <code>add</code>，以编程方式向 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 添加参数（或 AudioProcessorParameterGroups）。下面展示了如何做到这一点的一个示例：</p>
+<pre><code>juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
+{
+    juce::AudioProcessorValueTreeState::ParameterLayout params;
+    for (int i = 1; i &lt; 9; ++i)
+        params.add (std::make_unique&lt;AudioParameterInt&gt; (String (i), String (i), 0, i, 0));
+    return params;
+}
+YourAudioProcessor()
+    : parameters (*this, nullptr, "PARAMETERS", createParameterLayout())
+{
+    //...</code></pre>
+<h2>已弃用的方法</h2>
+<p>在 JUCE 5.4 版本之前，向 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 添加参数的唯一方法是使用现已弃用的 createAndAddParameter 方法，它带有许多函数参数。</p>
+<p>以前看起来像这样的代码</p>
+<pre><code>createAndAddParameter (paramID1, paramName1, ...);</code></pre>
+<p>可以重写为</p>
+<pre><code>using Parameter = juce::AudioProcessorValueTreeState::Parameter;
+createAndAddParameter (std::make_unique&lt;Parameter&gt; (paramID1, paramName1, ...));</code></pre>
+<p>但使用本教程中介绍的新 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 构造函数是更好的方法：</p>
+<pre><code>using Parameter = AudioProcessorValueTreeState::Parameter;
+YourAudioProcessor()
+    : apvts (*this, nullptr, "PARAMETERS", { std::make_unique&lt;Parameter&gt; (paramID1, paramName1, ...), std::make_unique&lt;Parameter&gt; (paramID2, paramName2, ...), ... })</code></pre>
+<h2>总结</h2>
+<p>在本教程中，我们介绍了 <a href="https://docs.juce.com/master/classAudioProcessorValueTreeState.html" rel="noreferrer noopener">AudioProcessorValueTreeState</a> 类，并展示了它如何帮助你：</p>
+<ul>
+<li>管理你的插件参数。
+</li>
+<li>使用 XML 存储和读取插件状态。
+</li>
+<li>以线程安全的方式将插件参数连接到按钮和滑块。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="audio-parameter.html" rel="noreferrer noopener">教程：添加插件参数</a>
+</li>
+<li><a href="audio-bus-layouts.html" rel="noreferrer noopener">教程：为插件配置正确的总线布局</a>
+</li>
+<li><a href="value-tree.html" rel="noreferrer noopener">教程：ValueTree 类</a>
+</li>
+<li><a href="audio-processor-graph.html" rel="noreferrer noopener">教程：级联插件效果</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_audio_processor_value_tree_state/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_audio_processor_value_tree_state/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,158 @@
+/* 本库的页面清单，修改标题和增加页面相关操作仅需修改此清单
+   title 库名 · home 返回总目录 · source 原文地址 · updated 译文更新日期
+   pages 平铺清单（上下页导航用）· sections 侧栏分组（按出处折叠，当前页所在组默认展开） */
+window.PT_DOC = {
+  title: 'JUCE 教程',
+  home: '../index.html',
+  source: 'https://juce.com/learn/tutorials/',
+  updated: '2026-10-18',
+  pages: [
+    { href: 'index.html', title: '教程总览' },
+    { href: 'new-projucer-project.html', title: 'Projucer 第 1 部分：Projucer 入门' },
+    { href: 'manage-projucer-project.html', title: 'Projucer 第 2 部分：管理 Projucer 项目' },
+    { href: 'choosing-projucer-template.html', title: 'Projucer 第 3 部分：选择合适的 Projucer 模板' },
+    { href: 'create-projucer-basic-plugin.html', title: '创建一个基础音频/MIDI 插件，第 1 部分（项目搭建）' },
+    { href: 'code-basic-plugin.html', title: '创建一个基础音频/MIDI 插件，第 2 部分（编写插件代码）' },
+    { href: 'playing-sound-files.html', title: '构建音频播放器' },
+    { href: 'processing-audio-input.html', title: '处理音频输入' },
+    { href: 'looping-audio-sample-buffer.html', title: '使用 AudioSampleBuffer 类循环播放音频' },
+    { href: 'looping-audio-sample-buffer-advanced.html', title: '使用 AudioSampleBuffer 类循环播放音频（进阶）' },
+    { href: 'audio-thumbnail.html', title: '绘制音频波形' },
+    { href: 'audio-device-manager.html', title: 'AudioDeviceManager 类' },
+    { href: 'simple-synth-noise.html', title: '构建白噪声发生器' },
+    { href: 'synth-level-control.html', title: '控制音频电平' },
+    { href: 'synth-db-level-control.html', title: '使用分贝控制音频电平' },
+    { href: 'sine-synth.html', title: '构建正弦波合成器' },
+    { href: 'synth-using-midi-input.html', title: '构建 MIDI 合成器' },
+    { href: 'wavetable-synth.html', title: '波表合成' },
+    { href: 'midi-message.html', title: '创建 MIDI 数据' },
+    { href: 'handling-midi-events.html', title: '处理 MIDI 事件' },
+    { href: 'mpe-introduction.html', title: '构建多复音合成器（MPE）' },
+    { href: 'mpe-zones.html', title: '理解 MPE 区域' },
+    { href: 'audio-parameter.html', title: '添加插件参数' },
+    { href: 'audio-processor-value-tree-state.html', title: '保存与加载插件状态' },
+    { href: 'audio-bus-layouts.html', title: '为插件配置正确的总线布局' },
+    { href: 'audio-processor-graph.html', title: '级联插件效果' },
+    { href: 'plugin-examples.html', title: '插件示例' },
+    { href: 'dsp-introduction.html', title: 'DSP 入门' },
+    { href: 'dsp-convolution.html', title: '通过波形整形与卷积添加失真' },
+    { href: 'dsp-delay-line.html', title: '用延迟线创建弦模型' },
+    { href: 'simd-register-optimisation.html', title: '使用 SIMDRegister 类优化' },
+    { href: 'simple-fft.html', title: '快速傅里叶变换' },
+    { href: 'spectrum-analyser.html', title: '实时可视化信号频率' },
+    { href: 'main-window.html', title: '应用程序窗口' },
+    { href: 'main-component.html', title: '主组件' },
+    { href: 'graphics-class.html', title: 'Graphics 类' },
+    { href: 'animation.html', title: '几何动画' },
+    { href: 'open-gl-application.html', title: '构建 OpenGL 应用程序' },
+    { href: 'component-parents-children.html', title: '父组件与子组件' },
+    { href: 'look-and-feel-customisation.html', title: '自定义应用程序的观感' },
+    { href: 'colours.html', title: 'JUCE 中的颜色' },
+    { href: 'point-line-rectangle.html', title: 'Point、Line 与 Rectangle 类' },
+    { href: 'rectangle-advanced.html', title: '进阶 GUI 布局技巧' },
+    { href: 'flex-box-grid.html', title: '使用 FlexBox 与 Grid 实现响应式 GUI 布局' },
+    { href: 'listeners-and-broadcasters.html', title: '监听器与广播器' },
+    { href: 'slider-values.html', title: 'Slider 类' },
+    { href: 'label.html', title: 'Label 类' },
+    { href: 'combo-box.html', title: 'ComboBox 类' },
+    { href: 'radio-buttons-checkboxes.html', title: '单选按钮与复选框' },
+    { href: 'table-list-box.html', title: 'TableListBox 类' },
+    { href: 'android-studio.html', title: 'Android 入门' },
+    { href: 'android-screen-sizes.html', title: '管理 Android 屏幕尺寸' },
+    { href: 'in-app-purchases.html', title: '桌面与移动设备上的应用内购买' },
+    { href: 'push-notifications.html', title: '桌面与移动设备上的推送通知' },
+    { href: 'big-integer.html', title: 'BigInteger 类' },
+    { href: 'random.html', title: 'Random 类' },
+    { href: 'file-reading.html', title: '文件读取' },
+    { href: 'value-tree.html', title: 'ValueTree 类' },
+    { href: 'undo-manager-value-tree.html', title: '将 UndoManager 与 ValueTree 配合使用' },
+    { href: 'analytics-collection.html', title: '应用分析数据收集' },
+    { href: 'online-unlock-status.html', title: '通过在线注册解锁插件' },
+    { href: 'app-plugin-packaging.html', title: '打包应用或插件以供分发' },
+    { href: 'osc-sender-receiver.html', title: '在应用中实现 OSC 协议' }
+  ],
+  sections: [
+    { title: '入门', pages: [
+      'new-projucer-project.html',
+      'manage-projucer-project.html',
+      'choosing-projucer-template.html',
+      'create-projucer-basic-plugin.html',
+      'code-basic-plugin.html'
+    ] },
+    { title: '音频', pages: [
+      'playing-sound-files.html',
+      'processing-audio-input.html',
+      'looping-audio-sample-buffer.html',
+      'looping-audio-sample-buffer-advanced.html',
+      'audio-thumbnail.html',
+      'audio-device-manager.html'
+    ] },
+    { title: '合成器', pages: [
+      'simple-synth-noise.html',
+      'synth-level-control.html',
+      'synth-db-level-control.html',
+      'sine-synth.html',
+      'synth-using-midi-input.html',
+      'wavetable-synth.html'
+    ] },
+    { title: 'MIDI', pages: [
+      'midi-message.html',
+      'handling-midi-events.html',
+      'mpe-introduction.html',
+      'mpe-zones.html'
+    ] },
+    { title: '插件', pages: [
+      'audio-parameter.html',
+      'audio-processor-value-tree-state.html',
+      'audio-bus-layouts.html',
+      'audio-processor-graph.html',
+      'plugin-examples.html'
+    ] },
+    { title: 'DSP', pages: [
+      'dsp-introduction.html',
+      'dsp-convolution.html',
+      'dsp-delay-line.html',
+      'simd-register-optimisation.html',
+      'simple-fft.html',
+      'spectrum-analyser.html'
+    ] },
+    { title: '图形', pages: [
+      'main-window.html',
+      'main-component.html',
+      'graphics-class.html',
+      'animation.html',
+      'open-gl-application.html'
+    ] },
+    { title: '界面设计', pages: [
+      'component-parents-children.html',
+      'look-and-feel-customisation.html',
+      'colours.html',
+      'point-line-rectangle.html',
+      'rectangle-advanced.html',
+      'flex-box-grid.html',
+      'listeners-and-broadcasters.html',
+      'slider-values.html',
+      'label.html',
+      'combo-box.html',
+      'radio-buttons-checkboxes.html',
+      'table-list-box.html'
+    ] },
+    { title: '移动端', pages: [
+      'android-studio.html',
+      'android-screen-sizes.html',
+      'in-app-purchases.html',
+      'push-notifications.html'
+    ] },
+    { title: '工具类', pages: [
+      'big-integer.html',
+      'random.html',
+      'file-reading.html',
+      'value-tree.html',
+      'undo-manager-value-tree.html',
+      'analytics-collection.html',
+      'online-unlock-status.html',
+      'app-plugin-packaging.html',
+      'osc-sender-receiver.html'
+    ] }
+  ]
+};

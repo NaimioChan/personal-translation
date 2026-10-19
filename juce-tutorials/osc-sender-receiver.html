@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在应用中实现 OSC 协议 - JUCE 教程</title>
+<meta name="description" content="在应用中实现 OSC 协议：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>在应用中实现 OSC 协议</h1>
+<p>学习如何利用 Open Sound Control 协议通过网络连接多个应用程序。在应用程序之间发送和接收交互数据。</p>
+<p><strong>难度：</strong>中级<br><strong>平台：</strong>Windows、macOS、Linux、iOS、Android<br><strong>类：</strong><a href="https://docs.juce.com/master/classOSCSender.html" rel="noreferrer noopener">OSCSender</a>、<a href="https://docs.juce.com/master/classOSCReceiver.html" rel="noreferrer noopener">OSCReceiver</a>、<a href="https://docs.juce.com/master/classOSCReceiver_1_1Listener.html" rel="noreferrer noopener">OSCReceiver::Listener</a>、<a href="https://docs.juce.com/master/classOSCReceiver_1_1ListenerWithOSCAddress.html" rel="noreferrer noopener">OSCReceiver::ListenerWithOSCAddress</a>、<a href="https://docs.juce.com/master/classOSCMessage.html" rel="noreferrer noopener">OSCMessage</a>、<a href="https://docs.juce.com/master/classOSCBundle.html" rel="noreferrer noopener">OSCBundle</a></p>
+<h2>入门</h2>
+<p>本教程附带了若干演示项目。这些项目的下载链接会在教程的相关章节中提供。</p>
+<p>如果你在每一节的这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>本教程提供的演示项目展示了 OSC 交互所需的几个不同应用程序。概括来说，这些应用程序是：</p>
+<ul>
+<li>OSC Sender：发送器应用程序包含一个旋钮，并向外发送信息到其他实例。
+</li>
+<li>OSC Receiver：接收器应用程序连接到发送器实例，接收信息以进行处理和显示。
+</li>
+<li>OSC Monitor：监视器应用程序也连接到发送器实例，但会以更精确的方式监视并记录交互。
+</li>
+</ul>
+<blockquote>
+      <p>为了让本教程正常运行，同一时间只应打开一个发送器和一个接收器/监视器应用程序。
+这里展示的代码与 JUCE Examples 中的 OSC 演示应用大致相似。</p>
+    </blockquote>
+<h2>OSC 发送器</h2>
+<p>在此处下载本节演示项目：<a href="https://docs.juce.com/tutorials/PIPs/OSCSenderTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/OSCSenderTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目并在 Projucer 中打开第一个头文件。</p>
+<p>完成后，OSC 发送器应用程序会显示一个旋钮，启动后我们可以与之交互：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_osc_sender_receiver_screenshot1.png" alt="OSC 发送器应用窗口">
+<figcaption>OSC 发送器应用窗口</figcaption>
+</figure>
+<h3>OSC 发送器实现</h3>
+<p>我们先从实现发送器应用程序开始。</p>
+<p>在 <code>MainContentComponent</code> 类中，首先像这样为该应用程序声明私有成员变量：</p>
+<pre><code>juce::Slider rotaryKnob; // [1]
+juce::OSCSender sender; // [2]
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
+};</code></pre>
+<p>添加一个 <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a> 对象以捕获用户交互 [1]，以及一个 <a href="https://docs.juce.com/master/classOSCSender.html" rel="noreferrer noopener">OSCSender</a> 对象以便稍后连接到接收器 [2]。</p>
+<p>在类构造函数中，设置滑块参数并尝试连接网络，如下所示：</p>
+<pre><code>MainContentComponent()
+{
+    rotaryKnob.setRange (0.0, 1.0);
+    rotaryKnob.setSliderStyle (juce::Slider::RotaryVerticalDrag);
+    rotaryKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, true, 150, 25);
+    rotaryKnob.setBounds (10, 10, 180, 180);
+    addAndMakeVisible (rotaryKnob); // [3]</code></pre>
+<pre><code>// specify here where to send OSC messages to: host URL and UDP port number
+if (!sender.connect ("127.0.0.1", 9001)) // [4]
+    showConnectionErrorMessage ("Error: could not connect to UDP port 9001.");
+setSize (200, 200);
+}</code></pre>
+<ul>
+<li>[3]：设置滑块的范围、样式和边界，并将该 <a href="https://docs.juce.com/master/classComponent.html" rel="noreferrer noopener">Component</a> 添加到此类的。
+</li>
+<li>[4]：这里我们通过调用 <a href="https://docs.juce.com/master/classOSCSender.html" rel="noreferrer noopener">OSCSender</a> 对象上的 <code>connect()</code> 函数，尝试连接到 UDP 端口号 9001 上的 <strong>localhost</strong> 或 IP 地址“127.0.0.1”。如果连接失败，我们会调用稍后声明的私有函数 <code>showConnectionErrorMessage()</code> 向用户显示错误消息。
+</li>
+</ul>
+<blockquote>
+      <p>就本教程而言，我们连接到开发机器的本地网络，使用一个任意的端口号，稍后在接收器中会指定该端口号。</p>
+    </blockquote>
+<p>接下来，为 <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a> 对象实现 <a href="https://docs.juce.com/master/classSlider.html#a680d007f6a824a28a60aa05b4045e794" rel="noreferrer noopener">Slider::onValueChange</a> 回调，以便像这样将 OSC 消息发送到接收器应用程序：</p>
+<pre><code>rotaryKnob.onValueChange = [this] {
+    // create and send an OSC message with an address and a float value:
+    if (!sender.send ("/juce/rotaryknob", (float) rotaryKnob.getValue()))
+        showConnectionErrorMessage ("Error: could not send OSC message.");
+};</code></pre>
+<p>在 lambda 函数中，使用 <a href="https://docs.juce.com/master/classOSCSender.html" rel="noreferrer noopener">OSCSender</a> 对象上的 <code>send()</code> 函数，以地址和旋钮值发送 OSC 消息 [5]。此处提供的地址“/juce/rotaryknob”让我们稍后能在接收器中对消息进行分类。如果消息发送失败，我们会调用同一个辅助函数 <code>showConnectionErrorMessage()</code> 来显示错误。</p>
+<p>我们通过使用函数 <a href="https://docs.juce.com/master/classAlertWindow.html#abf9c608d6e03ddf828fa9629cff1418b" rel="noreferrer noopener"><code>AlertWindow::showMessageBoxAsync()</code></a> 异步地在对话框中显示错误文本来实现该函数：</p>
+<pre><code>void showConnectionErrorMessage (const juce::String&amp; messageText)
+{
+    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon,
+        "Connection error",
+        messageText,
+        "OK");
+}</code></pre>
+<p>发送器实现现在完成了。</p>
+<blockquote>
+      <p>这一修改版代码的源代码可以在演示项目的 <code>OSCSenderTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>OSC 接收器</h2>
+<p>在此处下载本节演示项目：<a href="https://docs.juce.com/tutorials/PIPs/OSCReceiverTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/OSCReceiverTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目并在 Projucer 中打开第一个头文件。</p>
+<p>完成后，OSC 接收器应用程序会显示一个旋钮，启动后我们无法与之交互：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_osc_sender_receiver_screenshot2.png" alt="OSC 接收器应用窗口">
+<figcaption>OSC 接收器应用窗口</figcaption>
+</figure>
+<h3>OSC 接收器实现</h3>
+<p>要实现接收器，只需在 <code>MainContentComponent</code> 类中声明一个 <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a> 对象，以反映通过发送器旋钮所做的更改：</p>
+<pre><code>//==============================================================================
+juce::Slider rotaryKnob;
+JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)
+};</code></pre>
+<p>与发送器应用程序中将 <a href="https://docs.juce.com/master/classOSCSender.html" rel="noreferrer noopener">OSCSender</a> 对象声明为成员不同，这次我们继承自 <a href="https://docs.juce.com/master/classOSCReceiver.html" rel="noreferrer noopener">OSCReceiver</a>，将 MainContentComponent 实现为子类 [1]：</p>
+<pre><code>class MainContentComponent : public juce::Component,
+                             private juce::OSCReceiver, // [1]
+                             private juce::OSCReceiver::ListenerWithOSCAddress&lt;juce::OSCReceiver::MessageLoopCallback&gt; // [2]
+{
+public:</code></pre>
+<p>此外，我们还需要继承自 OSCReceiver::ListenerWithOSCAddress&lt;OSCReceiver::MessageLoopCallback&gt;，以便在收到消息时接收回调 [2]。</p>
+<p>在类构造函数中，为 <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a> 对象设置与发送器应用程序相同的参数：</p>
+<pre><code>MainContentComponent()
+{
+    rotaryKnob.setRange (0.0, 1.0);
+    rotaryKnob.setSliderStyle (juce::Slider::RotaryVerticalDrag);
+    rotaryKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, true, 150, 25);
+    rotaryKnob.setBounds (10, 10, 180, 180);
+    rotaryKnob.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (rotaryKnob);
+    // specify here on which UDP port number to receive incoming OSC messages
+    if (!connect (9001)) // [3]
+        showConnectionErrorMessage ("Error: could not connect to UDP port 9001.");
+    // tell the component to listen for OSC messages matching this address:
+    addListener (this, "/juce/rotaryknob"); // [4]
+    setSize (200, 200);
+}</code></pre>
+<p>作为 <a href="https://docs.juce.com/master/classOSCReceiver.html" rel="noreferrer noopener">OSCReceiver</a> 的子类，直接连接到正确的端口号以接收消息 [3]，并通过提供要监听的地址，将此类注册为自身的监听器 [4]。</p>
+<blockquote>
+      <p>确保端口号和 OSC 地址与发送器应用程序一致。</p>
+    </blockquote>
+<p>当收到 <a href="https://docs.juce.com/master/classOSCMessage.html" rel="noreferrer noopener">OSCMessage</a> 对象时，会调用 <code>oscMessageReceived()</code> 回调函数：</p>
+<pre><code>void oscMessageReceived (const juce::OSCMessage&amp; message) override
+{
+    if (message.size() == 1 &amp;&amp; message[0].isFloat32()) // [5]
+        rotaryKnob.setValue (juce::jlimit (0.0f, 10.0f, message[0].getFloat32())); // [6]
+}</code></pre>
+<p>重写此函数时，首先检查消息的大小和值类型 [5]。然后通过确保范围符合 <a href="https://docs.juce.com/master/classSlider.html" rel="noreferrer noopener">Slider</a> 范围来设置旋钮的值 [6]。</p>
+<p>实现与发送器应用程序相同的错误记录函数，以防连接失败：</p>
+<pre><code>void showConnectionErrorMessage (const juce::String&amp; messageText)
+{
+    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon,
+        "Connection error",
+        messageText,
+        "OK");
+}</code></pre>
+<p>现在，当两个应用程序都启动后，你应该能够通过移动发送器旋钮来控制接收器旋钮。</p>
+<blockquote>
+      <p>这一修改版代码的源代码可以在演示项目的 <code>OSCReceiverTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>OSC 监视器</h2>
+<p>在此处下载本节演示项目：<a href="https://docs.juce.com/tutorials/PIPs/OSCMonitorTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/OSCMonitorTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目并在 Projucer 中打开第一个头文件。</p>
+<p>完成后，OSC 监视器应用程序会显示一个记录交互的窗口。首次启动时若没有发送器实例，监视器应用程序无法连接，窗口应类似如下：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_osc_sender_receiver_screenshot3.png" alt="OSC 监视器应用窗口">
+<figcaption>OSC 监视器应用窗口</figcaption>
+</figure>
+<p>如果在发送器实例运行时启动，监视器应用程序将能够连接到它，窗口应类似如下：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_osc_sender_receiver_screenshot4.png" alt="OSC 监视器应用窗口">
+<figcaption>OSC 监视器应用窗口</figcaption>
+</figure>
+<h3>OSC 监视器实现</h3>
+<p>我们来实现另一种类型的接收器，将 <a href="https://docs.juce.com/master/classOSCMessage.html" rel="noreferrer noopener">OSCMessage</a> 对象显示为文本。</p>
+<p>在 <code>MainContentComponent</code> 类中，可以看到该类继承自 <a href="https://docs.juce.com/master/classOSCReceiver_1_1Listener.html" rel="noreferrer noopener">OSCReceiver::Listener</a> 类 [1]。注意我们没有继承 <a href="https://docs.juce.com/master/classOSCReceiver_1_1ListenerWithOSCAddress.html" rel="noreferrer noopener">OSCReceiver::ListenerWithOSCAddress</a>，因为我们想要接收发送的所有消息，而不论地址为何：</p>
+<pre><code>class MainContentComponent : public juce::Component,
+                             private juce::OSCReceiver::Listener&lt;juce::OSCReceiver::MessageLoopCallback&gt; // [1]
+{
+public:</code></pre>
+<p>将 OSCLogListBox 和 <a href="https://docs.juce.com/master/classOSCReceiver.html" rel="noreferrer noopener">OSCReceiver</a> 对象声明为私有成员变量 [2]，并定义一个临时 int 变量来存储端口号 [3]，如下所示：</p>
+<pre><code>OSCLogListBox oscLogListBox; // [2]
+juce::OSCReceiver oscReceiver;
+int currentPortNumber = -1; // [3]</code></pre>
+<p>在构造函数中，如下设置相应的参数：</p>
+<pre><code>MainContentComponent()
+{</code></pre>
+<pre><code>oscLogListBox.setBounds (0, 60, 700, 340); // [4]
+addAndMakeVisible (oscLogListBox);
+oscReceiver.addListener (this); // [5]
+oscReceiver.registerFormatErrorHandler ([this] (const char* data, int dataSize) // [6]
+    {
+        oscLogListBox.addInvalidOSCPacket (data, dataSize);
+    });
+setSize (700, 400);
+}</code></pre>
+<ul>
+<li>[4]：设置 OSCLogListBox 的边界并使该 <a href="https://docs.juce.com/master/classComponent.html" rel="noreferrer noopener">Component</a> 可见。
+</li>
+<li>[5]：将此添加为 <a href="https://docs.juce.com/master/classOSCReceiver.html" rel="noreferrer noopener">OSCReceiver</a> 对象的监听器以接收回调。
+</li>
+<li>[6]：通过使用 lambda 函数，在 <a href="https://docs.juce.com/master/classOSCReceiver.html" rel="noreferrer noopener">OSCReceiver</a> 上安装自定义的错误处理格式。这里我们将解析失败的数据指针及其大小提供给 OSCLogListBox 对象。
+</li>
+</ul>
+<p>当在监视器应用程序的用户界面上点击按钮时，我们会调用下一步实现的相应函数。</p>
+<p>如果用户点击“connect”按钮，它应根据应用程序状态进行连接/断开 [7]。此外，每次按下“connect”按钮时，我们都会调用 <code>updateConnectionStatusLabel()</code> 辅助函数 [8]，如下所示：</p>
+<pre><code>void connectButtonClicked()
+{
+    if (!isConnected()) // [7]
+        connect();
+    else
+        disconnect();
+    updateConnectionStatusLabel(); // [8]
+}</code></pre>
+<p>要更新状态标签，只需根据连接状态更改文本和颜色，如下所述：</p>
+<pre><code>void updateConnectionStatusLabel()
+{
+    juce::String text = "Status: ";
+    if (isConnected())
+        text += "Connected to UDP port " + juce::String (currentPortNumber);
+    else
+        text += "Disconnected";
+    auto textColour = isConnected() ? juce::Colours::green : juce::Colours::red;</code></pre>
+<p>为了确定连接状态，我们检查端口号是否已从其默认值 -1 改变：</p>
+<pre><code>bool isConnected() const
+{
+    return currentPortNumber != -1;
+}</code></pre>
+<p>否则，当用户按下“clear”按钮时，只需向 OSCLogListBox 发送清除指令并重置屏幕日志：</p>
+<pre><code>void clearButtonClicked()
+{
+    oscLogListBox.clear();
+}</code></pre>
+<p>要连接到发送器应用程序，我们来实现 <code>connect()</code> 函数：</p>
+<pre><code>void connect()
+{
+    auto portToConnect = portNumberField.getText().getIntValue(); // [9]
+    if (!isValidOscPort (portToConnect)) // [10]
+    {
+        handleInvalidPortNumberEntered();
+        return;
+    }
+    if (oscReceiver.connect (portToConnect)) // [11]
+    {
+        currentPortNumber = portToConnect;
+        connectButton.setButtonText ("Disconnect");
+    }
+    else // [12]
+    {
+        handleConnectError (portToConnect);
+    }
+}</code></pre>
+<ul>
+<li>[9]：将端口号文本转换为 int 值并存储在临时变量中。
+</li>
+<li>[10]：如果端口号无效，我们使用 <code>handleInvalidPortNumberEntered()</code> 辅助函数显示错误消息。
+</li>
+<li>[11]：否则，这意味着端口号有效，我们可以尝试连接。如果连接成功，我们将临时端口号变量更新为正确的值，并更改“connect”按钮的文本。
+</li>
+<li>[12]：如果连接失败，调用相应的 <code>handleConnectError()</code> 辅助函数来显示错误。
+</li>
+</ul>
+<p>为了验证端口号是否有效，检查其范围是否在 <code>1 .. 65535</code> 之内（含边界）：</p>
+<pre><code>bool isValidOscPort (int port) const
+{
+    return port &gt; 0 &amp;&amp; port &lt; 65536;
+}</code></pre>
+<p>要断开与网络的连接，检查断开是否成功，如果成功，将端口号重置为 -1 并更改“connect”按钮的文本 [13]。否则，调用 <code>handleDisconnectError()</code> 辅助函数 [14]：</p>
+<pre><code>void disconnect()
+{
+    if (oscReceiver.disconnect()) // [13]
+    {
+        currentPortNumber = -1;
+        connectButton.setButtonText ("Connect");
+    }
+    else
+    {
+        handleDisconnectError(); // [14]
+    }
+}</code></pre>
+<p>当收到 <a href="https://docs.juce.com/master/classOSCMessage.html" rel="noreferrer noopener">OSCMessage</a> 时，会调用以下回调函数，我们将消息内容传递给 OSCLogListBox：</p>
+<pre><code>void oscMessageReceived (const juce::OSCMessage&amp; message) override
+{
+    oscLogListBox.addOSCMessage (message);
+}</code></pre>
+<p>如果收到 <a href="https://docs.juce.com/master/classOSCBundle.html" rel="noreferrer noopener">OSCBundle</a>，则会调用另一个回调函数，我们将 bundle 的内容传递给 OSCLogListBox：</p>
+<pre><code>void oscBundleReceived (const juce::OSCBundle&amp; bundle) override
+{
+    oscLogListBox.addOSCBundle (bundle);
+}</code></pre>
+<p>通过为每种错误类型显示消息框来完成实现：</p>
+<pre><code>//==============================================================================
+void handleConnectError (int failedPort)
+{
+    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon,
+        "OSC Connection error",
+        "Error: could not connect to port " + juce::String (failedPort),
+        "OK");
+}
+//==============================================================================
+void handleDisconnectError()
+{
+    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon,
+        "Unknown error",
+        "An unknown error occured while trying to disconnect from UDP port.",
+        "OK");
+}
+//==============================================================================
+void handleInvalidPortNumberEntered()
+{
+    juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon,
+        "Invalid port number",
+        "Error: you have entered an invalid UDP port number.",
+        "OK");
+}</code></pre>
+<p>现在，当操作发送器旋钮时，监视器应用程序将记录收到的所有消息，窗口应类似如下：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_osc_sender_receiver_screenshot5.png" alt="OSC 监视器应用窗口">
+<figcaption>OSC 监视器应用窗口</figcaption>
+</figure>
+<blockquote>
+      <p>这一修改版代码的源代码可以在演示项目的 <code>OSCMonitorTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<blockquote>
+      <p>练习：修改发送器和接收器应用程序，使用 <a href="https://docs.juce.com/master/classToggleButton.html" rel="noreferrer noopener">ToggleButton</a> 或 <a href="https://docs.juce.com/master/classComboBox.html" rel="noreferrer noopener">ComboBox</a> 等其他 GUI 组件来处理不同的 OSC 消息。</p>
+    </blockquote>
+<h2>总结</h2>
+<p>在本教程中，我们学习了如何实现 OSC 协议以在应用程序实例之间发送信息。具体来说，我们：</p>
+<ul>
+<li>在发送器应用程序中使用旋钮发送了 OSC 消息。
+</li>
+<li>连接到接收器应用程序并处理了相应的消息。
+</li>
+<li>使用监视器应用程序以详细方式显示了 OSC 交互。
+</li>
+</ul>
+<h2>另见</h2>
+<ul>
+<li><a href="slider-values.html" rel="noreferrer noopener">教程：Slider 类</a>
+</li>
+<li><a href="listeners-and-broadcasters.html" rel="noreferrer noopener">教程：监听器与广播器</a>
+</li>
+<li><a href="look-and-feel-customisation.html" rel="noreferrer noopener">教程：定制应用的观感</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_osc_sender_receiver/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_osc_sender_receiver/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

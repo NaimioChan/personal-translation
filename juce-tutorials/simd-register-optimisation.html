@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用 SIMDRegister 类优化 - JUCE 教程</title>
+<meta name="description" content="使用 SIMDRegister 类优化：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>使用 SIMDRegister 类优化</h1>
+<p>利用处理器的并行能力来执行单指令多数据计算。在不引入并发的情况下优化你的音频应用。</p>
+<p><strong>难度：</strong>高级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>类：</strong><a href="structdsp_1_1SIMDRegister.html" rel="noreferrer noopener">dsp::SIMDRegister</a>, <a href="namespacedsp_1_1IIR.html" rel="noreferrer noopener">dsp::IIR</a>, <a href="structdsp_1_1ProcessorDuplicator.html" rel="noreferrer noopener">dsp::ProcessorDuplicator</a>, AudioDataConverters, <a href="https://docs.juce.com/master/classdsp_1_1AudioBlock.html" rel="noreferrer noopener">dsp::AudioBlock</a>, <a href="https://docs.juce.com/master/classHeapBlock.html" rel="noreferrer noopener">HeapBlock</a></p>
+<h2>准备工作</h2>
+<p>在这里下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/SIMDRegisterTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/SIMDRegisterTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压项目，并在 Projucer 中打开第一个头文件。</p>
+<p>如果这一步需要帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>演示项目可以通过 IIR 滤波器播放加载的音频文件，以便在试听时对其进行处理和改变。这项优化的目的在于看看在同一个 IIR 滤波器上使用 SIMD 指令集能减轻多少 CPU 负担。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_simd_register_optimisation_screenshot1.png" alt="演示项目窗口">
+<figcaption>演示项目窗口</figcaption>
+</figure>
+<blockquote>
+      <p>这里给出的代码与 DSP Demo 中的 <strong>SIMDRegisterDemo</strong> 大致相似。</p>
+    </blockquote>
+<h2>SIMD 指令</h2>
+<p>SIMD 代表“Single Instruction Multiple Data”（单指令多数据），指的是现代 CPU 通过把数字加载到多个寄存器并一次性执行相同的计算，从而将单条指令应用于一组数据的方式。在数字信号处理领域，这种并行方式比其他类型（例如 MIMD，多指令多数据）更受青睐，因为并发会在音频层面成为问题。确保音频线程不与其他线程争夺数据是至关重要的，而且在处理音频时，大多数情况下指令的顺序应保持不变。</p>
+<p>SIMD 对数据流向量而非单个数据进行操作，这使它更适合音频处理，因为我们习惯于从音频缓冲区接收数据块。当我们需要对多个数据点应用相同的标量运算时，SIMD 也能发挥优势，而这在 DSP 算法中非常常见。</p>
+<p>如今，通用代码的优化过程通常由编译器自动完成，但 DSP 算法的向量化并不总是那么简单。编译器并不总能像人一样理解算法想要做什么，从而进行正确的优化。因此，这项工作通常需要手动完成，而 SIMDRegister 类是在 JUCE 中完成这项工作的便捷工具。</p>
+<p>SIMDRegister 类的便利之处在于它会为你处理不同的处理器类型。根据 CPU 的不同，寄存器的大小和数量也会变化，要顾及所有 CPU 厂商很快就会变得困难。这些都由 SIMDRegister 类处理，我们只需指定要在算法中向量化哪些指令集。</p>
+<p>使用 SIMDRegister 类相对简单，它本质上可以当作基本类型的直接替代品。让我们看一段像这样的简单示例代码：</p>
+<pre><code>float calculateDSPEffect (float x,
+    float y)
+{
+    auto z = x + (y * 2.0f);
+    return z;
+}</code></pre>
+<p>只需用 SIMDRegister 类包裹基本类型，就可以轻松地将其向量化：</p>
+<pre><code>SIMDRegister&lt;float&gt; calculateDSPEffect (SIMDRegister&lt;float&gt; x,
+    SIMDRegister&lt;float&gt; y)
+{
+    auto z = x + (y * 2.0f);
+    return z;
+}</code></pre>
+<p>在 DSP 代码中，条件语句非常慢，通常应尽可能避免分支。因此，下面的示例是 SIMD 优化的良好候选：</p>
+<pre><code>float calculateDSPEffect (float x,
+    float y)
+{
+    auto z = (x &gt; y ? x + (y * 2.0f) : y);
+    return z;
+}</code></pre>
+<p>幸运的是，SIMDRegister 类为我们提供了位掩码，让我们可以像下面这样选择正确的结果：</p>
+<pre><code>SIMDRegister&lt;float&gt; calculateDSPEffect (SIMDRegister&lt;float&gt; x,
+    SIMDRegister&lt;float&gt; y)
+{
+    auto mask = SIMDRegister&lt;float&gt;::greaterThan (x, y);
+    auto z = ((x + (y * 2.0f)) &amp; mask) + (y &amp; (~mask));
+    return z;
+}</code></pre>
+<p>在本教程中，我们将使用 SIMD 优化一个 IIR 滤波器，所以先来看看 IIR 滤波器的实现。</p>
+<h2>IIR 滤波器</h2>
+<p>在 <code>SIMDTutorialFilter</code> 类中，我们首先定义成员变量，例如滤波器的参数，如下所示：</p>
+<pre><code>dsp::ProcessorDuplicator&lt;dsp::IIR::Filter&lt;float&gt;, dsp::IIR::Coefficients&lt;float&gt;&gt; iir;
+ChoiceParameter typeParam { { "Low-pass", "High-pass", "Band-pass" }, 1, "Type" };
+SliderParameter cutoffParam { { 20.0, 20000.0 }, 0.5, 440.0f, "Cutoff", "Hz" };
+SliderParameter qParam { { 0.3, 20.0 }, 0.5, 0.7, "Q" };
+std::vector&lt;DSPParameterBase*&gt; parameters { &amp;typeParam, &amp;cutoffParam, &amp;qParam };
+double sampleRate = 0.0;
+};</code></pre>
+<p>在 ProcessorDuplicator 中定义 IIR 滤波器对象，使我们能够自动把单声道处理器转换为多声道处理器，而无需担心逐个声道调用 prepare()、process() 和 reset() 函数。我们还定义了滤波器的参数，例如滤波类型、截止频率和滤波器的锐度 Q。</p>
+<p>在 updateParameters() 函数中，我们确保当屏幕上的控件被修改时，滤波器的参数会得到更新：</p>
+<pre><code>void updateParameters()
+{
+    if (sampleRate != 0.0)
+    {
+        auto cutoff = static_cast&lt;float&gt; (cutoffParam.getCurrentValue());
+        auto qVal = static_cast&lt;float&gt; (qParam.getCurrentValue());
+        switch (typeParam.getCurrentSelectedID())
+        {
+            case 1:
+                *iir.state = *dsp::IIR::Coefficients&lt;float&gt;::makeLowPass (sampleRate, cutoff, qVal);
+                break;
+            case 2:
+                *iir.state = *dsp::IIR::Coefficients&lt;float&gt;::makeHighPass (sampleRate, cutoff, qVal);
+                break;
+            case 3:
+                *iir.state = *dsp::IIR::Coefficients&lt;float&gt;::makeBandPass (sampleRate, cutoff, qVal);
+                break;
+            default:
+                break;
+        }
+    }
+}</code></pre>
+<p>每次修改参数时，我们都会根据采样率、截止频率和 Q，为 IIR 滤波器创建一组新系数的新状态。DSP 模块通过分别使用 makeLowPass()、makeHighPass() 和 makeBandPass() 函数，为我们的三种滤波器类型提供了便捷的系数。</p>
+<p>在 prepare() 函数中，我们从 ProcessSpec 对象设置采样率，为低通滤波器的默认情况设置 IIR 滤波器系数，并使用带有处理上下文信息的 prepare() 函数来准备滤波器：</p>
+<pre><code>void prepare (const dsp::ProcessSpec&amp; spec)
+{
+    sampleRate = spec.sampleRate;
+    iir.state = dsp::IIR::Coefficients&lt;float&gt;::makeLowPass (sampleRate, 440.0);
+    iir.prepare (spec);
+}</code></pre>
+<p>用滤波器处理音频文件很简单，在 process() 函数中，我们用一个输入和输出共用单个块的上下文，在滤波器上调用 process() 函数：</p>
+<pre><code>void process (const dsp::ProcessContextReplacing&lt;float&gt;&amp; context)
+{
+    iir.process (context);
+}</code></pre>
+<p>最后，我们在 reset() 函数中调用滤波器的 reset 来重置滤波器：</p>
+<pre><code>void reset()
+{
+    iir.reset();
+}</code></pre>
+<p>现在让我们开始优化这个 IIR 滤波器。</p>
+<h2>SIMD 优化的 IIR 滤波器</h2>
+<p>在优化 IIR 滤波器的代码之前，我们需要确保系统支持 SIMD。使用 <code>JUCE_USE_SIMD</code> 宏，像下面这样包裹整个滤波器实现，以检查你是否在支持 SIMD 的机器上开发：</p>
+<pre><code>#if JUCE_USE_SIMD
+//==============================================================================
+template &lt;typename T&gt;
+static T* toBasePointer (dsp::SIMDRegister&lt;T&gt;* r) noexcept
+{
+    return reinterpret_cast&lt;T*&gt; (r);
+}
+constexpr auto registerSize = dsp::SIMDRegister&lt;float&gt;::size();
+struct SIMDTutorialFilter
+{</code></pre>
+<pre><code>};
+#endif</code></pre>
+<p>我们首先为 IIR 滤波器定义成员变量，以及 AudioBlock 和 <a href="https://docs.juce.com/master/classHeapBlock.html" rel="noreferrer noopener">HeapBlock</a> 对象，以便在 <code>SIMDTutorialFilter</code> 类的底部进行处理：</p>
+<pre><code>dsp::IIR::Coefficients&lt;float&gt;::Ptr iirCoefficients; // [1]
+std::unique_ptr&lt;dsp::IIR::Filter&lt;dsp::SIMDRegister&lt;float&gt;&gt;&gt; iir;
+dsp::AudioBlock&lt;dsp::SIMDRegister&lt;float&gt;&gt; interleaved; // [2]
+dsp::AudioBlock&lt;float&gt; zero;
+juce::HeapBlock&lt;char&gt; interleavedBlockData, zeroData; // [3]
+ChoiceParameter typeParam { { "Low-pass", "High-pass", "Band-pass" }, 1, "Type" };
+SliderParameter cutoffParam { { 20.0, 20000.0 }, 0.5, 440.0f, "Cutoff", "Hz" };
+SliderParameter qParam { { 0.3, 20.0 }, 0.5, 0.7, "Q" };
+std::vector&lt;DSPParameterBase*&gt; parameters { &amp;typeParam, &amp;cutoffParam, &amp;qParam };
+double sampleRate = 0.0;</code></pre>
+<p>把 IIR 系数定义为指针，把滤波器定义为使用 SIMDRegister 类包裹采样类型的 unique 指针 [1]。创建一个 AudioBlock 来存储使用 SIMDRegister 类包裹采样类型的交错数据，再创建另一个用于零数据的 AudioBlock，稍后用于存储输出块 [2]。分配 <a href="https://docs.juce.com/master/classHeapBlock.html" rel="noreferrer noopener">HeapBlock</a> 对象来存放对应的 AudioBlock 对象，以及一些大小为一个 SIMDRegister 向量中元素数量的声道指针 [3]。</p>
+<p>在 prepare() 函数中，像之前一样设置采样率，并计算滤波器的默认系数 [4]。通过实例化一个新的 IIR 滤波器来重置滤波器，该滤波器用 SIMDRegister 包裹采样类型，并使用前面定义的系数 [5]，如下所示：</p>
+<pre><code>void prepare (const dsp::ProcessSpec&amp; spec)
+{
+    sampleRate = spec.sampleRate; // [4]
+    iirCoefficients = dsp::IIR::Coefficients&lt;float&gt;::makeLowPass (sampleRate, 440.0f);
+    iir.reset (new dsp::IIR::Filter&lt;dsp::SIMDRegister&lt;float&gt;&gt; (iirCoefficients)); // [5]
+    interleaved = dsp::AudioBlock&lt;dsp::SIMDRegister&lt;float&gt;&gt; (interleavedBlockData, 1, spec.maximumBlockSize);
+    zero = dsp::AudioBlock&lt;float&gt; (zeroData, dsp::SIMDRegister&lt;float&gt;::size(), spec.maximumBlockSize); // [6]
+    zero.clear();
+    auto monoSpec = spec;
+    monoSpec.numChannels = 1;
+    iir-&gt;prepare (monoSpec); // [7]
+}</code></pre>
+<p>通过分配前面定义的对应 <a href="https://docs.juce.com/master/classHeapBlock.html" rel="noreferrer noopener">HeapBlock</a> 对象，为交错数据和零数据创建 AudioBlock 对象 [6]。交错数据块只需要一个声道，最大块大小从上下文信息中获取。零数据块采用 SIMDRegister 向量的大小，并在处理前被清除。滤波器通过将当前上下文信息的声道数减少为单声道来准备 [7]，因为多声道采样稍后会被交错并作为单个声道处理。</p>
+<p>最后，在 process() 函数中，我们将对采样进行交错，以便进行优化处理，如下所示：</p>
+<pre><code>void process (const dsp::ProcessContextReplacing&lt;float&gt;&amp; context)
+{
+    jassert (context.getInputBlock().getNumSamples() == context.getOutputBlock().getNumSamples());
+    jassert (context.getInputBlock().getNumChannels() == context.getOutputBlock().getNumChannels());
+    const auto&amp; input = context.getInputBlock(); // [9]
+    const auto numSamples = (int) input.getNumSamples();
+    auto inChannels = prepareChannelPointers (input); // [10]
+    using Format = juce::AudioData::Format&lt;juce::AudioData::Float32, juce::AudioData::NativeEndian&gt;;
+    juce::AudioData::interleaveSamples (juce::AudioData::NonInterleavedSource&lt;Format&gt; {
+                                            inChannels.data(),
+                                            registerSize,
+                                        },
+        juce::AudioData::InterleavedDest&lt;Format&gt; { toBasePointer (interleaved.getChannelPointer (0)), registerSize },
+        numSamples); // [11]
+    iir-&gt;process (dsp::ProcessContextReplacing&lt;dsp::SIMDRegister&lt;float&gt;&gt; (interleaved)); // [12]
+    auto outChannels = prepareChannelPointers (context.getOutputBlock()); // [13]
+    juce::AudioData::deinterleaveSamples (juce::AudioData::InterleavedSource&lt;Format&gt; { toBasePointer (interleaved.getChannelPointer (0)), registerSize },
+        juce::AudioData::NonInterleavedDest&lt;Format&gt; { outChannels.data(), registerSize },
+        numSamples); // [14]
+}</code></pre>
+<ul>
+<li>[8]：首先，确保输入块和输出块的采样数量和声道数量相同。
+</li>
+<li>[9]：接着，获取输入块和要处理的采样数量。
+</li>
+<li>[10]：对于 SIMDRegister 中的每个声道，检查该声道是否为输入声道，并把声道指针复制到对应的 <a href="https://docs.juce.com/master/classHeapBlock.html" rel="noreferrer noopener">HeapBlock</a> 中。否则，说明它是输出声道，我们复制零数据的声道指针。
+</li>
+<li>[11]：现在，我们通过把数据从声道指针 <a href="https://docs.juce.com/master/classHeapBlock.html" rel="noreferrer noopener">HeapBlock</a> 复制到交错 AudioBlock 中，对所有不同声道的采样进行交错，并把采样数量和声道数量指定为 SIMDRegister 的大小。
+</li>
+<li>[12]：在单个块上下文中，使用交错后的数据、并以 SIMDRegister 包裹采样类型，通过滤波器处理音频。
+</li>
+<li>[13]：然后，对于每个输入声道，把输出块的声道指针复制到对应的 <a href="https://docs.juce.com/master/classHeapBlock.html" rel="noreferrer noopener">HeapBlock</a> 中。
+</li>
+<li>[14]：最后，我们通过把数据从交错 AudioBlock 复制到声道指针 <a href="https://docs.juce.com/master/classHeapBlock.html" rel="noreferrer noopener">HeapBlock</a> 中，对所有不同声道的采样进行解交错，并把采样数量和声道数量指定为 SIMDRegister 的大小。
+</li>
+</ul>
+<p>滤波器的 reset() 函数在两种情况下都保持不变，优化就完成了。</p>
+<p>我们只需更新 updateParameters() 函数，以处理新的系数指针，如下所示：</p>
+<pre><code>void updateParameters()
+{
+    if (sampleRate != 0.0)
+    {
+        auto cutoff = static_cast&lt;float&gt; (cutoffParam.getCurrentValue());
+        auto qVal = static_cast&lt;float&gt; (qParam.getCurrentValue());
+        switch (typeParam.getCurrentSelectedID())
+        {
+            case 1:
+                *iirCoefficients = *dsp::IIR::Coefficients&lt;float&gt;::makeLowPass (sampleRate, cutoff, qVal);
+                break;
+            case 2:
+                *iirCoefficients = *dsp::IIR::Coefficients&lt;float&gt;::makeHighPass (sampleRate, cutoff, qVal);
+                break;
+            case 3:
+                *iirCoefficients = *dsp::IIR::Coefficients&lt;float&gt;::makeBandPass (sampleRate, cutoff, qVal);
+                break;
+            default:
+                break;
+        }
+    }
+}</code></pre>
+<blockquote>
+      <p>这个修改版本的源代码可以在演示项目的 <code>SIMDRegisterTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>小结</h2>
+<p>在本教程中，我们学习了如何使用 SIMDRegister 类优化 DSP 代码。具体来说，我们：</p>
+<ul>
+<li>了解了 SIMD 指令的优势。
+</li>
+<li>通过 IIR 滤波器处理了声音文件。
+</li>
+<li>使用 SIMDRegister 类优化了 IIR 滤波器。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="audio-thumbnail.html" rel="noreferrer noopener">教程：绘制音频波形</a>
+</li>
+<li><a href="playing-sound-files.html" rel="noreferrer noopener">教程：构建音频播放器</a>
+</li>
+<li><a href="dsp-introduction.html" rel="noreferrer noopener">教程：DSP 简介</a>
+</li>
+<li><a href="looping-audio-sample-buffer.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频</a>
+</li>
+<li><a href="looping-audio-sample-buffer-advanced.html" rel="noreferrer noopener">教程：使用 AudioSampleBuffer 类循环播放音频（进阶）</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_simd_register_optimisation/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_simd_register_optimisation/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>为插件配置正确的总线布局 - JUCE 教程</title>
+<meta name="description" content="为插件配置正确的总线布局：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>为插件配置正确的总线布局</h1>
+<p>学习如何为多种配置情况配置和限制插件中的总线布局。使用 Apple Logic Pro 中提供的 auval 工具检查你的 AU 插件的总线安排。</p>
+<p><strong>难度：</strong>初级<br><strong>平台：</strong>Windows、macOS、Linux <strong>插件格式：</strong>VST、VST3、AU、Standalone<br><strong>类：</strong><a href="structAudioProcessor_1_1BusesLayout.html" rel="noreferrer noopener">AudioProcessor::BusesLayout</a>、<a href="structAudioProcessor_1_1BusesProperties.html" rel="noreferrer noopener">AudioProcessor::BusesProperties</a>、<a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a>、<a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a></p>
+<h2>入门</h2>
+<p>要学习本教程，请确保你已打开一个插件项目，或者在 Projucer 中新建一个 <strong>Audio Plugin</strong> 项目。</p>
+<p>如果你在这一步需要帮助，请参阅<a href="create-projucer-basic-plugin.html" rel="noreferrer noopener">教程：创建基本的音频/MIDI 插件，第 1 部分：设置</a>。</p>
+<blockquote>
+      <p>要构建 AudioUnit 插件并使用 auval 工具测试它，你需要在 macOS 上构建，并安装 Logic Pro X。</p>
+    </blockquote>
+<h2>简介</h2>
+<p>JUCE 中的 <a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a> 类接收若干输入通道，处理输入的数据，然后将结果提供给若干输出通道，如下图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_audio_bus_layouts_screenshot1.png" alt="带 I/O 通道的插件">
+<figcaption>带 I/O 通道的插件</figcaption>
+</figure>
+<p>对于许多类型的音频处理器来说，这就足够了。然而，你常常希望将这些单独的通道表示为一个组，以便于宿主与处理器之间的通信。例如，前四个输入通道可以用作主通道，后两个输入通道可以用作侧链，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_audio_bus_layouts_screenshot2.png" alt="带 I/O 总线的插件">
+<figcaption>带 I/O 总线的插件</figcaption>
+</figure>
+<p>上图中的黄色箭头称为<em>总线</em>。因此，总线是一组通道，它们通常在插件内部共享相同的信号路径，例如主音频信号路径或侧链信号路径。在 JUCE 中，每条总线都有一个名称，以便你可以识别它在插件中的具体用途。</p>
+<blockquote>
+      <p>在几乎每个 DAW 中，第一条输入总线或第一条输出总线被称为<em>主</em>总线。在 JUCE 中，你有时会看到注释或方法名提及主总线，它其实就是第一条输入或输出总线。</p>
+    </blockquote>
+<p>然而，仅仅对音频处理器的输入和输出通道进行分组并为这些组命名是不够的。你还需要传达每条总线内每个通道的空间位置信息。例如，你可以将总线配置为立体声总线（左、右）、四声道总线（左、右、左环绕、右环绕）或单声道总线（中置）等。在 JUCE 中，每条总线都被分配一个 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a>，用于描述这些通道组的空间位置（例如：<a href="https://docs.juce.com/master/classAudioChannelSet.html#a17a0a8ab8f24eebf463baf8d99a39617" rel="noreferrer noopener">AudioChannelSet::mono()</a>、<a href="https://docs.juce.com/master/classAudioChannelSet.html#a2f5463f3941cf8ca3ecf1eadf1537c19" rel="noreferrer noopener">AudioChannelSet::stereo()</a>、<a href="https://docs.juce.com/master/classAudioChannelSet.html#ab216c3d458cbd3965e321a29d12d591d" rel="noreferrer noopener">AudioChannelSet::quadraphonic()</a>）。</p>
+<p>需要注意的是，每条总线的 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 在插件的整个生命周期内并不是固定的。DAW 可能随时为某条特定总线请求不同的 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a>，例如当 DAW 用户将侧链源从单声道切换为立体声时。为实现这一点，JUCE 支持一个回调，用于向插件查询每条总线支持哪些 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 对象。</p>
+<blockquote>
+      <p>有一个特殊的 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 名为 <a href="https://docs.juce.com/master/classAudioChannelSet.html#a18675dc100238ac22868c41717ef2ffe" rel="noreferrer noopener">AudioChannelSet::disabled()</a>，它不包含任何通道。这个 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 用于表示某条总线当前未被使用，例如在 DAW 中未连接侧链时。</p>
+    </blockquote>
+<p>总之，要在任意时刻传达插件每个通道的信息，DAW 和插件必须：</p>
+<ul>
+<li>交换关于通道如何分组为总线的信息。
+</li>
+<li>交换关于每条总线的名称和当前 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 的信息。
+</li>
+<li>协商每条总线支持哪些 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 对象。
+</li>
+</ul>
+<p>让我们从插件开发者的角度开始，探讨如何将这些信息传达给宿主。</p>
+<h2>分配 BusesProperties</h2>
+<p>在编写插件时，我们首先关注前两点（将通道分组并命名到总线中，以及为每条总线选择一个 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a>）。这些信息通过将一个 <a href="structAudioProcessor_1_1BusesProperties.html" rel="noreferrer noopener">AudioProcessor::BusesProperties</a> 实例传递给 <a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a> 的构造函数来传达给 DAW，如下所示：</p>
+<pre><code>ExampleAudioProcessor()
+    : AudioProcessor (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo(), true).withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+{
+    //...</code></pre>
+<p>上面的代码告知 DAW，该插件有两条总线：一条名为“Input”的输入总线和一条名为“Output”的输出总线。<code>withInput()</code> 和 <code>withOutput()</code> 函数中的第二个参数描述相应总线的初始 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a>。重要的是要记住，DAW 可以随时改变这一点。第三个参数指示该总线最初是启用还是禁用。由于这两条总线都是主总线，禁用它们没有多大意义。</p>
+<p>前面的示例通常用于效果插件。然而，合成器插件通常只有一条输出总线，因此构造函数看起来会是这样：</p>
+<pre><code>ExampleAudioProcessor()
+    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+{
+    //...</code></pre>
+<p>JUCE 支持的另一类插件是 MIDI 效果插件。由于它们只处理 MIDI，因此完全没有音频总线：</p>
+<pre><code>ExampleAudioProcessor()
+    : AudioProcessor (BusesProperties())
+{
+    //...</code></pre>
+<blockquote>
+      <p>不要将上面的构造函数代码与调用默认 <a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a> 构造函数混淆。为向后兼容，默认构造函数会创建一个插件，其中包含一条最初被禁用、名为“Input”的输入总线和一条最初被禁用、名为“Output”的输出总线——两者都是 <a href="https://docs.juce.com/master/classAudioChannelSet.html#a2f5463f3941cf8ca3ecf1eadf1537c19" rel="noreferrer noopener">AudioChannelSet::stereo()</a>。</p>
+    </blockquote>
+<h2>配置 BusesLayout</h2>
+<p>现在唯一需要做的步骤是配置某条总线支持的 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 对象，因为 DAW 可能希望随时更改构造函数中提供的初始 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a>。需要注意的是，插件无法主动更改自己的布局：插件是被动的，始终“受制于”宿主。它只能拒绝或接受所请求的 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 配置。</p>
+<p>为此，插件需要重写 <a href="https://docs.juce.com/master/classAudioProcessor.html#a6e206c1d2987a250a2d6c2af4c3af01a" rel="noreferrer noopener">AudioProcessor::isBusesLayoutSupported()</a> 回调。该回调接受单个 BusesLayout 参数，它实际上就是插件每条总线对应一个 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 对象的数组。</p>
+<blockquote>
+      <p>受支持的输入和输出总线数组中的元素数量，将始终与你在 <a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a> 构造函数中指定的总线数量一致。</p>
+    </blockquote>
+<p>在你的 <a href="https://docs.juce.com/master/classAudioProcessor.html#a6e206c1d2987a250a2d6c2af4c3af01a" rel="noreferrer noopener">AudioProcessor::isBusesLayoutSupported()</a> 回调中，你需要返回给定的 BusesLayout 是否受支持。例如，默认回调是接受 DAW 请求的任何 BusesLayout，如下所示：</p>
+<pre><code>bool isBusesLayoutSupported (const BusesLayout&amp; layouts) const
+{
+    return true;
+}</code></pre>
+<p>大多数效果插件只有一条主输入总线和一条主输出总线。通常，它们要求输入侧和输出侧的 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 相同，如下所示：</p>
+<pre><code>bool isBusesLayoutSupported (const BusesLayout&amp; layouts) const
+{
+    return layouts.getMainInputChannelSet() == layouts.getMainOutputChannelSet();
+}</code></pre>
+<p>请记住，有一个特殊的 <a href="https://docs.juce.com/master/classAudioChannelSet.html" rel="noreferrer noopener">AudioChannelSet</a> 名为 <a href="https://docs.juce.com/master/classAudioChannelSet.html#a18675dc100238ac22868c41717ef2ffe" rel="noreferrer noopener">AudioChannelSet::disabled()</a>，它表示某条总线被禁用。大多数效果插件不希望其主总线被禁用，因此我们可以在回调中加入这样的检查：</p>
+<pre><code>bool isBusesLayoutSupported (const BusesLayout&amp; layouts) const
+{
+    if (layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
+        || layouts.getMainOutputChannelSet() == juce::AudioChannelSet::disabled())
+        return false;
+    return layouts.getMainInputChannelSet() == layouts.getMainOutputChannelSet();
+}</code></pre>
+<p>假设该插件只能处理单声道到单声道或立体声到立体声的配置。上面代码的最后一行已经检查了输入和输出布局必须相同，因此我们只需对输入或输出总线做前面的检查即可，如下所示：</p>
+<pre><code>bool isBusesLayoutSupported (const BusesLayout&amp; layouts) const
+{
+    if (layouts.getMainInputChannelSet() == juce::AudioChannelSet::disabled()
+        || layouts.getMainOutputChannelSet() == juce::AudioChannelSet::disabled())
+        return false;
+    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
+        &amp;&amp; layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+        return false;
+    return layouts.getMainInputChannelSet() == layouts.getMainOutputChannelSet();
+}</code></pre>
+<h2>测试 BusesLayout</h2>
+<p>我们在插件中支持的总线布局配置可以使用不同的工具来测试，因为很容易忽略 isBusesLayoutSupported() 函数中所定义布局的边界情况。</p>
+<p>在本教程中，我们提供两种方案：Apple Logic Pro 中包含的 <strong>auval</strong> 工具，用于测试和验证 AudioUnits；以及 JUCE 中包含的 Audio Plugin Host，它支持 VST 和 AU 插件。</p>
+<h3>使用 auval 工具测试</h3>
+<blockquote>
+      <p>本节介绍的工具仅在 macOS 上可用于 AudioUnits。</p>
+    </blockquote>
+<p><strong>auval</strong> 工具会在 AudioUnits 被加载到 Apple 的插件宿主（如 Logic Pro X 和 Final Cut Pro X）之前对其进行验证。它会对你的插件执行各种有用的测试，但就本教程而言，我们重点关注总线布局测试。</p>
+<p>在 Logic Pro X 中，可以通过依次进入 <strong>Logic Pro X &gt; Preferences &gt; Plug-in Manager…</strong> 并点击 <strong>Reset &amp; Rescan Selection</strong> 来调用验证，从而访问 <strong>auval</strong> 工具，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_audio_bus_layouts_screenshot3.png" alt="Logic Pro X 中的插件管理器">
+<figcaption>Logic Pro X 中的插件管理器</figcaption>
+</figure>
+<p>不过，我们也可以通过命令行这样调用它：</p>
+<pre><code>auval - v aufx Test Manu</code></pre>
+<p>第一个参数表示 AU 主类型，在实现效果插件时默认为 'aufx'，第二个和第三个参数是插件代码和制造商代码，它们在你项目的 Projucer 设置中指定：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_audio_bus_layouts_screenshot4.png" alt="Projucer 插件设置">
+<figcaption>Projucer 插件设置</figcaption>
+</figure>
+<p>举个例子，AU 验证的输出大致如下：</p>
+<pre><code>AU Validation Tool
+Version: 1.6.1a1
+Copyright 2003-2013, Apple Inc. All Rights Reserved.
+Specify -h (-help) for command options
+--------------------------------------------------
+VALIDATING AUDIO UNIT: 'aufx' - 'Test' - 'Manu'
+--------------------------------------------------
+Manufacturer String: Manu
+AudioUnit Name: TestPlugin
+Component Version: 1.0.0 (0x10000)
+* PASS
+--------------------------------------------------
+FORMAT TESTS:
+Reported Channel Capabilities (explicit):
+[1, 1] [2, 2]
+Input/Output Channel Handling:
+1-1 1-2 1-4 1-5 1-6 1-7 1-8 2-2 2-4 2-5 2-6 2-7 2-8 4-4 4-5 5-5 6-6 7-7 8-8
+X X
+# # AudioChannelLayouts (5), Input Scope:
+//...
+Is Audio Channel Layout Available:
+Mono Stereo Binau. AU_4 Ambi. AU_5 AU_5_0 AU_6 AU_6_0 AU_7_0 AU_7_0F AU_8 AU_5_1 AU_6_1 AU_7_1 AU_7_1F
+X X X
+//...
+# # AudioChannelLayouts (5), Output Scope:
+//...
+Is Audio Channel Layout Available:
+Mono Stereo Binau. AU_4 Ambi. AU_5 AU_5_0 AU_6 AU_6_0 AU_7_0 AU_7_0F AU_8 AU_5_1 AU_6_1 AU_7_1 AU_7_1F
+X X X
+//...
+* PASS
+--------------------------------------------------
+AU VALIDATION SUCCEEDED.
+--------------------------------------------------</code></pre>
+<p>从上面的输出中可以看到，我们可以确认测试插件只接受单声道到单声道和立体声到立体声的配置，这正是我们想要的。</p>
+<blockquote>
+      <p>如果使用 10.12.0 到 10.13.1 之间的 macOS 版本，auval 存在一个缺陷，可能会为你的插件报告错误的总线布局。</p>
+    </blockquote>
+<h3>使用插件宿主测试</h3>
+<p>另一个有用的工具是 JUCE 附带的 Audio Plugin Host，它位于库的 <code>JUCE/examples</code> 文件夹中。该工具允许你通过在运行时更改总线布局来测试 VST 和 AU 插件。</p>
+<blockquote>
+      <p>如果你需要关于构建和使用 Audio Plugin Host 的帮助，请参阅<a href="create-projucer-basic-plugin.html" rel="noreferrer noopener">教程：创建基本的音频/MIDI 插件，第 1 部分：设置</a>以获取详细说明。</p>
+    </blockquote>
+<p>打开 Audio Plugin Host，并加载一个你想测试的插件实例。如果你右键点击该插件并选择 <strong>Configure Audio I/O</strong> ，应该会看到以下窗口出现：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_audio_bus_layouts_screenshot5.png" alt="插件的音频 I/O 设置">
+<figcaption>插件的音频 I/O 设置</figcaption>
+</figure>
+<p>在这里，如果你的插件允许，你可以添加或移除输入或输出总线，更改所选总线的通道集，并按需启用或禁用总线。</p>
+<p>请注意，当你第一次加载插件时，可以看到输入和输出引脚显示的是在 <a href="https://docs.juce.com/master/classAudioProcessor.html" rel="noreferrer noopener">AudioProcessor</a> 构造函数中设置的默认 BusesLayout 配置。</p>
+<blockquote>
+      <p>练习：尝试不同的总线布局，并在 <strong>auval</strong> 工具和 Audio Plugin Host 中检查插件的行为。</p>
+    </blockquote>
+<h2>总结</h2>
+<p>阅读本教程后，你应该能够：</p>
+<ul>
+<li>用不同的通道集定义输入、输出和侧链总线。
+</li>
+<li>为你的插件类型配置偏好的总线布局。
+</li>
+<li>使用 auval 工具检查 AudioUnits 的总线安排配置。
+</li>
+<li>在 JUCE 音频插件宿主中分配不同的总线属性。
+</li>
+</ul>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="create-projucer-basic-plugin.html" rel="noreferrer noopener">教程：创建基本的音频/MIDI 插件，第 1 部分：设置</a>
+</li>
+<li><a href="code-basic-plugin.html" rel="noreferrer noopener">教程：创建基本的音频/MIDI 插件，第 2 部分：编写插件代码</a>
+</li>
+<li><a href="plugin-examples.html" rel="noreferrer noopener">教程：插件示例</a>
+</li>
+<li><a href="audio-processor-graph.html" rel="noreferrer noopener">教程：级联插件效果</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_audio_bus_layouts/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_audio_bus_layouts/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

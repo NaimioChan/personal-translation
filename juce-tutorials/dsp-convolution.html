@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>通过波形整形与卷积添加失真 - JUCE 教程</title>
+<meta name="description" content="通过波形整形与卷积添加失真：JUCE 官方教程的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>通过波形整形与卷积添加失真</h1>
+<p>通过对声音进行波形整形来创建谐波失真，为合成器声音增添颗粒感。了解卷积的基础知识，以从脉冲响应中提取其包含的声音特性。</p>
+<p><strong>难度：</strong>高级<br><strong>平台：</strong>Windows、macOS、Linux<br><strong>插件格式：</strong>VST、AU、Standalone<br><strong>类：</strong><a href="https://docs.juce.com/master/classdsp_1_1ProcessorChain.html" rel="noreferrer noopener">dsp::ProcessorChain</a>, <a href="https://docs.juce.com/master/classdsp_1_1Gain.html" rel="noreferrer noopener">dsp::Gain</a>, <a href="https://docs.juce.com/master/classdsp_1_1Oscillator.html" rel="noreferrer noopener">dsp::Oscillator</a>, <a href="https://docs.juce.com/master/classdsp_1_1Convolution.html" rel="noreferrer noopener">dsp::Convolution</a>, <a href="structdsp_1_1WaveShaper.html" rel="noreferrer noopener">dsp::WaveShaper</a>, <a href="https://docs.juce.com/master/classdsp_1_1Reverb.html" rel="noreferrer noopener">dsp::Reverb</a>, <a href="structdsp_1_1ProcessorDuplicator.html" rel="noreferrer noopener">dsp::ProcessorDuplicator</a></p>
+<blockquote>
+      <p>本项目需要支持 C++14 特性的编译器。较新版本的 Xcode 和 Visual Studio 均包含这一支持。</p>
+    </blockquote>
+<h2>准备工作</h2>
+<p>本教程承接<a href="dsp-introduction.html" rel="noreferrer noopener">教程：DSP 入门</a>。如果你还没有阅读，应该先阅读那篇教程。</p>
+<p>在此处下载本教程的演示项目：<a href="https://docs.juce.com/tutorials/PIPs/DSPConvolutionTutorial.zip" rel="noreferrer noopener">PIP</a> | <a href="https://docs.juce.com/tutorials/ZIPs/DSPConvolutionTutorial.zip" rel="noreferrer noopener">ZIP</a>。解压该项目，并在 Projucer 中打开第一个头文件。</p>
+<blockquote>
+      <p>如果使用该项目的 PIP 版本，请确保把 <code>Resources</code> 文件夹复制到生成的 Projucer 项目中。</p>
+    </blockquote>
+<p>如果你需要这一步的帮助，请参阅<a href="new-projucer-project.html" rel="noreferrer noopener">教程：Projucer 第 1 部分：Projucer 入门</a>。</p>
+<h2>演示项目</h2>
+<p>该项目按插件设计，但你可以通过在 IDE 中选择合适的部署目标，把它作为独立应用运行。在 Xcode 中，可以在主窗口左上角更改目标，如下面的截图所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_standalone_screenshot1.png" alt="在 Xcode 中更改部署目标">
+<figcaption>在 Xcode 中更改部署目标</figcaption>
+</figure>
+<p>演示项目在插件的上半部分提供了一个屏幕 MIDI 键盘，在下半部分通过示波器提供了信号的可视化表示。目前按下琴键时，插件会输出带有一些混响的基础振荡器声音。</p>
+<blockquote>
+      <p>你可以随时移除混响，以便清楚地听到教程每个步骤中的变化——在 <code>AudioEngine</code> 类中把混响处理器注释掉即可。</p>
+    </blockquote>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_introduction_screenshot1.png" alt="演示项目插件窗口">
+<figcaption>演示项目插件窗口</figcaption>
+</figure>
+<blockquote>
+      <p>如果你有 MIDI 控制器，也可以在本教程的整个过程中选择连接它，而不是使用屏幕键盘。</p>
+    </blockquote>
+<h2>简介</h2>
+<p>在本教程中，我们介绍两个新的 DSP 概念，它们能以不同的方式处理信号：波形整形和卷积。</p>
+<p>让我们先定义这些 DSP 术语。</p>
+<h3>什么是波形整形？</h3>
+<p>波形整形是通过对原始信号施加传递函数，把某个信号塑造成另一个不同信号的过程。例如，通过对一个简单的正弦波施加数学函数，可以把它塑造成不同的波形。</p>
+<p>波形整形器可以通过施加某种传递函数为原始信号添加谐波成分，从而有效地产生失真。你可能知道，例如方波和三角波本质上就是添加了奇次谐波的正弦波，而锯齿波是奇次和偶次谐波结合的正弦波。</p>
+<p>了解了这一点，制造失真的一种方法是让正弦波的形状更接近方波。那么，我们如何用传递函数实现这一点呢？</p>
+<p>例如，考虑一个简单的正弦波 <code>sin(x)</code>，它可以绘制如下：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_graph1.png" alt="正弦波">
+<figcaption>正弦波</figcaption>
+</figure>
+<p>通过对正弦波施加符号函数（signum）传递函数——一个本质上输出输入数字符号的函数——我们得到 <code>sgn(sin(x))</code>，它完美地表示方波，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_graph2.png" alt="带符号函数的方波">
+<figcaption>带符号函数的方波</figcaption>
+</figure>
+<p>然而，这种完美的波形会带来问题，因为曲线上的硬边缘会产生一种被称为硬削波的刺耳失真。这种波形也「过于完美」，无法在模拟域中重现，因此听起来不像大多数模拟合成器产生的方波。</p>
+<p>为了创造一种更柔和的失真（称为软削波），我们可以使用双曲正切传递函数 <code>tanh(sin(x))</code>，它输出的信号看起来几乎像正弦波，但曲线更圆润，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_graph3.png" alt="带 tanh 函数的方波">
+<figcaption>带 tanh 函数的方波</figcaption>
+</figure>
+<p>然后，为了达到类似方波的形状，我们可以在施加传递函数 <code>tanh(n*sin(x))</code> 之前把信号推入削波，本质上把钟形的顶部截断成边缘柔和的方波，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_graph4.png" alt="带削波 tanh 函数的方波">
+<figcaption>带削波 tanh 函数的方波</figcaption>
+</figure>
+<p>如你所见，波形整形的可能性可以是无穷无尽的，因为任何类型的传递函数都可以施加到输入信号上。</p>
+<p>在 JUCE 中，你可以使用 DSP 模块中包含的 <a href="structdsp_1_1WaveShaper.html" rel="noreferrer noopener">dsp::WaveShaper</a> 类来执行波形整形。</p>
+<h3>什么是卷积？</h3>
+<p>卷积在于通过使用描述某个空间特性的预先录制的脉冲响应，来模拟该空间的混响特性。这一过程允许我们通过卷积（本质上是把每个数据采样与脉冲响应采样相乘，以生成组合输出）把任何类型的声学轮廓施加到输入信号上。</p>
+<p>脉冲响应是通过在要刻画的空间中录制短脉冲而生成的音频文件，但它们不一定需要是真实的物理空间。例如，我们可以通过让脉冲经过箱体并录制其效果来捕捉吉他放大器的轮廓，如下所示：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_graph5.png" alt="吉他放大器脉冲响应">
+<figcaption>吉他放大器脉冲响应</figcaption>
+</figure>
+<p>对盒式录音机也做了同样的处理，生成的脉冲响应如下：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_graph6.png" alt="盒式录音机的脉冲响应">
+<figcaption>盒式录音机的脉冲响应</figcaption>
+</figure>
+<p>当输入信号与脉冲响应进行卷积时，原始干信号将被转换为湿的混响对应物，它保留了二者的特性。例如，一个 100ms 的 440Hz 正弦波通过上面所示的吉他放大器脉冲响应卷积后，输出结果如下：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_graph7.png" alt="经过吉他放大器脉冲响应的正弦波">
+<figcaption>经过吉他放大器脉冲响应的正弦波</figcaption>
+</figure>
+<p>同一个正弦波信号通过前面展示的盒式录音机脉冲响应后，最终生成这样的波形：</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_graph8.png" alt="经过盒式录音机脉冲响应的正弦波">
+<figcaption>经过盒式录音机脉冲响应的正弦波</figcaption>
+</figure>
+<p>如你所见，卷积的可能性可以是无穷无尽的，因为任何类型的脉冲响应都可以施加到输入信号上。</p>
+<p>在 JUCE 中，你可以使用 DSP 模块中包含的 <a href="https://docs.juce.com/master/classdsp_1_1Convolution.html" rel="noreferrer noopener">dsp::Convolution</a> 类来执行卷积。</p>
+<h2>集成波形整形器</h2>
+<p>在 <code>Distortion</code> 类中，添加一个以 juce::dsp::WaveShaper 处理器作为模板参数的 juce::dsp::ProcessorChain [1]。同时定义一个带有处理器索引的枚举 [2]，以便之后能通过索引清晰地引用相应的处理。</p>
+<pre><code>private:
+//==============================================================================
+enum {
+    waveshaperIndex // [2]
+};
+juce::dsp::ProcessorChain&lt;juce::dsp::WaveShaper&lt;Type&gt;&gt; processorChain; // [1]
+};</code></pre>
+<p>在 <code>reset()</code> 函数中，调用处理器链中波形整形器的 reset 函数 [3]。</p>
+<pre><code>void reset() noexcept
+{
+    processorChain.reset(); // [3]
+}</code></pre>
+<p>在 <code>prepare()</code> 函数中，调用处理器链中波形整形器的 prepare 函数 [4]。</p>
+<pre><code>void prepare (const juce::dsp::ProcessSpec&amp; spec)
+{
+    processorChain.prepare (spec); // [4]
+}</code></pre>
+<p>现在我们要定义波形整形器用来塑造输入信号的传递函数。如本教程简介部分所述，我们先从一个硬削波函数开始。</p>
+<p>在构造函数中，通过提供处理的索引并使用 <code>processorChain.get&lt;&gt;()</code> 方法获取 WaveShaper 的引用 [5]。让我们用 lambda 函数来初始化波形整形器，把值限制在 <code>-0.1 .. 0.1</code> 的范围内 [6]。</p>
+<pre><code>public:
+//==============================================================================
+Distortion()
+{
+    auto&amp; waveshaper = processorChain.template get&lt;waveshaperIndex&gt;(); // [5]
+    waveshaper.functionToUse = [] (Type x) {
+        return juce::jlimit (Type (-0.1), Type (0.1), x); // [6]
+    };
+}</code></pre>
+<p>在 <code>process()</code> 函数中，我们可以调用处理器链中波形整形器的 process 函数 [7]。</p>
+<pre><code>template &lt;typename ProcessContext&gt;
+void process (const ProcessContext&amp; context) noexcept
+{
+    processorChain.process (context); // [7]
+}</code></pre>
+<p>如果在 <code>Distortion</code> 类中实现上述更改后运行这段代码，我们应该能听到波形整形器对振荡器信号的影响。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_screenshot1.png" alt="对振荡器信号进行波形整形">
+<figcaption>对振荡器信号进行波形整形</figcaption>
+</figure>
+<blockquote>
+      <p>练习：通过把值限制在 <code>-0.5 .. 0.5</code> 之间，改变传递函数中限制的程度。你听出声音的差别了吗？</p>
+    </blockquote>
+<h2>更改传递函数</h2>
+<p>让我们把传递函数改为双曲正切，使波形整形器的削波更柔和一些。</p>
+<p>向处理器链添加两个 <code>juce::dsp::Gain</code> 处理器，把 <code>juce::dsp::WaveShaper</code> 夹在它们之间 [1]，并把对应的索引作为前置增益 [2] 和后置增益 [3] 添加到枚举中。它们将允许我们调整进入波形整形器的信号电平，并控制从其中出来的电平，从而影响传递函数的行为。</p>
+<pre><code>private:
+//==============================================================================
+enum {
+    preGainIndex, // [2]
+    waveshaperIndex,
+    postGainIndex // [3]
+};
+juce::dsp::ProcessorChain&lt;juce::dsp::Gain&lt;Type&gt;, juce::dsp::WaveShaper&lt;Type&gt;, juce::dsp::Gain&lt;Type&gt;&gt; processorChain; // [1]
+};</code></pre>
+<p>在构造函数中，如本教程简介所述，把传递函数改为双曲正切 [4]：</p>
+<pre><code>public:
+//==============================================================================
+Distortion()
+{
+    auto&amp; waveshaper = processorChain.template get&lt;waveshaperIndex&gt;();
+    waveshaper.functionToUse = [] (Type x) {
+        return std::tanh (x); // [4]
+    };
+    auto&amp; preGain = processorChain.template get&lt;preGainIndex&gt;(); // [5]
+    preGain.setGainDecibels (30.0f); // [6]
+    auto&amp; postGain = processorChain.template get&lt;postGainIndex&gt;(); // [7]
+    postGain.setGainDecibels (-20.0f); // [8]
+}</code></pre>
+<p>这里我们还获取了前置增益处理器的引用 [5]，并把进入波形整形器的信号提升 30dB [6]。然后我们获取后置增益处理器的引用 [7]，并把来自波形整形器的电平削减 20dB [8]。</p>
+<p>运行程序应该会给我们一个不同的失真声音。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_screenshot2.png" alt="使用双曲正切函数进行波形整形">
+<figcaption>使用双曲正切函数进行波形整形</figcaption>
+</figure>
+<blockquote>
+      <p>练习：把波形整形器中使用的传递函数改为符号函数。你听出声音的差别了吗？</p>
+    </blockquote>
+<h2>调整滤波器</h2>
+<p>你可能已经注意到的一点是，当用波形整形器对低频内容进行失真处理时，失真的声音很快就会变得浑浊。我们可以在用波形整形器处理信号之前引入一个高通滤波器来缓解这个问题。</p>
+<p>添加一个以 <code>juce::dsp::IIR::Filter</code> 和 <code>juce::dsp::IIR::Coefficients</code> 类作为模板参数的 <code>juce::dsp::ProcessorDuplicator</code> [1]，以便轻松地把单声道滤波器转换为多声道版本。为了简化过长的类名，我们使用「using」关键字给出更短的名称，并在枚举中添加对应的索引 [2]。</p>
+<pre><code>private:
+//==============================================================================
+enum {
+    filterIndex, // [2]
+    preGainIndex,
+    waveshaperIndex,
+    postGainIndex
+};
+using Filter = juce::dsp::IIR::Filter&lt;Type&gt;;
+using FilterCoefs = juce::dsp::IIR::Coefficients&lt;Type&gt;;
+juce::dsp::ProcessorChain&lt;juce::dsp::ProcessorDuplicator&lt;Filter, FilterCoefs&gt;,
+    juce::dsp::Gain&lt;Type&gt;,
+    juce::dsp::WaveShaper&lt;Type&gt;,
+    juce::dsp::Gain&lt;Type&gt;&gt;
+    processorChain;
+};</code></pre>
+<p>在 <code>prepare()</code> 函数中，获取滤波器处理器的引用 [3]，并调用 <code>makeFirstOrderHighPass()</code> 函数把高通滤波器的截止频率指定为 1kHz [4]：</p>
+<pre><code>void prepare (const juce::dsp::ProcessSpec&amp; spec)
+{
+    auto&amp; filter = processorChain.template get&lt;filterIndex&gt;(); // [3]
+    filter.state = FilterCoefs::makeFirstOrderHighPass (spec.sampleRate, 1000.0f); // [4]
+    processorChain.prepare (spec);
+}</code></pre>
+<p>现在信号的较低频率应被衰减，声音更清晰。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_screenshot3.png" alt="在波形整形器之前进行滤波">
+<figcaption>在波形整形器之前进行滤波</figcaption>
+</figure>
+<blockquote>
+      <p>练习：在波形整形之前尝试不同类型的滤波器，并注意失真信号的谐波成分如何变化。</p>
+    </blockquote>
+<h2>实现箱体模拟器</h2>
+<p>让我们使用卷积来模拟吉他箱体，为我们的声音增添更多特色。</p>
+<p>在 <code>CabSimulator</code> 类中，向处理器链添加一个 <code>juce::dsp::Convolution</code> 处理器 [1]，并在枚举中添加其对应的索引 [2]。</p>
+<pre><code>private:
+//==============================================================================
+enum {
+    convolutionIndex // [2]
+};
+juce::dsp::ProcessorChain&lt;juce::dsp::Convolution&gt; processorChain;
+};</code></pre>
+<p>在 <code>reset()</code> 函数中，调用处理器链中卷积器的 reset 函数 [3]。</p>
+<pre><code>void reset() noexcept
+{
+    processorChain.reset(); // [3]
+}</code></pre>
+<p>在 <code>prepare()</code> 函数中，调用处理器链中卷积器的 prepare 函数 [4]。</p>
+<pre><code>void prepare (const juce::dsp::ProcessSpec&amp; spec)
+{
+    processorChain.prepare (spec); // [4]
+}</code></pre>
+<p>现在我们要指定卷积器用来对输入信号进行混响的脉冲响应。如本教程简介部分所述，让我们用项目 <code>Resources</code> 文件夹中包含的吉他放大器脉冲响应来加载卷积处理器。</p>
+<p>在构造函数中，通过提供处理的索引并使用 <code>processorChain.get&lt;&gt;()</code> 方法获取 Convolution 处理器的引用 [5]。让我们通过从 <code>Resources</code> 文件夹加载音频文件，用吉他放大器脉冲响应初始化卷积器 [6]。</p>
+<pre><code>CabSimulator()
+{
+    auto dir = juce::File::getCurrentWorkingDirectory();
+    int numTries = 0;
+    while (!dir.getChildFile ("Resources").exists() &amp;&amp; numTries++ &lt; 15)
+        dir = dir.getParentDirectory();
+    auto&amp; convolution = processorChain.template get&lt;convolutionIndex&gt;(); // [5]
+    convolution.loadImpulseResponse (dir.getChildFile ("Resources").getChildFile ("guitar_amp.wav"),
+        juce::dsp::Convolution::Stereo::yes,
+        juce::dsp::Convolution::Trim::no,
+        1024); // [6]
+}</code></pre>
+<blockquote>
+      <p>请确保「guitar_amp.wav」文件存在于项目的 <code>Resources</code> 文件夹中。</p>
+    </blockquote>
+<p>在 <code>process()</code> 函数中，我们可以调用处理器链中卷积器的 process 函数 [7]。</p>
+<pre><code>template &lt;typename ProcessContext&gt;
+void process (const ProcessContext&amp; context) noexcept
+{
+    processorChain.process (context); // [7]
+}</code></pre>
+<p>在 <code>Distortion</code> 类中，移除增益削减，或把其电平设为 0dB 衰减 [8]，因为信号在我们的信号链中失真之后发生的卷积过程中会自然衰减：</p>
+<pre><code>public:
+//==============================================================================
+Distortion()
+{
+    auto&amp; waveshaper = processorChain.template get&lt;waveshaperIndex&gt;();
+    waveshaper.functionToUse = [] (Type x) {
+        return std::tanh (x);
+    };
+    auto&amp; preGain = processorChain.template get&lt;preGainIndex&gt;();
+    preGain.setGainDecibels (30.0f);
+    auto&amp; postGain = processorChain.template get&lt;postGainIndex&gt;();
+    postGain.setGainDecibels (0.0f); // [8]
+}</code></pre>
+<p>让我们运行程序，听听它听起来怎么样。</p>
+<figure>
+<img src="https://juce.com/wp-content/uploads/2024/12/tutorial_dsp_convolution_screenshot4.png" alt="用卷积模拟吉他放大器">
+<figcaption>用卷积模拟吉他放大器</figcaption>
+</figure>
+<blockquote>
+      <p>练习：加载 <code>Resources</code> 文件夹中包含的盒式录音机脉冲响应，注意卷积后的声音发生了多么剧烈的变化。</p>
+    </blockquote>
+<blockquote>
+      <p>这个修改版本代码的源代码可以在演示项目的 <code>DSPConvolutionTutorial_02.h</code> 文件中找到。</p>
+    </blockquote>
+<h2>总结</h2>
+<p>在本教程中，我们学习了如何集成波形整形和卷积。具体来说，我们：</p>
+<ul>
+<li>学习了波形整形和卷积的基础知识。
+</li>
+<li>集成了一个硬削波波形整形器来产生失真。
+</li>
+<li>把波形整形器的传递曲线修改为双曲正切。
+</li>
+<li>用卷积技术实现了箱体模拟器。
+</li>
+</ul>
+<blockquote>
+      <p>跳回本教程的第 1 部分，以理解振荡器和滤波器：<a href="dsp-introduction.html" rel="noreferrer noopener">教程：DSP 入门</a></p>
+    </blockquote>
+<blockquote>
+      <p>在这里查看本教程的第 3 部分，以添加延迟线：<a href="dsp-delay-line.html" rel="noreferrer noopener">教程：用延迟线创建弦模型</a></p>
+    </blockquote>
+<h2>另请参阅</h2>
+<ul>
+<li><a href="simple-fft.html" rel="noreferrer noopener">教程：快速傅里叶变换</a>
+</li>
+<li><a href="spectrum-analyser.html" rel="noreferrer noopener">教程：实时可视化信号的频率</a>
+</li>
+<li><a href="simd-register-optimisation.html" rel="noreferrer noopener">教程：使用 SIMDRegister 类进行优化</a>
+</li>
+<li><a href="dsp-introduction.html" rel="noreferrer noopener">教程：DSP 入门</a>
+</li>
+<li><a href="dsp-delay-line.html" rel="noreferrer noopener">教程：用延迟线创建弦模型</a>
+</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://juce.com/tutorials/tutorial_dsp_convolution/" rel="noreferrer noopener">https://juce.com/tutorials/tutorial_dsp_convolution/</a> · 译文更新于 2026-10-18</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
