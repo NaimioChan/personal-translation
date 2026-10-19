@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>为 VST 3 插件添加 AUv2 支持 - VST 3 开发者门户</title>
+<meta name="description" content="为 VST 3 插件添加 AUv2 支持 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="audiounit-tutorial---how-to-add-auv2-support-to-your-vst-3-plug-in">为 VST 3 插件添加 AUv2 支持</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#adding-the-audiounit-version-2-target">添加 AudioUnit 第 2 版目标</a><ul>
+<li><a href="#obtaining-the-required-audiounit-sdk">获取所需的 AudioUnit SDK</a></li>
+<li><a href="#creating-the-property-list">创建属性列表</a></li>
+<li><a href="#adding-the-audiounit-version-2-target-1">添加 AudioUnit 第 2 版目标</a></li>
+</ul>
+</li>
+</ul>
+<p><strong>相关页面：</strong></p>
+<ul>
+<li><a href="what-is-the-vst-3-sdk-wrappers-auv2-wrapper.html">AudioUnit v2 包装层</a></li>
+</ul>
+<hr/>
+<blockquote>
+<p>你可以在<a href="https://github.com/steinbergmedia/vst3_tutorials/blob/master/audiounit-tutorial" target="_blank" rel="noreferrer noopener">教程仓库</a>中找到本教程的源代码</p>
+</blockquote>
+<p>在本教程中，你将学习如何为你的 <strong>VST 3</strong> 插件添加 AudioUnit 第 2 版支持。</p>
+<p>首先，你需要一个 <strong>VST 3</strong> 插件工程。本教程所用的工程是我们通过 SDK 中的 <a href="https://steinbergmedia.github.io/vst3_dev_portal/pages/What+is+the+VST+3+SDK/Project+Generator.html" target="_blank" rel="noreferrer noopener">VST 3 Project Generator</a> 生成的。</p>
+<h1 id="adding-the-audiounit-version-2-target">添加 AudioUnit 第 2 版目标</h1>
+<h2 id="obtaining-the-required-audiounit-sdk">获取所需的 AudioUnit SDK</h2>
+<p><em>AudioUnit Version 2</em> 目标需要 Apple 官方的 <em>AudioUnit SDK</em>。截至本文撰写时，你可以在 GitHub 上找到它：<a href="https://github.com/apple/AudioUnitSDK" target="_blank" rel="noreferrer noopener">https://github.com/apple/AudioUnitSDK</a></p>
+<p>如何获取和存放 SDK 由你决定；为保证本教程可复现，我们将在生成工程时通过 <em>CMake</em> 下载它。因此我们直接把以下文本添加到 <em>CMakeLists.txt</em> 中，位置在包含 <strong>VST SDK</strong> 之前。</p>
+<pre><code>include(FetchContent)
+FetchContent_Declare(
+	AudioUnitSDK
+	GIT_REPOSITORY https://github.com/apple/AudioUnitSDK.git
+	GIT_TAG        HEAD
+)
+FetchContent_MakeAvailable(AudioUnitSDK)
+FetchContent_GetProperties(
+	AudioUnitSDK
+	SOURCE_DIR SMTG_AUDIOUNIT_SDK_PATH
+)
+</code></pre>
+<p>重要的是设置 <code>SMTG_AUDIOUNIT_SDK_PATH</code> 变量，以告知 <strong>VST SDK</strong> 到哪里查找 AudioUnit SDK。</p>
+<h2 id="creating-the-property-list">创建属性列表</h2>
+<p>对于 <em>AudioUnit Version 2</em>，你需要一个在 Apple 注册的厂商 OSType。如何操作不在本教程范围内，请在网上搜索相关做法。</p>
+<p>除了厂商 OSType，你还需要一个可自行选择的子类型 OSType。厂商和子类型共同决定了你的 <em>AudioUnit Version 2</em> 的唯一性。</p>
+<p>现在你可以生成所需的属性列表文件：</p>
+<pre><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"&gt;
+&lt;plist version="1.0"&gt;
+&lt;dict&gt;
+	&lt;key&gt;CFBundleDevelopmentRegion&lt;/key&gt;
+	&lt;string&gt;English&lt;/string&gt;
+	&lt;key&gt;CFBundleExecutable&lt;/key&gt;
+	&lt;string&gt;$(EXECUTABLE_NAME)&lt;/string&gt;
+	&lt;key&gt;CFBundleIdentifier&lt;/key&gt;
+	&lt;string&gt;$(PRODUCT_BUNDLE_IDENTIFIER)&lt;/string&gt;
+	&lt;key&gt;CFBundleName&lt;/key&gt;
+	&lt;string&gt;$(PRODUCT_NAME)&lt;/string&gt;
+	&lt;key&gt;CFBundleInfoDictionaryVersion&lt;/key&gt;
+	&lt;string&gt;6.0&lt;/string&gt;
+	&lt;key&gt;CFBundlePackageType&lt;/key&gt;
+	&lt;string&gt;BNDL&lt;/string&gt;
+	&lt;key&gt;CFBundleSignature&lt;/key&gt;
+	&lt;string&gt;????&lt;/string&gt;
+	&lt;key&gt;CFBundleVersion&lt;/key&gt;
+	&lt;string&gt;1.0&lt;/string&gt;
+	&lt;key&gt;CSResourcesFileMapped&lt;/key&gt;
+	&lt;string&gt;yes&lt;/string&gt;
+	&lt;key&gt;AudioComponents&lt;/key&gt;
+	&lt;array&gt;
+		&lt;dict&gt;
+			&lt;key&gt;factoryFunction&lt;/key&gt;
+			&lt;string&gt;AUWrapperFactory&lt;/string&gt;
+			&lt;key&gt;description&lt;/key&gt;
+			&lt;string&gt;AudioUnit Tutorial&lt;/string&gt;
+			&lt;key&gt;manufacturer&lt;/key&gt;
+			&lt;string&gt;Stgb&lt;/string&gt;
+			&lt;key&gt;name&lt;/key&gt;
+			&lt;string&gt;Steinberg: AudioUnit Tutorial&lt;/string&gt;
+			&lt;key&gt;subtype&lt;/key&gt;
+			&lt;string&gt;0002&lt;/string&gt;
+			&lt;key&gt;type&lt;/key&gt;
+			&lt;string&gt;aufx&lt;/string&gt;
+			&lt;key&gt;version&lt;/key&gt;
+			&lt;integer&gt;1&lt;/integer&gt;
+		&lt;/dict&gt;
+	&lt;/array&gt;
+&lt;/dict&gt;
+&lt;/plist&gt;
+</code></pre>
+<p>请务必修改 <code>description</code>、<code>manufacturer</code>、<code>name</code>、<code>subtype</code> 和 <code>type</code> 的字符串。type 必须是以下之一：</p>
+<ul>
+<li>aufx（音频效果器）</li>
+<li>aumu（乐器）</li>
+<li>aumf（带 MIDI 输入/输出的音频效果器）</li>
+</ul>
+<p>如果你构建的是音频效果器，还需要把支持的通道布局添加到列表中：</p>
+<pre><code>&lt;key&gt;AudioUnit SupportedNumChannels&lt;/key&gt;
+&lt;array&gt;
+	&lt;dict&gt;
+		&lt;key&gt;Outputs&lt;/key&gt;
+		&lt;string&gt;2&lt;/string&gt;
+		&lt;key&gt;Inputs&lt;/key&gt;
+		&lt;string&gt;2&lt;/string&gt;
+	&lt;/dict&gt;
+	&lt;dict&gt;
+		&lt;key&gt;Outputs&lt;/key&gt;
+		&lt;string&gt;2&lt;/string&gt;
+		&lt;key&gt;Inputs&lt;/key&gt;
+		&lt;string&gt;1&lt;/string&gt;
+	&lt;/dict&gt;
+	&lt;dict&gt;
+		&lt;key&gt;Outputs&lt;/key&gt;
+		&lt;string&gt;1&lt;/string&gt;
+		&lt;key&gt;Inputs&lt;/key&gt;
+		&lt;string&gt;1&lt;/string&gt;
+	&lt;/dict&gt;
+&lt;/array&gt;
+</code></pre>
+<p>把它保存为资源目录中名为 <code>au-info.plist</code> 的文件。</p>
+<h2 id="adding-the-audiounit-version-2-target-1">添加 AudioUnit 第 2 版目标</h2>
+<p>现在你可以把 AudioUnit 目标添加到 <em>CMakeLists.txt</em> 文件末尾：</p>
+<pre><code>if (SMTG_MAC AND XCODE AND SMTG_COREAUDIO_SDK_PATH)
+	list(APPEND CMAKE_MODULE_PATH "${vst3sdk_SOURCE_DIR}/cmake/modules")
+	include(SMTG_AddVST3AuV2)
+	smtg_target_add_auv2(VST3_AU_PlugIn_AU
+		BUNDLE_NAME audiounit_tutorial
+		BUNDLE_IDENTIFIER com.steinberg.vst3sdk.audiounit_tutorial.audiounit
+		INFO_PLIST_TEMPLATE ${CMAKE_CURRENT_SOURCE_DIR}/resource/au-info.plist
+		VST3_PLUGIN_TARGET VST3_AU_PlugIn)
+    smtg_target_set_debug_executable(VST3_AU_PlugIn_AU "/Applications/Reaper.app")
+endif(SMTG_MAC AND XCODE AND SMTG_COREAUDIO_SDK_PATH)
+</code></pre>
+<p>现在，生成并构建工程之后，「audiounit_tutorial」插件应当可以在任何 AudioUnit 宿主中使用。</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Tutorials/Audio+Unit.html" rel="noreferrer noopener">Tutorials/Audio+Unit.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

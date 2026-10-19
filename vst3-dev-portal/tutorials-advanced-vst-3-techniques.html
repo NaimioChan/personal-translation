@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VST 3 进阶技术 - VST 3 开发者门户</title>
+<meta name="description" content="VST 3 进阶技术 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="advanced-vst-3-techniques">VST 3 进阶技术</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#part-1-sample-accurate-parameter-handling">第 1 部分：逐采样精确的参数处理</a></li>
+<li><a href="#part-2-adding-32-and-64-bit-audio-processing">第 2 部分：添加 32 位和 64 位音频处理</a></li>
+<li><a href="#part-3-thread-safe-state-changes">第 3 部分：线程安全的状态变更</a></li>
+</ul>
+<hr/>
+<blockquote>
+<p>你可以在<a href="https://github.com/steinbergmedia/vst3_tutorials/blob/master/advanced-techniques-tutorial" target="_blank" rel="noreferrer noopener">教程仓库</a>中找到本教程的源代码</p>
+</blockquote>
+<p>在本教程中，你将学习：</p>
+<ul>
+<li>如何为音频效果器添加近乎逐采样精确的参数变更</li>
+<li>如何使用 C++ 模板编写一套同时支持 32 位和 64 位音频处理的算法</li>
+<li>如何以线程安全的方式设置音频效果器的状态</li>
+</ul>
+<hr/>
+<h2 id="part-1-sample-accurate-parameter-handling">第 1 部分：逐采样精确的参数处理</h2>
+<p>我们先来看这个 process 函数：</p>
+<pre><code class="language-c++">void MyEffect::process (ProcessData&amp; data)
+{
+    handleParameterChanges (data.inputParameterChanges);
+
+    // 取出本块的增益值
+    ParamValue gain = gainParameter.getValue ();
+
+    // 处理音频
+    AudioBusBuffers* inputs = data.inputs;
+    AudioBusBuffers* outputs = data.outputs;
+    for (auto channelIndex = 0; channelIndex &lt; inputs[0].numChannels; ++channelIndex)
+    {
+        for (auto sampleIndex = 0; sampleIndex &lt; data.numSamples; ++sampleIndex)
+        {
+            auto sample = inputs[0].channelBuffers32[channelIndex][sampleIndex];
+            outputs[0].channelBuffers32[channelIndex][sampleIndex] = sample * gain;
+        }
+    }
+}
+</code></pre>
+<p>这很直接也很简单：我们在 <em>handleParameterChanges</em> 函数中处理参数变更，稍后就会看到这个函数。然后我们取出最后一个增益参数值，遍历输入缓冲区，把其中的采样复制到输出缓冲区，再乘上 <em>gain</em> 系数。</p>
+<p>如果我们看一下 handleParameterChanges 函数：</p>
+<pre><code class="language-c++">void MyEffect::handleParameterChanges (IParameterChanges*changes)
+{
+    if (!changes)
+        return;
+    int32 changeCount = changes-&gt;getParameterCount ();
+    for (auto i = 0; i &lt; changeCount; ++i)
+    {
+        if (auto queue = changes-&gt;getParameterData (i))
+        {
+            auto paramID = queue-&gt;getParameterId ();
+            if (paramID == ParameterID::Gain)
+            {
+                int32 pointCount = queue-&gt;getPointCount ();
+                if (pointCount &gt; 0)
+                {
+                    int32 sampleOffset;
+                    ParamValue value;
+                    if (queue-&gt;getPoint (pointCount - 1, sampleOffset, value) == kResultTrue)
+                        gainParameter.setValue (value);
+                }
+            }
+        }
+    }
+}
+</code></pre>
+<p>可以看到，<em>Gain</em> 参数只使用最后一个点作为增益值。</p>
+<p>如果我们现在想使用 <em>Gain</em> 参数的所有点，可以使用 SDK 中的两个工具类。</p>
+<p>第一个是 <em>ProcessDataSlicer</em>，它把音频块切分成更小的片段。</p>
+<pre><code class="language-c++">void MyEffect::process (ProcessData&amp; data)
+{
+    handleParameterChanges (data.inputParameterChanges);
+
+    ProcessDataSlicer slicer (8);
+    
+    auto doProcessing = [this] (ProcessData&amp; data) {
+        // 取出本块的增益值
+        ParamValue gain = gainParameter.getValue ();
+
+        // 处理音频
+        AudioBusBuffers* inputs = data.inputs;
+        AudioBusBuffers* outputs = data.outputs;
+        for (auto channelIndex = 0; channelIndex &lt; inputs[0].numChannels; ++channelIndex)
+        {
+            for (auto sampleIndex = 0; sampleIndex &lt; data.numSamples; ++sampleIndex)
+            {
+                auto sample = inputs[0].channelBuffers32[channelIndex][sampleIndex];
+                outputs[0].channelBuffers32[channelIndex][sampleIndex] = sample * gain;
+            }
+        }
+    }
+    
+    slicer.process&lt;SymbolicSampleSizes::kSample32&gt; (data, doProcessing);
+}
+</code></pre>
+<p>如你所见，我们把算法部分移到了 lambda <em>doProcessing</em> 中，并把它传给 <em>slicer.process</em>。现在这个 lambda 会被多次调用，每次最多处理 8 个采样，直到整个缓冲区处理完毕。这还不能带来更好的参数分辨率，但我们现在可以用第二个工具类来处理这件事。</p>
+<p>首先，我们来看一下 <em>gainParameter</em> 变量的类型，因为它就是我们的下一个工具类：</p>
+<pre><code class="language-c++">SampleAccurate::Parameter gainParameter;
+</code></pre>
+<p>我们必须把 <em>handleParameterChanges</em> 函数改成：</p>
+<pre><code class="language-c++">void MyEffect::handleParameterChanges (IParameterChanges*inputParameterChanges)
+{
+    int32 changeCount = inputParameterChanges-&gt;getParameterCount ();
+    for (auto i = 0; i &lt; changeCount; ++i)
+    {
+        if (auto queue = changes-&gt;getParameterData (i))
+        {
+            auto paramID = queue-&gt;getParameterId ();
+            if (paramID == ParameterID::Gain)
+            {
+                gainParameter.beginChanges (queue);
+            }
+        }
+    }
+    
+}
+</code></pre>
+<p>以便把参数变更的处理委托给 <em>gainParameter</em> 对象。</p>
+<p>现在我们只需要在 process lambda 中再做一点小改动，就能使用近乎逐采样精确的 <em>gain</em> 值。我们必须调用 <em>gainParameter</em> 对象来<em>推进</em>参数值：</p>
+<pre><code class="language-c++">auto doProcessing = [this] (ProcessData&amp; data) {
+    // 取出本块的增益值
+    ParamValue gain = gainParameter.advance (data.numSamples);
+
+    // 处理音频
+    AudioBusBuffers* inputs = data.inputs;
+    AudioBusBuffers* outputs = data.outputs;
+    for (auto channelIndex = 0; channelIndex &lt; inputs[0].numChannels; ++channelIndex)
+    {
+        for (auto sampleIndex = 0; sampleIndex &lt; data.numSamples; ++sampleIndex)
+        {
+            auto sample = inputs[0].channelBuffers32[channelIndex][sampleIndex];
+            outputs[0].channelBuffers32[channelIndex][sampleIndex] = sample * gain;
+        }
+    }
+}
+</code></pre>
+<p>最后，我们必须在 <em>process</em> 函数末尾对 <em>gainParameter</em> 做一些清理，即调用 <em>gainParameter.endChanges</em>。</p>
+<pre><code class="language-c++">void MyEffect::process (ProcessData&amp; data)
+{
+    handleParameterChanges (data.inputParameterChanges);
+
+    ProcessDataSlicer slicer (8);
+    
+    auto doProcessing = [this] (ProcessData&amp; data) {
+        // 取出本块的增益值
+        ParamValue gain = gainParameter.advance (data.numSamples);
+
+        // 处理音频
+        AudioBusBuffers* inputs = data.inputs;
+        AudioBusBuffers* outputs = data.outputs;
+        for (auto channelIndex = 0; channelIndex &lt; inputs[0].numChannels; ++channelIndex)
+        {
+            for (auto sampleIndex = 0; sampleIndex &lt; data.numSamples; ++sampleIndex)
+            {
+                auto sample = inputs[0].channelBuffers32[channelIndex][sampleIndex];
+                outputs[0].channelBuffers32[channelIndex][sampleIndex] = sample * gain;
+            }
+        }
+    }
+    
+    slicer.process&lt;SymbolicSampleSizes::kSample32&gt; (data, doProcessing);
+    
+    gainParameter.endChanges ();
+}
+</code></pre>
+<p>现在，这个示例已经支持近乎逐采样精确的参数变更。每隔 8 个采样，<em>gain</em> 参数就会更新为正确的值。</p>
+<p>要做到 100% 逐采样精确非常简单，请查看 SDK 中的 <strong>AGain Sample Accurate</strong> 示例。</p>
+<hr/>
+<h2 id="part-2-adding-32-and-64-bit-audio-processing">第 2 部分：添加 32 位和 64 位音频处理</h2>
+<p>该示例目前只支持 32 位处理。现在我们要添加 64 位处理。</p>
+<p>你可能已经注意到，<em>ProcessDataSlicer</em> 的 process 函数使用了一个模板参数。这个模板参数 <em>SampleSize</em> 定义了 <em>ProcessData</em> 结构中音频缓冲区的位深。目前它被硬编码为 <em>SymbolicSampleSizes::kSample32</em>。</p>
+<p>为了支持 <em>SymbolicSampleSizes::kSample64</em>，我们只需要对代码做几处改动。首先，我们通过为效果器引入一个新的模板方法来改造算法部分：</p>
+<pre><code class="language-c++">template &lt;SymbolicSampleSizes SampleSize&gt;
+void MyEffect::process (ProcessData&amp; data)
+{
+}
+</code></pre>
+<p>我们基本上只是把代码从原来的 process 方法移到这个方法中，参数变更处理那部分代码除外：</p>
+<pre><code class="language-c++">template &lt;SymbolicSampleSizes SampleSize&gt;
+void MyEffect::process (ProcessData&amp; data)
+{
+    ProcessDataSlicer slicer (8);
+    
+    auto doProcessing = [this] (ProcessData&amp; data) {
+        // 取出本块的增益值
+        ParamValue gain = gainParameter.advance (data.numSamples);
+
+        // 处理音频
+        AudioBusBuffers* inputs = data.inputs;
+        AudioBusBuffers* outputs = data.outputs;
+        for (auto channelIndex = 0; channelIndex &lt; inputs[0].numChannels; ++channelIndex)
+        {
+            for (auto sampleIndex = 0; sampleIndex &lt; data.numSamples; ++sampleIndex)
+            {
+                auto sample = inputs[0].channelBuffers32[channelIndex][sampleIndex];
+                outputs[0].channelBuffers32[channelIndex][sampleIndex] = sample * gain;
+            }
+        }
+    }
+    
+    slicer.process&lt;SampleSize&gt; (data, doProcessing);
+}
+</code></pre>
+<p>我们只是把 <em>ProcessDataSlicer</em> 的 process 方法的模板参数 <em>SampleSize</em> 改成与我们自己的 process 函数相同的模板参数。</p>
+<p>这样还不能正确工作，因为我们在 <em>doProcessing</em> lambda 中仍然使用 32 位音频缓冲区。为了解决这个问题，我们必须再引入两个模板函数 <em>getChannelBuffers</em>，它们会根据 <em>SampleSize</em> 模板参数选择正确的音频缓冲区，该参数可以是 <em>SymbolicSampleSizes::kSample32</em> 或 <em>SymbolicSampleSizes::kSample64</em>：</p>
+<pre><code class="language-c++">template &lt;SymbolicSampleSizes SampleSize,
+        typename std::enable_if&lt;SampleSize == SymbolicSampleSizes::kSample32&gt;::type* = nullptr&gt;
+inline Sample32** getChannelBuffers (AudioBusBuffers&amp; buffer)
+{
+    return buffer.channelBuffers32;
+}
+
+template &lt;SymbolicSampleSizes SampleSize,
+        typename std::enable_if&lt;SampleSize == SymbolicSampleSizes::kSample64&gt;::type* = nullptr&gt;
+inline Sample64** getChannelBuffers (AudioBusBuffers&amp; buffer)
+{
+    return buffer.channelBuffers64;
+}
+</code></pre>
+<p>现在我们可以修改 <em>doProcessing</em> 算法，改用这些函数：</p>
+<pre><code class="language-c++">template &lt;SymbolicSampleSizes SampleSize&gt;
+void MyEffect::process (ProcessData&amp; data)
+{
+    ProcessDataSlicer slicer (8);
+    
+    auto doProcessing = [this] (ProcessData&amp; data) {
+        // 取出本块的增益值
+        ParamValue gain = gainParameter.advance (data.numSamples);
+
+        // 处理音频
+        AudioBusBuffers* inputs = data.inputs;
+        AudioBusBuffers* outputs = data.outputs;
+        for (auto channelIndex = 0; channelIndex &lt; inputs[0].numChannels; ++channelIndex)
+        {
+            auto inputBuffers = getChannelBuffers&lt;SampleSize&gt; (inputs[0])[channelIndex];
+            auto outputBuffers = getChannelBuffers&lt;SampleSize&gt; (outputs[0])[channelIndex];
+            for (auto sampleIndex = 0; sampleIndex &lt; data.numSamples; ++sampleIndex)
+            {
+                auto sample = inputBuffers[sampleIndex];
+                outputBuffers[sampleIndex] = sample * gain;
+            }
+        }
+    };
+    
+    slicer.process&lt;SampleSize&gt; (data, doProcessing);
+}
+</code></pre>
+<p>作为最后一步，我们现在需要从普通的 <em>process</em> 函数中调用模板化的 <em>process&lt;...&gt;</em> 函数：</p>
+<pre><code class="language-c++">void MyEffect::process (ProcessData&amp; data)
+{
+    handleParameterChanges (data.inputParameterChanges);
+
+    if (processSetup.symbolicSampleSize == SymbolicSampleSizes::kSample32)
+        process&lt;SymbolicSampleSizes::kSample32&gt; (data);
+    else
+        process&lt;SymbolicSampleSizes::kSample64&gt; (data);
+    
+    gainParameter.endChanges ();
+}
+</code></pre>
+<p>根据 <em>processSetup.symbolicSampleSize</em>，我们或者调用 32 位的 <em>process</em> 函数，或者调用 64 位的 <em>process</em> 函数。</p>
+<p>我们只需要告知宿主我们可以处理 64 位：</p>
+<pre><code class="language-c++">tresult PLUGIN_API MyEffect::canProcessSampleSize (int32symbolicSampleSize)
+{
+    return (symbolicSampleSize == SymbolicSampleSizes::kSample32 ||
+            symbolicSampleSize == SymbolicSampleSizes::kSample64) ?
+            kResultTrue :
+            kResultFalse;
+}
+</code></pre>
+<p>现在我们既有逐采样精确的参数变更，也有 32 位和 64 位音频处理。</p>
+<hr/>
+<h2 id="part-3-thread-safe-state-changes">第 3 部分：线程安全的状态变更</h2>
+<p>这个领域的一个常见问题是：来自预设或 DAW 工程的插件状态是由宿主在非实时线程中设置的。</p>
+<p>如果我们想改变内部数据模型来使用这个状态，就必须把这个状态传递到实时线程。这应当以实时线程安全的方式完成。否则模型可能无法反映正确的状态，因为在实时线程中分派的参数变更和在另一个线程中设置的状态数据最终会处于未定义状态。</p>
+<p>对于这种情况，我们还有另一个工具类：<em>RTTransferT</em></p>
+<p>这个类需要一个描述状态数据的模板参数 <em>StateModel</em>。我们创建一个简单的结构体作为数据模型：</p>
+<pre><code class="language-c++">struct StateModel
+{
+    double gain;
+};
+
+using RTTransfer = RTTransferT&lt;StateModel&gt;;
+</code></pre>
+<p>我们现在把 <em>RTTransfer</em> 用作 <em>MyEffect</em> 类的成员：</p>
+<pre><code class="language-c++">class MyEffect : ....
+{
+    RTTransfer stateTransfer;
+};
+</code></pre>
+<p>如果我们现在从宿主收到一个新的 <em>state</em>，就创建一个 <em>newStateModel</em>，把 <em>stateGain</em> 值写入 <em>model-&gt;gain</em>，并把它传给工具类 <em>stateTransfer</em>：</p>
+<pre><code class="language-c++">tresult PLUGIN_API MyEffect::setState (IBStream* state)
+{
+    double stateGain = ... // 从状态流中读出该值
+    
+    StateModel model = std::make_unique&lt;StateModel&gt; ();
+    model-&gt;gain = stateGain;
+    
+    stateTransfer.transferObject_ui (std::move (model));
+    
+    return kResultTrue;
+}
+</code></pre>
+<p>要把 <em>stateModel</em> 送入我们的实时线程，我们必须按以下方式修改 <em>process</em> 函数：</p>
+<pre><code class="language-c++">void MyEffect::process (ProcessData&amp; data)
+{
+    stateTransfer.accessTransferObject_rt ([this] (const auto&amp; stateModel) {
+        gainParameter.setValue (stateModel.gain);
+    });
+    
+    handleParameterChanges (data.inputParameterChanges);
+
+    if (processSetup.symbolicSampleSize == SymbolicSampleSizes::kSample32)
+        process&lt;SymbolicSampleSizes::kSample32&gt; (data);
+    else
+        process&lt;SymbolicSampleSizes::kSample64&gt; (data);
+    
+    gainParameter.endChanges ();
+    return kResultTrue;
+}
+</code></pre>
+<p><em>accessTransferObject_rt</em> 函数会检查是否有新的模型状态。如果有，它就会调用 lambda，然后我们就可以把 <em>gainParameter</em> 设置为 <em>stateModel.gain</em> 的值。</p>
+<p>为了释放 <em>stateTransfer</em> 对象中的内存，我们必须调用它的 <em>clear_ui</em> 方法。在这种只有一个 double 作为状态模型的情况下，把它保留到设置下一个状态或效果器终止为止是没有问题的。所以我们只需把它加到插件的 <em>terminate</em> 方法中：</p>
+<pre><code class="language-c++">tresult PLUGIN_API MyEffect::terminate ()
+{
+    stateTransfer.clear_ui ();
+    return AudioEffect::terminate ();
+}
+</code></pre>
+<p>如果模型数据占用更多内存，并且你想提前释放它，可以使用定时器或类似机制，在 setState 方法被调用后稍晚一点调用 clear_ui 方法。但这不属于本教程的范围。</p>
+<p>如果你想使用这些工具类，可以在 SDK 的以下位置找到它们：</p>
+<p>SDK 中的位置：<em>public.sdk/source/vst/utility/processdataslicer.h</em><br/> <em>public.sdk/source/vst/utility/sampleaccurate.h</em><br/> <em>public.sdk/source/vst/utility/rttransfer.h</em></p>
+<p>就这样！</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Tutorials/Advanced+VST+3+techniques.html" rel="noreferrer noopener">Tutorials/Advanced+VST+3+techniques.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

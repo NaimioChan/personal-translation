@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>复杂的插件结构 / 多重音色乐器 - VST 3 开发者门户</title>
+<meta name="description" content="复杂的插件结构 / 多重音色乐器 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="complex-plug-in-structures--multi-timbral-instruments">复杂的插件结构 / 多重音色乐器</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#the-problem">问题</a></li>
+<li><a href="#the-simple-mode">简单模式</a></li>
+<li><a href="#multi-timbral-program-lists">多音色程序列表</a></li>
+<li><a href="#units-and-tracks">单位与轨道</a></li>
+<li><a href="#routing">路由</a></li>
+</ul>
+<p><strong>相关页面：</strong></p>
+<ul>
+<li><a href="technical-documentation-vst-3-units-index.html">VST 3 单位</a></li>
+</ul>
+<hr/>
+<p>如何处理复杂的插件结构与多音色。</p>
+<h2 id="the-problem">问题</h2>
+<p>简单的 VST 效果器插件通常不会给宿主带来太多麻烦。它只有一个音频输入和输出总线，以及一组用于控制其声音某些方面的已定义参数。但 VST 插件可以比这复杂得多。当插件实现多音色乐器时，宿主在该插件与其 GUI 的集成方面会面临一系列问题。举几个例子：</p>
+<ul>
+<li>
+<p>插件可以定义多个事件输入和多个音频输出。当归音符事件传输给插件时，宿主如何知道声音会从哪个输出出现？</p>
+<ul>
+<li>宿主可能对此感兴趣，以便把 MIDI 轨道链接到相应的音频通道。</li>
+</ul>
+</li>
+<li>
+<p>插件可以定义一个程序列表，用户可以从插件 GUI 中加载。在多音色乐器中，一个程序只影响插件的某一部分（我们把这部分称为「单位」）。宿主如何了解这些部分以及可加载的插件定义程序？</p>
+<ul>
+<li>宿主可能对此感兴趣，以便在其自己的 GUI 中为此功能提供快捷方式。</li>
+</ul>
+</li>
+</ul>
+<p>由于 VST 插件不像硬件 MIDI 乐器那样只是一个黑盒，复杂的插件应帮助其宿主提供比硬件乐器更便利的 GUI 集成。<strong>VST 3</strong> 使用单位的概念来描述插件的内部结构（见 <a href="technical-documentation-vst-3-units-index.html">VST 3 单位</a>），多音色乐器应当支持相应的接口。但 <strong>VST 3</strong> 中首选的解决方案是通过「简单模式」降低这种复杂性。</p>
+<h2 id="the-simple-mode">简单模式</h2>
+<p>「VST 3 简单模式」有着（自私的）背景，即支持 <strong>Cubase</strong> 所谓的「简单乐器轨道」。这些轨道把 MIDI 轨道和 VST 音频通道组合在一起（无需再做任何其他指定，例如选择 MIDI 输出端口或 MIDI 通道）。该模式被定义为「只有一个输入、只有一个输出」。在「简单模式」中，只使用 MIDI 通道 0。因此，乐器必须是单音色的。</p>
+<p>现在宿主将使用插件的多个实例，而不是以包含多个同类内部区段的方式使用同一个实例。<strong>VST-MA</strong> 组件模型支持在插件的多个实例之间共享资源，因为通常每个插件实例都使用同一个模块实例（dll/bundle）。</p>
+<p>不过，插件可以选择用同一份实现同时支持简单模式和高级模式。宿主通过检查处理器的类标志（<a href="https://steinbergmedia.github.io/vst3_doc/base/structSteinberg_1_1PClassInfo2.html#ab5ab9135185421caad5ad8ae1d758409" target="_blank" rel="noreferrer noopener">Steinberg::PClassInfo2::classFlags</a>）中是否包含 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/namespaceSteinberg_1_1Vst.html#a626a070dcd2e025250f41b9c3f9817cdabc2edc9bb281cebe9cc6dc00a7cac0ea" target="_blank" rel="noreferrer noopener">Vst::kSimpleModeSupported</a> 标志来测试其支持「简单模式」的一般能力。如果插件要用于乐器轨道（或宿主认为它更合适时），会调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a4618e7358890d549f990010bea4a4137" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setIoMode</a> 方法来配置插件（必须在任何其他调用之前！）。单音色插件也应设置该标志，并且无需考虑 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a4618e7358890d549f990010bea4a4137" target="_blank" rel="noreferrer noopener">setIoMode</a> 调用。</p>
+<h2 id="multi-timbral-program-lists">多音色程序列表</h2>
+<p>对于多音色乐器插件，预设处理可能复杂得多。在这种情况下：</p>
+<ul>
+<li>
+<p>插件可以定义任意数量的程序列表。</p>
+</li>
+<li>
+<p>每个单位可以引用一个程序列表（此引用不得更改）。</p>
+</li>
+<li>
+<p>每个使用程序列表的单位引用一个列表项。</p>
+</li>
+<li>
+<p>对于每个引用程序列表的单位，必须导出一个程序选择参数（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ParameterInfo.html#ae3a5143ca8d0e271dbc259645a4ae645a517665185bca1f4f3d77ce0a6468b8e3" target="_blank" rel="noreferrer noopener">Vst:: ParameterInfo::kIsProgramChange</a>）。</p>
+</li>
+<li>
+<p>插件可以提供用于选择程序的 GUI，但它必须同步相应的程序选择参数。</p>
+</li>
+<li>
+<p>宿主可能希望以显示简单插件预设的同样方式显示活动单位的程序列表（通常在窗口顶部或底部的单独控制区域中）。宿主必须能够为在插件 GUI 中获得焦点的单位显示正确的列表和正确的程序名称。</p>
+</li>
+</ul>
+<p>为使这一切正常工作，插件必须提供 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitInfo.html" target="_blank" rel="noreferrer noopener">Vst:: IUnitInfo</a> 的有效实现，并且必须相应地操作回调接口 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IUnitHandler</a>。</p>
+<p>与简单情况类似，宿主可能希望保存和加载预设文件。插件的组件状态在这里并不有用。复杂插件的预设可以是：</p>
+<ul>
+<li>
+<p>一个插件单位的状态</p>
+<ul>
+<li>为此，插件必须在其组件部分中实现 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitData.html" target="_blank" rel="noreferrer noopener">Vst:: IUnitData</a> 接口。</li>
+</ul>
+</li>
+<li>
+<p>程序列表中某个项的内容</p>
+<ul>
+<li>为此，插件必须在其组件部分中实现 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IProgramListData.html" target="_blank" rel="noreferrer noopener">Vst:: IProgramListData</a> 接口。</li>
+</ul>
+</li>
+</ul>
+<p>插件可以同时支持单位预设和程序列表预设。</p>
+<p><img alt="Tech_doc_19" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_19.jpg"/></p>
+<p>另见 <a href="technical-documentation-presets-program-lists-index.html">预设 &amp; 程序列表</a>、<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IProgramListData.html" target="_blank" rel="noreferrer noopener">Vst:: IProgramListData</a>、<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitData.html" target="_blank" rel="noreferrer noopener">Vst:: IUnitData</a>。</p>
+<h2 id="units-and-tracks">单位与轨道</h2>
+<p>一个单位可以与总线（或总线的通道）关联。特别是，一个单位可以具有到某个输入 MIDI 通道的固定且唯一的连接。对宿主来说，了解这种连接以及由此得知哪个单位可以关联到特定 MIDI 轨道可能很有用。多音色插件的 GUI 通常不会同时显示所有同类单位的设置。取而代之的是某种单位选择。其想法是能够把插件中的单位选择与宿主中的轨道选择同步起来（双向）。</p>
+<p>当插件 GUI 按所述方式组织时，它应通过实现以下方法来支持所述行为</p>
+<ul>
+<li>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitInfo.html#a718fa905d04d7d559bc89c7ca761413b" target="_blank" rel="noreferrer noopener">Vst:: IUnitInfo::getUnitByBus</a>：找出轨道与单位的关系</p>
+</li>
+<li>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitInfo.html#a6f1b43425ba894764f35b7d492e81c53" target="_blank" rel="noreferrer noopener">Vst:: IUnitInfo::getSelectedUnit</a>：让宿主知道应选择哪条轨道</p>
+</li>
+<li>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitInfo.html#a2504c2bb3c57742102577f34cb58e257" target="_blank" rel="noreferrer noopener">Vst:: IUnitInfo::selectUnit</a>：使插件选择其单位</p>
+</li>
+</ul>
+<p>并通过调用</p>
+<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitHandler.html#ab05a9a8dcca888caeabdb8ed74766bc6" target="_blank" rel="noreferrer noopener">Vst:: IUnitHandler::notifyUnitSelection</a>：触发宿主同步其 GUI</li>
+</ul>
+<h2 id="routing">路由</h2>
+<p>如果插件定义了多个音频输出总线（在宿主中表示为 VSTi 混音器通道），对宿主来说，了解混音器中哪个 VSTi 通道是特定 MIDI 轨道的输出可能很有意思。一般而言，宿主需要了解插件任何从输入到输出的路由。因此，如果插件输入与输出之间存在明确的关系，应实现以下方法：</p>
+<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#aa0ffeccad3c44364a199ce56365a4c12" target="_blank" rel="noreferrer noopener">Vst:: IComponent::getRoutingInfo</a>：找出给定输入的输出</li>
+</ul>
+<p><img alt="Tech_doc_20" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_20.jpg"/></p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/Complex+Structures/Index.html" rel="noreferrer noopener">Technical+Documentation/Complex+Structures/Index.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VST 模块架构 - VST 3 开发者门户</title>
+<meta name="description" content="VST 模块架构 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="vst-module-architecture">VST 模块架构</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#introduction">引言</a></li>
+<li><a href="#interfaces">接口</a><ul>
+<li><a href="#funknown">FUnknown</a></li>
+<li><a href="#iidcid">IID/CID</a></li>
+<li><a href="#direction">方向</a></li>
+<li><a href="#versioning-and-inheritance">版本与继承</a></li>
+<li><a href="#com-compatibility">COM 兼容性</a></li>
+</ul>
+</li>
+<li><a href="#plug-ins">插件</a><ul>
+<li><a href="#module-factory">模块工厂</a></li>
+<li><a href="#locations">位置</a></li>
+<li><a href="#categories">类别</a></li>
+<li><a href="#ipluginbase">IPluginBase</a></li>
+<li><a href="#purpose-specific-interfaces">用途专用接口</a></li>
+<li><a href="#unicode">Unicode</a><ul>
+<li><a href="#plug-ins-for-unicode-hosts">面向 Unicode 宿主的插件</a></li>
+<li><a href="#migrating-from-non-unicode-to-unicode">从非 Unicode 迁移到 Unicode</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#sdk-backward-compatibility">SDK 向后兼容性</a></li>
+</ul>
+<p><strong>相关页面：</strong></p>
+<ul>
+<li><a href="technical-documentation-vst-module-architecture-loading.html">宿主如何加载基于 VST-MA 的插件</a></li>
+<li><a href="technical-documentation-vst-module-architecture-derive-from-interface.html">如何从接口派生类</a></li>
+<li><a href="technical-documentation-vst-module-architecture-interface-versions-and-inheritance.html">接口版本与继承</a></li>
+<li><a href="technical-documentation-api-documentation-index.html">VST 3 API 文档</a></li>
+</ul>
+<hr/>
+<h2 id="introduction">引言</h2>
+<p><strong>VST-MA</strong> 是一种组件模型系统，在所有 <a href="https://www.steinberg.net/" target="_blank" rel="noreferrer noopener">Steinberg</a> 宿主程序中都作为插件支持的基础层。</p>
+<p>它是面向对象的、跨平台的，并且（几乎）与编译器无关。<br/> 其基本概念与 <a href="https://en.wikipedia.org/wiki/Component_Object_Model" target="_blank" rel="noreferrer noopener">Microsoft® COM</a> 非常相似，因此如果你熟悉这项技术，理解 <strong>VST-MA</strong> 应当相当容易。</p>
+<p><strong>VST-MA</strong> 仅以 C++ 提供。C++ 中的接口以纯虚类（即只包含抽象方法的类）表示。与 COM 不同，目前还不支持 C 或其他语言——原因很简单：到目前为止没有这种需求。但所有 <strong>VST-MA</strong> 接口都可以转换成不同的表示形式，以防将来某天这变得不可避免。<br/> 目前它可用于 Windows、macOS X 和 Linux。</p>
+<p>属于 <strong>VST-MA</strong> 的 C++ 文件位于以下文件夹中：</p>
+<ul>
+<li><em>pluginterfaces/base</em></li>
+<li><em>pluginterfaces/gui</em></li>
+</ul>
+<p><strong>注意</strong>：「<strong>VST 模块架构</strong>」这个名称与「Virtual Studio Technology」本身关系不大。<br/> 它描述的是 <a href="https://www.steinberg.net/" target="_blank" rel="noreferrer noopener">Steinberg</a> 宿主所支持的任何插件类别的基础层。<strong>VST-MA</strong> 早在被用作 <strong>VST 3</strong> 自身的基础之前就早已存在。</p>
+<h2 id="interfaces">接口</h2>
+<h3 id="funknown">FUnknown</h3>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1FUnknown.html" target="_blank" rel="noreferrer noopener">Steinberg::FUnknown</a> 是 <strong>VST-MA</strong> 的基本接口。所有其他接口都直接或间接地由它派生。</p>
+<h3 id="iidcid">IID/CID</h3>
+<p>每个接口都有一个唯一标识符（IID），类型为 <a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1FUID.html" target="_blank" rel="noreferrer noopener">Steinberg::FUID</a>。它用于从一个接口获取另一个接口（<a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1FUnknown.html#a4199134d0669bfa92b7419dac14c01a7" target="_blank" rel="noreferrer noopener">Steinberg::FUnknown::queryInterface</a>）。重要的是理解接口标识符与组件标识符之间的区别。<br/> 组件 ID 或类 ID（CID）用于标识一个具体的实现类，通常会被传递给类工厂，以便创建相应的组件。<br/> 因此，许多不同的类（具有不同的类标识符）可以实现相同的接口。</p>
+<h3 id="direction">方向</h3>
+<p>接口可以有 <strong>方向</strong>，表示该接口预期由插件实现还是由宿主实现。接口的性质按以下方式记录：</p>
+<ul>
+<li><strong>[host imp]</strong>：宿主实现该接口</li>
+<li><strong>[plug imp]</strong>：插件实现该接口</li>
+</ul>
+<p>两者都未指定时，该接口可以两种方式使用。</p>
+<h3 id="versioning-and-inheritance">版本与继承</h3>
+<p>与 C++ 类不同，接口不使用继承来表达对象的特化。继承只用于版本管理。严格的规则之一是：接口一旦发布，就绝不能再改动。为接口添加新功能需要新版本（通常在这种情况下会给名称加上序号，例如 <a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IPluginFactory3.html" target="_blank" rel="noreferrer noopener">Steinberg:: IPluginFactory3</a> 为 <a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IPluginFactory2.html" target="_blank" rel="noreferrer noopener">Steinberg:: IPluginFactory2</a> 增加了新特性）。<br/> 新版本继承接口的旧版本，因此新旧方法会合并到一个接口中。这就是为什么特化必须建模为独立的接口！如果特化接口也继承基本接口，那么一个需要实现所有这些接口的实现类就会两次继承基接口，导致编译器遇到二义性。因此，特化与基本接口之间的关系只能在文档中表达。</p>
+<blockquote>
+<ul>
+<li>ISpecialInterface [<strong>extends</strong> IBaseInterface] => 表示可以用 IBaseInterface::queryInterface (ISpecialInterface::iid, ...) 获取派生接口。</li>
+</ul>
+</blockquote>
+<p>你可以在这里找到一些示例代码：<a href="technical-documentation-vst-module-architecture-interface-versions-and-inheritance.html">接口版本与继承</a>。</p>
+<h3 id="com-compatibility">COM 兼容性</h3>
+<p><strong>VST-MA</strong> 的第一层与 <strong>COM</strong> 二进制兼容。<a href="https://en.wikipedia.org/wiki/Virtual_method_table" target="_blank" rel="noreferrer noopener">Vtable</a> 以及 <a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1FUnknown.html" target="_blank" rel="noreferrer noopener">Steinberg::FUnknown</a> 的接口标识符与对应的 COM 接口 <a href="https://en.wikipedia.org/wiki/IUnknown" target="_blank" rel="noreferrer noopener">IUnknown</a> 一致。主要区别在于宿主程序如何组织和创建组件/插件。VST-MA 不要求任何 Microsoft® COM 源文件。你可以在以下页面找到有关 <strong>COM</strong> 的信息：</p>
+<ul>
+<li><a href="https://docs.microsoft.com/en-us/windows/win32/learnwin32/what-is-a-com-interface-" target="_blank" rel="noreferrer noopener">https://docs.microsoft.com/en-us/windows/win32/learnwin32/what-is-a-com-interface-</a></li>
+</ul>
+<p>基本接口</p>
+<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1FUnknown.html" target="_blank" rel="noreferrer noopener">Steinberg::FUnknown</a></li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IPluginBase.html" target="_blank" rel="noreferrer noopener">Steinberg:: IPluginBase</a></li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IPluginFactory.html" target="_blank" rel="noreferrer noopener">Steinberg:: IPluginFactory</a></li>
+</ul>
+<p>辅助类</p>
+<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1FUID.html" target="_blank" rel="noreferrer noopener">Steinberg::FUID</a></li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1FUnknownPtr.html" target="_blank" rel="noreferrer noopener">Steinberg::FUnknownPtr</a></li>
+</ul>
+<p>另请参阅「<a href="technical-documentation-vst-module-architecture-derive-from-interface.html">如何从接口派生类</a>」。</p>
+<h2 id="plug-ins">插件</h2>
+<h3 id="module-factory">模块工厂</h3>
+<p>模块（Windows：动态链接库；macOS：Mach-O Bundle；Linux：包）包含一个或多个组件（例如 VST 3 效果器）的实现。<strong>VST-MA</strong> 模块必须包含一个类工厂，其中注册了组件的元数据和创建方法。<br/> 宿主通过 <a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IPluginFactory.html" target="_blank" rel="noreferrer noopener">Steinberg:: IPluginFactory</a> 接口访问该工厂。这是模块的锚点，实现为一个名为 <a href="https://steinbergmedia.github.io/vst3_doc/base/group__pluginBase.html#ga843ac97a36dfc717dadaa7192c7e8330" target="_blank" rel="noreferrer noopener">GetPluginFactory</a> 的 C 风格导出函数。你可以在 SDK 中找到导出定义文件——<em>public.sdk/source/main/winexport.def</em>（<em>public.sdk/source/main/macexport.exp</em>），可用它导出该函数；也可以在 cpp 文件中直接使用宏 SMTG_EXPORT_SYMBOL（示例见 <em>public.sdk/source/main/dllmain.cpp</em>）。<br/> <a href="https://steinbergmedia.github.io/vst3_doc/base/group__pluginBase.html#ga843ac97a36dfc717dadaa7192c7e8330" target="_blank" rel="noreferrer noopener">GetPluginFactory</a> 的声明如下：</p>
+<pre><code class="language-c++">SMTG_EXPORT_SYMBOL IPluginFactory* PLUGIN_API GetPluginFactory ();
+</code></pre>
+<p>除 <strong>GetPluginFactory</strong> 函数外，插件还可能需要根据平台导出额外的 <strong>entry/exit</strong> 函数：</p>
+<blockquote>
+<p><strong>在 Windows 上</strong><br/> 在 <em>Windows</em> 上，entry/exit 函数名为 <strong>InitDll</strong> / <strong>ExitDll</strong>，并且是 <em><strong>可选的！</strong></em></p>
+<p>插件可以导出这些函数。宿主必须在通过 LoadLibrary 加载插件之后直接调用 <strong>InitDll</strong> 函数，并在调用 <strong>GetPluginFactory</strong> 之前完成这一调用。<strong>ExitDll</strong> 函数必须在通过 <em>FreeLibrary</em> 卸载插件之前，或在未调用 <em>FreeLibrary</em> 而程序终止时被调用。</p>
+<p>由于 <em>Windows</em> 已经具备此功能（参见 Microsoft 文档中的 <a href="https://docs.microsoft.com/en-us/cpp/build/run-time-library-behavior?view=msvc-170" target="_blank" rel="noreferrer noopener">DllMain</a>），上述函数是可选的。</p>
+</blockquote>
+<blockquote>
+<p><strong>在 macOS 上</strong><br/> 在 <em>macOS</em> 上，entry/exit 函数名为 <strong>bundleEntry</strong> / <strong>bundleExit</strong>，并且是 <em><strong>必需的！</strong></em></p>
+<p>插件必须导出这些函数，宿主必须在加载插件之后直接调用 <strong>bundleEntry</strong> 函数（插件通过 <em>CFBundleLoadExecutable</em> 加载），并在调用 <strong>GetPluginFactory</strong> 之前完成这一调用。</p>
+<p>必须在卸载插件之前或程序终止时调用 <strong>bundleExit</strong> 函数。</p>
+<p>由于 <em>macOS</em> 在加载 bundle 时没有标准入口函数，上述函数是必需的，宿主必须拒绝未导出这些函数的插件。</p>
+</blockquote>
+<blockquote>
+<p><strong>在 Linux 上</strong><br/> 在 <em>Linux</em> 上，entry/exit 函数名为 <strong>ModuleEntry</strong> / <strong>ModuleExit</strong>，并且是 <em><strong>必需的！</strong></em></p>
+<p>插件必须导出这些函数，宿主必须在通过 dlopen 加载插件之后、调用 <strong>GetPluginFactory</strong> 之前直接调用 <strong>ModuleEntry</strong> 函数。</p>
+<p>必须在通过 dlclose 卸载插件之前或程序终止时调用 <strong>ModuleExit</strong> 函数。</p>
+<p>由于 <em>Linux</em> 在加载动态库时没有标准入口函数，上述函数是必需的，宿主必须拒绝未导出这些函数的插件。</p>
+<p>入口函数用于向插件提供平台特定的实例句柄，许多平台 API 都需要它。</p>
+<p>插件开发者应使用这些函数，而不要用平台函数来获取实例句柄。</p>
+</blockquote>
+<p>以下示例使用 def/exp 文件，而不是 SMTG_EXPORT_SYMBOL：</p>
+<p><strong>Windows 上的 winexport.def 文件</strong></p>
+<pre><code class="language-c">EXPORTS
+GetPluginFactory
+InitDll
+ExitDll
+</code></pre>
+<p><strong>mac 上的 macexport.exp 文件</strong></p>
+<pre><code class="language-c">_GetPluginFactory
+_bundleEntry
+_bundleExit
+</code></pre>
+<h3 id="locations">位置</h3>
+<p>组件模块不要求像 <strong>DirectX</strong> 那样注册。宿主程序期望组件模块位于文件系统的预定义文件夹中。应用程序启动时会扫描这些文件夹及其子文件夹，查找 <strong>VST-MA</strong> 模块。每个文件夹都有特定用途：</p>
+<ul>
+<li>应用程序的 <em>Components</em> 子文件夹（例如 <em>"C:\Program Files\Steinberg\Cubase 12\Components"</em>）用于与应用程序紧密绑定的组件。其他应用程序不应使用它。</li>
+<li>在所有 <a href="https://www.steinberg.net/" target="_blank" rel="noreferrer noopener">Steinberg</a> 宿主之间共享的组件位于：<ul>
+<li>Win 平台：<em>"/Program Files/Common Files/Steinberg/Shared Components"</em></li>
+<li>Mac 平台：<em>"/Library/Application Support/Steinberg/Components/"</em></li>
+</ul>
+</li>
+<li>对于特殊用途的插件类型，还定义了其他位置。请参阅相应文档，了解是否使用其他文件夹以及在哪里找到它们。对于 <strong>VST 3</strong>，参见 <a href="technical-documentation-locations-format-index.html">VST 3 位置/格式</a>。</li>
+</ul>
+<h3 id="categories">类别</h3>
+<p>工厂可以创建的任何类都归属于某个类别。正是这个类别告诉宿主该类的用途（并暗示它可能实现哪些接口）。<br/> 类还用一个名称来描述，并且具有唯一的 id。</p>
+<ul>
+<li>例如，导入/导出过滤器的类别是「<strong>Project Filter</strong>」，<strong>VST 3</strong> 音频插件的类别是「<strong>Audio Module Class</strong>」。</li>
+<li>「Service」是一个特殊类别。该类别中类的用途对宿主来说完全未知。它会在程序启动时自动加载（前提是用户没有停用它）。</li>
+<li>由于工厂可以创建任意数量的类，一个组件库可以包含任意类型的多个组件。</li>
+</ul>
+<h3 id="ipluginbase">IPluginBase</h3>
+<p>任何组件类的入口点接口是 <a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IPluginBase.html" target="_blank" rel="noreferrer noopener">Steinberg:: IPluginBase</a>。宿主使用该接口来初始化并终止插件组件。宿主初始化插件时，<strong>必须传入</strong>所谓的上下文。该上下文包含插件工作所需的任何宿主接口。</p>
+<h3 id="purpose-specific-interfaces">用途专用接口</h3>
+<p>每个插件类别（VST 3 效果器、项目导入/导出过滤器、音频编解码器等）都定义了自己的一组用途专用接口。这些接口不属于基本的 <strong>VST-MA</strong> 层。</p>
+<h3 id="unicode">Unicode</h3>
+<p>从 <strong>Cubase</strong> 和 <strong>Nuendo</strong> 第 5 版开始，宿主的内部结构经过修改，以更好地支持国际化。因此，字符串处理改为在传递字符串时使用 <a href="https://en.wikipedia.org/wiki/Unicode" target="_blank" rel="noreferrer noopener">Unicode</a> 字符串。结果是，与插件之间的所有接口在调用参数和返回参数上都从使用 ASCI 字符串改为使用 Unicode 字符串。相应地，所有插件都必须改造以支持 Unicode。这带来以下重要后果：</p>
+<ul>
+<li>Unicode 宿主（<strong>Cubase 5</strong> 或更高版本）只能与 Unicode 插件配合工作。加载插件时，Unicode 宿主会检查插件类型，不会加载任何非 Unicode 插件。</li>
+<li>Unicode 插件<strong>不会</strong>加载到非 Unicode 宿主中。加载时，Unicode 插件会向宿主请求信息，如果未检测到 Unicode 宿主就不会加载。因此，如果插件需要同时适用于旧版和新版宿主，最好提供插件的两个版本。</li>
+</ul>
+<h4 id="plug-ins-for-unicode-hosts">面向 Unicode 宿主的插件</h4>
+<p>编写只与 Unicode 宿主配合工作的插件很容易。使用当前版本的此 SDK，像平常一样开发插件即可。确保只向以字符串为调用参数的接口传递 Unicode <a href="https://en.wikipedia.org/wiki/UTF-16" target="_blank" rel="noreferrer noopener">UTF-16</a> 字符串，并做好准备：这些接口返回的字符串始终是 <a href="https://en.wikipedia.org/wiki/UTF-16" target="_blank" rel="noreferrer noopener">UTF-16</a>。因此，为简化处理，建议在整个插件实现中都使用 Unicode 字符串，以避免来回转换。此外，使用 Base 模块中的 Steinberg::String 和 Steinberg::ConstString 类，它们被设计为可在 Mac 和 Win 上通用。</p>
+<h4 id="migrating-from-non-unicode-to-unicode">从非 Unicode 迁移到 Unicode</h4>
+<p>在 <a href="https://www.steinberg.net/" target="_blank" rel="noreferrer noopener">Steinberg</a> 早于 <strong>Cubase 5</strong> 发布的 SDK 中，接口函数使用 <em>char</em> 类型的指针向宿主传递字符串和从宿主接收字符串。现在这些已改为使用 Steinberg 定义的类型 <em>tchar</em>，它等价于 <em>char16</em>，即 16 位字符。理论上表示 16 位字符的方式有很多，但我们选择使用行业标准 <a href="https://en.wikipedia.org/wiki/Unicode" target="_blank" rel="noreferrer noopener">Unicode</a>，因此字符串预期以 <a href="https://en.wikipedia.org/wiki/UTF-16" target="_blank" rel="noreferrer noopener">UTF-16</a> 编码。<br/> 相应地，插件的实现也需要改造，以正确处理 Unicode 编码的字符串，并且只向宿主传递 Unicode 字符串。</p>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 将函数从使用 8 位字符指针改为 16 位字符指针，看起来只是很小的改动，但在接口设计中这是重大侵入，因为接口是对外界的契约，永远不应更改。因此，改为使用 Unicode 字符串的类会被区分出来，并获得新的唯一类 ID。</p>
+</blockquote>
+<h2 id="sdk-backward-compatibility">SDK 向后兼容性</h2>
+<p>即使使用当前 SDK，仍然可以开发非 Unicode 插件。在文件 <em>pluginterfaces/base/ftypes.h</em> 中，行 <em>"#define UNICODE_OFF"</em> 被注释掉了，但取消注释后即可将所有接口恢复为使用单字节 ASCII 字符串。或者，也可以在项目文件中将 UNICODE_OFF 指定为预处理器定义。<br/> 此外，插件的工厂信息现在不再定义 Unicode 标志，因此 Unicode 宿主会把编译出的插件视为非 Unicode。另外，恢复为单字节字符串时，插件的实现也必须相应修改才能正确工作。</p>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 取消定义 Unicode 时，类 ID 也会恢复为旧的类 ID。</p>
+</blockquote>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/VST+Module+Architecture/Index.html" rel="noreferrer noopener">Technical+Documentation/VST+Module+Architecture/Index.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

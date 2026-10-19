@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VST 3 API 文档 - VST 3 开发者门户</title>
+<meta name="description" content="VST 3 API 文档 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="vst-3-api-documentation">VST 3 API 文档</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#basic-concept">基本概念</a><ul>
+<li><a href="#initialization">初始化</a></li>
+<li><a href="#creation-and-initialization-from-host-point-of-view">从宿主视角看创建与初始化</a></li>
+<li><a href="#extensions">扩展</a></li>
+<li><a href="#persistence">持久化</a></li>
+</ul>
+</li>
+<li><a href="#the-processing-part">处理部分</a><ul>
+<li><a href="#icomponent">IComponent</a></li>
+<li><a href="#iaudioprocessor">IAudioProcessor</a></li>
+</ul>
+</li>
+<li><a href="#the-editing-part">编辑部分</a></li>
+<li><a href="#vst-3-threading-model">VST 3 线程模型</a></li>
+<li><a href="#communication-between-the-components">组件之间的通信</a><ul>
+<li><a href="#standard-communication">标准通信</a></li>
+<li><a href="#private-communication">私有通信</a></li>
+<li><a href="#initialization-of-communication-from-host-point-of-view">从宿主视角看通信的初始化</a></li>
+</ul>
+</li>
+</ul>
+<p><strong>相关页面：</strong></p>
+<ul>
+<li><a href="technical-documentation-vst-module-architecture-index.html">VST 模块架构</a></li>
+</ul>
+<hr/>
+<p><strong>VST 3 API</strong> 是一套为实时音频处理组件设计的接口集合。此类组件可以是音频效果器，也可以是乐器。<strong>VST 3</strong> 基于一项名为 <a href="technical-documentation-vst-module-architecture-index.html">VST 模块架构</a>（<strong>VST-MA</strong>）的技术。请阅读 <a href="technical-documentation-vst-module-architecture-index.html">VST-MA 文档</a> 以进一步了解插件系统的一般工作方式。属于 <strong>VST 3</strong> 的 API 文件位于文件夹 <em>"pluginterfaces/vst"</em> 中。</p>
+<blockquote>
+<p>ⓘ <strong>如果你在找 VST 3 的 C API</strong><br/>参见 <a href="https://github.com/steinbergmedia/vst3_c_api" target="_blank" rel="noreferrer noopener">https://github.com/steinbergmedia/vst3_c_api</a>。</p>
+</blockquote>
+<h2 id="basic-concept">基本概念</h2>
+<p><strong>VST 3</strong> 音频效果器或乐器基本上由两部分组成：处理部分与编辑控制器部分。对应的接口是：</p>
+<ul>
+<li>处理器：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor</a> + <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html" target="_blank" rel="noreferrer noopener">Vst:: IComponent</a></li>
+<li>控制器：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html" target="_blank" rel="noreferrer noopener">Vst:: IEditController</a></li>
+</ul>
+<p><img alt="Tech_doc_1" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_1.jpg"/></p>
+<p><img alt="Tech_doc_2" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_2.png"/></p>
+<p><strong>VST 3</strong> 的设计主张通过实现两个组件，把处理器与编辑控制器彻底分离。把一个效果器拆成这两部分需要一些额外的实现工作。不过，这种分离使宿主能够在不同的上下文中运行每个组件，甚至可以在不同的计算机上运行。另一个好处是，在自动化方面可以把参数变化分开处理。处理时这些变化需要以逐采样精确的方式传输，而 GUI 部分可以用低得多的频率更新，并且可以按延迟补偿或其他处理偏移所产生的时间量进行平移。</p>
+<p>支持这种分离的插件必须设置 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/namespaceSteinberg_1_1Vst.html#a626a070dcd2e025250f41b9c3f9817cda3185111648c1599241528f1a7f523396" target="_blank" rel="noreferrer noopener">Vst::kDistributable</a> 标志，位置在处理器组件的类信息中（<a href="https://steinbergmedia.github.io/vst3_doc/base/structSteinberg_1_1PClassInfo2.html#ab5ab9135185421caad5ad8ae1d758409" target="_blank" rel="noreferrer noopener">Steinberg::PClassInfo2::classFlags</a>）。当然，并非每个插件都能支持这一点。例如，当它深度依赖无法轻易迁移到另一台计算机的资源时。因此，如果没有设置此标志，宿主绝不能以任何方式尝试分离这些组件。</p>
+<p>虽然不推荐，但确实可以在一个组件类中同时实现处理部分与控制器部分。宿主在创建 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html" target="_blank" rel="noreferrer noopener">Vst:: IEditController</a> 之后会尝试查询 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor</a> 接口，若成功就把它用作控制器。</p>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 宿主在处理插件时，无需实例化该插件的控制器部分。</p>
+<p>插件应当做好在控制器部分未被实例化的情况下进行处理的准备。</p>
+</blockquote>
+<h3 id="initialization">初始化</h3>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html" target="_blank" rel="noreferrer noopener">Vst:: IComponent</a> 与 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html" target="_blank" rel="noreferrer noopener">Vst:: IEditController</a> 都派生自 <a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IPluginBase.html" target="_blank" rel="noreferrer noopener">Steinberg:: IPluginBase</a>。这个基础接口的用途是初始化组件，并在组件销毁前终止它。</p>
+<p>传递给 <a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IPluginBase.html#a3c81be4ff2e7bbb541d3527264f26eed" target="_blank" rel="noreferrer noopener">Steinberg:: IPluginBase::initialize</a> 的上下文参数应当实现 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IHostApplication.html" target="_blank" rel="noreferrer noopener">Vst:: IHostApplication</a> 接口。在调用 initialize 之前，宿主不应调用其他函数，唯一的例外是 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a4618e7358890d549f990010bea4a4137" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setIoMode</a>，它必须在 initialize 之前调用。<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a8aa65685068ad033af57b1497926b689" target="_blank" rel="noreferrer noopener">Vst:: IComponent::getControllerClassId</a> 也可以在之前调用（<a href="technical-documentation-workflow-diagrams-index.html">参见 VST 3 工作流程图</a>）。</p>
+<p><strong>插件如何访问 IHostApplication？</strong></p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API MyPluginProcessor::initialize (FUnknown* context)
+{
+    if (auto hostApp = Steinberg::U::cast&lt;IHostApplication&gt; (context))
+    {
+        String128 name;
+        if (hostApp-&gt;getName (name) == kResultTrue)
+        {
+            //...
+        }
+    }
+    //...
+}
+//-----------------------------------------------------------------------
+</code></pre>
+<h3 id="creation-and-initialization-from-host-point-of-view">从宿主视角看创建与初始化</h3>
+<p>下面是一个宿主实现的示例，它为一个具有给定 classID 的插件创建组件及其关联的控制器：</p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+Vst::IComponent* processorComponent;
+Vst::IEditController* editController;
+IPluginFactory* factory;
+// ...
+// 工厂已初始化（在库加载之后，参见 validator 示例）
+// ...
+// 创建其组件部分
+tresult result = factory-&gt;createInstance (classID,Vst::IComponent::iid, (void**)&amp;processorComponent);
+if (processorComponent &amp;&amp; (result == kResultOk))
+{
+    // 用我们的宿主上下文初始化组件（注意：initialize 紧跟在 creatInstance 之后调用）
+    res = (processorComponent-&gt;initialize (gStandardPluginContext) == kResultOk);
+
+    // 尝试从组件创建控制器部分
+    // 针对未能成功把组件与控制器分离的插件 :-(
+    if (processorComponent-&gt;queryInterface (Vst::IEditController::iid, (void**)&amp;editController) != kResultTrue)
+    {
+        // 这是正常情况，控制器与组件是分离的。
+
+        // 查询关联的控制器类 ID（可以在 processorComponent-&gt;initialize () 之前调用）
+        FUID controllerCID;
+        if (processorComponent-&gt;getControllerClassId (controllerCID) == kResultTrue &amp;&amp; controllerCID.isValid ())
+        {
+            // 从工厂创建其控制器部分
+            result = factory-&gt;createInstance (controllerCID, Vst::IEditController::iid, (void**)&amp;editController);
+            if (editController &amp;&amp; (result == kResultOk))
+            {
+                // editController 现已创建，我们拥有其所有权，
+                // 这意味着在不再使用时必须释放它。
+
+                // 用我们的上下文初始化组件
+                res = (editController-&gt;initialize (gStandardPluginContext) == kResultOk);
+
+                // 现在 processorComponent 与 editController 都已初始化…… :-)
+            }
+        }
+    }
+    else
+    {
+        // editController 现已创建，我们拥有其所有权，
+        // 这意味着在不再使用时必须释放它。
+    }
+}
+//-----------------------------------------------------------------------
+</code></pre>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 请注意，IPluginBase::initialize 与 IPluginBase::terminate 对每个对象实例只能调用一次。因此，如果一个对象同时实现了 IAudioProcessor 与 IEditController，要注意只调用它们一次，如上面的示例所示。</p>
+</blockquote>
+<h3 id="extensions">扩展</h3>
+<p>实现这些基础接口的组件，其功能可以通过若干可选接口来扩展；只有需要这种扩展时才必须实现这些接口。</p>
+<ul>
+<li>处理器扩展：<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IConnectionPoint.html" target="_blank" rel="noreferrer noopener">Vst:: IConnectionPoint</a></li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitData.html" target="_blank" rel="noreferrer noopener">Vst:: IUnitData</a></li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IProgramListData.html" target="_blank" rel="noreferrer noopener">Vst:: IProgramListData</a></li>
+</ul>
+</li>
+<li>编辑控制器扩展：<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IConnectionPoint.html" target="_blank" rel="noreferrer noopener">Vst:: IConnectionPoint</a></li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IMidiMapping.html" target="_blank" rel="noreferrer noopener">Vst:: IMidiMapping</a></li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitInfo.html" target="_blank" rel="noreferrer noopener">Vst:: IUnitInfo</a></li>
+</ul>
+</li>
+</ul>
+<h3 id="persistence">持久化</h3>
+<p>宿主在工程文件和预设文件中存储并恢复处理器与控制器的完整状态：</p>
+<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a10db03106be8ba89d23859fa6be5d9f6" target="_blank" rel="noreferrer noopener">Vst:: IComponent::getState</a> + <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a77ac39bcc5c4b15818b1a87de2573805" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setState</a> 存储并恢复 DSP 模型。</li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#a10db03106be8ba89d23859fa6be5d9f6" target="_blank" rel="noreferrer noopener">Vst:: IEditController::getState</a> + <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#a77ac39bcc5c4b15818b1a87de2573805" target="_blank" rel="noreferrer noopener">Vst:: IEditController::setState</a> 存储并恢复与处理器无关的任何 GUI 设置（如滚动位置等）。</li>
+<li><strong>恢复</strong>：恢复状态时，宿主把处理器状态同时传递给处理器和控制器（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#a4c2e1cafd88143fda2767a9c7ba5d48f" target="_blank" rel="noreferrer noopener">Vst:: IEditController::setComponentState</a>）。宿主必须始终先把该状态传递给处理器。随后控制器必须把其参数同步到该状态（但不得执行任何 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler</a> 回调）。恢复状态后，宿主会重新扫描参数（向控制器查询），以更新其内部表示。</li>
+</ul>
+<p><img alt="Tech_doc_3" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_3.png"/></p>
+<p><img alt="Tech_doc_4" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_4.png"/></p>
+<p>另请参见</p>
+<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IBStream.html" target="_blank" rel="noreferrer noopener">Steinberg:: IBStream</a></li>
+<li><a href="technical-documentation-change-history-3.0.0-plug-in-interfaces.html">VST 3 中需由插件实现的接口</a></li>
+<li><a href="technical-documentation-change-history-3.0.0-host-interfaces.html">VST 3 中需由宿主实现的接口</a></li>
+</ul>
+<h2 id="the-processing-part">处理部分</h2>
+<p><img alt="Tech_doc_5" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_5.png"/></p>
+<p>处理部分由两个相关的接口组成：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html" target="_blank" rel="noreferrer noopener">Vst:: IComponent</a> 与 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor</a>。之所以拆成两个，是为了让基础接口 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html" target="_blank" rel="noreferrer noopener">Vst:: IComponent</a> 不仅用于音频插件，也用于其他类型的媒体（例如将来的视频处理）。因此 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor</a> 接口表示处理组件中与音频相关的部分。下面我们仔细看看这些概念。</p>
+<h3 id="icomponent">IComponent</h3>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html" target="_blank" rel="noreferrer noopener">Vst:: IComponent</a> 接口允许宿主获取关于该插件的信息：</p>
+<ol>
+<li>
+<p><strong>编辑控制器关联</strong>：为了让宿主能够创建关联的编辑控制器部分，处理组件必须提供匹配的 class-ID。宿主使用模块的类工厂来创建控制器组件。参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a8aa65685068ad033af57b1497926b689" target="_blank" rel="noreferrer noopener">Vst:: IComponent::getControllerClassId</a></p>
+</li>
+<li>
+<p>宿主可以查询总线配置（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1BusInfo.html" target="_blank" rel="noreferrer noopener">Vst::BusInfo</a>）。参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a41b0e971a0ff153a4eb34274750b0c91" target="_blank" rel="noreferrer noopener">Vst:: IComponent::getBusInfo</a></p>
+</li>
+<li>
+<p>宿主可以查询路由信息（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1RoutingInfo.html" target="_blank" rel="noreferrer noopener">Vst::RoutingInfo</a>）。</p>
+</li>
+<li>
+<p>宿主可以激活或停用特定的总线，例如 <a href="https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical+Documentation/Change+History/3.0.0/Multiple+Dynamic+IO.html#what-is-a-side-chain" target="_blank" rel="noreferrer noopener">侧链</a>。被停用的总线不应由插件处理。参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a3ab7d06aaefe03da1fcd1819f1261050" target="_blank" rel="noreferrer noopener">Vst:: IComponent::activateBus</a></p>
+</li>
+<li>
+<p>宿主可以激活或停用插件（On/Off 按钮）。参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a0a840e8077eb74ec429b8007c7b83517" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setActive</a></p>
+</li>
+<li>
+<p>宿主可以存储并恢复插件的状态（预设与工程持久化）。参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstsdk/classSteinberg_1_1Vst_1_1Component.html#aee393393dc4dccf6e0b30a43380859b4" target="_blank" rel="noreferrer noopener">Vst:: IComponent::getState</a>、<a href="https://steinbergmedia.github.io/vst3_doc/vstsdk/classSteinberg_1_1Vst_1_1Component.html#a9228db732b48ece8b5b734e69b979d10" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setState</a></p>
+</li>
+</ol>
+<h3 id="iaudioprocessor">IAudioProcessor</h3>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor</a> 接口扩展了 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html" target="_blank" rel="noreferrer noopener">Vst:: IComponent</a>，为处理提供了状态机以及 process 方法：</p>
+<ol>
+<li>
+<p><strong>设置</strong>：开始处理之前必须先配置处理器。只有在处理器处于非活动状态时才允许进行配置（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a0a840e8077eb74ec429b8007c7b83517" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setActive</a>）。</p>
+<ul>
+<li><strong>处理设置</strong>：处理器会被告知在处理处于活动状态时不能更改的参数。（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessSetup.html" target="_blank" rel="noreferrer noopener">Vst::ProcessSetup</a>）。</li>
+<li><strong>动态扬声器布置</strong>：宿主可以尝试更改音频总线的通道数。默认情况下，扬声器布置由插件定义。为了让插件适应使用不同扬声器布置的环境，宿主可以尝试使用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#ad3bc7bac3fd3b194122669be2a1ecc42" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setBusArrangements</a></li>
+</ul>
+</li>
+<li>
+<p>处理器配置完成后，必须将其激活（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a0a840e8077eb74ec429b8007c7b83517" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setActive</a>）。激活调用表示所有配置已完成。</p>
+</li>
+<li>
+<p>除此之外，处理器还有一个「处理状态」。在宿主开始执行处理调用之前，必须通过调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#af252fd721b195b793f3a5dfffc069401" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setProcessing</a>（true）来表明这一点。当宿主停止处理时，必须在最后一次处理调用之后调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#af252fd721b195b793f3a5dfffc069401" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setProcessing</a>（false）。另请参见：<a href="technical-documentation-workflow-diagrams-index.html">VST 3 工作流程图</a>。在 <em>setProcessing</em>（true）时，插件必须重置其部分内部处理状态（例如清空延迟缓冲区，以便在处理重新开始时处于确定状态）。</p>
+</li>
+<li>
+<p><strong>处理</strong>：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#a6b98eb31cf38ba96a28b303c13c64e13" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::process</a> 是实现实际处理的方法。处理所需的任何数据都作为参数 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessData.html#a100f97803b72565daedee80e34bbb7f0" target="_blank" rel="noreferrer noopener">Vst::ProcessData</a> 传递给它。这是必要的，因为处理往往在单独的线程中执行，而这是一种避免线程同步问题的简单方式。</p>
+<ul>
+<li>
+<p><strong>块大小</strong>：处理以块为单位进行。一个块中可处理的采样数上限在 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#aefb5731b94dbc899a4a7e9cd1c96e6a2" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setupProcessing</a> 中设置。处理块中实际的采样数在处理调用中传递，每次调用可能不同，但必须是 1 到 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessSetup.html#a41cd06a0c942a1b3f283092b893d0de3" target="_blank" rel="noreferrer noopener">maxSamplesPerBlock</a> 之间的值。</p>
+</li>
+<li>
+<p><strong>音频缓冲区</strong>：对于插件定义的任何音频总线，宿主都必须提供缓冲区数据——即使总线处于非活动状态。总线按索引寻址，因此省略非活动总线会打乱这些索引。不过实际的数据缓冲区可以指向空指针（参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1AudioBusBuffers.html" target="_blank" rel="noreferrer noopener">Vst::AudioBusBuffers</a>）。</p>
+<p><strong>注意</strong>：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1AudioBusBuffers.html#abac2239417d88a091cad5b4f917dc49a" target="_blank" rel="noreferrer noopener">channelBuffers32</a>（或 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1AudioBusBuffers.html#a0bbcd9a3e75d01b547097c91f9f659cf" target="_blank" rel="noreferrer noopener">channelBuffers64</a>）缓冲区指针在输入和输出上可以相同也可以不同：在 process 函数中必须考虑到这一点（例如，如果输入与输出缓冲区相同，就不要在处理前重置输出！）。对于多个输入或多个输出（在乐器插件的情况下），指针也可以相同——所有输出（或输入）可以共享同一个缓冲区！</p>
+<p><strong>重要</strong>：宿主可以在没有缓冲区的情况下调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#a6b98eb31cf38ba96a28b303c13c64e13" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::process</a>（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessData.html#a852a74fc4e461ef086bac048313d2de9" target="_blank" rel="noreferrer noopener">numInputs</a> 与 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessData.html#a1338255f88bad5cf4fb714c71f92b61a" target="_blank" rel="noreferrer noopener">numOutputs</a> 在 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1AudioBusBuffers.html" target="_blank" rel="noreferrer noopener">Vst::AudioBusBuffers</a> 中被置零，<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessData.html#aeb42971a4bd34d7baa27cff8d7e3cf26" target="_blank" rel="noreferrer noopener">numSamples</a> 也一样），以便冲刷参数（从宿主到插件）。只有当宿主需要发送参数变化且没有调用处理时，参数才能被冲刷。</p>
+</li>
+<li>
+<p><strong>参数 &amp; 自动化</strong>：任何参数变化都在处理调用中通过接口 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IParameterChanges.html" target="_blank" rel="noreferrer noopener">Vst:: IParameterChanges</a> 与 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IParamValueQueue.html" target="_blank" rel="noreferrer noopener">Vst:: IParamValueQueue</a> 传递。由 GUI 交互引起的简单参数变化，其传递方式与自动化完全相同。（参见 <a href="technical-documentation-parameters-automation-index.html">参数与自动化</a>）。</p>
+</li>
+<li>
+<p><strong>上下文</strong>：对于每个处理块，宿主应当提供关于其状态的信息。参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessContext.html" target="_blank" rel="noreferrer noopener">Vst::ProcessContext</a></p>
+</li>
+<li>
+<p><strong>事件</strong>：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEventList.html" target="_blank" rel="noreferrer noopener">Vst:: IEventList</a></p>
+</li>
+</ul>
+</li>
+</ol>
+<p><img alt="Tech_doc_6" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_6.png"/></p>
+<h2 id="the-editing-part">编辑部分</h2>
+<p><img alt="Tech_doc_7" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_7.jpg"/></p>
+<p>编辑控制器负责插件的 GUI 方面。其标准接口是 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html" target="_blank" rel="noreferrer noopener">Vst:: IEditController</a>。宿主必须为编辑控制器提供一个名为 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler</a> 的回调接口。该 handler 对于与宿主和处理器的通信都至关重要。</p>
+<ul>
+<li>
+<p><strong>GUI</strong>：控制器可以选择性地定义编辑器视图。方法 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#a1fa4ed10cc0979e5559045104c998b1a" target="_blank" rel="noreferrer noopener">Vst:: IEditController::createView</a> 允许宿主通过传入 id 字符串来指定视图类型。目前唯一定义的类型是「editor」（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/namespaceSteinberg_1_1Vst_1_1ViewType.html#aaa62c4c32f0270a908eb20c7c7124dfc" target="_blank" rel="noreferrer noopener">Vst::ViewType::kEditor</a>），但未来的版本中可能会有其他变体（例如「setup」）。另请参见 <a href="https://steinbergmedia.github.io/vst3_doc/base/classSteinberg_1_1IPlugView.html" target="_blank" rel="noreferrer noopener">Steinberg:: IPlugView</a>。</p>
+</li>
+<li>
+<p><strong>参数</strong>：控制器负责参数的管理。插件 GUI 中由用户交互引起的任何参数变化都必须正确报告给 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler</a>。宿主负责把该变化传递给处理器。为了让自动化录制正常工作，必须按预期顺序调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a8456ad739430267a12dda11a53fe9223" target="_blank" rel="noreferrer noopener">beginEdit</a>、<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a135d4e76355ef0ba0a4162a0546d5f93" target="_blank" rel="noreferrer noopener">performEdit</a> 与 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#ae380206486b11f000cad7c0d9b6e877c" target="_blank" rel="noreferrer noopener">endEdit</a>！而且必须从 <strong>UI 线程</strong>调用！借助新接口 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler2.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler2</a>（自 VST 3.1 起），插件（在 UI 中）可以把写入自动化时应使用同一宿主时间戳的参数分组，方法是用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a8456ad739430267a12dda11a53fe9223" target="_blank" rel="noreferrer noopener">beginEdit</a>/<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a135d4e76355ef0ba0a4162a0546d5f93" target="_blank" rel="noreferrer noopener">performEdit</a>/<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#ae380206486b11f000cad7c0d9b6e877c" target="_blank" rel="noreferrer noopener">endEdit</a> 函数（参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler</a>）与 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler2.html#aba339113df404a6b3c557774d4aa9102" target="_blank" rel="noreferrer noopener">startGroupEdit</a> 和 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler2.html#adbdc10ff7ecd96fa365ad4f98d57b55e" target="_blank" rel="noreferrer noopener">finishGroupEdit</a> 包起来。更多细节见 <a href="technical-documentation-parameters-automation-index.html">参数</a>。</p>
+</li>
+<li>
+<p><strong>插件结构</strong>：如果插件由若干独立的功能部分构成，编辑控制器应当通过实现 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IUnitInfo.html" target="_blank" rel="noreferrer noopener">Vst:: IUnitInfo</a> 接口来公开这一结构以及各部分所属的参数。更多细节见 <a href="technical-documentation-vst-3-units-index.html">VST 3 单位</a>。</p>
+</li>
+</ul>
+<p><img alt="Tech_doc_8" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_8.png"/></p>
+<h2 id="vst-3-threading-model">VST 3 线程模型</h2>
+<p><strong>VST 3</strong> 使用的线程模型相当简单，要求：</p>
+<ul>
+<li>所有初始化/反初始化都在 <strong>UI 线程</strong> 中完成（有时也称为主线程）。</li>
+<li>插件导出的所有函数都由宿主在 <strong>UI 线程</strong> 中调用，但以下情况除外：<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#a6b98eb31cf38ba96a28b303c13c64e13" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::process</a>：它可能在 <strong>音频线程</strong> 中调用（有时也称为实时/处理线程），要避免任何内存分配！</li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#af252fd721b195b793f3a5dfffc069401" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setProcessing</a>：它可能在 <strong>音频线程</strong> 中调用，要避免任何内存分配！</li>
+</ul>
+</li>
+<li>宿主导出的所有函数都由插件在 <strong>UI 线程</strong> 中调用。</li>
+</ul>
+<p>请查看 <a href="technical-documentation-workflow-diagrams-audio-processor-call-sequence.html">音频处理器调用序列</a> 与 <a href="technical-documentation-workflow-diagrams-edit-controller-call-sequence.html">编辑控制器调用序列</a>。</p>
+<h2 id="communication-between-the-components">组件之间的通信</h2>
+<p><strong>VST 3</strong> 的两个组件（处理器与控制器）需要一种相互通信的方式。处理这件事是宿主的任务。</p>
+<h3 id="standard-communication">标准通信</h3>
+<p>所有标准数据（如参数变化）都通过上面列出的基础接口在处理器与控制器之间传输。</p>
+<ul>
+<li>创建处理器和控制器之后，宿主根据处理器的状态设置控制器组件的状态。这是相对于此前 SDK 的一处变化，以前的 SDK 假定创建之后控制器与处理器即处于同步状态。</li>
+<li>当宿主设置新的处理器状态（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a77ac39bcc5c4b15818b1a87de2573805" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setState</a>）时，该状态也总会传递给控制器（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#a4c2e1cafd88143fda2767a9c7ba5d48f" target="_blank" rel="noreferrer noopener">Vst:: IEditController::setComponentState</a>）。随后控制器必须同步到该状态并调整其参数。</li>
+<li>当控制器向宿主传递参数变化时，宿主把新值以 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IParameterChanges.html" target="_blank" rel="noreferrer noopener">Vst:: IParameterChanges</a> 的形式传给 process 调用，从而同步处理器。</li>
+<li>处理器也可以向宿主传递输出的参数变化。（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ProcessData.html#af08c4f7dfd9e456cc98ba0eb325993ae" target="_blank" rel="noreferrer noopener">Vst::ProcessData::outputParameterChanges</a>）。这些变化通过调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#aded549c5b0f342a23dee18cc41ece6b8" target="_blank" rel="noreferrer noopener">Vst:: IEditController::setParamNormalized</a> 传递给编辑控制器。</li>
+</ul>
+<p><img alt="Tech_doc_9" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_9.jpg"/></p>
+<h3 id="private-communication">私有通信</h3>
+<p>宿主未知的数据可以通过消息传递。通信接口有：</p>
+<ul>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IConnectionPoint.html" target="_blank" rel="noreferrer noopener">Vst:: IConnectionPoint</a>：宿主在处理器与控制器之间建立连接。</li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IMessage.html" target="_blank" rel="noreferrer noopener">Vst:: IMessage</a>：表示要发送给对端的消息。</li>
+<li><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAttributeList.html" target="_blank" rel="noreferrer noopener">Vst:: IAttributeList</a>：属于某条消息的属性列表。</li>
+</ul>
+<p>请注意，从处理器发往控制器的消息不得在处理调用期间发送，因为那样不够快，会破坏实时处理。这类任务应在 <strong>UI 线程</strong> 中处理，或使用 <a href="technical-documentation-data-exchange-index.html">数据交换</a>。</p>
+<p><img alt="Tech_doc_10" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_10.png"/></p>
+<h3 id="initialization-of-communication-from-host-point-of-view">从宿主视角看通信的初始化</h3>
+<p>下面是一个宿主实现的示例，其中组件部分与控制器部分已连接并同步：</p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+// 组件部分与控制器部分此前已创建并初始化（见上文）
+// ...
+if (editController)
+{
+    // 设置宿主 handler
+    // 宿主把自己的 handler 设置给控制器
+    editController-&gt;setComponentHandler (myHostComponentHandler);
+
+    // 连接这两个组件
+    Vst::IConnectionPoint* iConnectionPointComponent = nullPtr;
+    Vst::IConnectionPoint* iConnectionPointController = nullPtr;
+
+    processorComponent-&gt;queryInterface (Vst::IConnectionPoint::iid, (void**)&amp;iConnectionPointComponent);
+    editController-&gt;queryInterface (Vst::IConnectionPoint::iid, (void**)&amp;iConnectionPointController);
+
+    if (iConnectionPointComponent &amp;&amp; iConnectionPointController)
+    {
+        iConnectionPointComponent-&gt;connect (iConnectionPointController);
+        iConnectionPointController-&gt;connect (iConnectionPointComponent);
+    }
+
+    // 使用 setComponentState 让控制器与组件同步
+    MemoryStream stream; // 定义于 "public.sdk/source/common/memorystream.h"
+    if (processorComponent-&gt;getState (&amp;stream) == kResultTrue)
+    {
+        // 回退到流的开头
+        stream.seek (0, IBStream::IStreamSeekMode::kIBSeekSet, nullptr);
+        editController-&gt;setComponentState (&amp;stream);
+    }
+
+    // 现在 processorComponent 与 editController 各部分已连接并同步……:-)
+}
+</code></pre>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 请注意，你绝不能依赖「连接直接在处理器组件与编辑控制器之间完成」这一实现细节！</p>
+</blockquote>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/API+Documentation/Index.html" rel="noreferrer noopener">Technical+Documentation/API+Documentation/Index.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>参数与自动化 - VST 3 开发者门户</title>
+<meta name="description" content="参数与自动化 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="parameters-and-automation">参数与自动化</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#parameters">参数</a><ul>
+<li><a href="#representation-of-parameter-values">参数值的表示</a><ul>
+<li><a href="#parameter-styles--step-count">参数样式 /「步进数」</a></li>
+</ul>
+</li>
+<li><a href="#conversion-of-normalized-values">归一化值的转换</a></li>
+</ul>
+</li>
+<li><a href="#automation">自动化</a><ul>
+<li><a href="#problems">问题</a></li>
+<li><a href="#automation-recording">自动化录制</a><ul>
+<li><a href="#sliders--knobs">滑块 &amp; 旋钮</a></li>
+<li><a href="#buttons--radio-groups--pop-up-menus">按钮 / 单选按钮组 / 弹出菜单</a></li>
+<li><a href="#text-input">文本输入</a></li>
+</ul>
+</li>
+<li><a href="#automation-playback">自动化回放</a></li>
+<li><a href="#gui-playback">GUI 回放</a></li>
+</ul>
+</li>
+<li><a href="#informing-the-host-about-changes">通知宿主发生了更改</a><ul>
+<li><a href="#parameter-titles-default-values-or-flags-have-changed">参数标题、默认值或标志已更改</a></li>
+<li><a href="#multiple-parameter-values-have-changed">多个参数值已更改</a></li>
+</ul>
+</li>
+</ul>
+<p><strong>相关页面：</strong></p>
+<ul>
+<li><a href="technical-documentation-vst-3-units-index.html">VST 3 单位</a></li>
+</ul>
+<hr/>
+<p>介绍参数在 <strong>VST 3</strong> 中如何定义与使用。</p>
+<h2 id="parameters">参数</h2>
+<p>插件需要参数来控制其 DSP 算法，例如滤波器的一个频率参数。插件可以导出这些参数，使其对宿主可见，并允许宿主对它们进行控制/更改/自动化/远程控制/可视化。有些参数可以定义为仅供内部使用（对用户不可见）或只读，例如与 VU 表关联的参数。</p>
+<p><a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#ab6ffbb8e3bf6f4829ab1c9c23fe935a1" target="_blank" rel="noreferrer noopener">Vst:: IEditController::getParameterCount</a> 使宿主能够确定插件导出的参数数量。插件必须为每个导出的参数分配唯一的 32 位标识符（ID）。</p>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 最多可导出 2^31 个参数，ID 范围为 <strong>[0, 2.147.483.647]</strong>，十六进制为 <strong>[0x0, 0x7FFFFFFF]</strong>。</p>
+<p>范围 <strong>[2.147.483.648, 4.294.967.295]</strong>（十六进制为 <strong>[0x80000000, 0xFFFFFFFF]</strong>）保留给宿主程序使用。</p>
+<p>值 <strong>kNoParamId</strong>（<strong>0xFFFFFFFF</strong>）是未初始化参数 ID 的默认值。</p>
+</blockquote>
+<p>请注意，任何时候都不允许更改这一分配。特别是，插件不得执行任何会导致可自动化参数集合发生变化的重新配置。唯一允许的变化是在未来的插件版本中添加或删除参数。但请记住，删除参数时自动化数据可能会丢失。</p>
+<p>通常，宿主并不了解参数的语义。不过，有几个重要的例外必须由控制器通过 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ParameterInfo.html#a8ffba1d4311e48ae488bc118f20d7edb" target="_blank" rel="noreferrer noopener">Vst:: ParameterInfo::flags</a> 声明：</p>
+<ul>
+<li>
+<p><strong>kCanAutomate</strong>：表示该参数可以由宿主通过其自动化轨道进行自动化。<strong>[SDK 3.0.0]</strong></p>
+</li>
+<li>
+<p><strong>kIsBypass</strong>：如果插件自行执行旁通处理，则必须导出相应的参数并用 kIsBypass 标记它。强烈建议由效果器插件提供这个旁通参数。如果插件不导出旁通参数，宿主可以自行执行旁通处理，并且插件的处理调用将被中止。只允许有一个旁通参数。插件应像其他参数一样保存该旁通参数的状态（当使用 getState 和 setState 时）。如果插件不需要旁通（例如乐器），则不应使用该标志。请查看此 <a href="faq-index.html">常见问题</a> 以了解旁通处理的工作方式。<strong>[SDK 3.0.0]</strong></p>
+</li>
+<li>
+<p><strong>kIsReadOnly</strong>：表示该参数无法从插件外部更改，这要求不设置 kCanAutomate。<strong>[SDK 3.0.0]</strong></p>
+</li>
+<li>
+<p><strong>kIsWrapAround</strong>：当宿主为该参数创建的 UI 控件试图把它的值设置到超出限制时，该 UI 控件会进行回绕（对 360 度旋转之类的参数很有用）。<strong>[SDK 3.0.2]</strong></p>
+</li>
+<li>
+<p><strong>kIsList</strong>：表示宿主会在通用编辑器或自动化编辑中把该参数显示为列表。<strong>[SDK 3.1.0]</strong></p>
+</li>
+<li>
+<p><strong>kIsHidden</strong>：表示该参数不会被显示，也无法从插件外部更改。这要求不设置 kCanAutomate 并设置 kIsReadOnly。<strong>[SDK 3.7.0]</strong></p>
+</li>
+<li>
+<p><strong>kIsProgramChange</strong>：如果插件支持程序列表（见 <a href="technical-documentation-vst-3-units-index.html">VST 3 单位</a>、<a href="technical-documentation-presets-program-lists-index.html">程序列表</a>），插件的每个「单位」都需要导出一个程序选择参数。当受影响的参数同时被标记为可自动化时，不允许对该参数进行自动化。宿主可以在其 GUI 的特定位置显示程序参数。<strong>[SDK 3.0.0]</strong></p>
+</li>
+</ul>
+<p>控制器必须支持把任何导出的参数转换为字符串。转换方法 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#aab2f0b853e75361d331b667e7893962e" target="_blank" rel="noreferrer noopener">Vst:: IEditController::getParamStringByValue</a> 必须为任何可能的归一化参数值提供结果。</p>
+<blockquote>
+<p>⚠️ <strong>警告</strong><br/> 参数值始终以归一化的浮点（64 位 double）表示 <strong>[0.0, 1.0]</strong> 传输。</p>
+</blockquote>
+<h3 id="representation-of-parameter-values">参数值的表示</h3>
+<p>插件参数通常有多种表示形式。插件的 GUI 可能显示某个看起来是单个参数的东西，但它可能同时控制多个处理参数。或者 GUI 表示显示的是 DSP 参数经过比例变换后的表示。</p>
+<p>在从 GUI 到 DSP 算法的某个环节上，必须执行这种变换。宿主不需要关于 DSP 参数的信息，但它负责向处理器报告参数更改。因此，处理器是唯一可以发生变换的地方，并且所有参数始终必须与 GUI 表示一致。</p>
+<p>这符合把 GUI 与处理分离的思路吗？目前没有问题</p>
+<ul>
+<li>这只是一种职责分离，仅此而已。处理器组件和控制器组件必须基于同一个内部插件模型工作。控制器知道该模型在 GUI 中应如何呈现。处理器知道该模型必须如何转换为 DSP 参数。<br/> <strong>VST 3</strong> 接口为该模型的一部分（作为参数导出的那部分）建议了一种归一化值表示。这意味着每个值都必须位于 0.0 到 1.0 的范围内。</li>
+</ul>
+<h4 id="parameter-styles--step-count">参数样式 /「步进数」</h4>
+<p>尽管值以归一化格式传输，宿主仍需要了解参数所显示的 GUI 表示的一些细节。例如，在编辑自动化数据时，宿主必须了解以「步进数」表示的参数性质（见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ParameterInfo.html#ac1efeff62e4ba9aea101c3327e0b5c4d" target="_blank" rel="noreferrer noopener">Vst:: ParameterInfo::stepCount</a>）。</p>
+<p><strong>步进数语义：</strong></p>
+<ul>
+<li><strong>0</strong>：连续参数。任何归一化值都有精确的映射（0 = 值之间没有步进）</li>
+<li><strong>1</strong>：具有 2 个状态的离散参数，如（开/关）（是/否）等。（1 = 这些状态之间有一个步进）</li>
+<li><strong>2</strong>：具有 3 个状态的离散参数（0,1,2）或（3,5,7）（2 = 这些状态之间有两个步进）</li>
+<li><strong>3</strong>：等等……</li>
+</ul>
+<h3 id="conversion-of-normalized-values">归一化值的转换</h3>
+<p>控制器和处理器必须使用归一化的参数值工作。</p>
+<ul>
+<li>
+<p>步进数 0：连续参数只需相应地映射即可</p>
+</li>
+<li>
+<p>步进数 n：离散参数需要多留意一些</p>
+<ul>
+<li><strong>离散值 =&gt; 归一化</strong></li>
+</ul>
+<pre><code class="language-c++">double normalized = discreteValue / (double)stepCount;
+</code></pre>
+<ul>
+<li><strong>归一化 =&gt; 离散值（反归一化）</strong></li>
+</ul>
+<pre><code class="language-c++">int discreteValue = min (stepCount, normalized *(stepCount + 1));
+</code></pre>
+</li>
+</ul>
+<p><strong>示例</strong>：步进数 3</p>
+<p><img alt="Tech_doc_11" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_11.jpg"/></p>
+<h2 id="automation">自动化</h2>
+<p>支持参数自动化的宿主依赖于拥有这些参数的组件的正确配合。<strong>VST 3</strong> 接口设计的一个意图是减少实现中可能出现的错误。处理器与控制器的分离强制要求所有参数更改都必须由宿主以定义好的方式处理。此外，这还允许宿主把这些更改存储为自动化数据。不过，还有一些事情需要考虑：</p>
+<p>任何自动化参数都不得影响另一个自动化参数！</p>
+<p>最典型的例子是预设更改的自动化。一次预设更改可能导致所有「普通」参数发生变化。因此，如果已经为这些参数录制了自动化数据，同时预设更改也被录制下来：谁优先？这个问题无法回答，只能通过避免它来解决。这就是默认不允许对预设更改进行自动化的原因。</p>
+<h3 id="problems">问题</h3>
+<p>固定的 0.0 到 1.0 值范围在某些方面简化了参数的处理，但也存在一些问题：</p>
+<ul>
+<li>
+<p><strong>非线性缩放</strong><br/> 如果值的 DSP 表示与导出的归一化表示之间不是线性缩放关系（例如使用分贝刻度时就会如此），编辑控制器必须提供到普通表示的转换。这使宿主能够在移动自动化数据（处于 GUI 表示中）时保持原始的值关系不变。（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#a849747dc98909312b4cdbdeea82dbae0" target="_blank" rel="noreferrer noopener">Vst:: IEditController::normalizedParamToPlain</a> / <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#ae9706616ae6d938bbf102954f8f2f110" target="_blank" rel="noreferrer noopener">Vst:: IEditController::plainParamToNormalized</a>）。</p>
+</li>
+<li>
+<p><strong>未来插件版本中的变化</strong><br/> 例如，考虑一个控制三个选项之一的离散参数。如果宿主把归一化值存储为自动化数据，而插件的新版本引入了第四个选项，那么自动化数据现在就会失效。因此，宿主要么必须把反归一化值存储为自动化数据，要么必须相应地重新计算自动化数据。</p>
+</li>
+</ul>
+<h3 id="automation-recording">自动化录制</h3>
+<p>自动化录制由宿主执行。为此，宿主必须知道一次操作的开始和结束。因此，插件必须按以下方式操作 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler</a> 接口，并且必须在 <strong>UI 线程</strong> 中进行！</p>
+<ul>
+<li>
+<p>一次操作的开始必须通过 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a8456ad739430267a12dda11a53fe9223" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler::beginEdit</a> 发出信号</p>
+</li>
+<li>
+<p>参数更改通过 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a135d4e76355ef0ba0a4162a0546d5f93" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler::performEdit</a> 报告</p>
+</li>
+<li>
+<p>一次操作的结束必须通过 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#ae380206486b11f000cad7c0d9b6e877c" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler::endEdit</a> 发出信号</p>
+</li>
+</ul>
+<p>插件必须遵守这些回调的顺序。否则，自动化录制无法正常工作。不过，实现上可能会遇到困难。每种 GUI 控件及其操作方式，连同受控参数的性质，都需要具体的考量。为处理最常见的情况：</p>
+<h4 id="sliders--knobs">滑块与旋钮</h4>
+<p>这类控件通常控制连续参数，并且通常用鼠标操作。这种常见情况最容易处理：在鼠标按下时调用 beginEdit（如果控件允许跳转，随后调用 performEdit），在鼠标拖动时调用 performEdit，在鼠标松开时调用 endEdit。</p>
+<p>麻烦从 <strong>鼠标滚轮</strong> 开始：滚轮操作时根本没有所谓的开始或结束——每个滚轮事件都是「凭空」到达的。在这种情况下，启用正确自动化录制的唯一方法是使用定时器。</p>
+<ul>
+<li>插件实现应在处理第一个滚轮事件时调用 beginEdit 并启动一个定时器（随后进行第一次 performEdit 调用）。在超时间隔内到达的后续滚轮事件用 performEdit 报告，并重新启动定时器。当超时期限过去而没有更多事件时，应调用 endEdit，并可以移除定时器。</li>
+<li>但由于录制自动化数据是宿主的任务，有人可能会认为在这种情况下定时器也应由宿主负责。这就是存在以下规则例外的原因：<ul>
+<li>鼠标滚轮事件可以不带 beginEdit 和 endEdit 报告给宿主。宿主必须准备好接收某个参数在没有先前 beginEdit 调用的情况下到来的 performEdit，并自行处理超时。</li>
+</ul>
+</li>
+</ul>
+<h4 id="buttons--radio-groups--pop-up-menus">按钮 / 单选按钮组 / 弹出菜单</h4>
+<p>这类控件通常控制离散参数，只是切换某个状态。正确的处理方式是依次调用 beginEdit、performEdit 和 endEdit。受影响的参数必须以正确的步进数导出给宿主，因为离散参数在自动化方面的处理方式与连续参数不同。</p>
+<p>按钮通常不支持鼠标滚轮处理，但弹出菜单有时支持。离散参数不需要使用定时器就能被正确录制。</p>
+<p>因此，插件应为每个滚轮事件依次调用这 3 个函数——同样，另一种选择是省略 beginEdit 和 endEdit，但在这种情况下，务必向宿主正确报告参数的离散性质。</p>
+<h4 id="text-input">文本输入</h4>
+<p>要报告文本输入值更改对连续参数或离散参数的结果，始终依次调用 beginEdit、performEdit 和 endEdit。</p>
+<h3 id="automation-playback">自动化回放</h3>
+<p>在 <strong>VST 3</strong> 中，自动化回放是插件的任务，而提供自动化数据是宿主的任务。参数更改到达处理器的唯一途径是处理调用。从编辑控制器接收参数更改与回放自动化数据是同一件事。</p>
+<p>需要执行从归一化 GUI 表示到 DSP 表示的所有变换，这会产生一些开销。执行逐采样精确的自动化需要更多开销，因为必须为每个单采样计算 DSP 值。虽然这无法完全避免，但插件实现可以自行选择在自动化精度上花费多少处理时间。宿主始终以一种允许对底层自动化曲线进行逐采样精确重建的方式传输值更改。具体的实现由插件负责。</p>
+<p><img alt="Tech_doc_12" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_12.jpg"/></p>
+<p>处理器在处理调用中获得自动化数据，方式是针对每个具有自动化数据的参数使用一个参数更改队列：</p>
+<p>一个 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IParameterChanges.html" target="_blank" rel="noreferrer noopener">Vst:: IParameterChanges</a> 含有若干 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IParamValueQueue.html" target="_blank" rel="noreferrer noopener">Vst:: IParamValueQueues</a>（针对特定参数 ID），其中又含有若干自动化点。</p>
+<blockquote>
+<p>⚠️ <strong>警告</strong>\</p>
+<ul>
+<li>一个参数（ID）在 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IParameterChanges.html" target="_blank" rel="noreferrer noopener">Vst:: IParameterChanges</a> 列表中只出现一次！</li>
+<li>一个 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IParamValueQueue.html" target="_blank" rel="noreferrer noopener">Vst:: IParamValueQueues</a> 内的自动化点按偏移（音频块内的位置）排序！</li>
+</ul>
+</blockquote>
+<h3 id="gui-playback">GUI 回放</h3>
+<p>当自动化数据传输到处理器时，宿主负责更新插件 GUI。这是通过频繁调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#aded549c5b0f342a23dee18cc41ece6b8" target="_blank" rel="noreferrer noopener">Vst:: IEditController::setParamNormalized</a>、在 <strong>UI 线程</strong> 中实现的。</p>
+<p>另见 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IParameterChanges.html" target="_blank" rel="noreferrer noopener">Vst:: IParameterChanges</a>、<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IParamValueQueue.html" target="_blank" rel="noreferrer noopener">Vst:: IParamValueQueue</a>。</p>
+<h2 id="informing-the-host-about-changes">通知宿主更改</h2>
+<h3 id="parameter-titles-default-values-or-flags-have-changed">参数标题、默认值或标志已更改</h3>
+<p>如果发生了某些情况（例如用户交互），改变了某个或多个参数的参数样式（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ParameterInfo.html#ae3a5143ca8d0e271dbc259645a4ae645" target="_blank" rel="noreferrer noopener">ParameterFlags</a>）、标题或默认值，插件必须调用</p>
+<pre><code class="language-c++">IComponentHandler::restartComponent (kParamTitlesChanged);
+</code></pre>
+<p>以通知宿主这一更改（在 <strong>UI 线程</strong> 中）。宿主会重新扫描 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1ParameterInfo.html" target="_blank" rel="noreferrer noopener">ParameterInfos</a>，并使用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#a0ba78602ecf2f5e8d747d8b01d4cfb6c" target="_blank" rel="noreferrer noopener">getParameterInfo</a>。</p>
+<h3 id="multiple-parameter-values-have-changed">多个参数值已更改</h3>
+<p>例如，作为程序更改的结果，插件必须调用：</p>
+<pre><code class="language-c++">IComponentHandler::restartComponent (kParamValuesChanged);
+</code></pre>
+<p>以通知宿主这一更改（在 <strong>UI 线程</strong> 中）。宿主会使所有参数值缓存失效，并向编辑控制器询问当前值。</p>
+<p>如果只有部分值发生更改（少于 10 个），插件应使用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponentHandler.html#a135d4e76355ef0ba0a4162a0546d5f93" target="_blank" rel="noreferrer noopener">Vst:: IComponentHandler::performEdit</a> 接口（在使用自动化时展示正确的用法：<a href="#automation-recording">自动化录制</a>）</p>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 如果插件需要向宿主通知既包含参数标题、默认值或标志、又包含（多个参数的）值的变化，它可以组合 restartComponent 标志：</p>
+</blockquote>
+<pre><code class="language-c++">IComponentHandler::restartComponent (kParamValuesChanged|kParamTitlesChanged);
+</code></pre>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/Parameters+Automation/Index.html" rel="noreferrer noopener">Technical+Documentation/Parameters+Automation/Index.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

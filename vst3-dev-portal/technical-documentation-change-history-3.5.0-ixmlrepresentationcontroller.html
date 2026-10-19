@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[3.5.0] 参数的远程呈现 - VST 3 开发者门户</title>
+<meta name="description" content="[3.5.0] 参数的远程呈现 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="350-remote-presentation-of-parameters">[3.5.0] 参数的远程呈现</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#introduction">引言</a></li>
+<li><a href="#example">示例</a></li>
+<li><a href="#graphical-overview">图形概览</a></li>
+<li><a href="#example-of-implementation-using-helper-class">使用辅助类的实现示例</a></li>
+<li><a href="#location-table-for-vst-xmls-representation">VST XMLs 表示的位置表</a><ul>
+<li><a href="#for-mac-platform">Mac 平台</a></li>
+<li><a href="#for-windows-vista781011-platform">Windows Vista/7/8/10/11 平台</a></li>
+</ul>
+</li>
+<li><a href="#for-windows-xp2000-platform">Windows XP/2000 平台</a></li>
+</ul>
+<hr/>
+<h2 id="introduction">引言</h2>
+<p>如何更好地为参数支持远程设备/控制器（UI 与硬件）。</p>
+<p>自 VST 3.5 起，提供了一个新接口：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IXmlRepresentationController.html" target="_blank" rel="noreferrer noopener">Vst:: IXmlRepresentationController</a></p>
+<p>用于组件的扩展插件接口 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html" target="_blank" rel="noreferrer noopener">Vst:: IEditController</a>：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IXmlRepresentationController.html" target="_blank" rel="noreferrer noopener">Vst:: IXmlRepresentationController</a></p>
+<ul>
+<li>[plug imp]</li>
+<li>[extends <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html" target="_blank" rel="noreferrer noopener">Vst:: IEditController</a>]</li>
+<li>[发布于：3.5.0]</li>
+<li>[optional]</li>
+</ul>
+<p>基于 XML 的表示是一种为特定远程设备（硬件或软件机架（如 quick controls））导出、组织并分组插件参数的方式。它可以更精确地描述每个参数（哪一个最适合映射到旋钮、匹配受限远程显示的不同标题长度等）。</p>
+<ul>
+<li>一个表示由页面组成（这意味着要看到所有导出的参数，用户必须在各页面之间导航）。</li>
+<li>一个页面由单元格组成（例如每页 8 个单元格）。</li>
+<li>一个单元格由层组成（例如一个单元格可以有一个旋钮、一个显示和一个按钮，也就是 3 层）。</li>
+<li>层使用 ParameterID 作为标识符关联到插件参数：<ul>
+<li>它可以是一个带标题和/或数值显示的旋钮，该显示使用相同的 ParameterID，但也可以使用另一个。</li>
+<li>开关</li>
+<li>链接，可直接跳转到某个子页面（位于另一页）</li>
+<li>更多……请参见 Vst::LayerType</li>
+</ul>
+</li>
+</ul>
+<p>该表示以 XML 文本实现，遵循文档类型定义（DTD）：http://dtd.steinberg.net/VST-Remote-1.1.dtd</p>
+<h2 id="example">示例</h2>
+<p><strong>以下是 getXmlRepresentationStream 的流中应传入内容的示例：</strong></p>
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;!DOCTYPE vstXML PUBLIC "-//Steinberg//DTD VST Remote 1.1//EN" "http://dtd.steinberg.net/VST-Remote-1.1.dtd"&gt;
+&lt;vstXML version="1.0"&gt;
+    &lt;plugin classID="341FC5898AAA46A7A506BC0799E882AE" name="Chorus" vendor="Steinberg Media Technologies" /&gt;
+    &lt;originator&gt;My name&lt;/originator&gt;
+    &lt;date&gt;2010-12-31&lt;/date&gt;
+    &lt;comment&gt;This is an example for 4 Cells per Page for the Remote named ProductRemote
+             from company HardwareCompany.&lt;/comment&gt;
+ 
+     &lt;!-- ===================================== --&gt;
+    &lt;representation name="ProductRemote" vendor="HardwareCompany" version="1.0"&gt;
+        &lt;page name="Root"&gt;
+            &lt;cell&gt;
+                &lt;layer type="knob" parameterID="0"&gt;
+                    &lt;titleDisplay&gt;
+                        &lt;name&gt;Mix dry/wet&lt;/name&gt;
+                        &lt;name&gt;Mix&lt;/name&gt;
+                    &lt;/titleDisplay&gt;
+                &lt;/layer&gt;
+            &lt;/cell&gt;
+            &lt;cell&gt;
+                &lt;layer type="display"&gt;&lt;/layer&gt;
+            &lt;/cell&gt;
+            &lt;cell&gt;
+                &lt;layer type="knob" parameterID="3"&gt;
+                    &lt;titleDisplay&gt;
+                        &lt;name&gt;Delay&lt;/name&gt;
+                        &lt;name&gt;Dly&lt;/name&gt;
+                    &lt;/titleDisplay&gt;
+                &lt;/layer&gt;
+            &lt;/cell&gt;
+            &lt;cell&gt;
+                &lt;layer type="knob" parameterID="15"&gt;
+                    &lt;titleDisplay&gt;
+                        &lt;name&gt;Spatial&lt;/name&gt;
+                        &lt;name&gt;Spat&lt;/name&gt;
+                    &lt;/titleDisplay&gt;
+                &lt;/layer&gt;
+            &lt;/cell&gt;
+        &lt;/page&gt;
+        &lt;page name="Page 2"&gt;
+            &lt;cell&gt;
+                &lt;layer type="LED" ledStyle="spread" parameterID="2"&gt;
+                    &lt;titleDisplay&gt;
+                        &lt;name&gt;Width +&lt;/name&gt;
+                        &lt;name&gt;Widt&lt;/name&gt;
+                    &lt;/titleDisplay&gt;
+                &lt;/layer&gt;
+                &lt;!--这是 A/B 形状的开关--&gt;
+                &lt;layer type="switch" switchStyle="pushIncLooped" parameterID="4"&gt;&lt;/layer&gt;
+            &lt;/cell&gt;
+            &lt;cell&gt;
+                &lt;layer type="display"&gt;&lt;/layer&gt;
+            &lt;/cell&gt;
+            &lt;cell&gt;
+                &lt;layer type="LED" ledStyle="singleDot" parameterID="17"&gt;
+                    &lt;titleDisplay&gt;
+                        &lt;name&gt;Sync Note +&lt;/name&gt;
+                        &lt;name&gt;Note&lt;/name&gt;
+                    &lt;/titleDisplay&gt;
+                &lt;/layer&gt;
+                &lt;!--这是同步到速度开/关的开关--&gt;
+                &lt;layer type="switch" switchStyle="pushIncLooped" parameterID="16"&gt;&lt;/layer&gt;
+            &lt;/cell&gt;
+            &lt;cell&gt;
+                &lt;layer type="knob" parameterID="1"&gt;
+                    &lt;titleDisplay&gt;
+                        &lt;name&gt;Rate&lt;/name&gt;
+                    &lt;/titleDisplay&gt;
+                &lt;/layer&gt;
+            &lt;/cell&gt;
+        &lt;/page&gt;
+    &lt;/representation&gt;
+&lt;/vstXML&gt;
+</code></pre>
+<h2 id="graphical-overview">图形概览</h2>
+<p><img alt="ech_doc_32" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_32.jpg"/></p>
+<h2 id="example-of-implementation-using-helper-class">使用辅助类的实现示例</h2>
+<p>参见 <a href="https://steinbergmedia.github.io/vst3_doc/vstsdk/classSteinberg_1_1Vst_1_1XmlRepresentationHelper.html" target="_blank" rel="noreferrer noopener">Vst:: XmlRepresentationHelper</a>。</p>
+<h2 id="location-table-for-vst-xmls-representation">VST XMLs 表示的位置表</h2>
+<p>当宿主需要使用 VST XMLs 表示时（例如用于内部用途，如 quick control 分配，以按页面获取插件最重要的参数），宿主会在特定位置检查给定远程设备和给定插件是否存在一个表示 XML 文件，其文件名就是远程名称（关于路径如何定义见下文）。如果找不到，宿主就会通过 Steinberg::Vst::IXmlRepresentationController 向插件询问（如果插件实现了它）。</p>
+<p>说明：</p>
+<ul>
+<li>优先级列：<ul>
+<li>指定宿主的扫描顺序。将先检查路径 #1，最后检查 #8。找到的第一个 XML 会被使用，并覆盖其他 XML。</li>
+</ul>
+</li>
+<li>类型列：<ul>
+<li>用户：专属于当前登录的用户</li>
+<li>共享：适用于本机的所有用户</li>
+<li>工厂：由插件或应用程序安装程序随插件一起安装</li>
+</ul>
+</li>
+<li>$COMPANY 和 $PLUGIN-NAME 文件夹名称只包含文件命名允许的字符<ul>
+<li>把字符 "\*?/:.<>|\"	
+" 替换为 "_"</li>
+</ul>
+</li>
+<li>$UID 是处理器唯一 ID 的字符串表示形式<ul>
+<li>例如："57F704D1FA974D668083E4B9AF581D23" len=32)</li>
+</ul>
+</li>
+</ul>
+<h3 id="for-mac-platform">Mac 平台</h3>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: left">优先级</th><th style="text-align: left">类型</th><th style="text-align: left">范围</th><th style="text-align: left">写入</th><th style="text-align: left">路径</th><th style="text-align: left">说明</th></tr></thead><tbody>
+<tr><td style="text-align: left">1</td><td style="text-align: left">用户</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">Users/$USERNAME/Library/Audio/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left"></td></tr>
+<tr><td style="text-align: left">2</td><td style="text-align: left">用户</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">Users/$USERNAME/Library/Audio/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left"></td></tr>
+<tr><td style="text-align: left">3</td><td style="text-align: left">Shared_Factory</td><td style="text-align: left">Public</td><td style="text-align: left">-</td><td style="text-align: left">Library/Audio/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left">计算机共享的 FactoryROM</td></tr>
+<tr><td style="text-align: left">4</td><td style="text-align: left">Shared_Factory</td><td style="text-align: left">Public</td><td style="text-align: left">-</td><td style="text-align: left">Library/Audio/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">计算机共享的 FactoryROM</td></tr>
+<tr><td style="text-align: left">5</td><td style="text-align: left">App_Factory</td><td style="text-align: left">Apps</td><td style="text-align: left">-</td><td style="text-align: left">[$APPFOLDER]/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left">宿主程序</td></tr>
+<tr><td style="text-align: left">6</td><td style="text-align: left">App_Factory</td><td style="text-align: left">Apps</td><td style="text-align: left">-</td><td style="text-align: left">[$APPFOLDER]/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">宿主程序</td></tr>
+<tr><td style="text-align: left">7</td><td style="text-align: left">Plug_Factory</td><td style="text-align: left">Plugs</td><td style="text-align: left">-</td><td style="text-align: left">$PLUGIN-PATH/Contents/Resources/VST XMLs/$PLUGIN-NAME/$UID</td><td style="text-align: left">插件包</td></tr>
+<tr><td style="text-align: left">8</td><td style="text-align: left">Plug_Factory</td><td style="text-align: left">Plugs</td><td style="text-align: left">-</td><td style="text-align: left">$PLUGIN-PATH/Contents/Resources/VST XMLs/$PLUGIN-NAME</td><td style="text-align: left">插件包</td></tr>
+</tbody></table>
+</div>
+<h3 id="for-windows-vista781011-platform">Windows Vista/7/8/10/11 平台</h3>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: left">优先级</th><th style="text-align: left">类型</th><th style="text-align: left">范围</th><th style="text-align: left">写入</th><th style="text-align: left">路径</th><th style="text-align: left">说明</th></tr></thead><tbody>
+<tr><td style="text-align: left">1</td><td style="text-align: left">用户</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">[Users/$USERNAME/Documents]/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left">FOLDERID_Documents</td></tr>
+<tr><td style="text-align: left">2</td><td style="text-align: left">用户</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">[Users/$USERNAME/Documents]/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">FOLDERID_Documents</td></tr>
+<tr><td style="text-align: left">3</td><td style="text-align: left">User_Factory</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">[Users/$USERNAME/AppData/Roaming]/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left">FOLDERID_RoamingAppData</td></tr>
+<tr><td style="text-align: left">4</td><td style="text-align: left">User_Factory</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">[Users/$USERNAME/AppData/Roaming]/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">FOLDERID_RoamingAppData</td></tr>
+<tr><td style="text-align: left">5</td><td style="text-align: left">Shared_Factory</td><td style="text-align: left">Public</td><td style="text-align: left">-</td><td style="text-align: left">[ProgramData]/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left">FOLDERID_ProgramData</td></tr>
+<tr><td style="text-align: left">6</td><td style="text-align: left">Shared_Factory</td><td style="text-align: left">Public</td><td style="text-align: left">-</td><td style="text-align: left">[ProgramData]/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">FOLDERID_ProgramData</td></tr>
+<tr><td style="text-align: left">7</td><td style="text-align: left">App_Factory</td><td style="text-align: left">Apps</td><td style="text-align: left">-</td><td style="text-align: left">[$APPFOLDER]/VST XMLs/$COMPANY/</td><td style="text-align: left">宿主程序</td></tr>
+<tr><td style="text-align: left">8</td><td style="text-align: left">App_Factory</td><td style="text-align: left">Apps</td><td style="text-align: left">-</td><td style="text-align: left">[$APPFOLDER]/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">宿主程序</td></tr>
+<tr><td style="text-align: left">9</td><td style="text-align: left">Plug_Factory</td><td style="text-align: left">Plugs</td><td style="text-align: left">-</td><td style="text-align: left">$PLUGIN-PATH/Contents/Resources/VST XMLs/$PLUGIN-NAME/$UID</td><td style="text-align: left">插件包</td></tr>
+<tr><td style="text-align: left">10</td><td style="text-align: left">Plug_Factory</td><td style="text-align: left">Plugs</td><td style="text-align: left">-</td><td style="text-align: left">$PLUGIN-PATH/Contents/Resources/VST XMLs/$PLUGIN-NAME</td><td style="text-align: left">插件包</td></tr>
+</tbody></table>
+</div>
+<h2 id="for-windows-xp2000-platform">Windows XP/2000 平台</h2>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: left">优先级</th><th style="text-align: left">类型</th><th style="text-align: left">范围</th><th style="text-align: left">写入</th><th style="text-align: left">路径</th><th style="text-align: left">说明</th></tr></thead><tbody>
+<tr><td style="text-align: left">1</td><td style="text-align: left">用户</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">[My Documents]/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left">CSIDL_PERSONAL</td></tr>
+<tr><td style="text-align: left">2</td><td style="text-align: left">用户</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">[My Documents]/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">CSIDL_PERSONAL</td></tr>
+<tr><td style="text-align: left">3</td><td style="text-align: left">User_Factory</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">[Documents and Settings/$USERNAME/Application Data]/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left">CSIDL_APPDATA</td></tr>
+<tr><td style="text-align: left">4</td><td style="text-align: left">User_Factory</td><td style="text-align: left">用户</td><td style="text-align: left">X</td><td style="text-align: left">[Documents and Settings/$USERNAME/Application Data]/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">CSIDL_APPDATA</td></tr>
+<tr><td style="text-align: left">5</td><td style="text-align: left">Shared_Factory</td><td style="text-align: left">Public</td><td style="text-align: left">-</td><td style="text-align: left">[Documents and Settings/$ALLUSERS/Application Data]/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left">CSIDL_COMMON_APPDATA</td></tr>
+<tr><td style="text-align: left">6</td><td style="text-align: left">Shared_Factory</td><td style="text-align: left">Public</td><td style="text-align: left">-</td><td style="text-align: left">[Documents and Settings/$ALLUSERS/Application Data]/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">CSIDL_COMMON_APPDATA</td></tr>
+<tr><td style="text-align: left">7</td><td style="text-align: left">App_Factory</td><td style="text-align: left">Apps</td><td style="text-align: left">-</td><td style="text-align: left">[$APPFOLDER]/VST XMLs/$COMPANY/$PLUGIN-NAME/$UID</td><td style="text-align: left">宿主程序</td></tr>
+<tr><td style="text-align: left">8</td><td style="text-align: left">App_Factory</td><td style="text-align: left">Apps</td><td style="text-align: left">-</td><td style="text-align: left">[$APPFOLDER]/VST XMLs/$COMPANY/$PLUGIN-NAME</td><td style="text-align: left">宿主程序</td></tr>
+<tr><td style="text-align: left">9</td><td style="text-align: left">Plug_Factory</td><td style="text-align: left">Plugs</td><td style="text-align: left">-</td><td style="text-align: left">$PLUGIN-PATH/Contents/Resources/VST XMLs/$PLUGIN-NAME/$UID</td><td style="text-align: left">插件包</td></tr>
+<tr><td style="text-align: left">10</td><td style="text-align: left">Plug_Factory</td><td style="text-align: left">Plugs</td><td style="text-align: left">-</td><td style="text-align: left">$PLUGIN-PATH/Contents/Resources/VST XMLs/$PLUGIN-NAME</td><td style="text-align: left">插件包</td></tr>
+</tbody></table>
+</div>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/Change+History/3.5.0/IXmlRepresentationController.html" rel="noreferrer noopener">Technical+Documentation/Change+History/3.5.0/IXmlRepresentationController.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

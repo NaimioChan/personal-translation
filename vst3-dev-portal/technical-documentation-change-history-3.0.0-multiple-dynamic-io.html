@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[3.0.0] 多重动态 I/O 支持 - VST 3 开发者门户</title>
+<meta name="description" content="[3.0.0] 多重动态 I/O 支持 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="300-multiple-dynamic-io-support">[3.0.0] 多重动态 I/O 支持</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#introduction">引言</a></li>
+<li><a href="#multiple-input-or-output-busses">多个输入或输出总线</a></li>
+<li><a href="#information-about-busses">总线的信息</a></li>
+<li><a href="#activation-of-busses">总线的激活</a></li>
+<li><a href="#what-is-a-side-chain">什么是侧链？</a></li>
+<li><a href="#how-can-i-implement-a-side-chain-path-into-my-plug-in">如何在插件中实现侧链通路？</a></li>
+<li><a href="#audio-bus-channel-configuration">音频总线的通道配置</a><ul>
+<li><a href="#how-are-the-different-speakers-located">不同扬声器是如何定位的？</a></li>
+<li><a href="#my-plug-in-is-capable-of-processing-all-possible-channel-configurations">我的插件能够处理所有可能的通道配置</a></li>
+<li><a href="#how-are-speaker-arrangement-settings-handled-for-fx-plug-ins">FX 插件的扬声器布置设置是如何处理的？</a></li>
+<li><a href="#how-report-to-the-host-that-the-plug-in-arrangement-has-changed">如何向宿主报告插件的布置已更改？</a></li>
+<li><a href="#my-plug-in-has-mono-input-and-stereo-output-how-does-vst-3-handle-this">我的插件是单声道输入、立体声输出。VST 3 如何处理这种情况？</a></li>
+</ul>
+</li>
+</ul>
+<p><strong>相关页面</strong></p>
+<ul>
+<li><a href="technical-documentation-workflow-diagrams-audio-processor-call-sequence.html">音频处理器调用序列</a></li>
+<li><a href="technical-documentation-workflow-diagrams-bus-arrangement-setting-sequence.html">总线布置设置序列</a></li>
+<li><a href="technical-documentation-complex-structures-index.html">复杂插件结构 / 多音色乐器</a></li>
+</ul>
+<hr/>
+<h2 id="introduction">引言</h2>
+<p><strong>VST 3</strong> 插件不再局限于固定数量的输入和输出，其 I/O 配置可以动态适应通道配置。<a href="https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical+Documentation/Change+History/3.0.0/Multiple+Dynamic+IO.html#what-is-a-side-chain" target="_blank" rel="noreferrer noopener">侧链</a>也很容易实现。这包括在加载后停用未使用的总线，以及在需要时重新激活它们的可能性。这样可以让混音器更整洁，并进一步帮助降低 CPU 负载。</p>
+<p>可以把<strong>总线</strong>理解为归于一体的一组「数据通道」：</p>
+<ul>
+<li>它描述插件的数据输入（<strong>kInput</strong>）或数据输出（<strong>kOutput</strong>）。</li>
+<li>支持 2 种总线类型：<strong>kAudio</strong> 和 <strong>kEvent</strong></li>
+<li>一个 VST 组件可以定义任意所需数量的总线。</li>
+<li>一个总线可以定义为主总线（<strong>kMain</strong>）或用于侧链的辅助总线（<strong>kAux</strong>）（在导出的总线列表中，kMain 总线必须位于任何其他 kAux 总线之前）</li>
+<li>能够处理多个总线的宿主允许用户激活总线，而这些总线最初全部处于未激活状态。</li>
+</ul>
+<h2 id="multiple-input-or-output-busses">多个输入或输出总线</h2>
+<p>插件可能有各种理由定义多个事件输入总线，例如：</p>
+<ul>
+<li>对于支持同时加载超过 16 个子乐器的复杂多音色乐器，从宿主视角在其输入中加入某种结构（模拟若干个「MIDI 端口」及其子 MIDI 通道）</li>
+<li>或者不同的输入含义，它们在宿主中可以清楚地区分和选择：<ul>
+<li>一个输入用于演奏事件</li>
+<li>一个输入用于调制事件</li>
+</ul>
+</li>
+</ul>
+<p>插件可能有各种理由定义多个事件输出总线，例如：</p>
+<ul>
+<li>一个主事件输出用于来自 UI 的演奏事件，另一个事件输出用于琶音器内部生成的事件。</li>
+</ul>
+<p>插件可以决定导出多于一个音频输入，方法是添加第二个音频输入（<a href="https://steinbergmedia.github.io/vst3_dev_portal/pages/Technical+Documentation/Change+History/3.0.0/Multiple+Dynamic+IO.html#what-is-a-side-chain" target="_blank" rel="noreferrer noopener">侧链，见下文</a>）或更多。</p>
+<p>多个音频输出的典型用例是乐器插件，例如：</p>
+<ul>
+<li>一个主音频输出，以及若干用于 FX 返回或 FX 发送的辅助音频输出。</li>
+<li>每个内部加载的乐器各有一个主音频输出。</li>
+</ul>
+<p><strong>示例</strong></p>
+<pre><code class="language-c++">//------------------------------------------------------------------------
+tresult PLUGIN_API MyPlugin::initialize (FUnknown* context)
+{
+    //---总是初始化父类-------
+    tresult result = AudioEffect::initialize (context);
+    // 如果一切正常，继续
+    if (result != kResultOk)
+    {
+        return result;
+    }
+
+    //---创建音频输入/输出总线------
+    // 我们需要一个立体声输入和一个立体声输出
+    addAudioInput (STR16 ("Stereo In"), SpeakerArr::kStereo, kMain, BusInfo::kDefaultActive);
+    addAudioOutput (STR16 ("Stereo Out"), SpeakerArr::kStereo, kMain, BusInfo::kDefaultActive);
+
+    //---创建主事件输入总线（1 个只有 16 个通道的总线）------
+    addEventInput (STR16 ("Event In"), 16, kMain, BusInfo::kDefaultActive);
+
+    //---创建辅助事件输入总线（1 个只有 1 个通道的总线）------
+    addEventInput (STR16 ("Mod In"), 1, kAux, 0); // 不希望默认激活
+
+    //---创建事件输出总线（1 个只有 1 个通道的总线）------
+    addEventOutput (STR16 ("Arpeggiator"), 1, kAux, 0); // 不希望默认激活
+
+    return kResultOk;
+}
+</code></pre>
+<h2 id="information-about-busses">总线的信息</h2>
+<p>为了获取插件导出的总线数量与相关信息，宿主使用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html" target="_blank" rel="noreferrer noopener">Vst:: IComponent</a> 接口的以下函数：</p>
+<pre><code class="language-c++">/** 在插件初始化之后调用。 */
+virtual int32 PLUGIN_API getBusCount (MediaType type, BusDirection dir) = 0;
+ 
+/** 在插件初始化之后调用。 */
+virtual tresult PLUGIN_API getBusInfo (MediaType type, BusDirection dir, int32 index, BusInfo&amp; bus /*out*/) = 0;
+</code></pre>
+<p><strong>BusInfo</strong> 包含如下信息：</p>
+<ul>
+<li>名称，</li>
+<li>通道数量，</li>
+<li>...</li>
+<li>以及一些用于表示以下含义的标志：<ul>
+<li><strong>kDefaultActive</strong>：该总线应在实例化时由宿主默认激活（会请求调用 activateBus）。默认情况下总线是未激活的。注意，如果宿主之后向用户提供激活/停用总线的功能，它可能不遵循此 kDefaultActive 标志，并在实例化时让某些总线保持未激活状态。</li>
+<li><strong>kIsControlVoltage</strong>：该总线不包含普通音频数据，而是包含按采样率进行控制变更所用的数据。<ul>
+<li>数据格式与音频数据相同，为 [-1.0, 1.0]。</li>
+<li>宿主必须防止意外路由到扬声器，以避免造成损坏。</li>
+<li>仅对音频媒体类型的总线有效。</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<h2 id="activation-of-busses">总线的激活</h2>
+<p>总线的动态使用由宿主通过激活和停用总线来处理。所有总线最初都是未激活的。</p>
+<p>插件必须定义其中哪些总线在插件实例化后默认激活，这只是一个愿望，宿主可以不予遵循，例如只激活第一个总线。</p>
+<pre><code class="language-c++">// 这里希望默认激活（但不保证）
+addAudioInput (STR16 ("SideChain"), SpeakerArr::kStereo, kAux, BusInfo::kDefaultActive);
+</code></pre>
+<p>为了能够使用，每个输入总线和每个输出总线都必须被激活，这由宿主通过插件实现的接口（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html" target="_blank" rel="noreferrer noopener">Vst:: IComponent</a>）完成：</p>
+<pre><code class="language-c++">//------------------------------------------------------------------------
+tresult PLUGIN_API Component::activateBus (MediaType type, BusDirection dir, int32 index, TBool state)
+{
+    // ...
+</code></pre>
+<p>已停用的总线不需要由插件处理，这有助于降低 CPU 负载。</p>
+<p>查看工作流程图以了解此调用的时机：</p>
+<ul>
+<li><a href="technical-documentation-workflow-diagrams-audio-processor-call-sequence.html">音频处理器调用序列</a></li>
+<li><a href="technical-documentation-workflow-diagrams-bus-arrangement-setting-sequence.html">总线布置设置序列</a></li>
+</ul>
+<h2 id="what-is-a-side-chain">什么是侧链？</h2>
+<p>在音频应用中，某些插件允许向插件提供第二路信号，并将其作为一个或多个处理参数的控制器。这样的信号通常称为侧链信号或侧链输入。</p>
+<p><strong>示例</strong>：</p>
+<p>如果录制的底鼓被认为演奏得很好，但贝斯手部分的录音显示他经常略微抢在底鼓之前，那么对贝斯部分带「门控」功能的插件可以把底鼓信号用作侧链，将贝斯部分精确地「修剪」到与底鼓一致。</p>
+<p>另一种应用是，当另一路信号（例如人声）达到某一电平时，自动降低音乐背景的电平。这种情况下会使用带「闪避」功能的插件——当人声信号送入侧链输入时，主音乐信号被衰减。</p>
+<p>延迟的混合参数可以由侧链输入信号控制——使延迟信号量正比于另一路信号的电平。</p>
+<p>侧链可以用作额外的调制源，而不是周期性的调制形式。从插件的角度看，侧链输入和/或输出是额外的输入和输出，可由宿主启用或禁用。</p>
+<p>宿主（如果支持）会向用户提供一种方式，把某些信号通路路由到这些侧链输入，或从侧链输出路由到其他信号输入。</p>
+<p><a href="https://www.youtube.com/watch?v=6AvqoFSk2S8" target="_blank" rel="noreferrer noopener"><img alt="getting_started_vid_3" src="https://i.ytimg.com/vi/6AvqoFSk2S8/maxresdefault.jpg"/></a></p>
+<p>什么是侧链以及如何使用它 | 面向初学者的音乐制作。</p>
+<p><a href="https://www.youtube.com/watch?v=PBQr-PnI6Yw" target="_blank" rel="noreferrer noopener"><img alt="getting_started_vid_4" src="https://i.ytimg.com/vi/PBQr-PnI6Yw/maxresdefault.jpg"/></a></p>
+<p>这里是一个在 <strong>Cubase</strong> 中为乐器使用侧链的示例。</p>
+<h2 id="how-can-i-implement-a-side-chain-path-into-my-plug-in">如何在插件中实现侧链通路？</h2>
+<p>在 AudioEffect::initialize (FUnknown* context) 中，必须添加插件所需的总线和扬声器配置。例如，如果你的插件处理一个输入总线和一个输出总线，且两者都是立体声，相应的代码片段如下所示：</p>
+<pre><code class="language-c++">addAudioInput (USTRING ("Stereo In"), SpeakerArr::kStereo);
+addAudioOutput (USTRING ("Stereo Out"), SpeakerArr::kStereo);
+ 
+// 此外，添加一个立体声侧链总线的方式如下：
+addAudioInput (USTRING ("Aux In"), SpeakerArr::kStereo, kAux, 0); // 这里的 0 表示不希望默认激活
+</code></pre>
+<h2 id="audio-bus-channel-configuration">音频总线的通道配置</h2>
+<p>每个音频总线都有其通道配置，即一个扬声器布置：</p>
+<p><strong>立体声（L+R）</strong></p>
+<pre><code class="language-c++">const SpeakerArrangement kStereo = kSpeakerL | kSpeakerR;
+</code></pre>
+<h3 id="how-are-the-different-speakers-located">不同扬声器是如何定位的？</h3>
+<p>以下是主要已定义扬声器位置的概览（参见 enum Speakers 和 namespace SpeakerArr）。<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/group__vst3typedef.html#ga54884a26d0b6dfa18eb919ea004775ac" target="_blank" rel="noreferrer noopener">SpeakerArrangement</a> 是扬声器的位集组合。</p>
+<p>例如：</p>
+<pre><code class="language-c++">const SpeakerArrangement kStereo = kSpeakerL | kSpeakerR; // =&gt; 十六进制表示为 0x03，二进制表示为 0011。
+</code></pre>
+<p><img alt="Tech_doc_28" src="https://steinbergmedia.github.io/vst3_dev_portal/resources/tech_doc_28.jpg"/></p>
+<h3 id="my-plug-in-is-capable-of-processing-all-possible-channel-configurations">我的插件能够处理所有可能的通道配置</h3>
+<p>添加总线时，我应选择哪种扬声器布置？</p>
+<p>选择你的插件最可能被使用的配置。对于 5.1 环绕声设置，那就是：</p>
+<pre><code class="language-c++">addAudioInput (USTRING ("Surround In"), SpeakerArr::k51);
+addAudioOutput (USTRING ("Surround Out"), SpeakerArr::k51);
+</code></pre>
+<p>但当宿主调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#ad3bc7bac3fd3b194122669be2a1ecc42" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setBusArrangements</a> 时，宿主是在告知插件它被选择所在轨道的当前扬声器布置。如果你接受该布置，应返回 <strong>kResultOk</strong>；如果不接受，则返回 <strong>kResultFalse</strong>。</p>
+<blockquote>
+<p>ⓘ<strong>注意</strong><br/> 如果你拒绝 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#ad3bc7bac3fd3b194122669be2a1ecc42" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setBusArrangements</a> 并返回 <strong>kResultFalse</strong>，宿主会调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#adac76e90d4a18622d818c8204f937f94" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::getBusArrangement</a>，此时你有机会把参数 'arrangement' 设为你的插件对该给定总线所接受的扬声器布置的值。</p>
+<p>随后宿主可以用插件所希望的布置重新调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#ad3bc7bac3fd3b194122669be2a1ecc42" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setBusArrangements</a>，这时插件应返回 <strong>kResultOk</strong>。</p>
+</blockquote>
+<h3 id="how-are-speaker-arrangement-settings-handled-for-fx-plug-ins">FX 插件的扬声器布置设置是如何处理的？</h3>
+<p>在插件实例化之后，宿主会以默认配置（取决于当前通道配置）调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#ad3bc7bac3fd3b194122669be2a1ecc42" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setBusArrangements</a>；如果插件接受（通过返回 <strong>kResultOK</strong>），就继续使用该配置。如果不接受（通过返回 <strong>kResultFalse</strong>），宿主会调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#adac76e90d4a18622d818c8204f937f94" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::getBusArrangement</a>（针对输入和输出）询问插件所希望的布置，然后以最终希望的布置重新调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#ad3bc7bac3fd3b194122669be2a1ecc42" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setBusArrangements</a>。参见<a href="technical-documentation-workflow-diagrams-bus-arrangement-setting-sequence.html">总线布置设置序列</a>工作流程。</p>
+<pre><code class="language-c++">// 示例：仅支持对称输入-输出布置的插件：
+
+host -&gt; plug-in: setBusArrangements (monoIN, stereoOUT)
+plug-in return: kResultFalse
+host -&gt; plug-in: getBusArrangement (IN) =&gt; return Stereo;
+host -&gt; plug-in: getBusArrangement (OUT) =&gt; return Stereo;
+host -&gt; plug-in: setBusArrangements (stereoIN, stereoOUT)
+plug-in return: kResultOk
+</code></pre>
+<pre><code class="language-c++">// 示例：仅支持非对称输入-输出布置（单声道-&gt;立体声）的插件：
+
+host -&gt; plug-in: setBusArrangements (stereoIN, stereoOUT)
+plug-in return: kResultFalse
+host -&gt; plug-in: getBusArrangement (IN) =&gt; return Mono;
+host -&gt; plug-in: getBusArrangement (OUT) =&gt; return Stereo;
+host -&gt; plug-in: setBusArrangements (MonoIN, stereoOUT)
+plug-in return: kResultOk
+</code></pre>
+<pre><code class="language-c++">// 示例：仅支持非对称输入-输出布置（单声道-&gt; 立体声直至 5.1）的插件：
+
+host -&gt; plug-in: setBusArrangements (5.1IN, 5.1OUT)
+plug-in return: kResultFalse
+host -&gt; plug-in: getBusArrangement (IN) =&gt; return Mono;
+host -&gt; plug-in: getBusArrangement (OUT) =&gt; return 5.1;
+host -&gt; plug-in: setBusArrangements (MonoIN, 5.1OUT)
+plug-in return: kResultOk
+</code></pre>
+<pre><code class="language-c++">// 宿主 -&gt; 插件：setBusArrangements (QuadroIN, QuadroOUT)
+
+plug-in return: kResultFalse
+host -&gt; plug-in: getBusArrangement (IN) =&gt; return Mono;
+host -&gt; plug-in: getBusArrangement (OUT) =&gt; return Quadro;
+host -&gt; plug-in: setBusArrangements (MonoIN, QuadroOUT)
+plug-in return: kResultOk
+</code></pre>
+<pre><code class="language-c++">// 示例：仅支持对称输入-输出布置、且侧链输入始终为单声道的插件：
+
+host -&gt; plug-in: getBusArrangements (IN) =&gt; Input Main:Mono / Input Side-chain:Mono
+host -&gt; plug-in: getBusArrangements (OUT) =&gt; Output: mono
+host -&gt; plug-in: setBusArrangements (Input Main:stereo / Input Side-chain:Mono, Output: stereo)
+plug-in return: kResultTrue
+
+or
+host -&gt; plug-in: getBusArrangements (IN) =&gt; Input Main:Mono / Input Side-chain:Mono
+host -&gt; plug-in: getBusArrangements (OUT) =&gt; Output: mono
+host -&gt; plug-in: setBusArrangements (Input Main:stereo / Input Side-chain:stereo, Output: stereo)
+plug-in return: kResultFalse // 因为我们希望侧链为单声道
+host -&gt; plug-in: getBusArrangement (IN) =&gt; return Input Main:stereo / Input Side-chain:mono;
+host -&gt; plug-in: getBusArrangement (OUT) =&gt; return Stereo;
+host -&gt; plug-in: setBusArrangements (Input Main:stereo / Input Side-chain:mono, Output: stereo)
+plug-in return: kResultOk
+</code></pre>
+<pre><code class="language-c++">// 示例：仅支持对称输入-输出布置、且侧链输入跟随主输入布置的插件：
+
+host -&gt; plug-in: getBusArrangements (IN) =&gt; Input Main:Mono / Input Side-chain:Mono
+host -&gt; plug-in: getBusArrangements (OUT) =&gt; Output: mono
+host -&gt; plug-in: setBusArrangements (Input Main:stereo / Input Side-chain:Mono, Output: stereo)
+plug-in return: kResultFalse // 因为我们希望主输入和侧链使用相同的布置
+host -&gt; plug-in: getBusArrangement (IN) =&gt; return Input Main:stereo / Input Side-chain:stereo;
+host -&gt; plug-in: getBusArrangement (OUT) =&gt; return Stereo;
+host -&gt; plug-in: setBusArrangements (Input Main:stereo / Input Side-chain:stereo, Output: stereo)
+plug-in return: kResultOk
+</code></pre>
+<h3 id="how-report-to-the-host-that-the-plug-in-arrangement-has-changed">如何向宿主报告插件的布置已更改？</h3>
+<p>在加载预设或用户交互时，插件希望更改其 IO 配置。这种情况下，插件应从 editController 调用其组件处理器，并带上 kIoChanged 标志：</p>
+<pre><code class="language-c++">componentHandler-&gt;restartComponent (kIoChanged);
+</code></pre>
+<p>宿主会调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#adac76e90d4a18622d818c8204f937f94" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::getBusArrangement</a>（针对输入和输出）以检查新请求的布置，然后宿主会调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#ad3bc7bac3fd3b194122669be2a1ecc42" target="_blank" rel="noreferrer noopener">Vst:: IAudioProcessor::setBusArrangements</a>（在挂起状态下调用：<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a0a840e8077eb74ec429b8007c7b83517" target="_blank" rel="noreferrer noopener">setActive</a> (false)）以确认所请求的布置。</p>
+<h3 id="my-plug-in-has-mono-input-and-stereo-output-how-does-vst-3-handle-this">我的插件是单声道输入、立体声输出。VST 3 如何处理这种情况？</h3>
+<p>有以下两种方式可以这样实例化插件：</p>
+<ul>
+<li><strong>方式 1</strong></li>
+</ul>
+<p>在 AudioEffect::initialize (FUnknown* context) 中添加一个单声道总线和一个立体声总线。</p>
+<pre><code class="language-c++">//---------------------------------------------------------------
+tresult PLUGIN_API AGain::initialize (FUnknown* context)
+{
+    //---总是初始化父类-------
+    tresult result = AudioEffect::initialize (context);
+    // 如果一切正常，继续
+    if (result != kResultOk)
+    {
+        return result;
+    }
+
+    addAudioInput (USTRING ("Mono In"), SpeakerArr::kMono);
+    addAudioOutput (USTRING ("Stereo Out"), SpeakerArr::kStereo);
+    //...
+</code></pre>
+<p>当宿主为 <strong>Cubase/Nuendo</strong> 时，插件在插入立体声轨道后会得到立体声输入信号的左声道作为其单声道输入。你可以从这个信号创建立体声输出信号。</p>
+<ul>
+<li><strong>方式 2</strong></li>
+</ul>
+<p>在 <a href="https://steinbergmedia.github.io/vst3_doc/vstsdk/classSteinberg_1_1Vst_1_1AudioEffect.html" target="_blank" rel="noreferrer noopener">AudioEffect</a>::initialize (FUnknown* context) 中添加一个立体声输入总线和一个立体声输出总线。</p>
+<pre><code class="language-c++">//---------------------------------------------------------------
+tresult PLUGIN_API AGain::initialize (FUnknown* context)
+{
+    //---总是初始化父类-------
+    tresult result = AudioEffect::initialize (context);
+    // 如果一切正常，继续
+    if (result != kResultOk)
+    {
+        return result;
+    }
+
+    addAudioInput (USTRING ("Stereo In"), SpeakerArr::kStereo);
+    addAudioOutput (USTRING ("Stereo Out"), SpeakerArr::kStereo);
+    //...
+</code></pre>
+<p>处理时，你的插件算法只取左声道，或者把左、右声道的样本相加来创建新的单声道输入信号。</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/Change+History/3.0.0/Multiple+Dynamic+IO.html" rel="noreferrer noopener">Technical+Documentation/Change+History/3.0.0/Multiple+Dynamic+IO.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

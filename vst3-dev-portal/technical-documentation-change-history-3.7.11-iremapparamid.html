@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[3.7.11] 重映射参数 ID - VST 3 开发者门户</title>
+<meta name="description" content="[3.7.11] 重映射参数 ID · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="3711-remap-parameter-id">[3.7.11] 重映射参数 ID</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#introduction">引言</a></li>
+<li><a href="#iremapparamid">IRemapParamID（参数 ID 重映射接口）</a></li>
+<li><a href="#restartflags-kparamidmappingchanged">RestartFlags: kParamIDMappingChanged</a></li>
+<li><a href="#example">示例</a></li>
+</ul>
+<p><strong>相关页面：</strong></p>
+<ul>
+<li><a href="technical-documentation-vst-module-architecture-moduleinfo-json.html">Moduleinfo</a></li>
+<li><a href="faq-compatibility-with-vst-2.x-or-vst-1.html">与 VST 2.x 或 VST 1 的兼容性</a></li>
+</ul>
+<hr/>
+<h2 id="introduction">引言</h2>
+<p>当 VST 3 插件打算替换另一个插件时，无论对方是旧版本还是 VST 2 版本，都可能需要将参数重映射告知宿主。<strong>IRemapParamID</strong> 这个新插件接口便于实现此类重映射。</p>
+<p>插件需要此类重映射时，主要有两种使用场景：</p>
+<ul>
+<li>
+<p>当某个 VST 3 插件替换另一个具有不同 UID 的插件（无论是 VST 2 还是以前发布的 VST 3 版本）时。在这种场景下，这个新的 VST 3 插件应使用 <a href="technical-documentation-vst-module-architecture-moduleinfo-json.html">Moduleinfo</a> 表明它替换了另一个插件。旧插件的某些参数可能需要重映射到新插件的专用参数，以便宿主重新同步对旧参数的任何引用（例如在自动化或远程控制中）。例如，VST 2 参数使用索引标识，而 VST 3 参数使用 ParamID。借助这个新接口，如果旧索引与新关联的 ParamID 并不相同，宿主就可以将旧索引重映射到新的 ParamID。</p>
+</li>
+<li>
+<p>当 VST 3 插件更新到新版本，而其中某些参数的 ParamID 发生了变化时。在加载工程时，插件检测到该工程是由旧版本创建的，并通知宿主（<strong>kParamIDMappingChanged</strong>）：必须使用 <strong>IRemapParamID</strong> 接口来重新同步某些参数（如果宿主已经持有对插件参数的引用，例如在自动化中）。</p>
+</li>
+</ul>
+<h2 id="iremapparamid">IRemapParamID（参数 ID 重映射接口）</h2>
+<p>插件必须在其 <strong>IRemapParamID</strong> <em>EditController</em> 中实现此接口。取回的 paramID 应与它所替换的那个相匹配，从而在自动化回放期间保持一致的行为。</p>
+<ul>
+<li>[plug imp]</li>
+<li>[released: 3.7.11]</li>
+</ul>
+<h2 id="restartflags-kparamidmappingchanged">RestartFlags: kParamIDMappingChanged</h2>
+<p>在上述第二种使用场景中，插件在加载其状态时，通过 <strong>kParamIDMappingChanged</strong> 标志（位于 <em>IComponentHandler::restartComponent</em> 函数中）告知宿主参数 ID 发生了变化。此通知应由 <em>EditController</em> 在 <strong>setComponentState</strong> 或 <strong>setState</strong> 方法中（工程加载期间）触发。随后，宿主即可借助 <strong>IRemapParamID</strong> 接口重映射任何已使用的参数，例如自动化。</p>
+<ul>
+<li>[plug imp]</li>
+<li>[released: 3.7.11]</li>
+</ul>
+<h2 id="example">示例</h2>
+<p><strong>在 controller.h 中</strong>：</p>
+<pre><code class="language-c++">//------------------------------------------------------------------------
+class TestRemapParamIDController : public EditController, public IRemapParamID
+{
+public:
+    //...
+    //--- from IRemapParamID ---------------------------------------------
+    tresult PLUGIN_API getCompatibleParamID (const TUID pluginToReplaceUID /*in*/,
+                                         Vst::ParamID oldParamID /*in*/,
+                                         Vst::ParamID&amp; newParamID /*out*/) override;
+
+    //--- from EditController --------------------------------------------
+	tresult PLUGIN_API setComponentState (IBStream* state) override;
+
+    //---Interface---------
+    DEFINE_INTERFACES
+    	DEF_INTERFACE (IRemapParamID)
+    END_DEFINE_INTERFACES (EditController)
+    DELEGATE_REFCOUNT (EditController)
+    //... 
+};
+</code></pre>
+<p><strong>在 controller.cpp 中</strong>：</p>
+<pre><code class="language-c++">//------------------------------------------------------------------------
+tresult PLUGIN_API TestRemapParamIDController::getCompatibleParamID (const TUID pluginToReplaceUID,
+                                                                     Vst::ParamID oldParamID,
+                                                                     Vst::ParamID&amp; newParamID)
+{
+	//--- 我们要替换 AGain 插件-------
+	//--- 检查宿主是否在请求重映射 AGain 插件的参数
+	static const FUID AGainProcessorUID (0x84E8DE5F, 0x92554F53, 0x96FAE413, 0x3C935A18);
+	FUID uidToCheck (FUID::fromTUID (pluginToReplaceUID));
+	if (AGainProcessorUID != uidToCheck)
+		return kResultFalse;
+
+	//--- 宿主想要从 AGain 重映射------------
+	newParamID = -1;
+	switch (oldParamID)
+	{
+		//--- 将 kGainId (0) 映射到我们的参数 kMyGainParamTag
+		case 0:
+		{
+			newParamID = kMyGainParamTag;
+			break;
+		}
+	}
+	//--- 如果映射成功则返回 kResultTrue------------
+	return (newParamID == -1) ? kResultFalse : kResultTrue;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API TestRemapParamIDController::setComponentState (IBStream* state)
+{
+	//...
+    IBStreamer streamer (state, kLittleEndian);
+
+    // 读取状态
+
+    bool remapNeeded = false;
+    // 此处判断我们是否解析出该状态来自旧版插件
+    //...
+
+    // 然后调用 restartComponent
+    if (remapNeeded)
+        componentHandler-&gt;restartComponent (kParamIDMappingChanged);
+
+    return kResultOk;
+}
+
+</code></pre>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Technical+Documentation/Change+History/3.7.11/IRemapParamID.html" rel="noreferrer noopener">Technical+Documentation/Change+History/3.7.11/IRemapParamID.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

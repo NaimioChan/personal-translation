@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>与 VST 2.x 或 VST 1 的兼容性 - VST 3 开发者门户</title>
+<meta name="description" content="与 VST 2.x 或 VST 1 的兼容性 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="compatibility-with-vst-2x-or-vst-1">与 VST 2.x 或 VST 1 的兼容性</h1>
+<ul>
+<li><a href="#q-how-can-i-update-my-vst-2-version-of-my-plug-in-to-a-vst-3-version-and-be-sure-that-cubase-will-load-it-instead-of-my-old-one">问：如何把我的插件从 VST 2 版本更新为 VST 3 版本，并确保 Cubase 加载新版本而不是旧版本？</a></li>
+<li><a href="#q-how-can-i-support-projects-which-were-saved-with-the-vst-2-version-of-my-plug-in">问：如何支持用 VST 2 版本插件保存的项目？</a></li>
+<li><a href="#q-ive-already-released-a-vst-3-plug-in-with-a-different-uid-than-its-vst-2-equivalent-how-can-i-declare-that-the-vst-3-plug-in-can-replace-its-vst-2-plug-in-counterpart">问：我已经发布了一个 VST 3 插件，其 UID 与其 VST 2 对应版本不同。如何声明该 VST 3 插件可以替代其 VST 2 插件对应版本？</a></li>
+<li><a href="#q-in-vst-2-the-editor-was-able-to-access-the-processing-part-named-effect-directly-how-can-i-do-this-in-vst-3">问：在 VST 2 中，编辑器可以直接访问处理部分（名为 effect）。在 VST 3 中如何做到这一点？</a></li>
+<li><a href="#q-does-vst-3-implement-methods-like-beginedit-and-endedit-known-from-vst-2">问：VST 3 是否实现了 VST 2 中已知的 beginEdit 与 endEdit 之类的方法？</a></li>
+<li><a href="#q-does-vst-3-include-variable-inputoutput-processing-like-processvariableio-of-vst-2">问：VST 3 是否包含像 VST 2 的 processVariableIo 那样的可变输入/输出处理？</a></li>
+<li><a href="#q-what-is-the-equivalent-to-the-vst-2-kplugcategofflineprocess">问：与 VST 2 的 kPlugCategOfflineProcess 等价的是什么？</a></li>
+</ul>
+<hr/>
+<h2 id="q-how-can-i-update-my-vst-2-version-of-my-plug-in-to-a-vst-3-version-and-be-sure-that-cubase-will-load-it-instead-of-my-old-one">问：如何把我的插件从 VST 2 版本更新为 VST 3 版本，并确保 Cubase 加载新版本而不是旧版本？</h2>
+<p>你必须为 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/ivstaudioprocessor_8h.html#ae55c95a44e931e1cd78998c94bc65ee1" target="_blank" rel="noreferrer noopener">kVstAudioEffectClass</a> 与 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/ivsteditcontroller_8h.html#a49d6f6f53c7630ea334474e9998c0a99" target="_blank" rel="noreferrer noopener">kVstComponentControllerClass</a> 组件提供特殊的 UID，依据其 <strong>VST 2</strong> UniqueID（4 个字符）及其插件名称，方式如下：</p>
+<pre><code class="language-c++">static void convertVST2UID_To_FUID (FUID&amp; newOne, int32 myVST2UID_4Chars, const char* pluginName, bool forControllerUID = false)
+{
+    char uidString[33];
+ 
+    int32 vstfxid;
+    if (forControllerUID)
+        vstfxid = (('V' &lt;&lt; 16) | ('S' &lt;&lt; 8) | 'E');
+    else
+        vstfxid = (('V' &lt;&lt; 16) | ('S' &lt;&lt; 8) | 'T');
+ 
+    char vstfxidStr[7] = {0};
+    sprintf (vstfxidStr, "%06X", vstfxid);
+ 
+    char uidStr[9] = {0};
+    sprintf (uidStr, "%08X", myVST2UID_4Chars);
+ 
+    strcpy (uidString, vstfxidStr);
+    strcat (uidString, uidStr);
+ 
+    char nameidStr[3] = {0};
+    size_t len = strlen (pluginName);
+ 
+    // !!!pluginName 必须为小写!!!!
+    for (uint16 i = 0; i &lt;= 8; i++)
+    {
+        uint8 c = i &lt; len ? pluginName[i] : 0;
+        sprintf (nameidStr, "%02X", c);
+        strcat (uidString, nameidStr);
+    }
+    newOne.fromString (uidString);
+}
+</code></pre>
+<p>注意，如果你在开发新插件，并且使用 SDK 中包含的 <strong>VST 2</strong> 包装层，就无需使用 convertVST2UID_To_FUID，一个 <strong>VST 2</strong> 专用的厂商调用允许宿主（<a href="https://www.steinberg.net/" target="_blank" rel="noreferrer noopener">Steinberg</a> 宿主自 <strong>Cubase</strong> 4.0 起）从 <strong>VST 2</strong> 版本获取 <strong>VST 3</strong> UID。</p>
+<pre><code class="language-c++">// 摘自 vst2wrapper.cpp 的代码
+//-----------------------------------------------------------------------------
+VstIntPtr Vst2Wrapper::vendorSpecific (VstInt32 lArg, VstIntPtr lArg2, void* ptrArg, float floatArg)
+{
+    switch (lArg)
+    {
+        case 'stCA':
+        case 'stCa':
+            switch (lArg2)
+            {
+                case 'FUID':
+                    if (ptrArg)
+                    {
+                        if (vst3EffectClassID.isValid ())
+                        {
+                            memcpy ((char*)ptrArg, vst3EffectClassID, 16);
+                            return 1;
+                        }
+                    }
+                break;
+        // ....
+</code></pre>
+<hr/>
+<h2 id="q-how-can-i-support-projects-which-were-saved-with-the-vst-2-version-of-my-plug-in">问：如何支持用 VST 2 版本插件保存的项目？</h2>
+<p>宿主会以完整的 FXB/FXP 流调用 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IComponent.html#a77ac39bcc5c4b15818b1a87de2573805" target="_blank" rel="noreferrer noopener">Vst:: IComponent::setState()</a> 与 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IEditController.html#a4c2e1cafd88143fda2767a9c7ba5d48f" target="_blank" rel="noreferrer noopener">Vst:: IEditController::setComponentState()</a>。你必须从中提取旧状态，为此 SDK 提供了辅助函数 <a href="https://steinbergmedia.github.io/vst3_doc/vstsdk/namespaceVST3.html#aadc6b99109a9b056a0176f49f9220822" target="_blank" rel="noreferrer noopener">VST3::tryVst2StateLoad</a>。</p>
+<p>以下是当 <strong>VST 3</strong> 插件在 Steinberg 音序器项目中替代 <strong>VST 2</strong> 插件时，需要在 <strong>VST 3</strong> 版本中添加的代码：</p>
+<pre><code class="language-c++">#include "public.sdk/source/vst/utility/vst2persistence.h"
+ 
+//------------------------------------------------------------------------
+tresult PLUGIN_API MyVST3Effect::setState (IBStream* state)
+{
+    if (auto vst2State = VST3::tryVst2StateLoad (*state))
+    {
+        if ((vst2State-&gt;programs.empty ()) ||
+            (static_cast&lt;int32_t&gt; (vst2State-&gt;programs.size ()) &lt;= vst2State-&gt;currentProgram))
+            return kResultFalse;
+ 
+        //....
+    }
+    return kResultFalse;
+}
+</code></pre>
+<p>完整示例源代码可查看函数：<br/> tresult <em>PLUGIN_API Processor::setState (IBStream</em> state)*，它位于文件 <em>public.sdk/samples/vst/mda-vst3/source/mdaBaseProcessor.cpp</em> 中</p>
+<p>为了兼容自动化，你必须确保 <strong>VST 3</strong> 的参数 ID 与其在 <strong>VST 2</strong> 中关联参数的索引值相同。只有满足这个条件，宿主才能回放自动化。参数值在 <strong>VST 2</strong> 和 <strong>VST 3</strong> 中含义相同。</p>
+<hr/>
+<h2 id="q-ive-already-released-a-vst-3-plug-in-with-a-different-uid-than-its-vst-2-equivalent-how-can-i-declare-that-the-vst-3-plug-in-can-replace-its-vst-2-plug-in-counterpart">问：我已经发布了一个 VST 3 插件，其 UID 与其 VST 2 对应版本不同。如何声明该 VST 3 插件可以替代其 VST 2 插件对应版本？</h2>
+<p>你可以使用 <a href="technical-documentation-vst-module-architecture-moduleinfo-json.html">moduleinfo.json</a> 文件的 compatibility 数组。在那里，把你 <strong>VST 3</strong> 音频效果器类的 UID 作为 “New” UID，并把你 <strong>VST 2</strong> 插件的 UID 放入 “Old” 数组。</p>
+<p>如果无法使用 <a href="technical-documentation-vst-module-architecture-moduleinfo-json.html">moduleinfo.json</a> 文件，你可以创建一个实现 <a href="technical-documentation-change-history-3.7.5-moduleinfo.html">Vst:: IPluginCompatibility</a> 接口的类，并通过插件工厂把它提供给宿主。</p>
+<hr/>
+<h2 id="q-in-vst-2-the-editor-was-able-to-access-the-processing-part-named-effect-directly-how-can-i-do-this-in-vst-3">问：在 VST 2 中，编辑器可以直接访问处理部分（名为 effect）。在 VST 3 中如何做到这一点？</h2>
+<p>你不能这样做，更重要的是不得这样做。处理部分与用户界面部分通过消息系统通信。<br/> 详情参见 <a href="#q-how-should-i-communicate-between-the-processing-and-the-user-interface">问：应如何在「处理」与「用户界面」之间通信？</a>。</p>
+<hr/>
+<h2 id="q-does-vst-3-implement-methods-like-beginedit-and-endedit-known-from-vst-2">问：VST 3 是否实现了 VST 2 中已知的 beginEdit 与 endEdit 之类的方法？</h2>
+<p>是，而且支持这一点对自动化至关重要。详情请参见 <a href="technical-documentation-parameters-automation-index.html">参数与自动化</a></p>
+<hr/>
+<h2 id="q-does-vst-3-include-variable-inputoutput-processing-like-processvariableio-of-vst-2">问：VST 3 是否包含像 VST 2 的 processVariableIo 那样的可变输入/输出处理？</h2>
+<p>在 3.1.0 版本中还没有，我们计划以后朝这个方向做些什么。（注意：这种 variableIO 处理例如是用于时间伸缩插件的。）</p>
+<hr/>
+<h2 id="q-what-is-the-equivalent-to-the-vst-2-kplugcategofflineprocess">问：与 VST 2 的 kPlugCategOfflineProcess 等价的是什么？</h2>
+<p><strong>VST 3</strong> 不像 <strong>VST 2</strong> 那样支持离线处理（该接口专供 <strong>WaveLab</strong> 使用）。但可以在离线上下文中使用 <strong>VST 3</strong> 插件（这意味着 process 函数可以比实时更快地被调用：例如在导出或批处理期间）。如果插件不支持快于实时，就应把 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/group__plugType.html#gae58eb0aafa16197f12c1a61428fd5584" target="_blank" rel="noreferrer noopener">kOnlyRealTime</a> 加入其类别。</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/FAQ/Compatibility+with+VST+2.x+or+VST+1.html" rel="noreferrer noopener">FAQ/Compatibility+with+VST+2.x+or+VST+1.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

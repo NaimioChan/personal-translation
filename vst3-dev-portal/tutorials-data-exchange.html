@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据交换 - VST 3 开发者门户</title>
+<meta name="description" content="数据交换 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="data-exchange-tutorial---how-to-send-data-from-the-realtime-process-to-the-edit-controller">数据交换</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#tutorial---how-to-use-the-data-exchange-api">教程 - 如何使用 Data Exchange API</a><ul>
+<li><a href="#sending-data-from-the-audio-processor">从音频处理器发送数据</a></li>
+<li><a href="#receiving-data-in-the-edit-controller">在编辑控制器中接收数据</a></li>
+</ul>
+</li>
+</ul>
+<p><strong>相关页面：</strong></p>
+<ul>
+<li><a href="technical-documentation-data-exchange-index.html">数据交换</a></li>
+</ul>
+<hr/>
+<blockquote>
+<p>本教程的源码位于<a href="https://github.com/steinbergmedia/vst3_tutorials/blob/master/dataexchange-tutorial" target="_blank" rel="noreferrer noopener">教程仓库</a></p>
+</blockquote>
+<h2 id="tutorial---how-to-use-the-data-exchange-api">教程 - 如何使用 Data Exchange API</h2>
+<p>本教程介绍如何使用 <em>Data Exchange API</em> 把数据从实时音频 process 方法发送到插件的编辑控制器。</p>
+<h3 id="sending-data-from-the-audio-processor">从音频处理器发送数据</h3>
+<p>下面我们从处理器向控制器发送数据。</p>
+<p>首先需要添加所需的 include，以便使用包装类。在定义音频处理器之前加上下面的 include：</p>
+<pre><code class="language-c++">#include "public.sdk/source/vst/utility/dataexchange.h"
+</code></pre>
+<p>为了准备好 AudioEffect 类，你需要覆写以下方法：</p>
+<pre><code class="language-c++">tresult PLUGIN_API initialize (FUnknown* context) override;
+tresult PLUGIN_API connect (Vst::IConnectionPoint* other) override;
+tresult PLUGIN_API disconnect (Vst::IConnectionPoint* other) override;
+tresult PLUGIN_API setActive (TBool state) override;
+tresult PLUGIN_API canProcessSampleSize (int32 symbolicSampleSize) override;
+tresult PLUGIN_API process (Vst::ProcessData&amp; data) override;
+</code></pre>
+<p>另外还必须把这个包装类作为成员加入音频处理器类：</p>
+<pre><code class="language-c++">std::unique_ptr&lt;Vst::DataExchangeHandler&gt; dataExchange;
+</code></pre>
+<p>现在就可以初始化并配置 dataExchange 了。我们在这里做：</p>
+<pre><code class="language-c++">tresult PLUGIN_API DataExchangeProcessor::connect (Vst::IConnectionPoint* other)
+{
+    auto result = Vst::AudioEffect::connect (other);
+    if (result == kResultTrue)
+    {
+        auto configCallback = [this] (Vst::DataExchangeHandler::Config&amp; config,
+                                      const Vst::ProcessSetup&amp; setup) {
+            Vst::SpeakerArrangement arr;
+            getBusArrangement (Vst::BusDirections::kInput, 0, arr);
+            numChannels = static_cast&lt;uint16_t&gt; (Vst::SpeakerArr::getChannelCount (arr));
+            auto sampleSize = sizeof (float);
+
+            config.blockSize = setup.sampleRate * numChannels * sampleSize + sizeof (DataBlock);
+            config.numBlocks = 2;
+            config.alignment = 32;
+            config.userContextID = 0;
+            return true;
+        };
+
+        dataExchange = std::make_unique&lt;Vst::DataExchangeHandler&gt; (this, configCallback);
+        dataExchange-&gt;onConnect (other, getHostContext ());
+    }
+    return result;
+}
+</code></pre>
+<p>配置通过 <code>configCallback</code> 完成。在本例中，我们把队列配置为具有一个块大小，恰好能存储输入总线所配置扬声器排列的所有通道 1 秒的音频数据。我们为 <code>numBlocks</code> 选择 2，因为每秒发送一个块，在这种情况下两个块应该足够。如果你需要发送块的频率更高，就必须增大这个值，以防数据丢失。<code>configCallback</code> 在音频处理器被激活时调用。</p>
+<p>接下来要做的是，在编辑控制器断开时调用 dataExchange 对象并释放内存：</p>
+<pre><code class="language-c++">tresult PLUGIN_API DataExchangeProcessor::disconnect (Vst::IConnectionPoint* other)
+{
+    if (dataExchange)
+    {
+        dataExchange-&gt;onDisconnect (other);
+        dataExchange.reset ();
+    }
+    return AudioEffect::disconnect (other);
+}
+</code></pre>
+<p>另外，在处理器的状态变化时也必须调用 dataExchange 对象：</p>
+<pre><code class="language-c++">tresult PLUGIN_API DataExchangeProcessor::setActive (TBool state)
+{
+    if (state)
+        dataExchange-&gt;onActivate (processSetup);
+    else
+        dataExchange-&gt;onDeactivate ();
+    return AudioEffect::setActive (state);
+}
+</code></pre>
+<p>现在我们准备要发送给控制器的数据。为了让这件事简单一些，我们定义一个描述该数据结构的 struct，并把它放到自己的头文件「<em>dataexchange.h</em>」中：</p>
+<pre><code class="language-c++">// dataexchange.h
+
+#pragma once
+
+#include "public.sdk/source/vst/utility/dataexchange.h"
+#include &lt;cstdint&gt;
+
+namespace Steinberg::Tutorial {
+
+struct DataBlock
+{
+    uint32_t sampleRate;
+    uint16_t sampleSize;
+    uint16_t numChannels;
+    uint32_t numSamples;
+    float samples[0];
+};
+
+} // Steinberg::Tutorial
+</code></pre>
+<p>也就是说，我们要把采样率、大小、通道数、采样数以及实际的采样发送给控制器。</p>
+<p>为了真正能使用这个 <code>DataBlock</code> 结构，我们引入一个小辅助函数，也加到这个头文件中：</p>
+<pre><code class="language-c++">inline DataBlock* toDataBlock (const Vst::DataExchangeBlock&amp; block)
+{
+    if (block.blockID != Vst::InvalidDataExchangeBlockID)
+        return reinterpret_cast&lt;DataBlock*&gt; (block.data);
+    return nullptr;
+}
+</code></pre>
+<p>在开始发送数据之前还有一件事要做：我们需要一个 Vst::DataExchangeBlock 结构的成员变量，用来在处理音频时存储当前使用的块。所以把它加到处理器定义中：</p>
+<pre><code class="language-c++">class DataExchangeProcessor : public Vst::AudioEffect
+{
+private:
+    Vst::DataExchangeBlock currentExchangeBlock {InvalidDataExchangeBlock};
+}
+</code></pre>
+<p>现在开始实现处理部分：</p>
+<pre><code class="language-c++">tresult PLUGIN_API DataExchangeProcessor::process (Vst::ProcessData&amp; processData)
+{
+    if (processData.numSamples &lt;= 0)
+        return kResultTrue;
+    return kResultTrue;
+}
+</code></pre>
+<p>当 <code>processData</code> 中没有采样时，直接跳出该方法。</p>
+<p>现在要做的第一件事是从 <code>dataExchange</code> 对象获取一个新的块：</p>
+<pre><code class="language-c++">tresult PLUGIN_API DataExchangeProcessor::process (Vst::ProcessData&amp; processData)
+{
+    // ...
+    if (currentExchangeBlock.blockID == Vst::InvalidDataExchangeBlockID)
+        acquireNewExchangeBlock ();
+    // ...
+}
+</code></pre>
+<p>我们只希望在尚未获取新块时才去获取。因此在调用 <code>acquireNewExchangeBlock</code> 方法之前要先做这项检查，该方法如下：</p>
+<pre><code class="language-c++">void DataExchangeProcessor::acquireNewExchangeBlock ()
+{
+    currentExchangeBlock = dataExchange-&gt;getCurrentOrNewBlock ();
+    if (auto block = toDataBlock (currentExchangeBlock))
+    {
+        block-&gt;sampleRate = static_cast&lt;uint32_t&gt; (processSetup.sampleRate);
+        block-&gt;numChannels = numChannels;
+        block-&gt;sampleSize = sizeof (float);
+        block-&gt;numSamples = 0;
+    }
+}
+</code></pre>
+<p>我们用 <code>getCurrentOrNewBlock ()</code> 向 <code>dataExchange</code> 对象请求一个新的块，通过调用前面定义的 <code>toDataBlock</code> 函数检查它是否有效，并填入采样率、采样大小和通道数。</p>
+<p>现在回到 process 函数。我们把输入缓冲区中的采样写入自己的块，直到该块填满 1 秒的音频数据：</p>
+<pre><code class="language-c++">tresult PLUGIN_API DataExchangeProcessor::process (Vst::ProcessData&amp; processData)
+{
+    // ...
+    auto input = processData.inputs[0];
+    auto output = processData.outputs[0];
+
+    if (auto block = toDataBlock (currentExchangeBlock))
+    {
+        auto numSamples = static_cast&lt;uint32&gt; (processData.numSamples);
+        while (numSamples &gt; 0)
+        {
+            uint32 numSamplesFreeInBlock = block-&gt;sampleRate - block-&gt;numSamples;
+            uint32 numSamplesToCopy = std::min&lt;uint32&gt; (numSamplesFreeInBlock, numSamples);
+            for (auto channel = 0; channel &lt; input.numChannels; ++channel)
+            {
+                auto blockChannelData = &amp;block-&gt;samples[0] + block-&gt;numSamples;
+                auto inputChannel =
+                    input.channelBuffers32[channel] + (processData.numSamples - numSamples);
+                memcpy (blockChannelData, inputChannel, numSamplesToCopy * sizeof (float));
+            }
+            block-&gt;numSamples += numSamplesToCopy;
+            if (block-&gt;numSamples == block-&gt;sampleRate)
+            {
+                dataExchange-&gt;sendCurrentBlock ();
+                acquireNewExchangeBlock ();
+                block = toDataBlock (currentExchangeBlock);
+                if (block == nullptr)
+                    break;
+            }
+            numSamples -= numSamplesToCopy;
+        }
+    }
+    // ...
+}
+</code></pre>
+<p>当它填满 1 秒的音频数据后，我们用 <code>dataExchange-&gt;sendCurrentBlock()</code> 发送这个块，然后立即获取一个新的块。</p>
+<p>最后，我们需要把输入音频缓冲区复制回输出音频缓冲区。这样整个方法就是：</p>
+<pre><code class="language-c++">tresult PLUGIN_API DataExchangeProcessor::process (Vst::ProcessData&amp; processData)
+{
+    if (processData.numSamples &lt;= 0)
+        return kResultTrue;
+
+    if (currentExchangeBlock.blockID == Vst::InvalidDataExchangeBlockID)
+        acquireNewExchangeBlock ();
+
+    auto input = processData.inputs[0];
+    auto output = processData.outputs[0];
+
+    if (auto block = toDataBlock (currentExchangeBlock))
+    {
+        auto numSamples = static_cast&lt;uint32&gt; (processData.numSamples);
+        while (numSamples &gt; 0)
+        {
+            uint32 numSamplesFreeInBlock = block-&gt;sampleRate - block-&gt;numSamples;
+            uint32 numSamplesToCopy = std::min&lt;uint32&gt; (numSamplesFreeInBlock, numSamples);
+            for (auto channel = 0; channel &lt; input.numChannels; ++channel)
+            {
+                auto blockChannelData = &amp;block-&gt;samples[0] + block-&gt;numSamples;
+                auto inputChannel =
+                    input.channelBuffers32[channel] + (processData.numSamples - numSamples);
+                memcpy (blockChannelData, inputChannel, numSamplesToCopy * sizeof (float));
+            }
+            block-&gt;numSamples += numSamplesToCopy;
+            if (block-&gt;numSamples == block-&gt;sampleRate)
+            {
+                dataExchange-&gt;sendCurrentBlock ();
+                acquireNewExchangeBlock ();
+                block = toDataBlock (currentExchangeBlock);
+                if (block == nullptr)
+                    break;
+            }
+            numSamples -= numSamplesToCopy;
+        }
+    }
+    for (auto channel = 0; channel &lt; input.numChannels; ++channel)
+    {
+        if (output.channelBuffers32[channel] != input.channelBuffers32[channel])
+        {
+            memcpy (output.channelBuffers32[channel], input.channelBuffers32[channel],
+                    processData.numSamples * sizeof (float));
+        }
+        output.silenceFlags = input.silenceFlags;
+    }
+
+    return kResultOk;
+}
+</code></pre>
+<h3 id="receiving-data-in-the-edit-controller">在编辑控制器中接收数据</h3>
+<p>我们这样准备编辑控制器：让它继承 Vst::IDataExchangeReceiver，提供几个方法，并添加一个新的 Vst::DataExchangeReceiverHandler 成员：</p>
+<pre><code class="language-c++">class DataExchangeController : public Vst::EditControllerEx1,
+                               public Vst::IDataExchangeReceiver
+{
+public:
+    // ...
+    tresult PLUGIN_API notify (Vst::IMessage* message) override;
+    void PLUGIN_API queueOpened (Vst::DataExchangeUserContextID userContextID,
+                                 uint32 blockSize,
+                                 TBool&amp; dispatchOnBackgroundThread) override;
+    void PLUGIN_API queueClosed (Vst::DataExchangeUserContextID userContextID) override;
+    void PLUGIN_API onDataExchangeBlocksReceived (Vst::DataExchangeUserContextID userContextID, 
+                                                  uint32 numBlocks,
+                                                  Vst::DataExchangeBlock* blocks, 
+                                                  TBool onBackgroundThread) override;
+
+    DEFINE_INTERFACES
+        DEF_INTERFACE (Vst::IDataExchangeReceiver)
+    END_DEFINE_INTERFACES (EditController)
+    DELEGATE_REFCOUNT (EditController)
+private:
+    Vst::DataExchangeReceiverHandler dataExchange {this};
+}
+</code></pre>
+<p>首先，我们需要把消息转发给 <code>DataExchangeReceiverHandler</code>，以便在宿主不支持原生 API 时由它处理数据交换消息：</p>
+<pre><code class="language-c++">tresult PLUGIN_API DataExchangeController::notify (Vst::IMessage* message)
+{
+    if (dataExchange.onMessage (message))
+        return kResultTrue;
+    return EditControllerEx1::notify (message);
+}
+</code></pre>
+<p>下一步，我们可以实现 <code>IDataExchangeReceiver</code> 的这些方法：</p>
+<pre><code class="language-c++">void PLUGIN_API DataExchangeController::queueOpened (Vst::DataExchangeUserContextID userContextID,
+                                                     uint32 blockSize,
+                                                     TBool&amp; dispatchOnBackgroundThread)
+{
+    FDebugPrint ("Data Exchange Queue opened.\n");
+}
+
+void PLUGIN_API DataExchangeController::queueClosed (Vst::DataExchangeUserContextID userContextID)
+{
+    FDebugPrint ("Data Exchange Queue closed.\n");
+}
+
+void PLUGIN_API DataExchangeController::onDataExchangeBlocksReceived (
+    Vst::DataExchangeUserContextID userContextID, uint32 numBlocks, Vst::DataExchangeBlock* blocks,
+    TBool onBackgroundThread)
+{
+    for (auto index = 0u; index &lt; numBlocks; ++index)
+    {
+        auto dataBlock = toDataBlock (blocks[index]);
+        FDebugPrint (
+            "Received Data Block: SampleRate: %d, SampleSize: %d, NumChannels: %d, NumSamples: %d\n",
+            dataBlock-&gt;sampleRate, static_cast&lt;uint32_t&gt; (dataBlock-&gt;sampleSize),
+            static_cast&lt;uint32_t&gt; (dataBlock-&gt;numChannels),
+            static_cast&lt;uint32_t&gt; (dataBlock-&gt;numSamples));
+    }
+}
+</code></pre>
+<p>每当处理器发送了一个块，就会调用 <code>onDataExchangeBlocksReceived()</code> 方法。现在你可以对数据做任何处理。</p>
+<p>如果你希望数据在后台线程上派发，需要在 <code>queueOpened</code> 方法中把 <code>dispatchOnBackgroundThread</code> 变量设为 true。</p>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Tutorials/Data+Exchange.html" rel="noreferrer noopener">Tutorials/Data+Exchange.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

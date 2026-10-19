@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>如何使用静音标志 - VST 3 开发者门户</title>
+<meta name="description" content="如何使用静音标志 · VST 3 开发者门户 中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="how-to-use-the-silence-flags">如何使用静音标志</h1>
+<p><strong>本页内容：</strong></p>
+<ul>
+<li><a href="#goal">目标</a></li>
+<li><a href="#what-about-silence-flags">静音标志是怎么回事？</a></li>
+<li><a href="#plug-in-receives-a-silent-audio-input">插件收到静音的音频输入</a></li>
+<li><a href="#plug-in-generates-silent-output">插件产生静音输出</a></li>
+<li><a href="#in-bypass">处于旁通状态时</a></li>
+<li><a href="#plug-in-generates-audio-output">插件产生音频输出</a></li>
+</ul>
+<hr/>
+<h2 id="goal">目标</h2>
+<p>本教程讲解如何使用静音标志。</p>
+<hr/>
+<h2 id="what-about-silence-flags">静音标志是怎么回事？</h2>
+<p>在 process 调用中，插件有时需要知道音频输入里究竟真的有音频还是只有静音（缓冲区里全是 0！。这对宿主也有用：它可以知道插件是否会输出静音音频。例如，对于没有内容可演奏的乐器插件（没有输入事件到来），宿主可以通知处理链中后续的插件。这有助于减少计算量并提升整体性能。</p>
+<p>但它究竟是如何工作的？下面一节将展示如何在 process 调用中获取这一信息，以及如何把它传递到插件的音频输出。</p>
+<p>静音标志是 <a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1AudioBusBuffers.html" target="_blank" rel="noreferrer noopener">AudioBusBuffers</a>（<a href="https://steinbergmedia.github.io/vst3_doc/vstinterfaces/structSteinberg_1_1Vst_1_1AudioBusBuffers.html#a2c73b926e22ddb05193b6edd16a008f8" target="_blank" rel="noreferrer noopener">silenceFlags</a>）的一部分，它在 process 调用中由宿主传给插件，再由插件传回宿主。</p>
+<hr/>
+<h2 id="plug-in-receives-a-silent-audio-input">插件收到静音的音频输入</h2>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API AGain::process (ProcessData&amp; data)
+{
+    //...
+
+    //---检查是否为静音---------------
+    // 静音标志是一个位掩码，每一位对应总线的一个通道
+    // （例如立体声总线的 L 和 R）。
+    // 这里只检查第一个输入总线是否整体静音（立体声情况下：L 和 R 都静音）
+    if (data.inputs[0].silenceFlags != 0) // 如果标志不为零 =&gt; 说明输入是静音的！
+    {
+        // 在这个示例中我们对输入信号施加增益
+        // 由于已知输入只填满了零，输出也将只填满零！
+        for (int32 i = 0; i &lt; numChannels; i++)
+        {
+            // 如果输出缓冲区与输入缓冲区相同，就无需清除输出缓冲区，
+            // 因为已知输入填满了零；否则需要清除输出缓冲区
+            if (in[i] != out[i])
+            {
+                memset (out[i], 0, sampleFramesSize); // 这比对每个采样施加增益更快！
+            }
+        }
+
+        // 现在必须告知宿主我们的输出也是静音的
+        // 只需设置输出总线的 silenceFlags 即可：
+        data.outputs[0].silenceFlags = ((uint64)1 &lt;&lt; numChannels) - 1; // 立体声时该值为 3（二进制 0011）
+
+        // 到此完成，可以返回了
+        return kResultTrue;
+    }
+</code></pre>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 当宿主启用静音标志时（输出的静音标志将由宿主设为无静音（=0）），清除输入缓冲区（设为接近零的值，如 10e-7，以避免反规格化问题）是宿主的责任。</p>
+</blockquote>
+<hr/>
+<h2 id="plug-in-generates-silent-output">插件产生静音输出</h2>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API AGain::process (ProcessData&amp; data)
+{
+    //...
+
+    //---检查是否为静音---------------
+    // 见上文
+
+
+    // 在某些条件下我们的输出缓冲区可能是静音的：
+    // 例如这里的增益可能被设为 0 或小于某个阈值。
+    // 我们必须告知宿主我们的输出也是静音的
+    // 只需设置输出总线的 silenceFlags 即可：
+    if (gain &lt; 0.0000001)
+    {
+        for (int32 i = 0; i &lt; numChannels; i++)
+        {
+            // 确保把输出置零
+            memset (out[i], 0, sampleFramesSize);
+        }
+        // 这会把所有通道置为 1
+        data.outputs[0].silenceFlags = ((uint64)1 &lt;&lt; numChannels) - 1; // 立体声时该值为 3（二进制 0011）
+    }
+    else
+    {
+        //...
+    }
+</code></pre>
+<blockquote>
+<p>ⓘ <strong>注意</strong><br/> 插件如果产生静音输出，就有责任清除（置零）其输出缓冲区，并正确设置输出的静音标志。</p>
+</blockquote>
+<hr/>
+<h2 id="in-bypass">处于旁通状态时</h2>
+<p>在旁通模式下，插件必须确保其输出与输入处于相同状态：</p>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API AGain::process (ProcessData&amp; data)
+{
+    //...
+
+    //---检查是否为静音---------------
+    // 见上文
+
+
+    //---旁通模式下输出应当与输入相同-----
+    if (bBypass)
+    {
+        for (int32 i = 0; i &lt; numChannels; i++)
+        {
+            // 如果缓冲区相同就不需要复制
+            if (in[i] != out[i])
+            {
+                memcpy (out[i], in[i], sampleFramesSize);
+            }
+        }
+        // 这里必须把输入的静音标志转发到输出！
+        // 这对宿主通知处理链中的下一个插件非常重要
+        data.outputs[0].silenceFlags = data.inputs[0].silenceFlags;
+    }
+    else
+    {
+        //...
+    }
+</code></pre>
+<h2 id="plug-in-generates-audio-output">插件产生音频输出</h2>
+<pre><code class="language-c++">//-----------------------------------------------------------------------
+tresult PLUGIN_API AGain::process (ProcessData&amp; data)
+{
+    //...
+
+    //---检查是否为静音---------------
+    // 见上文
+
+
+    //---旁通模式下输出应当与输入相同-----
+    if (bBypass)
+    {
+        //... 见上文
+        data.outputs[0].silenceFlags = data.inputs[0].silenceFlags;
+    }
+    else
+    {
+        // 这里我们将从输入生成音频输出，输入中并非只有零
+        // 这是插件的主要用例
+        //...
+
+        // 然后必须告知宿主我们的输出不是静音的
+        // 只需把 silenceFlags 设为零
+        data.outputs[0].silenceFlags = 0;
+    }
+    //...
+</code></pre>
+
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://steinbergmedia.github.io/vst3_dev_portal/Tutorials/How+to+use+the+silence+flags.html" rel="noreferrer noopener">Tutorials/How+to+use+the+silence+flags.html</a> · 译文更新于 2026-10-19</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
