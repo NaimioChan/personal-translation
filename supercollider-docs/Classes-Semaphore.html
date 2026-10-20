@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Semaphore - SuperCollider 文档</title>
+<meta name="description" content="控制线程的并行执行">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Semaphore</h1>
+
+<p><em>控制线程的并行执行</em></p>
+
+<p><a href="Classes-Object.html">Object</a></p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>Semaphore.new(count: 1)</code></h4>
+
+<p>创建一个新实例，设置运行线程的最大数量（默认：1）。</p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h4 id="-count"><code>.count</code></h4>
+
+<p>确定正在运行的线程数量。</p>
+
+<h4 id="-clear"><code>.clear</code></h4>
+
+<p>移除对线程的所有引用，但不重新调度任何待处理的线程。</p>
+
+<h4 id="-wait"><code>.wait</code></h4>
+
+<p>如果已有太多线程在运行，则停止当前线程，否则继续。</p>
+
+<h4 id="-signal"><code>.signal</code></h4>
+
+<p>解除信号量阻塞，重新调度下一个挂起的线程。</p>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 只允许一个线程
+(
+c = Semaphore(1);
+fork {
+    c.wait;
+    &quot;thread 1&gt; now I am doing something for 10 seconds. Block the semaphore meanwhile.&quot;.postln;
+    10.wait;
+    c.signal;
+    &quot;thread 1&gt; ok, done. Release the semaphore.&quot;.postln;
+};
+fork {
+    3.0.rand.wait;
+    &quot;thread 2&gt; I would like to go on, if I may.&quot;.postln;
+    c.wait; // may I?
+    &quot;thread 2&gt; this took until the other thread has released the semaphore. &quot;
+        &quot;Blocking for 4 seconds.&quot;.postln;
+    4.wait;
+    &quot;thread 2&gt; ok, done. Releasing the semaphore&quot;.postln;
+    c.signal;
+};
+fork {
+    4.wait;
+    &quot;thread 3&gt; I, too, would like to go on, if I may.&quot;.postln;
+    c.wait; // may I?
+    &quot;thread 3&gt; this took until both other threads had released the semaphore.&quot;.postln;
+    c.signal;
+};
+)</code></pre>
+
+<pre><code>// 允许同时运行两个线程。
+(
+c = Semaphore(2);
+fork {
+    c.wait;
+    &quot;thread 1&gt; now I am doing something for 20 seconds. Block the semaphore.&quot;.postln;
+    10.wait;
+    &quot;thread 1&gt; ok, done. Releasing the semaphore&quot;.postln;
+    c.signal;
+};
+fork {
+    rrand(3.0, 5.0).wait;
+    &quot;thread 2&gt; I would like to go on, if I may.&quot;.postln;
+    if(c.count &lt;= 0) { &quot;thread 3&gt; ok, then I wait ...&quot;.postln };
+    c.wait; // may I?
+    &quot;thread 1&gt; ok, going ahead.&quot;.postln;
+    17.wait;
+    &quot;thread 2&gt; ok, done. Releasing the semaphore&quot;.postln;
+    c.signal;
+};
+fork {
+    6.wait;
+    &quot;thread 3&gt; I, too, would like to go on, if I may.&quot;.postln;
+    if(c.count &lt;= 0) { &quot;thread 3&gt; ok, then I wait ...&quot;.postln };
+    c.wait; // may I?
+    &quot;thread 3&gt; ok, this took until the first thread had released the semaphore. &quot;
+        &quot;Ok, doing something for 4 seconds. Block the semaphore&quot;.postln;
+        4.wait;
+    &quot;Releasing the semaphore.&quot;.postln;
+    c.signal;
+};
+fork {
+    7.wait;
+    &quot;thread 4&gt; Me, the fourth one, would like to go on, if I may.&quot;.postln;
+    if(c.count &lt;= 0) { &quot;thread 4&gt; ok, then I wait ...&quot;.postln };
+    c.wait; // may I?
+    &quot;thread 4&gt; ok, this took until the third thread had released the semaphore. &quot;
+        &quot;Ok, doing something for 3 seconds. Block the semaphore&quot;.postln;
+        3.wait;
+    &quot;Releasing the semaphore.&quot;.postln;
+    c.signal;
+};
+)</code></pre>
+
+<pre><code>// 授予仅一个线程对数据的独占访问权
+// 数据数组中绝不应出现混合的值
+(
+var data, useAndModify;
+
+data = [1, 2, 3];
+c = Semaphore(1);
+// c = Semaphore(2); 用这个来测试在没有独占访问的情况下它会如何表现。
+useAndModify = { |newData, who|
+    postln(who + &quot;trying to get blocking access.&quot;);
+    if(c.count &lt;= 0) { who + &quot;ok, then I wait ...&quot;.postln };
+    c.wait; // 可以访问吗？如果不能，我就等待。如果可以，则禁止他人。
+    &quot;\n&quot;.post;
+    (who + &quot;continuing...&quot;).postln;
+    data.do({ |x|
+            0.1.wait;
+            postln(who + x);
+        });
+    &quot;\n&quot;.post;
+    newData.do { |x, i| data[i] = x };
+    postln(who + &quot;rewriting data to:&quot; + newData);
+    postln(who + &quot;releasing&quot;);
+    c.signal; // 再次允许其他访问
+};
+
+// 例如将值设为整数
+u = Routine {
+    inf.do { |i|
+        useAndModify.value([100, 200, 300], &quot;thread 1&gt;&quot;);
+        rrand(1, 3).wait;
+    }
+};
+
+// 例如将值设为浮点数
+k =  Routine {
+    0.5.wait;
+    inf.do { |i|
+        useAndModify.value([pi, 0.5pi, 2pi], &quot;thread 2&gt;&quot;);
+        rrand(1, 5).wait;
+    }
+};
+u.play;
+k.play;
+);</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/Semaphore.html" rel="noreferrer noopener">Classes/Semaphore.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 05：模式上的数学运算 - SuperCollider 文档</title>
+<meta name="description" content="对模式执行数学和集合操作">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 05：模式上的数学运算</h1>
+
+<p><em>对模式执行数学和集合操作</em></p>
+
+<p>参见：<a href="Tutorials-A-Practical-Guide-PG_04_Words_to_Phrases.html">Pattern Guide 04: Words to Phrases</a>，<a href="Tutorials-A-Practical-Guide-PG_060_Filter_Patterns.html">Pattern Guide 060: Filter Patterns</a></p>
+
+<h2 id="Math on patterns">模式上的数学运算</h2>
+
+<p>通常，并不存在一个单独就能产生完全所需结果的模式。但是，可以对模式应用其他操作，来操纵一个模式的输出并将其转变为其他内容。</p>
+
+<p>其中一些操作看起来像是你会对数组做的事情，但有一个关键区别。对数组做数学运算会一次性对每个数组项执行该操作。相比之下，模式是“惰性”的——它们一次只计算一个值，仅在需要时计算，并且只做交付下一个值所需的工作。对模式的操作会产生另一个模式，该模式会记住要完成的工作。从复合模式创建流会建立起在请求时执行该操作的结构。</p>
+
+<p>例如，将一个模式乘以一个数字会产生一个“二元运算符模式”：<a href="Classes-Pbinop.html">Pbinop</a>。查看 Pbinop 的变量即可揭示按需重建该操作所需的一切。</p>
+
+<pre><code>p = Pwhite(1, 5, inf) * 2;    // 一个 Pbinop
+
+p.operator    // == &#x27;*&#x27;
+p.a        // == 一个 Pwhite
+p.b        // == 2</code></pre>
+
+<p>换句话说，这里的乘法并非产生单次乘法的结果，而是产生一个模板，用于生成后续无限乘法流。</p>
+
+<h3 id="Math on patterns">模式上的数学运算</h3>
+
+<p>模式不仅能生成数字，还支持所有标准数学运算符：一元（abs、reciprocal 等）、二元（+、-、*、/、**、min、max 等）和 n 元（clip、wrap、fold、linlin、linexp 等）运算符都可用于模式。</p>
+
+<pre><code>// 随机整数，1-5
+Pwhite(1, 5, inf).asStream.nextN(10);
+
+// 随机整数 1-5，乘以二得到偶数整数 2-10
+(Pwhite(1, 5, inf) * 2).asStream.nextN(10);
+
+// 随机整数 1-5，乘以 1/4 得到 0.25 到 1.25 之间 1/4 的倍数
+(Pwhite(1, 5, inf) * 0.25).asStream.nextN(10);
+
+// 随机整数 1-5，符号（正或负）随机选择
+(Pwhite(1, 5, inf) * Prand(#[-1, 1], inf)).asStream.nextN(10);</code></pre>
+
+<p>如果二元运算发生在两个模式上，那么每次从结果流请求一个值时，都会向两个组件流请求一个值，并将运算符应用于这些结果。如果任一流传结束，二元运算符流也会结束。</p>
+
+<pre><code>// 结果流有两个值，因为较短的操作数流有两个值
+(Pseq([10, 9, 8], 1) + Pseq([1, 2], 1)).do { |x| x.postln };</code></pre>
+
+<p>二元运算符副词 <code>.x</code> 支持与模式一起使用。（参见 <a href="Reference-Adverbs.html">Adverbs for Binary Operators</a>。）该副词类似于嵌套循环：在 <code>streamA +.x streamB</code> 中，streamA 的第一个值依次加到 streamB 的每个值上，然后 streamA 的第二个值加到 streamB 的每个值上，依此类推。这是将模式依次移调到不同层次的简便方法。</p>
+
+<pre><code>// 播放一个大七和弦琶音，移调到不同的音阶级数
+// Pwhite 是移调器；Pseq 是和弦
+// 和弦就像一个“内层循环”
+(
+p = Pbind(
+    \midinote, Pwhite(48, 72, inf) +.x Pseq(#[0, 4, 7, 11], 1),
+    \dur, 0.125
+).play;
+)
+
+p.stop;</code></pre>
+
+<h3 id="Collection operations on patterns">模式上的集合操作</h3>
+
+<p>对数组可以做的某些操作也适用于模式。</p>
+
+<dl>
+<dt><code>collect(func)</code></dt>
+<dd><p>将函数应用于模式中的每个返回值。适用于通用转换。</p></dd>
+<dt><code>select(func)</code></dt>
+<dd><p>保留输出流中通过布尔测试的值；丢弃其余的值。</p></dd>
+<dt><code>reject(func)</code></dt>
+<dd><p>丢弃输出流中通过测试的值；将其余值返回给用户。</p></dd>
+<dd><pre><code>// 任意/自定义操作：将每个数字转换为两位十六进制字符串
+Pwhite(0, 255, 20).collect({ |x| x.asHexString(2) }).do { |x| x.postln };
+
+// 在结果中保留奇数（现在少于 20 项）
+Pwhite(0, 255, 20).select({ |x| x.odd }).do { |x| x.postln };
+
+// 在结果中剔除奇数
+Pwhite(0, 255, 20).reject({ |x| x.odd }).do { |x| x.postln };</code></pre></dd>
+<dt><code>clump(n)</code></dt>
+<dd><p>对数组调用 .clump 会将一维数组转换为多维数组。类似地，对模式调用 .clump 会一次从模式中获取 n 个值，并将它们全部作为一个数组返回。n 可以是一个数字或一个数值模式。</p></dd>
+<dt><code>flatten(levels)</code></dt>
+<dd><p>反向操作：如果一个模式返回一个数组，其值将被逐个输出。</p></dd>
+<dd><pre><code>// 一个扁平流会变成一个由 4 项数组组成的数组
+Pwhite(0, 255, 20).clump(4).do { |x| x.postln };
+
+    // 一个二维数组
+Array.fill(5, { Array.fill(4, { rrand(1, 5) }) });
+
+    // 按顺序读取该数组的模式
+p = Pseq(Array.fill(5, { Array.fill(4, { rrand(1, 5) }) }), 1);
+
+    // 该模式返回多个数组
+p.do { |x| x.postln };
+
+    // 展平模式会返回一维的数字流
+p.flatten.do { |x| x.postln };</code></pre></dd>
+<dt><code>drop(n)</code></dt>
+<dd><p>丢弃前 n 个值，并返回剩余的所有值。</p></dd>
+<dd><pre><code>Pseries(1, 1, 20).drop(5).do { |x| x.postln };</code></pre></dd>
+<dt><code>differentiate</code></dt>
+<dd><p>返回相邻值之间的差：第二个减第一个，第三个减第二个，依此类推。</p></dd>
+<dd><pre><code>Array.geom(20, 1, 1.01).differentiate;
+Pgeom(1, 1.01, 20).differentiate.do { |x| x.postln };</code></pre></dd>
+</dl>
+
+<h3 id="Miscellaneous calculation patterns">杂项计算模式</h3>
+
+<p>这些是其他一些不完全属于数学运算符类别的数值计算。</p>
+
+<dl>
+<dt><code>Pavaroh(pattern, aroh, avaroh, stepsPerOctave)</code></dt>
+<dd><p>将音阶级数转换为音高数字，并分别使用上行和下行音阶模式。最初为印度拉格而编写，它同样适用于西方旋律小调音阶。</p></dd>
+<dt><code>PdegreeToKey(pattern, scale, stepsPerOctave)</code></dt>
+<dd><p>给定一个产出音阶度数的模式，根据所提供的音阶和每八度步数将度数转换为音符编号。当你使用 'degree' 事件键时，这会自动完成，但在某些情况下，你可能希望进一步对音符编号进行数学运算，此时可能需要显式地进行转换。</p></dd>
+<dt><code>Pdiff(pattern)</code></dt>
+<dd><p>返回源流的最新值与上一个值之间的差值。除其他用途外，这可以用来判断一个流是升序还是降序。这就是上文讨论的 differentiate 方法的底层实现。</p></dd>
+<dt><code>Prorate(proportion, pattern)</code></dt>
+<dd><p>根据比例模式给出的比例，将模式中的一个数拆分。这一点很难简短解释；请查看帮助文件中的一些好例子。</p></dd>
+<dd><pre><code>// 用 Prorate 处理摇摆音符
+(
+p = Pbind(
+    \degree, Pseries(4, Pwhite(-2, 2, inf).reject({ |x| x == 0 }), inf).fold(-7, 11),
+    \dur, Prorate(0.6, 0.5)    // actually yields 0.3, 0.2, 0.3, 0.2...
+).play;
+)
+
+p.stop;</code></pre></dd>
+</dl>
+
+<h3 id="Calculations based on other event values">基于其他事件值的计算</h3>
+
+<p>在 Pbind 中，通常各个键的模式是独立计算的。但也可以让一个或多个子模式依赖于同一个 Pbind 中另一个模式的结果。这通过 <a href="Classes-Pkey.html">Pkey</a> 实现，详见 <a href="Tutorials-A-Practical-Guide-PG_06g_Data_Sharing.html">Pattern Guide 06g: Data Sharing</a>。</p>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_04_Words_to_Phrases.html">模式指南 04：从词到短语</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_060_Filter_Patterns.html">模式指南 060：过滤模式</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_05_Math_on_Patterns.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_05_Math_on_Patterns.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

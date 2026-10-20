@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 06f：服务器控制 - SuperCollider 文档</title>
+<meta name="description" content="管理服务器端资源的模式">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 06f：服务器控制</h1>
+
+<p><em>管理服务器端资源的模式</em></p>
+
+<p>另请参见：<a href="Tutorials-A-Practical-Guide-PG_06e_Language_Control.html">Pattern Guide 06e: Language Control</a>、<a href="Tutorials-A-Practical-Guide-PG_06g_Data_Sharing.html">Pattern Guide 06g: Data Sharing</a></p>
+
+<h2 id="Server control methods">服务器控制方法</h2>
+
+<p>少数滤波器模式可以在私有总线和/或组上隔离信号，并且还能应用效果 synth。一个很好的特性是，模式开始时分配的资源会在结束时被移除。这对效果特别有用，因为你不希望留下大量效果 synth 占用 CPU 却不处理音频。</p>
+
+<dl>
+<dt><code>Pbus(pattern, dur, fadeTime, numChannels, rate)</code></dt>
+<dd><p>为模式所演奏的 synth 创建一个私有组和总线。当模式停止时，组和总线会被释放。适用于隔离不同模式的信号。</p></dd>
+<dt><code>Pgroup(pattern)</code></dt>
+<dd><p>为模式的 Synth 创建一个私有组（不含私有总线）。</p></dd>
+<dt><code>Pfx(pattern, fxname, pairs)</code></dt>
+<dt><code>Pfxb(pattern, fxname, pairs)</code></dt>
+<dd><p>这两个模式都在目标组的尾部播放一个效果 Synth。这个 Synth 应从 out 参数所标识的总线读取，并使用 ReplaceOut 或 XOut 将处理后的信号写入同一总线。Pfx 使用传入事件中指定的任意总线和组。Pfxb 则为效果和模式分配单独的总线和组。</p></dd>
+<dd><p>在信号路由和效果管理方面也有许多排列组合，此处无法深入讨论。一些主要场景包括：</p></dd>
+<dd><ul>
+<li>应当分别应用的独立效果：模式与效果应隔离在不同的总线上。<a href="Classes-Pfxb.html">Pfxb</a> 会自动处理这种隔离：像 <code>Pfxb(Pbind(...), \fxname, \effectargName, value, \name, value...)</code> 这样的两个模式会在不同的总线上播放，它们的信号不会相互干扰。</li>
+<li>应当以链式方式应用的效果：两个效果应使用同一总线，并且效果模式应嵌套以将它们串联起来。最外层的效果应使用 Pfxb 为该信号链分配独立的组和总线；内层效果应使用 <a href="Classes-Pfx.html">Pfx</a> 复用已有的总线。</li>
+</ul></dd>
+<dd><pre><code>Pfxb(
+    Pfx(
+        (event pattern here),
+        \synthDefNameOfFirstEffectInChain,
+        (argument list for the first effect),
+    )
+    \synthDefNameOfSecondEffectInChain,
+    (argument list for the second effect)
+).play;</code></pre></dd>
+<dd><p>通过嵌套以及使用 <a href="Classes-Ppar.html">Ppar</a> 及其同类并行化 Pfx 或 Pfxb 模式，可以实现更复杂的编排。</p></dd>
+<dd><p>此示例使用 Pfxb 在不同总线上分离一对独立发声的模式，并将两个信号的流分别通过独立的音量控制。为示例起见，音量效果合成器被刻意保持简单，但它当然可以执行你想要的任何类型的信号处理。</p></dd>
+<dd><p>起初为效果使用门控包络可能看起来有些奇怪，但这对于保持信号的完整性很重要。如果没有门控，效果 synth 将被 n_free（粗暴地切断），很可能在源模式播放的节点完成之前。在这种情况下，它会在结束时产生突然、短暂的音量跳变。门控与包络中一秒的释放相结合，使效果 synth 保持足够长的时间，以便其源 synth 先变为静音。</p></dd>
+<dd><p>请记住，由模式创建的流不会暴露其内部结构。这意味着你无法直接调整效果 Synth 的参数，因为你无从得知它的节点 ID。示例通过为振幅值分配几个控制总线，并将音量 Synth 映射到这些控制总线来解决此问题。这样，小型 GUI 只需更新控制总线的值即可。</p></dd>
+<dd><pre><code>// 演示 Pfxb 如何隔离不同总线上的信号
+// 此处的 fx synth 是一个简单的音量控制
+// 但它可以更复杂
+
+(
+SynthDef(\volumeCtl, { |out, amp = 1, gate = 1|
+    var    sig = In.ar(out, 2) * amp;
+    sig = sig * EnvGen.kr(Env(#[1, 1, 0], #[1, 1], -3, releaseNode: 1), gate, doneAction: Done.freeSelf);
+    ReplaceOut.ar(out, sig)
+}).add;
+
+~vbus1 = Bus.control(s, 1).set(0.5);
+~vbus2 = Bus.control(s, 1).set(0.5);
+
+~window = Window.new(&quot;mixers&quot;, Rect(10, 100, 320, 60));
+~window.view.decorator = FlowLayout(~window.view.bounds, 2@2);
+EZSlider(~window, 310@20, &quot;low part&quot;, \amp, { |ez| ~vbus1.set(ez.value) }, 0.5);
+~window.view.decorator.nextLine;
+EZSlider(~window, 310@20, &quot;high part&quot;, \amp, { |ez| ~vbus2.set(ez.value) }, 0.5);
+~window.front.onClose_({ ~vbus1.free; ~vbus2.free });
+)
+
+(
+p = Ppar([
+    Pfxb(Pbind(
+        \degree, Pseq([0, 7, 4, 3, 9, 5, 1, 4], inf),
+        \octave, 4,
+        \dur, 0.5
+    ), \volumeCtl, \amp, ~vbus1.asMap),    // 在此映射到控制总线
+    Pfxb(Pbind(
+        \degree, Pwhite(0, 11, inf),
+        \dur, 0.25
+    ), \volumeCtl, \amp, ~vbus2.asMap)    // ……以及这里
+]).play;
+)
+
+p.stop;</code></pre></dd>
+</dl>
+
+<p><strong>第三方扩展提醒</strong>：Pfx 及其同类基于这样一种理念：信号路由安排应当按需创建（当其子模式正在播放时），并在模式结束时立即移除。另一种方法是将信号路由和效果视为持久性基础设施，由用户控制创建和销毁（而非由模式控制）。JITLib 的 proxy 系统为此提供了一些支持。MixerChannels（在 ddwMixerChannel quark 中）是一种更显式的方式。任何模式都可以在 MixerChannel 上播放：<code>aMixer.play(aPattern)</code>。</p>
+
+<h3 id="Pproto: Allocating other resources for the duration of a pattern">Pproto：在模式持续期间分配其他资源</h3>
+
+<p>也可以在准备运行 Pbind 风格模式的过程中加载声音文件或波表缓冲区，或播放 synth。当 Pbind 停止时，这些资源会自动从服务器中移除。</p>
+
+<p>实现这一点的机制与 SuperCollider 中使用服务器的大多数其他协议有些不同。为了创建资源，Pproto 接受一个函数，其中包含一个或多个 Event 对象，这些对象包含创建资源的指令。这些事件应使用特定的事件类型，详见 Pproto 的帮助文件。该模式能够清理资源，因为每个事件都有一个关联的清理动作（参见带有 cleanup 类的事件类型）。因此，Pproto 只需记住代表资源的事件，并在最后执行它们的清理动作。</p>
+
+<p>Pproto 帮助文件中有几个值得阅读的复杂示例。这里只是一个简单案例：加载标准的 <code>ExampleFiles.child</code> 声音文件，并播放其中的片段。</p>
+
+<pre><code>(
+SynthDef(\playbuf, { |bufnum, start, dur = 1, amp = 0.2, out|
+    var    sig = PlayBuf.ar(1, bufnum, BufRateScale.ir(bufnum), 0, start);
+    sig = sig * amp * EnvGen.kr(Env.linen(0.01, dur, 0.01), doneAction: Done.freeSelf);
+    Out.ar(out, sig ! 2)
+}).add;
+)
+
+(
+TempoClock.default.tempo = 1;
+p = Pproto({
+    ~buf = (type: \allocRead, path: ExampleFiles.child).yield;
+}, Pbind(
+    \instrument, \playbuf,
+        // 通过 Pkey 访问 protoevent 中的资源
+    \bufnum, Pkey(\buf),
+    \dur, Pwhite(1, 4, inf) * 0.25,
+        // Pwhite 的上限基于 duration
+        // 因此 start + (dur * samplerate) 永远不会超出 buffer 的末尾
+    \start, Pwhite(0, 188893 - (Pkey(\dur) * 44100), inf)
+)).play;
+)
+
+// 显示分配的缓冲区编号（&#x27;true&#x27; 表示 ContiguousBlock）
+s.bufferAllocator.debug;
+
+p.stop;
+
+s.bufferAllocator.debug;    // 停止后，缓冲区就没了</code></pre>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_06e_Language_Control.html">Pattern Guide 06e: Language Control</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_06g_Data_Sharing.html">模式指南 06g：数据共享</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_06f_Server_Control.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_06f_Server_Control.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>softPut - SuperCollider 文档</title>
+<meta name="description" content="有条件地在环境中设置一个（数字）参数">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>softPut</h1>
+
+<p><em>有条件地在环境中设置一个（数字）参数</em></p>
+
+<p>参见：<a href="Reference-softSet.html">softSet</a>、<a href="Reference-softVol_.html">softVol_</a></p>
+
+<h2 id="description">说明</h2>
+
+<p><code>softPut</code> 是 <a href="Classes-Dictionary.html">Dictionary</a> 的扩展方法，仅在两种条件下更改字典中已有键的数值：</p>
+
+<ul>
+<li>如果新值与该键处的当前值足够接近；</li>
+<li>或者，如果设置控制器知道先前的值并将其一并发送。这里的想法是，如果控制器知道它执行了上一次的值更改，它就有权立即跳转。</li>
+</ul>
+
+<p>典型用途是切换到新的预设，然后使用推子盒，并避免可能发生的控制器突然跳变（软接管）。</p>
+
+<h4 id=".softPut"><code>softPut(param, val, within = 0.025, lastVal, mapped = true, spec)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>param</p></td><td class="argumentdesc"><p>要设置的参数（键）的名称</p></td></tr>
+<tr><td class="argumentname"><p>val</p></td><td class="argumentdesc"><p>要设置 param 的值（可以是已映射或未映射的）</p></td></tr>
+<tr><td class="argumentname"><p>within</p></td><td class="argumentdesc"><p>集合被接受时的归一化范围 - 默认为 0.025</p></td></tr>
+<tr><td class="argumentname"><p>mapped</p></td><td class="argumentdesc"><p>一个标志，表示 <strong>val</strong> 是映射的（在 param.asSpec 范围内）还是未映射的（0.0-1.0）</p></td></tr>
+<tr><td class="argumentname"><p>lastVal</p></td><td class="argumentdesc"><p>控件先前设置的值 - 参见最后的示例。</p></td></tr>
+<tr><td class="argumentname"><p>spec</p></td><td class="argumentdesc"><p>可以传入一个 <a href="Classes-ControlSpec.html">ControlSpec</a>。如果为 nil，则使用 param.asSpec。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果没有给定 spec，或尚不存在值，softSet 仅允许设置。</p></blockquote></td></tr>
+</table>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>(
+e = (amp: 0.1, dur: 0.2);
+Tdef(\test, {
+    var dur;
+    loop {
+        dur = e.dur;
+        (amp: e.amp, dur: dur, degree: 7.rand).play;
+        dur.wait;
+    };
+}).play;
+)
+
+e.put(\amp, 0.03);    // 直接设置它
+e.put(\amp, 0.1);
+e.softPut(\amp, 0.11);    // 小改动，可以设置
+e.put(\amp, 0.1);
+e.softPut(\amp, 0.15);    // 没有更大的变化
+e.softPut(\amp, 0.15, 0.1);    // 更大的变化在 within 值较大时也没问题
+
+e.softPut(\amp, 0.01);    // no
+e.softPut(\amp, 0.01, lastVal: 0.15);    // 当 lastVal 接近 current 时可能产生大跳跃。
+
+    // 默认情况下不存在 dur 的规格：
+    \dur.asSpec
+
+e.softPut(\dur, 0.05);    // 所以这总是会真正设置。</code></pre>
+
+<pre><code>    // PatternProxy（例如 Tdef、Pdef）有一个 softSet 方法，它
+    // 将 softPut 转发到它们的 envir：
+
+Pdef(\test, Pbind(\degree, Pseq((0..7), inf))).play;
+
+Pdef(\test).set(\amp, 0.03)
+Pdef(\test).envir.softPut(\amp, 0.06); // 不，太大了
+Pdef(\test).envir.softPut(\amp, 0.06, 0.1); // 在更宽范围内也没问题
+
+    // 等价于：
+Pdef(\test).set(\amp, 0.03)
+Pdef(\test).softSet(\amp, 0.1); // 不，太大了
+Pdef(\test).softSet(\amp, 0.06, 0.1); // 使用更宽的 &quot;within&quot; 没问题
+Pdef(\test).get(\amp)
+
+Pdef(\test).softSet(\amp, 0.5); // no!
+Pdef(\test).softSet(\amp, 0.5, lastVal: 0.06); // ok!
+Pdef(\test).softSet(\amp, 0.05, lastVal: 0.5); // ok
+
+Pdef(\test).softSet(\dur, 0.05); // 始终没问题，dur 没有 spec。
+Pdef(\test).softSet(\dur, 0.1); // ok
+
+Pdef(\test).softSet(\dur, 0.05, spec: [0.03, 3, \exp]); // 该规范不可接受</code></pre>
+
+<pre><code>    // softPut 和 softSet 可能有风险——如果控制器移动得太快，可能会丢失一个参数。
+    // 所以，如果我们知道最后一个值（例如因为同一个控制器
+    // 知道自己已设置成该值），那么跳变是没问题的：
+
+    // softSet 的示例，softSet 知道 lastVal，
+    // softVol_ 和 softVol_ 知道 lastVol：
+(
+w = Window(&quot;softSet, softVol&quot;, Rect(500, 200, 400, 240)).front;
+w.view.addFlowLayout;
+PdefGui(Pdef(\test), 2, w, 340@80);
+
+    // 如果摆动太快可能会失去控制
+EZSlider(w, 340@30, \softSetDur, [0.03, 3, \exp], { |sl|
+    Pdef(\test).softSet(\dur, sl.value, 0.05)
+});
+
+    // 知道它处于控制之中
+EZSlider(w, 340@30, \knowsLast, [0.03, 3, \exp], Routine { |sl|
+    var newVal, lastVal;
+    loop {
+        newVal = sl.value;
+        Pdef(\test).softSet(\dur, newVal, 0.05, lastVal: lastVal);
+        lastVal = newVal;
+        \dummy.yield;
+    }
+});
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Reference/softPut.html" rel="noreferrer noopener">Reference/softPut.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

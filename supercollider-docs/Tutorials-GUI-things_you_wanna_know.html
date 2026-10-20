@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GUI：你可能想了解的事项 - SuperCollider 文档</title>
+<meta name="description" content="关于 SuperCollider 的 GUI 系统，你可能想了解的一些杂项内容。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>GUI：你可能想了解的事项</h1>
+
+<p><em>关于 SuperCollider 的 GUI 系统，你可能想了解的一些杂项内容。</em></p>
+
+<h2 id="GUI Tutorial">GUI 教程</h2>
+
+<p>此帮助文件是 <a href="Tutorials-GUI-tutorial_intro.html">GUI 教程</a> 的一部分。</p>
+
+<h2 id="Rendering isn">渲染并不总是可用</h2>
+
+<p>SuperCollider 提供了一些有用的类来自动化处理过程。其中一些与 <a href="Classes-Clock.html">Clock</a> 相关联：主要是 <a href="Classes-Routine.html">Routine</a> 和 <a href="Classes-Task.html">Task</a>。</p>
+
+<p><strong>在时钟相关线程的上下文中，Qt 渲染系统不可用</strong>。换句话说，你无法在 <a href="Classes-Routine.html">Routine</a> 或 <a href="Classes-Task.html">Task</a> 中“直接”修改控件。</p>
+
+<p>取而代之的是，你需要通过<strong>将其封装在一个延迟函数中</strong>来推迟修改，该函数将在 SuperCollider 恢复其主上下文后执行，参见 <a href="Classes-Function.html#-defer">Function: -defer</a>。否则会导致程序崩溃：</p>
+
+<pre><code>(
+var win = Window();
+var slider= Slider();
+var value = 0;
+
+var routine = Routine({
+    loop {
+        value = 101.rand / 100;
+        // 在 routine 中与 widget 交互：
+        // 指令必须嵌套在函数中，并延迟执行
+        { slider.value_(value); }.defer;
+        0.5.wait;
+    };
+}).play;
+
+win.layout_(
+    VLayout()
+    .add(slider)
+);
+
+CmdPeriod.doOnce({
+    routine.stop;
+    win.close;
+});
+
+win.front;
+)</code></pre>
+
+<h2 id="Qt limitations">Qt 限制</h2>
+
+<p>这一说明主要涉及调试和理解问题。由于 <strong>Qt 是集成在 SuperCollider 内的第三方库</strong>，它的一些限制与 SuperCollider 本身无关。</p>
+
+<p>举例来说，在撰写本文时，Qt 的 <a href="https://docs.supercollider.online/Classes/QImage">QImage</a> 有严格的像素限制，不能超过 32767x32767 像素。这个“问题”仅与 Qt 相关，记录在 Qt 的源码/论坛中，而不在 SuperCollider 的源码/论坛中。换言之，在 SuperCollider 环境中使用 Qt 时，也可能需要直接使用 Qt 的文档。</p>
+
+<h2 id="Pen usage and resource management">Pen 的使用与资源管理</h2>
+
+<p><a href="Classes-Pen.html">Pen</a> 类允许用户为 <a href="Classes-View.html">View</a> 定义自定义的 <code>drawFunc</code>。</p>
+
+<p><a href="Classes-Pen.html">Pen</a> 的使用是一个<strong>两步过程</strong>：用户<strong>首先“描述”</strong>想要绘制的形状（使用 <code>fillRect</code> 或 <code>lineTo</code> 等方法），<strong>然后渲染该形状</strong>，使用 <code>fill</code>、<code>stroke</code> 或 <code>fillStroke</code>。</p>
+
+<p>取决于硬件，<strong>在绘制非常复杂的形状时</strong>（例如一百万条线），<strong>可能会出现一些问题</strong>：</p>
+
+<p>绘制指令会被缓存，直到被绘制为止。这意味着在调用 <code>stroke</code> 之前调用 <code>lineTo</code> 一百万次，可能会在 <code>stroke</code> 指令实际执行并释放缓存的指令之前耗尽计算机的 RAM。</p>
+
+<p>另一方面，连续调用 <code>lineTo</code> 然后 <code>stroke</code> 一百万次可能在时间上效率低下，因为多个 <code>lineTo</code> 本可以在绘制到屏幕之前被组合在一起。</p>
+
+<p>在这种情况下，最佳解决方案是测试多种配置，以最有效的方式平衡 RAM/CPU 使用率。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/GUI/things_you_wanna_know.html" rel="noreferrer noopener">Tutorials/GUI/things_you_wanna_know.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

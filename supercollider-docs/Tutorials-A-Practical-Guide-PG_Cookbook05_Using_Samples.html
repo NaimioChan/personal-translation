@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南食谱 05：使用采样 - SuperCollider 文档</title>
+<meta name="description" content="使用采样">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南食谱 05：使用采样</h1>
+
+<p><em>使用采样</em></p>
+
+<p>另请参见：<a href="Tutorials-A-Practical-Guide-PG_Cookbook04_Sending_MIDI.html">Pattern Guide Cookbook 04: Sending MIDI</a>、<a href="Tutorials-A-Practical-Guide-PG_Cookbook06_Phrase_Network.html">Pattern Guide Cookbook 06: Phrase Network</a></p>
+
+<h2 id="Using samples">使用采样</h2>
+
+<h3 id="Playing a pattern in time with a sampled loop">与采样循环同步地播放模式</h3>
+
+<p>一个看似复杂的需求。</p>
+
+<p>要将模式与采样循环同步，基本步骤如下：</p>
+
+<ol>
+<li>确定循环边界。</li>
+<li>调整速度与/或播放速率。</li>
+<li>将各个循环段与其他模式并排排列。</li>
+</ol>
+
+<p><strong>1. 确定循环边界</strong></p>
+
+<p>使用外部音频编辑器来识别源文件中以音乐上合理的方式循环的一段。对于此示例，我们将使用 <code>ExampleFiles.child</code>，来自 <a href="Classes-ExampleFiles.html">ExampleFiles</a>，因为它随时可用。根据经验，我们可以发现从 0.404561 到 3.185917 秒的片段产生的节奏可以解析为 4/4 拍的一小节。</p>
+
+<p>起始（0.404561）和结束（3.185917）的片段很重要。我们将在下面使用它们。</p>
+
+<p>请仔细选择这些值。如果循环边界错误，那么音乐结果将不合理。</p>
+
+<p><strong>2. 调整速度 and/or 播放速率</strong></p>
+
+<p>要将循环速度与序列速度匹配，我们需要知道两者：</p>
+
+<ul>
+<li>循环的原始速度，以及</li>
+<li>所需的播放速度。</li>
+</ul>
+
+<p><strong>原始速度：</strong>第 1 部分中所选片段的时长为 3.185917 - 0.404561 = 2.781356 秒。这跨越了一小节 = 4 拍，因此一拍的时长为 2.781356 / 4 = 0.695339 秒/拍。SuperCollider 将速度指定为每秒拍数，因此我们需要取倒数：1 / 0.695339 = 1.4381474359988 拍/秒（86.289 bpm）。</p>
+
+<pre><code>((end - start) / numBeats).reciprocal
+
+// 或者，用代数方式
+(end - start).reciprocal * numBeats
+
+// 等于
+numBeats / (end - start)</code></pre>
+
+<p><strong>播放速度：</strong>原则上，你可以选择任何你喜欢的速度。循环片段播放器应提供一个 <code>rate</code> 参数，其中 rate 为 <code>desiredTempo / originalTempo</code>。如果原始速度如上所述为 86.289 bpm，而你想以 72 bpm 播放，则必须将采样率按 72 / 86.289 = 0.83440531238049 的因子缩小。</p>
+
+<p><strong>3. 将各个循环片段与其他模式并排排序</strong></p>
+
+<p>让 <a href="Classes-PlayBuf.html">PlayBuf</a> 循环，使循环在服务器上自动运行，这也许很诱人，但它很容易与客户端失去同步（因为实际采样率存在细微偏差）。更好的做法是定义一个只播放一遍循环的 SynthDef，并每小节重复触发它一次。</p>
+
+<p>基本的钟声模式强调强拍，随后是随机生成的节奏。问题在于，我们无法保证 <a href="Classes-Pwrand.html">Pwrand</a> 的 <code>\dur</code> 模式会恰好累加到 4 拍。<a href="Classes-Pfindur.html">Pfindur</a>（“有限时长”）模式会在 4 拍后截断内部的 Pbind。这本来会停止该模式，但 <a href="Classes-Pn.html">Pn</a> 会无限重复 Pfindur，每次都把重音放在正确的位置。</p>
+
+<p>循环实际上以一个半拍的弱起开始，因此 <a href="Classes-Ptpar.html">Ptpar</a> 将钟声模式延迟了 0.5 拍。</p>
+
+<pre><code>(
+b = Buffer.read(s, ExampleFiles.child);
+
+// 一个循环片段
+SynthDef(\oneLoop, { |out, bufnum, start, time, amp, rate = 1|
+    var sig = PlayBuf.ar(1, bufnum,
+        rate: rate * BufRateScale.kr(bufnum),
+        startPos: start, loop: 0
+    ),
+    env = EnvGen.kr(Env.linen(0.01, time, 0.05, level: amp),
+        doneAction: Done.freeSelf);
+    Out.ar(out, (sig * env).dup);
+}).add;
+
+SynthDef(\bell, { |out, accent = 0, amp = 0.1, decayScale = 1|
+    var exc = PinkNoise.ar(amp)
+    * Decay2.kr(Impulse.kr(0), 0.01, 0.05),
+    sig = Klank.ar(`[
+        { ExpRand(400, 1600) } ! 4,
+        1 ! 4,
+        { ExpRand(0.1, 0.4) } ! 4
+    ], exc, freqscale: accent + 1, decayscale: decayScale);
+    DetectSilence.ar(sig, doneAction: Done.freeSelf);
+    Out.ar(out, sig.dup)
+}).add;
+)
+
+(
+var start = 0.404561, end = 3.185917,
+beatsInLoop = 4,
+originalTempo = beatsInLoop / (end - start);
+
+TempoClock.tempo = originalTempo;
+
+p = Ptpar([
+    0, Pbind(
+        \instrument, \oneLoop,
+        \bufnum, b,
+        \amp, 0.4,
+        \start, start * b.sampleRate,
+        \dur, beatsInLoop,
+        \time, Pkey(\dur) / Pfunc { thisThread.clock.tempo },
+        \rate, Pfunc { thisThread.clock.tempo / originalTempo }
+    ),
+    0.5, Pn(
+        Pfindur(4,
+            Pbind(
+                \instrument, \bell,
+                \accent, Pseq([2, Pn(0, inf)], 1),
+                \amp, Pseq([0.3, Pn(0.1, inf)], 1),
+                \decayScale, Pseq([6, Pn(1, inf)], 1),
+                \dur, Pwrand(#[0.25, 0.5, 0.75, 1], #[2, 3, 1, 1].normalizeSum, inf)
+            )
+        ),
+    inf),
+    0.5, Pbind(
+        \instrument, \bell,
+        \accent, -0.6,
+        \amp, 0.2,
+        \decayScale, 0.1,
+        \dur, 1
+    )
+], 1).play;
+)
+
+// 为了好玩，改变速度
+// 在下一小节重新同步
+TempoClock.tempo = 104/60;
+
+p.stop;</code></pre>
+
+<p>上面使用 Ptpar 意味着你只能一次性停止或启动整个组合，无法控制这三个层。在独立的事件流播放器中播放这些层并不更难，使用 quant 参数可确保正确同步。有关指定模式起始时间的细节，请参阅 <a href="Classes-Quant.html">Quant</a> 帮助文件。</p>
+
+<pre><code>(
+var start = 0.404561, end = 3.185917,
+beatsInLoop = 4,
+originalTempo = beatsInLoop / (end - start);
+
+TempoClock.tempo = originalTempo;
+
+p = Pbind(
+    \instrument, \oneLoop,
+    \bufnum, b,
+    \amp, 0.4,
+    \start, start * b.sampleRate,
+    \dur, beatsInLoop,
+    \time, Pkey(\dur) / Pfunc { thisThread.clock.tempo },
+    \rate, Pfunc { thisThread.clock.tempo / originalTempo }
+).play(quant: [4, 3.5]);
+
+q = Pn(
+    Pfindur(4,
+        Pbind(
+            \instrument, \bell,
+            \accent, Pseq([2, Pn(0, inf)], 1),
+            \amp, Pseq([0.3, Pn(0.1, inf)], 1),
+            \decayScale, Pseq([6, Pn(1, inf)], 1),
+            \dur, Pwrand(#[0.25, 0.5, 0.75, 1], #[2, 3, 1, 1].normalizeSum, inf)
+        )
+    ),
+inf).play(quant: [4, 4]);
+
+r = Pbind(
+    \instrument, \bell,
+    \accent, -0.6,
+    \amp, 0.2,
+    \decayScale, 0.1,
+    \dur, 1
+).play(quant: [4, 4]);
+)
+
+[p, q, r].do(_.stop);
+
+b.free;</code></pre>
+
+<h3 id="Using audio samples to play pitched material">使用音频采样播放有音高的素材</h3>
+
+<p>要在模式中使用乐器采样，你需要一个能以给定速率播放该采样的 SynthDef。这里我们将使用 <a href="Classes-PlayBuf.html">PlayBuf</a>，它不允许在特定区域内循环。为此，<a href="Classes-Phasor.html">Phasor</a> 和 <a href="Classes-BufRd.html">BufRd</a> 可能是最佳选择。（<strong>第三方扩展提醒</strong>：Lance Putnam 的 LoopBuf 是一种替代方案——可在 <strong>sc3-plugins</strong> 包中找到它。）</p>
+
+<p>频率由 rate 参数控制。采样在正常速率下以给定频率播放，因此要播放特定频率，<code>frequency / baseFrequency</code> 给出所需的速率。</p>
+
+<p>第一个示例创建了一个自定义 protoEvent，它基于基准频率计算出速率，即 <code>\freq</code>。它使用一个采样，因此最适合在较窄范围内播放的模式。由于 SuperCollider 发行版中没有乐器采样，我们将在运行模式之前，把一段频率调制采样录制到缓冲区中。</p>
+
+<pre><code>// 生成一个声音样本
+(
+var recorder;
+fork {
+    b = Buffer.alloc(s, 44100 * 2, 1);
+    s.sync;
+    recorder = { |freq = 440|
+        var initPulse = Impulse.kr(0),
+        mod = SinOsc.ar(freq) * Decay2.kr(initPulse, 0.01, 3) * 5,
+        car = SinOsc.ar(freq + (mod*freq)) * Decay2.kr(initPulse, 0.01, 2.0);
+        RecordBuf.ar(car, b, loop: 0, doneAction: Done.freeSelf);
+        car ! 2
+    }.play;
+    o = OSCFunc({ |msg|
+        if(msg[1] == recorder.nodeID, {
+            &quot;done recording&quot;.postln;
+            o.free;
+        });
+    }, &#x27;/n_end&#x27;, s.addr);
+};
+SynthDef(\sampler, { |out, bufnum, freq = 1, amp = 1|
+    var sig = PlayBuf.ar(1, bufnum, rate: freq, doneAction: Done.freeSelf) * amp;
+    Out.ar(out, sig ! 2)
+}).add;
+)
+
+(
+// 在执行此操作前，等待 &quot;done recording&quot; 消息
+var samplerEvent = Event.default.put(\freq, { ~midinote.midicps / ~sampleBaseFreq });
+
+TempoClock.default.tempo = 1;
+p = Pbind(
+    \degree, Pwhite(0, 12, inf),
+    \dur, Pwrand([0.25, Pn(0.125, 2)], #[0.8, 0.2], inf),
+    \amp, Pexprand(0.1, 0.5, inf),
+    \sampleBaseFreq, 440,
+    \instrument, \sampler,
+    \bufnum, b
+).play(protoEvent: samplerEvent);
+)
+
+p.stop;
+b.free;</code></pre>
+
+<h3 id="Multi-sampled instruments">多重采样乐器</h3>
+
+<p>要使用多个采样扩展采样器的范围并确保频率范围之间的平滑过渡，SynthDef 应在相邻缓冲区之间交叉淡化。此处采用混合方法，由 Pbind 计算要使用的较低缓冲区编号，由 SynthDef 计算交叉淡化强度。（计算可以有不同的组织方式，例如将更多计算放入 SynthDef 以便于模式使用，或将计算加载到模式中并让 SynthDef 尽可能精简。）</p>
+
+<p>这些计算使用 MIDI 音符号，因为它是线性频率刻度，线性插值比使用 Hz 时所需的指数插值更容易。假设数组已排序，indexInBetween 使用线性插值给出小数索引。如果你需要使用以 Hz 为单位的频率，请用此函数代替 indexInBetween。</p>
+
+<pre><code>f = { |val, array|
+    var a, b, div;
+    var i = array.indexOfGreaterThan(val);
+    if(i.isNil) { array.size - 1 } {
+        if(i == 0) { i } {
+            a = array[i-1]; b = array[i];
+            div = b / a;
+            if(div == 1) { i } {
+                    // log() / log() == log(val/a) 以 (b/a) 为底
+                    // 这是指数插值的逆运算
+                log(val / a) / log(div) + i - 1
+            }
+        }
+    };
+};</code></pre>
+
+<p>但该函数在此示例中并不需要：</p>
+
+<pre><code>(
+var bufCount;
+~midinotes = (39, 46 .. 88);
+bufCount = ~midinotes.size;
+
+fork {
+    // 以不同频率录制采样
+    b = Buffer.allocConsecutive(~midinotes.size, s, 44100 * 2, 1);
+    SynthDef(\sampleSource, { |freq = 440, bufnum|
+        var initPulse = Impulse.kr(0),
+        mod = SinOsc.ar(freq) * Decay2.kr(initPulse, 0.01, 3) * 5,
+        car = SinOsc.ar(freq + (mod*freq)) * Decay2.kr(initPulse, 0.01, 2.0);
+        RecordBuf.ar(car, bufnum, loop: 0, doneAction: Done.freeSelf);
+    }).send(s);
+    s.sync;
+    // 同时录制全部 8 个缓冲区
+    b.do({ |buf, i|
+        Synth(\sampleSource, [freq: ~midinotes[i].midicps, bufnum: buf]);
+    });
+};
+o = OSCFunc({ |msg|
+    bufCount = bufCount - 1;
+    if(bufCount == 0) {
+        &quot;done recording&quot;.postln;
+        o.free;
+    };
+}, &#x27;/n_end&#x27;, s.addr);
+
+SynthDef(\multiSampler, { |out, bufnum, bufBase, baseFreqBuf, freq = 440, amp = 1|
+    var buf1 = bufnum.floor,
+    buf2 = buf1 + 1,
+    xfade = (bufnum - buf1).madd(2, -1),
+    basefreqs = Index.kr(baseFreqBuf, [buf1, buf2]),
+    playbufs = PlayBuf.ar(1, bufBase + [buf1, buf2], freq / basefreqs, loop: 0,
+        doneAction: Done.freeSelf),
+    sig = XFade2.ar(playbufs[0], playbufs[1], xfade, amp);
+    Out.ar(out, sig ! 2)
+}).add;
+
+~baseBuf = Buffer.alloc(s, ~midinotes.size, 1, { |buf| buf.setnMsg(0, ~midinotes.midicps) });
+)
+
+(
+TempoClock.default.tempo = 1;
+p = Pbind(
+    \instrument, \multiSampler,
+    \bufBase, b.first,
+    \baseFreqBuf, ~baseBuf,
+    \degree, Pseries(0, Prand(#[-2, -1, 1, 2], inf), inf).fold(-11, 11),
+    \dur, Pwrand([0.25, Pn(0.125, 2)], #[0.8, 0.2], inf),
+    \amp, Pexprand(0.1, 0.5, inf),
+    // 一些重要的转换
+    // 确定要读取的缓冲区编号
+    \freq, Pfunc { |ev| ev.use(ev[\freq]) },
+    \bufnum, Pfunc({ |ev| ~midinotes.indexInBetween(ev[\freq].cpsmidi) })
+    .clip(0, ~midinotes.size - 1.001)
+).play;
+)
+
+p.stop;
+b.do(_.free); ~baseBuf.free;</code></pre>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook04_Sending_MIDI.html">Pattern Guide Cookbook 04: Sending MIDI</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook06_Phrase_Network.html">Pattern Guide Cookbook 06: Phrase Network</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_Cookbook05_Using_Samples.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_Cookbook05_Using_Samples.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

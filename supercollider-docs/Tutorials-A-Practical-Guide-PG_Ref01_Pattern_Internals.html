@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南参考 01：模式内部 - SuperCollider 文档</title>
+<meta name="description" content="模式实现的细节，以及编写新模式类的指导">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南参考 01：模式内部</h1>
+
+<p><em>模式实现的细节，以及编写新模式类的指导</em></p>
+
+<p>另请参阅：<a href="Tutorials-A-Practical-Guide-PG_Cookbook08_Swing.html">Pattern Guide Cookbook 08: Swing</a></p>
+
+<h2 id="Inner workings of patterns">模式的内部工作原理</h2>
+
+<h3 id="Patterns as streams">作为流的模式</h3>
+
+<p>如前所述，模式本身作用不大。必须先将其转换为流；然后，值是从流中请求的，而不是从模式中请求的。</p>
+
+<p>对于大多数模式，流是 <a href="Classes-Routine.html">Routine</a> 的一个实例。例程（在计算机科学中正式称为“协程”）很重要，因为它们可以将控制权交还给调用者，但仍能准确记住自己执行到了哪里，因此可以在下一次调用时从中间恢复，而不必从头开始。少数特殊模式使用 FuncStream，它只是对函数的一层包装，使函数能够通过响应 <code>next</code> 及其他 Stream 方法而表现得像流一样。</p>
+
+<p>每个 pattern 类都必须响应 <code>asStream</code>；然而，大多数 pattern 并不直接实现 <code>asStream</code>。它们改为使用来自 <a href="Classes-Pattern.html">Pattern</a> 的通用 <code>asStream</code> 实现。</p>
+
+<pre><code>    asStream { ^Routine({ arg inval; this.embedInStream(inval) }) }</code></pre>
+
+<p>这一行创建了一个 Routine，其职责只是将模式嵌入其流中。“嵌入”意味着模式执行其指定的工作，并在完成时将控制权返回给父层级。当简单模式完成时，其父层级就是 Routine 本身。在 <code>embedInStream</code> 返回后，Routine 没有其他事情可做，因此该流结束；此后它只能产生 nil。</p>
+
+<pre><code>p = Pseries(0, 1, 3).asStream;    // 这将恰好产生 3 个值
+4.do { p.next.postln };        // 第 4 个值为 nil</code></pre>
+
+<p>我们看到列表模式可以包含其他模式，并且内部模式被视为“子例程”。列表模式通过对其列表项调用 <code>embedInStream</code> 来实现这一点。大多数对象只需产出该对象即可被嵌入流中：</p>
+
+<pre><code>        // 在 Object 中
+    embedInStream { ^this.yield; }</code></pre>
+
+<p>但如果该项本身就是一个模式，控制会进入子模式并停留在那里，直到子模式结束。然后控制回到列表模式以获取下一项，该项被嵌入，依此类推。</p>
+
+<pre><code>p = Pseq([Pseries(0, 1, 3), Pgeom(10, 2, 3)], 1).asStream;
+
+p.next;    // Pseq 是内嵌的；第一项是 Pseries(0...)，也是内嵌的
+        // 控制现在位于 Pseries 中
+p.next;    // Pseries 的第二个元素
+p.next;    // Pseries 的第三项
+p.next;    // 没有更多 Pseries 项；控制权返回 Pseq
+        // Pseq 获取下一个项目（Pgeom）并嵌入它，产生 10
+p.next;    // Pgeom 的第二个元素
+p.next;    // Pgeom 的第三项
+p.next;    // 没有更多 Pgeom 项；Pseq 没有更多项，因此返回到 Routine
+        // Routine 已无剩余工作，因此结果为 nil</code></pre>
+
+<p>因此，要编写一个新的模式类，最低要求是：</p>
+
+<ul>
+<li>模式参数的<strong>实例变量</strong></li>
+<li>一个用于初始化这些变量的 <code>*new</code> 方法</li>
+<li>一个用于完成模式工作的 <code>embedInStream</code> 方法</li>
+</ul>
+
+<p>主库中较简单的模式定义之一是 Prand：</p>
+
+<pre><code>Prand : ListPattern {
+    embedInStream { arg inval;
+        var item;
+
+        repeats.value.do({ arg i;
+            item = list.at(list.size.rand);
+            inval = item.embedInStream(inval);
+        });
+        ^inval;
+    }
+}</code></pre>
+
+<p>此定义没有显示实例变量或 <code>*new</code> 方法。它们在哪里？它们继承自父类 ListPattern。</p>
+
+<pre><code>ListPattern : Pattern {
+    var &lt;&gt;list, &lt;&gt;repeats=1;
+
+    *new { arg list, repeats=1;
+        if (list.size &gt; 0) {
+            ^super.new.list_(list).repeats_(repeats)
+        }{
+            Error(&quot;ListPattern (&quot; ++ this.name ++ &quot;) requires a non-empty collection; received &quot;
+                ++ list ++ &quot;.&quot;).throw;
+        }
+    }
+    // 本文档中省略了一些杂项方法
+}</code></pre>
+
+<p>由于这种继承关系，Prand 简单地将其行为表达为一个 <code>do</code> 循环，从列表中随机选择 <code>repeats</code> 个项目并将它们嵌入流中。当循环结束时，该方法返回输入值（见下文）。</p>
+
+<h3 id="Streams">流的输入值（inval、inevent）</h3>
+
+<p>在讨论模式中的输入值之前，让我们先退一步，讨论它在例程中的工作方式。</p>
+
+<p><a href="Classes-Routine.html">Routine</a> 的 <code>next</code> 方法接受一个参数，该参数会被传入流（Routine）中。问题在于，例程不会从头开始——如果它从头开始，就会失去其记住位置并按需恢复的独特优势。因此，仅通过例程函数的参数变量来接收该参数是不够的。</p>
+
+<p>实际上，当一个 Routine 产生一个值时，它的执行在调用 <code>yield</code> 之后、但在 <code>yield</code> 返回之前被中断。然后，当要求该 Routine 提供下一个值时，执行会通过从 <code>yield</code> 方法提供一个返回值而恢复。（此行为在类库的 SuperCollider 代码中不可见；<code>yield</code> 是 C++ 后端中的一个原语，这就是它能够做到该语言中原本不可能之事的原因。）</p>
+
+<p>举一个简单的例子，考虑一个例程，它本应将输入值乘以二。首先看错误的方式，假设一切都由函数参数 <code>inval</code> 完成。实际上，第一个传入的 <code>inval</code> 是 <code>1</code>。由于例程中没有任何东西改变 <code>inval</code> 的值，例程每次都会产生相同的值。</p>
+
+<pre><code>r = Routine({ |inval|
+    loop {
+        yield(inval * 2)
+    }
+});
+
+(1..3).do { |x| r.next(x).postln };</code></pre>
+
+<p>如果例程将 <code>yield</code> 的结果保存到 <code>inval</code> 变量中，例程便会感知到连续的输入值并返回预期的结果。</p>
+
+<pre><code>r = Routine({ |inval|
+    loop {
+            // 这里是第 2、3、4 等输入值进入的地方
+        inval = yield(inval * 2);
+    }
+});
+
+(1..3).do { |x| r.next(x).postln };</code></pre>
+
+<p>这一约定——将第一个输入值作为参数接收，后续输入值作为方法调用的结果接收——同样适用于模式中的 <code>embedInStream</code> 方法。规则如下：</p>
+
+<ul>
+<li><code>embedInStream</code> 接受<strong>一个参数</strong>，即第一个输入值。</li>
+<li>当模式需要直接产出一个值，或将一个项嵌入流中时，它会接收下一个输入值作为 <code>yield</code> 或 <code>embedInStream</code> 的结果：<code>inval = output.yield</code> 或 <code>output.embedInStream(inval)</code>。</li>
+<li>当模式退出时，它必须返回最后一个输入值，以便父模式能将该输入值作为其 <code>embedInStream</code> 调用的结果：<code>^inval</code>。</li>
+</ul>
+
+<p>遵循这些规则，<code>embedInStream</code> 就几乎成了 <code>yield</code> 的双胞胎。两者本质上做的是同一件事：向用户吐出值，并带着下一个输入值返回。唯一的区别是，yield 只能向 <code>next</code> 调用者返回一个对象，而 <code>embedInStream</code> 可以连续产出多个对象。</p>
+
+<p>花点时间回头看看 Prand 的 <code>embedInStream</code> 方法是如何做到的。</p>
+
+<h3 id="embedInStream vs. asStream + next">embedInStream 与 asStream + next 的对比</h3>
+
+<p>如果一个模式类需要使用另一个模式的值，它应当使用 <code>embedInStream</code> 对该模式求值，还是应当创建一个单独的流（ <code>asStream</code> ）并使用 <code>next</code> 从该流中取值？类库中两种方法都有使用。</p>
+
+<p><code>embedInStream</code> 将控制权完全交给子模式。外部模式实际上被挂起，直到子模式交还控制权。例如，这是大多数列表模式的预期行为。父模式没有机会对返回给调用者的值做任何处理。</p>
+
+<p>这个模式演示了将控制权交给子模式意味着什么。<a href="Classes-Pseq.html">Pseq</a> 列表中的第一个模式是无限的；因此，第二个子模式将永远不会执行，因为无限模式永远不会将控制权交还给 Pseq。</p>
+
+<pre><code>p = Pseq([Pwhite(0, 9, inf), Pwhite(100, 109, inf)], 1).asStream;
+p.nextN(20);    // 无论你这样做多久，它永远不会 &gt; 9！</code></pre>
+
+<p>如果父模式需要在产出之前对产出值执行其他操作，或者需要同时跟踪多个子流，则应使用 <code>asStream</code>。例如，<a href="Classes-Pdiff.html">Pdiff</a> 取当前值与上一个值之间的差。由于减法发生在评估子模式与产出差值之间，因此子模式必须作为流使用。</p>
+
+<pre><code>Pdiff : FilterPattern {
+    embedInStream { arg event;
+            // 流在这里！
+        var stream = pattern.asStream;
+        var next, prev = stream.next(event);
+        while {
+            next = stream.next(event);
+            next.notNil;
+        }{
+                // 这里是返回值
+            event = (next - prev).yield;
+            prev = next;
+        }
+        ^event
+    }
+}</code></pre>
+
+<h3 id="Writing patterns: other factors">编写模式：其他因素</h3>
+
+<p>模式对象应当是<em>无状态的</em>，这意味着模式对象本身不应因任何运行该模式的流而发生改变。（有一些例外，例如 <a href="Classes-Ppatmod.html">Ppatmod</a>，它的存在就是为了对模式对象执行某种修改。但即便是这个特例，也会为每个流单独复制一份待修改的模式；原始模式不受这些流行为的影响。）<em>如果你正考虑打破这一规则，务必非常谨慎</em>，并且在这样做之前，先想一想是否还有别的办法能在不打破该规则的前提下达成目标。</p>
+
+<p>由于此规则，<em>所有反映特定流状态的变量都应是 embedInStream 方法的局部变量</em>。如果查阅现有模式类中的示例，几乎每种情况下都会看到 <code>embedInStream</code> 不会更改类中定义的实例变量。它将这些变量用作参数，但不会更改它们。在流评估期间发生变化的任何内容都是局部方法变量。</p>
+
+<p>要初始化模式的参数（实例变量），库中的典型做法是为所有实例变量提供 getter 和 setter 方法，并在 <code>*new</code> 方法中使用 setter（或者使用 <code>^super.newCopyArgs(...))</code>）。通常不会使用 init 方法来填充实例变量。例如，</p>
+
+<pre><code>Pn : FilterPattern {
+    var &lt;&gt;repeats;
+    *new { arg pattern, repeats=inf;
+            // 此处使用 setter 方法进行重复
+        ^super.new(pattern).repeats_(repeats)
+    }
+...
+}</code></pre>
+
+<p>请仔细考虑某个参数是否可以在每次 <code>next</code> 调用中改变。如果可以，请为该参数创建一个流，并在每次迭代时对其调用 <code>.next(inval)</code>。不应改变的参数（例如重复次数）应调用 <code>.value(inval)</code>，以便可以传入一个函数。<a href="Classes-Pwhite.html">Pwhite</a> 演示了这两个特性。</p>
+
+<p>- <strong>留给读者的练习</strong>：为什么 <code>Pwhite(0.0, 1.0, inf)</code> 即使经过 <code>asStream</code> 和 next 调用也能正常工作？</p>
+
+<pre><code>Pwhite : Pattern {
+    var &lt;&gt;lo, &lt;&gt;hi, &lt;&gt;length;
+    *new { arg lo=0.0, hi=1.0, length=inf;
+        ^super.newCopyArgs(lo, hi, length)
+    }
+    storeArgs { ^[lo,hi,length] }
+    embedInStream { arg inval;
+            // lo 和 hi 流
+        var loStr = lo.asStream;
+        var hiStr = hi.asStream;
+        var hiVal, loVal;
+            // length.value -- length 允许使用函数
+            // 例如，Pwhite 可以为每次嵌入提供随机数量的值
+        length.value.do({
+            hiVal = hiStr.next(inval);
+            loVal = loStr.next(inval);
+            if(hiVal.isNil or: { loVal.isNil }) { ^inval };
+            inval = rrand(loVal, hiVal).yield;
+        });
+        ^inval;
+    }
+}
+
+// 图形上升是因为 lo 和 hi 值在每个 &#x27;next&#x27; 值上增加
+Pwhite(Pseries(0.0, 0.01, inf), Pseries(0.2, 0.01, inf), inf).asStream.nextN(200).plot;</code></pre>
+
+<h3 id="Cleaning up event pattern resources">清理事件模式资源</h3>
+
+<p>某些事件模式会创建服务器或其他对象，当它们停止时需要显式移除。这由 <a href="Classes-EventStreamCleanup.html">EventStreamCleanup</a> 对象处理。该类存储一组将在模式结束时运行的函数。它还在当前事件中使用特殊键，将清理函数向上传递给父模式，最终传递给执行事件的 <a href="Classes-EventStreamPlayer.html">EventStreamPlayer</a>。</p>
+
+<p>基本用法包括 4 个阶段：</p>
+
+<pre><code>    embedInStream { |inval|
+        var    outputEvent;
+
+        // #1 - 创建 EventStreamCleanup 实例
+        var    cleanup = EventStreamCleanup.new;
+
+        // #2 - 创建持久资源，并添加清理函数
+        // 可以是 Synth 以外的某种资源
+        synth = (... make the Synth here...);
+        cleanup.addFunction(inval, { |flag|
+            if(flag) {
+                synth.release
+            };
+        });
+
+        loop {
+            outputEvent = (... get output event...);
+
+            // #4 - cleanup.exit
+            if(outputEvent.isNil) { ^cleanup.exit(inval) };
+
+            // #3 - 在 yield 之前更新 EventStreamCleanup
+            cleanup.update(outputEvent);
+            inval = outputEvent.yield;
+        }
+    }</code></pre>
+
+<ol>
+<li>embedInStream 方法应创建自己的 EventStreamCleanup 实例。（或者，它可以将 cleanup 对象作为第二个参数接收，但不应假定 cleanup 对象会被传入。它应始终检查其是否存在，并在需要时创建该实例。注意，模式还应如所示重新实现 <code>asStream</code>。）对模式来说，直接创建自己的实例要简单得多。</li>
+<li><p>当模式创建需要清理的对象时，它还应使用 EventStreamCleanup 上的 addFunction 方法，传入一个用于移除资源的函数。（上面的示例有意做了大幅简化。在实践中，注意服务器操作的时机很重要。有几个模式类给出了很好的示例，例如 Pmono、Pfx。）</p>
+
+<p>该标志应在移除 Synth 或 Group 节点时使用。通常该标志为 true；但是，如果模式的 EventStreamPlayer 被 cmd-. 停止，节点将已从服务器消失。如果你的函数试图再次移除它们，用户将看到来自服务器的 FAILURE 消息，然后感到困惑，以为自己做错了什么，而实际上该错误在类中是可以避免的。</p></li>
+<li>在使用返回事件调用 <code>.yield</code> 之前，还要调用 <code>cleanup.update(outputEvent)</code>。</li>
+<li>当 <code>embedInStream</code> 将控制权返回给父级时，通常使用 <code>^inval</code> 来完成。当涉及 EventStreamCleanup 时，应使用 <code>^cleanup.exit(inval)</code>。这会执行清理函数，并将它们从任意父级的 EventStreamCleanups 中移除。</li>
+</ol>
+
+<h3 id="When does a pattern need an EventStreamCleanup?">模式何时需要 EventStreamCleanup？</h3>
+
+<p>如果模式在服务器上创建了某些内容（总线、组、合成器、缓冲区等），则必须如所示使用 EventStreamCleanup，以确保这些资源被正确垃圾回收。</p>
+
+<p>或者，如果模式有可能在一个或多个子模式自行停止之前就停止，那么 EventStreamCleanup 就很重要，这样模式就能感知到来自子模式的清理动作。例如，在像 <code>Pfindur(10, Pmono(name, pairs...))</code> 这样的结构中，Pmono 可能持续超过 10 拍，在这种情况下 Pfindur 会将其截断。Pmono 需要结束其 synth，但它并不知道链中更高层的模式正在使其停止。清理子模式之后的状态就成为父模式的责任。如上所述，EventStreamCleanup 仅以对常规模式逻辑的最小侵入来处理这一点。</p>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook08_Swing.html">Pattern Guide Cookbook 08: Swing</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_Ref01_Pattern_Internals.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_Ref01_Pattern_Internals.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

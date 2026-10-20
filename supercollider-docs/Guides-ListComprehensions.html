@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>列表推导 - SuperCollider 文档</title>
+<meta name="description" content="列表推导式和生成器表达式">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>列表推导</h1>
+
+<p><em>列表推导式和生成器表达式</em></p>
+
+<h2 id="Introduction">Introduction</h2>
+
+<p>列表推导式是函数式编程语言（如 Miranda、Haskell 和 Erlang）的一种语法特性，后来被引入到 Python 中。你可以在网上搜索“list comprehensions”或“generator expressions”以了解更多。基本上，列表推导式用于获取某个问题的一系列解。</p>
+
+<p>在 SC 中，这些只是一个更长表达式的语法宏。将其读作 <em>“对 1..5 中的 x、1..x 中的 y，满足 x+y 为素数，取所有 [x,y]”</em>：</p>
+
+<pre><code>all {:[x,y], x &lt;- (1..5), y &lt;- (1..x), (x+y).isPrime }</code></pre>
+
+<p>returns:</p>
+
+<pre><code>[ [ 1, 1 ], [ 2, 1 ], [ 3, 2 ], [ 4, 1 ], [ 4, 3 ], [ 5, 2 ] ]</code></pre>
+
+<p>上面的列表推导式等价于以下代码：</p>
+
+<pre><code>all(Routine.new({ (1..5).do {|x| (1..x).do {|y| if ((x+y).isPrime) {[x,y].yield} }}}));</code></pre>
+
+<p>……但比把它完整写出来要简洁得多，也更容易记住。</p>
+
+<p>在列表推导编译器中，像 <code>(1..5)</code> 和 <code>(1..x)</code> 这样的简单序列被当作特殊情况处理，并实现为循环而不是创建集合。</p>
+
+<p>SC 中的列表推导实际上是一个 <a href="Classes-Routine.html">Routine</a>。你可以使用 <code>all</code> 消息将 Routine 的所有结果收集到一个列表中。</p>
+
+<h2 id="A few examples">几个示例</h2>
+
+<pre><code>all {: x/(x+1), x &lt;- (1..5) }
+
+[ 0.5, 0.66666666666667, 0.75, 0.8, 0.83333333333333 ]</code></pre>
+
+<pre><code>all {:[x,y], x &lt;- (1..3), y &lt;- [\a,\b,\c] }
+
+[ [ 1, a ], [ 1, b ], [ 1, c ], [ 2, a ], [ 2, b ], [ 2, c ], [ 3, a ], [ 3, b ], [ 3, c ] ]</code></pre>
+
+<pre><code>all {:[x,y], x &lt;- (0..3), y &lt;- (x..0) }
+
+[ [ 0, 0 ], [ 1, 1 ], [ 1, 0 ], [ 2, 2 ], [ 2, 1 ], [ 2, 0 ], [ 3, 3 ], [ 3, 2 ], [ 3, 1 ], [ 3, 0 ] ]</code></pre>
+
+<pre><code>all {:y, x &lt;- (1..4), y &lt;- (x..1) }
+
+[ 1, 2, 1, 3, 2, 1, 4, 3, 2, 1 ]</code></pre>
+
+<pre><code>(
+var intervals;
+// 一个用于生成和弦排列中所有音符对之间音程的函数
+intervals = {|chord|
+    all {: chord[i+gap] - chord[i],
+        gap &lt;- (1 .. chord.lastIndex),
+        i &lt;- (0 .. chord.lastIndex - gap)
+    }
+};
+
+intervals.([0,4,7,10]).postln;
+intervals.([0,1,3,7]).postln;
+)
+
+[ 4, 3, 3, 7, 6, 10 ]
+[ 1, 2, 4, 3, 6, 7 ]</code></pre>
+
+<pre><code>all {:[y, z], x&lt;-(0..30), var y = x.nthPrime, var z = 2 ** y - 1, z.asInteger.isPrime.not  }
+[ [ 11, 2047 ], [ 23, 8388607 ], [ 29, 536870911 ] ] // 不是素数的梅森数</code></pre>
+
+<h2 id="Qualifier Clauses">限定子句</h2>
+
+<p>列表推导式以 <code>{:</code> 开头，包含一个主体，其后是以逗号分隔的若干限定子句。</p>
+
+<pre><code>{: body , qualifiers }</code></pre>
+
+<p>有几种类型的限定子句可以出现在主体之后。</p>
+
+<h3 id="generator clause">生成器子句</h3>
+
+<p>基本子句是生成器子句。其语法为</p>
+
+<pre><code>name &lt;- expr</code></pre>
+
+<p>表达式应该是能够对 'do' 做出有意义响应的对象，例如集合或流。name 依次取表达式的每个值。name 是一个局部变量，其作用域延伸到右侧的所有子句。name 在主体中也处于作用域内。</p>
+
+<pre><code>all {: x, x &lt;- (1..3) }
+
+[ 1, 2, 3 ]</code></pre>
+
+<pre><code>all {: x, x &lt;- [\a, \b, \c] }
+
+[ a, b, c ]</code></pre>
+
+<pre><code>all {: x, x &lt;- (1!3)++(2!2)++3 }
+
+[ 1, 1, 1, 2, 2, 3 ]</code></pre>
+
+<p>多个生成器的作用类似于嵌套循环。</p>
+
+<pre><code>all {: [x,y], x &lt;- (1..2), y &lt;- (10,20..30) }
+
+[ [ 1, 10 ], [ 1, 20 ], [ 1, 30 ], [ 2, 10 ], [ 2, 20 ], [ 2, 30 ] ]</code></pre>
+
+<p>生成器可以依赖先前的值。</p>
+
+<pre><code>all {: x, x &lt;- (1..3), y &lt;- (1..x) }
+
+[ 1, 2, 2, 3, 3, 3 ]</code></pre>
+
+<pre><code>all {: x, x &lt;- (1..3), y &lt;- (1..4-x) }
+
+[ 1, 1, 1, 2, 2, 3 ]</code></pre>
+
+<h3 id="guard clause">守卫子句</h3>
+
+<p>守卫子句只是一个表达式。它应返回一个布尔值。</p>
+
+<pre><code>expr</code></pre>
+
+<p>guard 充当结果的过滤器并约束搜索。</p>
+
+<pre><code>all {: x, x &lt;- (0..10), x.odd }
+
+[ 1, 3, 5, 7, 9 ]</code></pre>
+
+<p><code>x.odd</code> 是守卫条件，会使所有偶数被跳过。</p>
+
+<pre><code>all {: x, x &lt;- (0..30), (x % 5 == 0) || x.isPowerOfTwo }
+
+[ 0, 1, 2, 4, 5, 8, 10, 15, 16, 20, 25, 30 ]</code></pre>
+
+<p>你可以有多个守卫。</p>
+
+<pre><code>all {: [x,y], x &lt;- (0..10), (x % 5 == 0) || x.isPowerOfTwo, y &lt;- (1..2), (x+y).even }
+
+[ [ 0, 2 ], [ 1, 1 ], [ 2, 2 ], [ 4, 2 ], [ 5, 1 ], [ 8, 2 ], [ 10, 2 ] ]</code></pre>
+
+<h3 id="var clause">var 子句</h3>
+
+<p>var 子句允许你创建一个新的变量绑定，以便在表达式中使用。该名称的作用域延伸到右侧的所有子句以及主体中。</p>
+
+<pre><code>var name = expr</code></pre>
+
+<p>与生成器子句不同，名称绑定到单个值，不会迭代。</p>
+
+<pre><code>all {: z, x &lt;- (1..20), var z = (x*x-x) div: 2, z.odd }
+
+[ 1, 3, 15, 21, 45, 55, 91, 105, 153, 171 ]</code></pre>
+
+<h3 id="side effect clause">副作用子句</h3>
+
+<p>此子句允许你插入代码以执行某些副作用，例如打印。</p>
+
+<pre><code>\:: expr</code></pre>
+
+<pre><code>all {: z, x &lt;- (1..20), var z = (x*x-x) div: 2, :: [x,z].postln, z.even }</code></pre>
+
+<h3 id="termination clause">终止子句</h3>
+
+<p>终止子句用于停止进一步搜索结果。一旦表达式变为 false，例程便停止。</p>
+
+<pre><code>:while expr</code></pre>
+
+<p>使用守卫</p>
+
+<pre><code>all {: z, x &lt;- (1..20), var z = (x*x-x) div: 2,  :: [x,z].postln, z &lt; 50 }</code></pre>
+
+<p>使用终止子句。这个会停止搜索，因此比上面的做法工作量更少。</p>
+
+<pre><code>all {: z, x &lt;- (1..20), var z = (x*x-x) div: 2,  :: [x,z].postln, :while z &lt; 50 }</code></pre>
+
+<h2 id="Constrained Search">约束搜索</h2>
+
+<p>列表推导可以解决像这样的受约束组合问题：</p>
+
+<p>Baker、Cooper、Fletcher、Miller 和 Smith 住在一栋只有五层的公寓楼的不同楼层。Baker 不住在顶层。Cooper 不住在底层。Fletcher 既不住在顶层也不住在底层。Miller 住的楼层比 Cooper 高。Smith 不住在与 Fletcher 相邻的楼层。Fletcher 不住在与 Cooper 相邻的楼层。每个人住在哪里？</p>
+
+<pre><code>(
+z = {: [baker, cooper, fletcher, miller, smith] ,
+    var floors = (1..5),
+    baker &lt;- floors,  baker != 5,  // Baker 不住在顶层。
+    // 从列表中移除 baker&#x27;s floor。
+    // var 会创建一个新作用域，因此左侧的 &#x27;floors&#x27; 是一个新绑定。
+    var floors = floors.removing(baker),
+    cooper &lt;- floors, cooper != 1, // Cooper 不住在底层。
+    var floors = floors.removing(cooper), // 从列表中移除 cooper 的地板。
+    fletcher &lt;- floors, (fletcher != 5) &amp;&amp; (fletcher != 1) // Fletcher 既不住在顶层也不住在底层。
+        &amp;&amp; (absdif(fletcher, cooper) &gt; 1), // Fletcher 不住在 Cooper 的相邻楼层。
+    var floors = floors.removing(fletcher), // 移除 fletcher 的下限
+    miller &lt;- floors, miller &gt; cooper, // Miller 住在比 Cooper 更高的楼层。
+    var floors = floors.removing(miller), // 移除 Miller 的地板
+    smith &lt;- floors, absdif(fletcher, smith) &gt; 1  // Smith 不住在 Fletcher 的相邻楼层。
+};
+)
+
+z.next; // [3, 2, 4, 5, 1 ]
+z.next; // nil。只有一种解</code></pre>
+
+<p>组合问题可能需要运行很长时间。你可以重新排列上面的测试以使其运行得更快。通常你希望先搜索约束最多的变量。上面约束最多的人是 fletcher，所以应该先搜索他们，然后是 cooper，等等。</p>
+
+<h2 id="Grammar">Grammar</h2>
+
+<p>以下是 SC 中列表推导式的 BNF 语法。</p>
+
+<pre><code>[ ] - optional
+{ } - zero or more
+
+&lt;list_compre&gt; ::= &quot;{:&quot; &lt;body&gt; &#x27;,&#x27; &lt;qualifiers&gt; &quot;}&quot;
+
+&lt;body&gt; ::= &lt;exprseq&gt;
+
+&lt;exprseq&gt; ::= &lt;expr&gt; { &quot;;&quot; &lt;expr&gt; }
+
+&lt;qualifiers&gt; ::= &lt;qualifier&gt; { &#x27;,&#x27; &lt;qualifiers&gt; }
+
+&lt;qualifier&gt; ::= &lt;generator&gt; | &lt;guard&gt; | &lt;binding&gt; | &lt;side_effect&gt; | &lt;termination&gt;
+
+&lt;generator&gt; ::= &lt;name&gt; &quot;&lt;-&quot; &lt;exprseq&gt;
+
+&lt;guard&gt; ::= &lt;exprseq&gt;
+
+&lt;binding&gt; ::= &quot;var&quot; &lt;name&gt; &quot;=&quot; &lt;exprseq&gt;
+
+&lt;side_effect&gt; ::= &quot;::&quot; &lt;exprseq&gt;
+
+&lt;termination&gt; ::= &quot;:while&quot; &lt;exprseq&gt;</code></pre>
+
+<h2 id="Code Generation">代码生成</h2>
+
+<p>对于上述每个子句，以下是代码的生成方式。主体作为最内层的限定符。理解这些转换，你就能更好地理解列表推导式中的作用域和控制流是如何工作的。</p>
+
+<dl>
+<dt>generator</dt>
+<dd><pre><code>expr.do {|name| ..next qualifier.. }</code></pre></dd>
+<dt>guard</dt>
+<dd><pre><code>if (expr) { ..next qualifier.. }</code></pre></dd>
+<dt>binding</dt>
+<dd><pre><code>{|name| ..next qualifier.. }.value(expr)</code></pre></dd>
+<dt>副作用</dt>
+<dd><pre><code>expr ; ..next qualifier..</code></pre></dd>
+<dt>termination</dt>
+<dd><pre><code>if (expr) { ..next qualifier.. }{ nil.alwaysYield }</code></pre></dd>
+</dl>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/ListComprehensions.html" rel="noreferrer noopener">Guides/ListComprehensions.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

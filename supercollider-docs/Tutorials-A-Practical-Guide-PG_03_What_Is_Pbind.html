@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 03：什么是 Pbind - SuperCollider 文档</title>
+<meta name="description" content="使用 Pbind 及其同类进行基于模式的音乐序列编排">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 03：什么是 Pbind</h1>
+
+<p><em>使用 Pbind 及其同类进行基于模式的音乐序列编排</em></p>
+
+<p>另请参阅：<a href="Tutorials-A-Practical-Guide-PG_02_Basic_Vocabulary.html">Pattern Guide 02: Basic Vocabulary</a>、<a href="Tutorials-A-Practical-Guide-PG_04_Words_to_Phrases.html">Pattern Guide 04: Words to Phrases</a></p>
+
+<h2 id="What">Pbind 是什么？</h2>
+
+<p>上一个教程中的一些示例使用 Pbind 播放音符，你可能想知道它通常是如何工作的，以及还能用它做什么。</p>
+
+<p>在最一般的意义上，<a href="Classes-Pbind.html">Pbind</a> 只是一种为刚刚看到的各类模式所输出的值命名的方式。当你向 Pbind 流请求下一个值时，结果是一个称为 <a href="Classes-Event.html">Event</a> 的对象。与 <a href="Classes-Dictionary.html">Dictionary</a>（它是 Event 的父类）类似，事件是一组“键值对”：每个值由一个键命名。</p>
+
+<pre><code>e = (freq: 440, dur: 0.5);    // 一个 Event
+
+e.at(\freq)        // 按名称访问值
+e[\freq]
+e.freq        // 关于此用法的更多内容，请参阅 IdentityDictionary 帮助
+
+e.put(\freq, 880);    // 按名称更改值
+e[\freq] = 660;
+e.freq = 220;
+
+e.put(\amp, 0.6);    // 向事件中添加一个新值
+e.put(\dur, nil);    // 移除一个值</code></pre>
+
+<p>Pbind 由一系列的 pair 定义：键与将为其事件提供值的模式相关联。</p>
+
+<p>当与 Pbind 子模式关联的名称同时也是 <a href="Classes-SynthDef.html">SynthDef</a> 参数时，事情就变得有趣了。此时就可以用 Pbind 演奏新的 Synth，并在每个事件中为其输入提供不同的值。</p>
+
+<h2 id="Building an event, one key at a time">逐个键构建事件</h2>
+
+<p>我们可以通过对流调用 <code>next</code> 来查看 Pbind 的返回值。请注意，必须向 <em>next</em> 传入一个空事件，以便 Pbind 有地方放置这些值。</p>
+
+<pre><code>(
+p = Pbind(
+    \degree, Pseq(#[0, 0, 4, 4, 5, 5, 4], 1),
+    \dur, Pseq(#[0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1], 1)
+).asStream;    // 记住，在使用模式之前，必须先将其转换为流
+)
+
+p.next(Event.new);    // 更简短：p.next(())
+
+// 输出：
+( &#x27;degree&#x27;: 0, &#x27;dur&#x27;: 0.5 )
+( &#x27;degree&#x27;: 0, &#x27;dur&#x27;: 0.5 )
+( &#x27;degree&#x27;: 4, &#x27;dur&#x27;: 0.5 )
+( &#x27;degree&#x27;: 4, &#x27;dur&#x27;: 0.5 )</code></pre>
+
+<p>返回事件向我们展示了 Pbind 实际做了什么。每次请求下一个值时，它会遍历每个键-模式对，并从每个模式中获取下一个值（实际上是流，但 Pbind 内部会将子模式转换为流）。每个值都会使用关联的键放入事件中。</p>
+
+<p>对于第一个事件，第一个键是 <code>'degree'</code>，值为 <code>0</code>。这一对在移动到下一对之前被放入事件中：转换中的事件包含 <code>( 'degree': 0 )</code>。然后下一个键为 <code>'dur'</code> 提供 <code>0.5</code>，由于没有更多键值对了，事件完成：<code>( 'degree': 0, 'dur': 0.5 )</code>。</p>
+
+<p>// 用户执行：</p>
+
+<pre><code>p.next(Event.new);</code></pre>
+
+<p>// SuperCollider 进程：</p>
+
+<ol>
+<li><code>\degree</code> 流返回 <code>0</code></li>
+<li>将其放入 Event 中：<code>( 'degree': 0 )</code></li>
+<li><code>\dur</code> 流返回 <code>0.5</code></li>
+<li>将其放入 Event：<code>( 'degree': 0, 'dur': 0.5 )</code></li>
+<li>返回结果事件。</li>
+</ol>
+
+<blockquote class="note"><p><strong>注意：</strong> SuperCollider 中的字典是<em>无序</em>集合。尽管 Pbind 按照给定顺序处理其子流，但结果的显示可能以任意顺序呈现键和值。这不会影响播放事件的行为，我们很快就会看到。</p></blockquote>
+
+<h2 id="Event, .play and event prototypes">Event、.play 与事件原型</h2>
+
+<p>到目前为止，我们还没有看到任何产生音符的东西，只是数据处理：从模式中获取值并将它们拼接成事件。音符来自 Events 与常规 Dictionaries 之间的差异：Events 在你对它们调用 <code>.play</code> 时可以做些事情。</p>
+
+<pre><code>( &#x27;degree&#x27;: 0, &#x27;dur&#x27;: 0.5 ).play;</code></pre>
+
+<p>事件将要执行的动作定义在“事件原型”中。该原型必须包含 <code>'play'</code> 键对应的一个函数；当在事件上调用 <code>.play</code> 时会执行该函数。此外，可选地，原型还可以包含各种参数的默认值。</p>
+
+<p>如果没有事件原型，Pbind 不会做太多事情。幸运的是，你不必自己编写原型。有一个默认事件，可通过 <code>Event.default</code> 访问，它包含用于许多不同服务器消息传递任务的函数。如果没有请求特定动作，正常动作就是播放一个 Synth。这就是为什么在之前的教程中，仅使用 <code>'degree'</code> 和 <code>'dur'</code> 模式播放 Pbind 会产生音符：默认情况下，每个事件至少产生一个 synth，而默认事件原型知道如何将音阶度数转换为频率，并将 <code>'dur'</code>（持续时间）转换为音符长度。</p>
+
+<p>当播放一个模式时，会创建一个名为 <a href="Classes-EventStreamPlayer.html">EventStreamPlayer</a> 的对象。该对象从模式的流中逐个读出事件（以给定的 event 原型为基础），并对每个事件调用 <code>play</code>。事件中的 <code>'delta'</code> 值决定等待多少拍才进入下一个事件。播放会持续到模式停止产生事件，或你对 EventStreamPlayer 调用 .stop 为止。（注意，对模式调用 <code>.stop</code> 不会产生任何效果。模式是无状态的，无法自行播放或停止。）</p>
+
+<p>- <strong>目前总结如下</strong>：Pbind 的流会生成事件。当事件被播放时，它会执行一些通常会在服务器上产生声音的工作。这项工作在事件原型中定义。Event 类提供了一个默认事件原型，其中包含在服务器上创建和操作对象的强大选项。</p>
+
+<h3 id="Rests">Rests</h3>
+
+<p>休止符可以用三种方式表示。</p>
+
+<ul>
+<li><p>Recommended</p>
+
+<ul>
+<li><em>Rest：</em><a href="Classes-Rest.html">Rest</a> 的实例，用于将事件标记为休止。</li>
+</ul></li>
+<li><p>Legacy</p>
+
+<ul>
+<li><em>Symbol 作为音高：</em> 在音高相关的键（degree、note、midinote、freq）中，一个 symbol（例如 <strong>\rest</strong>、<strong>\r</strong> 甚至空 symbol <strong>\</strong>）会使该事件变为静音。</li>
+<li><em>\type, \rest：</em>将事件的 \type 设为 \rest 也会使该事件静音。</li>
+</ul></li>
+</ul>
+
+<p>更完整的讨论见 <a href="Classes-Rest.html">Rest</a> 帮助文件。</p>
+
+<h3 id="Useful Pbind variant: Pmono">有用的 Pbind 变体：Pmono</h3>
+
+<p>Pbind 默认播放独立的音符。有时，你可能需要一个模式更像单音合成器那样工作，即只播放一个 Synth 节点并在每个事件中改变其值。如果说 Pbind 通常对应 <code>Synth.new</code> 或 <code>/s_new</code>，那么 <a href="Classes-Pmono.html">Pmono</a> 对应 <code>aSynth.set</code> 或 <code>/n_set</code>。</p>
+
+<p>比较这些模式的声音。Pbind 在每个音符上产生起音，而 Pmono 则从音高滑到音高。</p>
+
+<pre><code>p = Pbind(\degree, Pwhite(0, 7, inf), \dur, 0.25, \legato, 1).play;
+p.stop;
+
+p = Pmono(\default, \degree, Pwhite(0, 7, inf), \dur, 0.25).play;
+p.stop;</code></pre>
+
+<p>通过将多个 Pmono 模式串联在一起，或者使用 <a href="Classes-PmonoArtic.html">PmonoArtic</a>，可以用 Pmono 来清晰地表达乐句。</p>
+
+<h2 id="Connecting Event values to SynthDef inputs">将 Event 值连接到 SynthDef 输入</h2>
+
+<p>大多数 SynthDef 都有 <a href="Classes-Control.html">Control</a> 输入，通常由 UGen 函数的参数定义。例如，默认 SynthDef（在 Event.sc 中声明）定义了五个输入：<code>out</code>、<code>freq</code>、<code>amp</code>、<code>pan</code> 和 <code>gate</code>。</p>
+
+<pre><code>SynthDef(\default, { arg out=0, freq=440, amp=0.1, pan=0, gate=1;
+    var z;
+    z = LPF.ar(
+            Mix.new(VarSaw.ar(freq + [0, Rand(-0.4,0.0), Rand(0.0,0.4)], 0, 0.3)),
+            XLine.kr(Rand(4000,5000), Rand(2500,3200), 1)
+        ) * Linen.kr(gate, 0.01, 0.7, 0.3, 2);
+    OffsetOut.ar(out, Pan2.ar(z, pan, amp));
+}, [\ir]);</code></pre>
+
+<p>当事件播放一个 synth 时，事件中存储的与 SynthDef 输入同名的任何值都将传递给新的 synth。比较以下内容：</p>
+
+<pre><code>// 类似于 Synth(\default, [freq: 293.3333, amp: 0.2, pan: -0.7])
+(freq: 293.3333, amp: 0.2, pan: -0.7).play;
+
+// 类似于 Synth(\default, [freq: 440, amp: 0.1, pan: 0.7])
+(freq: 440, amp: 0.1, pan: 0.7).play;</code></pre>
+
+<p>这引出了一个关键点：<strong>你在 Pbind 中为模式使用的名称应与正在播放的 SynthDef 中的参数相对应</strong>。Pbind 模式名称决定了结果 Event 中各值的名称，而这些值会被发送到对应的 Synth 控件输入。</p>
+
+<p>要播放的 SynthDef 由 <code>'instrument'</code> 键指定。要用不同的 Synth 播放模式，只需在模式中为其命名。</p>
+
+<pre><code>SynthDef(\harpsi, { |outbus = 0, freq = 440, amp = 0.1, gate = 1|
+    var out;
+    out = EnvGen.ar(Env.adsr, gate, doneAction: Done.freeSelf) * amp *
+        Pulse.ar(freq, 0.25, 0.75);
+    Out.ar(outbus, out ! 2);
+}).add;    // 关于 .add 的更多内容见下文
+
+p = Pbind(
+        // 使用 \harpsi，而不是 \default
+    \instrument, \harpsi,
+    \degree, Pseries(0, 1, 8),
+    \dur, 0.25
+).play;</code></pre>
+
+<p>说 Pbind 的名称应始终与 SynthDef 参数匹配实际上过于简单化了。</p>
+
+<ul>
+<li>Pbind 可以使用事件中的某些值进行中间计算（参见 <a href="Tutorials-A-Practical-Guide-PG_06g_Data_Sharing.html">Pattern Guide 06g: Data Sharing</a>）。如果这些中间值的名称在 SynthDef 中不存在，它们不会被发送到服务器。并不要求 Event 中的每一项都必须对应一个 SynthDef 控件。</li>
+<li>默认事件原型会执行一些自动转换。你可能已经注意到，到目前为止的示例使用 <code>'degree'</code> 来指定音高，但被播放的默认 SynthDef 并没有 degree 参数。它能工作是因为默认事件会将 degree 转换为 <code>'freq'</code>，而 freq 是一个参数。最重要的转换是音高和时序。时序很简单；音高则更为复杂。关于这些自动计算的说明，请参见 <a href="Tutorials-A-Practical-Guide-PG_07_Value_Conversions.html">Pattern Guide 07: Value Conversions</a>。</li>
+</ul>
+
+<p><strong>不要发送或加载 SynthDef；请改用 .add 或 .store</strong></p>
+
+<p>为了只将相关的值发送给新的 Synth，Event 需要知道 SynthDef 中存在哪些控制项。这通过 SynthDef 描述符库来实现；描述符是 <a href="Classes-SynthDesc.html">SynthDesc</a>，库是 <a href="Classes-SynthDescLib.html">SynthDescLib</a>。通常用于将 SynthDef 发送到服务器的方法——<code>.send(s)</code>、<code>.load(s)</code>——不会将其录入库中。因此，以这种方式发送的 SynthDef 无法与 Pbind 正常配合使用。请改用其他方法将 SynthDef <em>存储</em> 到库中。</p>
+
+<pre><code>// 保存到库中，写入 .scsyndef 文件，并在服务器上加载它
+SynthDef(...).store;
+
+// 保存到库中并将 SynthDef 发送到服务器（不生成 .scsyndef 文件）
+// 执行此操作前请确保服务器已启动
+SynthDef(...).add;</code></pre>
+
+<p>.load(s) --&gt; .store</p>
+
+<p>.send(s) --&gt; .add</p>
+
+<h2 id="Rest events">休止事件</h2>
+
+<p>从 3.5 版本开始，休止可以用 <a href="Classes-Rest.html">Rest</a> 的实例来表示。</p>
+
+<ul>
+<li>休止符可以出现在任何 Pbind 键值对中。（此前，休止符只能在 \type、\degree、\note、\midinote 或 \freq 中表示。）</li>
+<li>休止符有一个值，例如 <code>Rest(0.5)</code>，并会透明地通过计算。</li>
+<li>解决了先前约定中的一些问题（下文将简要讨论）。</li>
+</ul>
+
+<p>Ligeti 的 "touches bloquées" 技法可以这样编写（条件 <a href="Classes-Pif.html">Pif</a> 的说明见 <a href="Tutorials-A-Practical-Guide-PG_06e_Language_Control.html">Pattern Guide 06e: Language Control</a>）：</p>
+
+<pre><code>(
+// 首先，音高以 1-3 个半音递增，直到达到两个八度
+var    pitches = Pseries(0, Pconst(24, Pwhite(1, 3, inf)), inf).asStream.all,
+        // 随机屏蔽其中 1/3
+    mask = pitches.scramble[0 .. pitches.size div: 3];
+
+p = Pbind(
+    \arpeg, Pseq(pitches[ .. pitches.size - 2] ++ pitches.reverse[ .. pitches.size - 2], inf),
+        // 如果该音符在 mask 数组中找到，则将其替换为 Rest
+        // 这样该音符就不会发声
+    \note, Pif(Pfunc { |event| mask.includes(event[\arpeg]) }, Rest(0), Pkey(\arpeg)),
+    \octave, 4,
+    \dur, 0.125
+).play;
+)
+
+p.stop;</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 在 3.9 中，不再支持在模式中使用 Rest 类。所有休止符都需要有一个值，例如 <code>Rest(0)</code>。Rest 对象现在支持数学运算符。也就是说，你现在可以写 <code>Pseq([1, 2, Rest(0)], inf) * 2</code> <em>以及</em> <code>[1, 2, Rest(0)] * 2</code>。（在 3.9 之前，前一种用法受支持，但仅在 Pbind 中；后一种用法则完全不受支持。）</p></blockquote>
+
+<p>对于休止符较旧的惯例是将 <code>\freq</code> 键设置为一个 <a href="Classes-Symbol.html">Symbol</a>。通常为 <code>\rest</code>，但仅一个反斜杠就足以在服务器上抑制该音符。（这种用法仍然受支持，但不推荐，因为它仅限于与音高相关的键。）</p>
+
+<p>如果是 <code>\freq</code> 键决定事件是否为休止，那为什么用 <code>\note</code> 也有效？如前所述，<code>\degree</code>、<code>\note</code> 和 <code>\midinote</code> 等键会自动转换为频率。执行转换的数学运算会完整保留 Symbol——例如，<code>\rest + 1 == \rest</code>。因此 <code>\rest</code> 值会一路传递穿过整个转换链，使得事件中的 <code>\freq</code> 最终接收到 <code>\rest</code>。</p>
+
+<p>注意，SynthDef 是否有 <code>freq</code> 参数并不重要。是<em>客户端</em>侧的事件查看这个键来决定是否播放音符。如果是休止符，则服务器完全不参与。</p>
+
+<h2 id="Writing SynthDefs for patterns">为模式编写 SynthDef</h2>
+
+<p>SynthDef 应具有一些特定特性才能与模式良好配合。</p>
+
+<h3 id="Synths should release themselves">Synth 应自行释放</h3>
+
+<p>默认事件原型依赖 synth 在完成后从服务器中自行移除。这可以通过几种方式实现：</p>
+
+<ul>
+<li>（最典型的）在包络生成器中带有释放型 <code>doneAction</code>（ &gt;= 2）的门控包络（完整列表见 <a href="Classes-Done.html">Done</a>）。上面的 <code>\harpsi</code> SynthDef 使用了这种技术。门控包络指定一个释放节点，或使用预定义的延音包络类型之一：<code>Env.asr</code>、<code>Env.adsr</code>、<code>Env.dadsr</code>。<a href="Classes-Env.html">Env</a> 帮助文件提供了关于门控包络的更多细节。</li>
+<li><p>Linen.kr，它是 EnvGen.kr(Env([0, susLevel, 0], [attackTime, releaseTime], \lin, releaseNode: 1), gate, doneAction: [2 或更高]) 的快捷方式。默认的 SynthDef 使用它。doneAction 应至少为 2 以释放节点。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果释音由门控控制，则门控必须由 Synth 参数 <code>gate</code> 表示；标准事件原型期望能够使用此参数控制 Synth 的释音。此外，请确保门控的默认值大于 0。否则，包络将永远不会启动，你将既听不到声音，又会看到 Synth 在服务器上不断堆积。</p></blockquote></li>
+<li>固定时长的包络（无 gate）。</li>
+</ul>
+
+<h3 id="Argument name prefixes">参数名前缀</h3>
+
+<p>关于 Synth 参数名还有一个微妙之处。在 SynthDef 中，参数名可以带有前缀 <code>t_</code> 以表示“触发控制”，或带有 <code>i_</code> 表示“初始速率”控制（意味着它保持 Synth 首次播放时设置的值）。这在 <a href="Classes-SynthDef.html">SynthDef</a> 帮助中有说明。Pbind 及其同类应省略这些前缀，例如：</p>
+
+<pre><code>(
+SynthDef(\trig_demo, { |out, freq = 440, gate = 1, t_trig = 1|    // 此处 t_trig
+    var    env = Decay2.kr(t_trig, 0.01, 0.1),
+        sig = SinOsc.ar(freq, 0, env)
+            * Linen.kr(gate, 0.01, 0.1, 0.1, doneAction: Done.freeSelf);
+    Out.ar(out, sig ! 2)
+}).add;
+)
+
+(
+p = Pmono(\trig_demo,
+    \freq, Pexprand(200, 800, inf),
+    \trig, 1,    // 注意这不是 t_trig —— 只是 \trig
+    \delta, 0.125
+).play;
+)
+
+p.stop;</code></pre>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_02_Basic_Vocabulary.html">模式指南 02：基本词汇</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_04_Words_to_Phrases.html">模式指南 04：从词到短语</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_03_What_Is_Pbind.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_03_What_Is_Pbind.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

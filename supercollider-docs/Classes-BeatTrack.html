@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BeatTrack - SuperCollider 文档</title>
+<meta name="description" content="自相关节拍跟踪器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>BeatTrack</h1>
+
+<p><em>自相关节拍跟踪器</em></p>
+
+<p><a href="Classes-MultiOutUGen.html">MultiOutUGen</a> : <a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>另请参阅：<a href="Classes-BeatTrack2.html">BeatTrack2</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>基于自相关的节拍跟踪器；<a href="#footnote_1" id="footnote_org_1">1</a> 其底层模型假定为 4/4 拍，但它应能适用于任何等时节拍结构，不过会偏向 100-120 bpm；从这个意义上说，快速的 7/8 拍可能无法被跟踪。有四个 k-rate 输出，分别是在所确定节拍基础上的四分音符、八分音符和十六分音符级别的脉冲，以及当前检测到的速度。请注意，如果要跟踪的音乐带有摇摆感，十六分音符输出未必有多大意义；它只是作为便利而提供。</p>
+
+<p>此节拍跟踪器通过加权函数偏向中速范围来确定节拍。它不测定小节层级，只确定 tactus。它的反应也较慢，使用 6 秒的时间窗口进行自相关操作。不要期望达到人类音乐家水平的预测跟踪能力。</p>
+
+<p>另一方面，它不知疲倦、相对通用（尽管显然最擅长处理没有太多表情速度变化的瞬态 4/4 重型素材），并且可以作为比人类明显更快的计算机处理的基础。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*kr"><code>BeatTrack.kr(chain, lock: 0)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>chain</p></td><td class="argumentdesc"><p>[fft] 要跟踪的音频输入，已经过 FFT UGen 处理；对于 44100 和 48000 采样率，预期的 FFT 大小为 1024，对于两倍于这些值的采样率，则为 2048。不支持其他采样率。</p></td></tr>
+<tr><td class="argumentname"><p>lock</p></td><td class="argumentdesc"><p>[sk] 如果此参数大于 0.5，跟踪器将锁定在其当前周期性上并从当前相位继续。虽然它会更新模型的相位和周期，但在 lock 回到 0.5 以下之前，这不会反映在输出中。</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>四个 k-rate 输出：</p>
+
+<pre><code>#quarternotetick, eighthnotetick, sixteenthnotetick, tempo = BeatTrack.kr(chain, 0)</code></pre>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 这是一首一分钟的流行歌曲；你应该加载类似的东西来测试
+d = Buffer.read(s, &quot;/Volumes/data/stevebeattrack/samples/100.wav&quot;);
+
+
+// 你也可以在 48000 下测试，它应该能正常工作
+(
+a = SynthDef(\help_beattrack, { |out, vol = 1.0, beepvol = 1.0, lock = 0|
+    var in, fft, resample;
+    var trackb, trackh, trackq, tempo;
+    var bsound, hsound, qsound, beep;
+
+    in = PlayBuf.ar(1, d, BufRateScale.kr(d), 1, 0, 1);
+    // in = SoundIn.ar(0);
+
+    fft = FFT(LocalBuf(1024), in); // 对于采样率 44100 和 48000
+
+    #trackb, trackh, trackq, tempo = BeatTrack.kr(fft, lock);
+
+    beep = SinOsc.ar(1000, 0.0, Decay.kr(trackb, 0.1));
+
+    Out.ar(out, Pan2.ar((vol * in) + (beepvol * beep), 0.0))
+
+}).play
+)
+
+a.set(\vol, 0.0);
+a.set(\vol, 1.0);
+
+a.set(\beepvol, 1.0);
+a.set(\beepvol, 0.0);
+
+a.set(\lock, 1); // 从当前相位/周期解刚性固定它
+a.set(\lock, 0); // 取消固定，回到跟踪</code></pre>
+
+<p>跟踪音频输入（试着拍一段节拍或用口技打拍子，但请留出最多 6 秒以让跟踪开始），并在四分音符、八分音符和十六分音符处生成内容：</p>
+
+<pre><code>(
+SynthDef(\help_beattrack2, { |out|
+    var trackb, trackh, trackq, tempo;
+    var source;
+    var bsound, hsound, qsound;
+
+    source = SoundIn.ar(0);
+
+    #trackb, trackh, trackq, tempo = BeatTrack.kr(FFT(LocalBuf(1024)));
+
+    bsound = Pan2.ar(LPF.ar(WhiteNoise.ar * Decay.kr(trackb, 0.05), 1000), 0.0);
+
+    hsound = Pan2.ar(BPF.ar(WhiteNoise.ar * Decay.kr(trackh, 0.05), 3000, 0.66), -0.5);
+
+    qsound = Pan2.ar(HPF.ar(WhiteNoise.ar * Decay.kr(trackq, 0.05), 5000), 0.5);
+
+    Out.ar(out, bsound + hsound + qsound);
+}).play;
+)</code></pre>
+
+<p class="footnote" id="footnote_1">[<a href="#footnote_org_1">1</a>] - 研究说明：此 UGen 是对以下工作的衍生实现：Davies, M. E. P. and Plumbley, M. D. Beat Tracking With A Two State Model. Proceedings of the IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP 2005), Philadelphia, USA, March 19-23, 2005。该 UGen 由 Nick Collins 在其博士研究期间为节拍跟踪研究而转换，使用了 Matthew Davies 的 MATLAB 模型的原始 C 实现。它最初作为 BBCut2 的一部分以 AutoTrack 之名出现，现在已被加入核心，以增强 SuperCollider 的实时机器监听选项。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/BeatTrack.html" rel="noreferrer noopener">Classes/BeatTrack.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

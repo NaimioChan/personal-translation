@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南食谱 06：乐句网络 - SuperCollider 文档</title>
+<meta name="description" content="通过短语网络进行序列编排，使用 PmonoArtic 来发音音符">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南食谱 06：乐句网络</h1>
+
+<p><em>通过短语网络进行序列编排，使用 PmonoArtic 来发音音符</em></p>
+
+<p>参见：<a href="Tutorials-A-Practical-Guide-PG_Cookbook05_Using_Samples.html">Pattern Guide Cookbook 05: Using Samples</a>、<a href="Tutorials-A-Practical-Guide-PG_Cookbook07_Rhythmic_Variations.html">Pattern Guide Cookbook 07: Rhythmic Variations</a></p>
+
+<h2 id="Sequencing by a network of phrases">通过乐句网络进行序列编排</h2>
+
+<h2 id="Articulating notes with PmonoArtic">使用 PmonoArtic 表达音符</h2>
+
+<p>这里一举两得！</p>
+
+<p>大多数传统合成器都有一种模式：在前一个音符仍在延音时演奏一个音符，会从一个音符滑音到另一个音符。<a href="Classes-PmonoArtic.html">PmonoArtic</a> 模式根据事件的 sustain 值来实现这一点。delta 值是直到下一个事件的拍数；sustain 是直到音符释放的拍数。如果 sustain 短于 delta，音符应提前切断，下一个事件应产生一个新的 Synth。</p>
+
+<p>该示例使用 <a href="Classes-Pfsm.html">Pfsm</a>（有限状态机）以部分随机化的顺序排列一组预定义的乐句。每个乐句后面都跟着一个列表，指向可以合理地跟随当前乐句的乐句。也就是说，从乐句 1 到乐句 2 可能具有音乐意义，但从 1 到 3 则不然。为 1 适当地定义后继者可以确保不会做出无意义的转换。</p>
+
+<p>这是一个很长的示例，但这只是因为其中包含许多乐句。结构非常简单：只是一组由 Pfsm 依次选择的乐句。</p>
+
+<p>- <strong>第三方扩展提醒</strong>：在本例中，下一个乐句的选择通过重复数组元素来显式加权，例如 <code>#[1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5]</code>。更优雅的方式是使用 <strong>MathLib</strong> quark 中的 <strong>WeighBag</strong> 类。</p>
+
+<pre><code>// 以下两者等价：
+a = #[1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5];
+({ a.choose } ! 100).histo(5, 1, 5);
+
+a = WeighBag.with((1..5), #[4, 2, 2, 2, 1]);
+({ a.wchoose } ! 100).histo(5, 1, 5);</code></pre>
+
+<h3 id="Example">Example</h3>
+
+<pre><code>(
+// 这个 SynthDef 有强烈的起音，强调了发音
+SynthDef(\sawpulse, { |out, freq = 440, gate = 0.5, plfofreq = 6, mw = 0, ffreq = 2000, rq = 0.3, freqlag = 0.05, amp = 1|
+    var sig, plfo, fcurve;
+    plfo = SinOsc.kr(plfofreq, mul:mw, add:1);
+    freq = Lag.kr(freq, freqlag) * plfo;
+    fcurve = EnvGen.kr(Env.adsr(0, 0.3, 0.1, 20), gate);
+    fcurve = (fcurve - 1).madd(0.7, 1) * ffreq;
+    sig = Mix.ar([Pulse.ar(freq, 0.9), Saw.ar(freq*1.007)]);
+    sig = RLPF.ar(sig, fcurve, rq)
+        * EnvGen.kr(Env.adsr(0.04, 0.2, 0.6, 0.1), gate, doneAction: Done.freeSelf)
+        * amp;
+    Out.ar(out, sig ! 2)
+}).add;
+)
+
+(
+TempoClock.default.tempo = 128/60;
+
+// Pmul 在这里只做一件事：从每个事件中取出 ~amp
+// 并将其替换为 ~amp * 0.4
+p = Pmul(\amp, 0.4, Pfsm([
+    #[0, 3, 1],        // 起始位置
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([78, 81, 78, 76, 78, 76, 72, 71, 69, 66], 1),
+        \dur, Pseq(#[0.25, 1.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25], 1),
+        \sustain, Pseq(#[0.3, 1.2, 0.3, 0.2, 0.3, 0.2, 0.3, 0.2, 0.3, 0.2],1 ),
+        \amp, Pseq(#[1, 0.5, 0.75, 0.5, 0.75, 0.5, 0.75, 0.5, 0.75, 0.5], 1),
+        \mw, Pseq([0, 0.03, Pseq(#[0], inf)], 1)
+    ), #[1, 2, 3, 4, 7],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([64, 66, 69, 71, 72, 73], 1),
+        \dur, Pseq(#[0.25], 6),
+        \sustain, Pseq(#[0.3, 0.2, 0.2, 0.2, 0.3, 0.2], 1),
+        \amp, Pseq(#[1, 0.5, 0.5, 0.5, 0.5, 0.5], 1),
+        \mw, 0
+    ), #[1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([69, 71, 69, 66, 64, 69, 71, 69], 1),
+        \dur, Pseq(#[0.125, 0.625, 0.25, 0.25, 0.25, 0.25, 0.25, 0.75], 1),
+        \sustain, Pseq(#[0.2, 0.64, 0.2, 0.2, 0.2, 0.3, 0.3, 0.75], 1),
+        \amp, Pseq(#[0.5, 0.75, 0.5, 0.5, 0.5, 1, 0.5, 0.5], 1),
+        \mw, 0
+    ), #[0, 1, 1, 1, 1, 3, 3, 3, 3, 5],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([72, 73, 76, 72, 71, 69, 66, 71, 69], 1),
+        \dur, Pseq(#[0.25, 0.25, 0.25, 0.083, 0.083, 0.084, 0.25, 0.25, 0.25], 1),
+        \sustain, Pseq(#[0.3, 0.2, 0.2, 0.1, 0.07, 0.07, 0.2, 0.3, 0.2], 1),
+        \amp, Pseq(#[1, 0.5, 0.5, 1, 0.3, 0.3, 0.75, 0.75, 0.5], 1),
+        \mw, 0
+    ), #[1, 1, 1, 1, 3, 3, 4, 4, 4],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([64, 66, 69, 71, 72, 73, 71, 69, 66, 71, 69, 66, 64, 69], 1),
+        \dur, Pseq(#[0.25, 0.25, 0.25, 0.25, 0.125, 0.375, 0.166, 0.166, 0.168,
+                0.5, 0.166, 0.166, 0.168, 0.5], 1),
+        \sustain, Pseq(#[0.3, 0.2, 0.2, 0.2, 0.14, 0.4, 0.2, 0.2, 0.2, 0.6, 0.2, 0.2, 0.2, 0.5],1),
+        \amp, Pseq(#[0.5, 0.5, 0.6, 0.8, 1, 0.5, 0.5, 0.5, 0.5, 1,
+            0.5, 0.5, 0.5, 0.45], 1),
+        \mw, 0
+    ), #[0, 1, 1, 1, 1, 3, 3, 5],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([72, 73, 76, 78, 81, 78, 83, 81, 84, 85], 1),
+        \dur, Pseq(#[0.25, 0.25, 0.25, 0.25, 0.5, 0.5, 0.5, 0.5, 0.125, 1.125], 1),
+        \sustain, Pseq(#[0.3, 0.2, 0.2, 0.2, 0.95, 0.25, 0.95, 0.25, 0.2, 1.13], 1),
+        \amp, Pseq(#[0.7, 0.5, 0.5, 0.5, 0.7, 0.5, 0.8, 0.5, 1, 0.5], 1),
+        \mw, Pseq([Pseq(#[0], 9), 0.03], 1)
+    ), #[6, 6, 6, 8, 9, 10, 10, 10, 10, 11, 11, 13, 13],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([83, 81, 78, 83, 81, 78, 76, 72, 73, 78, 72, 72, 71], 1),
+        \dur, Pseq(#[0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25,
+                0.25, 2], 1),
+        \sustain, Pseq(#[0.3, 0.3, 0.2, 0.3, 0.3, 0.3, 0.2, 0.3, 0.2, 0.3, 0.2, 0.3, 2], 1),
+        \amp, Pseq(#[0.5, 0.5, 0.5, 0.8, 0.5, 0.5, 0.5, 0.8, 0.5, 0.8, 0.5,
+                1, 0.4], 1),
+        \mw, Pseq([Pseq([0], 12), 0.03], 1)
+    ), #[0, 7, 7, 7, 7, 7, 3, 3, 3, 3],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([69, 71, 72, 71, 69, 66, 64, 69, 71], 1),
+        \dur, Pseq(#[0.25, 0.25, 0.25, 0.25, 0.166, 0.167, 0.167, 0.25, 0.25], 1),
+        \sustain, Pseq(#[0.2, 0.2, 0.3, 0.2, 0.2, 0.2, 0.14, 0.3, 0.2], 1),
+        \amp, Pseq(#[0.5, 0.5, 0.8, 0.5, 0.5, 0.5, 0.5, 0.8, 0.5], 1)
+    ), #[3, 3, 3, 4, 4, 5],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([84, 85, 84, 84, 88, 84, 83, 81, 83, 81, 78, 76, 81, 83], 1),
+        \dur, Pseq(#[0.125, 0.535, 0.67, 1.92, 0.25, 0.166, 0.167, 0.167,
+                0.25, 0.25, 0.25, 0.25, 0.25, 0.25], 1),
+        \sustain, Pseq(#[0.2, 3.12, 0.2, 0.2, 0.2, 0.2, 0.2, 0.15, 0.3, 0.2, 0.2, 0.2,
+                0.3, 0.2], 1),
+        \amp, Pseq(#[1, 0.8, 0.8, 0.8, 1, 1, 0.8, 0.8, 1, 0.8, 0.8, 0.8,
+                1, 0.8], 1),
+        \mw, Pseq([0, 0.005, 0.005, 0.06, Pseq(#[0], 10)], 1)
+    ), #[10, 10, 10, 11, 11, 11, 11, 12, 12, 12],
+
+        // 与 #4 相同，高八度
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq(([64, 66, 69, 71, 72, 73, 71, 69, 66, 71, 69, 66, 64, 69]+12), 1),
+        \dur, Pseq(#[0.25, 0.25, 0.25, 0.25, 0.125, 0.375, 0.166, 0.166, 0.168,
+                0.5, 0.166, 0.166, 0.168, 0.5], 1),
+        \sustain, Pseq(#[0.3, 0.2, 0.2, 0.2, 0.14, 0.4, 0.2, 0.2, 0.2, 0.6, 0.2, 0.2, 0.2, 0.5],1),
+        \amp, Pseq(#[0.5, 0.5, 0.6, 0.8, 1, 0.5, 0.5, 0.5, 0.5, 1,
+            0.5, 0.5, 0.5, 0.45], 1),
+        \mw, 0
+    ), #[11, 11, 11, 11, 11, 12, 12],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([81, 84, 83, 81, 78, 76, 81, 83], 1),
+        \dur, Pseq(#[0.25], 8),
+        \sustain, Pseq(#[0.2, 0.3, 0.3, 0.2, 0.3, 0.2, 0.3, 0.2], 1),
+        \amp, Pseq(#[0.5, 1, 0.5, 0.5, 0.6, 0.5, 0.8, 0.5], 1),
+        \mw, 0
+    ), #[0, 9, 9, 11, 11, 12, 12, 12, 12, 12],
+
+        // 与 #1 相同，高八度
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq(([64, 66, 69, 71, 72, 73]+12), 1),
+        \dur, Pseq(#[0.25], 6),
+        \sustain, Pseq(#[0.3, 0.2, 0.2, 0.2, 0.3, 0.2], 1),
+        \amp, Pseq(#[1, 0.5, 0.5, 0.5, 0.5, 0.5], 1),
+        \mw, 0
+    ), #[6, 6, 8, 9, 9, 9, 9, 10, 10, 10, 10, 13, 13, 13],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([78, 81, 83, 78, 83, 84, 78, 84, 85], 1),
+        \dur, Pseq(#[0.25, 0.25, 0.5, 0.25, 0.25, 0.5, 0.25, 0.25, 1.75], 1),
+        \sustain, Pseq(#[0.2, 0.3, 0.2, 0.2, 0.3, 0.2, 0.2, 0.3, 1.75], 1),
+        \amp, Pseq(#[0.4, 0.8, 0.5, 0.4, 0.8, 0.5, 0.4, 1, 0.8], 1),
+        \mw, Pseq([Pseq([0], 8), 0.03], 1)
+    ), #[8, 13, 13],
+
+    PmonoArtic(\sawpulse,
+        \midinote, Pseq([88, 84, 83, 81, 83, 81, 78, 76, 81, 83], 1),
+        \dur, Pseq(#[0.25, 0.166, 0.167, 0.167,
+                0.25, 0.25, 0.25, 0.25, 0.25, 0.25], 1),
+        \sustain, Pseq(#[0.2, 0.2, 0.2, 0.15, 0.3, 0.2, 0.2, 0.2,
+                0.3, 0.2], 1),
+        \amp, Pseq(#[1, 1, 0.8, 0.8, 1, 0.8, 0.8, 0.8,
+                1, 0.8], 1),
+        \mw, 0
+    ), #[10]
+], inf)).play;
+)
+
+p.stop;</code></pre>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook05_Using_Samples.html">Pattern Guide Cookbook 05: Using Samples</a></p>
+
+<p>下一节：<a href="Tutorials-A-Practical-Guide-PG_Cookbook07_Rhythmic_Variations.html">Pattern Guide Cookbook 07: Rhythmic Variations</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_Cookbook06_Phrase_Network.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_Cookbook06_Phrase_Network.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

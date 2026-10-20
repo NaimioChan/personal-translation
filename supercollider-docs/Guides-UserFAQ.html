@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用户 FAQ - SuperCollider 文档</title>
+<meta name="description" content="一些常见问题与常见错误">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>用户 FAQ</h1>
+
+<p><em>一些常见问题与常见错误</em></p>
+
+<p><span id="ERROR Primitive BasicNew failed Index not an Integer"> </span></p>
+
+<h2 id="ERROR: Primitive ">错误：原语 'BasicNew' 失败。索引不是整数</h2>
+
+<h3 id="If you">如果你正在编写 SynthDef</h3>
+
+<p>很可能这个错误意味着你试图在 SynthDef 内部动态改变通道数量，而这是做不到的——SynthDef 必须具有固定的布局。例如，下面是一个在可变数量的通道上生成粉红噪声的简单尝试：</p>
+
+<pre><code>(
+SynthDef(\thiswillfail, { |out=0, numChannels=2|
+    Out.ar(out, {PinkNoise.ar}.dup(numChannels))
+}).add
+)</code></pre>
+
+<p>它失败是因为我们试图让涉及的粉红噪声发生器的数量真正可变。这是做不到的——当 SynthDef 被编译时，语言需要<strong>确切</strong>知道将涉及多少个 UGen 以及它们如何连接。这是因为 SynthDef 表示一个高效的固定布局 synth，服务器可以实例化它。</p>
+
+<h3 id="So what to do instead?">那么该怎么做？</h3>
+
+<p>将 SynthDef 视为微小、固定的可复用组件，并设计你的逻辑以按需以任意组合复用它们。</p>
+
+<p>要回到上面的简单示例（粉红噪声生成器），你可以直接这样做：</p>
+
+<pre><code>(
+SynthDef(\simplepink, { |out=0|
+    Out.ar(out, PinkNoise.ar)
+}).add
+)</code></pre>
+
+<p>并为每个声道创建一个 <code>\simplepink</code> synth。或者，你可以为你预期使用的每种声道数各创建一个 SynthDef。例如，如果你可能使用 1 到 5 个声道：</p>
+
+<pre><code>(
+(1..5).do{ |n|
+SynthDef(&quot;simplepink_%&quot;.format(n).asSymbol, { |out=0|
+    Out.ar(out, {PinkNoise.ar}.dup(n))
+}).add
+}
+)</code></pre>
+
+<p>然后你需要按需调用 <code>\simplepink_4</code> 或类似的东西。</p>
+
+<p><span id="Language (client) Issues"> </span></p>
+
+<h2 id="Language (client) issues">语言（客户端）问题</h2>
+
+<h3 id="Calling gui primitives from a SystemClock routine">从 SystemClock 例程中调用 GUI 原语</h3>
+
+<p>从 SystemClock 例程中调用 GUI 原语时会导致错误：</p>
+
+<pre><code>SystemClock.sched(0,{ Window.new.front })</code></pre>
+
+<pre><code>ERROR: Qt: You can not use this Qt functionality in the current thread. Try scheduling on AppClock instead.
+ERROR: Primitive &#x27;_QWindow_AvailableGeometry&#x27; failed.</code></pre>
+
+<p>为避免此问题，请使用 AppClock：</p>
+
+<pre><code>AppClock.sched(0,{ Window.new.front })</code></pre>
+
+<p>或 defer 方法：</p>
+
+<pre><code>SystemClock.sched(0,{ { Window.new.front }.defer })</code></pre>
+
+<h3 id="Binary operations order">二元运算顺序</h3>
+
+<p>由于 SuperCollider 求值表达式的方式，数学表达式的通常执行顺序并不被遵循。在 SuperCollider 中一切都是对象，求值从左到右进行，因此：</p>
+
+<pre><code>5 + 3 * 2</code></pre>
+
+<p>将求值为 (5 + 3 ) * 2。</p>
+
+<p>出现这种情况是因为表达式变为：</p>
+
+<pre><code>5.performBinaryOpOnSimpleNumber(&#x27;+&#x27;,3).performBinaryOpOnSimpleNumber(&#x27;*&#x27;,2)</code></pre>
+
+<p>因此，在代数表达式中，当从左到右的顺序不是期望的顺序时，必须使用括号：</p>
+
+<pre><code>5 + (3 * 2)</code></pre>
+
+<p><span id="SynthDef Issues"> </span></p>
+
+<h2 id="SynthDef Issues">SynthDef 问题</h2>
+
+<h3 id="&quot;If&quot; statements inside a SynthDef">SynthDef 内部的 "If" 语句</h3>
+
+<p>用户迟早会尝试在 <code>SynthDef</code> 中写出类似这样的东西</p>
+
+<pre><code>SynthDef(\kablooie, { |x = 0|
+    var signal;
+    if(x &gt; 0) {
+        signal = SinOsc.ar
+    } {
+        signal = Saw.ar
+    };
+});</code></pre>
+
+<p>... 结果是令人不安的：<code>ERROR: Non Boolean in test.</code></p>
+
+<p>“测试中不是布尔值”？但 <strong>x &gt; 0</strong> 是一个比较，理应产生一个布尔值，对吧？</p>
+
+<p>这应当是首要线索：服务器中的布尔逻辑与客户端（语言中）所谓的条件判断的“常规”用法截然不同。</p>
+
+<h3 id="What is a Boolean in the server?">服务器中的布尔值是什么？</h3>
+
+<p>事实上，并不存在这样的东西。服务器处理的是浮点数。它没有<strong>真</strong>或<strong>假</strong>的实体。</p>
+
+<p>由于服务器中的一切都是数字，比较的结果也必须是数字。服务器遵循与其他 DSP 环境（Max/MSP、pd 等）相同的约定：</p>
+
+<p>- <code>True</code> 用 1.0 表示 - <code>False</code> 用 0.0 表示</p>
+
+<h3 id="Why is x > 0 &quot;non-Boolean&quot; in the &quot;test&quot;?">为什么在“test”中 x &gt; 0 是“非布尔值”？</h3>
+
+<p>这要回到处理服务器中运算符的一般性问题。SynthDef 中的数学运算符不是<strong>现在</strong>要执行的计算。它们<strong>描述</strong>的是<strong>将来</strong>要执行的计算，会执行成千上万次。</p>
+
+<pre><code>var x = 1;
+x &gt; 0;
+// -&gt; true</code></pre>
+
+<pre><code>SynthDef(\kablooie, { |x = 0|
+    &quot;x: &quot;.post; x.postln;
+    &quot;(x &gt; 0): &quot;.post; (x &gt; 0).postln;
+});</code></pre>
+
+<pre><code>x: an OutputProxy
+(x &gt; 0): a BinaryOpUGen</code></pre>
+
+<p>在你执行 SynthDef 代码时，<strong>x</strong> 的精确值是未知的。<strong>x</strong> 实际上代表无限多个值，这些值将通过参数列表提供给 Synth。因此，一劳永逸地确定 <strong>x &gt; 0</strong> 是否成立是没有意义的。<strong>x</strong> 现在可能 <strong>&gt; 0</strong>，而瞬间之后可能 <strong>&lt; 1</strong>。所以，<strong>x &gt; 0</strong> 不会产生布尔值，而是产生一个<strong>二元操作符 UGen</strong>，它会反复执行该比较。</p>
+
+<p>回到这里：</p>
+
+<pre><code>if (aBinaryOpUGen) { ... } { ... };</code></pre>
+
+<p>要做到这一点，语言必须知道要执行哪个函数（true 或 false）。但无法预知 BinaryOpUGen 会是哪一个。因此，SuperCollider 会抛出错误。</p>
+
+<h3 id="If you can">如果你不能分支，那么在服务器中进行比较又有什么用呢？</h3>
+
+<p>实际上，比较有很多用途。</p>
+
+<p>- <strong>从两个信号中选择一个</strong>：这是我们在服务器中最接近 <strong>if-then-else</strong> 的做法。<strong>then</strong> 和 <strong>else</strong> 都必须持续运行。这是服务器工作方式的要求：单个 Synth 内单元生成器的数量和排列不能改变。相反，你可以选择<strong>这些信号中哪一个向下游传递</strong>。一个会被使用，另一个被忽略。由于 true 为 1、false 为 0，你可以用条件来通过 Select 索引数组。</p>
+
+<pre><code>Select.kr(aKrSignal &gt; anotherKrSignal, [false_signal, true_signal]);</code></pre>
+
+<p>- <strong>生成触发器</strong>：每当信号 &lt;= 0 然后变为 &gt; 0 时，就会产生一个触发器。将其扩展到比较运算，意味着<strong>当比较在持续一段时间内为假、然后变为真时，就会产生一个触发器</strong>。因此，在触发器有效的任何地方，都可以将信号与阈值进行比较。举个简单的例子，考虑当麦克风输入的幅度超过阈值时向语言发送消息的情况。</p>
+
+<pre><code>var mic = In.ar(8, 1), amplitude = Amplitude.kr(mic);
+SendTrig.kr(amplitude &gt; 0.2, 0, amplitude);</code></pre>
+
+<p>- <strong>传递或抑制触发</strong>：你可能需要持续生成触发，但只允许在满足某个条件时才让触发生效。乘法可以很好地处理这一点：<strong>condition * trigger</strong>。由于条件为 false 时求值为 0，触发会被替换为 0，什么也不会发生，正合预期。</p>
+
+<p>对于一个简单的例子，让我们改进麦克风振幅示例，抑制在前一次触发后 1/4 秒内发生的触发。</p>
+
+<pre><code>var mic = In.ar(8, 1),
+    amplitude = Amplitude.kr(mic),
+    trig = amplitude &gt; 0.2,
+    timer = Timer.kr(trig), // 距离上次触发有多久了？
+    filteredTrig = (timer &gt; 0.25) * trig;
+
+SendTrig.kr(filteredTrig, 0, amplitude);</code></pre>
+
+<h3 id="Logical operators: And, Or, Not, Xor">逻辑运算符：And、Or、Not、Xor</h3>
+
+<p>逻辑运算符有简单的算术等价形式。</p>
+
+<p>- <strong>And = 乘法</strong>：<strong>(x &gt; 0) * (y &gt; 0)</strong> 表示两个条件都必须为真（非零），结果才为非零。</p>
+
+<p>- <strong>Or = 加法</strong>：<strong>(x &gt; 0) + (y &gt; 0)</strong> 表示任一条件非零就足以使结果非零。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果两者都为真，则结果为 2，而不是 1。在某些情况下，2 可能不可接受。可以通过将 Or 包裹在另一个比较中来解决——<strong>((x &gt; 0) + (y &gt; 0)) &gt; 0</strong>——因为 2 &gt; 0 求值为 1！</p></blockquote>
+
+<p>- <strong>Not</strong>：我倾向于通过将条件与零比较来取反：<strong>condition &lt;= 0</strong>。0 &lt;= 0 为 1（即非 0），1 &lt;= 0 为 0（非 1）。如果你确定逻辑表达式只会精确地取 0 或 1，也可以用减法取反：<strong>1 - condition</strong>。</p>
+
+<p>- <strong>Xor</strong>：异或运算在其中一个条件为真、但不同时为真时为真。我们可以将两个条件相加并与 1 比较。语法有点棘手，因为 <code>==</code> 不会自动转换为 BinaryOpUGen。我们必须手动创建 BinaryOpUGen。</p>
+
+<pre><code>BinaryOpUGen(&#x27;==&#x27;, (x &gt; 0) + (y &gt; 0), 1)</code></pre>
+
+<h3 id="ERROR: SynthDef not found">错误：未找到 SynthDef</h3>
+
+<p>向服务器发送 SynthDef 需要一点时间，这意味着同时包含 SynthDef 定义和这些 SynthDef 实例的一段代码，如果不考虑这一点点延迟，就不能保证正常运行。有两种主要方法可以做到：</p>
+
+<p>第一种方法：将 SynthDef 和主代码放入一个 Task 中，并在它们之间放置某种 <code>.wait</code> 时间。</p>
+
+<pre><code>Task({
+    // 将你的 SynthDefs 放在这里
+    0.2.wait;
+    // 将你的其余代码放在这里
+}).play;</code></pre>
+
+<p>第二种方式：使用 <code>.sync</code>：</p>
+
+<pre><code>Routine({
+    // 将你的 SynthDefs 放在这里
+    s.sync; // 假设 &#x27;s&#x27; 是服务器
+    // 将你的其余代码放在这里
+}).play</code></pre>
+
+<h3 id="FAILURE /s_new alloc failed, increase server">FAILURE /s_new 分配失败，请增加服务器的内存分配</h3>
+
+<p><strong>含义</strong>：在初始化新 Synth 节点中的单元生成器时，服务器耗尽了实时内存。</p>
+
+<p><strong>解决方案</strong>：增加服务器可用的实时内存量。正如错误消息所述，该大小在与服务器关联的 <code>ServerOptions</code> 对象中设置。它是一个服务器启动选项；你必须退出服务器并重新启动它，否则新设置不会生效。</p>
+
+<pre><code>myServer.quit;
+myServer.options.memSize = 65536;  // 例如，对你来说可能不同
+myServer.boot;</code></pre>
+
+<p><code>myServer.options.memSize</code> 以 KB 为单位。默认值为 8192KB，即 8MB。</p>
+
+<p><strong>它的真正含义</strong>：许多单元生成器需要内部内存缓冲区，例如延迟线、梳状滤波器、全通延迟、某些 FFT 操作器、混响单元等。这些内部缓冲区并非直接从操作系统分配，而是从一个“实时内存池”中分配。这是因为通过 <code>malloc()</code> 等函数直接从操作系统分配并不是实时安全的。操作系统可能返回新内存块耗时过长，从而导致音频出现故障。为解决此问题，服务器在启动时分配一大块内存，并按需将其分发给各单元生成器。</p>
+
+<p>如果你使用大量延迟，服务器可能会耗尽实时内存。默认的 <code>8192KB</code> 设置在 44.1 kHz 采样率下可以支持 47.55 秒的延迟。当使用大量带有多个延迟通道的 synth 时，这些内存会很快耗尽。</p>
+
+<p><strong>替代方案</strong>：对于延迟单元，你可以使用预分配的延迟缓冲区——<code>Buffer.alloc()</code>——以及“Buf”延迟单元：<code>BufDelayN</code>、<code>BufDelayL</code>、<code>BufDelayC</code>、<code>BufCombL</code> 等。<code>Buffer.alloc()</code> 不使用实时池，也不受 memSize 限制。这种方法对 FFT 单元没有帮助。</p>
+
+<h3 id="Array arguments">数组参数</h3>
+
+<p>有时，你需要向 SynthDef 中的一系列 Control 输入发送一个数组（通常称为“_数组参数_”）。</p>
+
+<pre><code>Synth(\xyz, [freqs: [300, 400, 500]]);</code></pre>
+
+<p>有两种主要方式可以做到这一点：</p>
+
+<p>- 在函数中为该参数名提供一个字面量数组作为默认值——<code>\#[1, 2, 3]</code>。这一点在 <a href="Classes-SynthDef.html">SynthDef</a> 的帮助文件中有讨论。</p>
+
+<pre><code>SynthDef(\xyz, { |freqs = #[1, 2, 3]|
+    // ...
+})</code></pre>
+
+<p>- 或者使用 <code>NamedControl</code>。如果你想动态构造数组的大小，或基于变量来构造，这是唯一的方法。参见 <a href="Classes-NamedControl.html">NamedControl</a>。</p>
+
+<pre><code>SynthDef(\xyz, {
+    var freqs = NamedControl.kr(\freqs, #[1, 2, 3]);
+    // ...
+});</code></pre>
+
+<h3 id="Why does it have to be a literal array?">为什么它必须是字面量数组？</h3>
+
+<p>原因来自构建 SynthDef 的过程：</p>
+
+<p>1. 首先，查看函数参数以确定 Control 输入应该是什么。2. 然后创建 Control 单元（通常只需一个，如果它们都是没有前缀或特殊速率的普通参数）。每个通道由一个 <code>OutputProxy</code> 表示。3. 然后运行 SynthDef 函数，将输出代理传递给参数。4. 然后将 UGen 按正确顺序排序，等等等等。</p>
+
+<p>要完成步骤 \#1 和 \#2，SynthDef 构建器必须在运行函数<strong>之前</strong>知道数组参数的大小。只有当它是字面量数组时才有可能：<code>\#[1, 2, 3, 4, 5]</code>。任何其他数组表示法都会<strong>在运行函数时</strong>创建数组（步骤 \#3）。但那时已经太晚了——SynthDef 构建器已经为它创建了非数组的控制通道！</p>
+
+<pre><code>SynthDef(\notArray, { |a = (1..5)|
+    a.debug(&quot;a is&quot;);
+});</code></pre>
+
+<p><code>a is: an OutputProxy</code></p>
+
+<pre><code>SynthDef(\array, { |a = #[1, 2, 3, 4, 5]|
+   a.debug(&quot;a is&quot;);
+});</code></pre>
+
+<p><code>a is: [ an OutputProxy, an OutputProxy, an OutputProxy, an OutputProxy, an OutputProxy ]</code></p>
+
+<p>（注意，如果 'a' 打印为 [ 1, 2, 3, 4, 5 ]，那么你就无法使用 <code>.set</code> 改变 Synth 中的值！）</p>
+
+<p><span id="Server Issues"> </span></p>
+
+<h2 id="Server issues">服务器问题</h2>
+
+<h3 id="How to trigger a function from the server">如何从服务器触发函数</h3>
+
+<p>第一点也是最重要的一点：<strong>函数仅存在于客户端</strong>。服务器不知道函数是什么、不理解它们，也无法执行它们。<strong>只有客户端才能执行函数</strong>。</p>
+
+<p>因此，如果你希望当服务器中发生某事时执行一个函数，唯一的方法就是让服务器通知客户端采取行动。</p>
+
+<p>服务器可以使用两种单元生成器之一将消息回传给客户端：<code>SendTrig</code> 和 <code>SendReply</code>。<code>SendTrig</code> 更简单但灵活性较差（它只能发送 <code>/tr</code> 消息，且只能携带一个数据值）。<code>SendReply</code> 允许你随意命名消息，并可以随消息发送数组。此处我们将使用 SendReply，因为它更灵活。</p>
+
+<p>在语言内部，你还需要一个对象来接收消息并对其做出反应。通常是 <code>OSCFunc</code> 或 <code>OSCdef</code>。在此示例中，<code>OSCdef</code> 不仅根据名称 <code>/bleep</code> 过滤消息，还根据 synth 的 ID 过滤。这样，你可以拥有多个触发 synth，每个 synth 有不同的响应器和不同的动作。</p>
+
+<pre><code>(
+a = {
+    var trig = Dust.kr(8),
+    decay = Decay2.kr(trig, 0.01, 0.1),
+    sig = SinOsc.ar(TExpRand.kr(200, 600, trig), 0, 0.1) * decay;
+    SendReply.kr(trig, &#x27;/bleep&#x27;, trig);
+    sig ! 2
+}.play;
+
+o = OSCdef(\bleepResponder, { |msg|
+    msg.postln;
+}, &#x27;/bleep&#x27;, s.addr, argTemplate: [a.nodeID]);
+)
+
+a.free; o.remove;</code></pre>
+
+<h3 id="Helpfile references:">帮助文件引用：</h3>
+
+<p>- <a href="Classes-SendTrig.html">SendTrig</a>、<a href="Classes-SendReply.html">SendReply</a></p>
+
+<p>- <a href="Classes-OSCresponderNode.html">OSCresponderNode</a>、<a href="Classes-OSCpathResponder.html">OSCpathResponder</a>、<a href="Classes-OSCresponder.html">OSCresponder</a>、<a href="Guides-OSC_communication.html">OSC Communication</a></p>
+
+<h3 id="Error: failed to open UDP socket: address in use">错误：无法打开 UDP 套接字：地址已被占用</h3>
+
+<p>有时在启动服务器时会收到消息：<code>Error: failed to open UDP socket: addess in use</code>。</p>
+
+<p>这通常是由一个已挂起但尚未释放 osc 端口的 scsynth 实例导致的，可能是 SuperCollider 崩溃所致。你可以使用 SuperCollider（sclang）运行 <code>Server.killAll</code> 来终止所有正在运行的服务器。你也可以使用终端或操作系统的任务管理器终止 scsynth。</p>
+
+<p><span id="Other Issues"> </span></p>
+
+<h2 id="Other issues">其他问题</h2>
+
+<h3 id="Error while loading shared libraries: libsclang.so: cannot open shared object file">加载共享库时出错：libsclang.so：无法打开共享对象文件</h3>
+
+<p>这种情况通常发生在 Linux 上构建之后，它意味着你的系统尚未感知到新安装的共享库。以 root 身份运行 ldconfig 即可解决该问题：</p>
+
+<p><code>/sbin/ldconfig</code></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/UserFAQ.html" rel="noreferrer noopener">Guides/UserFAQ.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

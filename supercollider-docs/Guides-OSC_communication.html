@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OSC 通信 - SuperCollider 文档</title>
+<meta name="description" content="OSC 网络通信">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>OSC 通信</h1>
+
+<p><em>OSC 网络通信</em></p>
+
+<p>参见：<a href="Classes-NetAddr.html">NetAddr</a>、<a href="Classes-OSCFunc.html">OSCFunc</a></p>
+
+<p>程序之间的 OSC 通信通常用于从一个应用程序向另一个应用程序发送消息，这些应用程序可能运行在不同的计算机上。在 SuperCollider 中，这种通信通过创建目标应用程序的 <a href="Classes-NetAddr.html">NetAddr</a> 并创建一个 <a href="Classes-OSCFunc.html">OSCFunc</a> 来监听另一个应用程序来实现。OSC 的底层协议是 UDP 或 TCP。</p>
+
+<h2 id="Sending OSC to another application">向另一个应用程序发送 OSC</h2>
+
+<p>要与另一个应用程序建立通信，你需要知道该应用程序在哪个端口上监听。例如，如果一个应用程序在端口 7771 上监听，我们可以创建一个 NetAddr 并向它发送消息：</p>
+
+<pre><code>b = NetAddr.new(&quot;127.0.0.1&quot;, 7771);    // 创建 NetAddr
+b.sendMsg(&quot;/hello&quot;, &quot;there&quot;);    // 向应用程序发送消息 &quot;hello&quot;，参数为 &quot;there&quot;</code></pre>
+
+<h2 id="Receiving OSC from another application">从另一个应用程序接收 OSC</h2>
+
+<p>要监听另一个应用程序，该应用程序需要向 SuperCollider 正在监听的端口发送消息。通常默认端口是 57120，但如果 SC 启动时该端口已被占用，则可能是其他端口。当前默认端口可通过以下方式获取</p>
+
+<pre><code>NetAddr.langPort;    // 获取 SC 当前监听的端口</code></pre>
+
+<p>或者你可以同时获取 IP 和端口：</p>
+
+<pre><code>NetAddr.localAddr    // 获取当前 IP 和端口</code></pre>
+
+<p>你可以使用 <a href="Classes-Main.html#-openUDPPort">Main: -openUDPPort</a> 打开额外的端口。它会返回一个 <a href="Classes-Boolean.html">Boolean</a>，指示 SC 是否成功打开了新端口。或者，你也可以直接将自定义端口作为 <strong>recvPort</strong> 参数传给 <a href="Classes-OSCFunc.html">OSCFunc</a>，如果该端口尚未打开，它会自动打开。</p>
+
+<pre><code>thisProcess.openUDPPort(1121); // 尝试打开 1121
+thisProcess.openPorts; // 列出所有打开的端口</code></pre>
+
+<p>要监听传入的消息，需要在 SuperCollider 中创建一个 <a href="Classes-OSCFunc.html">OSCFunc</a>。如果发送应用程序<strong>具有固定的发送端口</strong>，你可以将 OSCFunc 设置为仅监听来自该 IP 和端口的消息：</p>
+
+<pre><code>n = NetAddr.new(&quot;127.0.0.1&quot;, 7771);    // 创建 NetAddr
+// 创建 OSCFunc
+o = OSCFunc({ arg msg, time, addr, recvPort; [msg, time, addr, recvPort].postln; }, &#x27;/goodbye&#x27;, n);
+o.free;    // 完成后移除该 OSCFunc。</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 上面的端口 7771 是另一个应用程序发送<strong>来源</strong>端口，而不是 SC 接收数据的端口。如果你想在 NetAddr.langPort 以外的端口接收数据，请参见 <a href="Classes-OSCFunc.html#*new">OSCFunc: *new</a> 中的 <strong>recvPort</strong> 参数。</p></blockquote>
+
+<h2 id="Receiving from an application that is sending from a variable port">从正在从可变端口发送的应用程序接收</h2>
+
+<p>有些应用程序（尤其是 Pd 和 Max）不会从固定端口发送消息，而是每次发送消息时使用不同的端口，或者每次补丁启动时随机选择一个端口。在这种情况下，需要设置 OSCFunc，使其监听来自任何地方的消息。你可以通过将 srcID 参数传入 nil 来实现。</p>
+
+<pre><code>o = OSCFunc({ arg msg, time, addr, recvPort; [msg, time, addr, recvPort].postln; }, &#x27;/goodbye&#x27;); // 创建 OSCFunc
+o.free;    // 完成后移除该 OSCFunc。</code></pre>
+
+<h2 id="Testing incoming traffic">测试传入流量</h2>
+
+<p>OSCFunc 有一个便捷方法 <a href="Classes-OSCFunc.html#*trace">OSCFunc: *trace</a>，它会发布所有传入的 OSC 消息：</p>
+
+<pre><code>OSCFunc.trace(true); // 开启 posting
+OSCFunc.trace(false); // 关闭发布</code></pre>
+
+<h2 id="Custom OSC message processing">自定义 OSC 消息处理</h2>
+
+<p>所有传入的 OSC 消息都会调用 <a href="Classes-Main.html">Main</a> 中的消息 recvOSCmessage。如有需要，可以向 Main 的 recvOSCFunc 变量添加自定义的 <a href="Classes-Function.html">Function</a> 或其它对象。虽然可以直接使用相应的 setter 来完成，但最好使用 <a href="Classes-Main.html#-addOSCRecvFunc">Main: -addOSCRecvFunc</a> 和 <a href="Classes-Main.html#-removeOSCRecvFunc">Main: -removeOSCRecvFunc</a>，以避免覆盖类代码可能已添加的任何其它函数。</p>
+
+<pre><code>// 此示例基本上类似于 OSCFunc.trace，但会过滤掉
+// /status.reply 消息
+(
+f = { |msg, time, addr|
+    if(msg[0] != &#x27;/status.reply&#x27;) {
+        &quot;time: % sender: %\nmessage: %\n&quot;.postf(time, addr, msg);
+    }
+};
+thisProcess.addOSCRecvFunc(f);
+);
+
+// 停止发送。
+thisProcess.removeOSCRecvFunc(f);</code></pre>
+
+<h2 id="OSC type tags and sclang">OSC 类型标签与 sclang</h2>
+
+<p>入站 OSC 消息必须带有类型标签，否则将抛出错误。</p>
+
+<p>支持以下出站转换：</p>
+
+<ul>
+<li>整数变为 "i"。OSC 和 sclang 都使用 32 位有符号整数。</li>
+<li>布尔值变为 "i"，true 转换为 1，false 转换为 0。</li>
+<li>Nil 变为 "i"，转换为值 0。</li>
+<li>浮点数变为 "f"（32 位浮点数）。sclang 的浮点数是 64 位的，因此转换为 OSC 时会有精度损失。</li>
+<li>字符串和符号变为 "s"（字符串）。</li>
+<li>Int8Array 变为 "b"（blob）。</li>
+<li>Char 作为原始类型标签添加，不向 OSC 包附加任何数据。这用于发送 <code>$N</code>（nil）、<code>$T</code>（true）、<code>$F</code>（false）、<code>$I</code>（infinity/impulse）。请小心处理——如果目标实体不认为该标签消耗零字节，则 OSC 消息的剩余部分可能会被破坏！</li>
+</ul>
+
+<p>如果将 <code>NetAddr.useDoubles</code> 设置为 true，那么在出站消息中，sclang 将使用 "d"（双精度）类型标签而非 "f"。OSC 双精度数为 64 位。你需要自行确保接收者能够理解 "d"。</p>
+
+<p>支持以下入站类型标签：</p>
+
+<ul>
+<li>"i"（32 位有符号整数）变为 Integer</li>
+<li>"f"（32 位浮点数）变为 Float</li>
+<li>"s"（字符串）变为 Symbol</li>
+<li>"b"（blob）和 "m"（4 字节 MIDI 消息）变为 Int8Array</li>
+<li>"d"（64 位浮点数）变为 Float</li>
+<li>"T"（真）和 "F"（假）变为布尔值</li>
+<li>"I"（无穷/冲激）变为 <code>+inf</code></li>
+<li>"N"（nil）变为 <code>nil</code></li>
+<li>"t"（64 位大端定点时间标签）变为 Float</li>
+<li>"c"（字符）变为 Char</li>
+</ul>
+
+<p>不支持 "r"（RGBA 颜色）、"S"（符号）以及 "[" 和 "]"（数组开始和结束）。</p>
+
+<p>如果遇到无法识别的标签，sclang 会将这个无法识别的标签转换为一个 Char 对象，并将其添加到 OSC 消息中。然后它会像读取字符串一样在 OSC 消息中向前跳过——它寻找下一个空字节，然后跳过 0-3 个字节以实现 4 字节对齐。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/OSC_communication.html" rel="noreferrer noopener">Guides/OSC_communication.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

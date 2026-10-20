@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackFFT - SuperCollider 文档</title>
+<meta name="description" content="将独立的需求速率 FFT 频段流打包到 FFT 链缓冲区中">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>PackFFT</h1>
+
+<p><em>将独立的需求速率 FFT 频段流打包到 FFT 链缓冲区中</em></p>
+
+<p><a href="Classes-PV_ChainUGen.html">PV_ChainUGen</a> : <a href="Classes-WidthFirstUGen.html">WidthFirstUGen</a> : <a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-UnpackFFT.html">UnpackFFT</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>接收一个幅度和相位数组，并将它们打包进 FFT 缓冲区，以便使用 IFFT 变换回时域音频。</p>
+
+<p>大多数人不需要直接使用它——而应使用 <a href="Classes-PV_ChainUGen.html">PV_ChainUGen</a> 基类中的 pvcollect、pvcalc 或 pvcalc2 方法。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>PackFFT.new(chain, bufsize, magsphases, frombin: 0, tobin, zeroothers: 0)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>chain</p></td><td class="argumentdesc"><p><a href="Classes-FFT.html">FFT</a> 链</p></td></tr>
+<tr><td class="argumentname"><p>bufsize</p></td><td class="argumentdesc"><p>FFT 缓冲区大小</p></td></tr>
+<tr><td class="argumentname"><p>magsphases</p></td><td class="argumentdesc"><p>输入数据应为一个扁平数组，按升序包含所有 bin 的幅度和相位。例如 <code>[mag0, phase0, mag1, phase1, mag2, phase2, ... magN, phaseN]</code> 此输入通常为 demand-rate。</p></td></tr>
+<tr><td class="argumentname"><p>frombin</p></td><td class="argumentdesc"><p>限制频带</p></td></tr>
+<tr><td class="argumentname"><p>tobin</p></td><td class="argumentdesc"><p>限制频带</p></td></tr>
+<tr><td class="argumentname"><p>zeroothers</p></td><td class="argumentdesc"><p>设为 1 以将受限频带外的所有幅度置零</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>从技术上讲，这与 Demand 或 Duty 类似，因为它会调用图中更上层的 demand-rate UGen 来处理这些值，最终调用 UnpackFFT。在大多数情况下，这个过程的两端必须看到同一条链……！否则行为就是未定义的，而且谁知道呢，可能还会令人不快。</p>
+
+<p>可选参数：frombin 和 tobin 允许你仅将提供的数据填充到 FFT 频段的一个子集（即单个限定的频带），如果这样做，你还可以选择将 zeroothers 设为 1，以将该频带之外的所有幅度归零（否则它们保持不变）。</p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-fftSize"><code>.fftSize</code></h4>
+
+<h2 id="examples">示例</h2>
+
+<p>这里有一个不寻常的例子，它使用 PackFFT 而不先使用 UnpackFFT——本质上是从零开始创建我们的 FFT 数据。</p>
+
+<pre><code>// 提醒：这不是预期的典型用法！不过这样做也可以。
+(
+x = {
+    var mags, phases, chain, sig;
+    // 创建简单的起伏幅度
+    mags = { FSinOsc.kr(ExpRand(0.1, 1)).range(0, 1) }.dup(100);
+    // 然后给它们一个 &quot;rolloff&quot;，让声音不那么难听
+    mags = mags  * ((1, 0.99 .. 0.01).squared);
+    // 让我们以不同速率开启和关闭这些频段，我*确信*那听起来会很有趣
+    mags = mags * { LFPulse.kr(2 ** IRand(-3, 5)).range(0, 1) }.dup(100);
+    // 暂时忽略相位
+    phases = 0.dup(100);
+    // 我们需要创建一个 FFT 链来输入我们的数据。
+    // 最简单的方法是对某个信号做 FFT，然后将其忽略！
+    chain = FFT(LocalBuf(512), FSinOsc.ar);
+    // 现在我们可以进行打包
+    chain = PackFFT(chain, 512, [mags, phases].flop.flatten, 0, 99, 1);
+    sig = IFFT(chain);
+    sig.dup
+}.play
+)
+x.free;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/PackFFT.html" rel="noreferrer noopener">Classes/PackFFT.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

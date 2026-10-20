@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubsampleOffset - SuperCollider 文档</title>
+<meta name="description" content="相对于 synth 起始位置在一个采样内的偏移量。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>SubsampleOffset</h1>
+
+<p><em>相对于 synth 起始位置在一个采样内的偏移量。</em></p>
+
+<p><a href="Classes-InfoUGenBase.html">InfoUGenBase</a> : <a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-ControlRate.html">ControlRate</a>、<a href="Classes-RadiansPerSample.html">RadiansPerSample</a>、<a href="Classes-SampleDur.html">SampleDur</a>、<a href="Classes-SampleRate.html">SampleRate</a>、<a href="Classes-OffsetOut.html">OffsetOut</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>当根据带时间戳的 osc-bundle 创建 synth 时，它会在下一个可能的块（通常是 64 个采样）开始计算。使用 OffsetOut UGen，可以延迟音频，使其精确到采样。</p>
+
+<p>对于某些合成方法，需要子采样精度。SubsampleOffset 提供 synth 在当前采样内被调度的时间信息。它可用于偏移包络或对音频输出进行重采样。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*ir"><code>SubsampleOffset.ir</code></h4>
+
+<p><em>来自父类：<a href="Classes-InfoUGenBase.html">InfoUGenBase</a></em></p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 示例：演示三次子样本（cubic subsample）插值
+
+
+// 可以在样本之间移动的脉冲串
+(
+SynthDef(\Help_SubsampleOffset, { |out, addOffset|
+    var in, dt, sampDur, extraSamples, sampleOffset, resampledSignal;
+    in = Impulse.ar(2000, 0, 0.3); // some input.
+    sampDur = SampleDur.ir;     // 一个采样的时长
+    extraSamples = 4;            // DelayC 至少需要 4 个采样的缓冲区
+    sampleOffset = 1 - SubsampleOffset.ir; // 平衡子样本偏移
+    sampleOffset = sampleOffset + MouseX.kr(0, addOffset); // 添加一个依赖鼠标的偏移
+    // 三次重采样：
+    resampledSignal = DelayC.ar(in,
+                            maxdelaytime: sampDur * (1 + extraSamples),
+                            delaytime: sampDur * (sampleOffset + extraSamples)
+                    );
+    OffsetOut.ar(out, resampledSignal)
+}).add;
+)
+
+// 创建相隔 1 个采样的 2 个脉冲串，将一个相对于另一个移动。
+// 当光标在左侧时，脉冲相邻，在右侧时，它们
+// 恰好相隔 1 个采样。
+
+(
+var dt = s.sampleRate.reciprocal; // 1 个采样延迟
+s.sendBundle(0.2, [9, \Help_SubsampleOffset, s.nextNodeID, 1, 1, \out, 40, \addOffset, 3]);
+s.sendBundle(0.2 + dt, [9, \Help_SubsampleOffset, s.nextNodeID, 1, 1, \out, 40, \addOffset, 0]);
+)
+
+s.scope(1, 40, zoom: 0.2);
+
+
+
+
+
+// 子采样精确正弦颗粒的示例：
+// （我听不出与普通采样精确颗粒的差别，但也许
+// 有人可以添加一个展示该效果的示例）
+
+(
+SynthDef(&quot;Help_Subsample_Grain&quot;,
+    { |out = 0, freq = 440, sustain = 0.005, attack = 0.001|
+        var env, offset, sig, sd;
+
+        sd = SampleDur.ir;
+        offset = (1 - SubsampleOffset.ir) * sd;
+        // 延迟后释放 synth：
+        Line.ar(1, 0, attack + sustain + offset, doneAction: Done.freeSelf);
+        env = EnvGen.kr(Env.perc(attack, sustain, 0.2));
+        sig = SinOsc.ar(freq, 0, env);
+
+        sig = DelayC.ar(sig, sd * 4, offset);
+        OffsetOut.ar(out, sig);
+    }, [\ir, \ir, \ir, \ir]).add;
+)
+
+(
+    Routine {
+        loop {
+            s.sendBundle(0.2, [9, \Help_Subsample_Grain, -1, 1, 1, \freq, 1000]);
+            rrand(0.001, 0.002).wait;
+        }
+    }.play;
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/SubsampleOffset.html" rel="noreferrer noopener">Classes/SubsampleOffset.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

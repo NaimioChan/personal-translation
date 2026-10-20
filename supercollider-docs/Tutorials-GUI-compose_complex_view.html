@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GUI：使用基本组件组合视图 - SuperCollider 文档</title>
+<meta name="description" content="关于用基本 GUI 组件组合视图的通用示例。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>GUI：使用基本组件组合视图</h1>
+
+<p><em>关于用基本 GUI 组件组合视图的通用示例。</em></p>
+
+<p>另请参阅：<a href="Tutorials-GUI-create_window.html">GUI: Create a Window</a>、<a href="Tutorials-GUI-create_simple_instrument_view.html">GUI: Interfacing an instrument with a View</a></p>
+
+<h2 id="GUI Tutorial">GUI 教程</h2>
+
+<p>此帮助文件是 <a href="Tutorials-GUI-tutorial_intro.html">GUI 教程</a> 的一部分。</p>
+
+<p>这是 SuperCollider GUI 系统初学者介绍的第二部分。第一部分介绍<a href="Tutorials-GUI-create_window.html">创建窗口</a>，而第二部分讨论<a href="Tutorials-GUI-create_simple_instrument_view.html">将 Synth 与 GUI 界面连接</a>。</p>
+
+<h2 id="What is this tutorial about?">本教程是关于什么的？</h2>
+
+<p>本教程介绍使用 SuperCollider 系统时<strong>你可能需要构建的不同界面</strong>，<strong>并讨论它们的特殊性</strong>。如果你需要关于视图组合基础的更详细教程，应先阅读 <a href="Tutorials-GUI-create_simple_instrument_view.html">GUI：将乐器与 View 对接</a>。</p>
+
+<p><strong>SuperCollider 实现了不同的 GUI 组件，允许你组合复杂的软件界面。</strong></p>
+
+<p>这些组件的列表可在文档中查看，方法是选择 <strong>Browse &gt; GUI &gt; Views</strong>。</p>
+
+<p>你可以把这些组件看作一些基础构建块，让你能够构建出更大的结构。</p>
+
+<h2 id="Composing a Slider with a title and an editable text field">组合一个带标题和可编辑文本字段的 Slider</h2>
+
+<p>这是关于视图组合的最简单示例：一个 <a href="Classes-Slider.html">Slider</a>、一个 <a href="Classes-TextField.html">TextField</a> 和一个 <a href="Classes-StaticText.html">StaticText</a>。这里没什么可多说的，代码本身基本就能说明问题。唯一需要记住的是，当编辑时，让 <a href="Classes-Slider.html">Slider</a> 和 <a href="Classes-TextField.html">TextField</a> 相应地相互更新。</p>
+
+<p><strong>请注意，此示例是“不安全”的</strong>：没有任何机制阻止在 <a href="Classes-TextField.html">TextField</a> 中输入高数值：任何浮点数都是有效的。在使用 <a href="Classes-TextField.html">TextField</a> 时，你仍需负责将值裁剪到正确的范围。在 <a href="Classes-TextField.html">TextField</a> 中输入非有效数字会将值设为 0.0（因为对非浮点的 <a href="Classes-String.html">String</a> 调用 <code>.asFloat</code> 会返回 0.0）。</p>
+
+<pre><code>(
+var value = 1;
+var displayValue = { |value|
+    value.postln;
+};
+
+var sliderView = UserView()
+.bounds_(Rect(0, 0, 400, 64));
+var slider;
+var text = StaticText()
+.align_(\center)
+.string_(&quot;Slider Name&quot;);
+var field;
+
+slider = Slider()
+.orientation_(\horizontal)
+.action_({
+    value = slider.value;
+    field.string_(
+        value.trunc(0.01).asString);
+    displayValue.value(value);
+});
+
+field = TextField()
+.align_(\center)
+.string_(value.asString)
+.maxWidth_(64)
+.action_({
+    value = field.string.asFloat;
+    slider.value_(value);
+    displayValue.value(value);
+});
+
+sliderView.layout_(
+    HLayout()
+    .add(
+        VLayout()
+        .add(text)
+        .add(slider),
+    )
+    .add(field)
+);
+
+sliderView.front;
+)</code></pre>
+
+<h2 id="Centralizing Views actions with a single Function">使用单个 Function 集中管理 Views 操作</h2>
+
+<p>此示例是前一示例的延续，解释了<strong>为什么 UI 组件不应直接负责它们最终执行的操作</strong>。它还简要讨论了焦点和键盘输入响应。</p>
+
+<p><strong>开始使用 SuperCollider 的 GUI 系统时常见的错误之一，是把 View 的 action 函数当作真正负责修改软件的的函数来使用</strong>。即使在与该算法关联的 View 只有一个时它能可靠工作，这种做法也会降低代码可读性。当多个 View 绑定到同一个算法时，这几乎总会引发问题，正如在上一个例子中所见。</p>
+
+<p>下一个示例展示了<strong>如何将算法集中到单个</strong> <a href="Classes-Function.html">Function</a> 中，该函数负责将修改应用到软件，然后相应地更新各 View。在这种上下文中，<strong>View 的动作函数只负责将其提供的数据转换为正确的格式，然后调用这个集中函数</strong>。</p>
+
+<p>这里，多个视图使用 <code>updateValue</code> 函数来修改值。此函数也会同时更新每个视图。有趣的是，该函数会在值越界时对其进行裁剪：这可以防止用户在使用 <a href="Classes-TextField.html">TextField</a> 时指定错误的值。无论错误值来源如何，都会被裁剪。</p>
+
+<p><a href="Classes-Slider.html">Slider</a> 和 <a href="Classes-TextField.html">TextField</a> 都只有非常小的动作函数：它们只将值转换为正确的格式，然后调用 <code>updateValue</code>。除了可读性之外，只有在我们必须更改算法时才需要修改 <code>updateValue</code>。View 的 <code>action</code> 函数一旦设置就不再受任何更改的影响。</p>
+
+<p>在这个特定示例中，我还实现了一个 switch 语句，它<strong>允许窗口响应键盘输入</strong>。由于 <a href="Classes-Slider.html">Slider</a> 和 <a href="Classes-TextField.html">TextField</a> 都原生响应键盘输入事件，我们必须操作 View 的焦点来指定事件的上下文。</p>
+
+<pre><code>(
+// 指定默认值及其范围
+var valueDefault = 440;
+var valueMin = 440;
+var valueMax = 880;
+// 引用值
+// 用于键盘事件
+var currentValue = valueDefault;
+
+var window = Window(&quot;&quot;, Rect(100, 100, 400, 400));
+
+var slider = Slider()
+.orientation_(\horizontal)
+.maxHeight_(64)
+.value_(
+    valueDefault.linlin(valueMin, valueMax, 0, 1)
+);
+
+var textField = TextField()
+.string_(valueDefault.asString)
+.align_(\center);
+
+// 中心化函数：
+var updateValue = { |value|
+    // 将值裁剪到正确的范围
+    currentValue = value.clip(valueMin, valueMax);
+
+    // 这里是你实现实际控制的地方
+    // 例如
+    // synth.set(\freq, value);
+
+    // 现在我们可以更新我们的界面
+
+    // 将值调整回滑块的范围
+    slider.value_(
+        currentValue.linlin(valueMin, valueMax, 0, 1
+    ));
+
+    // 将值转换为字符串格式以供 textField 使用
+    textField.string_(currentValue.trunc(0.01).asString);
+};
+
+// 滑块需要在调用函数之前
+// 将其值映射到正确的范围
+slider.action_({
+    updateValue.value(
+        slider.value.linlin(0, 1, valueMin, valueMax)
+    );
+});
+
+// textField 在调用该函数之前需要将其值
+// 转换为浮点格式
+textField.action_({
+    updateValue.value(textField.string.asFloat);
+});
+
+// 点击背景会移除
+// slider 和 textField 的焦点，
+// 从而可以使用方向键
+// 直接控制数值
+window.view.mouseDownAction_({
+    slider.focus(false);
+    textField.focus(false);
+});
+
+// 设置窗口视图
+// 使其响应箭头
+// 键事件
+window.view.keyDownAction_({ |view, char, mod, unicode, keycode|
+    switch(keycode)
+    // 左箭头检测
+    { 65361 } { updateValue.value(currentValue * 0.99); }
+    // 右箭头检测
+    { 65363 } { updateValue.value(currentValue * 1.01); }
+    // 向上箭头检测
+    { 65362 } { updateValue.value(currentValue * 1.1); }
+    // 下箭头检测
+    { 65364 } { updateValue.value(currentValue * 0.9); };
+});
+
+window.layout_(
+    VLayout()
+    .add(slider)
+    .add(textField)
+);
+
+// 让滑块失去焦点，
+// 它默认是获得焦点的
+window.view.focus(true);
+
+window.front;
+)</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 还有其他几种将算法与图形用户界面连接的方法。其中最为广泛使用的一种是 <a href="https://en.wikipedia.org/wiki/Model%E2%80%93view%E2%80%93controller">Model-View-Controller 设计模式</a>。关于 Model-View-Controller 范式的 SuperCollider 实现，请参见 <a href="Classes-SimpleController.html">SimpleController</a>。</p></blockquote>
+
+<h2 id="Creating a Tab View">创建 Tab 视图</h2>
+
+<p>一个提供简单标签系统的接口，类似于网页浏览器中的标签页，允许在多个网页之间切换。</p>
+
+<p>为此，我们可以<strong>组合两个简单的构建块</strong>：一些 <a href="Classes-Button.html">Button</a>，以及一个 <a href="Classes-StackLayout.html">StackLayout</a>。</p>
+
+<p><a href="Classes-StackLayout.html">StackLayout</a> 允许你<strong>将多个图形上下文层叠在一起</strong>，就像把一些图画堆叠在一起那样。你可以选择只显示其中一个，或全部显示；在全部显示时，你可以看到某个视图位于另一个视图之下。这类似于绘图软件中的图层系统。</p>
+
+<pre><code>(
+var tabView = UserView();
+var stackLayout = StackLayout();
+var buttonLayout = HLayout();
+
+var tabNames = [
+    &quot;Tab One&quot;,
+    &quot;Tab Two&quot;,
+    &quot;Tab Three&quot;
+];
+var tabs = List(0);
+
+tabNames.do({ |tabName, tabIndex|
+    var button = Button()
+    .string_(tabName)
+    // 将按钮映射到 stackLayout 索引：
+    .action_({ stackLayout.index_(tabIndex); });
+
+    // Tabs 在此处创建
+    // 因为这只是个示例。
+    // 在实际代码中，
+    // 你的视图很可能
+    // 早已创建好了。
+    var tab = UserView()
+    .background_(Color.rand);
+
+    buttonLayout.add(button);
+    stackLayout.add(tab);
+});
+
+// 允许指定起始标签页
+stackLayout.index_(0);
+
+tabView.layout_(
+    VLayout()
+    .add(buttonLayout, 1)
+    .add(stackLayout, 9)
+);
+
+tabView.front;
+)</code></pre>
+
+<h2 id="Implementing a view minimizer">实现视图最小化器</h2>
+
+<p>此示例演示如何<strong>切换视图的可见性，就像使用窗口最小化功能一样</strong>。</p>
+
+<p>这是可行的，因为<strong>布局在其子元素的可见性被修改时会重绘其子元素</strong>。</p>
+
+<p>窗口首先被垂直分成两部分：一个主视图，以及一个“包含”隐藏视图的小菜单。此菜单仅在非空时可见。</p>
+
+<p>对于我们的每个子视图（在我们的示例中，是一个 <a href="Classes-MultiSliderView.html">MultiSliderView</a> 和一个 <a href="Classes-StaticText.html">StaticText</a>），我们创建两个 <a href="Classes-Button.html">Button</a>：一个用于隐藏视图，位于它所隐藏的视图相同的布局中；另一个位于菜单内，用于将其重新显示出来。它们控制视图的可见性，同时也控制菜单的可见性。</p>
+
+<pre><code>(
+var window = Window(
+    &quot;Visibility Toggle&quot;,
+    Rect(100, 100, 600, 400)
+);
+
+// 我们的主显示
+var mainView = UserView()
+.layout_(HLayout());
+
+// 限制最大高度
+// 因为它只是一个菜单
+var visibilityView = UserView()
+.maxHeight_(64)
+.layout_(HLayout());
+
+// 我们引用
+// 隐藏视图的数量
+// 以便在没有视图被隐藏时
+// 隐藏“可见性菜单”
+var numberOfHiddenView = 0;
+
+// 一个 multiSlider 示例
+var multiSliderView;
+var multiSliderHideButton;
+var multiSliderShowButton;
+var multiSlider;
+
+// 一个文本示例
+var textView;
+var textHideButton;
+var textShowButton;
+var text;
+
+// 设置 multiSlider 视图
+multiSliderView = UserView()
+.layout_(VLayout());
+
+multiSlider = MultiSliderView()
+.value_([1, 2, 3, 4, 5, 6, 7, 8].reciprocal)
+.drawLines_(true)
+.elasticMode_(1);
+
+multiSliderHideButton = Button()
+.string_(&quot;Hide MultiSlider&quot;)
+.maxHeight_(64);
+
+// 启动时 Show 按钮不可见
+multiSliderShowButton = Button()
+.visible_(false)
+.string_(&quot;Show MultiSlider&quot;)
+.maxHeight_(64);
+
+multiSliderView.layout.add(
+    multiSliderHideButton, 1);
+multiSliderView.layout.add(
+    multiSlider, 9);
+
+// 将子视图插入主视图
+mainView.layout.add(multiSliderView, 1);
+// 将 &#x27;show&#x27; 按钮添加到可见性视图
+visibilityView.layout.add(multiSliderShowButton);
+
+// 设置文本视图
+textView = UserView()
+.layout_(VLayout());
+
+text = StaticText()
+.string_(&quot;Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed non risus. Suspendisse lectus tortor, dignissim sit amet, adipiscing nec, ultricies sed, dolor. Cras elementum ultrices diam.&quot;)
+.align_(\center);
+
+textHideButton = Button()
+.string_(&quot;Hide Text&quot;)
+.maxHeight_(64);
+
+// 启动时 Show 按钮不可见
+textShowButton = Button()
+.visible_(false)
+.string_(&quot;Show Text&quot;)
+.maxHeight_(64);
+
+textView.layout.add(
+    textHideButton, 1);
+textView.layout.add(
+    text, 9);
+
+// 将子视图插入主视图
+mainView.layout.add(textView, 1);
+// 将 &#x27;show&#x27; 按钮添加到可见性视图
+visibilityView.layout.add(textShowButton);
+
+// 构建顶层
+window.layout_(
+    VLayout()
+    .add(mainView)
+    .add(visibilityView)
+);
+
+// 隐藏可见性视图，
+// 因为开始时所有内容都是可见的
+visibilityView.visible_(false);
+
+
+// --- 以下是可见性逻辑：---
+// 当按下隐藏按钮时
+multiSliderHideButton.action_({
+    // 隐藏视图
+    multiSliderView.visible_(false);
+    // 设置 show 按钮可见
+    multiSliderShowButton.visible_(true);
+    // 增加隐藏视图的数量
+    numberOfHiddenView = numberOfHiddenView + 1;
+    // 如果恰好隐藏了一个项目，
+    // 这意味着我们必须显示之前隐藏的
+    // 可见性视图
+    if(numberOfHiddenView == 1)
+    { visibilityView.visible_(true); };
+});
+
+// 现在显示按钮的反向逻辑：
+// 当按下显示按钮时
+multiSliderShowButton.action_({
+    // 显示视图
+    multiSliderView.visible_(true);
+    // 隐藏显示按钮
+    multiSliderShowButton.visible_(false);
+    // 减少隐藏视图的数量
+    numberOfHiddenView = numberOfHiddenView - 1;
+    // 如果没有隐藏项，
+    // 隐藏可见性视图
+    if(numberOfHiddenView == 0)
+    { visibilityView.visible_(false); };
+});
+
+// 文本视图同理：
+textHideButton.action_({
+    textView.visible_(false);
+    textShowButton.visible_(true);
+    numberOfHiddenView = numberOfHiddenView + 1;
+    if(numberOfHiddenView == 1)
+    { visibilityView.visible_(true); };
+});
+
+textShowButton.action_({
+    textView.visible_(true);
+    textShowButton.visible_(false);
+    numberOfHiddenView = numberOfHiddenView - 1;
+    if(numberOfHiddenView == 0)
+    { visibilityView.visible_(false); };
+});
+
+// Done
+window.front;
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/GUI/compose_complex_view.html" rel="noreferrer noopener">Tutorials/GUI/compose_complex_view.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

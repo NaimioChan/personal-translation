@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16_Playbuf - SuperCollider 文档</title>
+<meta name="description" content="Mark Polishook 教程">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>16_Playbuf</h1>
+
+<p><em>Mark Polishook 教程</em></p>
+
+<p>另见：<a href="Tutorials-Mark_Polishook_tutorial-00_Introductory_tutorial.html">00_入门教程</a></p>
+
+<p>将合成过程分解为完成小型明确任务的部分，有助于模块化设计和组件复用（即面向对象编程的信条）。</p>
+
+<pre><code>(
+// 从磁盘读取声音文件
+b = Buffer.read(s, ExampleFiles.child);
+
+// 单声道的 samplePlayer……仅一个通道
+SynthDef(&quot;aMonoSamplePlayer&quot;, { arg bus = 0, bufnum = 0, rateScale = 1;
+    Out.ar(
+        bus,
+        PlayBuf.ar(
+            1,
+            bufnum,
+            BufRateScale.kr(bufnum) * rateScale
+        )
+        *
+        EnvGen.kr(Env.sine(BufDur.kr(bufnum)))
+    )
+}).add;
+)
+
+(
+// 测试 synthdef……它能工作吗？（是的，没问题。它在左声道播放）
+Synth(&quot;aMonoSamplePlayer&quot;, [\bus, 0, \bufNum, b]);
+)
+
+
+(
+// 组件重用的一个简单示例……使用 \bus 参数将从
+// 同一 synthdef 构建的 synth 分配到不同通道
+// 在这种情况下，在 2 个通道上播放 1 通道的声音文件
+// 每个通道使用不同的播放速率使效果更明显
+Synth(&quot;aMonoSamplePlayer&quot;, [\bus, 0, \bufNum, b, \rateScale, 0.99]);
+Synth(&quot;aMonoSamplePlayer&quot;, [\bus, 1, \bufNum, b, \rateScale, 1.01]);
+)</code></pre>
+
+<h2 id="Information">Information</h2>
+
+<p>如上一个例子所示，BufRateScale 和 BufDur 这两个 ugen 控制 PlayBuf 播放声音文件的速率以及施加于 playbuf 的包络长度。</p>
+
+<p>BufRateScale 和 BufDur 属于继承自 InfoUGenBase 或 BufInfoUGenBase 的一族 ugen。</p>
+
+<p>要查看此类 UGen 的完整列表，请执行</p>
+
+<pre><code>InfoUGenBase.dumpClassSubtree;</code></pre>
+
+<p>它返回</p>
+
+<pre><code>InfoUGenBase
+[
+  NumRunningSynths
+  NumBuffers
+  ControlDur
+  NumControlBuses
+  SubsampleOffset
+  RadiansPerSample
+  SampleDur
+  ControlRate
+  NumInputBuses
+  NumAudioBuses
+  SampleRate
+  NumOutputBuses
+]
+InfoUGenBase</code></pre>
+
+<p>Evaluate</p>
+
+<pre><code>BufInfoUGenBase.dumpClassSubtree;</code></pre>
+
+<p>并且它返回</p>
+
+<pre><code>BufInfoUGenBase
+[
+  BufChannels
+  BufSampleRate
+  BufRateScale
+  BufFrames
+  BufDur
+  BufSamples
+]
+BufInfoUGenBase</code></pre>
+
+<h2 id="Loop a sample">循环一个采样</h2>
+
+<p>下一个示例使用三个 synthdef 构成一条链。第一个 synthdef 是一个循环播放缓冲区的采样播放器。第二个 synthdef 对其输入进行环形调制。第三个 synthdef 应用低通滤波器。</p>
+
+<pre><code>(
+// 读取声音文件
+b = Buffer.read(s, ExampleFiles.child);
+
+// 定义一个样本播放器，它将循环播放一个声音文件
+SynthDef(&quot;aLoopingSamplePlayer&quot;, { arg outBus = 0, bufnum = 0, rateScale = 1, mul = 1;
+    Out.ar(
+        outBus,
+        PlayBuf.ar(
+            1,
+            bufnum,
+            BufRateScale.kr(bufnum) * rateScale + LFNoise1.kr(2.reciprocal, 0.05),
+            loop: 1    // 反复播放声音文件而不停止
+        )
+        *
+        mul
+    )
+}).add;
+
+// 对音频源应用振幅调制
+SynthDef(&quot;ampMod&quot;, { arg inBus = 0, outBus = 0, modFreq = 1;
+    Out.ar(
+        outBus,
+        [    // In.ar ugen 从音频总线读取
+            In.ar(inBus, 1) * SinOsc.kr(modFreq),
+            In.ar(inBus, 1) * SinOsc.kr(modFreq - 0.02)
+        ]
+    )
+}).add;
+
+// 对音频源应用低通滤波器
+SynthDef(&quot;aLowPassFilter&quot;, { arg inBus = 0, outBus = 0, freq = 300, freqDev = 50, boost = 1;
+    Out.ar(
+        outBus,
+        RLPF.ar(
+            In.ar(inBus, 2),
+            Lag.kr(LFNoise0.kr(1, freqDev, freq), 1),
+            0.2
+        )
+        *
+        boost
+        *
+        LFPulse.kr(1, [0.25, 0.75], [0.5, 0.45])
+        +
+        In.ar(inBus, 2)
+    )
+}).add;
+)
+
+// 定义 2 个组，一个用于源素材，另一个用于效果
+(
+~source = Group.head(s);
+~effect = Group.tail(~s);
+)
+
+(
+// 将 samplePlayer 添加到源组
+~theSource = Synth.head(
+    ~source,
+    &quot;aLoopingSamplePlayer&quot;, [\outBus, 3, \bufNum, b, \rateScale, 1, \mul, 0.051]);
+// 在效果组的头部添加一个振幅调制合成器
+~fx1 = Synth.head(
+    ~effect,
+    &quot;ampMod&quot;, [\inBus, 3, \outBus, 5, \modFreq, 1]);
+// 为效果组的尾部添加滤波
+~fx2 = Synth.tail(
+    ~effect,
+    &quot;aLowPassFilter&quot;, [\inBus, 5, \outBus, 0, \boost, 5])
+)
+
+// 检查节点
+(
+s.queryAllNodes;
+)</code></pre>
+
+<pre><code>// 示意图
+
+    RootNode
+    |
+  default_node
+      /\
+     /  \
+~source  ~effects    // ~source 和 ~effects 是组
+ |        |      \
+ |        |       \
+ synth    synth    synth</code></pre>
+
+<pre><code>// 更改参数（控制）值会影响音色
+(
+ ~theSource.set(\rateScale, 0.95.rrand(1.05), \mul, 0.051.rrand(0.07));
+ ~fx1.set(\modFreq, 800.0.rrand(1200));
+ ~fx2.set(\freq, 500.rrand(700), \freqDev, 180.rrand(210), \boost, 7);
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>转到 <a href="Tutorials-Mark_Polishook_tutorial-17_Delays_reverbs.html">17_Delays_reverbs</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Mark_Polishook_tutorial/16_Playbuf.html" rel="noreferrer noopener">Tutorials/Mark_Polishook_tutorial/16_Playbuf.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

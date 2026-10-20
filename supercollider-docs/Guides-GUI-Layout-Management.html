@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>布局管理 - SuperCollider 文档</title>
+<meta name="description" content="使用布局类管理父视图内子视图的分布">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>布局管理</h1>
+
+<p><em>使用布局类管理父视图内子视图的分布</em></p>
+
+<p>另请参见：<a href="Classes-LineLayout.html">LineLayout</a>、<a href="Classes-HLayout.html">HLayout</a>、<a href="Classes-VLayout.html">VLayout</a>、<a href="Classes-GridLayout.html">GridLayout</a>、<a href="Classes-StackLayout.html">StackLayout</a></p>
+
+<p>布局的作用是将安装布局的视图所获得的空间量分配给该视图的子级。Layout 的每个子类都有特定的空间分配模式（一条线、一个二维网格等）。详见其文档。</p>
+
+<p>布局被安装到视图上，用于管理视图所占用的空间，并在其子视图之间分配空间。这些子视图又可以安装其他布局，管理分配给它们的空间。但布局也可以直接管理其他布局——一个布局可以直接占据另一个布局分配模式中的一个位置。因此，布局操作的基本单元被抽象地称为 item，它可以是视图，也可以是另一个布局。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 虽然布局可以自行构成层次结构，但就视图层次而言，由这些布局管理的所有视图都是安装顶层布局的视图的直接子视图。</p></blockquote>
+
+<p>以下示例展示了一个 VLayout，将一系列 TextField 组织成垂直线，其最后一项是一个 HLayout，将一系列 Button 组织成水平线。</p>
+
+<pre><code>(
+w = Window(bounds:Rect(200,200,200,200)).layout_(
+    VLayout(
+        TextField(), TextField(), TextField(),
+        HLayout( Button(), Button(), Button() )
+    )
+).front;
+)</code></pre>
+
+<h2 id="How a layout does its job">布局如何完成其工作</h2>
+
+<p>布局通过在父视图中调整项的大小并移动它们，以形成特定的分布模式来发挥作用，这遵循各项自身的大小偏好与约束，并符合使 GUI 实用的常识。</p>
+
+<p>为了解释布局如何运作，我们先来看看视图的固有尺寸偏好和约束：</p>
+
+<h3 id="Intrinsic view sizes">固有视图尺寸</h3>
+
+<p>每个视图本质上都有一个<strong>首选尺寸</strong>和一个<strong>最小尺寸</strong>，分别由 <a href="Classes-View.html#-sizeHint">View: -sizeHint</a> 和 <a href="Classes-View.html#-minSizeHint">View: -minSizeHint</a> 返回。首选尺寸是适合视图舒适地绘制自身、显示其内容并允许交互的尺寸，而最小尺寸是视图正确绘制自身（包括其内容）所需的绝对最小尺寸。当视图的内容发生变化时，两者都可能改变；例如，大多数显示某些文本的视图在文本改变时会报告不同的 <code>sizeHint</code>（除非文本是可滚动的）。</p>
+
+<p>如果在构造时省略了 'bounds' 参数，视图会在构造时采用其首选大小。然而，通常无法在构造时设置视图上的文本，因此它自动获得的大小不会反映构造之后对文本所做的更改。你可以通过在设置文本后将视图调整为其 <code>sizeHint</code> 来补救这一点——但<strong>布局的目的</strong>（下文将解释）正是为了自动为你完成这一操作。以下是手动使用 <code>sizeHint</code> 的示例：</p>
+
+<pre><code>// 创建一个带 StaticText 的 Window
+(
+w=Window().alwaysOnTop_(true);
+t=StaticText(w);
+w.front;
+)
+
+// 尚未设置文本。发布 StaticText 的 sizeHint：
+t.sizeHint
+
+// 设置文本，并再次发布 sizeHint：
+t.string_(&quot;This is a looooooong text&quot;);
+t.sizeHint
+
+// 将大小调整为 sizeHint：
+t.bounds = t.bounds.size_(t.sizeHint);
+
+// 现在你可以看到整个文本</code></pre>
+
+<p>正如它们的名称所示，<code>sizeHint</code> 和 <code>minSizeHint</code> 只是提示，并不阻止设置不同的大小。不过，你可以使用 <a href="Classes-View.html#-minSize">View: -minSize</a>、<a href="Classes-View.html#-maxSize">View: -maxSize</a> 及类似方法设置大小的<strong>硬性限制</strong>：</p>
+
+<pre><code>x=View(bounds:Rect(30,30,100,100)).alwaysOnTop_(true).front;
+
+// 设置最小尺寸限制：
+x.minSize = Size(200,200);
+
+// 视图自动调整到了最小尺寸。
+// 现在试着把它缩回去：
+x.resizeTo(100,100);
+
+// 该视图不允许小于 minSize 的尺寸。</code></pre>
+
+<h3 id="Automatic and dynamic space distribution">自动和动态的空间分布</h3>
+
+<p>布局会<strong>自动</strong>在其各项之间分配空间，可能按<strong>不相等</strong>的部分分配，这取决于上述视图的固有偏好和约束。此外，视图对于自身是更受益于被水平或垂直扩展，还是更倾向于在某个方向上保持固定大小，也有各自的固有偏好。布局也会考虑这一点。</p>
+
+<p>布局是<strong>动态</strong>工作的，这意味着每当空间量发生变化（安装它的视图或父布局被调整大小）、每当条目被添加或移除，以及每当条目的大小约束和偏好发生改变时，布局都会重新分配空间。后者可能发生的情况例如：影响视图外观的属性被改变时。</p>
+
+<p>布局将影响<strong>沿布局层级向上</strong>的空间分配——它将根据其分布模式以及其各项约束和偏好之和，定义自身的约束和偏好。最终，这意味着用户调整窗口大小的能力将受到基于窗口内容所确定的大小约束的限制。</p>
+
+<p>例如：在一个包含 Button 和 TextField 的 HLayout（一种将项目按水平线排列的布局）中，Button 会根据其显示的文本获得固定的宽度，而 TextField 则会获得剩余的所有宽度。下面示例代码中的另一个 Button 将占据窗口的全部宽度，因为没有其他项目竞争该特定空间。请注意，Button 和 TextField 都具有固有固定的高度，因此它们在调整窗口大小时高度永远不会改变。尺寸约束还限制了窗口可调整到的最小尺寸。</p>
+
+<pre><code>(
+w = Window.new(bounds:Rect(100,100,300,80)).layout_(
+    VLayout (
+        HLayout(
+            Button().states_([[&quot;Super&quot;]]),
+            TextField().string_(&quot;Collider&quot;)
+        ),
+        Button().states_([[&quot;SuperCollider&quot;]])
+    )
+).front;
+)</code></pre>
+
+<h2 id="User customization">用户自定义</h2>
+
+<h3 id="Stretch factors">拉伸因子</h3>
+
+<p>布局通常允许用户通过为布局分布模式的项或方面分配伸缩因子，来覆盖其默认的分布策略。</p>
+
+<pre><code>(
+w = Window.new(bounds:Rect(100,100,400,80)).layout_(
+    HLayout(
+        [Button().states_([[&quot;Super&quot;]]), stretch:1],
+        TextField().string_(&quot;Collider&quot;)
+    )
+).front;
+)</code></pre>
+
+<h3 id="Size constraints">尺寸约束</h3>
+
+<p>用户可以通过对视图尺寸设置硬性限制（如上所述）来覆盖视图的固有尺寸约束和偏好，布局会将这些考虑在内。</p>
+
+<pre><code>(
+w = Window.new(bounds:Rect(100,100,300,300)).layout_(
+    VLayout(
+        TextField().string_(&quot;Super&quot;).minHeight_(80),
+        TextField().string_(&quot;Collider&quot;).maxWidth_(150)
+    )
+).front;
+)</code></pre>
+
+<p>视图的最小尺寸对于默认没有最小尺寸的 UserView 尤为重要。在示例中，第一个 UserView 是不可见的。</p>
+
+<pre><code>(
+w = Window.new(bounds:Rect(100,100,200,200)).layout_(
+    VLayout(
+        UserView.new.background_(Color.rand),
+        TextField().string_(&quot;Super&quot;).maxWidth_(100),
+        UserView.new.background_(Color.rand).minSize_(200@200),
+        TextField().string_(&quot;Collider&quot;).maxWidth_(100)
+    )
+).front;
+)</code></pre>
+
+<h3 id="Alignment">Alignment</h3>
+
+<p>布局层级中所有项的大小约束和偏好的组合，可能导致分配给某项的空间大于其自身约束所允许的大小。在这种情况下，该项只会增长到其最大允许大小，而用户在额外可用空间内的位置可通过为该项指定对齐方式来控制。</p>
+
+<pre><code>(
+w = Window.new.layout_(
+    HLayout(
+        [Button.new.states_([[&quot;Super&quot;]]), align:\bottom],
+        TextView(),
+        [Button.new.states_([[&quot;Collider&quot;]]), align:\top]
+    )
+).front;
+)</code></pre>
+
+<h2 id="View vs. layout hierarchies">视图与布局的层级结构</h2>
+
+<p>从布局安装到某视图上的那一刻起，它就开始作用于该视图所占据的空间。然而，它不会自动影响在布局之前已创建的子视图。要让视图由布局管理，它们必须在布局安装到某视图之后作为该视图的子视图创建，或者必须通过布局的构造函数或为此目的提供的实例方法显式插入到布局中。</p>
+
+<h3 id="View constructed with a parent">使用父级构建的视图</h3>
+
+<p>当创建一个视图并指定另一个视图作为其父视图时，它会隐式地受父视图布局的管理——它会以某种默认方式插入到布局中。然而，像 <a href="Classes-GridLayout.html">GridLayout</a> 这样的布局具有复杂的空间分配模式，因此你需要使用它们专用的方法来精确指定视图将占据布局分配模式中的哪个位置。</p>
+
+<h3 id="View explicitly inserted into a layout">显式插入到布局中的视图</h3>
+
+<p>视图也可以在未给定父视图的情况下构造；在通过布局的构造函数或实例方法将其显式插入布局后，它将自动成为该布局所在（或将安装于其上的）视图的子视图。如果该布局直接位于另一个布局中，则视图将成为最顶层布局所安装于其上的视图的子视图。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/GUI-Layout-Management.html" rel="noreferrer noopener">Guides/GUI-Layout-Management.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

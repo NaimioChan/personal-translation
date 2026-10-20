@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>同步与异步执行 - SuperCollider 文档</title>
+<meta name="description" content="同时同步和异步执行的问题">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>同步与异步执行</h1>
+
+<p><em>同时同步和异步执行的问题</em></p>
+
+<p>使用 SuperCollider 这样的程序会引入许多关于时序和执行顺序的问题。实时音频合成要求按一定的速率和时间表计算并播放采样，以避免丢音、故障等。其他任务，例如将采样加载到内存中，可能花费任意长的时间，并且可能不需要在确定的时间范围内完成。这就是同步任务与异步任务的区别。</p>
+
+<p>当同步任务依赖于异步任务的完成时，可能会出现问题。例如尝试播放一个可能尚未完全加载的样本。</p>
+
+<p>在 SC2 中，处理这一点相对简单。在合成期间，即在 <code>Synth.play</code> 的作用域内，调度同步任务。异步任务按顺序在合成之外执行。因此，人们会首先创建缓冲区，将采样加载到其中，然后开始合成并播放它们。解释器确保只有在必要的前一步骤完成后才执行每一步。</p>
+
+<p>在 SC3 中，语言与 synth 应用的分离带来一个问题：一侧如何知道另一侧已经完成了必要的任务，换言之，左手如何知道右手是否已经完成？新架构带来的灵活性引入了另一层复杂性，也对用户提出了额外的要求。</p>
+
+<p>处理此问题的一种简单方法是以块为单位执行代码。例如，在以下代码中，每个代码块或每行代码都依赖于前一块或前一行完成。</p>
+
+<pre><code>// 一次执行一个
+
+// 启动服务器
+s.boot;
+
+// 编译一个 SynthDef 并将其写入磁盘
+(
+SynthDef(&quot;Help-SynthDef&quot;, { arg out = 0;
+     Out.ar(out, PinkNoise.ar(0.1))
+}).writeDefFile;
+)
+
+// 将其加载到服务器
+s.loadSynthDef(&quot;Help-SynthDef&quot;);
+
+// 用它创建一个 Synth
+x = Synth.new(&quot;Help-SynthDef&quot;, s);
+
+// 在服务器上释放该节点
+x.free;
+
+// 允许客户端 Synth 对象被垃圾回收
+x = nil;</code></pre>
+
+<p>在前面的示例中，有必要使用解释器变量（在编译时声明的变量 a-z），以便在后续的代码块或代码行中引用先前创建的对象。如果在一个代码块内声明了变量（即 <code>var mySynth;</code>），那么它只会在该作用域内持续存在。（更多细节请参阅帮助文件 <a href="Reference-Scope.html">Scoping and Closure</a>。）</p>
+
+<p>这种一次执行一行或一块代码的工作方式可以非常动态和灵活，在演出情境中尤其有用，特别是在即兴时。但它确实带来了作用域和持久性的问题。另一种允许使用更具描述性变量名的方法是使用环境变量（即以 ~ 开头的名字，例如 <code>~mysynth;</code>，详情参见 <a href="Classes-Environment.html">Environment</a> 帮助文件）。然而，在两种方法中，你都需要负责确保对象和节点在不再需要时不会继续存在。</p>
+
+<pre><code>(
+SynthDef(&quot;Help-SynthDef&quot;, { arg out = 0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).send(s);
+)
+
+// 创建一个 Synth 并将其分配给环境变量
+~mysynth = Synth.new(&quot;Help-SynthDef&quot;, s);
+
+// 释放 synth
+~mysynth.free;
+
+// 但你仍然有一个 Synth 对象
+~mysynth.postln;
+
+// 所以把它从 Environment 中移除，这样 Synth 就会被垃圾回收
+currentEnvironment.removeAt(\mysynth);</code></pre>
+
+<p>但如果你想要一个包含若干同步和异步任务的代码块呢？以下代码会导致错误，因为服务器所需的 <a href="Classes-SynthDef.html">SynthDef</a> 尚未被接收。</p>
+
+<pre><code>// 一次性完成所有这些会产生错误 &quot;FAILURE /s_new SynthDef not found&quot;
+(
+var name;
+name = &quot;Rand-SynthDef&quot; ++ 400.0.rand; // 使用随机名称以确保它尚未被加载
+
+SynthDef(name, { arg out=0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).send(s);
+
+Synth.new(name, s);
+)</code></pre>
+
+<p>一种粗糙的解决方案是使用时钟，将依赖代码安排在看似足够的延迟之后执行。</p>
+
+<pre><code>// 这个可以工作，因为定义先到达服务器应用
+(
+var name;
+name = &quot;Rand-SynthDef&quot; ++ 400.0.rand;
+
+SynthDef(name, { arg out = 0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).send(s);
+
+SystemClock.sched(0.05, {Synth.new(name, s);}); // 在 0.05 秒后创建一个 Synth
+)</code></pre>
+
+<p>尽管这样可行，但并不是很优雅或高效。更好的做法是让下一件事在前一件事完成后立即执行。为了探究这一点，我们将看一个已经实现的示例。</p>
+
+<p>你可能已经意识到，上面第一个示例是不必要的复杂。SynthDef-play 只需按一次回车键，就能一次性完成所有这些编译、发送以及 Synth 的创建。</p>
+
+<pre><code>// 一次性全部
+(
+SynthDef(&quot;Help-SynthDef&quot;, { arg out = 0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).play(s);
+)</code></pre>
+
+<p>让我们看一下 SynthDef-play 的方法定义，看看它做了什么。</p>
+
+<pre><code>    play { arg target,args,addAction=\addToTail;
+        var synth, msg;
+        target = target.asTarget;
+
+        synth = Synth.basicNew(name,target.server); // 创建一个 Synth，但不是 synth 节点
+        msg = synth.newMsg(target, addAction, args);// 创建一个将添加 synth 节点的消息
+        this.send(target.server, msg); // ** 发送 def，并将该消息作为完成消息
+        ^synth // 返回 Synth 对象
+    }</code></pre>
+
+<p>如果你不习惯钻研类定义，这可能看起来有点复杂，但重要的是 <code>this.send(target.server, msg);</code> 的第二个参数。这个参数是一个完成消息，它是服务器在发送动作完成后将执行的消息。在本例中，它表示在服务器上创建一个合成器节点，该节点对应于我已经创建的 <a href="Classes-Synth.html">Synth</a> 对象，且仅当 def 已被发送到服务器应用程序时才会执行。（有关消息传递的详细信息，请参阅帮助文件 <a href="Reference-Server-Command-Reference.html">Server Command Reference</a>。）</p>
+
+<p>SC 中的许多方法都可以包含完成消息。这里我们可以使用 SynthDef-send 来完成与 SynthDef-play 相同的事情：</p>
+
+<pre><code>// 编译、发送并开始播放
+(
+SynthDef(&quot;Help-SynthDef&quot;, { arg out=0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).send(s, [&quot;s_new&quot;, &quot;Help-SynthDef&quot;, x = s.nextNodeID]);
+// 这是 &#x27;messaging&#x27; 风格，见下文
+)
+s.sendMsg(&quot;n_free&quot;, x);</code></pre>
+
+<p>完成消息需要是一条 OSC 消息，但它也可以是一些在被求值时返回该消息的代码：</p>
+
+<pre><code>// 解释一些代码以返回完成消息。需要 .value。
+// 这和前面的示例本质上与 SynthDef.play 相同
+(
+SynthDef(&quot;Help-SynthDef&quot;, { arg out=0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).send(s, {x = Synth.basicNew(&quot;Help-SynthDef&quot;); x.newMsg; }.value); // &#x27;object&#x27; 风格
+)
+x.free;</code></pre>
+
+<p>如果你更喜欢以“消息传递”风格工作，这非常简单。如果你更喜欢以“对象”风格工作，你可以对对象使用 <code>newMsg</code>、<code>setMsg</code> 等命令来创建相应的服务器消息。前面两个示例展示了这种差别。更多细节请参阅 <a href="Guides-NodeMessaging.html">Node Messaging</a> 帮助文件。</p>
+
+<p>对于 <a href="Classes-Buffer.html">Buffer</a> 对象，可以将函数用作完成消息。它将被求值，并将 <a href="Classes-Buffer.html">Buffer</a> 对象作为参数传入。这将在 <a href="Classes-Buffer.html">Buffer</a> 对象创建之后、消息发送到服务器之前发生。它还可以返回一条有效的 OSC 消息，供服务器在完成时执行。</p>
+
+<pre><code>(
+SynthDef(&quot;help-Buffer&quot;,{ arg out=0, bufnum;
+    Out.ar(
+        out,
+        PlayBuf.ar(1,bufnum,BufRateScale.kr(bufnum))
+    )
+}).load(s);
+
+y = Synth.basicNew(&quot;help-Buffer&quot;); // 尚未发送
+
+b = Buffer.read(s, ExampleFiles.child, action: { arg buffer;
+       // synth 发送其 s_new 消息以跟随
+       // 在缓冲区读取完成后
+       s.sendBundle(nil, y.newMsg(s,[\bufnum,buffer],\addToTail));
+   }
+);
+)
+
+// 完成后……
+y.free;
+b.free;</code></pre>
+
+<p>完成消息的主要目的是为服务器提供可在完成时立即执行的 OSC 消息。对于 <a href="Classes-Buffer.html">Buffer</a>，以下两者本质上没有区别：</p>
+
+<pre><code>(
+b = Buffer.alloc(s, 44100,
+    completionMessage: { arg buffer; (&quot;bufnum:&quot; + buffer).postln; }
+);
+)
+
+// 这等同于上述内容
+(
+b = Buffer.alloc(s, 44100);
+(&quot;bufnum:&quot; + b).postln;
+)</code></pre>
+
+<p>还可以用 <a href="Classes-OSCFunc.html">OSCFunc</a> 响应 'done' 消息（或任何其他消息）来求值一个函数。详见其帮助文件。</p>
+
+<pre><code>(
+SynthDef(&quot;help-SendTrig&quot;,{
+    SendTrig.kr(Dust.kr(1.0), 0, 0.9);
+}).send(s);
+
+// 注册以接收此消息
+a = OSCFunc({ arg msg, time;
+    (&quot;This is the done message for the SynthDef.send:&quot; + [time, msg]).postln;
+}, &#x27;/done&#x27;).oneShot; // 完成后自动移除我
+
+b = OSCFunc({ arg msg, time;
+    [time, msg].postln;
+}, &#x27;/tr&#x27;);
+c = OSCFunc({ arg msg;
+    &quot;this is another call&quot;.postln;
+}, &#x27;/tr&#x27;);
+)
+
+x = Synth.new(&quot;help-SendTrig&quot;);
+b.free;
+c.free;
+a.free;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Sync-Async.html" rel="noreferrer noopener">Guides/Sync-Async.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

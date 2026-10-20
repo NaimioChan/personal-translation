@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 06a：重复约束模式 - SuperCollider 文档</title>
+<meta name="description" content="重复值或提前截断其他模式的模式">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 06a：重复约束模式</h1>
+
+<p><em>重复值或提前截断其他模式的模式</em></p>
+
+<p>另请参阅：<a href="Tutorials-A-Practical-Guide-PG_060_Filter_Patterns.html">Pattern Guide 060: Filter Patterns</a>、<a href="Tutorials-A-Practical-Guide-PG_06b_Time_Based_Patterns.html">Pattern Guide 06b: Time Based Patterns</a></p>
+
+<h2 id="Repetition and Constraint patterns">重复与约束模式</h2>
+
+<p>这些本质上是控制流模式。每一个都接受一个源模式并从中重复取值，或基于预设约束提前停止流。</p>
+
+<h3 id="Repetition patterns">重复模式</h3>
+
+<p>这些模式允许你重复单个值，或者（在 Pn 的情况下）重复整个模式。</p>
+
+<dl>
+<dt><code>Pclutch(pattern, connected)</code></dt>
+<dd><p>如果所连接的模式为 true，Pclutch 返回模式的下一个值。如果 connected 为 false，则重复先前的模式值。它就像汽车里的离合器：接合时，模式向前推进；断开时，它停留在原处。</p></dd>
+<dt><code>Pn(pattern, repeats)</code></dt>
+<dd><p>将源模式重复 times 次：简单重复。这也适用于单个值：Pn(1, 5) 输出数字 1 五次。</p></dd>
+<dt><code>Pdup(n, pattern)</code></dt>
+<dd><p>n 和 pattern 都是模式。pattern 中的每个值重复 n 次。如果 n 是一个模式，每个值可以重复不同的次数。</p></dd>
+<dt><code>Psubdivide(n, pattern)</code></dt>
+<dd><p>与 Pdup 类似，不同的是模式值被除以重复次数（这样重复周期的总时间就是源模式的 duration 值）。</p></dd>
+<dd><p>另请参见 <a href="Classes-Pstep.html">Pstep</a>，在 <a href="Tutorials-A-Practical-Guide-PG_06b_Time_Based_Patterns.html">Pattern Guide 06b: Time Based Patterns</a> 中有所描述。Pstep 的用法与 <a href="Classes-Pdup.html">Pdup</a> 类似，但重复由时间而非每个项的重复次数来控制。</p></dd>
+<dd><pre><code>// 以每个新音高对应不同节奏时值的方式演奏重复音符
+// 使用 Pdup
+p = Pbind(
+        // 让 &#x27;n&#x27; 成为独立的流，以便 degree 和 dur 可以共享它
+    \n, Pwhite(3, 10, inf),
+    \degree, Pdup(Pkey(\n), Pwhite(-4, 11, inf)),
+    \dur, Pdup(Pkey(\n), Pwhite(0.1, 0.4, inf)),
+    \legato, 0.3
+).play;
+
+p.stop;
+
+
+// 使用 Pfin / Pn
+// Pn 无限循环 Pbind
+// Plazy 在每次迭代时构建一个新的 Pbind
+// Pfin 在需要新值时截断 Pbind
+
+p = Pn(
+    Plazy {
+        Pbind(
+            \degree, Pfin(rrand(3, 10), rrand(-4, 11)),
+            \dur, rrand(0.1, 0.4)
+        )
+    },
+    inf
+).play;
+
+p.stop;
+
+
+// 使用 Pclutch
+// 规则是，当 degree 改变时，dur 也应改变
+// 如果 Pdiff 返回 0，则 degree 未改变
+// 因此在这里，非零的 Pdiff 值“连接”离合器并允许生成新的 dur
+// 否则保留旧的
+p = Pbind(
+    \degree, Pdup(Pwhite(3, 10, inf), Pwhite(-4, 11, inf)),
+    \dur, Pclutch(Pwhite(0.1, 0.4, inf), Pdiff(Pkey(\degree)).abs &gt; 0),
+    \legato, 0.3
+).play;
+
+p.stop;</code></pre></dd>
+</dl>
+
+<h3 id="Constraint (or interruption) patterns">约束（或中断）模式</h3>
+
+<p>这些模式不是通过重复来延长流，而是使用不同的方法来动态地停止流。它们对于模块化地构造模式尤其有用。你代码中的某一部分可能负责生成数值模式或事件模式。通过使用约束模式，这部分代码不必知道有多少个事件或要播放多长时间。它可以只返回一个无限模式，而代码的另一部分可以用其中一个模式将它包装起来，以便根据适当的条件停止它。</p>
+
+<dl>
+<dt><code>Pfin(count, pattern)</code></dt>
+<dd><p>从源模式中精确返回 count 个值，然后停止。（Pfin 有一个表亲 Pfinval，已废弃。）</p></dd>
+<dt><code>Pconst(sum, pattern, tolerance)</code></dt>
+<dd><p>输出数字，直到总和超过预定义的限制。最后一个输出值会被调整，使总和恰好等于该限制。</p></dd>
+<dt><code>Pfindur(dur, pattern, tolerance)</code></dt>
+<dd><p>类似 Pconst，但将“约束”行为应用于事件的节奏值。源模式会运行到指定的时长，然后停止。如果你知道某个音乐行为应持续多长时间，但不知道填满该时间所需的事件数量，这会非常有用。</p></dd>
+<dd><pre><code>// 同一事物的两种变体
+// 使用 Pconst 或 Pfindur 创建具有随机节奏的 4 拍片段
+// Pconst 和 Pfindur 都可以确保总节奏不超过 4.0
+
+p = Pn(Pbind(
+        // 强拍上始终是低音 C
+    \degree, Pseq([-7, Pwhite(0, 11, inf)], 1),
+    \dur, Pconst(4, Pwhite(1, 4, inf) * 0.25)
+), inf).play;
+
+p.stop;
+
+p = Pn(Pfindur(4, Pbind(
+    \degree, Pseq([-7, Pwhite(0, 11, inf)], 1),
+    \dur, Pwhite(1, 4, inf) * 0.25
+)), inf).play;
+
+p.stop;</code></pre></dd>
+<dt><code>Psync(pattern, quant, maxdur, tolerance)</code></dt>
+<dd><p>与 Pfindur 类似，但没有固定的时长限制。相反，它会一直播放，直到达到 maxdur（此时其行为与 Pfindur 类似，调整最后一个事件以使总时长与 maxdur 匹配），或者模式提前停止，并将最后一个事件向上取整到 quant 的下一个整数倍。这很难解释；几个示例可能会更清楚。</p></dd>
+<dd><pre><code>(
+// 在这种情况下，模式通过达到 maxdur 而停止
+// 经过时间 = 4
+var    startTime;
+p = (Psync(Pbind(
+    \dur, 0.25,    // 总时长 = 无限
+    \time, Pfunc { startTime = startTime ? (thisThread.clock.beats.debug(&quot;time&quot;)) }
+), 1, 4) ++ Pfuncn({
+    thisThread.clock.beats.debug(&quot;finish time&quot;);
+    (thisThread.clock.beats - startTime).debug(&quot;elapsed&quot;);
+    nil
+}, 1)).play;
+)
+
+(
+// 在这种情况下，pattern 在 maxdur (4) 之前自行停止
+// Pbind 的持续时间 (1.25) 向上取整为 2（1 的下一个倍数）
+var    startTime;
+p = (Psync(Pbind(
+    \dur, Pn(0.25, 5),    // total duration = 0.25 * 5 = 1.25
+    \time, Pfunc { startTime = startTime ? (thisThread.clock.beats.debug(&quot;time&quot;)) }
+), 1, 4) ++ Pfuncn({
+    thisThread.clock.beats.debug(&quot;finish time&quot;);
+    (thisThread.clock.beats - startTime).debug(&quot;elapsed&quot;);
+    nil
+}, 1)).play;
+)</code></pre></dd>
+</dl>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_060_Filter_Patterns.html">模式指南 060：滤波器模式</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_06b_Time_Based_Patterns.html">Pattern 指南 06b：基于时间的模式</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_06a_Repetition_Contraint_Patterns.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_06a_Repetition_Contraint_Patterns.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

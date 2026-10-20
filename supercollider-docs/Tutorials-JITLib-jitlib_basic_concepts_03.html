@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jitlib_basic_concepts_03 - SuperCollider 文档</title>
+<meta name="description" content="proxyspace - 基本概念">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>jitlib_basic_concepts_03</h1>
+
+<p><em>proxyspace - 基本概念</em></p>
+
+<p>另请参阅：<a href="Overviews-JITLib.html">JITLib</a>、<a href="Tutorials-JITLib-jitlib_basic_concepts_02.html">jitlib_basic_concepts_02</a>、<a href="Tutorials-JITLib-jitlib_basic_concepts_04.html">jitlib_basic_concepts_04</a></p>
+
+<p>节点代理的内部结构、节点顺序和参数上下文</p>
+
+<ul>
+<li><a href="#a)%20NodeProxy%20slots">a) 槽位</a></li>
+<li><a href="#b)%20fade%20time">b) fadeTime</a></li>
+<li><a href="#c)%20play/stop,%20send/free,%20pause/resume">c) play/stop、send/release、pause/resume、clear</a></li>
+<li><a href="#d)%20The%20parameter%20context">d) 参数上下文</a></li>
+</ul>
+
+<p>NodeProxy 有两个内部上下文用于插入对象：组（位于服务器上）和 nodeMap（客户端侧的参数上下文）。由于组可以包含 Synth 的顺序，因此存在一个客户端侧的表示，其中存储源对象（参见 <a href="Classes-Order.html">Order</a>）。</p>
+
+<pre><code>// 创建新空间
+p = ProxySpace.push(s.boot);
+~z.play; ~y.ar; // 显式初始化代理</code></pre>
+
+<h2 id="a) NodeProxy slots">a) NodeProxy 槽位</h2>
+
+<p>一个节点代理可以按执行顺序持有多个对象。索引可以是任意正整数。</p>
+
+<pre><code>// 初始槽 (0) 在直接赋值时使用。
+// ~y 仍未使用，我们稍后会添加它。
+
+~z = (~y * pi).sin * 0.1 * { LFSaw.kr(LFNoise1.kr(0.1 ! 3).sum * -18).max(0.2) };
+
+// 其他槽位编号通过正整数访问：
+
+~y[1] = { Saw.ar([400, 401.3], 0.4) };
+~y[0] = { Saw.ar([300, 301], 0.4) };
+
+// 要移除其中一个，使用 nil：
+
+~y[0] = nil;
+
+// 索引 1 处是什么？
+~y.objects[1] // 一个播放界面
+~y.objects[1].source.postcs // 放入的函数。
+~y.objects.postcs     // 这会返回槽位中的对象。
+~y.source.postcs    // 这只返回槽 0 中的函数。</code></pre>
+
+<p>多重赋值</p>
+
+<pre><code>// 该函数被分配到从 1 到 4 的槽位
+~z[1..4] = { SinOsc.ar(exprand(300, 600), 0, LFTri.kr({exprand(1, 3)} ! 3).sum.max(0)) * 0.1 };
+
+
+// 该函数被分配到槽位 1、2 和 3（依次）
+~z[1..] = [ {SinOsc.ar(440) * 0.1 }, { SinOsc.ar(870) * 0.08 }, { SinOsc.ar(770) * 0.04 }];
+
+// 如果未给定槽位，则清空所有其他槽位
+~z = { OnePole.ar(Saw.ar([400, 401.3], 0.3), 0.95) };
+
+~z.end;
+~y.end;</code></pre>
+
+<h2 id="b) fade time">b) 淡入淡出时间</h2>
+
+<pre><code>// 设置 fadeTime 将允许交叉淡化。
+// 对于音频速率 proxy，淡化为伪高斯型
+// 对于控制速率 proxy，淡化为线性。
+
+~z.play;
+
+~z.fadeTime = 5.0; // 5 秒
+~z = { max(SinOsc.ar([300, 301]), Saw.ar([304, 304.3])) * 0.1 };
+~z = { max(SinOsc.ar(ExpRand(300, 600)), Saw.ar([304, 304.3])) * 0.1 };
+
+// fadeTime 可以在任何时候有效地设置
+~z.fadeTime = 0.2;
+~z = { max(SinOsc.ar(ExpRand(3, 160)), Saw.ar([304, 304.3])) * 0.1 };</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> fadeTime 也用于 xset 和 xmap 操作。（见下文）</p></blockquote>
+
+<h2 id="c) play/stop, send/free, pause/resume">c) 播放/停止、发送/释放、暂停/恢复</h2>
+
+<p>NodeProxy 能理解一些与 play、stop 等相关的消息。下面是它们的作用。</p>
+
+<h3 id="play/stop">play/stop</h3>
+
+<p>这对消息与代理的监控功能相关。play 开始监控，stop 结束监控。<em>如果代理组正在播放</em>（可以用 .isPlaying 测试），play 不会以任何方式影响代理的内部行为。只有当它未在播放时（例如因为已通过 cmd-period 释放了组），它才会启动代理中的 synth/对象。stop 永远不会影响代理的内部状态。</p>
+
+<pre><code>// 先按 cmd-period。
+~z = { max(SinOsc.ar(ExpRand(3, 160)), Saw.ar([304, 304.3])) * 0.1 };
+~z.play;        // 监视代理
+~z.stop;        // 注意现在 proxy 仍在播放，但仅在私有模式下
+~z.isPlaying;        // 该组正在播放吗？是的。
+~z.monitor.isPlaying;    // 监视器在播放吗？没有。</code></pre>
+
+<p>你可以向 play 传入一个 vol 参数来调整监听音量，而不影响代理内部总线音量。</p>
+
+<pre><code>~z.play(vol:0.3);
+// 播放时也可以设置音量：
+~z.vol = 0.8;</code></pre>
+
+<h3 id="send / release">发送 / 释放</h3>
+
+<p>这对消息控制代理内的 synth。它不影响监听（见上文）。send 启动一个新 synth，release 释放该 synth。<strong>send</strong> 默认释放最后一个 synth。如果 synth 自行释放（doneAction 2），可以使用 <strong>spawn</strong>。</p>
+
+<pre><code>// 先按 cmd-period。
+~z.play; // 监视。如果组未在播放，这也会启动 synth。
+
+~z = { SinOsc.ar(ExpRand(20, 660) ! 2) * Saw.ar(ExpRand(200, 960) ! 2) * 0.1 };
+
+~z.release; // 释放 synth。当前的 fadeTime 用于淡出
+
+~z.send; // 发送一个新的 synth。当前的 fadeTime 用于淡入
+
+~z.send; // 发送另一个 synth，释放旧的
+
+~z.release;
+
+~z.stop;
+
+~z.play; // 监视。由于该组仍在播放，这 _不会_ 启动 proxy。</code></pre>
+
+<p>为了同时释放 synth 和组，使用了 <strong>free</strong>：</p>
+
+<pre><code>~z.free; // 这也不会影响监听。
+~z.play; // 监视。由于组未在播放，这会启动 proxy。</code></pre>
+
+<p>为了释放 synth 和组，停止播放时使用 <strong>end</strong>。</p>
+
+<pre><code>~z.end(3); // 3 秒后结束</code></pre>
+
+<p>为了在服务器上重建 synthdef，请使用 <strong>rebuild</strong>。当然，这比 <em>send</em> 效率低得多，但它可能有意义；例如，synthdef 包含随机元素时。像 Rand(300, 400) 这样的 UGen 在每次 send 时都会创建新的随机值，而像 exprand(1, 1.3) 这样的客户端随机函数只会构建一次；要用这些函数强制做出新决定，可以使用 <strong>rebuild</strong>。</p>
+
+<pre><code>(
+~z = {
+    Splay.ar(
+        SinOsc.ar(Rand(300,400) + ({exprand(1, 1.3)} ! rrand(1, 9)))
+        * LFCub.ar({exprand(30, 900)} ! rrand(1, 9))
+        * LFSaw.kr({exprand(1.0, 8.0)} ! rrand(1, 9)).max(0)
+        * 0.1
+    )
+};
+)
+
+~z.play;
+~z.rebuild;
+~z.send;    // send 只是创建一个新的合成器 - 新频率，其他一切保持不变
+~z.rebuild;    // 重建 synthdef，重新决定振荡器的数量
+~z.end;</code></pre>
+
+<h3 id="pause / resume">暂停 / 恢复</h3>
+
+<p>暂停时，节点代理仍保持活动状态，但每个已启动的 synth 都会暂停，直到该代理再次恢复。</p>
+
+<pre><code>~z.play;
+
+~z.pause; // 暂停 synth。
+
+~z = { SinOsc.ar({ExpRand(300, 660)} ! 2) * 0.1 };    // 你可以添加一个新函数，
+                            // 该对象处于暂停状态。
+
+~z.resume; // 恢复播放。</code></pre>
+
+<p>注意，暂停/恢复在音频速率代理上会造成咔嗒声，而在暂停控制速率代理时则不会出现。</p>
+
+<h3 id="clear">clear</h3>
+
+<p>clear 会移除所有 synth、组、监视器，并释放总线编号。</p>
+
+<pre><code>~z.clear;
+~z.bus;        // no bus
+~z.isNeutral;    // 未初始化。</code></pre>
+
+<p>注意，当其他进程使用 nodeproxy 时，这些进程不会被通知。因此，清除操作必须考虑到这一点。</p>
+
+<h2 id="d) The parameter context">d) 参数上下文</h2>
+
+<p>函数参数会发生什么？</p>
+
+<pre><code>~y.play;
+~y = { arg freq=500; SinOsc.ar(freq * [1, 1.1]) * 0.1 };</code></pre>
+
+<p>现在参数 'freq' 是 synth 中的一个控件（就像在 SynthDef 中一样），你可以通过 <strong>'set'</strong> 消息来改变它。</p>
+
+<pre><code>~y.set(\freq, 440);
+
+// 与合成器不同，此上下文会被保留并应用于每个新的合成器：
+
+~y = { arg freq=500; Formant.ar(50, freq * [1, 1.1], 70) * 0.1 };</code></pre>
+
+<p>消息 <strong>xset</strong> 是 set 的变体，用于使用当前 fadeTime 对更改进行交叉淡变：</p>
+
+<pre><code>~y.fadeTime = 3;
+~y.xset(\freq, 600);
+
+// 同样的上下文应用于所有槽：
+
+~y[2] = { arg freq=500; SinOsc.ar(freq * [1, 1.1]) * LFPulse.kr(Rand(1, 3)) * 0.1 };
+~y.xset(\freq, 300);</code></pre>
+
+<p>参数上下文还可以保留总线映射。一个控件可以映射到任意<em>控件代理</em>：</p>
+
+<pre><code>~c = { MouseX.kr(300, 800, 1) };
+~y.map(\freq, ~c);
+
+// 这里上下文也同样保留：
+
+~y = { arg freq=500; Formant.ar(4, freq * [1, 1.1], 70) * 0.1 };</code></pre>
+
+<p>消息 <strong>xmap</strong> 是 map 的变体，用于使用当前 fadeTime 对更改进行交叉淡变：</p>
+
+<pre><code>~y.set(\freq, 440);
+~y.xmap(\freq, ~c);</code></pre>
+
+<p>要移除设置或映射，请使用 unmap / unset。</p>
+
+<pre><code>~y.unmap;</code></pre>
+
+<p>多通道控制也可以使用 <strong>map</strong> 映射到多通道代理：</p>
+
+<pre><code>~c2 = { [MouseX.kr(300, 800, 1), MouseY.kr(300, 800, 1)] };
+~y = { arg freq=#[440, 550]; SinOsc.ar(freq) * SinOsc.ar(freq + 3) * 0.05 };
+~y.map(\freq, ~c2);</code></pre>
+
+<p>可以检查参数上下文：</p>
+
+<pre><code>~y.nodeMap;
+
+// 除了显式设置的参数之外，
+// 它还包含总线索引和 fadeTime
+
+// 更多信息，请参见 NodeMap
+
+
+p.clear(8); // 在 8 秒内清空整个 proxy space。</code></pre>
+
+<p>previous: <a href="Tutorials-JITLib-jitlib_basic_concepts_02.html">jitlib_basic_concepts_02</a> next: <a href="Tutorials-JITLib-jitlib_basic_concepts_04.html">jitlib_basic_concepts_04</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/JITLib/jitlib_basic_concepts_03.html" rel="noreferrer noopener">Tutorials/JITLib/jitlib_basic_concepts_03.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

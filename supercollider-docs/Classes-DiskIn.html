@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DiskIn - SuperCollider 文档</title>
+<meta name="description" content="从文件流式输入音频。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>DiskIn</h1>
+
+<p><em>从文件流式输入音频。</em></p>
+
+<p><a href="Classes-MultiOutUGen.html">MultiOutUGen</a> : <a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>另请参阅：<a href="Classes-PlayBuf.html">PlayBuf</a>、<a href="Classes-VDiskIn.html">VDiskIn</a>、<a href="Classes-DiskOut.html">DiskOut</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>从磁盘连续播放较长的声音文件。这需要一个预加载了一个缓冲区大小的声音的缓冲区。</p>
+
+<p>DiskIn 无法改变播放速率。关于带速率控制的磁盘流式 UGen，请参见 <a href="Classes-VDiskIn.html">VDiskIn</a>。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*ar"><code>DiskIn.ar(numChannels, bufnum, loop: 0)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>通道数。必须与缓冲区中的通道数相匹配。必须是非零正整数。此值在编译 SynthDef 时固定，因此不能赋值给 SynthDef 参数。</p></td></tr>
+<tr><td class="argumentname"><p>bufnum</p></td><td class="argumentdesc"><p>缓冲区编号</p>
+
+<blockquote class="note"><p><strong>注意：</strong> Buffer 的 numFrames 必须是 2 的幂，建议至少为 65536——最好是 131072 或 262144。较小的缓冲区大小意味着更频繁的磁盘访问，这可能导致故障。</p></blockquote></td></tr>
+<tr><td class="argumentname"><p>loop</p></td><td class="argumentdesc"><p>如果设为 1，声音文件将循环播放。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果缓冲区的帧数大于声音文件，则第一次循环与后续循环迭代之间会出现明显的间隙。在这种情况下，请选择更小的缓冲区大小，或改用 <a href="Classes-PlayBuf.html">PlayBuf</a></p></blockquote></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>此 UGen 在播放完成时会设置 <a href="Classes-Done.html">'done' 标志</a>。</p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>s.boot; // 启动服务器
+
+// 下面的示例将使用这个 synthdef
+(
+SynthDef(&quot;help-Diskin&quot;, { |out, bufnum = 0|
+    Out.ar(out, DiskIn.ar(1, bufnum));
+}).add
+)</code></pre>
+
+<h3 id="Normal usage (with Buffer; &quot;Object Style&quot;)">常规用法（配合 Buffer；“对象风格”）</h3>
+
+<pre><code>b = Buffer.cueSoundFile(s, ExampleFiles.apollo11, 0, 1);
+
+x = { DiskIn.ar(1, b.bufnum) }.play;
+
+b.close;
+
+// 再次
+// 注意同名的实例方法，但参数不同
+b.cueSoundFile(ExampleFiles.apollo11, 0);
+
+x.free; b.close; b.free;
+
+
+
+// 循环播放它（为了更好地循环请使用 PlayBuf！）
+(
+p = ExampleFiles.apollo11;
+a = SoundFile.new;
+a.openRead(p);
+d = a.numFrames/s.sampleRate; // 获取时长
+a.close; // 不要忘记
+b = Buffer.cueSoundFile(s, p, 0, 1);
+f = { DiskIn.ar(1, b.bufnum) };
+x = f.play;
+r = Routine({
+    loop({ d.wait; x.free; x = f.play; b.close(b.cueSoundFileMsg(p, 0)) });
+}).play)
+r.stop; x.free; b.close; b.free; // 你需要完成所有这些才能正确清理
+
+
+
+// 立即 cue 并播放
+(
+SynthDef(&quot;help-Diskin&quot;, { |out, bufnum = 0|
+    Out.ar(out, DiskIn.ar(1, bufnum));
+}).add;
+)
+
+(
+x = Synth.basicNew(&quot;help-Diskin&quot;);
+m = { |buf| x.addToHeadMsg(nil, [\bufnum, buf.bufnum]) };
+
+b = Buffer.cueSoundFile(s, ExampleFiles.apollo11, 0, 1, completionMessage: m);
+
+)</code></pre>
+
+<h3 id="OSC Messaging Style">OSC 消息风格</h3>
+
+<pre><code>// 分配一个磁盘 I/O 缓冲区
+s.sendMsg(&quot;/b_alloc&quot;, 0, 65536, 1);
+
+// 为此缓冲区打开一个输入文件，并保持打开
+s.sendMsg(&quot;/b_read&quot;, 0, ExampleFiles.apollo11, 0, 65536, 0, 1);
+
+// 创建 diskin 节点
+s.sendMsg(&quot;/s_new&quot;, &quot;help-Diskin&quot;, x = s.nextNodeID, 1, 1);
+
+s.sendMsg(&quot;/b_close&quot;, 0); // 关闭文件（非常重要！）
+
+
+// 再次
+// d 无需重新分配，Synth 仍在读取
+s.sendMsg(&quot;/b_read&quot;, 0, ExampleFiles.apollo11, 0, 0, 0, 1);
+
+s.sendMsg(&quot;/n_free&quot;, x); // 停止读取
+
+s.sendMsg(&quot;/b_close&quot;, 0); // 关闭文件。
+
+s.sendMsg(&quot;/b_free&quot;, 0); // 释放缓冲区</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/DiskIn.html" rel="noreferrer noopener">Classes/DiskIn.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

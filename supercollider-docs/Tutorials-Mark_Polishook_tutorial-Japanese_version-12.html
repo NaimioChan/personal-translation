@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12 - SuperCollider 文档</title>
+<meta name="description" content="Mark Polishook 教程（JP）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>12</h1>
+
+<p><em>Mark Polishook 教程（JP）</em></p>
+
+<p>另见：<a href="Tutorials-Mark_Polishook_tutorial-00_Introductory_tutorial.html">00_入门教程</a></p>
+
+<h2 id="複数の部分からなるシンセシス">複数の部分からなるシンセシス</h2>
+
+<p>将合成过程分解为多个部分可以促进模块化设计和组件复用。这意味着，创建完成小而设计良好的任务的 SynthDef 往往能带来好处。这样，就可以将 SynthDef 组合起来构建复杂的合成网络，或以各种方式重新组合它们。</p>
+
+<pre><code>(
+// ディスクからサウンド・ファイルを読み込む
+b = Buffer.read(s, ExampleFiles.child);
+
+// モノのサンプル・プレーヤー ... １チャンネルのみ
+SynthDef(&quot;aMonoSamplePlayer&quot;, { arg bus = 0, bufnum = 0, rateScale = 1;
+    Out.ar(
+        bus,
+        PlayBuf.ar(
+            1,
+            bufnum,
+            BufRateScale.kr(bufnum) * rateScale
+        )
+        *
+        EnvGen.kr(Env.sine(BufDur.kr(bufnum)))
+    )
+}).add;
+)
+
+(
+// SynthDefをテストする ... 動く？（はい、大丈夫。左チャンネルで再生する。）
+Synth(&quot;aMonoSamplePlayer&quot;, [\bus, 0, \bufNum, b]);
+)
+
+
+(
+// コンポーネントの再利用の非常にシンプルな例 ...
+// \busアーギュメントを使用して、同じSynthDefから作られたシンセを別のチャンネルにアサインする
+// この場合には、1チャンネルのサウンド・ファイルを2チャンネルで再生する
+// それぞれのチャンネルの再生レートを変えることで効果を明白にする
+Synth(&quot;aMonoSamplePlayer&quot;, [\bus, 0, \bufNum, b, \rateScale, 0.99]);
+Synth(&quot;aMonoSamplePlayer&quot;, [\bus, 1, \bufNum, b, \rateScale, 1.01]);
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<h2 id="どのようにして情報を取得するか">どのようにして情報を取得するか</h2>
+
+<p>在前面的示例中，使用 BufRateScale 和 BufDur 这两个 UGen 来控制 PlayBuf 播放声音文件的速率以及应用于 PlayBuf 的包络长度。</p>
+
+<p>BufRateScale 确保声音文件以其录制时的速率播放。BufDur 返回缓冲区的长度。这两个类都属于继承自 InfoUGenBase 或 BufInfoUGenBase 的 UGen 家族。</p>
+
+<p>以下是显示此类 UGen 完整列表的代码。</p>
+
+<pre><code>InfoUGenBase.dumpClassSubtree</code></pre>
+
+<p>このコードを実行すると次の様に表示されます。</p>
+
+<pre><code>InfoUGenBase
+[
+  NumRunningSynths
+  NumBuffers
+  ControlDur
+  NumControlBuses
+  SubsampleOffset
+  RadiansPerSample
+  SampleDur
+  ControlRate
+  NumInputBuses
+  NumAudioBuses
+  SampleRate
+  NumOutputBuses
+]
+InfoUGenBase</code></pre>
+
+<pre><code>BufInfoUGenBase.dumpClassSubtree</code></pre>
+
+<p>このコードを実行すると次の様に表示されます。</p>
+
+<pre><code>BufInfoUGenBase
+[
+  BufChannels
+  BufSampleRate
+  BufRateScale
+  BufFrames
+  BufDur
+  BufSamples
+]
+BufInfoUGenBase</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<h2 id="実行の順序">実行の順序</h2>
+
+<p>もう一度、次の例はどのようにしてシンセをソースとエフェクトのグループに配置するのかを示します。２つのグループは２つのシンセが適切な順序で実行されることを保証します。</p>
+
+<pre><code>(
+// エンベロープなしのフィルター　ー永遠にとどまる
+SynthDef(&quot;soundFileFilter&quot;, { arg bus = 0, freq = 440, rq = 0.05;
+    ReplaceOut.ar(
+        bus,
+        BPF.ar(            // 一个带通滤波器
+            In.ar(0, 2),
+            [freq * 0.99, freq * 1.5],
+            rq
+        )
+    )
+}).add;
+)
+
+// ２つのグループを作成する。１つはソース用、他の１つはエフェクト用
+(
+~source = Group.head(s);
+~effect = Group.tail(s);
+)
+
+// シンセをそれぞれ適切なグループの先頭に追加する
+// シンセを適切なグループの最後に追加しても同じ結果になる
+(
+Synth.head(~effect, &quot;soundFileFilter&quot;, [\out, 0, \freq, 500.rrand(1000), \rq, 0.04.rrand(0.1)]);
+Synth.head(~source, &quot;aMonoSamplePlayer&quot;, [\bus, 0, \bufNum, b]);
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<h2 id="サンプルをループする">サンプルをループする</h2>
+
+<p>要反复多次播放声音文件，请使用 PlayBuf 的 loop 参数（控件）。</p>
+
+<p>但是，与其让 PlayBuf 实例的 loop 参数来循环整个文件，不如通过调度使精确的重复发生，从而进行更精细的控制。</p>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>此示例使用了三个 SynthDef。第一个 SynthDef 是采样播放器，会永远循环播放整个缓冲区。第二个 SynthDef 对其输入进行环形调制。第三个 SynthDef 对其输入应用低通滤波器。</p>
+
+<p>３つのシンセはチェーンを形成します。第1のシンセはソース・シンセです。第2と第3のシンセは、それぞれのソースに対して処理を加えます。つまり、ソースに対して振幅変調を加え、振幅変調を行ったソースに対してローパス・フィルターをかけます。</p>
+
+<p>処理の順序、つまり振幅変調とローパス・フィルターのどちらが最初でどちらが2番目かは任意です。それはどちらの方法でも定義することができます。</p>
+
+<pre><code>(
+// サウンド・ファイルを読み込む
+b = Buffer.read(s, ExampleFiles.child);
+
+// サウンド・ファイル全体をループ再生するサンプル・プレーヤーを定義する
+SynthDef(&quot;aLoopingSamplePlayer&quot;, { arg outBus = 0, bufnum = 0, rateScale = 1, mul = 1;
+    Out.ar(
+        outBus,
+        PlayBuf.ar(
+            1,
+            bufnum,
+            BufRateScale.kr(bufnum) * rateScale + LFNoise1.kr(2.reciprocal, 0.05),
+            loop: 1    // 停止することなくサウンド・ファイルを繰り返し再生する
+        )
+        *
+        mul
+    )
+}).add;
+
+// オーディオ・ソースに振幅変調を適用する
+SynthDef(&quot;ampMod&quot;, { arg inBus = 0, outBus = 0, modFreq = 1;
+    Out.ar(
+        outBus,
+        [In.ar(inBus, 1) * SinOsc.kr(modFreq), In.ar(inBus, 1) * SinOsc.kr(modFreq - 0.02)]
+    )
+}).add;
+
+// オーディオ・ソースにローパス・フィルターを適用する
+SynthDef(&quot;aLowPassFilter&quot;, { arg inBus = 0, outBus = 0, freq = 300, freqDev = 50, boost = 1;
+    Out.ar(
+        outBus,
+        RLPF.ar(
+            In.ar(inBus, 2),
+            Lag.kr(LFNoise0.kr(1, freqDev, freq), 1),
+            0.1
+        )
+        *
+        boost
+    )
+}).add;
+)
+
+// ２つのグループを定義する。１つはソースのためで、他方はエフェクトのため
+(
+~source = Group.head(s);
+~effect = Group.tail(~s);
+)
+
+(
+// ソース・グループにサンプル・プレーヤーを追加する
+Synth.head(
+    ~source,
+    &quot;aLoopingSamplePlayer&quot;, [\outBus, 3, \bufNum, b, \rateScale, 1, \mul, 0.051]);
+// エフェクト・グループの先頭に振幅変調シンセを追加する
+Synth.head(
+    ~effect,
+    &quot;ampMod&quot;, [\inBus, 3, \outBus, 5, \modFreq, 1]);
+// エフェクト・グループの最後にフィルタリングを追加する
+Synth.tail(
+    ~effect,
+    &quot;aLowPassFilter&quot;, [\inBus, 5, \outBus, 0, \boost, 5])
+)</code></pre>
+
+<p>このシンセシスのネットワークを文字による図で表すと、この様になります。</p>
+
+<pre><code>Group (RootNode, ID 0)
+      /\
+     /  \
+~source  ~effects    // ~source 和 ~effects 是组
+ |        |      \
+ |        |       \
+ synth    synth    synth</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>ここでは、シンセとグループの配置は同じです。一部のアーギュメント（コントロール）を変えることでエフェクトの音色が劇的に変わります。</p>
+
+<pre><code>(
+~source = Group.head(s);
+~effect = Group.tail(~s);
+)
+
+(
+Synth.head(
+    ~source,
+    &quot;aLoopingSamplePlayer&quot;, [\outBus, 3, \bufNum, b, \rateScale, 1, \mul, 0.051]);
+Synth.head(
+    ~effect,
+    &quot;ampMod&quot;, [\inBus, 3, \outBus, 5, \modFreq, 1000]);
+Synth.tail(
+    ~effect,
+    &quot;aLowPassFilter&quot;, [\inBus, 5, \outBus, 0, \freq, 500, \freqDev, 200, \boost, 7])
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>转到 <a href="Tutorials-Mark_Polishook_tutorial-Japanese_version-13.html">13</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Mark_Polishook_tutorial/Japanese_version/12.html" rel="noreferrer noopener">Tutorials/Mark_Polishook_tutorial/Japanese_version/12.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

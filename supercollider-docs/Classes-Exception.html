@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exception - SuperCollider 文档</title>
+<meta name="description" content="根错误类">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Exception</h1>
+
+<p><em>根错误类</em></p>
+
+<p><a href="Classes-Object.html">Object</a></p>
+
+<p>子类：<a href="Classes-Error.html">Error</a></p>
+
+<p><span id="kw_try protect catch"> </span></p>
+
+<h2 id="description">说明</h2>
+
+<p>SuperCollider 错误处理机制的根。</p>
+
+<p>Exception 是一个抽象类，定义了基本的错误行为。该类不直接在 SuperCollider 中使用。用户可以创建 Exception 的子类来标识特定类型的失败条件。</p>
+
+<p>内置的异常类型实际上是 <a href="Classes-Error.html">Error</a> 的子类——其层次结构参见它的帮助文件。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 你不应从 <code>try</code> 或 <code>protect</code> 函数内部返回 ^，它无法被捕获。在被接收者调用的方法中返回是可以的。</p></blockquote>
+
+<h3 id="Background: General exception handling">背景：通用异常处理</h3>
+
+<p>异常是指任何中断程序正常执行流的事件。实际上，异常和错误之间并没有太大区别；在 SuperCollider 中，我们倾向于在其他面向对象语言（Java、C++）会一致使用异常的地方使用错误这一说法。</p>
+
+<p>如果一段代码遇到意外情况，它会创建一个异常对象来保存关于该错误情况的信息，然后“抛出”该对象。随后，解释器会向前回溯所有之前的栈帧，寻找将“捕获”该异常的异常处理器。异常处理器可以采取另一条路径来解决故障并正常继续；如果无法做到，它可以重新将异常抛回前一个栈帧。从未被捕获的异常会导致执行中止。在 SuperCollider 中，这会产生标准错误转储（详情参见 Understanding-Errors 帮助文件）；在 C++ 或 Java 中，后果是灾难性的，会导致整个程序崩溃。</p>
+
+<h3 id="Common syntax in other languages for exception handling is:">其他语言中异常处理的常见语法是：</h3>
+
+<pre><code>try { ...code... }
+catch { ...exception handler... }</code></pre>
+
+<p>特定语言可能有其他变体。SuperCollider 编译器没有为「catch」关键字留出空间，因此语法更简单：</p>
+
+<pre><code>try { ...code... } { ...exception handler... };</code></pre>
+
+<p>使用 "try" 时，如果错误无法处理，必须显式重新抛出错误：</p>
+
+<pre><code>try { ...code... } { |error|
+    if(test: can I handle the error?) {
+        handle gracefully
+    } { error.throw }
+};</code></pre>
+
+<p>SuperCollider 包含一个借自 Scheme 的变体，其中异常总是致命的，但之前的代码可能已经分配了一些资源，需要在报告错误之前释放。例如，你可能打开了一个文件并对其进行一些处理，而处理过程中可能遇到错误。良好的做法是在错误停止之前关闭文件，你可以这样实现：</p>
+
+<pre><code>file = File(path, &quot;r&quot;);
+protect {
+    work with the file here, which might cause an error
+} {
+    file.close;
+};</code></pre>
+
+<p>使用“protect”时，即使没有错误，第二个函数也会执行，并且任何错误都会沿调用链向上传递。</p>
+
+<p>在 Java 中，你可以捕获特定类的异常。你可以用以下结构模拟这种用法：</p>
+
+<pre><code>// Java 风格
+
+try { }
+catch { FileNotFoundException e } { console.printLine(&quot;File not found: &quot; + e.path) }
+catch { EmptyFileException e } { console.printLine(&quot;File is empty: &quot; + e.path) };
+
+// SuperCollider 风格（假设性的；这些具体异常在主库中不存在
+
+try { } { |error|
+    switch(error.species.name)
+        { &#x27;FileNotFoundException&#x27; } { postln(&quot;File not found:&quot; + e.path) }
+        { &#x27;EmptyFileException&#x27; } { postln(&quot;File is empty:&quot; + e.path) }
+            // 默认条件：未处理的异常，重新抛出
+        { error.throw }
+}</code></pre>
+
+<p>下面是一个从写入不可变数组失败中恢复的例子，方法是在数组的副本上重新尝试写入。</p>
+
+<pre><code>(
+~inPlaceSub = { |array, find, replace|
+    array.do({ |item, i|
+        if(item == find) { array[i] = replace };
+    });
+};
+
+~trySub = { |array, find, replace|
+    try {
+        ~inPlaceSub.(array, find, replace)
+    } { |error|
+        switch(error.species.name)
+            { &#x27;PrimitiveFailedError&#x27; } {
+                if(error.what.find(&quot;immutable&quot;).notNil) {
+                    &quot;caught ImmutableError&quot;.postln;
+                    ~inPlaceSub.(array.copy, find, replace)
+                } { &quot;unknown primitive exception&quot;.postln; error.throw }
+            }
+                // 默认情况：未处理的异常，应终止以便重新抛出错误
+            { &quot;unknown exception&quot;.postln; error.throw }
+    };
+};
+)
+
+// 传入一个可变数组，可以
+~trySub.((0..9), 9, 19);
+
+// 传入字面量数组，Immutable 异常被捕获并处理
+~trySub.(#[0, 1, 2, 3, 4, 5], 5, 6);
+
+// 传入一个无意义的值，其他异常会被重新抛出
+~trySub.(10, 5, 6);</code></pre>
+
+<h2 id="classmethods">类方法</h2>
+
+<h3 id="Undocumented class methods">未文档化的类方法</h3>
+
+<h4 id="*debug"><code>Exception.debug</code></h4>
+
+<h4 id="*debug"><code>Exception.debug = value</code></h4>
+
+<h4 id="*handling"><code>Exception.handling</code></h4>
+
+<h4 id="*handling"><code>Exception.handling = value</code></h4>
+
+<h4 id="*inProtectedFunction"><code>Exception.inProtectedFunction</code></h4>
+
+<h4 id="*inProtectedFunction"><code>Exception.inProtectedFunction = value</code></h4>
+
+<h4 id="*new"><code>Exception.new(what)</code></h4>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-adviceLink"><code>.adviceLink</code></h4>
+
+<h4 id="-adviceLinkPage"><code>.adviceLinkPage</code></h4>
+
+<h4 id="-errorString"><code>.errorString</code></h4>
+
+<h4 id="-isException"><code>.isException</code></h4>
+
+<h4 id="-path"><code>.path</code></h4>
+
+<h4 id="-path"><code>.path = value</code></h4>
+
+<h4 id="-postProtectedBacktrace"><code>.postProtectedBacktrace</code></h4>
+
+<h4 id="-protectedBacktrace"><code>.protectedBacktrace</code></h4>
+
+<h4 id="-protectedBacktrace"><code>.protectedBacktrace = value</code></h4>
+
+<h4 id="-reportError"><code>.reportError</code></h4>
+
+<h4 id="-what"><code>.what</code></h4>
+
+<h4 id="-what"><code>.what = value</code></h4>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/Exception.html" rel="noreferrer noopener">Classes/Exception.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

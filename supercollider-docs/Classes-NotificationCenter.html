@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NotificationCenter - SuperCollider 文档</title>
+<meta name="description" content="让对象发出通知">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>NotificationCenter</h1>
+
+<p><em>让对象发出通知</em></p>
+
+<p><a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-SimpleController.html">SimpleController</a>、<a href="Classes-NodeWatcher.html">NodeWatcher</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>在某些情况下，让一个对象在收到来自另一个给定对象的预定义消息时执行特定函数可能很有用。例如，GUI 元素可能希望在服务器对象的状态发生变化时更新自身状态。这类情况包括：在加载新 synthdef 时更新 synthdef 数量，在某个 Synth 所控制的 Synth 开始运行或被释放时更新控制 GUI 元素的启用/禁用状态，等等。NotificationCenter 使得可以向任何对象（称为 observer）添加这样的自定义函数，并在另一个对象（称为 subject）发出由符号（称为 message）标识的通知时执行它。</p>
+
+<p>NotificationPattern 提供的实现是被称为观察者模式的常见 OOP 模式的一种变体，它提供了一种让对象灵活地将消息广播到感兴趣的接收者对象的方式。该模式定义了对象之间的一对多依赖关系，使得当一个对象改变状态时，所有依赖它的对象都会被自动通知和更新。（参见：<a href="https://www.gofpatterns.com/behavioral-design-patterns/behavioral-patterns/observer-pattern.php">https://www.gofpatterns.com/behavioral-design-patterns/behavioral-patterns/observer-pattern.php</a> 和 <a href="https://en.wikipedia.org/wiki/Observer_pattern).">https://en.wikipedia.org/wiki/Observer_pattern).</a> 通知其依赖者的对象称为主题，而依赖者称为观察者。</p>
+
+<p>该模式在 SuperCollider 中的原始实现涉及三个步骤：</p>
+
+<ol>
+<li>主体通过以下方式添加依赖者：<code>subject.addDependant(observer)</code></li>
+<li>当主体想要通知其观察者（依赖者）它已发生变化时，它使用 changed 方法：<code>subject.changed(&lt;optional arguments&gt;...)</code></li>
+<li>方法 changed 获取 subject 的依赖者列表，并遍历每个观察者，向其发送 <code>update</code> 消息：<code>observer.changed(subject, &lt;optional arguments&gt;...)</code></li>
+</ol>
+
+<p>然后每个观察者对象可以根据 update 方法中包含的代码以及从主题接收到的参数，决定如何响应主题广播的变化。</p>
+
+<p>上述实现使用简单，因为它只需要将每个观察者注册到目标主体。然而它受到限制，因为观察者要执行的动作被编码在 update 方法中。这使得根据主体、观察者以及随 <code>changed</code> 消息作为参数发送的消息来选择执行不同动作的编码变得复杂。NotificationCenter 类提供了一种方式，根据主体以及随主体广播的方法一起作为参数发送的符号，告诉每个观察者要执行什么动作。因此，要让观察者在从主体接收到消息符号时执行某个动作，必须指定以下 4 个对象：</p>
+
+<ol>
+<li>主体（除 nil 外的任何类型的对象）</li>
+<li>消息（一个符号）</li>
+<li>观察者（除 nil 外的任意类型对象）</li>
+<li>要执行的动作（一个 Function）</li>
+</ol>
+
+<p>使用 NotificationCenter 类，可通过以下代码创建主体与观察者之间的连接，以响应消息执行操作：</p>
+
+<pre><code>NotificationCenter.register(subject, message, observer, action)</code></pre>
+
+<p>要通知观察者某个主题已发生变化，NotificationCenter 必须调用 <code>notify</code> 方法：</p>
+
+<pre><code>NotificationCenter.notify(subject, message, &lt;optional arguments&gt;...);</code></pre>
+
+<p>任何已注册为发出通知的主体的观察者的对象，都将执行与该通知消息所关联的动作。因此，当观察者对象从其注册的对象那里接收到相应的消息时，就可以让该观察者对象执行指定的动作。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*notify"><code>NotificationCenter.notify(object, message, args)</code></h4>
+
+<p>该对象发出消息，也可以传递额外参数。</p>
+
+<h4 id="*register"><code>NotificationCenter.register(object, message, listener, action)</code></h4>
+
+<p>感兴趣的客户端可以为对象/消息通知注册动作函数。每个对象/消息通知，一个监听者只能注册一个动作。</p>
+
+<h4 id="*unregister"><code>NotificationCenter.unregister(object, message, listener)</code></h4>
+
+<p>移除注册。</p>
+
+<h4 id="*registerOneShot"><code>NotificationCenter.registerOneShot(object, message, listener, action)</code></h4>
+
+<p>在通知已发出并处理后，自动注销。</p>
+
+<h4 id="*registrationExists"><code>NotificationCenter.registrationExists(object, message, listener)</code></h4>
+
+<p>仅确认注册是否已存在。</p>
+
+<h3 id="Undocumented class methods">未文档化的类方法</h3>
+
+<h4 id="*clear"><code>NotificationCenter.clear</code></h4>
+
+<h4 id="*removeForListener"><code>NotificationCenter.removeForListener(listener)</code></h4>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="Example">Example</h2>
+
+<p>当 Server 启动或退出时，它会通知其观察者，向它们发送消息 \newAllocators：</p>
+
+<pre><code>NotificationCenter.notify(server, \newAllocators)</code></pre>
+
+<p>因此，任何希望在服务器启动或退出时执行动作的对象，都可以使用 NotificationCenter 通过以下代码注册该动作：</p>
+
+<pre><code>// 使用默认服务器作为主题，符号作为观察者：
+NotificationCenter.register(Server.default, \newAllocators, \yourself, {
+    // 在此处替换为更有意义的内容：
+    &quot;symbol yourself was notified newAllocators by default server&quot;.postln;
+});</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/NotificationCenter.html" rel="noreferrer noopener">Classes/NotificationCenter.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,1218 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buffer - SuperCollider 文档</title>
+<meta name="description" content="服务器上缓冲区的客户端表示">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Buffer</h1>
+
+<p><em>服务器上缓冲区的客户端表示</em></p>
+
+<p><a href="Classes-Object.html">Object</a></p>
+
+<p>另请参见：<a href="Classes-ExampleFiles.html">ExampleFiles</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>Buffer 对象是服务器端缓冲区的客户端侧抽象。（SuperCollider 的服务器-客户端架构是使用 Buffer 对象时常见的困惑来源，因此请参阅 <a href="Guides-ClientVsServer.html">Client vs Server</a>。）</p>
+
+<p>缓冲区最常用于保存采样的音频，例如加载到内存中的声音文件，但也可以用于保存其他类型的数据。从技术上讲，服务器上的缓冲区是一个全局可用的、多声道 32 位浮点数数组。它还具有关联的采样率，以 64 位浮点数表示，单位为赫兹。</p>
+
+<p>Buffer 类封装了大量与服务器端缓冲区相关的常见任务、OSC 消息和功能——请参阅本文档后面的示例，了解使用 Buffer 进行声音播放和录音的许多示例。</p>
+
+<p>缓冲区通常与 <a href="Classes-PlayBuf.html">PlayBuf</a>、<a href="Classes-RecordBuf.html">RecordBuf</a>、<a href="Classes-DiskIn.html">DiskIn</a>、<a href="Classes-DiskOut.html">DiskOut</a>、<a href="Classes-BufWr.html">BufWr</a>、<a href="Classes-BufRd.html">BufRd</a> 以及其他 UGen 一起使用。（更多示例请参见它们各自的帮助文件。）即使正在被访问，缓冲区也可以被释放或修改。一些技术细节请参见 <a href="Reference-Server-Architecture.html">服务器架构</a>。</p>
+
+<p>不应在 <a href="Classes-SynthDef.html">SynthDef</a> 中创建或修改缓冲区对象。如有需要，参见 <a href="Classes-LocalBuf.html">LocalBuf</a>。</p>
+
+<h3 id="Buffer Numbers and Allocation">缓冲区编号与分配</h3>
+
+<p>尽管服务器上的缓冲区数量在服务器启动时设定，但在它们能够保存值之前，仍必须在服务器应用内部分配内存。（启动时所有缓冲区的大小均为 0。）</p>
+
+<p><a href="Classes-Server.html">Server</a> 端缓冲区通过编号标识，从 0 开始。使用 Buffer 对象时，缓冲区编号会从 Server 的 bufferAllocator 自动分配。当你在 Buffer 对象上调用 <code>.free</code> 时，它会释放服务器上该缓冲区的内存，并释放缓冲区编号以供将来重新分配。有关设置可用缓冲区数量的详细信息，请参见 <a href="Classes-ServerOptions.html">ServerOptions</a>。</p>
+
+<p>通常你不需要提供缓冲区编号（参见 <a href="Classes-Buffer.html#*alloc">Buffer: *alloc</a>）。只有在你确信自己清楚在做什么时才应该这样做。同样，在正常使用中你也不需要访问缓冲区编号，因为 Buffer 的实例可以直接用作 <a href="Classes-UGen.html">UGen</a> 输入或 <a href="Classes-Synth.html">Synth</a> 参数。</p>
+
+<h3 id="Multichannel Buffers">多通道缓冲区</h3>
+
+<p>多声道缓冲区会交错存储其数据。因此，使用诸如 <code>set, setn, get, getn</code> 等方法按索引请求或设置值时，实际可用的值数量等于 <code>numFrames * numChannels</code>。索引从 0 开始，一直到 <code>(numFrames * numChannels) - 1</code>。例如，在两声道缓冲区中，索引 0 将是第一个声道的第一个值，索引 1 将是第二个声道的第一个值，索引 2 将是第一个声道的第二个值，依此类推。</p>
+
+<p>在某些情况下，使用多个单声道缓冲区比使用单个多声道缓冲区更简单。</p>
+
+<h3 id="Completion Messages and Action Functions">完成消息与动作函数</h3>
+
+<p>许多缓冲区操作（例如读取和写入文件）是异步的，这意味着它们将花费任意长的时间来完成。异步命令被传递给服务器上的后台线程，以免占用音频合成线程的 CPU 时间。由于它们可能持续任意长的时间，因此能够指定在完成时立即执行的其它操作会很方便。Buffer 的各种方法以两种方式实现了这一能力：完成消息和动作函数。</p>
+
+<p>完成消息是包含在发送给服务器的消息中的第二条 OSC 命令。（关于 OSC 消息的讨论见 <a href="Guides-NodeMessaging.html">Node Messaging</a>。）服务器在完成第一条命令后会立即执行它。动作函数是一个 <a href="Classes-Function.html">Function</a>，当客户端收到服务器发来的相应回复、表明前一条命令已完成时，它会被求值。因此，动作函数本质上比完成消息更灵活，但由于消息传递会带来少量额外延迟，效率略低。动作函数在被求值时会将 Buffer 对象作为参数传入。</p>
+
+<p>对于带有完成消息的 Buffer 方法，也可以传入一个返回 OSC 消息的函数。与 action 函数一样，该函数会将 Buffer 作为参数传入。然而重要的是要理解，该函数将在 Buffer 对象创建之后（以便其 bufnum 和其他细节可访问），但在相应消息发送到服务器之前被求值。</p>
+
+<h3 id="Bundling">Bundling</h3>
+
+<p>下面的许多方法有两个版本：常规版本会立即将对应消息发送到服务器，另一个版本则将消息返回为 <a href="Classes-Array.html">Array</a>，以便加入 bundle。也可以利用 Server 的自动打包功能捕获常规方法生成的消息。详情请参阅 <a href="Classes-Server.html">Server</a> 和 <a href="Guides-Bundled-Messages.html">Bundled Server Messages</a>。</p>
+
+<h3 id="Server message data types">服务器消息数据类型</h3>
+
+<p>服务器要求 <code>numFrames</code>、<code>numChannels</code> 以及 get/set 索引参数为整数。为方便起见，用于构造服务器消息的 Buffer 方法（方法名以 'Msg' 结尾）会将这些参数的浮点数转换为整数。手动构造消息的用户应注意这些数据类型。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h3 id="Creation with Immediate Memory Allocation">使用立即内存分配创建</h3>
+
+<h4 id="*alloc"><code>Buffer.alloc(server, numFrames, numChannels: 1, completionMessage, bufnum, sampleRate)</code></h4>
+
+<p>创建一个 Buffer 并返回，同时在服务器上立即分配所需的内存。缓冲区的值将被初始化为 0.0。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于分配缓冲区的服务器。默认为默认服务器。</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要分配的帧数。实际内存使用量将对应于 numFrames * numChannels。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>Buffer 的通道数。默认值为 1。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+<tr><td class="argumentname"><p>bufnum</p></td><td class="argumentdesc"><p>一个显式指定的缓冲区编号。提供编号会绕过服务器的缓冲区分配器，这可能导致冲突。最佳实践是不设置此项，让缓冲区编号分配器选择下一个可用的 bufnum。</p></td></tr>
+<tr><td class="argumentname"><p>sampleRate</p></td><td class="argumentdesc"><p>缓冲区的采样率。默认值为服务器的采样率。0 或 nil 将重置为服务器的采样率。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>// 分配 8 秒立体声缓冲区
+s.boot;
+b = Buffer.alloc(s, s.sampleRate * 8.0, 2);
+b.free;</code></pre>
+
+<h4 id="*allocConsecutive"><code>Buffer.allocConsecutive(numBufs: 1, server, numFrames, numChannels: 1, completionMessage, bufnum, sampleRate)</code></h4>
+
+<p>分配一段连续编号的缓冲区范围，供像 <a href="Classes-VOsc.html">VOsc</a> 和 <a href="Classes-VOsc3.html">VOsc3</a> 这样需要连续缓冲区块的 UGen 使用，并返回相应 Buffer 对象的数组。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>numBufs</p></td><td class="argumentdesc"><p>要分配的连续索引缓冲区的数量。</p></td></tr>
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于分配缓冲区的服务器。默认为默认服务器。</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>每个缓冲区中要分配的帧数。实际内存使用量将对应于 numFrames * numChannels。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>每个缓冲区的通道数。默认为 1。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息，或一个将返回该消息的 Function。求值时，将把每个 Buffer 及其在数组中的索引作为参数传递给 Function。</p></td></tr>
+<tr><td class="argumentname"><p>bufnum</p></td><td class="argumentdesc"><p>一个显式指定的缓冲区编号。提供编号会绕过服务器的缓冲区分配器，这可能导致冲突。最佳实践是不设置此项，让缓冲区编号分配器选择下一个可用的 bufnum。</p></td></tr>
+<tr><td class="argumentname"><p>sampleRate</p></td><td class="argumentdesc"><p>缓冲区的采样率。默认为服务器的采样率。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>注意：你必须将 Buffers 数组当作一个组来处理。单独释放它们或重用它们可能会导致分配错误。你应该用 do 遍历该数组，一次性释放数组中的所有 Buffers。</p>
+
+<pre><code>s.boot;
+// 分配一个 Buffer 数组并用不同的谐波填充它们
+(
+b = Buffer.allocConsecutive(8, s, 4096, 1, { |buf, i|
+    buf.sine1Msg((1 .. ((i + 1) * 6)).reciprocal) // 完成消息
+});
+
+a = { VOsc.ar(SinOsc.kr(0.5, 0).range(b.first.bufnum + 0.1, b.last.bufnum - 0.1),
+    [440, 441], 0, 0.2) }.play;
+)
+a.free;
+
+// 遍历该数组并释放它
+b.do(_.free);</code></pre>
+
+<h4 id="*read"><code>Buffer.read(server, path, startFrame: 0, numFrames: -1, action, bufnum)</code></h4>
+
+<p>分配一个缓冲区并立即将声音文件读入其中。此方法会发送一条查询消息作为完成消息，以便 Buffer 的实例变量自动更新。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于分配缓冲区的服务器。</p></td></tr>
+<tr><td class="argumentname"><p>path</p></td><td class="argumentdesc"><p>一个 String，表示要读取的声音文件的路径。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件的开头。</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要读取的帧数。默认值为 -1，将读取整个文件。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+<tr><td class="argumentname"><p>bufnum</p></td><td class="argumentdesc"><p>一个显式指定的缓冲区编号。提供编号会绕过服务器的缓冲区分配器，这可能导致冲突。最佳实践是不设置此项，让缓冲区编号分配器选择下一个可用的 bufnum。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>注意：不能指望缓冲区的实例变量会立即更新，因为其中涉及少量延迟。收到查询回复时会求值 action，因此在需要访问实例变量的情况下请使用它。</p>
+
+<pre><code>// 从磁盘读取声音文件到缓冲区
+s.boot;
+// ExampleFiles 帮助定位示例中使用的音频文件
+p = ExampleFiles.child;
+// 查看路径以了解位置和路径的格式
+p.postln;
+// 读取文件
+b = Buffer.read(s, p);
+
+// 现在播放它
+(
+x = SynthDef(\help_Buffer, { |out = 0, bufnum|
+    Out.ar(out,
+        PlayBuf.ar(1, bufnum, BufRateScale.kr(bufnum))
+    )
+}).play(s, [\bufnum, b]);
+)
+x.free; b.free;
+
+// 带有一个 action 函数
+// 注意这些变量不会立即更新
+(
+b = Buffer.read(s, p, action: { |buffer|
+    (&quot;After update:&quot; + buffer.numFrames).postln;
+    x = { PlayBuf.ar(1, buffer, BufRateScale.kr(buffer)) }.play;
+});
+(&quot;Before update:&quot; + b.numFrames).postln;
+)
+x.free; b.free;</code></pre>
+
+<h4 id="*readChannel"><code>Buffer.readChannel(server, path, startFrame: 0, numFrames: -1, channels, action, bufnum)</code></h4>
+
+<p>与上面的 <a href="#*read">*read</a> 相同，但接受一个要读取的通道索引 <a href="Classes-Array.html">Array</a>，从而只读取选定的通道。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于分配缓冲区的服务器。</p></td></tr>
+<tr><td class="argumentname"><p>path</p></td><td class="argumentdesc"><p>一个 String，表示要读取的声音文件的路径。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件的开头。</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要读取的帧数。默认值为 -1，将读取整个文件。</p></td></tr>
+<tr><td class="argumentname"><p>channels</p></td><td class="argumentdesc"><p>要从声音文件中读取的声道数组。索引从零开始。这些声道将按提供的顺序读取。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+<tr><td class="argumentname"><p>bufnum</p></td><td class="argumentdesc"><p>一个显式指定的缓冲区编号。提供编号会绕过服务器的缓冲区分配器，这可能导致冲突。最佳实践是不设置此项，让缓冲区编号分配器选择下一个可用的 bufnum。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+// 首先进行一次标准读取，以便我们查看文件中的内容
+b = Buffer.read(s, ExampleFiles.sinedPink);
+// ExampleFiles.sinedPink 包含左侧的 SinOsc 和右侧的 PinkNoise
+b.plot;
+b.free;
+
+// 现在只保留正弦波
+b = Buffer.readChannel(s, ExampleFiles.sinedPink, channels: [0]);
+b.plot;
+b.free;
+
+// 现在只保留粉红噪声
+b = Buffer.readChannel(s, ExampleFiles.sinedPink, channels: [1]);
+b.plot;
+b.free;
+
+// 现在反转通道顺序
+b = Buffer.readChannel(s, ExampleFiles.sinedPink, channels: [1, 0]);
+b.plot;
+b.free;</code></pre>
+
+<h4 id="*readNoUpdate"><code>Buffer.readNoUpdate(server, path, startFrame: 0, numFrames: -1, bufnum, completionMessage)</code></h4>
+
+<p>与上面的 <a href="#*read">*read</a> 相同，但不会自动更新实例变量。调用 <code>updateInfo</code>（见下文）来更新这些变量。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于分配缓冲区的服务器。</p></td></tr>
+<tr><td class="argumentname"><p>path</p></td><td class="argumentdesc"><p>一个 String，表示要读取的声音文件的路径。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件的开头。</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要读取的帧数。默认值为 -1，将读取整个文件。</p></td></tr>
+<tr><td class="argumentname"><p>bufnum</p></td><td class="argumentdesc"><p>一个显式指定的缓冲区编号。提供编号会绕过服务器的缓冲区分配器，这可能导致冲突。最佳实践是不设置此项，让缓冲区编号分配器选择下一个可用的 bufnum。</p></td></tr>
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>// 带有完成消息
+s.boot;
+(
+SynthDef(\help_Buffer, { |out = 0, bufnum|
+    Out.ar(out,
+        PlayBuf.ar(1, bufnum, BufRateScale.kr(bufnum))
+    )
+}).add;
+
+y = Synth.basicNew(\help_Buffer); // 尚未发送
+b = Buffer.readNoUpdate(s, ExampleFiles.child,
+    completionMessage: { |buffer|
+        // synth 将其 s_new 消息添加为
+        // 在缓冲区读取完成后跟随
+        y.newMsg(s, [\bufnum, buffer], \addToTail)
+    });
+)
+// 音符变量不准确
+b.numFrames; // nil
+b.updateInfo;
+b.numFrames; // 188893
+// 完成后……
+y.free;
+b.free;</code></pre>
+
+<h4 id="*cueSoundFile"><code>Buffer.cueSoundFile(server, path, startFrame: 0, numChannels: 2, bufferSize: 32768, completionMessage)</code></h4>
+
+<p>分配一个缓冲区并预加载声音文件，以便使用 <a href="Classes-DiskIn.html">DiskIn</a> 进行流式播放。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于分配缓冲区的服务器。</p></td></tr>
+<tr><td class="argumentname"><p>path</p></td><td class="argumentdesc"><p>一个 String，表示要读取的声音文件的路径。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>DiskIn 开始播放时声音文件的帧位置。</p></td></tr>
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>声音文件中的通道数。</p></td></tr>
+<tr><td class="argumentname"><p>bufferSize</p></td><td class="argumentdesc"><p>这必须是（2 * 服务器块大小）的倍数。32768 是默认值，适用于大多数情况。</p></td></tr>
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+(
+SynthDef(\help_Buffer_cue, { |out = 0, bufnum|
+    Out.ar(out,
+        DiskIn.ar(1, bufnum)
+    )
+}).add;
+)
+
+(
+s.makeBundle(nil, {
+    b = Buffer.cueSoundFile(s, ExampleFiles.child, 0, 1);
+    y = Synth(\help_Buffer_cue, [\bufnum, b], s);
+});
+)
+b.free; y.free;</code></pre>
+
+<h4 id="*loadCollection"><code>Buffer.loadCollection(server, collection, numChannels: 1, action)</code></h4>
+
+<p>将大型集合加载到服务器上的缓冲区中。返回一个 Buffer 对象。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于创建缓冲区的服务器。</p></td></tr>
+<tr><td class="argumentname"><p>collection</p></td><td class="argumentdesc"><p>Collection 的一个子类（即 Array），仅包含浮点数和整数。多维数组将无法使用。</p></td></tr>
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>缓冲区应具有的通道数。注意，缓冲区会对多通道数据进行交织。如有需要，你需自行提供交织后的集合。多维数组不可用。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>这是通过将集合写入 SoundFile 并从那里加载来实现的。因此，此方法仅适用于本地机器上的服务器。对于远程服务器，请使用下面的 <code>sendCollection</code>。文件在加载后会自动删除。这允许比下面的 setn 更大的集合，并且通常是将大型集合放入缓冲区的最安全方式。缓冲区的采样率将是在其上创建它的服务器的采样率。</p>
+
+<pre><code>s.boot;
+(
+a = FloatArray.fill(44100 * 5.0, { 1.0.rand2 }); // 5 秒的噪声
+b = Buffer.loadCollection(s, a);
+)
+
+// test it
+b.get(20000, { |msg| (msg == a[20000]).postln });
+
+// play it
+x = { PlayBuf.ar(1, b, BufRateScale.kr(b), loop: 0) * 0.5 }.play;
+b.free; x.free;
+
+// 交错一个多维数组
+(
+l = Signal.sineFill(16384, Array.fill(200, { 0 }).add(1));
+r = Array.fill(16384, { 1.0.rand2 });
+m = [Array.newFrom(l), r]; // 一个多维数组
+m = m.lace(32768); // 交错两个集合
+b = Buffer.loadCollection(s, m, 2, { |buf|
+    x = { PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 1) * 0.5 }.play;
+});
+)
+b.plot;
+x.free; b.free;</code></pre>
+
+<h4 id="*sendCollection"><code>Buffer.sendCollection(server, collection, numChannels: 1, wait: -1, action)</code></h4>
+
+<p>使用多个 setn 消息将一个大集合流入服务器上的缓冲区。返回一个 Buffer 对象。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于创建缓冲区的服务器。</p></td></tr>
+<tr><td class="argumentname"><p>collection</p></td><td class="argumentdesc"><p>Collection 的一个子类（即 Array），仅包含浮点数和整数。多维数组将无法使用。</p></td></tr>
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>缓冲区应具有的通道数。请注意，缓冲区会交错存储多通道数据。如有需要，你有责任提供一个交错集合。多维数组将无法使用。请参阅上方 <a href="#*loadCollection">*loadCollection</a> 中的示例，了解如何操作。</p></td></tr>
+<tr><td class="argumentname"><p>wait</p></td><td class="argumentdesc"><p>发送 setn 消息之间的可选等待时间。在高流量情况下，将其设置为大于零的值可能更安全，零是默认值。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>这允许使用比下面介绍的 setn 更大的集合。这不如上面的 <a href="#*loadCollection">*loadCollection</a> 安全，但可以用于远程机器上的服务器。缓冲区的采样率将是创建它的服务器的采样率。</p>
+
+<pre><code>s.boot;
+(
+a = Array.fill(2000000, { rrand(0.0, 1.0) }); // 一个大型集合
+b = Buffer.sendCollection(s, a, 1, 0, { |buf| &quot;finished&quot;.postln });
+)
+b.get(1999999, { |msg| (msg == a[1999999]).postln });
+b.free;</code></pre>
+
+<h4 id="*loadDialog"><code>Buffer.loadDialog(server, startFrame: 0, numFrames, action, bufnum)</code></h4>
+
+<p>与上面的 <a href="#*read">*read</a> 相同，但会提供一个加载对话框窗口供你浏览文件。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于分配缓冲区的服务器。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件的开头。</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要读取的帧数。默认值为 -1，将读取整个文件。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+<tr><td class="argumentname"><p>bufnum</p></td><td class="argumentdesc"><p>一个显式指定的缓冲区编号。提供编号会绕过服务器的缓冲区分配器，这可能导致冲突。最佳实践是不设置此项，让缓冲区编号分配器选择下一个可用的 bufnum。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+(
+b = Buffer.loadDialog(s, action: { |buffer|
+    x = { PlayBuf.ar(buffer.numChannels, buffer, BufRateScale.kr(buffer)) }.play;
+});
+)
+x.free; b.free;</code></pre>
+
+<h4 id="*loadChannelDialog"><code>Buffer.loadChannelDialog(server, startFrame: 0, numFrames, channels, action, bufnum)</code></h4>
+
+<p>与上面的 <a href="#*readChannel">*readChannel</a> 类似，但会提供一个加载对话框窗口以供浏览文件。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于分配缓冲区的服务器。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件的开头。</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要读取的帧数。默认值为 -1，将读取整个文件。</p></td></tr>
+<tr><td class="argumentname"><p>channels</p></td><td class="argumentdesc"><p>要从声音文件中读取的声道数组。索引从零开始。将按照提供的顺序读取。如果缺省或为空数组，则将按顺序从声音文件中读取所有声道。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+<tr><td class="argumentname"><p>bufnum</p></td><td class="argumentdesc"><p>一个显式指定的缓冲区编号。提供编号会绕过服务器的缓冲区分配器，这可能导致冲突。最佳实践是不设置此项，让缓冲区编号分配器选择下一个可用的 bufnum。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+(
+b = Buffer.loadChannelDialog(s, channels: [0], action: { arg buffer;
+    x = { PlayBuf.ar(buffer.numChannels, buffer, BufRateScale.kr(buffer)) }.play;
+});
+)
+x.free; b.free;</code></pre>
+
+<h3 id="Creation without Immediate Memory Allocation">不进行立即内存分配的创建</h3>
+
+<h4 id="*new"><code>Buffer.new(server, numFrames, numChannels, bufnum, sampleRate)</code></h4>
+
+<p>创建一个新的 Buffer 对象并返回它，而不会立即在服务器上分配相应的内存。将此与 'message' 方法结合使用，可以灵活地处理 bundle。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于分配缓冲区的服务器。默认为默认服务器。</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要分配的帧数。实际内存使用量将对应于 numFrames * numChannels。</p></td></tr>
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>Buffer 的声道数。默认值为 1。</p></td></tr>
+<tr><td class="argumentname"><p>bufnum</p></td><td class="argumentdesc"><p>一个显式指定的缓冲区编号。提供编号会绕过服务器的缓冲区分配器，这可能导致冲突。最佳实践是不设置此项，让缓冲区编号分配器选择下一个可用的 bufnum。</p></td></tr>
+<tr><td class="argumentname"><p>sampleRate</p></td><td class="argumentdesc"><p>缓冲区的采样率。默认为服务器的采样率。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+b = Buffer.new(s, 44100 * 8.0, 2);
+c = Buffer.new(s, 44100 * 4.0, 2);
+b.query; // numFrames = 0
+s.sendBundle(nil, b.allocMsg, c.allocMsg); // 同时发送两者
+b.query; // 现在正确了
+c.query;
+b.free; c.free;</code></pre>
+
+<h3 id="Cached Buffers">已缓存的缓冲区</h3>
+
+<p>为协助缓冲区信息的自动更新（参见 <code>updateInfo</code> 和 <code>read</code>），缓冲区对象被缓存在与承载这些缓冲区的 <a href="Classes-Server.html">Server</a> 对象关联的集合中。释放缓冲区会将其从缓存中移除；退出服务器会清除所有缓存的缓冲区。（如果服务器意外崩溃，也会发生这种情况。）</p>
+
+<p>你可以使用以下方法访问缓存的缓冲区。</p>
+
+<p>通过服务器对象访问它们可能更简单：</p>
+
+<pre><code>myServer.cachedBufferAt(bufnum)
+myServer.cachedBuffersDo(func)
+
+b = Buffer.alloc(s, 2048, 1);
+Buffer.cachedBufferAt(s, 0);    // 假设 b 的 bufnum 为 0
+s.cachedBufferAt(0);            // 相同结果
+s.cachedBuffersDo({ |buf| buf.postln });</code></pre>
+
+<h4 id="*cachedBufferAt"><code>Buffer.cachedBufferAt(server, bufnum)</code></h4>
+
+<p>通过编号访问缓冲区。</p>
+
+<h4 id="*cachedBuffersDo"><code>Buffer.cachedBuffersDo(server, func)</code></h4>
+
+<p>遍历所有已缓存的缓冲区。遍历不按任何顺序进行，但会触及所有缓冲区。</p>
+
+<h3 id="Undocumented class methods">未文档化的类方法</h3>
+
+<h4 id="*freeAll"><code>Buffer.freeAll(server)</code></h4>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h3 id="Variables">Variables</h3>
+
+<p>以下变量具有 getter 方法。</p>
+
+<h4 id="-server"><code>.server</code></h4>
+
+<p>返回 Buffer 的 Server 对象。</p>
+
+<h4 id="-bufnum"><code>.bufnum</code></h4>
+
+<p>返回相应服务器端缓冲区的缓冲区编号。在正常使用中你不需要访问该值，因为 Buffer 的实例可以直接用作 UGen 输入或 Synth 参数。</p>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+b = Buffer.alloc(s, 44100 * 8.0, 2);
+b.bufnum.postln;
+b.free;</code></pre>
+
+<h4 id="-numFrames"><code>.numFrames</code></h4>
+
+<h4 id="-numFrames"><code>.numFrames = value</code></h4>
+
+<p>返回对应服务器端缓冲区中的采样帧数。注意，多声道缓冲区会交错排列其采样，因此在使用 get 和 getn 等方法处理索引时，实际可用的值数量为 numFrames * numChannels。</p>
+
+<h4 id="-numChannels"><code>.numChannels</code></h4>
+
+<h4 id="-numChannels"><code>.numChannels = value</code></h4>
+
+<p>返回相应服务器端缓冲区中的通道数。</p>
+
+<h4 id="-sampleRate"><code>.sampleRate</code></h4>
+
+<h4 id="-sampleRate"><code>.sampleRate = value</code></h4>
+
+<p>返回语言端的实例变量 <code>sampleRate</code>，即对应服务器端缓冲区的采样率。默认情况下，当实例化 <code>Buffer</code> 时，它会被设置为服务器的采样率。</p>
+
+<p><code>sampleRate</code> 设置方法仅更改语言端的实例变量。它不会重新采样缓冲区，也不会更改服务器端的采样率。要更改服务器端缓冲区的采样率，请使用 <code>setSampleRate</code>。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 设置 <code>sampleRate</code> 实例变量会影响返回的 <a href="#-duration">-duration</a>（其返回 <code>numFrames / sampleRate</code>）。</p></blockquote>
+
+<blockquote class="warning"><p><strong>警告：</strong> 你可以使用 <a href="#-query">-query</a> 在服务器上检查缓冲区的采样率，但这也会<em>更新</em> <code>sampleRate</code> <em>实例变量</em>，覆盖你之前可能设置的值。</p></blockquote>
+
+<h4 id="-setSampleRate"><code>.setSampleRate(value)</code></h4>
+
+<p>在服务器端设置缓冲区的采样率，并在语言端更新其值。这不会对音频进行重采样。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>value</p></td><td class="argumentdesc"><p>新的目标采样率。0 或 nil 将设置为 Server 的采样率。</p></td></tr>
+</table>
+
+<h4 id="-duration"><code>.duration</code></h4>
+
+<p>返回 <code>this.numFrames / this.sampleRate</code>（语言侧的实例变量）。</p>
+
+<h4 id="-path"><code>.path</code></h4>
+
+<h4 id="-path"><code>.path = value</code></h4>
+
+<p>返回一个字符串，包含已加载到相应服务器端缓冲区的声音文件的路径。</p>
+
+<h3 id="Explicit allocation">显式分配</h3>
+
+<p>这些方法在服务器上为先前用 <a href="#*new">*new</a> 创建的 Buffer 分配必要的内存。</p>
+
+<h4 id="-alloc"><code>.alloc(completionMessage)</code></h4>
+
+<h4 id="-allocMsg"><code>.allocMsg(completionMessage)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4 id="-allocRead"><code>.allocRead(argpath, startFrame: 0, numFrames: -1, completionMessage)</code></h4>
+
+<h4 id="-allocReadMsg"><code>.allocReadMsg(argpath, startFrame: 0, numFrames: -1, completionMessage)</code></h4>
+
+<p>将由 <a href="#*new">*new</a> 先前创建的 Buffer 对应的声音文件读入服务器上的缓冲区。请注意，这不会自动更新实例变量。请调用 <code>updateInfo</code> 来完成此操作。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>argpath</p></td><td class="argumentdesc"><p>一个 String，表示要读取的声音文件的路径。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件开头。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要读取的帧数。默认值为 -1，表示读取整个文件。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+b = Buffer.new(s);
+b.allocRead(ExampleFiles.child);
+x = { PlayBuf.ar(1, b, BufRateScale.kr(b), loop: 1) * 0.5 }.play;
+x.free; b.free;</code></pre>
+
+<h4 id="-allocReadChannel"><code>.allocReadChannel(argpath, startFrame: 0, numFrames: -1, channels, completionMessage)</code></h4>
+
+<h4 id="-allocReadChannelMsg"><code>.allocReadChannelMsg(argpath, startFrame: 0, numFrames: -1, channels, completionMessage)</code></h4>
+
+<p>与上面的 <a href="#-allocRead">-allocRead</a> 相同，但允许你指定要读取哪些通道。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>argpath</p></td><td class="argumentdesc"><p>一个 String，表示要读取的声音文件的路径。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件开头。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要读取的帧数。默认值为 -1，表示读取整个文件。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>channels</p></td><td class="argumentdesc"><p>要从声音文件中读取的声道数组。索引从零开始。将按照提供的顺序读取。如果缺省或为空数组，则将按顺序从声音文件中读取所有声道。</p></td></tr>
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+b = Buffer.new(s);
+// 只读取立体声文件的第一个声道（一个正弦波）
+b.allocReadChannel(ExampleFiles.sinedPink, channels: [0]);
+x = { PlayBuf.ar(1, b, BufRateScale.kr(b), loop: 1) * 0.5 }.play;
+x.free; b.free;</code></pre>
+
+<h3 id="Other methods">其他方法</h3>
+
+<h4 id="-read"><code>.read(argpath, fileStartFrame: 0, numFrames: -1, bufStartFrame: 0, leaveOpen: false, action)</code></h4>
+
+<p>将声音文件读入已分配的缓冲区。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>argpath</p></td><td class="argumentdesc"><p>一个 String，表示要读取的声音文件的路径。</p></td></tr>
+<tr><td class="argumentname"><p>fileStartFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件开头。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要读取的帧数。默认值为 -1，表示读取整个文件。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>bufStartFrame</p></td><td class="argumentdesc"><p>缓冲区中开始读取的帧索引。默认值为 0，即缓冲区的开头。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>leaveOpen</p></td><td class="argumentdesc"><p>一个布尔值，指示 Buffer 是否应保持“打开”状态。与 DiskIn 一起使用时，你会希望它设为 true，因为缓冲区将用于从磁盘流式传输声音文件。（为此，缓冲区必须按 (2 * synth 块大小) 的倍数进行分配。常用的数字是 32768 帧。下面的 cueSoundFile 提供了一种更简单的方法来实现此目的。）默认值为 false，这对所有其他情况都是正确的值。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+<tr><td class="argumentname"><p>(completionMessage)</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4 id="-readMsg"><code>.readMsg(argpath, fileStartFrame: 0, numFrames: -1, bufStartFrame: 0, leaveOpen: false, completionMessage)</code></h4>
+
+<p>为读取命令构造消息。args 与 read 的类似，只是最后一个参数是 completionMessage。</p>
+
+<h4>讨论：</h4>
+
+<p>请注意，如果文件中的帧数大于缓冲区中的帧数，则会被截断。请注意，readMsg 不会自动更新实例变量。为此请调用 updateInfo。</p>
+
+<h4 id="-readChannel"><code>.readChannel(argpath, fileStartFrame: 0, numFrames: -1, bufStartFrame: 0, leaveOpen: false, channels, action)</code></h4>
+
+<p>与上面的 <a href="#-read">-read</a> 相同，但允许你指定要读取的通道。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>argpath</p></td><td class="argumentdesc"><p>一个 String，表示要读取的声音文件的路径。</p></td></tr>
+<tr><td class="argumentname"><p>fileStartFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件开头。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要读取的帧数。默认值为 -1，表示读取整个文件。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>bufStartFrame</p></td><td class="argumentdesc"><p>缓冲区中开始读取的帧索引。默认值为 0，即缓冲区的开头。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>leaveOpen</p></td><td class="argumentdesc"><p>一个布尔值，指示 Buffer 是否应保持“打开”状态。与 DiskIn 一起使用时，你会希望它设为 true，因为缓冲区将用于从磁盘流式传输声音文件。（为此，缓冲区必须按 (2 * synth 块大小) 的倍数进行分配。常用的数字是 32768 帧。下面的 cueSoundFile 提供了一种更简单的方法来实现此目的。）默认值为 false，这对所有其他情况都是正确的值。</p></td></tr>
+<tr><td class="argumentname"><p>channels</p></td><td class="argumentdesc"><p>要从声音文件中读取的声道数组。索引从零开始。将按提供的顺序进行读取。请求的声道数必须与这个 Buffer 的 numChannels 匹配。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+<tr><td class="argumentname"><p>(completionMessage)</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4 id="-readChannelMsg"><code>.readChannelMsg(argpath, fileStartFrame: 0, numFrames: -1, bufStartFrame: 0, leaveOpen: false, channels, completionMessage)</code></h4>
+
+<p>同上，用于单声道，最后一个参数为 completionMessage。</p>
+
+<h4 id="-cueSoundFile"><code>.cueSoundFile(path, startFrame, completionMessage)</code></h4>
+
+<h4 id="-cueSoundFileMsg"><code>.cueSoundFileMsg(path, startFrame: 0, completionMessage)</code></h4>
+
+<p>一种便捷方法，可将声音文件提示到缓冲区中以供 <a href="Classes-DiskIn.html">DiskIn</a> 使用。缓冲区的分配帧数必须是（2 * 服务器块大小）的倍数。常见的大小是 32768 帧。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>path</p></td><td class="argumentdesc"><p>一个 String，表示要读取的声音文件的路径。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>要读取的声音文件的第一帧。默认值为 0，即文件开头。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+
+
+
+// 使用 cueSoundFile 类方法创建
+b = Buffer.cueSoundFile(s, ExampleFiles.apollo11, 0, 1);
+x = { DiskIn.ar(1, b) }.play;
+b.close;    // 在 cue 之间必须调用 close
+// 现在像命名实例方法一样使用，但参数不同
+b.cueSoundFile(ExampleFiles.apollo11);
+// 必须完成所有这些才能正确清理！
+x.free; b.close; b.free;</code></pre>
+
+<h4 id="-write"><code>.write(path, headerFormat: &quot;aiff&quot;, sampleFormat: &quot;int24&quot;, numFrames: -1, startFrame: 0, leaveOpen: false, completionMessage)</code></h4>
+
+<h4 id="-writeMsg"><code>.writeMsg(path, headerFormat: &quot;aiff&quot;, sampleFormat: &quot;int24&quot;, numFrames: -1, startFrame: 0, leaveOpen: false, completionMessage)</code></h4>
+
+<p>将缓冲区的内容写入文件。有关 headerFormat 和 sampleFormat 有效值的信息，请参见 <a href="Classes-SoundFile.html">SoundFile</a>。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>path</p></td><td class="argumentdesc"><p>一个表示要写入的声音文件路径的 String。如果未给出路径，Buffer 会以通用名称写入默认录音目录。</p></td></tr>
+<tr><td class="argumentname"><p>headerFormat</p></td><td class="argumentdesc"><p>一个 String。</p></td></tr>
+<tr><td class="argumentname"><p>sampleFormat</p></td><td class="argumentdesc"><p>一个 String。</p></td></tr>
+<tr><td class="argumentname"><p>numFrames</p></td><td class="argumentdesc"><p>要写入的帧数。默认值为 -1，将写入整个缓冲区。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>缓冲区中开始写入的帧索引。默认值为 0，即缓冲区的开头。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>leaveOpen</p></td><td class="argumentdesc"><p>一个布尔值，指示是否应让 Buffer 保持“打开”状态。与 DiskOut 一起使用时，你会希望将其设为 true。默认值为 false，这对所有其他情况都是正确的值。</p></td></tr>
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4 id="-free"><code>.free(completionMessage)</code></h4>
+
+<h4 id="-freeMsg"><code>.freeMsg(completionMessage)</code></h4>
+
+<p>释放缓冲区在服务器上的内存，并将 bufferID 归还给服务器的缓冲区编号分配器以供将来重用。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4 id="-zero"><code>.zero(completionMessage)</code></h4>
+
+<h4 id="-zeroMsg"><code>.zeroMsg(completionMessage)</code></h4>
+
+<p>将此缓冲区中的所有值设为 0.0。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4 id="-set"><code>.set(index, float ... morePairs)</code></h4>
+
+<h4 id="-setMsg"><code>.setMsg(index, float ... morePairs)</code></h4>
+
+<p>将缓冲区中索引处的值设置为等于 float。同一条消息中可以包含额外的索引和浮点数对。（索引的浮点值会被截断为整数。）</p>
+
+<h4>讨论：</h4>
+
+<p>注意，多声道缓冲区会对样本数据进行交织，因此实际可用的值数量等于 <code>numFrames * numChannels</code>。索引从 0 开始。</p>
+
+<pre><code>s.boot;
+b = Buffer.alloc(s, 4, 2);
+b.set(0, 0.2, 1, 0.3, 7, 0.4); // 设置索引 0、1 和 7 处的值。
+b.getn(0, 8, { |msg| msg.postln });
+b.free;</code></pre>
+
+<h4 id="-setn"><code>.setn( ... args)</code></h4>
+
+<h4 id="-setnMsg"><code>.setnMsg( ... args)</code></h4>
+
+<p>将缓冲区中从索引 startAt 开始的一段连续值设置为等于浮点数或整数数组 values。所设置值的数量与 values 的大小相对应。可以在同一条消息中包含额外的起始索引与值数组对。（索引的浮点值会被截断为整数。）</p>
+
+<h4>讨论：</h4>
+
+<p>注意，多声道缓冲区会交错存储其采样数据，因此实际可用的值数量等于 <code>numFrames * numChannels</code>。如有需要，你负责将 values 中的数据交错排列。多维数组将无法使用。索引从 0 开始。</p>
+
+<p>注意：当服务器使用 UDP 作为通信协议时，单条 setn 消息最多可设置 1633 个值。使用 <a href="#-loadCollection">-loadCollection</a> 和 <a href="#-sendCollection">-sendCollection</a> 来设置更大范围的值。</p>
+
+<pre><code>s.boot;
+b = Buffer.alloc(s, 16);
+b.setn(0, Array.fill(16, { rrand(0, 1) }));
+b.getn(0, b.numFrames, { |msg| msg.postln });
+b.setn(0, [1, 2, 3], 4, [1, 2, 3]);
+b.getn(0, b.numFrames, { |msg| msg.postln });
+b.free;</code></pre>
+
+<h4 id="-loadCollection"><code>.loadCollection(collection, startFrame: 0, action)</code></h4>
+
+<p>将大型集合加载到此缓冲区中。这是通过将集合写入 SoundFile 并从那里加载来完成的。因此，此方法仅适用于你本地机器上的服务器。对于远程服务器，请使用下面的 sendCollection。加载后文件会自动删除。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>collection</p></td><td class="argumentdesc"><p>Collection 的一个子类（即 Array），仅包含浮点数和整数。多维数组将无法使用。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>开始加载集合的帧索引。默认值为 0，即缓冲区的起始位置。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>这允许比上面的 setn 更大的集合，并且通常是将大集合放入缓冲区的最安全方式。缓冲区的采样率将是创建它的服务器的采样率。通道数和帧数将在分配缓冲区时确定。你有责任确保集合的大小不大于 numFrames，并在需要时对任何数据进行交错。</p>
+
+<pre><code>s.boot;
+(
+v = Signal.sineFill(128, 1.0 / [1, 2, 3, 4, 5, 6]);
+b = Buffer.alloc(s, 128);
+)
+(
+b.loadCollection(v, action: { |buf|
+    x = { PlayBuf.ar(buf.numChannels, buf, BufRateScale.kr(buf), loop: 1)
+        * 0.2 }.play;
+});
+)
+x.free; b.free;
+
+// 交错一个多维数组
+(
+l = Signal.sineFill(16384, Array.fill(200, { 0 }).add(1));
+r = Array.fill(16384, { 1.0.rand2 });
+m = [Array.newFrom(l), r]; // 一个多维数组
+m = m.lace(32768); // 交错两个集合
+b = Buffer.alloc(s, 16384, 2);
+)
+(
+b.loadCollection(m, 0, { |buf|
+    x = { PlayBuf.ar(2, buf, BufRateScale.kr(buf), loop: 1) * 0.5 }.play;
+});
+)
+b.plot;
+x.free; b.free;</code></pre>
+
+<h4 id="-sendCollection"><code>.sendCollection(collection, startFrame: 0, wait: -1, action)</code></h4>
+
+<p>使用多个 setn 消息将大型集合流式传输到此缓冲区。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>collection</p></td><td class="argumentdesc"><p>Collection 的一个子类（即 Array），仅包含浮点数和整数。多维数组将无法使用。</p></td></tr>
+<tr><td class="argumentname"><p>startFrame</p></td><td class="argumentdesc"><p>在集合中开始流式传输的帧索引。默认值为 0，即缓冲区的起始位置。</p></td></tr>
+<tr><td class="argumentname"><p>wait</p></td><td class="argumentdesc"><p>发送 setn 消息之间的可选等待时间。在高流量情况下，将其设置为大于零的值可能更安全，零是默认值。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>这允许比 setn 更大的集合。它不如上面的 loadCollection 安全，但可与远程机器上的服务器一起使用。缓冲区的采样率将是在其上创建缓冲区的服务器的采样率。</p>
+
+<pre><code>s.boot;
+(
+a = Array.fill(2000000, { rrand(0.0, 1.0) });
+b = Buffer.alloc(s, 2000000);
+)
+b = b.sendCollection(a, action: { |buf| &quot;finished&quot;.postln });
+b.get(1999999, { |msg| (msg == a[1999999]).postln });
+b.free;</code></pre>
+
+<h4 id="-get"><code>.get(index, action)</code></h4>
+
+<h4 id="-getMsg"><code>.getMsg(index)</code></h4>
+
+<p>发送一条消息，请求缓冲区中索引处的值。action 是一个 Function，该值将作为参数传入并在收到回复时求值。（index 的浮点值会被截断为整数。）</p>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+b = Buffer.alloc(s, 16);
+b.setn(0, Array.fill(16, { rrand(0.0, 1.0) }));
+b.get(0, { |msg| msg.postln });
+b.free;</code></pre>
+
+<h4 id="-getn"><code>.getn(index, count, action)</code></h4>
+
+<h4 id="-getnMsg"><code>.getnMsg(index, count, action)</code></h4>
+
+<p>发送一条消息，请求从 index 开始、大小为 count 的连续范围的值。action 是一个 Function，它会将值以 Array 的形式作为参数传入，并在收到回复时求值。（index 和 count 的浮点值会被截断为整数。）</p>
+
+<h4>讨论：</h4>
+
+<p>注意：当服务器使用 UDP 作为其通信协议时，通过单条 getn 消息最多可以获取 1633 个值。请使用 <a href="#-loadToFloatArray">-loadToFloatArray</a> 和 <a href="#-getToFloatArray">-getToFloatArray</a> 来获取更大范围的值。</p>
+
+<h4 id="-loadToFloatArray"><code>.loadToFloatArray(index: 0, count: -1, action)</code></h4>
+
+<p>将缓冲区写入文件，然后将其加载到 FloatArray 中。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>index</p></td><td class="argumentdesc"><p>缓冲区中开始写入的索引。默认为 0。</p></td></tr>
+<tr><td class="argumentname"><p>count</p></td><td class="argumentdesc"><p>要写入的值的数量。默认值为 -1，表示从索引开始一直写入到缓冲区末尾。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在加载完成时会被求值，并将得到的 FloatArray 作为参数传入。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>这比 getToFloatArray 更安全，但仅适用于位于本地机器上的服务器。一般来说，这是从服务器缓冲区获取大范围值到客户端应用程序的最安全方式。</p>
+
+<pre><code>s.boot;
+b = Buffer.read(s, ExampleFiles.child);
+// 与 Buffer.plot 相同
+b.loadToFloatArray(action: { |array| { array.plot }.defer; &quot;done&quot;.postln });
+b.free;</code></pre>
+
+<h4 id="-getToFloatArray"><code>.getToFloatArray(index: 0, count: -1, wait: 0.01, timeout: 3, action)</code></h4>
+
+<p>使用一系列 getn 消息将缓冲区流式传输到客户端，并将结果放入 FloatArray。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>index</p></td><td class="argumentdesc"><p>开始写入时在缓冲区中的索引。默认为 0。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>count</p></td><td class="argumentdesc"><p>要获取的值的数量。默认值为 -1，表示从 index 获取到缓冲区末尾。（浮点值会被截断为整数。）</p></td></tr>
+<tr><td class="argumentname"><p>wait</p></td><td class="argumentdesc"><p>发送 getn 消息之间等待的时间量，以秒为单位。较长的等待时间更安全。默认值为 0.01 秒，在正常情况下似乎可靠。不建议设置为 0。</p></td></tr>
+<tr><td class="argumentname"><p>timeout</p></td><td class="argumentdesc"><p>在此时间（秒）之后，如果尚未收到所有回复，则发布警告。默认值为 3。</p></td></tr>
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，会将得到的 FloatArray 作为参数传入，并在收到所有回复后求值。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>这比 loadToFloatArray 风险更大，但确实可用于远程机器上的服务器。在高流量情况下，数据可能会丢失。如果该方法在超时前未收到其全部回复，它将发布一条警告，说明该方法已失败。一般来说，应尽可能改用 loadToFloatArray。</p>
+
+<pre><code>s.boot;
+b = Buffer.read(s, ExampleFiles.child);
+// 类似 Buffer.plot
+b.getToFloatArray(wait: 0.01, action: { |array { array.plot }.defer; &quot;done&quot;.postln });
+b.free;</code></pre>
+
+<h4 id="-normalize"><code>.normalize(newmax: 1, asWavetable: false)</code></h4>
+
+<h4 id="-normalizeMsg"><code>.normalizeMsg(newmax: 1, asWavetable: false)</code></h4>
+
+<p>对缓冲区进行归一化，使峰值绝对值为 newmax（默认为 1）。若缓冲区为 Wavetable 格式，则将 asWavetable 参数设为 true。</p>
+
+<h4 id="-fill"><code>.fill(startAt, numFrames, value ... more)</code></h4>
+
+<h4 id="-fillMsg"><code>.fillMsg(startAt, numFrames, value ... more)</code></h4>
+
+<p>从索引 startAt 开始，将接下来的 numFrames 设为 value。可以在同一消息中包含额外的范围。（startAt 或 numFrames 的浮点值会被截断为整数。）</p>
+
+<h4 id="-copyData"><code>.copyData(buf, dstStartAt: 0, srcStartAt: 0, numSamples: -1)</code></h4>
+
+<h4 id="-copyMsg"><code>.copyMsg(buf, dstStartAt: 0, srcStartAt: 0, numSamples: -1)</code></h4>
+
+<p>从索引 srcStartAt 开始，从本缓冲区复制 numSamples 个样本到目标缓冲区 buf 中从 dstStartAt 开始的位置。如果 numSamples 为负，则复制尽可能多的样本。默认从源中的 0 开始，并从目标中的 0 开始复制尽可能多的样本。（srcStartAt、numSamples 和 dstStartAt 的浮点值会被截断为整数。）</p>
+
+<h4>讨论：</h4>
+
+<p>注意：此方法过去称为 copy，但这与用于对象复制的方法冲突。因此 Buffer:copy 现在旨在创建客户端侧 Buffer 对象的副本。将其用于在服务器上复制缓冲区数据的用法已弃用。如果你看到弃用警告，数据仍会在服务器上被复制，你的代码仍可正常工作，但你应更新代码以使用新的方法名。</p>
+
+<pre><code>s.boot;
+(
+SynthDef(\help_Buffer_copy, { |out = 0, buf|
+    Line.ar(0, 0, dur: BufDur.kr(buf), doneAction: Done.freeSelf);
+    Out.ar(out, PlayBuf.ar(1, buf));
+}).add;
+)
+
+(
+b = Buffer.read(s, ExampleFiles.child);
+c = Buffer.alloc(s, 120000);
+)
+
+Synth(\help_Buffer_copy, [\buf, b]);
+
+// 复制整个缓冲区
+b.copyData(c);
+Synth(\help_Buffer_copy, [\buf, c]);
+
+// 复制一些样本
+c.zero;
+b.copyData(c, numSamples: 4410);
+Synth(\help_Buffer_copy, [\buf, c]);
+
+// 缓冲区 &quot;compositing&quot;
+c.zero;
+b.copyData(c, numSamples: 4410);
+b.copyData(c, dstStartAt: 4410, numSamples: 15500);
+Synth(\help_Buffer_copy, [\buf, c]);
+
+b.free;
+c.free;</code></pre>
+
+<h4 id="-close"><code>.close(completionMessage)</code></h4>
+
+<h4 id="-closeMsg"><code>.closeMsg(completionMessage)</code></h4>
+
+<p>将 Buffer 与 DiskOut 或 DiskIn 一起使用后，必须关闭声音文件。否则可能导致问题。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>completionMessage</p></td><td class="argumentdesc"><p>一个有效的 OSC 消息或一个将返回该消息的 Function。当求值时，此 Buffer 将作为参数传递给 Function。</p></td></tr>
+</table>
+
+<h4 id="-plot"><code>.plot: METHOD NOT FOUND!</code></h4>
+
+<p>在 GUI 窗口中绘制 Buffer 的内容。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>name</p></td><td class="argumentdesc"><p>生成窗口的名称。</p></td></tr>
+<tr><td class="argumentname"><p>bounds</p></td><td class="argumentdesc"><p>一个 Rect 实例，用于确定结果视图的大小。</p></td></tr>
+<tr><td class="argumentname"><p>minval</p></td><td class="argumentdesc"><p>绘图中的最小值</p></td></tr>
+<tr><td class="argumentname"><p>maxval</p></td><td class="argumentdesc"><p>绘图中的最大值</p></td></tr>
+<tr><td class="argumentname"><p>separately</p></td><td class="argumentdesc"><p>一个布尔值，表示使用各自独立的显示范围还是单一共享范围。</p></td></tr>
+<tr><td class="argumentname"><p>parent</p></td><td class="argumentdesc"><p>可以传入一个 <a href="Classes-Window.html">Window</a> 或 <a href="Classes-View.html">View</a>——此时绘图嵌入其中。否则将创建一个新的 <a href="Classes-Window.html">Window</a>。</p>
+
+<pre><code>(
+s.waitForBoot {
+    var w = Window(&quot;parent&quot;);
+    var buf = Buffer.read(s, ExampleFiles.sinedPink);
+    s.sync;
+    buf.plot(parent: w);
+    w.front
+}
+)</code></pre></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+b = Buffer.read(s, ExampleFiles.child);
+b.plot;
+b.free;</code></pre>
+
+<h4 id="-play"><code>.play(loop: false, mul: 1)</code></h4>
+
+<p>在服务器上播放缓冲区的全部内容，并返回一个对应的 Synth。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>loop</p></td><td class="argumentdesc"><p>一个 Boolean，指示是否循环播放。如果为 false，则 synth 完成后会自动释放。默认为 false。</p></td></tr>
+<tr><td class="argumentname"><p>mul</p></td><td class="argumentdesc"><p>用于缩放输出的值。默认值为 1。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+b = Buffer.read(s, ExampleFiles.child);
+b.play; // 自我释放
+x = b.play(true);
+x.free; b.free;</code></pre>
+
+<h4 id="-query"><code>.query(action)</code></h4>
+
+<p>向服务器发送 <code>\b_query</code> 消息，服务器会返回以下内容：OSC 地址模式（<code>/b_info</code>）、服务器端缓冲区表示的 <code>bufnum</code>、<code>numFrames</code>、<code>numChannels</code> 和 <code>sampleRate</code>。这些值会按顺序传给 <strong>action</strong> 函数，默认情况下为：</p>
+
+<pre><code>action: { |oscAddrPattern, bufnum, numFrames, numChannels, sampleRate|
+    postf(&quot;bufnum: %\nnumFrames: %\nnumChannels: %\nsampleRate: %\n&quot;,
+        bufnum, numFrames, numChannels, sampleRate
+    );
+}</code></pre>
+
+<p>它会发布缓冲区的属性。</p>
+
+<blockquote class="warning"><p><strong>警告：</strong> 调用 <code>query</code> 将更新 <code>Buffer</code> 实例变量 <code>numFrames</code>、<code>numChannels</code> 和 <code>sampleRate</code>。这是存储在 <code>serverCaches</code> 中缓冲条目里的 OSC 响应器动作的副作用。</p></blockquote>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个可选的 <a href="Classes-Function.html">Function</a>，会以上面列出的缓冲区属性作为参数被调用，替代默认的 <strong>action</strong>。</p></td></tr>
+</table>
+
+<h4 id="-updateInfo"><code>.updateInfo(action)</code></h4>
+
+<p>向服务器发送 b_query 消息，请求该缓冲区的描述。收到回复后，该 Buffer 的实例变量会自动更新。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>一个 Function，在文件读取完成且此 Buffer 的实例变量已更新后求值。该函数将把此 Buffer 作为参数传入。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+b = Buffer.readNoUpdate(s, ExampleFiles.child);
+b.numFrames; // 显示 nil
+b.updateInfo({ |buf| buf.numFrames.postln }); // 现在已更新
+b.free;</code></pre>
+
+<h3 id="Buffer Fill Commands">缓冲区填充命令</h3>
+
+<p>这些对应于各种 b_gen OSC 命令，它们用要使用的值填充缓冲区。更多细节请参见 <a href="Reference-Server-Command-Reference.html">服务器命令参考</a>。</p>
+
+<h4 id="-gen"><code>.gen(genCommand, genArgs, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<h4 id="-genMsg"><code>.genMsg(genCommand, genArgs, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<p>这是下面命令的通用版本。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>genCommand</p></td><td class="argumentdesc"><p>一个 String，指示要使用的命令名称。有效命令名称列表参见 Server-Command-Reference。</p></td></tr>
+<tr><td class="argumentname"><p>genArgs</p></td><td class="argumentdesc"><p>一个 Array，包含该命令对应的参数。</p></td></tr>
+<tr><td class="argumentname"><p>normalize</p></td><td class="argumentdesc"><p>一个 Boolean，指示是否将缓冲区归一化到峰值为 1.0。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>asWavetable</p></td><td class="argumentdesc"><p>一个布尔值，指示是否以波表格式写入缓冲区，以便可以通过插值振荡器读取。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>clearFirst</p></td><td class="argumentdesc"><p>一个 Boolean，指示写入前是否清空缓冲区。默认为 true。</p></td></tr>
+</table>
+
+<h4 id="-sine1"><code>.sine1(amps, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<h4 id="-sine1Msg"><code>.sine1Msg(amps, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<p>用指定振幅的一系列正弦波谐波填充此缓冲区。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>amps</p></td><td class="argumentdesc"><p>一个包含各次谐波振幅的数组。第一个浮点值指定第一个分音的振幅，第二个浮点值指定第二个分音的振幅，以此类推。</p></td></tr>
+<tr><td class="argumentname"><p>normalize</p></td><td class="argumentdesc"><p>一个 Boolean，指示是否将缓冲区归一化到峰值为 1.0。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>asWavetable</p></td><td class="argumentdesc"><p>一个布尔值，指示是否以波表格式写入缓冲区，以便可以通过插值振荡器读取。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>clearFirst</p></td><td class="argumentdesc"><p>一个 Boolean，指示写入前是否清空缓冲区。默认为 true。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+(
+b = Buffer.alloc(s, 512, 1);
+b.sine1(1.0 / [1, 2, 3, 4], true, true, true);
+x = { Osc.ar(b, 200, 0, 0.5) }.play;
+)
+x.free; b.free;</code></pre>
+
+<h4 id="-sine2"><code>.sine2(freqs, amps, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<h4 id="-sine2Msg"><code>.sine2Msg(freqs, amps, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<p>使用指定的频率和振幅，用一系列正弦波分音填充此缓冲区。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>freqs</p></td><td class="argumentdesc"><p>一个包含各分音频率（以每缓冲区周期数为单位）的数组。</p></td></tr>
+<tr><td class="argumentname"><p>amps</p></td><td class="argumentdesc"><p>一个包含各分音振幅的数组。其项数应与 freqs 相同。</p></td></tr>
+<tr><td class="argumentname"><p>normalize</p></td><td class="argumentdesc"><p>一个 Boolean，指示是否将缓冲区归一化到峰值为 1.0。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>asWavetable</p></td><td class="argumentdesc"><p>一个布尔值，指示是否以波表格式写入缓冲区，以便可以通过插值振荡器读取。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>clearFirst</p></td><td class="argumentdesc"><p>一个 Boolean，指示写入前是否清空缓冲区。默认为 true。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>s.boot;
+(
+b = Buffer.alloc(s, 512, 1);
+b.sine2([1.0, 3], [1, 0.5]);
+x = { Osc.ar(b, 200, 0, 0.5) }.play;
+)
+x.free; b.free;</code></pre>
+
+<h4 id="-sine3"><code>.sine3(freqs, amps, phases, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<h4 id="-sine3Msg"><code>.sine3Msg(freqs, amps, phases, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<p>使用指定的频率、振幅和初始相位，用一系列正弦波分音填充此缓冲区。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>freqs</p></td><td class="argumentdesc"><p>一个包含各分音频率（以每缓冲区周期数为单位）的数组。</p></td></tr>
+<tr><td class="argumentname"><p>amps</p></td><td class="argumentdesc"><p>一个包含各分音振幅的数组。其项数应与 freqs 相同。</p></td></tr>
+<tr><td class="argumentname"><p>phases</p></td><td class="argumentdesc"><p>一个包含各分音初始相位（以弧度为单位）的数组。其元素个数应与 freqs 相同。</p></td></tr>
+<tr><td class="argumentname"><p>normalize</p></td><td class="argumentdesc"><p>一个 Boolean，指示是否将缓冲区归一化到峰值为 1.0。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>asWavetable</p></td><td class="argumentdesc"><p>一个布尔值，指示是否以波表格式写入缓冲区，以便可以通过插值振荡器读取。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>clearFirst</p></td><td class="argumentdesc"><p>一个 Boolean，指示写入前是否清空缓冲区。默认为 true。</p></td></tr>
+</table>
+
+<h4 id="-cheby"><code>.cheby(amps, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<h4 id="-chebyMsg"><code>.chebyMsg(amps, normalize: true, asWavetable: true, clearFirst: true)</code></h4>
+
+<p>用一系列 Chebyshev 多项式填充此缓冲区，其定义如下：<code>cheby(n) = amplitude * cos(n * acos(x))</code>。为消除用作波形整形器时的直流偏移，波表会进行偏移，使中心值为零。</p>
+
+<p>类似的功能可在 <a href="Classes-Signal.html#*chebyFill">Signal.chebyFill</a> 和 <a href="Classes-Wavetable.html#*chebyFill">Wavetable.chebyFill</a> 中找到。如果你需要不包含偏移补偿的 Chebyshev 多项式，建议使用其中之一。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>amps</p></td><td class="argumentdesc"><p>一个包含各次谐波幅度的数组。第一个浮点值指定 n = 1 的幅度，第二个浮点值指定 n = 2 的幅度，依此类推。</p></td></tr>
+<tr><td class="argumentname"><p>normalize</p></td><td class="argumentdesc"><p>一个 Boolean，指示是否将缓冲区归一化到峰值为 1.0。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>asWavetable</p></td><td class="argumentdesc"><p>一个布尔值，指示是否以波表格式写入缓冲区，以便可以通过插值振荡器读取。默认为 true。</p></td></tr>
+<tr><td class="argumentname"><p>clearFirst</p></td><td class="argumentdesc"><p>一个 Boolean，指示写入前是否清空缓冲区。默认为 true。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<blockquote class="note"><p><strong>注意：</strong> 在之前的版本中，偏移处理（以确保中心值为零）的执行方式不正确。此问题已在 3.7 版本中修复，因此任何可能依赖（错误）行为的代码都可能需要修改。如果将 Chebyshev 缓冲区用作波形整形器，最简单的修复方法是将 <a href="Classes-Shaper.html">Shaper</a> 包装在 <a href="Classes-LeakDC.html">LeakDC</a> UGen 中。</p></blockquote>
+
+<pre><code>s.boot;
+b = Buffer.alloc(s, 512, 1, { |buf| buf.chebyMsg([1, 0, 1, 1, 0, 1]) });
+(
+x = {
+    Shaper.ar(
+        b,
+        SinOsc.ar(300, 0, Line.kr(0, 1, 6)),
+        0.5
+    )
+}.play;
+)
+x.free; b.free;</code></pre>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-asBufWithValues"><code>.asBufWithValues</code></h4>
+
+<h4 id="-asControlInput"><code>.asControlInput</code></h4>
+
+<h4 id="-asUGenInput"><code>.asUGenInput</code></h4>
+
+<h4 id="-cache"><code>.cache</code></h4>
+
+<h4 id="-doOnInfo"><code>.doOnInfo = value</code></h4>
+
+<h4 id="-preparePartConv"><code>.preparePartConv(buf, fftsize)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/Common/Audio/PartConv.sc">/usr/local/share/SuperCollider/SCClassLibrary/Common/Audio/PartConv.sc</a></em></p>
+
+<h4 id="-queryDone"><code>.queryDone</code></h4>
+
+<h4 id="-queryMsg"><code>.queryMsg</code></h4>
+
+<h4 id="-readNoUpdate"><code>.readNoUpdate(argpath, fileStartFrame: 0, numFrames: -1, bufStartFrame: 0, leaveOpen: false, completionMessage)</code></h4>
+
+<h4 id="-setSampleRateMsg"><code>.setSampleRateMsg(value)</code></h4>
+
+<h4 id="-setnMsgArgs"><code>.setnMsgArgs( ... args)</code></h4>
+
+<h4 id="-startFrame"><code>.startFrame</code></h4>
+
+<h4 id="-startFrame"><code>.startFrame = value</code></h4>
+
+<h4 id="-streamCollection"><code>.streamCollection(collstream, collsize, startFrame: 0, wait: -1, action)</code></h4>
+
+<h4 id="-uncache"><code>.uncache</code></h4>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/Buffer.html" rel="noreferrer noopener">Classes/Buffer.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

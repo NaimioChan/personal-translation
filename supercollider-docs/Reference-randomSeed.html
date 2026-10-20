@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>随机种子 - SuperCollider 文档</title>
+<meta name="description" content="随机生成器种子">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>随机种子</h1>
+
+<p><em>随机生成器种子</em></p>
+
+<p>另请参阅：<a href="Guides-Randomness.html">Randomness</a>、<a href="Classes-RandSeed.html">RandSeed</a>、<a href="Classes-Pseed.html">Pseed</a>、<a href="Classes-Thread.html">Thread</a></p>
+
+<h2 id="Introduction">Introduction</h2>
+
+<p>sclang 中的每个 <a href="Classes-Thread.html">Thread</a> 都有一个（伪）随机数生成器，负责该线程内的所有随机化操作。每个随机数生成器都有自己的种子（起始点），值序列由该种子生成。可以设置此种子，之后该随机数生成器（严格确定性）会再次产生完全相同的数字。</p>
+
+<p>为了节省磁盘空间，你可以通过一个可以记录在笔记本上的整数来重现任意随机数据序列。</p>
+
+<h4 id=".randSeed"><code>randSeed</code></h4>
+
+<pre><code>// 每个线程，也包括 Routine，都有一个随机生成器种子：
+(
+r = Routine({
+    loop({#[1,2,3,4,5].choose.yield })
+});
+r.randSeed = 1923;
+)
+
+// 使用例程填充数组
+Array.fill(7, r);
+
+// 将随机生成器种子设置回我们最初的种子
+r.randSeed = 1923;
+
+// 使该数组完全相同
+Array.fill(7, r);</code></pre>
+
+<h3 id="Inheriting Seeds">继承种子</h3>
+
+<p>当创建一个例程时，它会从父线程（<a href="Classes-Thread.html#.thisThread">thisThread</a>）继承其随机数生成器。如果没有设置特定的 randSeed（通常情况），那么同一个随机数生成器对象会同时为父线程和子线程提供数字（一个随机数流，在两者之间分配）。</p>
+
+<p>父线程是创建新 Routine 那一刻正在生效的那个 Routine。如果那一刻没有 Routine 正在求值，那么父线程就是 sclang 进程主 <a href="Classes-Thread.html">Thread</a>。默认情况下，所有 Routine 都从主线程继承随机数生成器。</p>
+
+<p>那么，要为整个应用程序设置主随机种子，请在任何 Routine 的上下文之外求值 <code>thisThread.randSeed = yourSeed</code>，如下例所示。</p>
+
+<pre><code>thisThread.randSeed = 1923;
+
+// 创建一个返回 Routine 的函数
+
+r = { Routine({
+    loop({#[1,2,3,4,5].choose.yield })
+}) };
+
+Array.fill(7, r.value);
+
+// 重置种子
+thisThread.randSeed = 1923;
+
+Array.fill(7, r.value);</code></pre>
+
+<p>当你在例程上设置 <code>randSeed</code> 时，该例程会切换到它自己的随机数生成器，独立于任何其他生成器。随后，在此例程内创建的例程将继承其唯一的随机数生成器。</p>
+
+<pre><code>(
+thisThread.randSeed = 1000;
+TempoClock.sched(0, { 1000.rand.debug(&quot;main RNG&quot;); 1 });
+
+fork {
+    2.1.wait;
+    thisThread.randSeed = 1000;
+    loop { 1000.rand.debug(&quot;routine RNG&quot;); 1.wait }
+};
+)
+
+main RNG: 592 // sequence is 592, 876, 614, 236...
+main RNG: 876
+main RNG: 614
+routine RNG: 592 // sequence is 592, 876...
+main RNG: 236
+routine RNG: 876</code></pre>
+
+<p>请注意，这种继承只在创建新 Routine 的那一刻发生。对子 Routine 调用 <code>next</code> 或 <code>play</code> 并不会覆盖该 Routine 的随机数生成器。</p>
+
+<h3 id="Audio example">音频示例</h3>
+
+<pre><code>// 使用种子来完全重现一个声音：
+(
+SynthDef(\help_randomSeed, { arg out=0, freq=440;
+    Out.ar(out,
+        Line.kr(1, 0, 0.3, doneAction: Done.freeSelf) *
+        Resonz.ar(
+            Dust2.ar([10, 10], 270) + WhiteNoise.ar(4),
+        freq, 0.01)
+    )
+}).send(s);
+
+SynthDef(\help_setRandomSeed, { arg seed=1956, tbus=0.0;
+        RandSeed.kr(tbus, seed);
+}).send(s);
+)
+
+// 运行一个 patch
+(
+x = Synth(\help_setRandomSeed);
+r = Routine({
+    loop({
+        Synth(\help_randomSeed, [\freq, rrand(440, 700)]);
+        0.25.wait;
+    })
+}).play;
+)
+
+
+// 创建一个重置任务
+
+(
+d = 1250;// seed
+t = Task({
+    loop({
+        x.set(\seed, d, \tbus, 1.0); r.randSeed = d;
+        0.1.wait;
+        x.set(\tbus, 0.0);
+        1.9.wait;
+    })
+});
+)
+
+// 声音开始循环
+t.start;
+
+d = 1251; // 不同的循环
+d = 1925;
+
+
+// 声音又变得像随机一样，对任何东西都不感兴趣。
+t.stop;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Reference/randomSeed.html" rel="noreferrer noopener">Reference/randomSeed.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

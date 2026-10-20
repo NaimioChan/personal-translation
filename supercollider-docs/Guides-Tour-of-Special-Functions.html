@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>特殊函数之旅 - SuperCollider 文档</title>
+<meta name="description" content="Boost 特殊函数的示例与绘图">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>特殊函数之旅</h1>
+
+<p><em>Boost 特殊函数的示例与绘图</em></p>
+
+<p>参见：<a href="Classes-SimpleNumber.html">SimpleNumber</a></p>
+
+<p><span id="kw_special functions"> </span><span id="kw_boost"> </span></p>
+
+<h2 id="description">说明</h2>
+
+<p>Boost 库特殊函数：用法、边界与绘图</p>
+
+<p>由 Boost 库提供的特殊函数数组。该库的<a href="http://www.boost.org/doc/libs/1_66_0/libs/math/doc/html/special.html">在线文档</a>是以下函数的主要参考资料。</p>
+
+<p>许多函数只在特定数值范围内有效。下面的导览将展示说明函数行为、其范围与渐近线的图。</p>
+
+<p>在下一节中定义绘图函数，然后你可以使用目录菜单在各函数族之间跳转。</p>
+
+<h2 id="Before you get started...">在开始之前……</h2>
+
+<p>定义以下函数，它们将为你布置绘图：</p>
+
+<pre><code>(
+var genCol, getPlotLay, multiPlot, layOutPlots, plotSpecs;
+
+// 为每个绘图生成颜色
+genCol = { |num, offset=(rrand(0,1.0)), range=(rrand(0.15,1.3))|
+    num.collect { |i|
+        Color.hsv(((i/(max(num,1.0001)-1)) * range + offset).wrap(0,1), 0.6, 1, 1)
+    }
+};
+// 为绘图及其文本生成垂直布局
+getPlotLay = { |plot, text|
+    VLayout(plot, StaticText().string_(text).maxHeight_(50).align_(\center), 10)
+};
+
+~multiPlot = { |func, data, txt, min, max|
+    var res, params, samps, clumped, pltr;
+    var gridcol = Color.gray.alpha_(0.2);
+
+    if(data.shape.size == 1) {
+        samps = data;
+        clumped = data.asList.flop;
+    }{
+        #params, samps = data;
+        if (params.size &gt; 6) {
+            txt = txt ++ format(&quot;( % .. % )&quot;, params.first, params.last);
+        } {
+            txt = txt ++ params.asString;
+        };
+        clumped = params.collect{ |param, i|
+            samps.collect([param, _, i])
+        }
+    };
+
+    res = clumped.collect({ |bundle, i|
+        bundle.collect(func.applyTo(*_)).select(_.notNil)
+    });
+
+    pltr = res.plot( txt, minval: min, maxval: max)
+    .superpose_(true)
+    .domainSpecs_([samps.minItem, samps.maxItem].asSpec)
+    .plotColor_(
+        genCol.(params !? params.size ?? 1, rrand(0,1.0))
+    )
+    ;
+
+    pltr.plots[0]
+    .gridColorX_(gridcol)
+    .gridColorY_(gridcol)
+    ;
+
+    pltr
+};
+
+~layOutPlots = { |plotters, title=&quot;&quot;, numCols|
+    var cols, hl, plotlay, colbut, plots, wscl;
+    var vl = VLayout();
+    var sb = Window.screenBounds;
+
+    cols = numCols ?? { plotters.size.sqrt.ceil.asInteger };
+    wscl = cols.linlin(1, 4, 0.5, 0.9);
+    w = Window(title,
+        Rect().width_(sb.width*wscl).height_(sb.height).center_(sb.center)
+    ).view.layout_(vl).front;
+
+    colbut = Button().states_([[&quot;Light Plots&quot;], [&quot;Dark Plots&quot;]]).maxSize_(Size(80,15));
+    vl.add(HLayout(nil, colbut));
+
+    plotters.do { |pltr, i|
+        var plot = pltr.parent.view.children[0];
+        if(i % cols == 0) {
+            vl.add(hl = HLayout())
+        };
+        plotlay = getPlotLay.(plot, pltr.name.asString);
+        hl.add(plotlay);
+        pltr.parent.close;
+    };
+
+    if((plotters.size) % cols &gt; 0) {
+        ((cols-(plotters.size)%cols)).do{hl.add(StaticText().string_(&quot;&quot;))}
+    };
+
+    colbut.action_({ |but|
+        var switch = but.value.asBoolean;
+        plotters.do{ |pltr|
+            pltr.plots[0]
+            .backgroundColor_(
+                switch.if({Color.white.alpha_(1)}, {Color(*0.1.dup(3)).alpha_(0.95)})
+            )
+            .fontColor_(
+                switch.if({Color.gray},{Color.red});
+            );
+        };
+        w.refresh;
+    });
+    colbut.value_(0).doAction; // 以深色绘图开始
+};
+)</code></pre>
+
+<h2 id="Number Series">数列</h2>
+
+<pre><code>/* 伯努利数 */
+
+//   奇数编号的伯努利数为零，除了 B1
+//   其值为 -1/2。输出偶数伯努利数：
+(0..31).do{ |i| postf(&quot;% %\n&quot;, i*2, bernouliB2n(i)) }
+
+
+/* 正切数 */
+
+(0..15).do { |i| postf(&quot;% %\n&quot;, i, tangentT2n(i)) }</code></pre>
+
+<h2 id="Gamma Functions">伽马函数</h2>
+
+<h3 id="Gamma, Log Gamma, Digamma, Trigamma, Polygamma">Gamma、Log Gamma、Digamma、Trigamma、Polygamma</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var checkCall, plotSpecs;
+// 确保 z 不是负整数
+checkCall = { |selector, z|
+    if ((z &lt;= 0) nand: { (z % 1) == 0 }) { z.perform(selector) }
+};
+
+plotSpecs = [
+    [   { |z| checkCall.(\tgamma, z) },
+        (-4, -3.95 .. 6),
+        &quot;tgamma(z)\n\&quot;True\&quot; gamma function&quot;,
+        -125, 125
+    ],
+    [   { |dz| checkCall.(\tgamma1pm1, dz) },
+        (-4, -3.95 .. 6),
+        &quot;tgamma1pm1(dz)\ngamma(dz + 1) - 1&quot;,
+        -125, 125
+    ],
+    [   { |z| checkCall.(\lgamma, z) },
+        (-4, -3.95 .. 10),
+        &quot;lgamma(z)\nLog gamma&quot;,
+        -2.5, 12.5
+    ],
+    [   { |z| checkCall.(\digamma, z) },
+        (-3, -2.95 .. 10),
+        &quot;digamma(z)\nDigamma&quot;,
+        -2.5, 12.5
+    ],
+    [   { |z| checkCall.(\trigamma, z) },
+        (-3.99, -3.94 .. 10),
+        &quot;trigamma(z)\nTrigamma&quot;,
+        0, 30
+    ],
+    [   // 确保 z 不是负整数
+        { |n, z| if ( z &lt;= 0 nand: { (z % 1) == 0 }) { polygamma(n, z) } },
+        [[2,3], (-6, -5.95 .. 5)],
+        &quot;polygamma(z)\nPolygamma\nn=&quot;,
+        -50, 400
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Gamma Functions&quot;, 2 );
+)</code></pre>
+
+<h3 id="Gamma Ratios, Incomplete/Inverses, and Derivatives of Gamma Functions">Gamma 比值、不完全/反函数以及 Gamma 函数的导数</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   \gammaP,
+        [ (0.1, 0.3 .. 8), (0.01, 0.05 .. 20) ],
+        &quot;gammaP(a, z)\nLower incomplete gamma function (normalized)\na=&quot;,
+    ],
+    [   \gammaQ,
+        [ (0.1, 0.3 .. 8), (0.01, 0.05 .. 20) ],
+        &quot;gammaQ(a, z)\nUpper incomplete gamma function (normalized)\na=&quot;,
+    ],
+    [   \tgammaLower,
+        [ (0.1, 0.3 .. 8), (0.01, 0.05 .. 6) ],
+        &quot;tgammaLower(a, z)\nLower incomplete gamma function (non-normalized)\na=&quot;,
+        0, 3
+    ],
+    [   \tgammaUpper,
+        [ (0.1, 0.3 .. 8), (0.01, 0.05 .. 6) ],
+        &quot;tgammaUpper(a, z)\nUpper incomplete gamma function (non-normalized)\na=&quot;,
+        0, 3
+    ],
+    [   { |delta, z| if(z.neg != delta) { tgammaDeltaRatio(z, delta) } },
+        [ (-0.5, -0.45  .. 1), (0.0001, 0.1 .. 40)],
+        &quot;tgammaDeltaRatio(z, delta)\nGamma Delta Ratio\ndelta=&quot;,
+        0, 7
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect { |data| ~multiPlot.(*data) }, &quot;Gamma Functions (cont&#x27;d)&quot;, 2 );
+)</code></pre>
+
+<h2 id="Factorials and Binomial Coefficients">阶乘与二项式系数</h2>
+
+<pre><code>/*  阶乘  */
+// 警告：溢出 i &gt; 170
+(1..170).do{ |i| (i.asString + factorial(i.asFloat)).postln };
+
+
+/*  双阶乘  */
+// for even i, i !! = i(i-2)(i-4)(i-6) ... (4)(2)
+doubleFactorial(8);
+// for odd i, i !! = i(i-2)(i-4)(i-6) ... (3)(1)
+doubleFactorial(7)
+
+/*  上升阶乘  */
+// x(x+1)(x+2)(x+3)...(x+i-1)
+risingFactorial(9, 4)  // 9 * 10 * 11 ... (9+4-1)
+
+/*  下降阶乘  */
+// x(x-1)(x-2)(x-3)...(x-i+1)
+fallingFactorial(9, 4) // 9 *  8 *  7 ... (9-4+1)</code></pre>
+
+<h2 id="Beta Functions">Beta 函数</h2>
+
+<h3 id="Beta Functions, Incomplete and Derivative">Beta 函数、不完全 Beta 函数与导数</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var as = [9,7,5,2,1];
+var bs = [1,2,5,7,9];
+var xs = (0, 0.005 .. 1);
+var plotSpecs = [
+    [   { |a, b| log(beta(a, b)) }, // 注意：像 boost 文档中那样使用 log 进行绘图
+        [[0.5, 1.0, 5.0, 10.0], (0.001, 0.005 .. 5)],
+        &quot;log(beta(a, b))\nBeta function\nas=&quot;,
+        -10, 10
+    ],
+    [   { |a, x, i| ibetaDerivative(a, bs[i], x) },
+        [as, xs],
+        &quot;ibetaDerivative(a, b, x)\nDerivative of the Incomplete Beta function (norm)\nbs=[1,2,5,7,9]  as=&quot;,
+        0, 6
+    ],
+    [   { |a, x, i| ibeta(a, bs[i], x) },
+        [as, xs],
+        &quot;ibeta(a, b, x)\nIncomplete Beta function (norm)\nbs=[1,2,5,7,9]  as=&quot;,
+        0, 1
+    ],
+    [   { |a, x, i| ibetaC(a, bs[i], x) },
+        [as, xs],
+        &quot;ibetaC(a, b, x)\nComplement of Incomplete Beta function (norm)\nbs=[1,2,5,7,9]  as=&quot;,
+        0, 1
+    ],
+    [   { |a, x, i| betaFull(a, bs[i], x) },
+        [as, xs],
+        &quot;betaFull(a, b, x)\nIncomplete Beta function (non-norm)\nbs=[1,2,5,7,9]  as=&quot;,
+        0, 0.125
+    ],
+    [   { |a, x, i| betaFullC(a, bs[i], x) },
+        [as, xs],
+        &quot;betaFullC(a, b, x)\nComplement of the Incomplete Beta function (non-norm)\nbs=[1,2,5,7,9]  as=&quot;,
+        0, 0.125
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Beta Functions, Incomplete and Derivative&quot;, 2);
+)</code></pre>
+
+<h3 id="Incomplete Beta Function Inverses">不完全 Beta 函数反函数</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var abs = [9,7,5,2,1];
+var bs = [1,2,5,7,9];
+var xs = [ 0.1, 0.3, 0.5, 0.7, 0.9 ];
+var pqs = (0.001, 0.005 .. 1);
+var plotSpecs = [
+    [   { |a, p, i| ibetaInv(a, bs[i], p) },
+        [abs, pqs],
+        format(&quot;ibetaInv(a, b, p)\nbs=%  as=&quot;, bs),
+        0, 1
+    ],
+    [   { |a, p, i| ibetaCInv(a, bs[i], p) },
+        [abs, pqs],
+        format(&quot;ibetaCInv(a, b, x)\nbs=%  as=&quot;, bs),
+        0, 1
+    ],
+    [   { |b, p, i| ibetaInvA(b, xs[i], p) },
+        [abs, pqs],
+        format(&quot;ibetaInvA(b, x, p)\nxs=%  bs=&quot;, xs),
+        0, 18
+    ],
+    [   { |b, q, i| ibetaCInvA(b, xs[i], q) },
+        [abs, pqs],
+        format(&quot;ibetaCInvA(b, x, q)\nxs=%  bs=&quot;, xs),
+        0, 18
+    ],
+    [   { |b, p, i| ibetaInvB(b, xs[i], p) },
+        [abs, pqs],
+        format(&quot;ibetaInvB(b, x, p)\nxs=%  bs=&quot;, xs),
+        0, 18
+    ],
+    [   { |b, q, i| ibetaCInvB(b, xs[i], q) },
+        [abs, pqs],
+        format(&quot;ibetaCInvB(b, x, q)\nxs=%  bs=&quot;, xs),
+        0, 18
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Incomplete Beta Function Inverses&quot;, 4);
+)</code></pre>
+
+<h2 id="Error Functions">误差函数</h2>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var erfSamps = (-3, -2.995 .. 3);
+var plotSpecs = [
+    [   \erf,
+        erfSamps,
+        &quot;erf(z)\nError Function&quot;,
+        -1, 1
+    ],
+    [   \erfC,
+        erfSamps,
+        &quot;erfC(z)\nComplement of the Error Function&quot;,
+        0, 2
+    ],
+    [   \erfInv,
+        (-0.9995, -0.995 .. 1),
+        &quot;erfInv(z)\nInverse of the Error Function&quot;,
+        -3, 2
+    ],
+    [   \erfCInv,
+        (0.001, 0.002 .. 1.999),
+        &quot;erfCInv(z)\nInverse of the Complement of the Error Function&quot;,
+        -3, 2
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Error Function&quot; );
+)</code></pre>
+
+<h2 id="Polynomials">Polynomials</h2>
+
+<h3 id="Legendre (and Associated) Polynomials">Legendre（及关联）多项式</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   { |l, x| legendreP(l, x.clip(-1,1)) },
+        [(1..4), (-1,-0.995 .. 1)],
+        &quot;legendreP(l, x)\nLegendre Polynomials of the First Kind \nls=&quot;,
+        -1, 1
+    ],
+    [   { |l, x| legendrePPrime(l, x.clip(-1,1)) },
+        [(1..4), (-1,-0.995 .. 1)],
+        &quot;legendrePPrime(l, x)\nDerivatives of the Legendre Polynomials of the First Kind \nls=&quot;,
+        -5, 5
+    ],
+    [   { |l, x| legendreQ(l, x.clip(-0.9999,0.9999)) },
+        [(1..4), (-1,-0.995 .. 1)],
+        &quot;legendreQ(l, x)\nLegendre Polynomials of the Second Kind \nls=&quot;,
+        -1, 1
+    ],
+    [   { |l, x, i| var ms = (l.neg..l); legendrePAssoc(l, ms[i], x.clip(-1,1)) },
+        [1.dup(1*2+1), (-1,-0.995 .. 1)],
+        &quot;legendrePAssoc(l, m, x)\nAssociated Legendre Polynomials of the First Kind \nEach order (m) in degree l=&quot;,
+        -3, 3
+    ],
+    [   { |l, x, i| var ms = (l.neg..l); legendrePAssoc(l, ms[i], x.clip(-1,1)) },
+        [2.dup(2*2+1), (-1,-0.995 .. 1)],
+        &quot;legendrePAssoc(l, m, x)\nAssociated Legendre Polynomials of the First Kind \nEach order (m) in degree l=&quot;,
+        -3, 3
+    ],
+    [   { |l, x, i| var ms = (l.neg..l); legendrePAssoc(l, ms[i], x.clip(-1,1)) },
+        [4.dup(4*2+1), (-1,-0.995 .. 1)],
+        &quot;legendrePAssoc(l, m, x)\nAssociated Legendre Polynomials of the First Kind\nEach order (m) in degree l=&quot;,
+        -150, 150
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Legendre (and Associated) Polynomials&quot; );
+)</code></pre>
+
+<h3 id="Laguerre (and Associated) Polynomials">Laguerre（及关联）多项式</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   \laguerre,
+        [(0..6), (-5, -4.995 .. 11)],
+        &quot;laguerre(n, x)\n Laguerre Polynomial\nns=&quot;,
+        -10, 15
+    ],
+    [   { |n, x, i| var ms = (0..n); laguerreAssoc(n, ms[i], x) },
+        [3.dup(3+1), (-1, -0.95 .. 8)],
+        &quot;laguerreAssoc(n, m, x)\nAssociated Laguerre Polynomials of the First Kind\nOrder m = (0..n), degree n=&quot;,
+        -10, 10
+    ],
+    [   { |n, x, i| var ms = (0..n); laguerreAssoc(n, ms[i], x) },
+        [7.dup(7+1), (-1, -0.95 .. 8)],
+        &quot;laguerreAssoc(n, m, x)\nAssociated Laguerre Polynomials of the First Kind\nOrder m = (0..n), degree n=&quot;,
+        -65, 30
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Laguerre (and Associated) Polynomials&quot;, 1);
+)</code></pre>
+
+<h3 id="Hermite Polynomials">Hermite 多项式</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   \hermite,
+        [(0..4), (-2, -1.95 .. 2)],
+        &quot;hermite(n, x)\n Hermite Polynomial\nns=&quot;,
+        -25, 25
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Hermite Polynomials&quot;);
+)</code></pre>
+
+<h3 id="Chebyshev Polynomials">切比雪夫多项式</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var ns = (0..6);
+var samps = (-1, -0.995 .. 1);
+var plotSpecs = [
+    [   \chebyshevT,
+        [ns, samps],
+        &quot;chebyshevT(n, x)\nChebyshev Polynomial of the First Kind \nns=&quot;,
+        -1, 1
+    ],
+    [   \chebyshevU,
+        [ns, samps],
+        &quot;chebyshevU(n, x)\nChebyshev Polynomial of the First Kind \nns=&quot;,
+        -3, 3
+    ],
+    [   \chebyshevTPrime,
+        [ns, samps],
+        &quot;chebyshevTPrime(n, x)\nDerivative of the Chebyshev Polynomial of the First Kind \nns=&quot;,
+        -15, 15
+    ],
+
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Chebyshev Polynomials&quot;, 1 );
+)</code></pre>
+
+<h3 id="Spherical Harmonics">球谐函数</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var samps = (-2pi, -1.995pi .. 2pi);
+var dupN = { |n| n.dup(n*2+1) };
+var plotSpecs = [
+    [   { |n, theta, i| var ms = (n.neg..n), phi = -15.degrad;
+            sphericalHarmonicR(n, ms[i], theta, phi)
+        },
+        [dupN.(3), samps],
+        &quot;sphericalHarmonicR(n, m, theta, phi)\nSpherical Harmonics (real part)\nm = (n.neg..n), phi = -15 deg, ns=&quot;,
+        -1, 1
+    ],
+    [   { |n, theta, i| var ms = (n.neg..n), phi = 85.degrad;
+            sphericalHarmonicI(n, ms[i], theta, phi)
+        },
+        [dupN.(3), samps],
+        &quot;sphericalHarmonicI(n, m, theta, phi)\nSpherical Harmonics (imaginary part)\nm = (n.neg..n), phi = 85 deg, ns=&quot;,
+        -1, 1
+    ],
+    [   { |n, theta, i| var ms = (n.neg..n), phi = 25.degrad;
+            sphericalHarmonicR(n, ms[i], theta, phi)
+        },
+        [dupN.(9), samps],
+        &quot;sphericalHarmonicR(n, m, theta, phi)\nSpherical Harmonics (real part)\nm = (n.neg..n), phi = 25 deg, ns=&quot;,
+        -1.5, 1.5
+    ],
+    [   { |n, theta, i| var ms = (n.neg..n), phi = 45.degrad;
+            sphericalHarmonicI(n, ms[i], theta, phi)
+        },
+        [dupN.(5), samps],
+        &quot;sphericalHarmonicI(n, m, theta, phi)\nSpherical Harmonics (imaginary part)\nm = (n.neg..n), phi = 45 deg, ns=&quot;,
+        -1, 1
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Spherical Harmonics&quot; );
+)</code></pre>
+
+<h2 id="Bessel Functions">贝塞尔函数</h2>
+
+<h3 id="Bessel and Modified Bessel Functions">贝塞尔函数与修正贝塞尔函数</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   \cylBesselJ,
+        [(0..4), (-20,-19.9 .. 20)],
+        &quot;cylBesselJ(v, x)\nBessel Function of the First Kind \nvs=&quot;,
+        -1, 1
+    ],
+    [   \cylNeumann,
+        [(0..4), (0.001, 0.05 .. 20)],
+        &quot;cylNeumann(v, x)\nBessel Function of the Second Kind (Neumann) \nvs=&quot;,
+        -3, 1
+    ],
+    [   \cylBesselI,
+        [[0,2,5,7,10], (-10, -9.95 .. 10)],
+        &quot;cylBesselI(v, x)\nModified Bessel Function of the First Kind \nvs=&quot;,
+        -15, 15
+    ],
+    [   \cylBesselK,
+        [[0,2,5,7,10], (0.15, 0.25 .. 10)],
+        &quot;cylBesselK(v, x)\nModified Bessel Function of the Second Kind \nvs=&quot;,
+        0, 4
+    ],
+    [   \sphBessel,
+        [(0..4), (0, 0.05 .. 20)],
+        &quot;sphBessel(v, x)\nSpherical Bessel Function of the First Kind \nvs=&quot;,
+        -1, 1
+    ],
+    [   \sphNeumann,
+        [(0..4), (0.001, 0.05 .. 20)],
+        &quot;sphNeumann(v, x)\nSpherical Bessel Function of the Second Kind (Spherical Neumann) \nvs=&quot;,
+        -3, 1
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Bessel Functions&quot;, 2 );
+)</code></pre>
+
+<h3 id="Derivatives of Bessel and Modified Bessel Functions">贝塞尔函数与修正贝塞尔函数的导数</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var bPrimeVs = (0..5);
+var modBPrimeVs = [0,2,5,7,10];
+var plotSpecs = [
+    [   \cylBesselJPrime,
+        [bPrimeVs, (-20,-19.9 .. 20)],
+        &quot;cylBesselJPrime(v, x)\nDerivative of the Bessel Function of the First Kind \nvs=&quot;,
+        -1, 1
+    ],
+    [   \cylNeumannPrime,
+        [bPrimeVs, (0.04, 0.05 .. 20)],
+        &quot;cylNeumannPrime(v, x)\nDerivative of the Bessel Function of the Second Kind \nvs=&quot;,
+        -1, 2
+    ],
+    [   \cylBesselIPrime,
+        [modBPrimeVs, (-10, -9.95 .. 10)],
+        &quot;cylBesselIPrime(v, x)\nDerivative of the Modified Bessel Function of the First Kind \nvs=&quot;,
+        -25, 25
+    ],
+    [   \cylBesselKPrime,
+        [modBPrimeVs, (0.01, 0.05 .. 10)],
+        &quot;cylBesselKPrime(v, x)\nDerivative of the Modified Bessel Function of the Second Kind \nvs=&quot;,
+        -0.5, 0
+    ],
+    [   \sphBesselPrime,
+        [modBPrimeVs, (0.001, 0.05 .. 20)],
+        &quot;sphBesselPrime(v, x)\nDerivative of the Spherical Bessel Function of the First Kind \nvs=&quot;,
+    ],
+    [   \sphNeumannPrime,
+        [modBPrimeVs, (1.13, 1.15 .. 20)],
+        &quot;sphNeumannPrime(v, x)\nDerivative of the Spherical Bessel Function of the Second Kind \nvs=&quot;,
+        -0.5, 0.5
+    ],
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Derivatives of Bessel Functions&quot;, 2);
+)</code></pre>
+
+<h2 id="Hankel Functions">汉克尔函数</h2>
+
+<h3 id="Cyclic Hankel Functions">循环 Hankel 函数</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var ns = (0..3);
+var range = (0.001, 0.025 .. 6);
+var plotSpecs = [
+    [   { |n, z| cylHankel1(n,z).real },
+        [ns, range],
+        &quot;cylHankel1(n,z).real\nCyclic Hankel Function of the First Kind (real part)\nns=&quot;,
+        -1, 1.5
+    ],
+    [   { |n, z| cylHankel1(n,z).imag },
+        [ns, range],
+        &quot;cylHankel1(n,z).imag\nCyclic Hankel Function of the First Kind (imaginary part)\nns=&quot;,
+        -2, 1
+    ],
+    [   { |n, z| cylHankel2(n,z).real },
+        [ns, range],
+        &quot;cylHankel2(n,z).real\nCyclic Hankel Function of the Second Kind (real part)\nns=&quot;,
+        -1, 1.5
+    ],
+    [   { |n, z| cylHankel2(n,z).imag },
+        [ns, range],
+        &quot;cylHankel2(n,z).imag\nCyclic Hankel Function of the Second Kind (imaginary part)\nns=&quot;,
+        -1, 2
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Cyclic Hankel Functions&quot; );
+)</code></pre>
+
+<h3 id="Spherical Hankel Functions">球 Hankel 函数</h3>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var ns = (0..3);
+var range = (0.001, 0.025 .. 6);
+var plotSpecs = [
+    [   { |n, z| sphHankel1(n,z).real },
+        [ns, range],
+        &quot;sphHankel1(n,z).real\nSpherical Hankel Function of the First Kind (real part)\nns=&quot;,
+        -1, 2
+    ],
+    [   { |n, z| sphHankel1(n,z).imag },
+        [ns, range],
+        &quot;sphHankel1(n,z).imag\nSpherical Hankel Function of the First Kind (imaginary part)\nns=&quot;,
+        -2, 1
+    ],
+    [   { |n, z| sphHankel2(n,z).real },
+        [ns, range],
+        &quot;sphHankel2(n,z).real\nSpherical Hankel Function of the Second Kind (real part)\nns=&quot;,
+        -1, 2
+    ],
+    [   { |n, z| sphHankel2(n,z).imag },
+        [ns, range],
+        &quot;sphHankel2(n,z).imag\nSpherical Hankel Function of the Second Kind (imaginary part)\nns=&quot;,
+        -1, 2
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Spherical Hankel Functions&quot; );
+)</code></pre>
+
+<h2 id="Airy Functions">Airy 函数</h2>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var aiSamps = (-20, -19.95 .. 20);
+var biSamps = (-20, -19.95 .. 3);
+// 从零开始生成采样点
+var genSamps = { |selector, zeroDex|
+    var zero = zeroDex.perform(selector);
+    (zero, zero - (zero*0.001) .. 0)
+};
+var plotSpecs = [
+    [ \airyAi, aiSamps, &quot;airyAi(z)&quot;],
+    [ \airyBi, biSamps, &quot;airyBi(z)&quot;, -2,15],
+    [ \airyAiPrime, aiSamps, &quot;airyAiPrime(z)&quot;, -1.2, 1.2],
+    [ \airyBiPrime, biSamps, &quot;airyBiPrime(z)&quot;, -1.2, 1.2],
+    [   \airyAi,
+        genSamps.(\airyAiZero, 7),
+        &quot;AiryAi from 7th zero\nairyAiZero(n)&quot;
+    ],
+    [   \airyBi,
+        genSamps.(\airyBiZero, 7),
+        &quot;AiryBi from 7th zero\nairyBiZero(n)&quot;
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect { |data| ~multiPlot.(*data) }, &quot;Airy Functions&quot; );
+)</code></pre>
+
+<h2 id="Elliptic Integrals">椭圆积分</h2>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var samps = (-1, -0.995 ..1);
+var args1 = [0.5,0.75,1.25,pi/2]; // 第一/第二种的 phi
+var args2 = [0, 0.5, 0.25, 0.75]; // 第三类、D、Zeta、Lambda 函数的 ns/phis
+var plotSpecs = [
+    [   { |phi, k| ellint1(k.clip(-1,1), phi) },
+        [args1, samps],
+        &quot;ellint1(k,phi)\nElliptic Integrals of the First Kind (Inomplete) \nphis=&quot;,
+        0.5, 2.5
+    ],
+    [   { |k| ellint1C(k.clip(-0.999,0.999)) },
+        samps,
+        &quot;ellint1C(k)\nElliptic Integrals of the First Kind (Complete)&quot;,
+        0.5, 2.5
+    ],
+    [   { |phi, k| ellint2(k.clip(-1,1), phi) },
+        [args1, samps],
+        &quot;ellint2(k,phi)\nElliptic Integrals of the Second Kind (Inomplete) \nphis=&quot;,
+        0.4, 1.6
+    ],
+    [   { |k| ellint2C(k.clip(-1,1)) },
+        samps,
+        &quot;ellint2C(k)\nElliptic Integrals of the Second Kind (Complete)&quot;,
+        0.5, 1.5
+    ],
+    [   { |n, k, i|
+            var phis = [1.25,1.25,pi/2,pi/2];
+            ellint3(k.clip(-1,1), n, phis[i])
+        },
+        [args2, samps],
+        &quot;ellint3(k,n,phi)\nElliptic Integrals of the Third Kind (Incomplete) \nphis=[1.25,1.25,pi/2,pi/2], ns=&quot;,
+        1, 4
+    ],
+    [   { |n, k| ellint3C(k.clip(-0.999,0.999), n) },
+        [args2, samps],
+        &quot;ellint3C(n,k)\nElliptic Integrals of the Third Kind (Complete) \nns=&quot;,
+        1, 4
+    ],
+    [   { |phi, k| ellintD(k.clip(-1,1), phi) },
+        [args2, samps],
+        &quot;ellintD(k, phi)\nElliptic Integral D (Incomplete) \nphis=&quot;,
+        0, 0.2
+    ],
+    [   { |k| ellintDC(k.clip(-0.999,0.999)) },
+        samps,
+        &quot;ellintDC(k, phi)\nElliptic Integral D (Complete)&quot;,
+        0.5, 1.5
+    ],
+    [   { |phi, k| jacobiZeta(k.clip(-0.999,0.999), phi) },
+        [args2, samps],
+        &quot;jacobiZeta(k,phi)\nJacobi Zeta Function \nphis=&quot;,
+        0, 0.3
+    ],
+    [   { |phi, k| heumanLambda(k.clip(-0.999,0.999), phi) },
+        [args2, samps],
+        &quot;heumanLambda(k,phi)\nHeuman Lambda Function \nphis=&quot;,
+        0, 0.7
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Elliptic Integrals&quot; );
+)</code></pre>
+
+<h2 id="Jacobi Elliptic Functions">Jacobi 椭圆函数</h2>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs =
+[
+    \Cd, [-10, 10], \Cn, [-10, 10], \Cs, [0, 3], \Dc, [-10, 10], \Dn, [-10, 10], \Ds, [0, 3],
+    \Nc, [-5, 5], \Nd, [-2, 2], \Ns, [0,4], \Sc, [-5,5], \Sd, [-2.5, 2.5], \Sn, [-10,10]
+].clump(2).collect{ |nameRange, i|
+    var method, variant, range, us, step;
+    var data, max, min, clipplot = 8;
+    var samps = 500, ks = [0, 0.5, 0.75, 0.95, 1];
+
+    #variant, range = nameRange;
+    step = range[1] - range[0] / samps;
+    us = (range[0], range[0]+step .. range[1]);
+    method = (\jacobi ++ variant).asSymbol;
+    data = ks.collect { |k|
+        us.collect { |u| k.perform(method, u) }
+    }.flat;
+    [
+        method,
+        [ks, us],
+        format(&quot;jacobi%(k,u)\nk&#x27;s=&quot;, variant),
+        max(data.minItem, clipplot.neg)*1.1, min(data.maxItem, clipplot)*1.1,
+    ];
+};
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Jacobi Elliptic Functions&quot; );
+)</code></pre>
+
+<h2 id="Zeta Functions">Zeta 函数</h2>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   \zeta,
+        (-28, -27.95 .. 5),
+        &quot;zeta(z)&quot;,
+        -75, 100
+    ],
+    [   \zeta,
+        (-15, -14.95 .. 0),
+        &quot;zeta(z)&quot;,
+        -0.2, 0.05
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Riemann Zeta Function&quot; );
+)</code></pre>
+
+<h2 id="Exponential Integrals">指数积分</h2>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   \expintEn,
+        [[1,2,3,4], (0.0001, 0.01 .. 2)],
+        &quot;expintEn(z)\nns = &quot;,
+        0,1
+    ],
+    [   \expintEi,
+        (-3, -2.99 .. 4),
+        &quot;expintEi(z)&quot;,
+        -18,18
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Exponential Integrals&quot; );
+)</code></pre>
+
+<h2 id="Basic Functions">基本函数</h2>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   \sinPi,
+        (0, 0.1 .. 8),
+        &quot;sinPi(x)&quot;,
+    ],
+    [   \cosPi,
+        (0, 0.1 .. 8),
+        &quot;cosPi(x)&quot;,
+    ],
+    [   \log1p,
+        (-0.999, -0.994 .. 10),
+        &quot;log1p(x)&quot;,
+    ],
+    [   \expm1,
+        (-4, -3.995 .. 2),
+        &quot;expm1(x)&quot;,
+    ],
+    [   \cbrt,
+        (-10, -9.95 .. 10),
+        &quot;cbrt(x)&quot;,
+    ],
+    [   \sqrt1pm1,
+        (-0.999, -0.994 .. 5),
+        &quot;sqrt1pm1(x)&quot;,
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Basic Functions&quot; );
+)</code></pre>
+
+<h2 id="Sinus Cardinal (Sinc) and Hyperbolic Sinus Cardinal Functions, Inverse Hyperbolic Functions">Sinus Cardinal（Sinc）与双曲 Sinus Cardinal 函数、反双曲函数</h2>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   \sincPi,
+        (-40, -39.95 ..40),
+        &quot;sincPi(x)\nSinus Cardinal (\&quot;sinc\&quot;) Function\n(note: plot should be centered at 0)&quot;,
+    ],
+    [   \sinhcPi,
+        (-5, -4.95 ..5),
+        &quot;sinhcPi(x)\nHyperbolic Sinus Cardinal Function\n(note: plot should be centered at 0)&quot;,
+    ],
+    [   \acosh,
+        (1, 1.05 .. 10),
+        &quot;acosh(x)\nReciprocal of the hyperbolic cosine function&quot;,
+    ],
+    [   \asinh,
+        (-10, -9.99 ..10),
+        &quot;asinh(x)\nReciprocal of the hyperbolic sine function&quot;,
+    ],
+    [   \atanh,
+        (-0.999, -0.995 .. 0.999),
+        &quot;atanh(x)\nReciprocal of the hyperbolic tangent function&quot;,
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Sinus &amp; Hyperbolic Sinus Cardinal, Inverse Hyperbolic Functions&quot; );
+)</code></pre>
+
+<h2 id="Owen">Owen 的 T 函数</h2>
+
+<p>请务必在<a href="#Before%20you%20get%20started...">页面顶部</a>定义 <code>~layOutPlots</code> 和 <code>~multiPlot</code>。</p>
+
+<pre><code>(
+var plotSpecs = [
+    [   { |a, h| owensT(h, a) },
+        [(-6, -5.5 .. 6),(-5, -4.995 ..5)],
+        &quot;owensT(h, a)\nOwen&#x27;s T Function\nh = &quot;,
+        -0.4, 0.4
+    ]
+];
+
+~layOutPlots.( plotSpecs.collect{ |data| ~multiPlot.(*data) }, &quot;Owen&#x27;s T Function&quot; );
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Tour-of-Special-Functions.html" rel="noreferrer noopener">Guides/Tour-of-Special-Functions.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

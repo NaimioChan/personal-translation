@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit Generator 与 Synth - SuperCollider 文档</title>
+<meta name="description" content="一些基本概念的介绍">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Unit Generator 与 Synth</h1>
+
+<p><em>一些基本概念的介绍</em></p>
+
+<p>unit generator 是处理或生成声音的对象。unit generator 有许多类，它们都派生自类 <a href="Classes-UGen.html">UGen</a>。</p>
+
+<p>SuperCollider 中的单元生成器可以有多个输入，但始终只有一个输出。那些自然会有多个输出的单元生成器类（例如声像器）在实例化时会返回一个单元生成器数组。每个单元生成器只有一个输出的约定允许通过使用单元生成器数组来实现多通道。（更多细节见 <a href="Guides-Multichannel-Expansion.html">多通道扩展</a>。）</p>
+
+<h2 id="Instantiation. Audio Rate, Control Rate">实例化。音频速率、控制速率</h2>
+
+<p>通过向 unit generator 的类对象发送 'ar' 或 'kr' 消息来创建 unit generator。'ar' 消息创建一个以音频速率运行的 unit generator。'kr' 消息创建一个以控制速率运行的 unit generator。控制速率 unit generator 用于低频或缓慢变化的控制信号。控制速率 unit generator 每个控制周期只产生一个采样，因此比音频速率 unit generator 消耗更少的处理能力。</p>
+
+<p>单位生成器的输入参数在该类的文档中给出。</p>
+
+<pre><code>FSinOsc.ar(800, 0.0, 0.2); // 在 800 Hz 处创建一个正弦振荡器，相位 0.0，振幅 0.2</code></pre>
+
+<p>单元发生器的信号输入可以是其他单元发生器、标量，或单元发生器与标量的数组。</p>
+
+<h2 id="SynthDefs and Synths">SynthDef 与 Synth</h2>
+
+<p>要播放一个 unit generator，需要将它编译进一个 <a href="Classes-SynthDef.html">SynthDef</a>，并在服务器上通过 <a href="Classes-Synth.html">Synth</a> 播放它。synth 节点是一个或多个一起执行的 unit generator 的容器。SynthDef 就像是一种用于在服务器上创建 synth 节点的模式。</p>
+
+<pre><code>s.boot; // 启动服务器
+
+// 编译并发送此 def
+SynthDef.new(&quot;FSinOsc-test&quot;, { Out.ar(0, FSinOsc.ar(800, 0, 0.2)) }).send(s); // 输出通道 0
+
+// 现在创建一个 Synth 对象，它代表服务器上的一个 synth 节点
+x = Synth.new(&quot;FSinOsc-test&quot;);
+
+// 释放 synth
+x.free;</code></pre>
+
+<p>上面创建的 synth 节点也可以使用“消息风格”来创建，从而节省客户端 Synth 对象的开销：</p>
+
+<pre><code>n = s.nextNodeID;
+s.sendMsg(&quot;/s_new&quot;, &quot;FSinOsc-test&quot;, n);
+s.sendMsg(&quot;/n_free&quot;, n);</code></pre>
+
+<p>因为任何表达式都会返回它的值，为方便起见，我们可以把上面两行嵌套起来。（详见 <a href="Reference-Expression-Sequence.html">Expression Sequence</a>。）</p>
+
+<pre><code>s.sendMsg(&quot;/s_new&quot;, &quot;FSinOsc-test&quot;, n = s.nextNodeID;);
+s.sendMsg(&quot;/n_free&quot;, n);</code></pre>
+
+<p>理解客户端 Synth、Group、Buffer 和 Bus 对象底层的消息结构非常重要且有用。有关更多细节，请参见 <a href="Guides-NodeMessaging.html">Node Messaging</a>、<a href="Tutorials-Server_Tutorial.html">Server Tutorial</a> 和 <a href="Guides-ClientVsServer.html">Client vs Server</a>。</p>
+
+<p>为方便起见，类 <a href="Classes-Function.html">Function</a> 的 'play' 方法会编译一个 SynthDef，并为你使用该函数创建并播放一个 synth。使用此方法时，如果你没有显式创建，系统会为你创建一个 <a href="Classes-Out.html">Out</a> ugen。</p>
+
+<pre><code>{ FSinOsc.ar(800, 0, 0.2) }.play; // 创建一个 800 Hz 的正弦振荡器并播放</code></pre>
+
+<h2 id="Building Patches">构建音色</h2>
+
+<p>你可以对单位生成器进行数学运算，结果将是另一个单位生成器。对单位生成器进行数学运算本身并不进行任何信号计算——它是在构建单位生成器网络，这些网络将在 Synth 中播放时执行。这是需要理解的关键：合成网络，换言之信号流图，是通过执行单位生成器的表达式创建的。以下表达式创建一个流图，其根是一个执行 '+' 操作的 <a href="Classes-BinaryOpUGen.html">BinaryOpUGen</a> 实例。它的输入是 <a href="Classes-FSinOsc.html">FSinOsc</a> 和 <a href="Classes-BrownNoise.html">BrownNoise</a> 单位生成器。</p>
+
+<pre><code>FSinOsc.ar(800, 0.0, 0.2) + BrownNoise.ar(0.2); // 按回车并查看 post 窗口
+
+{FSinOsc.ar(800, 0.0, 0.2) + BrownNoise.ar(0.2)}.play; // play it</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/UGens-and-Synths.html" rel="noreferrer noopener">Guides/UGens-and-Synths.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

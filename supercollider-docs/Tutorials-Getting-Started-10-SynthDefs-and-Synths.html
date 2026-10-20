@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10. SynthDef 与 Synth - SuperCollider 文档</title>
+<meta name="description" content="SuperCollider 入门">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>10. SynthDef 与 Synth</h1>
+
+<p><em>SuperCollider 入门</em></p>
+
+<p>另请参阅：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+
+<p>现在我们已经介绍了一些基础知识，接下来要看服务器抽象，也就是语言应用中的各种类，它们代表服务器上的事物。在查看这些内容时，重要的是要理解：这些对象只是服务器架构各部分的客户端<em>表示</em>，不应与那些部分本身相混淆。服务器抽象对象只是为了方便。</p>
+
+<p>区分这两者可能会有点令人困惑，因此我在本文中通常用大写名称指代客户端侧的类，而用相应的小写名称指代服务器架构的对应方面，即 Synth 与 synth。</p>
+
+<p>你已经见过一种服务器抽象，即 Server 类本身。由 Server.local 和 Server.internal 引用的对象（以及在任意给定时刻存储在解释器变量 's' 中的那个对象）都是 Server 的实例。</p>
+
+<p>现在是时候熟悉其余部分了。我们首先要看的是类 SynthDef，它是“synth definition”的缩写。</p>
+
+<h2 id="Meet the SynthDef">认识 SynthDef</h2>
+
+<p>到目前为止，我们一直在使用 Function 来生成音频。这种工作方式对于快速测试以及需要最大灵活性的情况非常有用。这是因为每次执行代码时，Function 都会被重新求值，这意味着结果可能会有很大变化。</p>
+
+<p>然而，服务器并不理解函数、OOP 或 SC 语言。它需要以称为 synth definition 的特殊形式获取关于如何创建音频输出的信息。synth definition 是关于 UGen 及其如何相互连接的数据。它以称为“字节码”的特殊优化形式发送，服务器可以非常高效地处理它。</p>
+
+<p>一旦服务器拥有了合成器定义，它就能非常高效地基于该定义创建多个合成器。服务器上的合成器基本上就是产生或处理声音、或产生控制信号以驱动其他合成器的事物。</p>
+
+<p>SynthDef 与 Synth 之间的关系类似于类与实例之间的关系，前者是后者的模板。但请记住，服务器应用程序对 OOP 一无所知。</p>
+
+<p>幸运的是，语言中有诸如 SynthDef 这样的类，它们使创建必要的字节码并将其发送到服务器变得容易，并且能以面向对象的方式处理 synth 定义。</p>
+
+<p>每当你使用 Function 的任何音频创建方法时，实际上发生的事情是：可以这么说，一个对应的 SynthDef 实例会在“幕后”被创建，必要的字节码会被生成并发送到服务器，在那里创建一个 synth 来播放所需的音频。因此，Function 的音频方法为你提供了一种便利，让你不必亲自处理这些。</p>
+
+<p>那么你如何自己制作一个 SynthDef 呢？使用它的 'new' 方法。让我们比较一个目前熟悉的基于 Function 的例子，并制作一个等效的 SynthDef。与 Function 一样，SynthDef 也有一个方便的 play 方法，因此我们可以轻松确认这两者是等效的。</p>
+
+<pre><code>//首先是 Function
+{ SinOsc.ar(440, 0, 0.2) }.play;
+
+// 现在这里有一个等效的 SynthDef
+SynthDef.new(&quot;tutorial-SinOsc&quot;, { |out| Out.ar(out, SinOsc.ar(440, 0, 0.2)) }).play;</code></pre>
+
+<p>SynthDef-new 接受若干参数。第一个是名称，通常采用如上所示的字符串形式。第二个实际上是一个函数。这个参数被称为 UGen 图函数，因为它告诉服务器如何将其各个 UGen 连接在一起。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 在函数花括号内，<code>|out|</code> 参数定义了一个 SynthDef <em>控制输入</em>，随后它被用作 <code>Out.ar</code> 的第一个输入。在每个 SynthDef 中都提供一个 <code>out</code> 控制是一个好习惯。有关函数参数的更多内容，请参阅 <a href="Tutorials-Getting-Started-04-Functions-and-Other-Functionality.html">04. Functions and Other Functionality</a>。</p></blockquote>
+
+<h2 id="SynthDefs vs. Functions">SynthDef 与函数</h2>
+
+<p>我们在上面第二个示例中使用的这个 UGen Graph Function 与第一个示例中使用的 Function 类似，但有一个显著的区别：它多了一个名为 Out 的 UGen。Out 将一个 ar 或 kr 信号写入服务器的某个总线，这些总线可以看作是混音器通道或输出。我们稍后会更详细地讨论总线，但现在只需知道它们用于将音频从计算机播放出去，以及从麦克风等来源读取音频。</p>
+
+<p>Out 接受两个参数：第一个是要写入的总线的索引号。这些索引从 0 开始，在立体声设置中通常对应左输出通道。第二个是一个 UGen 或一个 UGen 的数组。如果你提供一个数组（即多通道输出），那么第一个通道将被输出到索引为指定值的那条总线上，第二个通道输出到索引为指定值 + 1 的总线上，依此类推。</p>
+
+<p>下面是一个立体声示例，用以清楚地说明其工作方式。频率参数为 440 Hz 的 SinOsc 将在第一个输出总线（左声道）上播放，频率参数为 442 Hz 的 SinOsc 将在第二个总线（右声道）上播放。默认情况下，<code>out</code> 假定总线 0 为第一个声道，因此两者将分别在总线 0 和 1 上播放。</p>
+
+<pre><code>(
+SynthDef.new(&quot;tutorial-SinOsc-stereo&quot;, { |out|
+    var outArray;
+    outArray = [SinOsc.ar(440, 0, 0.2), SinOsc.ar(442, 0, 0.2)];
+    Out.ar(out, outArray)
+}).play;
+)</code></pre>
+
+<p>当你使用 Function-play 时，如果没有显式创建 Out UGen，实际上会为你创建一个。这个 Out UGen 的默认总线索引是 0。</p>
+
+<p>Function-play 和 SynthDef-play 都会返回另一种类型的对象，即 Synth，它表示服务器上的一个 synth。如果你通过将其赋值给变量来存储这个对象，就可以用各种方式控制它的行为。例如，方法 'free' 会停止服务器上的 synth 播放，并释放其内存和 CPU 资源。</p>
+
+<pre><code>x = { SinOsc.ar(660, 0, 0.2) }.play;
+y = SynthDef.new(&quot;tutorial-SinOsc&quot;, { |out| Out.ar(out, SinOsc.ar(440, 0, 0.2)) }).play;
+x.free;    // 仅释放 x
+y.free;    // 仅释放 y</code></pre>
+
+<p>这比 Cmd-. 更灵活，后者会一次性释放所有 synth。</p>
+
+<p>更常见的情况是，你希望将相应的字节码发送到服务器应用程序，而不立即创建 synth。这样做的一大优势是，你可以播放任意数量的 SynthDef 副本，而无需承担编译或发送单位生成器网络的额外开销。在几乎所有情况下，请使用 'add'，如下面的下一个示例所示。详情请参阅 <a href="Classes-SynthDef.html#-add">SynthDef: -add</a>。</p>
+
+<pre><code>// 先单独执行
+SynthDef.new(&quot;tutorial-PinkNoise&quot;, { |out| Out.ar(out, PinkNoise.ar(0.3)) }).add;
+
+// then:
+x = Synth.new(&quot;tutorial-PinkNoise&quot;);
+y = Synth.new(&quot;tutorial-PinkNoise&quot;);
+x.free; y.free;</code></pre>
+
+<p>这比对同一个 Function 反复调用 play 更高效，因为它省去了求值 Function、编译字节码并多次发送的麻烦。在许多情况下，这种 CPU 用量的节省小到基本可以忽略不计，但在进行诸如“批量生产”synth 之类的操作时，这可能很重要。</p>
+
+<p>直接使用 SynthDefs 的一个相应局限是，SynthDef 中的 UGen Graph Function 只被求值 <em>一次且仅一次</em>。（请记住服务器对 SC 语言一无所知。）这意味着它灵活性稍差。比较以下两个示例：</p>
+
+<pre><code>// 首先用一个 Function。注意每次调用 &#x27;play&#x27; 时频率都是随机的。
+f = { SinOsc.ar(440 + 200.rand, 0, 0.2) };
+x = f.play;
+y = f.play;
+z = f.play;
+x.free; y.free; z.free;
+
+// 现在使用 SynthDef。没有随机性！
+SynthDef(&quot;tutorial-NoRand&quot;, { |out| Out.ar(out, SinOsc.ar(440 + 200.rand, 0, 0.2)) }).add;
+x = Synth(&quot;tutorial-NoRand&quot;);
+y = Synth(&quot;tutorial-NoRand&quot;);
+z = Synth(&quot;tutorial-NoRand&quot;);
+x.free; y.free; z.free;</code></pre>
+
+<p>每次基于该 def 创建新的 Synth 时，频率都相同。这是因为 Function（以及其中的 <code>200.rand</code>）只在创建 SynthDef 时被求值一次。</p>
+
+<h2 id="Creating Variety with SynthDefs">使用 SynthDef 创建多样性</h2>
+
+<p>不过，有多种方法可以让 SynthDefs 产生变化。例如随机性可以通过各种 UGens 实现。一个例子是 <a href="Classes-Rand.html">Rand</a>，它在 synth 首次创建时计算 low 与 high 值之间的随机数：</p>
+
+<pre><code>// 使用 Rand，可行！
+SynthDef(&quot;tutorial-Rand&quot;, { |out| Out.ar(out, SinOsc.ar(Rand(440, 660), 0, 0.2)) }).add;
+x = Synth(&quot;tutorial-Rand&quot;);
+y = Synth(&quot;tutorial-Rand&quot;);
+z = Synth(&quot;tutorial-Rand&quot;);
+x.free; y.free; z.free;</code></pre>
+
+<p>这个 <a href="https://docs.supercollider.online/Browse.html#UGens">Browse: UGens</a> 分类链接列出了许多此类 UGen。</p>
+
+<p>创建变量最常见的方式是将参数放入 UGen Graph Function 中。这允许你在创建 synth 时设置不同的值。这些值作为 Synth-new 的第二个参数以数组传入。该数组应包含参数名和值的成对组合。</p>
+
+<pre><code>(
+SynthDef(&quot;tutorial-args&quot;, { arg freq = 440, out = 0;
+    Out.ar(out, SinOsc.ar(freq, 0, 0.2));
+}).add;
+)
+x = Synth(&quot;tutorial-args&quot;);                // 没有参数，因此使用默认值
+y = Synth(&quot;tutorial-args&quot;, [&quot;freq&quot;, 660]);        // 改变频率
+z = Synth(&quot;tutorial-args&quot;, [&quot;freq&quot;, 880, &quot;out&quot;, 1]);    // 改变频率和输出通道
+x.free; y.free; z.free;</code></pre>
+
+<p>这种参数与 UGen 的组合意味着你可以从单个 def 中获得很大的灵活性，但在某些需要最大灵活性的情况下，你可能仍然需要使用 Function，或者创建多个 def。</p>
+
+<h2 id="More About Synth">关于 Synth 的更多内容</h2>
+
+<p>Synth 理解一些方法，允许你在创建 synth 后更改参数的值。现在我们只看其中一个：'set'。Synth-set 接受成对的参数名和值。</p>
+
+<pre><code>s.boot;
+(
+SynthDef.new(&quot;tutorial-args&quot;, { arg freq = 440, out = 0;
+    Out.ar(out, SinOsc.ar(freq, 0, 0.2));
+}).add;
+)
+s.scope; // 示波器，以便你能看到效果
+x = Synth.new(&quot;tutorial-args&quot;);
+x.set(&quot;freq&quot;, 660);
+x.set(&quot;freq&quot;, 880, &quot;out&quot;, 1);
+x.free;</code></pre>
+
+<h2 id="Some Notes on Symbols, Strings, SynthDef and Arg Names">关于符号、字符串、SynthDef 和参数名的一些说明</h2>
+
+<p>SynthDef 名称和参数名可以是 String（如我们上面所见），也可以是另一种称为 Symbol 的字面量。符号有两种写法：要么用单引号括起来：<code>'tutorial_SinOsc'</code>，要么在前面加一个反斜杠：<code>\tutorial_SinOsc</code>。与 String 一样，Symbol 也由字母数字序列组成。String 与 Symbol 的区别在于，所有文本相同的 Symbol 都保证是相同的，即完全相同的对象，而 String 则未必如此。你可以使用 '===' 来测试这一点。执行以下代码并观察 post 窗口。</p>
+
+<pre><code>&quot;a String&quot; === &quot;a String&quot;;     // 这将输出 false
+\aSymbol === &#x27;aSymbol&#x27;;        // 这将输出 true</code></pre>
+
+<p>通常，在与服务器通信的方法中，可以互换使用字符串和符号，但要注意，在一般代码中这未必成立。</p>
+
+<pre><code>&quot;this&quot; === \this;     // 这将输出 false</code></pre>
+
+<p>更多信息请参见：</p>
+
+<p><a href="Classes-SynthDef.html">SynthDef</a>、<a href="Classes-Synth.html">Synth</a>、<a href="Classes-String.html">String</a>、<a href="Classes-Symbol.html">Symbol</a>、<a href="Reference-Literals.html">Literals</a>、<a href="Guides-Randomness.html">Randomness</a>、<a href="https://docs.supercollider.online/Browse.html#UGens">Browse: UGens</a></p>
+
+<h2 id="Suggested Exercise">建议练习</h2>
+
+<p>尝试把一些前面基于 Function 的示例，或你自己的 Function，转换成 SynthDef 版本，并添加 Out UGen。尝试在创建 synth 时以及之后使用 'set' 添加和更改参数。</p>
+
+<p>____________________</p>
+
+<p>本文档是教程 <strong>Getting Started With SuperCollider</strong> 的一部分。</p>
+
+<p>点击此处继续下一节：<a href="Tutorials-Getting-Started-11-Busses.html">11. 总线</a></p>
+
+<p>点击此处返回目录：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Getting-Started/10-SynthDefs-and-Synths.html" rel="noreferrer noopener">Tutorials/Getting-Started/10-SynthDefs-and-Synths.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

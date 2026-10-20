@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16. 使用模式进行音序编排 - SuperCollider 文档</title>
+<meta name="description" content="SuperCollider 入门">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>16. 使用模式进行音序编排</h1>
+
+<p><em>SuperCollider 入门</em></p>
+
+<p>另请参阅：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+
+<p>上一节演示了如何使用数据例程来生成合成参数序列。然而，用显式 yield 编写例程并不是一种很方便的语法。由于这是创建计算机音乐的重要部分，我们确实需要一种更简单的方法。</p>
+
+<p>模式极大地简化了数据流的使用。模式本质上是一个流的工厂。模式对象包含你希望从流中输出的数据，而模式的类型决定了数据的流式传输方式。</p>
+
+<p>例如，我们用这个例程输出 MIDI 音符编号，来演奏《Over the Rainbow》中的几个乐句。</p>
+
+<pre><code>(
+r = Routine({
+    [60, 72, 71, 67, 69, 71, 72, 60, 69, 67].do({ |midi| midi.yield });
+});
+)
+
+while { (m = r.next).notNil } { m.postln };</code></pre>
+
+<p>使用模式，我们可以表达流返回相同值这一概念，而且更清晰简洁。因为我们不必显式写出 yield，模式中没有任何东西会分散对数据（数据才是作曲中真正关注的对象）的注意力。</p>
+
+<p><a href="Classes-Pseq.html">Pseq</a>（Pattern-sequence，模式序列）的意思很简单：按顺序逐个吐出数组中的值，重复次数由第二个参数指定（此处仅一次）。</p>
+
+<pre><code>p = Pseq([60, 72, 71, 67, 69, 71, 72, 60, 69, 67], 1);
+r = p.asStream;
+while { (m = r.next).notNil } { m.postln };</code></pre>
+
+<p>注意 Pseq 本身不可流化，但当你对它调用 asStream 时，它会创建一个流（Routine）。然后这个例程可以像任何其他例程一样使用——用于读取流值的 while 循环对两者完全相同，尽管它们的写法不同。</p>
+
+<p>因此，'Over the Rainbow' 示例可以重写，且更加简洁：</p>
+
+<pre><code>(
+var midi, dur;
+midi = Pseq([60, 72, 71, 67, 69, 71, 72, 60, 69, 67], 1).asStream;
+dur = Pseq([2, 2, 1, 0.5, 0.5, 1, 1, 2, 2, 3], 1).asStream;
+
+SynthDef(\smooth, { |out, freq = 440, sustain = 1, amp = 0.5|
+    var sig;
+    sig = SinOsc.ar(freq, 0, amp) * EnvGen.kr(Env.linen(0.05, sustain, 0.1), doneAction: Done.freeSelf);
+    Out.ar(out, sig ! 2)
+}).add;
+
+r = Task({
+    var delta;
+    while {
+        delta = dur.next;
+        delta.notNil
+    } {
+        Synth(\smooth, [freq: midi.next.midicps, sustain: delta]);
+        delta.yield;
+    }
+}).play(quant: TempoClock.default.beats + 1.0);
+)</code></pre>
+
+<h2 id="What else can patterns do?">模式还能做什么？</h2>
+
+<p>SuperCollider 的模式库很庞大（超过 120 个类，不包括扩展库），显然超出了教程深入覆盖的范围。但有些模式你会反复用到。</p>
+
+<p>许多模式接受值的列表并以某种顺序返回它们。</p>
+
+<dl>
+<dt><a href="Classes-Pseq.html">Pseq</a>(list, repeats, offset)</dt>
+<dd><p>按顺序返回列表的值</p></dd>
+<dt><a href="Classes-Pshuf.html">Pshuf</a>(list, repeats)</dt>
+<dd><p>将列表打乱为随机顺序</p></dd>
+<dt><a href="Classes-Prand.html">Prand</a>(list, repeats)</dt>
+<dd><p>从列表的值中随机选择</p></dd>
+<dt><a href="Classes-Pxrand.html">Pxrand</a>(list, repeats)</dt>
+<dd><p>随机选择，但绝不连续两次返回同一个列表项</p></dd>
+<dt><a href="Classes-Pwrand.html">Pwrand</a>(list, weights, repeats)</dt>
+<dd><p>类似 Prand，但根据概率/权重列表选择值</p></dd>
+</dl>
+
+<p>其他模式会根据各种参数生成值。除了这些基本模式之外，还有一整套随机数生成器可以产生特定的分布，以及混沌函数。</p>
+
+<dl>
+<dt><a href="Classes-Pseries.html">Pseries</a>(start, step, length)</dt>
+<dd><p>等差数列，例如 1、2、3、4、5</p></dd>
+<dt><a href="Classes-Pgeom.html">Pgeom</a>(start, grow, length)</dt>
+<dd><p>等比数列，例如 1、2、4、8、16</p></dd>
+<dt><a href="Classes-Pwhite.html">Pwhite</a>(lo, hi, length)</dt>
+<dd><p>随机数生成器，使用 rrand(lo, hi) —— 均匀分布</p></dd>
+<dt><a href="Classes-Pexprand.html">Pexprand</a>(lo, hi, length)</dt>
+<dd><p>随机数生成器，使用 exprand(lo, hi) —— 指数分布</p></dd>
+</dl>
+
+<p>其他模式修改值模式的输出。这些被称为 FilterPatterns。</p>
+
+<dl>
+<dt><a href="Classes-Pn.html">Pn</a>(pattern, repeats)</dt>
+<dd><p>将模式重复 repeats 所指示的次数</p></dd>
+<dt><a href="Classes-Pdup.html">Pdup</a>(n, pattern)</dt>
+<dd><p>将模式中的各个值重复 n 次。n 本身也可以是一个数值模式。</p></dd>
+</dl>
+
+<p>你可以在其他模式内部使用模式。这里，我们在逐渐增大的范围内生成随机数。随机数生成器的上限是一个流，它从 0.01 开始，然后依次变为 0.02、0.03，依此类推，正如绘图所清晰显示的。</p>
+
+<pre><code>p = Pwhite(0.0, Pseries(0.01, 0.01, inf), 100).asStream;
+    // .all 会从流中拉取直到返回 nil
+    // 显然，对于 &#x27;inf&#x27; 长度的流你不想这样做！
+p.all.plot;</code></pre>
+
+<p>或者，再举一个例子，如果你想要随机排列一组数字，使得所有数字都出现之后才选择新的顺序，可以使用 Pn 来重复 Pshuf。</p>
+
+<pre><code>p = Pn(Pshuf([1, 2, 3, 4, 5], 1), inf).asStream;
+p.nextN(15);    // 从模式的流中获取 15 个值</code></pre>
+
+<p>这只是一个初步示例，旨在展示使用模式所能获得的灵活性。与任何丰富且可适应的结构一样，最好的方法是从简单的情况开始，然后逐步扩展到更复杂的设置。</p>
+
+<h2 id="Playing notes with a pattern: Pbind">用模式演奏音符：Pbind</h2>
+
+<p>模式不仅可以为音符生成数据，还能直接演奏音符。再次以《Over the Rainbow》为例。</p>
+
+<pre><code>(
+SynthDef(\smooth, { |out, freq = 440, sustain = 1, amp = 0.5|
+    var sig;
+    sig = SinOsc.ar(freq, 0, amp) * EnvGen.kr(Env.linen(0.05, sustain, 0.1), doneAction: Done.freeSelf);
+    Out.ar(out, sig ! 2)
+}).add;
+)
+
+(
+p = Pbind(
+        // 每个音符要使用的 SynthDef 名称
+    \instrument, \smooth,
+        // MIDI 音符编号——自动转换为 Hz
+    \midinote, Pseq([60, 72, 71, 67, 69, 71, 72, 60, 69, 67], 1),
+        // 节奏值
+    \dur, Pseq([2, 2, 1, 0.5, 0.5, 1, 1, 2, 2, 3], 1)
+).play;
+)</code></pre>
+
+<p>首先要注意的是语法多么简短、精炼而清晰。没有任何多余的东西；它把你的全部注意力集中在应该播放的内容上，并尽量减少程序逻辑带来的干扰。</p>
+
+<p><a href="Overviews-Streams.html">Streams</a> 文档详细解释了这一切的工作原理。高层概述如下：</p>
+
+<p>- Pbind 模式生成 Event 对象，这些对象包含描述音符应如何发声的名称和值。</p>
+
+<p>- 它通过读取 'name, pattern' 对，依次从每个模式流中获取值，并将这些值添加到结果事件中来实现这一点。</p>
+
+<p>- 然后事件被播放。它根据事件原型内编码的一组默认值和规则来解释这些值，并执行相应的动作。默认动作是在服务器上播放一个新的 synth。你可以从默认事件原型中定义的其他几种动作中选择，这些动作在 Streams 系列帮助文件中有文档说明。</p>
+
+<p>- 要播放 synth，事件需要知道将哪些值作为参数传递给服务器。SuperCollider 可以使用 <strong>add</strong> 方法将 synthdef 的信息存储到一个 synthdef 描述库中。</p>
+
+<p>- 事件中的 delta 值告诉 SuperCollider 在播放下一个事件之前等待多长时间。</p>
+
+<p>入门教程无法涵盖所有可能性。学习一组核心的模式类很重要；<a href="Tutorials-A-Practical-Guide-PG_01_Introduction.html">Practical Guide to Patterns</a> 帮助文件系列是更全面的介绍。模式操作，以及组合或嵌套模式的方式，几乎为每一种作曲需求开辟了领域。</p>
+
+<p>例如，我们可以通过从一组 Pbind 序列中随机选择来生成一条有节奏的（但不一定是节拍的）bassline。（其中一些将使用 Pmono，它是 Pbind 的一种变体，旨在播放单声部 synth 线条。）虽然这是一段较大的代码，但其结构相当简单，并且汇集了序列教程中介绍的若干概念。注意，play 的 quant 参数用于让几个不同的序列在节拍上保持在一起。</p>
+
+<p>不要被贝斯线模式吓到。在更高的层面上，它可以简化为 <strong>Pxrand([a, b, c, d], inf)</strong>，它只是随机选取各项，且不会连续两次重复同一个项。恰好每个项都是一个播放一系列音符的事件模式，但这对于 Pxrand 来说无关紧要。它只是选取一个项，将其完整播放到结束，然后再选取下一个，如此反复。从这个角度看，该模式是对选取乐句这一想法的优雅表达。其代码表示与音乐构思之间的对应关系十分直接。</p>
+
+<pre><code>(
+SynthDef(\bass, { |out, freq = 440, gate = 1, amp = 0.5, slideTime = 0.17, ffreq = 1100, width = 0.15,
+        detune = 1.005, preamp = 4|
+    var sig, env;
+    env = Env.adsr(0.01, 0.3, 0.4, 0.1);
+    freq = Lag.kr(freq, slideTime);
+    sig = Mix(VarSaw.ar([freq, freq * detune], 0, width, preamp)).distort * amp
+        * EnvGen.kr(env, gate, doneAction: Done.freeSelf);
+    sig = LPF.ar(sig, ffreq);
+    Out.ar(out, sig ! 2)
+}).add;
+
+TempoClock.default.tempo = 132/60;
+
+p = Pxrand([
+    Pbind(
+        \instrument, \bass,
+        \midinote, 36,
+        \dur, Pseq([0.75, 0.25, 0.25, 0.25, 0.5], 1),
+        \legato, Pseq([0.9, 0.3, 0.3, 0.3, 0.3], 1),
+        \amp, 0.5, \detune, 1.005
+    ),
+    Pmono(\bass,
+        \midinote, Pseq([36, 48, 36], 1),
+        \dur, Pseq([0.25, 0.25, 0.5], 1),
+        \amp, 0.5, \detune, 1.005
+    ),
+    Pmono(\bass,
+        \midinote, Pseq([36, 42, 41, 33], 1),
+        \dur, Pseq([0.25, 0.25, 0.25, 0.75], 1),
+        \amp, 0.5, \detune, 1.005
+    ),
+    Pmono(\bass,
+        \midinote, Pseq([36, 39, 36, 42], 1),
+        \dur, Pseq([0.25, 0.5, 0.25, 0.5], 1),
+        \amp, 0.5, \detune, 1.005
+    )
+], inf).play(quant: 1);
+)
+
+// 非常俗气，但谁能抗拒呢？
+(
+SynthDef(\kik, { |out, preamp = 1, amp = 1|
+    var freq = EnvGen.kr(Env([400, 66], [0.08], -3)),
+        sig = SinOsc.ar(freq, 0.5pi, preamp).distort * amp
+            * EnvGen.kr(Env([0, 1, 0.8, 0], [0.01, 0.1, 0.2]), doneAction: Done.freeSelf);
+    Out.ar(out, sig ! 2);
+}).add;
+
+// 在你演奏之前：
+// 你预期 &#x27;\delta, 1&#x27; 会做什么？
+k = Pbind(\instrument, \kik, \delta, 1, \preamp, 4.5, \amp, 0.32).play(quant: 1);
+)
+
+p.stop;
+k.stop;</code></pre>
+
+<h2 id="Further reading">延伸阅读</h2>
+
+<p><a href="Overviews-Streams.html">流</a>、<a href="Tutorials-Streams-Patterns-Events1.html">流-模式-事件</a>、<a href="Tutorials-A-Practical-Guide-PG_01_Introduction.html">模式实用指南</a></p>
+
+<h2 id="Suggested exercises">建议练习</h2>
+
+<ul>
+<li>选择一首熟悉的曲子，使用你喜欢的任何 synthdef 为它编写一个 Pbind。</li>
+<li>在前一个示例的低音线序列中添加任意数量的乐句。</li>
+</ul>
+
+<p>____________________</p>
+
+<p>本文档是教程 <strong>Getting Started With SuperCollider</strong> 的一部分。</p>
+
+<p>点击此处返回目录：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Getting-Started/16-Sequencing-with-Patterns.html" rel="noreferrer noopener">Tutorials/Getting-Started/16-Sequencing-with-Patterns.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

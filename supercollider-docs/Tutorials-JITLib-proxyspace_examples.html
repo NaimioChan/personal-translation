@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProxySpace 示例 - SuperCollider 文档</title>
+<meta name="description" content="一些 ProxySpace 示例">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>ProxySpace 示例</h1>
+
+<p><em>一些 ProxySpace 示例</em></p>
+
+<p>参见：<a href="Overviews-JITLib.html">JITLib</a>、<a href="Classes-ProxySpace.html">ProxySpace</a></p>
+
+<h2 id="main examples">主要示例</h2>
+
+<h3 id="preparing the environment">准备环境</h3>
+
+<pre><code>(
+s.boot;
+p = ProxySpace.push(s);
+)</code></pre>
+
+<h3 id="playing and monitoring">播放与监听</h3>
+
+<pre><code>// 向硬件总线播放一些输出，这可以是任何音频速率键。
+~out.play;
+
+~out = { SinOsc.ar([400, 408] * 0.8, 0, 0.2) };
+
+
+// 替换节点。交叉淡化包络在内部创建。
+~out = { SinOsc.ar([443, 600 - Rand(0,200)], 0, 0.2) };
+~out = { Resonz.ar(Saw.ar(40 + [0,0.2], 1), [1200, 1600], 0.1) + SinOsc.ar(60 * [1,1.1],0,0.2) };
+~out = { Pan2.ar(PinkNoise.ar(0.1), LFClipNoise.kr(2)) };</code></pre>
+
+<h3 id="setting the node controls">设置节点控件</h3>
+
+<pre><code>~out = { arg rate = 2; Pan2.ar(PinkNoise.ar(0.1), LFClipNoise.kr(rate)) };
+~out.set(\rate, 30);
+~out = { arg rate = 2; Pan2.ar(Dust.ar(2000, 0.2), LFClipNoise.kr(rate)) };
+~out.set(\rate, 2);</code></pre>
+
+<h3 id="referencing between proxies">代理之间的引用</h3>
+
+<pre><code>~lfo = { LFNoise2.kr(30, 300, 500) };
+~out = { SinOsc.ar(~lfo.kr, 0, 0.15) };
+~out = { SinOsc.ar(~lfo.kr * [1, 1.2], 0, 0.1) * Pulse.ar(~lfo.kr * [0.1, 0.125], 0.5) };
+~lfo = { LFNoise1.kr(30, 40) + SinOsc.kr(0.1, 0, 200, 500) };
+~out = { SinOsc.ar(~lfo.kr * [1, 1.2], 0, 0.1) };
+~lfo = 410;</code></pre>
+
+<h3 id="math">math</h3>
+
+<pre><code>// 一元运算符
+~lfo2 = { SinOsc.kr(0.5, 0, 600, 100) };
+~lfo = ~lfo2.abs;
+~lfo2 = { SinOsc.kr(1.3, 0, 600, 100) };
+
+// 二元运算符
+~lfo3 = { LFTri.kr(0.5, 0, 80, 300) };
+~lfo = ~lfo2 + ~lfo3;
+~lfo = ~lfo3;
+~lfo = (~lfo3 / 50).sin * 200 + 500 * { LFTri.kr(~lfo.kr * 0.0015, 0, 0.1 * ~lfo3.kr / 90, 1) };
+~lfo3 = { Mix(~lfo2.kr * [1, 1.2]) };
+
+currentEnvironment.free; // 释放所有节点代理
+~out.stop; // 释放播放 synth。</code></pre>
+
+<h3 id="waking up a network of proxies">唤醒代理网络</h3>
+
+<pre><code>// 按 cmd-. 停止所有节点
+// 再次启动
+~out.play;</code></pre>
+
+<h3 id="feeding back">反馈</h3>
+
+<p>（一个缓冲区大小的延迟）</p>
+
+<pre><code>~out = { SinOsc.ar([220, 330], ~out.ar(2).reverse * LFNoise2.kr(0.5, 4pi), 0.4) };
+
+// 没有即时性：听到缓冲区大小周期
+~out = { Impulse.ar(1 ! 2) + (~out.ar(2) * 0.99) };
+
+
+
+// SuperCollider“微分方程”
+
+~out = { SinOsc.ar(Slope.ar(~out.ar) * MouseX.kr(1000, 18000, 1)) * 0.1 + SinOsc.ar(100, 0, 0.1) };
+
+(
+~out = { var z, zz;
+    z = Slope.ar(~out.ar);
+    zz = Slope.ar(z);
+    SinOsc.ar(Rand(300,410), z) *
+    SinOsc.ar(zz * 410)
+    * 0.1 + Decay2.ar(Pan2.ar(Dust.ar(600), MouseX.kr(-1,1)), 0.01, 0.05);
+}
+)</code></pre>
+
+<h3 id="multiple control">多重控制</h3>
+
+<pre><code>(
+~out = { arg freqOffest;
+    var ctl;
+    ctl = Control.names(\array).kr(Array.rand(8, 400, 1000));
+    Pan2.ar(Mix(SinOsc.ar(ctl + freqOffest, 0, 0.1 / 8)), LFNoise0.kr(2))
+};
+)
+
+~out.setn(\array, Array.exprand(8, 400, 2000));
+~out.set(\freqOffest, rrand(300,200));
+~out.map(\freqOffest, ~lfo);
+
+// 更简单的简写形式是：
+(
+~out = { arg freqOffest=0, array = #[ 997, 777, 506, 553, 731, 891, 925, 580 ];
+    Pan2.ar(Mix(SinOsc.ar(array + freqOffest, 0, 0.1 / 8)), LFNoise0.kr(2))
+};
+)</code></pre>
+
+<h3 id="mixing">mixing</h3>
+
+<pre><code>~out1 = { SinOsc.ar(600, 0, 0.1) };
+~out2 = { SinOsc.ar(500, 0, 0.1) };
+~out3 = { SinOsc.ar(400, 0, 0.1) };
+~out = ~out2 + ~out1 + ~out3;
+
+~out = ~out1 + ~out2;
+~out = ~out1;
+
+// 另一种方法是：
+~out = { SinOsc.ar(600, 0, 0.1) };
+~out.add({ SinOsc.ar(500, 0, 0.1) });
+~out.add({ SinOsc.ar(400, 0, 0.1) });
+
+// 或者直接访问：
+~out[1] = { SinOsc.ar(500 * 1.2, 0, 0.1) };
+~out[2] = { SinOsc.ar(400 * 1.2, 0, 0.1) };</code></pre>
+
+<h3 id="restoring / erasing">恢复 / 擦除</h3>
+
+<pre><code>~out.free; // 这会释放组，而不是播放合成器 x
+~out.send; // 重新发送所有合成器
+~out.free;
+~out.send(nil, 1); // 这仅在索引 1 处发送
+~out.send;
+
+// 移除：
+~out.removeLast;
+~out.removeAt(0);
+
+// 清理，释放总线：
+~out.clear; // 这会中和该 proxy，并释放它的总线</code></pre>
+
+<p>有关代理槽的更多信息，请参见：<a href="Tutorials-JITLib-jitlib_basic_concepts_03.html">jitlib_basic_concepts_03</a></p>
+
+<h3 id="garbage collecting">垃圾回收</h3>
+
+<pre><code>// 通常会有一些不再使用的 proxy 仍在运行——这没关系，
+// 因为它们随时可能再次被使用。
+// 这里展示如何释放未使用的 proxy，例如 ~out1、~out2。
+
+~out.play;
+~out = { Pan2.ar(SinOsc.ar(~lfo.kr, 0, 0.2), sin(~lfo.kr / 10)) }; // ~lfo 被保留，如同其父级。
+~lfo = { LFNoise2.kr(3, 160, 400) };
+
+p.keysValuesDo { arg key, proxy; [key, proxy.isPlaying].postln };
+p.reduce; // 所有监听 proxy（本例中为 ~out）都保持运行。
+// 等效写法：p.reduce(to: [~out]);
+p.keysValuesDo { arg key, proxy; [key, proxy.isPlaying].postln };
+
+// 要移除其他所有内容：
+p.postln;
+p.clean; // 所有监控代理（在此例中为 ~out）都被保留。
+p.postln;
+
+// ~out 停止后，它也会被移除：
+~out.stop; // 停止监视
+p.clean;
+p.postln; // 空白区域。</code></pre>
+
+<h3 id="execution order">执行顺序</h3>
+
+<pre><code>// 你也可以 .play .kr 或 .ar 一个尚未使用的名称。
+// 速率会尽可能被推测出来。关于这个话题另见：[the_lazy_proxy]
+
+~myOut.play; // 播放一些按键（假定为音频速率）
+
+// 速率由第一次访问决定：
+// 像这样 ~lfo 会变成控制速率
+
+~myOut = { SinOsc.ar(~freq.kr * 2, 0, 0.1) };
+~freq = 900;
+~freq = { SinOsc.kr(115, 0, 70, 220) }
+
+~myOut = { SinOsc.ar(~otherFreq.ar * 2, 0, 0.1) };
+~otherFreq = { SinOsc.ar(115, 0, 70, 220) };
+
+currentEnvironment.clear; // 清除此环境中的每个代理并移除它们。（相同：p.clear）</code></pre>
+
+<h3 id="setting the xfade time">设置交叉淡化时间</h3>
+
+<pre><code>~out.play;
+
+~out.fadeTime = 4;
+~out = { SinOsc.ar(Rand(800, 300.0) * [1,1.1], 0, 0.1) };
+~out = { SinOsc.ar(Rand(800, 300.0) * [1,1.1], 0, 0.1) };
+~out.fadeTime = 0.01;
+~out = { SinOsc.ar(Rand(800, 300.0) * [1,1.1], 0, 0.1) };
+~out = { SinOsc.ar(Rand(800, 300.0) * [1,1.1], 0, 0.1) };
+
+~out.free(3);    // 以给定的 fadeTime 释放 synth 和 group，而不改变代理时间
+~out.stop;    // 停止监视</code></pre>
+
+<h3 id="setting and mapping arguments">设置和映射参数</h3>
+
+<pre><code>~out.play;
+
+~out = { arg freq=500, ffreq=120; SinOsc.ar(freq*[1,1.1], SinOsc.ar(ffreq, 0, pi), 0.2) };
+~out.set(\freq, 400 + 100.rand2);
+~out.set(\freq, 400 + 100.rand2);
+~out.set(\ffreq, 30 + 20.rand2);
+~out.unset(\freq, \ffreq);    // 移除该设置
+~out.set(\ffreq, 30 + 10.rand2, \freq, 500 + 200.rand2);
+
+
+// 参数设置和映射会应用到每个新函数
+~out = { arg freq=100, ffreq=20; SinOsc.ar(freq, SinOsc.ar(SinOsc.ar(ffreq)*ffreq, 0, pi), 0.2) };
+
+// 映射到其他代理
+~lfo = { SinOsc.kr(0.3, 0, 80, 100) };
+~out.map(\ffreq, ~lfo);
+
+~out = { arg freq=300, ffreq=20; Pulse.ar(freq * [1, 1.1] + SinOsc.ar(ffreq, 0, freq), 0.3, 0.1) };
+~out = { arg freq=300, ffreq=20; BPF.ar(LFSaw.ar(ffreq * [1, 1.1], 0, 1), freq, 0.2) };
+
+~lfo = { FSinOsc.kr(0.3, 0, 30, 200) + FSinOsc.kr(10, 0, 10) };
+~out = { arg freq=300, ffreq=20; SinOsc.ar(freq*[1,1.1], SinOsc.ar(ffreq, 0, pi), 0.1) };
+
+
+// 交叉淡入淡出的设置与映射：使用 fadeTime
+~out.fadeTime = 2;
+~out.xset(\freq, 9000);
+~out.xset(\freq, rrand(400, 700));
+
+~lfo = { FSinOsc.kr(0.1, 0, 30, 100) };
+~lfo2 = { LFClipNoise.kr(3, 100, 200) };
+~lfo3 = StreamKrDur(Pseq([Prand([530, 600],1), 700, 400, 800, 500].scramble, inf) / 3, 0.2);
+
+~out.xmap(\ffreq, ~lfo2);
+~out.xmap(\ffreq, ~lfo);
+~out.xmap(\ffreq, ~lfo3);
+
+// 参数速率：就像 synthdef 有输入 &#x27;rates&#x27;（如 \ir 或 \tr），nodeproxy 控件
+// 可以被赋予一个速率。此速率用于传入代理的每个函数。
+
+// 触发输入
+~out = { arg trig, dt=1; Decay2.kr(trig, 0.01, dt) * Mix(SinOsc.ar(7000 * [1.2, 1.3, 0.2])) }
+~out.setRates(\trig, \tr);
+
+// 设置组，这样 node proxy 不会存储新值
+~out.group.set(\trig, 0.1, \dt, 0.1);
+~out.group.set(\trig, 0.4, \dt, 0.31);
+~out.group.set(\trig, 0.13, \dt, 2);
+
+// 滞后控制：
+~out.lag(\xfreq, 1); // 等价于 ~out.setRates(\xfreq, 1);
+(
+~out = { arg trig, dt=1, xfreq=700;
+    Decay2.kr(trig, 0.01, dt) * Mix(SinOsc.ar(xfreq * [1.2, 1.3, 0.2]))
+};
+)
+~out.group.set(\trig, 0.1, \dt, 1, \xfreq, rrand(2000,9000));
+~out.group.set(\trig, 0.1, \dt, 0.5, \xfreq, rrand(2000,9000));
+~out.group.set(\trig, 0.1, \dt, 1, \xfreq, rrand(2000,9000));
+
+// 改变 lag，synth 会用新的 lag 重建：
+
+~out.lag(\xfreq, 0.01);
+~out.group.set(\trig, 0.1, \dt, 1, \xfreq, rrand(2000,9000));
+~out.group.set(\trig, 0.1, \dt, 1, \xfreq, rrand(2000,9000));
+~out.group.set(\trig, 0.1, \dt, 1, \xfreq, rrand(2000,9000));
+
+// 移除触发速率：
+~out.setRates(\trig, nil);
+
+// 注意，同样的做法也适用于 i_ 和 t_ 参数，就像在 SynthDef 中一样</code></pre>
+
+<h2 id="other possible inputs">其他可能的输入</h2>
+
+<h3 id="using a synthdef as input">使用 synthdef 作为输入</h3>
+
+<p>如需更系统的概述，请参阅：<a href="Tutorials-JITLib-jitlib_fading.html">jitlib_fading</a></p>
+
+<pre><code>// 你需要负责正确的通道数和输出速率
+// 你必须提供一个 &#x27;out&#x27; 参数，以便它可以映射到正确的通道。
+
+~out.play;
+~out = SynthDef(&quot;w&quot;, { arg out=0; Out.ar(out,SinOsc.ar([Rand(430, 600), 600], 0, 0.2)) });
+~out = SynthDef(&quot;w&quot;, { arg out=0; Out.ar(out,SinOsc.ar([Rand(430, 600), 500], 0, 0.2)) });
+
+
+// 如果提供 gate，它会淡入淡出。多次求值此表达式
+(
+~out = SynthDef(&quot;w&quot;, { arg out=0, gate=1.0, fadeTime = 0.1;
+    Out.ar(out,
+        SinOsc.ar([Rand(430, 800), Rand(430, 800)], 0, 0.2)
+            * EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: Done.freeSelf)
+    )
+    });
+)
+
+// 一旦 SynthDef 被发送，就可以按名称分配。
+// 使用此方法时，应提供一个 gate 参数
+// 以释放 synth。（doneAction: Done.freeSelf）
+// 这非常高效，因为 def 已经在服务器上了。
+
+// 如果 synth def 在 synthdesc 库中（.add），则会检测到其 gate。
+
+(
+SynthDef(&quot;staub&quot;, { arg out, gate=1, fadeTime = 0.1;
+    Out.ar(out,
+        Ringz.ar(Dust.ar(15), Rand(1, 3) * 3000*[1,1], 0.001)
+        * EnvGen.kr(Env.asr(fadeTime, 1, fadeTime), gate, doneAction: Done.freeSelf)
+    )
+}).add;
+)
+
+~out = \staub;
+
+
+
+// 如果你提供一个会自行释放的包络，则不会发送用于释放它的 bundle
+(
+~out = SynthDef(&quot;w&quot;, { arg out, lfo, f0=430;
+    Out.ar(out,
+        SinOsc.ar([Rand(f0, 800), Rand(f0, 800)]+lfo, 0, 0.2)
+            * EnvGen.kr(Env.perc(0.01, 0.03), doneAction: Done.freeSelf)
+    )
+    });
+)
+
+~out.spawn;
+~out.spawn([\f0, 5000]);
+fork { 5.do { ~out.spawn([\f0, 5000 + 1000.0.rand]); 0.1.wait; } }
+
+
+// 当在 SynthDescLib 中找到该符号的 synth 描述时，
+// 代理可以决定是释放还是释放 synth。
+// 因此，如果没有提供 &#x27;gate&#x27; 参数且 def 有 desc，则 synth 会被
+// 释放而不是释放。
+
+(
+SynthDef(&quot;staub&quot;, { arg out;
+    Out.ar(out, Ringz.ar(WhiteNoise.ar(0.01), 1000 * [1,1], 0.001))
+}).add; // 存储 synth def，以便将其添加到 SynthDescLib 中
+)
+
+
+~out = \staub;
+~out = \staub;    // 观察 synth 计数可看出旧的 synth 已被释放。
+~out = 0;    // 现在 out 播放连续的零流。
+~out = nil;    // 移除对象并停止它。</code></pre>
+
+<h3 id="using patterns">使用模式</h3>
+
+<pre><code>// example
+
+(
+SynthDef(\who, { arg amp=0.1, freq=440, detune=0, gate=1, out=0, ffreq=800;
+    var env;
+    env = Env.asr(0.01, amp, 0.5);
+    Out.ar(out, Pan2.ar(
+        Formant.ar(freq + detune, ffreq, 30, EnvGen.kr(env, gate, doneAction: Done.freeSelf)), Rand(-1.0, 1.0))
+    )
+}).add;
+
+)
+
+~out.play;
+
+
+~out = Pbind(\instrument, \who, \freq, [600, 601], \ffreq, 800, \legato, 0.02);
+
+
+// 将控制节点 proxy 嵌入事件模式：
+// 这对 \degree、\midinote 等间接赋值不起作用，
+// 因为事件中会进行计算！如有需要，可以在 SynthDef 中完成这些计算。
+
+~lfo = { SinOsc.kr(2, 0, 400, 700) };
+~out = Pbind(\instrument, \who, \freq, 500, \ffreq, ~lfo, \legato, 0.02);
+
+~lfo = { SinOsc.kr(SinOsc.kr(0.2, Rand(0,pi), 10, 10), 0, 400, 700) };
+
+~lfo = { LFNoise1.kr(5, 1300, 1500) };
+~lfo = { MouseX.kr(100, 5500, 1) };
+
+(
+~out = Pbind(
+        \instrument, \who,
+        \freq, Pseq([500, 380, 300],inf),
+        \legato, 0.1,
+        \ffreq, Pseq([~lfo, 100, ~lfo, 100, 300, 550], inf), // 在 pattern 中使用它
+        \dur, Pseq([1, 0.5, 0.75, 0.125]*0.4, inf)
+    );
+)
+
+// 注意，当你在非事件 pattern 中使用 proxy 时，它会作为对象嵌入，
+// 因此此功能仍然是标准的
+
+// 仅适用于控制速率代理。多通道控制速率代理会导致
+// 事件的多通道扩展：
+
+~lfoStereo = { LFNoise1.kr([1, 1], 1300, 1500) }; // 2 通道控制速率代理
+~out = Pbind(\instrument, \who, \ffreq, ~lfoStereo, \legato, 0.02).trace;
+~lfoStereo = { [MouseX.kr(100, 15500, 1), SinOsc.kr(SinOsc.kr(0.2, 0, 10, 10), 0, 400, 700)] }
+
+// 顺便说一句：设置 clock 会使 pattern 同步：
+p.clock = TempoClock.default;
+p.clock.tempo = 2.0;
+p.clock.tempo = 1.0
+
+
+// 如果 synthdef 中定义了 \amp 参数，pattern 也会交叉淡化：
+// （多执行几次）
+~out.fadeTime = 3.0;
+(
+~out = Pbind(
+        \instrument, \who,
+        \freq, Pshuf([500, 380, 200, 510, 390, 300, 300],inf) * rrand(1.0, 2.0),
+        \legato, 0.1,
+        \ffreq, Pshuf([~lfo, 100, ~lfo, 100, 300, 550], inf),
+        \dur, 0.125 * [1, 2, 3, 2/3].choose
+    );
+)</code></pre>
+
+<h3 id="using instruments and players">使用乐器和播放器</h3>
+
+<blockquote class="note"><p><strong>注意：</strong> 要使以下内容正常工作，你需要安装 <strong>cruciallib</strong> quark。</p></blockquote>
+
+<pre><code>// 暂停和恢复尚不可用。
+
+
+// 存储一个乐器
+(
+Instr(\test,
+    { arg dens=520, ffreq=7000; Ringz.ar(Dust.ar(dens, [1,1] * 0.1), ffreq, 0.02) }
+    );
+)
+
+~out = Patch(\test, [10, rrand(5000, 8000)]);
+~out.fadeTime = 3;
+
+
+(
+~out = InstrSpawner({ arg freq=1900,env,pan;
+    Pan2.ar(SinOsc.ar(freq, 0.5pi, 0.3) * EnvGen.kr(env, doneAction: Done.freeSelf), pan)
+},[
+    Prand([1500, 700, 800, 3000] + 170.rand2, inf),
+    Env.perc(0.002,0.01),
+    Prand([-1,1],inf)
+],0.125)
+)
+
+~out.clear;
+
+
+
+// 尚不可用。
+//~out.set(\dens, 120);
+//~out.xset(\dens, 1030);
+//~out.unmap(\ffreq);
+//~out.set(\ffreq, 500);</code></pre>
+
+<h2 id="client side routines">客户端例程</h2>
+
+<h3 id="spawning">spawning</h3>
+
+<pre><code>~out.play;
+~out.awake = false; // 允许声音对象赋值而不立即发送
+
+// 将一个 synthdef 放入节点代理而不立即播放
+// 该 synthdef 有一个会自行释放的包络。
+(
+~out = SynthDef(&quot;a&quot;, { arg out=0, freq=800, pmf=1.0, pan;
+        var env, u;
+        env = EnvGen.kr(Env.perc(0.001, 0.04, 0.4),doneAction: Done.freeSelf); // 包络
+        u = SinOsc.ar(freq * Rand(0.9, 1.1), SinOsc.ar(pmf, 0, pi), env);
+        Out.ar(out, Pan2.ar(u, pan))
+    })
+);
+
+
+// 创建一个任务以重复发送 grains
+(
+t = Task.new({
+    loop({
+        // 在索引 0 处使用当前 synthdef 启动一个 synth
+        ~out.spawn([\pmf, [1, 20, 300].choose, \pan, [0, -1, 1].choose]);
+        [0.1, 0.01, 0.25].choose.wait;
+    })
+});
+)
+
+t.start;
+t.stop;
+t.start;
+
+// 注意：如果你想避免使用解释器变量（单个字母，如 &quot;t&quot;），
+// 你可以为此使用 Tdef。（参见 Tdef.help）
+
+// 设置一些参数
+~out.set(\freq, 300);
+~out.set(\freq, 600);
+~out.map(\freq, ~lfo);
+~lfo = { SinOsc.kr(0.1, 0, 3000, 4000) };
+~lfo = { SinOsc.kr(0.1, 0, 600, 700) };
+~lfo.add({ Trig.kr(Dust.kr(1), 0.1) * 3000 });
+~lfo = 300;
+
+// 在运行过程中更改定义
+(
+~out = SynthDef(&quot;a&quot;, { arg out, freq=800;
+        var env;
+        env = EnvGen.kr(Env.perc(0.01, 0.1, 0.3),doneAction: Done.freeSelf);
+        Out.ar(out, Pulse.ar(freq * Rand([0.9,0.9], 1.1), 0.5, env) )
+    });
+)
+
+
+t.stop;
+~out.awake = true; // 别忘了这个
+// 释放当前 ProxySpace 中的所有合成器
+currentEnvironment.clear;</code></pre>
+
+<h3 id="granular synthesis: efficient code">粒度合成：高效代码</h3>
+
+<p>另请参阅 <a href="Tutorials-JITLib-jitlib_efficiency.html">jitlib_efficiency</a></p>
+
+<pre><code>~out.play;
+
+(
+SynthDef(&quot;grain&quot;, { arg i_out = 0, pan;
+    var env;
+    env = EnvGen.kr(Env.perc(0.001, 0.003, 0.2),doneAction: Done.freeSelf);
+    Out.ar(i_out, Pan2.ar(FSinOsc.ar(Rand(1000,10000)), pan) * env)
+}).send(s);
+)
+
+// 颗粒的目标
+~someInput.ar(2); // 初始化为 2 声道音频
+~out = ~someInput;
+
+(
+t = Task({
+    loop({
+        s.sendMsg(&quot;/s_new&quot;,&quot;grain&quot;,-1,0,0,
+            \i_out, ~someInput.index, // 返回代理的总线索引
+            \pan, [1, 1, -1].choose * 0.2
+        );
+        [0.01, 0.02].choose.wait;
+    })
+});
+)
+t.play;
+
+// 不同的滤波器；
+
+~out.fadeTime = 1.0;
+
+~out = { BPF.ar(~someInput.ar, MouseX.kr(100, 18000, 1), 0.1) };
+
+~out = { CombL.ar(~someInput.ar * (LFNoise0.ar(2) &gt; 0), 0.2, 0.2, MouseX.kr(0.1, 5, 1)) };
+
+~out = { RLPF.ar(~someInput.ar, LFNoise1.kr(3, 1000, 1040), 0.05) };
+
+
+t.stop;
+
+
+// end
+
+~out.stop;
+currentEnvironment.clear;
+ProxySpace.pop; // 恢复原始环境</code></pre>
+
+<h3 id="using multiple proxyspaces">使用多个代理空间</h3>
+
+<p>可以在服务器未运行时完成：使用 p.wakeUp 或 p.play</p>
+
+<p>环境可以被回放。</p>
+
+<pre><code>// 退出服务器：
+
+s.quit;
+
+
+// 创建两个没有运行服务器的 proxyspace
+(
+p = ProxySpace(s);
+q = ProxySpace(s);
+
+p.use({
+    ~out = { Resonz.ar(~in.ar, ~freq.kr, 0.01) };
+    ~in = { WhiteNoise.ar(0.5) };
+    ~freq = { LFNoise2.kr(1, 1000, 2000) };
+});
+
+q.use({
+    ~in = { Dust.ar(20, 0.1) };
+    ~out = { Resonz.ar(~in.ar * 450, ~freq.kr, 0.005) };
+    ~freq = { LFNoise2.kr(1, 400, 2000) };
+});
+)
+
+(
+// 等待已启动的服务器
+s.waitForBoot({
+    // 在 \out 处播放代理
+    p.play(\out);
+    q.play; // out 是默认输出
+});
+)</code></pre>
+
+<h3 id="external access">外部访问</h3>
+
+<pre><code>q[\in][1] = { Impulse.ar(2, 0, 0.5) }; // 在索引 1 处添加一个 synth
+
+// 等价于
+q.at(\in).put(1, { Impulse.ar(7, 0, 0.5) });</code></pre>
+
+<h3 id="connecting two spaces">连接两个空格</h3>
+
+<p>（必须位于同一服务器上）</p>
+
+<pre><code>(
+q.use({
+    ~freq = 100 + p[\freq] / 2;
+})
+)</code></pre>
+
+<h3 id="recording output">录制输出</h3>
+
+<p>（另见：<a href="Classes-RecNodeProxy.html">RecNodeProxy</a>）</p>
+
+<pre><code>r = p.record(\out, &quot;proxySpace.aiff&quot;);
+
+// 开始录制
+r.unpause;
+
+// 暂停录制
+r.pause;
+
+// 停止录制
+r.close;</code></pre>
+
+<h3 id="push/pop">push/pop</h3>
+
+<pre><code>// 使 p 成为 currentEnvironment
+p.push;
+
+~freq = 700;
+~freq = 400;
+~freq = { p.kr(\freq) + LFNoise1.kr(1, 200, 300) % 400 }; // 反馈
+~freq = 400;
+
+p.pop; // 恢复环境
+
+
+// 使 y 成为 currentEnvironment
+q.push;
+
+~freq = 1000;
+~in = { WhiteNoise.ar(0.01) };
+
+q.pop; // 恢复环境
+
+q.clear;
+p.clear;</code></pre>
+
+<h2 id="some more topics">更多主题</h2>
+
+<h3 id="nodeproxy with numbers as input">以数字作为输入的 nodeproxy</h3>
+
+<pre><code>p = ProxySpace.push(s.boot);
+
+
+~out = { SinOsc.ar(~a.kr * Rand(1, 2), 0, 0.1) };
+~out.play;
+
+~a = 900;
+
+// 这些加起来：
+~a[0] = 440;
+~a[1] = 220;
+~a[2] = 20;
+
+~a.fadeTime = 2;
+
+~a[0] = 300; // 现在有一个交叉淡化。
+~a[1] = { SinOsc.kr(5, 0, 20) };
+~a[2] = { SinOsc.kr(30, 0, 145) };
+
+
+
+// 内部，数值输入大约被替换为：
+// （伪代码）
+SynthDef(&quot;name&quot;, { arg out, fadeTime;
+    Out.kr(out,
+        Control.kr(Array.fill(proxy.numChannels, { the number }))
+            * EnvGate.new(fadeTime:fadeTime)
+    )
+});</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/JITLib/proxyspace_examples.html" rel="noreferrer noopener">Tutorials/JITLib/proxyspace_examples.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

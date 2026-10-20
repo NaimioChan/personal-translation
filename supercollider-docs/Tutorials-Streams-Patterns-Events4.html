@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>理解流、模式和事件 - 第 4 部分 - SuperCollider 文档</title>
+<meta name="description" content="Environment &amp;amp; Event">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>理解流、模式和事件 - 第 4 部分</h1>
+
+<p><em>Environment &amp; Event</em></p>
+
+<p>另请参阅：<a href="Tutorials-Streams-Patterns-Events1.html">理解流、模式与事件 - 第 1 部分</a>、<a href="Tutorials-Streams-Patterns-Events2.html">理解流、模式与事件 - 第 2 部分</a>、<a href="Tutorials-Streams-Patterns-Events3.html">理解流、模式与事件 - 第 3 部分</a>、<a href="Tutorials-Streams-Patterns-Events5.html">理解流、模式与事件 - 第 5 部分</a>、<a href="Tutorials-Streams-Patterns-Events6.html">理解流、模式与事件 - 第 6 部分</a>、<a href="Tutorials-Streams-Patterns-Events7.html">理解流、模式与事件 - 第 7 部分</a></p>
+
+<p>前面的章节展示了如何使用流和模式来一次为单个参数生成复杂的值序列。</p>
+
+<p>本节涵盖环境与事件，它们用于为模式构建一个符号事件框架，让你能用模式控制作曲的各个方面。</p>
+
+<h2 id="Environment">Environment</h2>
+
+<p><a href="Classes-Environment.html">Environment</a> 是一个将 <a href="Classes-Symbol.html">Symbol</a> 映射到值的 <a href="Classes-IdentityDictionary.html">IdentityDictionary</a>。始终存在一个当前 Environment，它存储在 <a href="Classes-Object.html">Object</a> 类的 <code>currentEnvironment</code> 类变量中。</p>
+
+<p>符号和值对可以按如下方式放入当前 Environment：</p>
+
+<pre><code>currentEnvironment.put(\myvariable, 999);</code></pre>
+
+<p>并按如下方式从当前 Environment 中获取：</p>
+
+<pre><code>currentEnvironment.at(\myvariable).postln;</code></pre>
+
+<p>编译器为上述两种构造提供了简写形式。</p>
+
+<pre><code>~myvariable = 888;</code></pre>
+
+<p>等价于：</p>
+
+<pre><code>currentEnvironment.put(\myvariable, 888);</code></pre>
+
+<p>and:</p>
+
+<pre><code>~myvariable.postln;</code></pre>
+
+<p>等价于：</p>
+
+<pre><code>currentEnvironment.at(\myvariable).postln;</code></pre>
+
+<h2 id="Making an Environment">创建一个环境</h2>
+
+<p>Environment 有一个类方法 <strong>make</strong>，可用于创建 <a href="Classes-Environment.html">Environment</a> 并为其填充值。<strong>make</strong> 的作用是临时用一个新的 Environment 替换当前的 Environment，调用你的函数在其中填充值，然后恢复之前的当前 Environment，并返回新的那个。</p>
+
+<pre><code>(
+var a;
+a = Environment.make({
+    ~a = 100;
+    ~b = 200;
+    ~c = 300;
+});
+a.postln;
+)</code></pre>
+
+<h2 id="Using an Environment">使用环境</h2>
+
+<p>实例方法 <strong>use</strong> 可以让你用一个自己创建的 <a href="Classes-Environment.html">Environment</a> 临时替换当前的 Environment。<strong>use</strong> 方法返回你的函数的结果，而不是像 <strong>make</strong> 那样返回 Environment。</p>
+
+<pre><code>(
+var a;
+a = Environment.make({
+    ~a = 10;
+    ~b = 200;
+    ~c = 3000;
+});
+a.use({
+    ~a + ~b + ~c
+}).postln;
+)</code></pre>
+
+<p>还有一个 <strong>use</strong> 类方法，用于你想直接从 <a href="Classes-Environment.html">Environment</a> 创建并使用结果的情况。</p>
+
+<pre><code>(
+var a;
+a = Environment.use({
+    ~a = 10;
+    ~b = 200;
+    ~c = 3000;
+    ~a + ~b + ~c
+}).postln;
+)</code></pre>
+
+<h2 id="Calling Functions with arguments from the current Environment">从当前环境调用带参数的函数</h2>
+
+<p>可以调用一个 <a href="Classes-Function.html">Function</a> 并让它从当前 Environment 中查找任何未指定的参数值。这是通过 <strong>valueEnvir</strong> 和 <strong>valueArrayEnvir</strong> 方法完成的。对于任何未指定的参数值，这些方法将在当前 Environment 中查找与参数同名的符号。如果未找到该参数，则使用函数为该参数定义的默认值。</p>
+
+<pre><code>(
+var f;
+
+// 定义一个函数
+f = { arg x, y, z; [x, y, z].postln; };
+
+Environment.use({
+    ~x = 7;
+    ~y = 8;
+    ~z = 9;
+
+    f.valueEnvir(1, 2, 3);    // 所有值均已提供
+    f.valueEnvir(1, 2);    // z 在当前 Environment 中查找
+    f.valueEnvir(1);    // y 和 z 在当前 Environment 中查找
+    f.valueEnvir;        // 所有参数都在当前 Environment 中查找
+    f.valueEnvir(z: 1);    // x 和 y 在当前 Environment 中查找
+});
+)</code></pre>
+
+<p>下面是一个有些刻意构造的示例，说明如何使用 Environment 来制造 SynthDefs。尽管下面三个函数的 freq、amp 和 pan 参数以不同的顺序声明，但这并不重要，因为 valueEnvir 会在环境中查找它们。</p>
+
+<pre><code>(
+var a, b, c, n;
+
+n = 40;
+a = { arg freq, amp, pan;
+    Pan2.ar(SinOsc.ar(freq), pan, amp);
+};
+b = { arg amp, pan, freq;
+    Pan2.ar(RLPF.ar(Saw.ar(freq), freq * 6, 0.1), pan, amp);
+};
+c = { arg pan, freq, amp;
+    Pan2.ar(Resonz.ar(GrayNoise.ar, freq * 2, 0.1), pan, amp * 2);
+};
+
+Task({
+    n.do({ arg i;
+        SynthDef(&quot;Help-SPE4-EnvirDef-&quot; ++ i.asString, { |out|
+            var sound;
+            Environment.use({
+                    // 在环境中设置值
+                ~freq = exprand(80, 600);
+                ~amp = 0.1 + 0.3.rand;
+                ~pan = 1.0.rand2;
+
+                    // 调用一个随机选择的乐器函数
+                    // 使用环境中的值
+                sound = [a,b,c].choose.valueEnvir;
+            });
+            sound = CombC.ar(sound, 0.2, 0.2, 3, 1, out);
+            sound = sound * EnvGen.kr(
+                Env.sine, doneAction: Done.freeSelf, timeScale: 1.0 + 6.0.rand, levelScale: 0.3
+            );
+            Out.ar(out, sound);
+        }).send(s);
+        0.02.wait;
+    });
+    loop({
+        Synth( &quot;Help-SPE4-EnvirDef-&quot; ++ n.rand.asString );
+        (0.5 + 2.0.rand).wait;
+    });
+}).play;
+)</code></pre>
+
+<h2 id="Event">Event</h2>
+
+<p>类 <a href="Classes-Event.html">Event</a> 是 <a href="Classes-Environment.html">Environment</a> 的子类。事件是将代表音乐事件参数名称的 Symbol 映射到其值的映射。这让你可以将任何想要的信息放入事件中。</p>
+
+<p>类获取方法 <strong>default</strong> 检索默认的原型事件，该事件已用许多有用参数的值进行了初始化。它只代表一种可能的事件模型。你可以自由创建自己的事件模型，但最好先理解所提供的这一个，以便了解可以做什么。</p>
+
+<p>原型事件是一个默认事件，它将被模式返回的流所变换。由事件模式产生的组合完全是由对单个 protoEvent 的副本进行变换而创建的。</p>
+
+<p><a href="#footnote_1" id="footnote_org_1">1</a></p>
+
+<h2 id="Value Patterns, Event Patterns and Pbind">值模式、事件模式和 Pbind</h2>
+
+<p>第 2 部分和第 3 部分讨论的模式被称为“值模式”，因为它们的流在每次调用 <strong>next</strong> 时返回单个值。这里我们介绍“事件模式”，它在转换为流后，每次调用 <strong>next</strong> 时返回一个 <a href="Classes-Event.html">Event</a>。</p>
+
+<p>类 <a href="Classes-Pbind.html">Pbind</a> 在值模式与事件模式之间架起桥梁。它将每个事件中的符号绑定到从模式获得的值。Pbind 以成对形式接收参数，每对中的第一个是 <a href="Classes-Symbol.html">Symbol</a>，第二个是值 <a href="Classes-Pattern.html">Pattern</a>。任何对象都可以充当 Pattern，因此你可以使用常量作为模式（参见下面示例中的 <code>\amp</code>）。</p>
+
+<p>当其流中的第一个结束时，Pbind 流返回 nil。</p>
+
+<pre><code>Pbind( \freq, Pseq([440,880]) ).play</code></pre>
+
+<p>通过向模式发送 <code>asStream</code> 消息，会为其创建一个事件流。Pbind 所做的是产生一个流，将其符号对应的值放入事件中，可能覆盖这些符号之前的绑定：</p>
+
+<pre><code>t = Pbind( \freq, Pseq([440,880]) ).asStream;
+t.next(Event.default);
+t.next(Event.default);
+t.next(Event.default);</code></pre>
+
+<p>调用 <a href="Classes-Pattern.html#-play">Pattern: -play</a> 时，会自动生成一个 <a href="Classes-EventStreamPlayer.html">EventStreamPlayer</a>，它负责调度以及将 protoEvent 传递到事件流中。</p>
+
+<h2 id="EventStreamPlayer">EventStreamPlayer</h2>
+
+<p>类 <a href="Classes-EventStreamPlayer.html">EventStreamPlayer</a> 是 <a href="Classes-PauseStream.html">PauseStream</a> 的子类。PauseStream 只是一个流的包装器，允许播放、停止、启动它等……</p>
+
+<p>EventStreamPlayers 使用 Pbind-asStream 返回的事件流以及 protoEvent 来初始化。EventStreamPlayer 在每次对 Pbind 流调用 <strong>next</strong> 时传入一个 <strong>protoEvent</strong>。Pbind 流会复制该事件，以便沿着模式流树向下和向上传递，使每个流都能修改它。</p>
+
+<p>EventStreamPlayer 本身就是一个流，它返回标量（数字），时钟用这些标量来调度其下一次调用。每次时钟调用 EventStreamPlayer-next 时，播放器都会在 Pbind 流遍历返回 Event 之后，通过查询该 Event 来获取其 delta 值。</p>
+
+<h2 id="Changes in SC3">SC3 中的变化</h2>
+
+<p>在 SC2 中，你在 Pattern 上调用 asEventStream，会得到一个实际返回事件的流。</p>
+
+<p>在 SC3 中，如果你想要一个真正的事件流，可以在 Event Pattern 上调用 asStream。这将给你一个事件流，然后你可以用它来初始化一个 EventStreamPlayer 对象。不过你不需要担心这一点，因为这通常会在 Pattern 的 play 方法中为你完成。另一个变化是，你不通过 asStream 方法传入你的 protoEvent。它由 EventStreamPlayer 在每次调用流的 next 时为你传入。</p>
+
+<p>在这里你可以看到从 Pbind 返回的流是什么样子。</p>
+
+<pre><code>(
+var pattern, stream;
+
+    // 将 Symbol xyz 绑定到从 pattern 获得的值
+pattern = Pbind(
+    \xyz, Pseq([1, 2, 3])
+);
+
+    // 为 Pbind 模式创建一个事件流。
+stream = pattern.asStream;
+
+    // 事件流需要一个原型事件作为输入。
+    // 此示例使用一个空 Event 作为原型
+4.do({ stream.next(Event.new).postln; });
+)</code></pre>
+
+<p>这是一个包含更多绑定的示例。</p>
+
+<pre><code>(
+var pattern, stream;
+
+pattern = Pbind(
+    \abc, Prand([6, 7, 8, 9], inf ),
+    \xyz, Pseq([1, 2, 3], 2 ),
+    \uuu, 999 // 常量表示其自身的无限序列
+);
+
+stream = pattern.asStream;
+
+7.do({ stream.next(Event.new).postln; });
+)</code></pre>
+
+<p>第 3 部分中讨论的 ListPattern 可以围绕 Event Stream 来创建 Event Stream 的序列。</p>
+
+<pre><code>(
+var pattern, stream;
+pattern =
+    Pseq([
+        Pbind( \abc, Pseq([1, 2, 3])),
+        Pbind( \def, Pseq([4, 5, 6])),
+        Pbind( \xyz, Pseq([7, 8, 9]))
+    ]);
+stream = pattern.asStream;
+10.do({ stream.next(Event.new).postln; });
+)
+
+(
+var pattern, stream;
+pattern =
+    Prand([
+        Pbind( \abc, Pseq([1, 2, 3])),
+        Pbind( \def, Pseq([4, 5, 6])),
+        Pbind( \xyz, Pseq([7, 8, 9]))
+    ], 3);
+stream = pattern.asStream;
+10.do({ stream.next(Event.new).postln; });
+)</code></pre>
+
+<p>转到下一个文件：<a href="Tutorials-Streams-Patterns-Events5.html">理解流、模式和事件 - 第 5 部分</a></p>
+
+<p class="footnote" id="footnote_1">[<a href="#footnote_org_1">1</a>] - 这都是 Big Note 的一部分，但别告诉那些猪和小马。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Streams-Patterns-Events4.html" rel="noreferrer noopener">Tutorials/Streams-Patterns-Events4.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

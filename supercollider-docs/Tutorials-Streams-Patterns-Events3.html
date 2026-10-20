@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>理解流、模式和事件 - 第 3 部分 - SuperCollider 文档</title>
+<meta name="description" content="ListPatterns">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>理解流、模式和事件 - 第 3 部分</h1>
+
+<p><em>ListPatterns</em></p>
+
+<p>另请参阅：<a href="Tutorials-Streams-Patterns-Events1.html">理解流、模式与事件 - 第 1 部分</a>、<a href="Tutorials-Streams-Patterns-Events2.html">理解流、模式与事件 - 第 2 部分</a>、<a href="Tutorials-Streams-Patterns-Events4.html">理解流、模式与事件 - 第 4 部分</a>、<a href="Tutorials-Streams-Patterns-Events5.html">理解流、模式与事件 - 第 5 部分</a>、<a href="Tutorials-Streams-Patterns-Events6.html">理解流、模式与事件 - 第 6 部分</a>、<a href="Tutorials-Streams-Patterns-Events7.html">理解流、模式与事件 - 第 7 部分</a></p>
+
+<h2 id="ListPatterns">ListPatterns</h2>
+
+<p>ListPattern 是按某种方式遍历对象数组的 <a href="Classes-Pattern.html">Pattern</a>。所有 ListPattern 都有共同的实例变量 list 和 repeats。list 变量是要被遍历的某个 <a href="Classes-Array.html">Array</a>。repeats 变量是某种衡量某操作重复次数的量，其含义因各个子类而异。repeats 的默认值为 1。</p>
+
+<p><a href="Classes-Pseq.html">Pseq</a> 是一种在值列表上循环的模式。repeats 变量给出重复整个列表的次数。</p>
+
+<pre><code>//////////////////////////////////////////////////////////////
+// 注意：本文档通篇使用此 SynthDef
+(
+SynthDef(\help_SPE3_SimpleSine, { |out, freq=440, sustain=1.0|
+    var osc;
+    osc = SinOsc.ar( [freq, freq+0.05.rand], 0.5pi )
+    * EnvGen.ar(
+        Env.perc, doneAction: Done.freeSelf, levelScale: 0.3, timeScale: sustain
+    );
+    Out.ar(out, osc);
+}).add;
+)
+//////////////////////////////////////////////////////////////
+
+(
+var a, b;
+a = Pseq.new(#[1, 2, 3], 2);    // 重复两次
+b = a.asStream;
+7.do({ b.next.postln; });
+)</code></pre>
+
+<p>Pseq 还有一个 offset 参数，用于给出列表中的起始偏移量。</p>
+
+<pre><code>(
+var a, b;
+a = Pseq.new(#[1, 2, 3, 4], 3, 2);    // 重复 3 次，偏移 2
+b = a.asStream;
+13.do({ b.next.postln; });
+)</code></pre>
+
+<p>你可以为 repeats 变量传入一个函数，该函数在流创建时求值。</p>
+
+<pre><code>(
+var a, b;
+a = Pseq.new(#[1, 2], { rrand(1, 3) });    // 重复 1、2 或 3 次
+b = a.asStream;
+7.do({ b.next.postln; });
+)</code></pre>
+
+<p>如果你为 repeats 变量指定值 <code>inf</code>，那么它将无限重复。</p>
+
+<pre><code>(
+var a, b;
+a = Pseq.new(#[1, 2, 3], inf);    // 无限重复
+b = a.asStream;
+10.do({ b.next.postln; });
+)</code></pre>
+
+<p>Pseq 用作音高序列：</p>
+
+<p>请记住，像 <code>midicps</code> 这样的数学运算可用于流。</p>
+
+<p>另一种写法 <code>Pseq(...).midicps.asStream</code> 也是可行的，因为模式和流都继承自 <a href="Classes-AbstractFunction.html">AbstractFunction</a>，而 midicps 是它的一个方法。（midicps 将 midi 值转换为每秒周期数或 Hz）</p>
+
+<pre><code>(
+var a, d;
+a = Pseq(#[60, 61, 63, 65, 67, 63], inf ).asStream.midicps;
+d = 0.3;
+Task({
+    12.do({
+        Synth(\help_SPE3_SimpleSine, [ \freq, a.next, \sustain, d ]);
+        d.wait;
+    });
+}).play
+)</code></pre>
+
+<p><a href="Classes-Pser.html">Pser</a> 类似于 Pseq，但 repeats 变量给出的是返回的项数，而不是完整循环的次数。</p>
+
+<pre><code>(
+var a, b;
+a = Pser.new(#[1, 2, 3], 5);    // 返回 5 项
+b = a.asStream;
+6.do({ b.next.postln; });
+)</code></pre>
+
+<p><a href="Classes-Prand.html">Prand</a> 在每次重复时从列表中随机返回一项。</p>
+
+<pre><code>(
+var a, b;
+a = Prand.new(#[1, 2, 3, 4, 5], 6);    // 返回 6 项
+b = a.asStream;
+7.do({ b.next.postln; });
+)</code></pre>
+
+<p>Prand 用作音高序列：</p>
+
+<pre><code>(
+var a, d;
+a = Prand(#[60, 61, 63, 65], inf).midicps.asStream;
+d = 0.3;
+Task({
+    12.do({
+        Synth(\help_SPE3_SimpleSine,[\freq, a.next]);
+        d.wait;
+    });
+}).play;
+)</code></pre>
+
+<p><a href="Classes-Pxrand.html">Pxrand</a> 与 Prand 类似，每次重复时从列表中随机返回一个项目，但 Pxrand 从不连续两次重复同一个元素。</p>
+
+<pre><code>(
+var a, b;
+a = Pxrand.new(#[1, 2, 3], 10);    // 返回 10 项
+b = a.asStream;
+11.do({ b.next.postln; });
+)</code></pre>
+
+<p>Pxrand 用作音高序列：</p>
+
+<pre><code>(
+var a;
+a = Pxrand(#[60, 61, 63, 65], inf).midicps.asStream;
+Task({
+    12.do({
+        Synth(\help_SPE3_SimpleSine, [\freq, a.next]);
+        0.8.wait;
+    });
+}).play;
+)</code></pre>
+
+<p><a href="Classes-Pshuf.html">Pshuf</a> 以打乱的顺序遍历列表。整个打乱后的列表会以相同顺序重复 repeats 变量所指定的次数。</p>
+
+<pre><code>(
+var a, b;
+a = Pshuf.new(#[1, 2, 3, 4], 3);
+b = a.asStream;
+13.do({ b.next.postln; });
+)</code></pre>
+
+<p>Pshuf 用作音高序列：</p>
+
+<pre><code>(
+var a, b;
+a = Pshuf(#[60, 61, 65, 67], inf).midicps.asStream;
+Task({
+    12.do({
+        Synth(\help_SPE3_SimpleSine, [\freq, a.next]);
+        0.5.wait;
+    });
+}).play;
+)</code></pre>
+
+<h2 id="Nesting Patterns">嵌套模式</h2>
+
+<p>如果一个 <a href="Classes-Pattern.html">Pattern</a> 在其列表中遇到另一个 Pattern，它就会将该模式嵌入其输出中。也就是说，它会在该模式上创建一个流，并迭代该模式直到其结束，然后再继续。</p>
+
+<p>例如，这里有一个模式嵌套在另一个模式中。</p>
+
+<pre><code>(
+var a, b;
+a = Pseq.new([1, Pseq.new([100,200], 2), 3], 3);
+b = a.asStream;
+19.do({ b.next.postln; });
+)</code></pre>
+
+<p>嵌套在 Prand 中的 Pseq：</p>
+
+<pre><code>(
+var a, b;
+a = Prand.new([
+        Pseq.new([1, 2], 2),
+        Pseq.new([3, 4], 2),
+        Pseq.new([5, 6], 2)
+    ], 3);
+b = a.asStream;
+13.do({ b.next.postln; });
+)</code></pre>
+
+<p>嵌套的音高序列：</p>
+
+<pre><code>(
+var a;
+a = Prand([
+        Pseq(#[60, 61, 63, 65, 67, 63]),
+        Prand(#[72, 73, 75, 77, 79], 6),
+        Pshuf(#[48, 53, 55, 58], 2)
+    ], inf
+).midicps.asStream;
+Task({
+    loop({
+        Synth( \help_SPE3_SimpleSine, [\freq, a.next] );
+        0.3.wait;
+    });
+}).play;
+)</code></pre>
+
+<h2 id="Math operations on ListPatterns">对 ListPattern 进行数学运算</h2>
+
+<p>模式 <code>b</code> 将模式 a 正常播放一次，再升五度移调播放一次，再升四度移调播放一次。</p>
+
+<pre><code>(
+var a, b;
+a = Pseq(#[60, 62, 63, 65, 67, 63]);
+b = Pseq([ a, a + 7, a + 5], inf).asStream;
+Task({
+    24.do({
+        Synth(\help_SPE3_SimpleSine, [ \freq, b.next.midicps ]);
+        0.3.wait;
+    });
+}).play;
+)</code></pre>
+
+<p>将两个模式相加。第二个模式将第一个模式中每第五个音符移低一个八度。</p>
+
+<pre><code>(
+var a;
+a = Pseq(#[60, 62, 63, 65, 67, 63], inf) + Pseq(#[0, 0, 0, 0, -12], inf);
+a = a.asStream.midicps;
+Task({
+    25.do({
+        Synth(\help_SPE3_SimpleSine, [\freq, a.next]);
+        0.3.wait;
+    });
+}).play;
+)</code></pre>
+
+<h2 id="Making Music with ListPatterns">使用 ListPatterns 创作音乐</h2>
+
+<p>这里是第 2 部分给出的同一示例改写为使用 ListPattern 的版本。它使用嵌套模式，代码更加简洁。SuperCollider 允许你把 <code>SomeClass.new(params)</code> 写成 <code>SomeClass(params)</code>，省去 ".new"。这可以让下面那些会创建大量对象的模式示例代码更易读。</p>
+
+<pre><code>(
+SynthDef( \help_SPE3_Allpass6, { arg freq;
+    var out, env;
+    out = RLPF.ar(
+        LFSaw.ar( freq, mul: EnvGen.kr( Env.perc, levelScale: 0.3, doneAction: Done.freeSelf ) ),
+        LFNoise1.kr(1, 36, 110).midicps,
+        0.1
+    );
+    6.do({ out = AllpassN.ar(out, 0.05, [0.05.rand, 0.05.rand], 4) });
+    Out.ar( 0, out );
+}).add
+)
+
+(
+var freqStream;
+
+freqStream = Pseq([
+    Prand([
+        nil,    // 在模式中遇到 nil 项会导致其结束
+        Pseq(#[24, 31, 36, 43, 48, 55]);
+    ]),
+    Pseq([ 60, Prand(#[63, 65]), 67, Prand(#[70, 72, 74]) ], { rrand(2, 5) }),
+    Prand(#[74, 75, 77, 79, 81], { rrand(3, 9) })
+], inf).asStream.midicps;
+
+Task({
+    loop({
+        Synth( \help_SPE3_Allpass6, [\freq, freqStream.next ]);
+        0.13.wait;
+    });
+}).play;
+)</code></pre>
+
+<p>这是一个使用 Pattern 创建节奏独奏的示例。模式中的值指定了馈送到 <a href="Classes-Decay2.html">Decay2</a> 生成器的脉冲的振幅。</p>
+
+<pre><code>(
+SynthDef( \help_SPE3_Mridangam, { |out, t_amp|
+    var sound;
+
+    sound = Resonz.ar(
+        WhiteNoise.ar(70) * Decay2.kr( t_amp, 0.002, 0.1 ),
+        60.midicps,
+        0.02,
+        4
+    ).distort * 0.4;
+
+    Out.ar(out, sound);
+    DetectSilence.ar(sound, doneAction: Done.freeSelf);
+}).add;
+
+SynthDef( \help_SPE3_Drone, { |out|
+    var sound;
+    sound = LPF.ar(
+        Saw.ar([60, 60.04].midicps)
+        +
+        Saw.ar([67, 67.04].midicps),
+        108.midicps,
+        0.007
+    );
+    Out.ar(out, sound);
+}).add;
+)
+
+(
+// 10/8 拍号的打击乐独奏
+
+var stream, pat, amp;
+
+pat = Pseq([
+    Pseq(#[0.0], 10),
+
+    // intro
+    Pseq(#[0.9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 2),
+    Pseq(#[0.9, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0], 2),
+    Pseq(#[0.9, 0.0, 0.0, 0.2, 0.0, 0.2, 0.0, 0.2, 0.0, 0.0], 2),
+    Pseq(#[0.9, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0, 0.2, 0.0, 0.2], 2),
+
+    // solo
+    Prand([
+        Pseq(#[0.9, 0.0, 0.0, 0.7, 0.0, 0.2, 0.0, 0.7, 0.0, 0.0]),
+        Pseq(#[0.9, 0.2, 0.0, 0.7, 0.0, 0.2, 0.0, 0.7, 0.0, 0.0]),
+        Pseq(#[0.9, 0.0, 0.0, 0.7, 0.0, 0.2, 0.0, 0.7, 0.0, 0.2]),
+        Pseq(#[0.9, 0.0, 0.0, 0.7, 0.2, 0.2, 0.0, 0.7, 0.0, 0.0]),
+        Pseq(#[0.9, 0.0, 0.0, 0.7, 0.0, 0.2, 0.2, 0.7, 0.2, 0.0]),
+        Pseq(#[0.9, 0.2, 0.2, 0.7, 0.2, 0.2, 0.2, 0.7, 0.2, 0.2]),
+        Pseq(#[0.9, 0.2, 0.2, 0.7, 0.2, 0.2, 0.2, 0.7, 0.0, 0.0]),
+        Pseq(#[0.9, 0.0, 0.0, 0.7, 0.2, 0.2, 0.2, 0.7, 0.0, 0.0]),
+        Pseq(#[0.9, 0.0, 0.4, 0.0, 0.4, 0.0, 0.4, 0.0, 0.4, 0.0]),
+        Pseq(#[0.9, 0.0, 0.0, 0.4, 0.0, 0.0, 0.4, 0.2, 0.4, 0.2]),
+        Pseq(#[0.9, 0.0, 0.2, 0.7, 0.0, 0.2, 0.0, 0.7, 0.0, 0.0]),
+        Pseq(#[0.9, 0.0, 0.0, 0.7, 0.0, 0.0, 0.0, 0.7, 0.0, 0.0]),
+        Pseq(#[0.9, 0.7, 0.7, 0.0, 0.0, 0.2, 0.2, 0.2, 0.0, 0.0]),
+        Pseq(#[0.9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    ], 30),
+
+    // tehai : 7 拍动机重复 3 次，第 1 拍与下一个 7x3 共享
+    // 再次第三次：
+    //   123456712345671234567                   123456712345671234567
+    //                       123456712345671234567
+    //   !                   !                   !                   !
+    //   1234567890123456789012345678901234567890123456789012345678901
+    Pseq(#[2.0, 0.0, 0.2, 0.5, 0.0, 0.2, 0.9,
+        1.5, 0.0, 0.2, 0.5, 0.0, 0.2, 0.9,
+        1.5, 0.0, 0.2, 0.5, 0.0, 0.2], 3),
+    Pseq(#[5], 1),    // sam
+
+    Pseq(#[0.0], inf)
+]);
+
+stream = pat.asStream;
+
+Task({
+    Synth(\help_SPE3_Drone);
+    loop({
+        if( ( amp = stream.next ) &gt; 0,
+            { Synth(\help_SPE3_Mridangam, [ \t_amp, amp ]) }
+        );
+        (1/8).wait;
+    })
+}).play
+)</code></pre>
+
+<p>转到下一个文件：<a href="Tutorials-Streams-Patterns-Events4.html">理解流、模式和事件 - 第 4 部分</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Streams-Patterns-Events3.html" rel="noreferrer noopener">Tutorials/Streams-Patterns-Events3.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

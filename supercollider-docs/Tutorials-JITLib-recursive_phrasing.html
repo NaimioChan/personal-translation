@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>recursive_phrasing - SuperCollider 文档</title>
+<meta name="description" content="递归乐句与颗粒合成声音">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>recursive_phrasing</h1>
+
+<p><em>递归乐句与颗粒合成声音</em></p>
+
+<p>另请参阅：<a href="Overviews-JITLib.html">JITLib</a>、<a href="Classes-Pdef.html">Pdef</a>、<a href="Classes-PlazyEnvirN.html">PlazyEnvirN</a></p>
+
+<p>Pdef 可用作事件模式的全局存储。这里提供了一种方式，通过这些定义可以将它们用作由若干事件组成的乐器（一个<em>乐句</em>），例如一片短颗粒云。此外，此方案可以递归应用，从而可以构造像云之云这样的结构。</p>
+
+<p>当传入事件类型 <code>\phrase</code> 时，如果事件能在 <code>Pdef.all</code> 中找到定义，它就会在其中查找模式。</p>
+
+<ul>
+<li>如果找到一个，它就在外层模式的事件上下文中播放该模式。</li>
+<li>如果在那里找不到定义，则使用具有此名称的 <a href="Classes-SynthDef.html">SynthDef</a>（如果存在）。</li>
+</ul>
+
+<p>当向 Pdef 传递一个<em>函数</em>时，它会在内部创建一个 PlazyEnvirN。该函数在输入事件的上下文中求值（参见 <a href="Classes-PlazyEnvirN.html">PlazyEnvirN</a>），并且应返回一个模式或一个流。注意，这不允许像通常那样在函数内部访问外部环境。</p>
+
+<pre><code>(
+s.boot;
+
+SynthDef(\pgrain,
+    { arg out = 0, freq=800, sustain=0.001, amp=0.5, pan = 0;
+        var window;
+        window = Env.sine(sustain, amp * AmpCompA.kr(freq));
+        Out.ar(out,
+            Pan2.ar(
+                SinOsc.ar(freq),
+                pan
+            ) * EnvGen.ar(window, doneAction: Done.freeSelf)
+        )
+    }
+).add;
+
+SynthDef(\noiseGrain,
+    { arg out = 0, freq=800, sustain=0.001, amp=0.5, pan = 0;
+        var window;
+        window = Env.perc(0.002, sustain, amp * AmpCompA.kr(freq));
+        Out.ar(out,
+            Pan2.ar(
+                Ringz.ar(PinkNoise.ar(0.1), freq, 2.6),
+                pan
+            ) * EnvGen.ar(window, doneAction: Done.freeSelf)
+        )
+    }
+).add;
+
+
+
+Pdef(\sweep, { arg sustain=1, n=8, freq=440, ratio=0.1;
+    Pbind(
+        \instrument, \pgrain,
+        \dur, sustain.value / n,
+        \freq, Pseq((1..n)) * ratio + 1 * freq.value // freq 是一个函数，必须求值
+    )
+});
+Pdef(\sweep2, { arg sustain=1, n=8, freq=440, ratio=0.1;
+    Pbind(
+        \instrument, \noiseGrain,
+        \dur, sustain.value / n, // sustain 也是一个函数，必须被求值
+        \freq, Pseq((1..n).scramble) * ratio + 1 * freq.value,
+        \recursionLevel, 2
+    )
+});
+Pdef(\sweep3, { arg freq=440;
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \freq, Pfunc({ rrand(0.8, 1.3) }) * freq.value,
+        \dur, 0.3,
+        \legato, 1.3,
+        \n, 5
+    )
+});
+)
+
+
+
+
+// 在 Pdef.all（或你自己定义的库）中找到的 pattern 会在时间上被截断
+// 使用外部 pattern 提供的 sustain。
+(
+Pbind(
+    \type, \phrase, // 来自全局库的乐句事件
+    \instrument, \sweep,
+    \n, 15,
+    \degree, Pseq([0, 4, 6, 3], inf),
+    \sustain, Pseq([1.3, 0.2, 0.4],inf)
+).play
+)
+
+// 多通道扩展被传播到子模式中
+(
+Pbind(
+    \type, \phrase, // 来自全局库的乐句事件
+    \instrument, \sweep,
+    \n, 15,
+    \degree, Pseq([0, 0, 6, 3], inf) + Prand([0, [0, 3], [0, 5], [0, 15]], inf),
+    \ratio, Prand([ 0.1, 0.1, [0.1, -0.1] ], inf)
+).play
+)
+
+// 各种乐器与 synthdef 可以在同一层级上使用
+(
+Pbind(
+    \type, \phrase,
+    \instrument, Pseq([\sweep, \default, \sweep2, \sweep3, \pgrain, \pgrain], inf),
+    \degree, Pseq([0, 3, 2], inf),
+    \dur, Pseq([1, 0.5], inf) * 0.7,
+    \n, Pseq([4, 6, 25, 10], inf),
+    \ratio, Prand([0.03, 0.1, 0.4, -0.1],inf) + Pseq([0, 0, [0, 0.02]], inf),
+    \legato, Pseq(#[0.5, 1, 0.5, 0.1, 0.1],inf)
+).play;
+)
+
+
+//////// 当然，pattern 也可以直接在 Pdef 中使用
+
+(
+Pdef(\sweep,
+    Pbind(
+        \instrument, Pseq([\pgrain, \noiseGrain],inf),
+        \dur, Pseq([1, 2, 1, 3, 1, 4, 1, 5]) * 0.05,
+        \legato, Prand([0.5, 0.5, 3],inf)
+    )
+)
+)
+
+// 直接播放，嵌入在流中（参见 Pdef.help）
+
+Pn(Pdef(\sweep), 2).play;
+Pdef(\sweep).fork; // 播放而不改变播放器状态（参见 Pdef.help）
+
+
+// 在模式中播放
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep,
+    \degree, Pseq([0, 1b, 4, 2, 3, 1b], inf),
+    \pan, Pfunc(#{ 1.0.rand2 })
+).play
+)
+
+
+
+//////// 递归示例 //////////
+
+// 给定的模式可以递归地应用于自身
+// 从而产生自相似的声音结构，类似 lindenmeyer 系统（另见 Prewrite）
+// 已特别注意避免发生无限循环。
+// 与非递归乐句一样，新值会覆盖旧值，
+// 模式定义中未提供的任何值
+// 都从外层事件传入。
+
+
+
+(
+Pdef(\sweep, { arg dur=1, n=4, freq=440, ratio=0.3;
+    Pbind(
+        \instrument, \pgrain,
+        \dur, dur.value / n,    // 现在 dur 依赖于外层 dur。
+        \freq, Pseries(1, 1, inf) * ratio + 1 * freq.value % 17000
+    )
+});
+)
+
+
+// 无递归
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \degree, Pseq((0..5),inf)
+    ).play;
+)
+
+// 无递归，legato &gt; 1.0 且音符变化
+// 注意子模式被截断到音符长度
+// 由外层模式提供（在此情况下由 legato 决定）
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \degree, Pseq((0..5),inf),
+        \legato, Pseq([1.2, 2.8, 0.3], inf)
+    ).play;
+)
+
+// 为了阻止 \legato 扩散到乐句中，将 \transparency 设为 0
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \transparency, 0,
+        \degree, Pseq((0..5),inf),
+        \legato, Pseq([1.2, 2.8, 0.3], inf)
+    ).play;
+)
+
+
+// 单层递归
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \degree, Pseq([0, 1, 2, 3], inf),
+        \recursionLevel, 1
+    ).play
+)
+
+// 递归一层：legato 被递归应用
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \degree, Pseq([0, 1, 2, 3], inf),
+        \legato, Pseq([0.5, 1, 1.5, 1.8], inf),
+        \recursionLevel, 1
+    ).play
+)
+
+// 要阻止 \legato 和 \degree 等属性扩散
+// 到 phrase 中，请将 \transparency 设为 0。
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \degree, Pseq([0, 1, 2, 3], inf),
+        \legato, Pseq([0.5, 1, 1.5, 1.8], inf),
+        \recursionLevel, 1,
+        \transparency, 0
+    ).play
+)
+
+// 递归三层：legato 被递归应用
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \degree, 1,
+        \legato, Pseq([0.5, 1, 1.3], inf),
+        \recursionLevel, 3,
+        \n, 3
+    ).play
+)
+
+// 要阻止 \legato 扩散到乐句中，将 \transparency 设置为一个级别，
+// 在该级别停止传递该值。
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \degree, 1,
+        \legato, Pseq([0.5, 1, 2.3], inf),
+        \recursionLevel, 3,
+        \n, 3,
+        \transparency, Pdup(8, Prand([0, 1, 2], inf))
+    ).play
+)
+
+
+
+// 要修改此递归，请显式赋值：
+(
+Pdef(\sweep, { arg dur=1, n=4, ratio=0.5, freq=440;
+    var legato;
+    freq = freq.value;
+    legato = freq % 200 / 200 * 3 + 0.2;
+    Pbind(
+        \instrument, \pgrain,
+        \dur, dur.value / n,
+        \legato, legato,
+        \freq, Pseq((1..n) * ratio + 1 * freq)
+    )
+});
+)
+
+// 在一个层级上递归：degree 被分配给每个乐句，
+// 因为 freq 是在内部计算的，并在第二层级上覆盖 degree
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \degree, Pseq((0..10),inf),
+        \recursionLevel, 1
+    ).play
+)
+
+
+
+// 跨两个层级递归
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep,
+    \degree, 0,
+    \recursionLevel, 2
+).play
+)
+
+// 在三个层级上递归，颗粒数量可变
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep,
+    \degree, -5,
+    \n, Pseq([1, 2, 3],inf),
+    \recursionLevel, 3
+).play
+)
+
+
+// &quot;zoom&quot; 在
+TempoClock.default.tempo = 0.2;
+TempoClock.default.tempo = 1.0;
+
+
+// 对变量层级进行递归
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep,
+    \n, Prand([2, 7, 3], inf),
+    \degree, -5,
+    \recursionLevel, Prand([0, 1, 2],inf)
+).play
+)
+
+
+
+// 将基于频率的模式替换为基于音级的模式
+(
+Pdef(\sweep, { arg sustain=1, n=8, degree=0, ratio=1;
+    Pbind(
+        \instrument, \pgrain,
+        \dur, sustain.value / n,
+        \degree, Pseq((1..n)) * ratio + 1 + degree.value
+    )
+});
+)
+
+
+// woozy
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep,
+    \n, Prand([2, 4, 3, 8], inf),
+    \degree, Pseq([-5, 0, -2], inf),
+    \legato, Pseq([1.4, 0.5, 2], inf),
+    \scale, #[0, 2, 5, 7, 10],
+    \recursionLevel, Prand([0, 1, 2],inf)
+).play
+)
+
+
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep,
+    \synthDef, Prand([\pgrain, \default, \noiseGrain],inf),
+    \n, Prand([2, 4, 3, 8], inf),
+    \degree, Pseq([-5, 0, -2], inf),
+    \recursionLevel, Prand([0, 1],inf)
+).play
+)
+
+
+// 在内部 pattern 中使用不同的父事件
+(
+e = Event.default;
+e.use { ~sustain = { 2.0.exprand(0.05) } };
+Pdef(\sweep, { arg sustain=1, n=8, degree=0, ratio=1;
+    Pbind(
+        \parent, e, // 替换为其他事件
+        \instrument, \pgrain,
+        \dur, sustain.value / n,
+        \degree, Pseq((1..n)) * ratio + 1 + degree.value
+    )
+});
+)
+
+
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep,
+    \n, Prand([2, 4, 3, 8], inf),
+    \degree, Pseq([-5, 0, -2], inf),
+    \recursionLevel, Prand([0, 1],inf)
+).play
+)
+
+
+// 从外部传入一个模式
+
+(
+Pdef(\sweep, { arg sustain=1, n=8, degree=0, ratio=1;
+    n = n.value;
+    Pbind(
+        \instrument, \pgrain,
+        \dur, sustain.value / n,
+        \degree, Pseq([ 1, 2, 3, 4, 5 ] * ratio + 1 + degree.value) )
+});
+)
+
+
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep,
+    \n, { Pshuf([2, 4, 3, 8, 16, 32], inf) }, // 使用一个函数来与 embedInStream 隔离
+    \degree, Pseq([-5, 0, -2], inf),
+    \recursionLevel, Prand([0, 1],inf)
+).play
+)
+
+
+
+
+// 模式定义内部的递归
+
+(
+Pdef(\sweep2, { arg sustain=1, n=2, degree=0, ratio=1;
+    Pbind(
+        \type, \phrase,
+        \instrument, \sweep,
+        \dur, sustain.value / n,
+        \degree, Pseq((1..5).scramble * ratio + 1 + degree.value),
+        \recursionLevel, 2
+    )
+});
+)
+
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep2,
+    \n, 3,
+    \degree, Pseq([-5, 0, -2], inf)
+).play
+)
+
+
+// 乐器在演奏时不会交叉淡化（以使乐句处理更高效）。
+
+
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \sweep,
+    \n, 3,
+    \degree, Pseq([0, 2b, 3, 4], inf),
+    \dur, 2,
+    \legato, 2
+).play
+)
+
+// 在播放时更改 pattern 定义：
+(
+Pdef(\sweep,
+    Pbind(
+        \instrument, \pgrain,
+        \dur, exprand(0.01, 0.1),
+        \legato, rrand(0.01, 2.0),
+        \octave, rrand(5, 7)
+    )
+)
+)
+
+
+// 科赫“雪花”
+(
+Pdef(\koch, { arg dur=1, freq=440;
+    Pbind(
+        \dur, dur.value / 3,
+        \freq, freq.value * Pseq([1, 1.2, 1])
+    )
+});
+)
+
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \koch,
+        \synthDef, \pgrain,
+        \dur, 9,
+        \recursionLevel, 2,
+        \legato, 1.1
+    ).play
+)
+
+(
+    Pbind(
+        \type, \phrase,
+        \instrument, \koch,
+        \synthDef, \pgrain,
+        \dur, 9,
+        \recursionLevel, 4,
+        \legato, 1.1
+    ).play
+)
+
+(
+Pdef(\koch, { arg dur=1, degree=0;
+    Pbind(
+        \dur, dur.value / 3,
+        \degree, degree + Pseq([0, 2, 0])
+    )
+});
+)
+
+
+
+
+
+// 声音文件示例
+
+
+(
+SynthDef(\play_from_to, { arg out, bufnum, from=0.0, to=1.0, sustain=1.0;
+    var env;
+    env = EnvGen.ar(Env.linen(0.01, sustain, 0.01), 1, doneAction: Done.freeSelf);
+    Out.ar(out,
+        BufRd.ar(1, bufnum,
+            Line.ar(from, to, sustain) * BufFrames.kr(bufnum)
+        ) * env
+    )
+
+
+}).add;
+)
+
+b = Buffer.read(s, ExampleFiles.child)
+
+(
+Pdef(\poch, { arg sustain=1.0, from=0.0, to=1.0, n=3;
+        var step;
+        sustain = sustain.value;
+        step = (to - from) / n;
+        Pbind(
+            \instrument, \play_from_to,
+            \from, Pseries(from, step, n),
+            \to, Pseries(from, step, n) + step,
+            \legato, 1.0,
+            \dur, sustain / n
+        )
+})
+)
+
+// 这会直接播放
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \poch,
+    \recursionLevel, 3,
+    \from, 0,
+    \to, 1,
+    \dur, 3,
+    \bufnum, b
+).play
+)
+
+// 现在将每个中间部分的每个中间部分都反转
+(
+Pdef(\poch, { arg sustain=1.0, from=0.0, to=1.0, n=3;
+    var step, f, t, i;
+    sustain = sustain.value;
+    step = (to - from) / n;
+    f = Array.series(n, from, step) +.t [0.0, step];
+    i = n div: 2;
+    f[i] = f[i].reverse;
+    Pbind(
+        \instrument, \play_from_to,
+        [\from, \to], Pseq(f),
+        \legato, 1.0,
+        \dur, sustain / n
+    )
+})
+)
+
+
+// 变化的递归
+(
+Pbind(
+    \type, \phrase,
+    \instrument, \poch,
+    \recursionLevel, Prand([0, 1, 2, 3], inf),
+    \from, 0,
+    \to, Prand([-1, 1], inf),
+    \dur, 3,
+    \n, Prand([1, 2, 3], inf),
+    \bufnum, b,
+    \amp, 0.2
+).play
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/JITLib/recursive_phrasing.html" rel="noreferrer noopener">Tutorials/JITLib/recursive_phrasing.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

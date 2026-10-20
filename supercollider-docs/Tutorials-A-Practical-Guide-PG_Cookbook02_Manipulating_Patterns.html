@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南食谱 02：操作模式 - SuperCollider 文档</title>
+<meta name="description" content="操作模式数据">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南食谱 02：操作模式</h1>
+
+<p><em>操作模式数据</em></p>
+
+<p>参见：<a href="Tutorials-A-Practical-Guide-PG_Cookbook01_Basic_Sequencing.html">Pattern Guide Cookbook 01: Basic Sequencing</a>、<a href="Tutorials-A-Practical-Guide-PG_Cookbook03_External_Control.html">Pattern Guide Cookbook 03: External Control</a></p>
+
+<h2 id="Manipulating pattern data">操作模式数据</h2>
+
+<h3 id="Merging (interleaving) independent streams">合并（交织）独立的流</h3>
+
+<p>假设你想要一个模式，它在 70% 的时间里生成较低音域的 pitch，其余 30% 的时间生成较高音域。对于纯随机模式，这很简单，因为每个音域的模式都没有记忆（下一个值不会以任何可感知的方式依赖前一个值）。随机数生成器模式（<a href="Classes-Pwhite.html">Pwhite</a>）在把控制权交还给“选择器”（<a href="Classes-Pwrand.html">Pwrand</a>）之前只返回一个元素。</p>
+
+<pre><code>    \degree, Pwrand([Pwhite(-7, 11, 1), Pwhite(7, 18, 1)], #[0.7, 0.3], inf)</code></pre>
+
+<p>如果各范围需要保持各自的完整性，则此方法不可行。为此，<a href="Classes-Pnsym1.html">Pnsym1</a> 是理想选择。我们创建一个包含命名模式的字典，每个模式维护自己的流。然后我们在它们的名称之间随机选择，从本轮所选中的那个流中取出一个值。</p>
+
+<p>这种对 <a href="Classes-Pseries.html">Pseries</a> 的使用本质上是在音阶级数之间进行随机游走。与 Pwhite 生成的均匀分布相比，它具有更强的线性连续性。尽管较高范围会时不时地打断，但连续性仍然应当可以听到。</p>
+
+<pre><code>(
+var    melodies = (
+        lowMelody: Pseries(4, Prand(#[-2, -1, 1, 2], inf), inf).fold(-7, 11),
+        highMelody: Pseries(14, Prand(#[-3, -2, 2, 3], inf), inf).fold(7, 18)
+    );
+
+p = Pbind(
+    \degree, Pnsym1(Pwrand(#[lowMelody, highMelody], [0.7, 0.3], inf), melodies),
+    \dur, Pwrand(#[0.25, 0.5], #[0.4, 0.6], inf)
+).play;
+)
+
+p.stop;</code></pre>
+
+<h3 id="Reading an array forward or backward arbitrarily">任意地向前或向后读取数组</h3>
+
+<p>这里有个有趣的例子。我们有一个可能输出值的数组，并且我们希望模式能根据某种用户输入在数组中向前或向后移动。</p>
+
+<p>实际上已经有一个模式可以处理这件事，它基于（随机）游走这一标准编程概念。在随机游走中，有一个“观察者”处于数组中的某个位置。观察者随机向前或向后移动若干步。在 SuperCollider 的模式实现中，<a href="Classes-Pwalk.html">Pwalk</a> 的步长不必是随机的。因此这里我们通过滑块来确定步长。</p>
+
+<p>一般来说，GUI 对象不应用于数据存储。这里的做法是将步长保存到变量中，然后在 Pwalk 模式中引用该变量。</p>
+
+<pre><code>(
+var    pitches = (0..14),    // 替换为你想要的其他音高
+    move = 0,
+    window, slider;
+
+window = Window.new(&quot;Mouse Transport&quot;, Rect(5, 100, 500, 50));
+slider = Slider.new(window, Rect(5, 5, 490, 20))
+    .action_({ |view|
+        move = (view.value * 4 - 2).round;
+    })
+    .value_(0.5);
+window.front;
+
+p = Pbind(
+        // Pfunc 是在数组中移动的方向
+        // 它可以是任何东西
+        //   - 可以从 MIDI 或 HID 读取并将其转换为步进
+        //   - 可以是 GUI 控件，就像这里一样
+    \degree, Pwalk(pitches, Pfunc { move }, 1, 7),
+    \dur, 0.25
+).play;
+)
+
+p.stop;</code></pre>
+
+<p><strong>第三方扩展提醒</strong>：此处展示的 <a href="Classes-Pwalk.html">Pwalk</a> 模式在预设数组中向前和向后移动。要对模式的结果做同样的事情，请参见 <strong>ddwPatterns</strong> quark 中的 Pscratch。Pscratch 一个特别有趣的用法是将其用于像 Pbind 这样的事件模式，在一系列完全实现的音符事件中跳转。</p>
+
+<h3 id="Changing Pbind value patterns on the fly">动态更改 Pbind 值模式</h3>
+
+<p>模式被转换为流以生成值（或事件）。按照设计，无法访问流的内部状态。这意味着，对于 Pbind 及类似的模式，为事件键生成值的流是不可见的。因此，无法在模式播放时深入流内部并更改它们。</p>
+
+<p>我们改为可以将 Pbind 建立在<strong>模式代理</strong>之上——即代替模式的对象。<a href="Classes-PatternProxy.html">PatternProxy</a> 是一个单一对象，它在 Pbind 内创建单个流，但它会向代理内部包含的模式和流查找其值。更改代理的模式会替换流，而无需触碰 Pbind 的封闭盒子。</p>
+
+<p>在第一个示例中，模式代理保存在环境变量中，并且可以通过这些变量进行操作。</p>
+
+<pre><code>(
+~degree = PatternProxy(Pn(Pseries(0, 1, 8), inf));
+~dur = PatternProxy(Pn(0.25, inf));
+
+p = Pbind(
+    \degree, ~degree,
+    \dur, ~dur
+).play;
+)
+
+~degree.source = (Pexprand(1, 8, inf) - 1).round;
+
+~dur.source = Pwrand(#[0.25, 0.5, 0.75], #[0.5, 0.3, 0.2], inf);
+
+p.stop;</code></pre>
+
+<p>另一种方法是使用 <a href="Classes-Pdefn.html">Pdefn</a>，它是用于值模式的代理的全局命名空间。（由于处理值和事件模式的要求不同，因此有两个命名空间：<a href="Classes-Pdef.html">Pdef</a> 用于诸如 Pbind 之类的事件模式，而 Pdefn 用于诸如这里的 <code>\degree</code> 和 <code>\dur</code> 之类的值模式。）存储全部由系统处理，无需你自己定义变量。</p>
+
+<pre><code>(
+Pdefn(\degree, Pn(Pseries(0, 1, 8), inf));
+Pdefn(\dur, Pn(0.25, inf));
+
+p = Pbind(
+    \degree, Pdefn(\degree),
+    \dur, Pdefn(\dur)
+).play;
+)
+
+Pdefn(\degree, (Pexprand(1, 8, inf) - 1).round);
+
+Pdefn(\dur, Pwrand(#[0.25, 0.5, 0.75], #[0.5, 0.3, 0.2], inf));
+
+p.stop;</code></pre>
+
+<p><strong>第三方扩展提示</strong>：<strong>ddwChucklib</strong> quark 定义了第三种实现方式，使用对象原型（基于 Environments）来创建对象，这些对象封装了执行某种音乐行为所需的全部信息。存储在原型变量中的模式会自动作为对象模式的模式代理可用，从而更容易创建复杂、可塑的“过程”，这些过程可以复制为彼此不干扰的独立对象。这是朝着音乐行为的面向对象建模迈出的一步，而无需硬编码特定于某首作品的类。</p>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook01_Basic_Sequencing.html">模式指南食谱 01：基本音序</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook03_External_Control.html">Pattern Guide Cookbook 03: External Control</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_Cookbook02_Manipulating_Patterns.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_Cookbook02_Manipulating_Patterns.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RandSeed - SuperCollider 文档</title>
+<meta name="description" content="设置 Synth 的随机生成器种子。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>RandSeed</h1>
+
+<p><em>设置 Synth 的随机生成器种子。</em></p>
+
+<p><a href="Classes-WidthFirstUGen.html">WidthFirstUGen</a> : <a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-RandID.html">RandID</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>当触发信号从非正变为正时，合成器的随机生成器种子会重置为给定值。所有使用相同随机数生成器的合成器会再次重现相同的数字序列。</p>
+
+<p>有关设置 randgen id 的信息，请参见 <a href="Classes-RandID.html">RandID</a> UGen；客户端侧的等效功能请参见 <a href="Reference-randomSeed.html">Random Seed</a>。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*kr"><code>RandSeed.kr(trig: 0.0, seed: 56789)</code></h4>
+
+<h4 id="*ir"><code>RandSeed.ir(trig: 0.0, seed: 56789)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>trig</p></td><td class="argumentdesc"><p>触发信号。触发信号可以是任意信号。当信号从非正变为正时，触发发生。</p></td></tr>
+<tr><td class="argumentname"><p>seed</p></td><td class="argumentdesc"><p>随机种子。</p></td></tr>
+</table>
+
+<h3 id="Undocumented class methods">未文档化的类方法</h3>
+
+<h4 id="*ar"><code>RandSeed.ar(trig: 0.0, seed: 56789)</code></h4>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 启动噪声片段
+
+(
+{
+var noise, filterfreq;
+noise = WhiteNoise.ar(0.05 ! 2) + Dust2.ar(70 ! 2);
+filterfreq = LFNoise1.kr(3, 5500, 6000);
+Resonz.ar(noise * 5, filterfreq, 0.5) + (noise * 0.5)
+}.play;
+)
+
+// 以可变速率重置种子
+(
+x = { |seed = 1956|
+        RandSeed.kr(Impulse.kr(MouseX.kr(0.1, 100)), seed);
+}.play;
+)
+
+
+
+x.set(\seed, 2001);
+x.set(\seed, 1798);
+x.set(\seed, 1902);
+
+
+// 上面可以看到，LFNoise1 的声音并不能被精确重现（滤波器频率）
+// 这是由于噪声 ugen 的内部相位与
+// 种子设置速率之间的干扰导致的。
+
+// 解决方案是启动一个新的 synth：
+
+(
+SynthDef(&quot;pseudorandom&quot;, { |out, sustain = 1, seed = 1967, id = 0|
+    var noise, filterfreq;
+    RandID.ir(id);
+    RandSeed.ir(1, seed);
+
+
+    noise = WhiteNoise.ar(0.05 ! 2) + Dust2.ar(70 ! 2);
+    filterfreq = LFNoise1.kr(3, 5500, 6000);
+
+    Out.ar(out,
+        Resonz.ar(noise * 5, filterfreq, 0.5) + (noise * 0.5)
+        *
+        Line.kr(1, 0, sustain, doneAction: Done.freeSelf)
+    )
+
+}).add;
+)
+
+// 完全相同的音效被重现
+(
+fork {
+    loop {
+        Synth(&quot;pseudorandom&quot;);
+        1.1.wait; // 等待比 sustain 稍长一点，这样声音就不会重叠
+    }
+}
+)
+
+// 改变随机种子会改变声音：
+
+(
+fork {
+    (1902..2005).do { |seed|
+        seed.postln;
+        3.do {
+            Synth(&quot;pseudorandom&quot;, [\seed, seed]);
+            1.1.wait;
+        }
+    }
+}
+)
+
+// cd 跳过器
+(
+fork {
+    (1902..2005).do { |seed|
+        seed.postln;
+        rrand(4, 10).do {
+            Synth(&quot;pseudorandom&quot;, [\seed, seed, \sustain, 0.05]);
+            0.06.wait;
+        }
+    }
+}
+)
+
+// 如果声音重叠，这就不再按预期工作了
+// 声音会有所不同。
+
+(
+fork {
+    loop {
+        Synth(&quot;pseudorandom&quot;);
+        0.8.wait; // 而不是 1.1
+    }
+}
+)
+
+// rand id 可用于限制每个声音对种子的重置：
+
+(
+fork {
+    var id = 0;
+    (1902..2005).do { |seed|
+        seed.postln;
+        3.do {
+            Synth(&quot;pseudorandom&quot;, [\seed, seed, \id, id]);
+            id = id + 1 % 16; // 有 16 种不同的随机生成器
+            0.8.wait;
+        }
+    }
+}
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/RandSeed.html" rel="noreferrer noopener">Classes/RandSeed.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

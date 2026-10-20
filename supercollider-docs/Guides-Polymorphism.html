@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polymorphism - SuperCollider 文档</title>
+<meta name="description" content="不同类以不同方式响应同一消息的能力">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Polymorphism</h1>
+
+<p><em>不同类以不同方式响应同一消息的能力</em></p>
+
+<p>另请参阅：<a href="Reference-Messages.html">消息</a>、<a href="Reference-Classes.html">类</a>、<a href="Guides-Intro-to-Objects.html">对象入门</a></p>
+
+<h2 id="Introduction">Introduction</h2>
+
+<p>多态是指不同类能够以不同方式响应同一消息的能力。一条消息通常具有某种内在含义，而每个类都有责任以适合该含义的方式作出响应。</p>
+
+<p>例如，<code>value</code> 消息表示“给我这个对象的有效值”。</p>
+
+<p>value 方法由这些类（以及其他类）实现：</p>
+
+<dl>
+<dt>函数：</dt>
+<dd><p>this.value(args)</p></dd>
+<dt>Object :</dt>
+<dd><p>this.value()</p></dd>
+<dt>Ref：</dt>
+<dd><p>this.value</p></dd>
+</dl>
+
+<p>让我们看看这些类如何实现 value 消息。</p>
+
+<h3 id="Object">Object</h3>
+
+<p>以下是 <a href="Classes-Object.html">Object</a> 类中的 value 方法：</p>
+
+<pre><code>value { ^this }</code></pre>
+
+<p>它只是返回自身。由于所有类都继承自类 Object，这意味着除非某个类重写了 <code>value</code>，否则对象对 <code>value</code> 的响应就是返回自身。</p>
+
+<pre><code>5.postln;            // 自我发布
+5.value.postln;        // 值返回自身
+&#x27;a symbol&#x27;.postln;
+&#x27;a symbol&#x27;.value.postln;
+[1,2,3].value.postln;
+//etc...</code></pre>
+
+<h3 id="Function">Function</h3>
+
+<p>在类 <a href="Classes-Function.html">Function</a> 中，value 方法是一个原语：</p>
+
+<pre><code>value { arg ... args;
+    _FunctionValue
+    // 求值带参数的函数
+    ^this.primitiveFailed
+}</code></pre>
+
+<p><code>_FunctionValue</code> 是一个 C 代码原语，因此仅通过查看它无法知道它的作用。不过，它的作用是求值该函数并返回结果。</p>
+
+<pre><code>{ 5.squared }.postln;            // 输出 Function 的实例
+{ 5.squared }.value.postln;        // 发布 25</code></pre>
+
+<h3 id="Ref">Ref</h3>
+
+<p><a href="Classes-Ref.html">Ref</a> 类提供了一种创建对象间接引用的方法。它可用于按引用传递值。Ref 对象有一个名为 <code>value</code> 的实例变量。<code>value</code> 方法返回实例变量 <code>value</code> 的值。以下是 Ref 类定义的一部分：</p>
+
+<pre><code>Ref : AbstractFunction
+{
+    var &lt;&gt;value;
+
+    *new { arg thing; ^super.new.value_(thing) }
+    set { arg thing; value = thing }
+    get { ^value }
+    dereference { ^value }
+    asRef { ^this }
+
+    // 像流一样运作
+    next { ^value }
+
+    printOn { arg stream;
+        stream &lt;&lt; &quot;`(&quot; &lt;&lt; value &lt;&lt; &quot;)&quot;;
+    }
+    storeOn { arg stream;
+        stream &lt;&lt; &quot;`(&quot; &lt;&lt;&lt; value &lt;&lt; &quot;)&quot;;
+    }
+}</code></pre>
+
+<p>以下是它的响应方式：</p>
+
+<pre><code>Ref.new(123).postln;
+Ref.new(123).value.postln;</code></pre>
+
+<p>Ref 还实现了一个名为 <code>dereference</code> 的消息，这是多态的另一个好例子。正如在 Ref 中所实现的，dereference 只返回 value 实例变量，这与 value 方法所做的没有区别。那么为什么需要它呢？这可以通过其他类如何响应 dereference 来解释。dereference 消息的意思是“移除任何包含你的 Ref”。在 Object 类中，dereference 返回对象本身，同样就像 value 消息一样。区别在于没有其他类重写此方法。因此对 Function 的 dereference 仍然是 Function。</p>
+
+<dl>
+<dt>Object :</dt>
+<dd><p>this.dereference()</p></dd>
+<dt>Ref：</dt>
+<dd><p>this.dereference()</p></dd>
+</dl>
+
+<pre><code>5.value.postln;
+{ 5.squared }.value.postln;
+Ref.new(123).value.postln;
+
+5.dereference.postln;
+{ 5.squared }.dereference.postln;
+Ref.new(123).dereference.postln;</code></pre>
+
+<h2 id="Play">Play</h2>
+
+<p>多态的另一个例子是 play。许多不同类型的对象都知道如何播放自身。</p>
+
+<h3 id="Function">Function</h3>
+
+<pre><code>{ PinkNoise.ar(0.1) }.play;</code></pre>
+
+<h3 id="AppClock">AppClock</h3>
+
+<pre><code>(
+var w, r;
+w = Window.new(&quot;trem&quot;, Rect(512, 256, 360, 130));
+w.front;
+r = Routine({ arg appClockTime;
+    [&quot;AppClock has been playing for secs:&quot;,appClockTime].postln;
+    60.do({ arg i;
+        0.05.yield;
+        w.bounds = w.bounds.moveBy(10.rand2, 10.rand2);
+        w.alpha = cos(i*0.1pi)*0.5+0.5;
+    });
+    1.yield;
+    w.close;
+});
+AppClock.play(r);
+)</code></pre>
+
+<h3 id="SynthDef">SynthDef</h3>
+
+<pre><code>(
+x = SynthDef(&quot;Help-SynthDef&quot;, { arg out=0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).play;
+)</code></pre>
+
+<h3 id="Pattern">Pattern</h3>
+
+<pre><code>Pbind(\degree, Pseq([0, 1, 2, 3],inf)).play;</code></pre>
+
+<h2 id="Conclusion">Conclusion</h2>
+
+<p>多态允许你编写不假设对象实现细节的代码，而是请求对象“做我想做的事”，并由对象做出适当的响应。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Polymorphism.html" rel="noreferrer noopener">Guides/Polymorphism.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

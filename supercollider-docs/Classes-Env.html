@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Env - SuperCollider 文档</title>
+<meta name="description" content="分段包络的规格">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Env</h1>
+
+<p><em>分段包络的规格</em></p>
+
+<p><a href="Classes-Object.html">Object</a></p>
+
+<p>另请参见：<a href="Classes-EnvGen.html">EnvGen</a>、<a href="Classes-IEnvGen.html">IEnvGen</a>、<a href="Classes-Pseg.html">Pseg</a></p>
+
+<p>子类：<a href="Classes-Penv.html">Penv</a></p>
+
+<h2 id="description">说明</h2>
+
+<p><code>Env</code> 是分段包络的规格说明。<code>Env</code> 既可在服务器端使用，通过在 <a href="Classes-SynthDef.html">SynthDef</a> 中的 <a href="Classes-EnvGen.html">EnvGen</a> 或 <a href="Classes-IEnvGen.html">IEnvGen</a>，也可在客户端使用，通过如下所述的 <a href="#-at">-at</a> 和 <a href="#-asStream">-asStream</a> 等方法。</p>
+
+<p><code>Env</code> 可以有任意数量的段，这些段可以停在某个特定值，或者在持续时循环若干段。它的段可以有多种形状。</p>
+
+<p>包络被构想为一系列断点<em>节点</em>，每个节点有三个参数：一个<em>电平</em>、一个过渡<em>时间</em>和一个过渡<em>曲线</em>形状。这三个节点参数如下所述保存在独立的数组中。请注意，由于第一个节点表示包络的初始电平，它没有关联的过渡时间或曲线。</p>
+
+<pre><code>Env.new(levels: [0, 1, 0.9, 0], times: [0.1, 0.5, 1], curve: [-5, 0, -5]).plot;</code></pre>
+
+<p>在此包络中，有四个<em>节点</em>：</p>
+
+<ul>
+<li>第一个 <em>node</em> 是包络的初始电平：0</li>
+<li>第二个<em>节点</em>的级别为 1，并在 0.1 秒内到达</li>
+<li>第三个<em>节点</em>的级别为 0.9，并在 0.5 秒内到达</li>
+<li>第四个 <em>node</em> 的电平为 0，并在 1 秒内到达</li>
+</ul>
+
+<p>重新触发包络时必须密切注意。从触发那一刻的当前值开始，包络将循环经过所有节点，第一个节点除外。第一个节点是包络的初始值，仅在初始触发之前输出。</p>
+
+<pre><code>(
+{
+    EnvGen.kr(
+        Env(
+            levels: [0, 0.1, 0.2, 0.3],
+            times: [0.1, 0.1, 0.1],
+            curve: 8
+        ),
+        gate: Impulse.kr(3)
+    );
+}.plot(duration: 1);
+)</code></pre>
+
+<p>在上面的示例中，初始电平（0）从不重复。当重新触发时，包络从其当前值（此处为 0.3）移动到默认情况下第二个节点的值（0.1），然后继续经过后续节点。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 在某些情况下，我们会处理控制点或断点。如果这些控制点带有相关联的 x 位置（比如在包络 GUI 中，参见 <a href="Classes-EnvelopeView.html">EnvelopeView</a>），就必须将它们转换为点之间的时间差，才能作为 Env 对象中的节点使用。方法 <a href="#*xyc">*xyc</a> 和 <a href="#*pairs">*pairs</a> 可用于按点的方式指定包络。</p></blockquote>
+
+<pre><code>// 合成器中的包络
+(
+{
+    var env = Env([0, 1, 0.5, 1, 0], [0.01, 0.5, 0.02, 0.5]);
+    SinOsc.ar(470) * EnvGen.kr(env, doneAction: Done.freeSelf)
+}.play
+)
+// 一个用于控制模式中参数的包络
+(
+Pbind(
+    \note, Env([0, 12, 6, 13, 0], [1, 5, 2, 10]),
+    \dur, 0.1
+).play
+)</code></pre>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>Env.new(levels: [0, 1, 0], times: [1, 1], curve: &#x27;lin&#x27;, releaseNode, loopNode, offset: 0)</code></h4>
+
+<p>创建一个新的包络规格。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>levels</p></td><td class="argumentdesc"><p>一个电平值数组。第一个值是包络的初始电平，当与 <a href="Classes-EnvGen.html">EnvGen</a> 一起使用时，它会一直保持到 <code>gate</code> 打开为止。如果某个电平值是 UGen，则其值仅在包络到达该节点时才更新。当某个电平值本身是一个数组时，包络会返回多通道输出（相关讨论请见 <a href="#Multichannel%20expansion">Multichannel expansion</a>）。</p></td></tr>
+<tr><td class="argumentname"><p>times</p></td><td class="argumentdesc"><p>一个包含各段持续时间（以秒为单位）的数组。其元素个数应比 levels 少一个，但若长度更短，则通过循环回绕给定值来扩展该数组。</p></td></tr>
+<tr><td class="argumentname"><p>curve</p></td><td class="argumentdesc"><p>一个 <a href="Classes-Symbol.html">Symbol</a>、<a href="Classes-Float.html">Float</a>，或由它们组成的<a href="Classes-Array.html">数组</a>。决定包络段形状。</p>
+
+<p>可能的值为：</p>
+
+<table>
+<tr><td><p>\step</p></td><td></td><td><p>平坦段（立即跳转到最终值）</p></td></tr>
+<tr><td><p>\hold</p></td><td></td><td><p>平坦段（保持初始值，在段末跳变到最终值）</p></td></tr>
+<tr><td><p>\linear</p></td><td><p>\lin</p></td><td><p>线性段，默认值</p></td></tr>
+<tr><td><p>\exponential</p></td><td><p>\exp</p></td><td><p>自然指数增长与衰减。在这种情况下，各级别必须均非零且符号相同。</p></td></tr>
+<tr><td><p>\sine</p></td><td><p>\sin</p></td><td><p>正弦 S 形分段。</p></td></tr>
+<tr><td><p>\welch</p></td><td><p>\wel</p></td><td><p>形状像 Welch 窗两侧的正弦段。</p></td></tr>
+<tr><td><p>\squared</p></td><td><p>\sqr</p></td><td><p>平方段</p></td></tr>
+<tr><td><p>\cubed</p></td><td><p>\cub</p></td><td><p>三次方段</p></td></tr>
+<tr><td><p>一个 Float</p></td><td></td><td><p>所有段的曲率值。0 表示线性，正数和负数使段向上和向下弯曲。</p></td></tr>
+<tr><td><p>符号或浮点数的数组</p></td><td></td><td><p>每个段的曲率值。</p></td></tr>
+</table></td></tr>
+<tr><td><p>\step</p></td><td></td><td><p>平坦段（立即跳转到最终值）</p></td></tr>
+<tr><td><p>\hold</p></td><td></td><td><p>平坦段（保持初始值，在段末跳变到最终值）</p></td></tr>
+<tr><td><p>\linear</p></td><td><p>\lin</p></td><td><p>线性段，默认值</p></td></tr>
+<tr><td><p>\exponential</p></td><td><p>\exp</p></td><td><p>自然指数增长与衰减。在这种情况下，各级别必须均非零且符号相同。</p></td></tr>
+<tr><td><p>\sine</p></td><td><p>\sin</p></td><td><p>正弦 S 形分段。</p></td></tr>
+<tr><td><p>\welch</p></td><td><p>\wel</p></td><td><p>形状像 Welch 窗两侧的正弦段。</p></td></tr>
+<tr><td><p>\squared</p></td><td><p>\sqr</p></td><td><p>平方段</p></td></tr>
+<tr><td><p>\cubed</p></td><td><p>\cub</p></td><td><p>三次方段</p></td></tr>
+<tr><td><p>一个 Float</p></td><td></td><td><p>所有段的曲率值。0 表示线性，正数和负数使段向上和向下弯曲。</p></td></tr>
+<tr><td><p>符号或浮点数的数组</p></td><td></td><td><p>每个段的曲率值。</p></td></tr>
+<tr><td class="argumentname"><p>releaseNode</p></td><td class="argumentdesc"><p>一个 <a href="Classes-Integer.html">Integer</a> 或 <code>nil</code>。包络将在 <strong>releaseNode</strong> 处持续，直到被释放。</p>
+
+<pre><code>(
+{
+    EnvGen.kr(
+        Env.new(
+            levels: [0, 1, 0.5, 0],
+            times: [0.01, 0.01, 0.01],
+            releaseNode: 2 // 保持在 0.5 电平直到 gate 关闭
+        ),
+        gate: Trig.kr(Impulse.kr(3), dur: 0.3)
+    );
+}.plot(duration: 1);
+)</code></pre>
+
+<p>在上面的示例中，释放节点被设为第三个节点，这意味着它将在 0.5 的水平上保持，直到被释放。然后包络将继续进行，直到到达其最后一个节点。</p></td></tr>
+<tr><td class="argumentname"><p>loopNode</p></td><td class="argumentdesc"><p>一个 <a href="Classes-Integer.html">Integer</a> 或 <code>nil</code>。创建一个循环节点段。你必须指定 <strong>releaseNode</strong>，<strong>loopNode</strong> 才会生效。循环节点是循环的初始节点，并且永远不会重复。</p>
+
+<p>到达释放节点时，包络将在该节点的过渡时间内回退到循环节点之后的节点。</p>
+
+<p>包络将循环，直到 <a href="Classes-EnvGen.html">EnvGen</a> 的 <code>gate</code> 关闭；此时包络将从其当前位置移动到 releaseNode 之后的节点，经过该节点的过渡时间，并继续经过剩余的节点。</p>
+
+<pre><code>(
+{
+    var trig = Trig.kr(1, 1.4); // 门打开 1.4 秒
+    var env = EnvGen.kr(
+        Env(
+            levels: [0.001, 1, 0.5, 0.9, 0.3, 0.7, 0],
+            times:  [0.01, 0.05, 0.2,  0.15, 0.4, 0.1],
+            curve:  [\exp,   5,  \sin, \exp, \lin, 0],
+            releaseNode: 4, // loop at 0.3
+            loopNode: 1 // 循环回到 0.5
+        ), gate: trig
+    );
+    [trig, env]
+}.plot(duration: 2)
+)</code></pre>
+
+<p>在此示例中：</p>
+
+<ul>
+<li>包络的起始电平为 0.001</li>
+<li>循环回跳点在 <code>levels[releaseNode]</code>（0.3）处，在 <code>times[loopNode]</code> 秒内回跳到 <code>levels[loopNode+1]</code>（0.5）</li>
+<li>当 <code>gate</code> 关闭时（1.4 秒），包络继续到 <code>levels[releaseNode+1]</code>（0.7），在 <code>times[releaseNode]</code> 秒内，然后继续经过包络的其余部分</li>
+</ul>
+
+<p>对于仅循环遍历其所有节点的包络，请参见 <a href="#*circle">*circle</a>。</p></td></tr>
+<tr><td class="argumentname"><p>offset</p></td><td class="argumentdesc"><p>所有时间值的偏移量（仅适用于 <a href="Classes-IEnvGen.html">IEnvGen</a>）。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>(
+{
+    var env = Env([0.0, 0.5, 0.0, 1.0, 0.9, 0.0], [0.05, 0.1, 0.01, 1.0, 1.5], -4);
+    var envgen = EnvGen.ar(env, doneAction: Done.freeSelf);
+    env.plot;
+    SinOsc.ar(
+        envgen * 1000 + 440
+    ) * envgen * 0.1
+}.play
+);</code></pre>
+
+<h4 id="*newClear"><code>Env.newClear(numSegments: 8, numChannels: 1)</code></h4>
+
+<p>创建一个新的包络规范，具有 <strong>numSegments</strong> 和 <strong>numChannels</strong>，以便后续填充。</p>
+
+<h4>讨论：</h4>
+
+<p>当将 Env 参数作为参数传递给 <a href="Classes-Synth.html">Synth</a> 时，这可能很有用。注意，段的最大数量是固定的，一旦嵌入到 <a href="Classes-SynthDef.html">SynthDef</a> 中就无法更改。尝试设置段数超过此限制的 Env 可能会导致其他参数被意外设置。</p>
+
+<pre><code>(
+SynthDef(\help_Env_newClear, { |out = 0, gate = 1|
+    var env, envctl;
+    // 创建一个空的 4 段包络
+    env = Env.newClear(4);
+    // 创建一个控制参数数组
+    envctl = \env.kr(env.asArray);
+    Out.ar(out, SinOsc.ar(EnvGen.kr(envctl, gate), 0) * -12.dbamp);
+}).add;
+)
+
+Synth(\help_Env_newClear, [\env, Env([700, 900, 900, 800], [1, 1, 1], \exp)]); // 3 个段
+
+// 重置然后再次播放：
+Synth(\help_Env_newClear, [\env, Env({ rrand(60, 70).midicps } ! 4, [1, 1, 1], \exp)]);
+
+// 同样内容写成事件形式：
+(instrument: \help_Env_newClear, env: Env({ rrand(60, 70).midicps } ! 4, [1, 1, 1], \exp)).play;</code></pre>
+
+<h4 id="*shapeNames"><code>Env.shapeNames</code></h4>
+
+<p>返回包含包络曲线可用形状的字典</p>
+
+<h4 id="*shapeNumber"><code>Env.shapeNumber(shapeName)</code></h4>
+
+<p>返回给定曲线形状在字典中的索引</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>shapeName</p></td><td class="argumentdesc"><p>形状名称。例如 \lin、\cub ...</p></td></tr>
+</table>
+
+<h3 id="Standard Shape Envelope Creation Methods">标准形状包络创建方法</h3>
+
+<p>以下类方法根据提供的时长创建一些常用的包络形状。</p>
+
+<h4 id="*linen"><code>Env.linen(attackTime: 0.01, sustainTime: 1.0, releaseTime: 1.0, level: 1.0, curve: &#x27;lin&#x27;)</code></h4>
+
+<p>创建一个具有梯形形状的新包络规范。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>attackTime</p></td><td class="argumentdesc"><p>起音部分的持续时间。</p></td></tr>
+<tr><td class="argumentname"><p>sustainTime</p></td><td class="argumentdesc"><p>延音部分的时长。</p></td></tr>
+<tr><td class="argumentname"><p>releaseTime</p></td><td class="argumentdesc"><p>释音部分的时长。</p></td></tr>
+<tr><td class="argumentname"><p>level</p></td><td class="argumentdesc"><p>延音部分的电平。</p></td></tr>
+<tr><td class="argumentname"><p>curve</p></td><td class="argumentdesc"><p>包络的曲率。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>Env.linen(0.1, 0.2, 0.1, 0.6).test.plot;
+Env.linen(1, 2, 3, 0.6).test.plot;
+Env.linen(1, 2, 3, 0.6, \sine).test.plot;
+Env.linen(1, 2, 3, 0.6, \welch).test.plot;
+Env.linen(1, 2, 3, 0.6, -3).test.plot;
+Env.linen(1, 2, 3, 0.6, -3).test.plot;
+Env.linen(1, 2, 3, 0.6, [[\sine, \welch, \lin, \exp]]).plot;</code></pre>
+
+<h4 id="*triangle"><code>Env.triangle(dur: 1.0, level: 1.0)</code></h4>
+
+<p>创建一个新的三角形包络规格。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>dur</p></td><td class="argumentdesc"><p>包络的持续时间。</p></td></tr>
+<tr><td class="argumentname"><p>level</p></td><td class="argumentdesc"><p>包络的峰值电平。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>Env.triangle(1, 1).test.plot;</code></pre>
+
+<h4 id="*sine"><code>Env.sine(dur: 1.0, level: 1.0)</code></h4>
+
+<p>创建一个新的包络规格，其具有 hanning 窗形状。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>dur</p></td><td class="argumentdesc"><p>包络的持续时间。</p></td></tr>
+<tr><td class="argumentname"><p>level</p></td><td class="argumentdesc"><p>包络的峰值电平。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>Env.sine(1, 1).test.plot;</code></pre>
+
+<h4 id="*perc"><code>Env.perc(attackTime: 0.01, releaseTime: 1.0, level: 1.0, curve: -4.0)</code></h4>
+
+<p>创建一个新的包络规格，其（通常）具有打击乐形状。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>attackTime</p></td><td class="argumentdesc"><p>起音部分的持续时间。</p></td></tr>
+<tr><td class="argumentname"><p>releaseTime</p></td><td class="argumentdesc"><p>释音部分的时长。</p></td></tr>
+<tr><td class="argumentname"><p>level</p></td><td class="argumentdesc"><p>包络的峰值电平。</p></td></tr>
+<tr><td class="argumentname"><p>curve</p></td><td class="argumentdesc"><p>包络的曲率。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>Env.perc(0.05, 1, 1, -4).test.plot;
+Env.perc(0.001, 1, 1, -4).test.plot;    // 更锐利的起音
+Env.perc(0.001, 1, 1, -8).test.plot;    // 改变曲率
+Env.perc(1, 0.01, 1, 4).test.plot;    // 反转包络</code></pre>
+
+<h4 id="*pairs"><code>Env.pairs(pairs, curve)</code></h4>
+
+<p>从坐标 / 控制点创建一个新的包络规格</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>pairs</p></td><td class="argumentdesc"><p>成对值的数组 [[time, level], ...]</p>
+
+<p>如果可能，按时间点对配对进行排序</p></td></tr>
+<tr><td class="argumentname"><p>curve</p></td><td class="argumentdesc"><p>包络的曲率。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>Env.pairs([[0, 1], [2.1, 0.5], [3, 1.4]], \exp).plot;
+Env.pairs([[0, 1], [3, 1.4], [2.1, 0.5], [3, 4]], \exp).plot; // *如果可能*，对按时间排序
+Env.pairs({ { 1.0.rand } ! 2 } ! 16, \exp).plot;</code></pre>
+
+<h4 id="*xyc"><code>Env.xyc(xyc)</code></h4>
+
+<p>根据坐标/控制点及曲率创建新的包络规格。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>xyc</p></td><td class="argumentdesc"><p>三元组数组 [[time, level, curve], ...]</p>
+
+<p>如果可能，按时间点对配对进行排序</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>Env.xyc([[0, 1, \sin], [2.1, 0.5, \lin], [3, 1.4, \lin]]).plot;
+Env.xyc([[2.1, 0.5, \lin], [0, 1, \sin], [3, 1.4, \lin]]).plot; // *如果可能*，对按时间排序
+Env.xyc({ [1.0.rand, 10.0.rand, -4.rand2] } ! 16, \exp).plot;
+Env.xyc([[0, 1], [2.1, 0.5], [3, 1.4]]).plot; // 如果未指定，curve 默认为 \lin</code></pre>
+
+<h3 id="Sustained Envelope Creation Methods">持续包络创建方法</h3>
+
+<p>以下方法创建一些常用的、带有延音段的包络形状。它们通常用于 SynthDef 中，适用于启动 synth 时还无法确定它何时结束的情况。典型情形包括外部接口、midi 输入或快速变化的 TempoClock。</p>
+
+<pre><code>(
+SynthDef(\env_help, { |out, gate = 1, amp = 0.1, release = 0.1|
+    var env = Env.adsr(0.02, release, amp);
+    var gen = EnvGen.kr(env, gate, doneAction: Done.freeSelf);
+    Out.ar(out, PinkNoise.ar(1 ! 2) * gen)
+}).add
+);
+
+a = Synth(\env_help);
+b = Synth(\env_help, [\release, 2]);
+a.set(\gate, 0); // 或者，你可以写 a.release；
+b.set(\gate, 0);</code></pre>
+
+<h4 id="*step"><code>Env.step(levels: [0, 1], times: [1, 1], releaseNode, loopNode, offset: 0)</code></h4>
+
+<p>创建一个新的包络规范，其中所有段都是水平线。给定 n 个时间值，只需提供 n 个电平，对应每个段的固定值。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>levels</p></td><td class="argumentdesc"><p>一个电平值数组。第一个值是包络的初始电平，当与 <a href="Classes-EnvGen.html">EnvGen</a> 一起使用时，它会一直保持到 <code>gate</code> 打开为止。如果某个电平值是 UGen，则其值仅在包络到达该节点时才更新。当某个电平值本身是一个数组时，包络会返回多通道输出（相关讨论请见 <a href="#Multichannel%20expansion">Multichannel expansion</a>）。</p></td></tr>
+<tr><td class="argumentname"><p>times</p></td><td class="argumentdesc"><p>一个以秒为单位的各段时长数组。它应与 levels 数组大小相同。</p></td></tr>
+<tr><td class="argumentname"><p>releaseNode</p></td><td class="argumentdesc"><p>一个 <a href="Classes-Integer.html">Integer</a> 或 <code>nil</code>。包络将在释放节点处持续，直到被释放。</p></td></tr>
+<tr><td class="argumentname"><p>loopNode</p></td><td class="argumentdesc"><p>一个 <a href="Classes-Integer.html">Integer</a> 或 <code>nil</code>。如果不是 <code>nil</code>，输出将在这些节点之间循环：从循环节点开始，到释放节点之前的节点，然后回到循环节点，如此反复。注意，只有当包络被释放时才会过渡到释放节点。示例见下文。当发送门限信号时，输出会过渡到释放节点（如下所述），此时循环将被退出。</p></td></tr>
+<tr><td class="argumentname"><p>offset</p></td><td class="argumentdesc"><p>所有时间值的偏移量（仅适用于 <a href="Classes-IEnvGen.html">IEnvGen</a>）。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>(
+{
+    var env = Env.step([0, 3, 5, 2, 7, 3, 0, 3, 4, 0], [0.5, 0.1, 0.2, 1.0, 1.5, 2, 0.2, 0.1, 0.2, 0.1]);
+    var envgen = EnvGen.kr(env);
+    var freq = (envgen + 60).midicps;
+    SinOsc.ar(freq) * 0.1
+}.play
+);</code></pre>
+
+<h4 id="*adsr"><code>Env.adsr(attackTime: 0.01, decayTime: 0.3, sustainLevel: 0.5, releaseTime: 1.0, peakLevel: 1.0, curve: -4.0, bias: 0.0)</code></h4>
+
+<p>创建一个新的包络规格，其形状类似传统的模拟 attack-decay-sustain-release（adsr）包络。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>attackTime</p></td><td class="argumentdesc"><p>起音部分的持续时间。</p></td></tr>
+<tr><td class="argumentname"><p>decayTime</p></td><td class="argumentdesc"><p>衰减部分的持续时间。</p></td></tr>
+<tr><td class="argumentname"><p>sustainLevel</p></td><td class="argumentdesc"><p>延音部分的电平与峰值电平的比值。</p></td></tr>
+<tr><td class="argumentname"><p>releaseTime</p></td><td class="argumentdesc"><p>释音部分的时长。</p></td></tr>
+<tr><td class="argumentname"><p>peakLevel</p></td><td class="argumentdesc"><p>包络的峰值电平。</p></td></tr>
+<tr><td class="argumentname"><p>curve</p></td><td class="argumentdesc"><p>包络的曲率。</p></td></tr>
+<tr><td class="argumentname"><p>bias</p></td><td class="argumentdesc"><p>offset</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>Env.adsr(0.02, 0.2, 0.25, 1, 1, -4).test(2).plot;
+Env.adsr(0.001, 0.2, 0.25, 1, 1, -4).test(2).plot;
+Env.adsr(0.001, 0.2, 0.25, 1, 1, -4).test(0.45).plot;    // 0.45 秒后释放</code></pre>
+
+<h4 id="*dadsr"><code>Env.dadsr(delayTime: 0.1, attackTime: 0.01, decayTime: 0.3, sustainLevel: 0.5, releaseTime: 1.0, peakLevel: 1.0, curve: -4.0, bias: 0.0)</code></h4>
+
+<p>与上面的 <a href="#*adsr">*adsr</a> 相同，但其起始时间延迟 <strong>delayTime</strong> 秒。默认延迟为 0.1。</p>
+
+<h4 id="*asr"><code>Env.asr(attackTime: 0.01, sustainLevel: 1.0, releaseTime: 1.0, curve: -4.0)</code></h4>
+
+<p>创建一个新的包络规格，其形状类似于传统的模拟式起音-延音-释音（asr）包络。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>attackTime</p></td><td class="argumentdesc"><p>起音部分的持续时间。</p></td></tr>
+<tr><td class="argumentname"><p>sustainLevel</p></td><td class="argumentdesc"><p>延音部分的电平与峰值电平的比值。</p></td></tr>
+<tr><td class="argumentname"><p>releaseTime</p></td><td class="argumentdesc"><p>释音部分的时长。</p></td></tr>
+<tr><td class="argumentname"><p>curve</p></td><td class="argumentdesc"><p>包络的曲率。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>Env.asr(0.02, 0.5, 1, -4).test(2).plot;
+Env.asr(0.001, 0.5, 1, -4).test(2).plot; // 更锐利的起音
+Env.asr(0.02, 0.5, 1, &#x27;linear&#x27;).test(2).plot; // 线性段</code></pre>
+
+<h4 id="*cutoff"><code>Env.cutoff(releaseTime: 0.1, level: 1.0, curve: &#x27;lin&#x27;)</code></h4>
+
+<p>创建一个新的包络规格，它没有起音段。它会一直维持在峰值电平，直到被释放。如果你只需要一个淡出效果，这很有用，并且比 <a href="Classes-Line.html">Line</a> 更加灵活。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>releaseTime</p></td><td class="argumentdesc"><p>释音部分的时长。</p></td></tr>
+<tr><td class="argumentname"><p>level</p></td><td class="argumentdesc"><p>包络的峰值电平。</p></td></tr>
+<tr><td class="argumentname"><p>curve</p></td><td class="argumentdesc"><p>包络的曲率。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>Env.cutoff(1, 1).test(2).plot;
+Env.cutoff(1, 1, 4).test(2).plot;
+Env.cutoff(1, 1, \sine).test(2).plot;</code></pre>
+
+<h4 id="*circle"><code>Env.circle(levels, times, curve: &#x27;lin&#x27;)</code></h4>
+
+<p>创建一个新的包络，当被 <a href="Classes-EnvGen.html">EnvGen</a> 使用时，它会循环其各值。</p>
+
+<p>要使已创建的包络变为循环，可以使用 <a href="#-circle">-circle</a> 实例方法，它接收循环时间和曲线作为参数。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>levels</p></td><td class="argumentdesc"><p>包络经过的各个电平。</p></td></tr>
+<tr><td class="argumentname"><p>times</p></td><td class="argumentdesc"><p>包络中后续<strong>各电平</strong>之间的时间。最后一个值是循环回绕时间。<strong>times</strong> 数组的大小应与 <strong>levels</strong> 数组的大小相同。</p></td></tr>
+<tr><td class="argumentname"><p>curve</p></td><td class="argumentdesc"><p>包络各段的曲率。最后一个值是循环回绕曲率。有效值参见 <a href="#*new">*new</a>。<strong>curve</strong> 的数组大小应与 <strong>levels</strong> 数组的大小相同。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果 <strong>times</strong> 或 <strong>curve</strong> 数组太短，它将通过循环环绕给定的值来扩展。如果只给出一个值，则该值适用于所有包络阶段。</p></blockquote></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<blockquote class="note"><p><strong>注意：</strong> 循环 <code>Env</code> 必须在用于构造 <a href="Classes-SynthDef.html">SynthDef</a> 的函数内部实例化。如果在函数外部实例化（例如作为变量传入），它将无法工作。由于内部对循环行为的初始化，包络存在一个采样的延迟。</p></blockquote>
+
+<pre><code>( // 使用 *circle 和 -circle 绘制包络
+var loopBackTime = 0.06;
+{ [
+    EnvGen.kr(
+        Env.circle([0.5, 1, 0.3], [0.01, 0.03, loopBackTime])
+    ),
+    EnvGen.kr(
+        Env.new([0.5, 1, 0.3], [0.01, 0.03]).circle(loopBackTime)
+    )
+] }.plot(0.1 * 4 - 0.01).plotMode_(\dlines)
+)
+
+// 一个声音示例
+{ SinOsc.ar(EnvGen.kr(Env.circle([0, 1, 0], [0.01, 0.5, 0.2])) * 440 + 200) * 0.2 }.play;
+
+// 如果 times.size &lt; levels.size，则时间会被重复
+{ SinOsc.ar(EnvGen.kr(Env.circle([0, 1, 0, 2, 0, 1, 0], [0.01, 0.3])) * 440 + 200) * 0.2 }.play;
+
+( // levels 的多通道扩展
+{ SinOsc.ar(EnvGen.kr(Env.circle(
+    [0, 1, 0, 0.5 * (1..4), 0, 2.sqrt/2 * (1..4), 0],
+    [0.01, 0.3]
+)) * 440 + 200).clump(2).collect(_.sum) * 0.2
+}.scope;
+)</code></pre>
+
+<h3 id="Multichannel expansion">多通道扩展</h3>
+
+<p>如果 levels、times 或 curves 中的某个值本身是一个数组，包络会在适当的地方扩展为多通道。这意味着当这样的包络传给 EnvGen 时，该 EnvGen 会扩展；当通过 <a href="#-at">-at</a> 或 <a href="#-asSignal">-asSignal</a> 方法查询包络时，它会返回一个数组值。</p>
+
+<pre><code>(
+{
+    var env = Env([0.0, 0.5, 0.0, [1.0, 1.25, 1.5], 0.9, 0.0], [0.05, 0.1, 0.01, 1.0, 1.5], -4);
+    var envgen = EnvGen.ar(env, doneAction: Done.freeSelf);
+    SinOsc.ar(
+        envgen * 1000 + 440
+    ) * envgen * 0.1
+}.play
+);
+
+(
+{
+    var env = Env([1, [1, 2, 3], 0.5, 0.5, [3, 2, 1], 2], [1, 1, 0.5, 1], [[\exp, \sin]]);
+    env.plot;
+    Splay.ar(SinOsc.ar(EnvGen.kr(env) * 400 + 600)) * 0.1
+}.play;
+);
+
+
+(
+{
+    var levels = (1..30);
+    var env = Env([1, levels, 0.5, levels / 2.5, 2], [1, 0.15, 1, 0.25, 0.1], \exp);
+    Splay.ar(SinOsc.ar(EnvGen.kr(env) * 400 + 600)) * 0.1
+}.play;
+);
+
+
+// 通过索引访问包络
+
+e = Env([1, [1, 2, 3], 1], [1, 1], \exp);
+e.at(0.5);
+e.at(1.8);
+e.at(2);
+
+e = Env([1, 1, 1], [1, [1, 2, 3]], \exp);
+e.at(0.5);
+e.at(2);
+
+
+// 多声道电平
+
+Env([0.1, 1, 0.1], [1, [1, 2, 3]], \exp).plot;
+Env([0.1, 1, 0.1], [1, [1, 2, 3]], [\lin, [\lin, \exp, \sin]]).plot;
+
+Env([1, 1, 0.5, 3, 2], [1, 0.5, 1, 0.25], \exp).plot;
+Env([0, 1, 0, 2, 0] * [[1, 2, 3]], [1, 0.5, 1, 0.25], \lin).plot;
+
+
+// 多声道曲线
+
+Env([0.01, 5, 1, 0.5] + 1, [1, 0.5, 1, 0.25], [[\lin, \sqr]]).plot;
+
+Env([0.01, 5, 1, 0.5, 0.001] + 1, [1, 0.5, 1, 0.25, 1], [[\lin, \cub, \sin, \cubed, \welch, \step, \exp]]).plot(bounds: Rect(30, 100, 500, 700));
+
+Env([0.01, 5, 1, 0.5, 0.001] + 1, [1, 0.5, 1, 0.25, 1], [(-4..4)]).plot(bounds: Rect(30, 100, 500, 700));
+Env([0.01, 5, 1, 0.5] + 1, [1, 0.5, 1, 0.25], [(-4..4)]).plot(bounds: Rect(30, 100, 500, 700));
+
+
+Env([[0, 0.01], 1, 0], [0.5, 0.5], [[\lin, \exp], \step]).plot;
+Env([[0, 0.01], 1, [0, 0.01]], [0.5, 1], [[\lin, \exp]]).plot;
+
+// 多通道次数
+
+Env([[2, 1], 0], [[1, 2]], \lin).plot;
+Env([0, 1], [1/(1..5)], [(-4..4)]).plot(bounds: Rect(30, 100, 300, 700));
+Env([0, 1], [1/(1..5)], \lin).plot(bounds: Rect(30, 100, 300, 700));
+
+
+// 混合展开
+
+Env([1, [1, 2, 3, 4, 5], 0.5, [3, 2, 1], 2], [1, 0.5, 1, 0.25], [[\exp, \lin]]).plot;
+Env([1, [1, 2, 3, 4, 5], 0.5, 4, 2], [1, 0.5, 1, 0.25], \exp).plot;
+
+
+// 扩展控制点包络
+
+Env.xyc([[2, 0.5, [\lin, \exp]], [0, 1, \lin], [3, 1.4, \lin]]).plot;
+Env.xyc({ [1.0.rand, 1.0.rand, { [\lin, \exp, \step].choose } ! 3] } ! 8).plot
+
+Env.xyc([[[2.0, 2.3], 0.5, \lin], [0, 1, \lin], [3, 1.4, \lin]]).plot; // 多次</code></pre>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h4 id="-ar"><code>.ar(doneAction: 0, gate: 1.0, timeScale: 1.0, levelScale: 1.0, levelBias: 0.0)</code></h4>
+
+<h4 id="-kr"><code>.kr(doneAction: 0, gate: 1.0, timeScale: 1.0, levelScale: 1.0, levelBias: 0.0)</code></h4>
+
+<p>此消息在 UGen 图中隐式地完成与使用 <a href="Classes-EnvGen.html">EnvGen</a> 相同的工作，以提供便利。其参数顺序对应最常见的参数。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>doneAction</p></td><td class="argumentdesc"><p>一个整数，表示当包络播放结束时执行的操作。这可用于释放包含它的 synth 等。更多细节请参见 <a href="Classes-Done.html">Done</a>。</p></td></tr>
+<tr><td class="argumentname"><p>gate</p></td><td class="argumentdesc"><p>这会触发包络，并在 &gt; 0 期间保持其打开。如果 Env 是固定长度的（例如 Env.linen、Env.perc），gate 参数会被用作简单的触发器。如果它是延音包络（例如 Env.adsr、Env.asr），则包络会保持打开，直到 gate 变为 0，此时它会被释放。</p>
+
+<p>如果 <strong>gate</strong> &lt; 0，则以 <code>-1.0 - gate</code> 的时间强制释放。请参见 <a href="Classes-EnvGen.html#Forced%20release">EnvGen: Forced release</a> 示例。</p></td></tr>
+<tr><td class="argumentname"><p>timeScale</p></td><td class="argumentdesc"><p>各段的时长会乘以该值。该值可以被调制，但只会在新包络段的起始处采样。</p></td></tr>
+<tr><td class="argumentname"><p>levelScale</p></td><td class="argumentdesc"><p>断点的电平值会乘以该值。该值可以被调制，但只会在新包络段的起始处采样。</p></td></tr>
+<tr><td class="argumentname"><p>levelBias</p></td><td class="argumentdesc"><p>该值作为偏移量加到断点的电平上。该值可以被调制，但只会在新包络段的起始处采样。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>{ Blip.ar(50, 200, Env.perc(1, 0.1, 0.2).kr(2)) }.play;
+(
+{
+    Blip.ar(
+        Env({ exprand(3, 2000.0) } ! 18, 0.2, \exp).kr,
+        200,
+        Env({ rrand(0.1, 0.2) } ! 18 ++ 0, 0.2).kr(2))
+    }.play;
+)</code></pre>
+
+<h4 id="-blend"><code>.blend(argAnotherEnv, argBlendFrac: 0.5)</code></h4>
+
+<p>混合两个包络。返回一个新的 Env。参见下面的 <a href="#blend">blend</a> 示例。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>argAnotherEnv</p></td><td class="argumentdesc"><p>一个 Env。</p></td></tr>
+<tr><td class="argumentname"><p>argBlendFrac</p></td><td class="argumentdesc"><p>一个从零到一的数字。</p></td></tr>
+</table>
+
+<h4 id="-delay"><code>.delay(delay)</code></h4>
+
+<p>根据接收者返回一个新的 Env，其中起始值将保持 <strong>delay</strong> 秒数。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>delay</p></td><td class="argumentdesc"><p>延迟包络启动的时间量。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>a = Env.perc(0.05, 1, 1, -4);
+b = a.delay(2);
+a.test.plot;
+b.test.plot;
+
+a = Env([0.5, 1, 0], [1, 1]).plot;
+a.delay(1).plot;</code></pre>
+
+<h4 id="-duration"><code>.duration</code></h4>
+
+<h4 id="-duration"><code>.duration = dur</code></h4>
+
+<p>通过拉伸来设置时间的总时长。</p>
+
+<h4>讨论：</h4>
+
+<pre><code>e = Env([0, 1, 0], [1, 2]);
+e.duration;
+e.duration = 2;
+e.duration;</code></pre>
+
+<h4 id="-totalDuration"><code>.totalDuration</code></h4>
+
+<p>获取包络的总时长。在多通道包络中，这是最长包络的时长。</p>
+
+<h4>讨论：</h4>
+
+<pre><code>e = Env([0, 1, 0], [[1, 2], 2]);
+e.duration;
+e.totalDuration;</code></pre>
+
+<h4 id="-circle"><code>.circle(timeFromLastToFirst: 0.0, curve: &#x27;lin&#x27;)</code></h4>
+
+<p>将 <code>Env</code> 声明为循环，以便在与 <a href="Classes-EnvGen.html">EnvGen</a> 一起使用时，<code>Env</code> 会循环播放。</p>
+
+<p>你可以直接通过 <a href="#*circle">*circle</a> 类方法创建一个循环的 <code>Env</code>。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>timeFromLastToFirst</p></td><td class="argumentdesc"><p>从 <code>Env</code> 的最后一层循环回到第一层所需的时间。若未指定，循环时间为即时（一个采样）。</p></td></tr>
+<tr><td class="argumentname"><p>curve</p></td><td class="argumentdesc"><p>连接 <code>Env</code> 最后一级和第一级的线段的曲率。可能的值与 <a href="#*new">*new</a> 的 <strong>curves</strong> 参数相同。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<blockquote class="note"><p><strong>注意：</strong> 循环 <code>Env</code> 必须在用于构造 <a href="Classes-SynthDef.html">SynthDef</a> 的函数内部实例化。如果在函数外部实例化（例如作为变量传入），它将无法工作。由于内部对循环行为的初始化，包络存在一个采样的延迟。</p></blockquote>
+
+<pre><code>// 无参数：立即进行回环
+{ EnvGen.kr(Env([0.1, 1, 0.5], [0.01, 0.03]).circle) }.plot(0.2).plotMode_(\dlines)
+
+// 指定了循环时间与曲线
+{ EnvGen.kr(Env([0.1, 1, 0.5], [0.01, 0.03]).circle(0.05, \sin)) }.plot(0.2).plotMode_(\dlines)
+
+( // 循环频率调制
+{
+    SinOsc.ar(
+        EnvGen.kr(
+            Env(
+                [6000, 700, 100], [1, 1], [&#x27;exp&#x27;, &#x27;lin&#x27;]
+            ).circle.postcs // 输出内部表示
+        )
+    ) * 0.1
+    // 添加一个可听的节拍器
+    + (SinOsc.ar(280) * Decay.ar(Impulse.ar(1), 0.05) * 0.5)
+}.play;
+)
+
+( // 使用 MouseX 控制门限
+{
+    SinOsc.ar(
+        EnvGen.kr(
+            Env(
+                [6000, 700, 100], [0.5, 0.5], [&#x27;exp&#x27;, &#x27;lin&#x27;]
+            ).circle(1).postcs,
+            MouseX.kr &gt; 0.5
+        )
+    ) * 0.1
+    + (SinOsc.ar(280) * Decay.ar(Impulse.ar(1), 0.05) * 0.5)
+}.play;
+)</code></pre>
+
+<h4 id="-test"><code>.test(releaseTime: 3.0)</code></h4>
+
+<p>在默认 <a href="Classes-Server.html">Server</a> 上用 <a href="Classes-SinOsc.html">SinOsc</a> 测试该包络。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>releaseTime</p></td><td class="argumentdesc"><p>如果这是一个持续型包络，将在此时间（秒）后释放。默认值为 3 秒。</p></td></tr>
+</table>
+
+<h4 id="-plot"><code>.plot: METHOD NOT FOUND!</code></h4>
+
+<p>在窗口中绘制此包络的形状。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>size</p></td><td class="argumentdesc"><p>绘图的大小。默认值为 400。</p></td></tr>
+<tr><td class="argumentname"><p>bounds</p></td><td class="argumentdesc"><p>绘图窗口的尺寸。</p></td></tr>
+<tr><td class="argumentname"><p>minval</p></td><td class="argumentdesc"><p>绘图中的最小值。默认为数据中的最低值。</p></td></tr>
+<tr><td class="argumentname"><p>maxval</p></td><td class="argumentdesc"><p>绘图中的最大值。默认为数据中的最高值。</p></td></tr>
+<tr><td class="argumentname"><p>name</p></td><td class="argumentdesc"><p>绘图窗口的标签名称。如果为 nil，将为你创建一个名称。</p></td></tr>
+<tr><td class="argumentname"><p>parent</p></td><td class="argumentdesc"><p>可以传入一个 <a href="Classes-Window.html">Window</a> 或 <a href="Classes-View.html">View</a>——此时绘图嵌入其中。否则将创建一个新的 <a href="Classes-Window.html">Window</a>。</p>
+
+<pre><code>(
+var w = Window(&quot;parent&quot;);
+Env.perc.plot(parent: w);
+w.front
+)</code></pre></td></tr>
+</table>
+
+<h4 id="-asSignal"><code>.asSignal(length: 400)</code></h4>
+
+<p>返回一个<a href="Classes-Signal.html">Signal</a>，其大小为<strong>length</strong>，通过在此Env上以<strong>length</strong>个间隔进行采样而创建。如果包络有多个通道（参见<a href="#Multichannel%20expansion">Multichannel expansion</a>），此方法返回一个信号数组。</p>
+
+<h4 id="-asArray"><code>.asArray</code></h4>
+
+<p>将 Env 转换为一种特殊排序格式的 <a href="Classes-Array.html">Array</a>。这使得 Env 参数可以作为 SynthDef 中的可设置参数。参见 <a href="#*newClear">*newClear</a> 下的示例。</p>
+
+<h4 id="-asMultichannelArray"><code>.asMultichannelArray</code></h4>
+
+<p>将 Env 转换为采用特殊排序格式的 <a href="Classes-Array.html">Array</a>，类似 <a href="#-asArray">-asArray</a>，但它总是返回这些数据集的数组，对应于包络的通道数。</p>
+
+<h4 id="-isSustained"><code>.isSustained</code></h4>
+
+<p>如果这是一个持续包络则返回 true，否则返回 false。</p>
+
+<h4 id="-range"><code>.range(lo: 0.0, hi: 1.0)</code></h4>
+
+<h4 id="-exprange"><code>.exprange(lo: 0.01, hi: 1.0)</code></h4>
+
+<h4 id="-curverange"><code>.curverange(lo: 0.0, hi: 1.0, curve: -4)</code></h4>
+
+<p>返回 Env 的副本，其 levels 已被映射到给定的线性、指数或曲线范围。</p>
+
+<h4>讨论：</h4>
+
+<pre><code>a = Env.adsr;
+a.levels;
+a.range(42, 45).levels;
+a.exprange(42, 45).levels;
+a.curverange(42, 45, -4).levels;
+
+(
+// 将一个 Env 映射到指数频率范围：
+{
+    SinOsc.ar(EnvGen.ar(Env.perc(0.01, 0.7).exprange(40, 10000), doneAction: Done.freeSelf)) * 0.2;
+}.play
+)</code></pre>
+
+<h3 id="Client-side Access and Stream Support">客户端访问与流支持</h3>
+
+<p>下面的方法中 sustain 和 loop 设置不起作用。</p>
+
+<h4 id="-at"><code>.at(time)</code></h4>
+
+<p>返回 Env 在 <strong>time</strong> 处的值。如果包络有多个通道，此方法返回一个电平数组。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>time</p></td><td class="argumentdesc"><p>一个数字或一个数字数组，用于指定包络中的截断。如果 time 是数组，则返回每个时间值对应的电平；如果包络有多个通道，则返回一个值的数组。两者组合则返回二维数组。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>e = Env.triangle(1, 1);
+e.at(0.5);
+e.at([0.5, 0.7]);
+
+e = Env([1, [1, 2, 3], 1], [1, 1], \exp);
+e.at(0.5);
+e.at(1.8);
+e.at(2);
+e.at([0.5, 1.2]);
+
+e = Env([1, 100, 1], [1, [1, 2, 3]], \exp);
+e.at(0.5);
+e.at(2);
+e.at([1, 2, 4]);</code></pre>
+
+<h4 id="-embedInStream"><code>.embedInStream(inval)</code></h4>
+
+<p>将此 Env 嵌入到一个外层的 <a href="Classes-Stream.html">Stream</a> 中。计时由 <code>thisThread.beats</code> 推导得出。</p>
+
+<h4 id="-asStream"><code>.asStream</code></h4>
+
+<p>创建一个 Routine 并将 Env 嵌入其中。这使得 Env 可以作为 <a href="Classes-Stream.html">Stream</a> 使用。</p>
+
+<h4>讨论：</h4>
+
+<pre><code>(
+{
+e = Env.sine.asStream;
+5.do({
+    e.next.postln;
+    0.25.wait;
+}) }.fork
+)</code></pre>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-=="><code>==(that)</code></h4>
+
+<h4 id="-array"><code>.array</code></h4>
+
+<h4 id="-asArrayForInterpolation"><code>.asArrayForInterpolation</code></h4>
+
+<h4 id="-asControlInput"><code>.asControlInput</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/Common/Control/extConvertToOSC.sc">/usr/local/share/SuperCollider/SCClassLibrary/Common/Control/extConvertToOSC.sc</a></em></p>
+
+<h4 id="-asMultichannelSignal"><code>.asMultichannelSignal(length: 400, class)</code></h4>
+
+<h4 id="-asOSCArgEmbeddedArray"><code>.asOSCArgEmbeddedArray(array)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/Common/Control/extConvertToOSC.sc">/usr/local/share/SuperCollider/SCClassLibrary/Common/Control/extConvertToOSC.sc</a></em></p>
+
+<h4 id="-asPseg"><code>.asPseg</code></h4>
+
+<h4 id="-curveValue"><code>.curveValue(curve)</code></h4>
+
+<h4 id="-curves"><code>.curves</code></h4>
+
+<h4 id="-curves"><code>.curves = z</code></h4>
+
+<h4 id="-discretize"><code>.discretize(n: 1024)</code></h4>
+
+<h4 id="-hash"><code>.hash</code></h4>
+
+<h4 id="-levels"><code>.levels</code></h4>
+
+<h4 id="-levels"><code>.levels = z</code></h4>
+
+<h4 id="-loopNode"><code>.loopNode</code></h4>
+
+<h4 id="-loopNode"><code>.loopNode = z</code></h4>
+
+<h4 id="-offset"><code>.offset</code></h4>
+
+<h4 id="-offset"><code>.offset = z</code></h4>
+
+<h4 id="-releaseNode"><code>.releaseNode</code></h4>
+
+<h4 id="-releaseNode"><code>.releaseNode = z</code></h4>
+
+<h4 id="-releaseTime"><code>.releaseTime</code></h4>
+
+<h4 id="-streamArg"><code>.streamArg</code></h4>
+
+<h4 id="-times"><code>.times</code></h4>
+
+<h4 id="-times"><code>.times = z</code></h4>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>s.boot;     // 下面的 .test 将运行一个合成示例
+        // 为了演示包络，所以 Server 必须开启
+
+// 不同形状的段：.plot 绘制 Env
+Env.new([0, 1, 0.3, 0.8, 0], [2, 3, 1, 4], &#x27;linear&#x27;).test.plot;
+Env.new([0.001, 1, 0.3, 0.8, 0.001], [2, 3, 1, 4], &#x27;exponential&#x27;).test.plot;
+Env.new([0, 1, 0.3, 0.8, 0], [2, 3, 1, 4], \sine).test.plot;
+Env.new([0.001, 1, 0.3, 0.8, 0.001], [2, 3, 1, 4], \welch).test.plot;
+Env.new([0, 1, 0.3, 0.8, 0], [2, 3, 1, 4], &#x27;step&#x27;).test.plot;
+Env.new([0, 1, 0.3, 0.8, 0], [2, 3, 1, 4], -2).test.plot;
+Env.new([0, 1, 0.3, 0.8, 0], [2, 3, 1, 4], 2).test.plot;
+Env.new([0, 1, 0.3, 0.8, 0], [2, 3, 1, 4], [0, 3, -3, -1]).test.plot;</code></pre>
+
+<p>如果给定了释放节点，且 EnvGen 的门限输入被设置为零，则输出释放节点之后的节点：</p>
+
+<pre><code>// release 节点是节点 1；从 0 到 1 需要 0.5 秒，
+// 保持在 1 的电平，然后在三秒后释放
+// （测试会在三秒后触发释放，参数给定为 3），
+// 完成需要 2 秒
+Env.new([0, 1, 0], [0.5, 2], &#x27;linear&#x27;, 1).test(3).plot
+
+// 更复杂的示例
+// 释放节点是节点 2；在 5 秒后释放
+Env.new([0.001, 1, 0.3, 0.8, 0.001], [2, 3, 1, 4] * 0.2, 2, 2).test(5).plot;
+Env.new([0.001, 1, 0.3, 0.8, 0.5, 0.8, 0], [2, 3, 1, 2, 2, 1] * 0.2, 2, 2).test(5).plot;
+
+// 提前释放：在 0.1 秒后直接进入释放节点
+Env.new([0.001, 1, 0.3, 0.8, 0.5, 0.8, 0], [2, 3, 1, 2, 2, 1] * 0.2, 2, 2).test(0.1).plot;</code></pre>
+
+<p>如果给定了循环节点，EnvGen 会输出循环节点与释放节点之间的节点（不包括释放节点本身），直到被释放：</p>
+
+<pre><code>// 释放节点是节点 2，循环节点是节点 0：因此会在节点 0（lvl 1，dur 0.5）
+// 和节点 1（lvl 0.1，dur 0.5）之间循环         // 直到 3.5 秒后被释放
+Env.new([0, 1, 0.1, 0], [0.5, 0.5, 2], &#x27;lin&#x27;, 2, 0).test(3.5).plot;
+
+// 这只是停留在节点 0，因为没有其他节点可供循环！
+Env.new([0, 1, 0], [0.5, 2], &#x27;lin&#x27;, 1, 0).test(3.5).plot;
+
+// 更复杂的例子：释放节点是节点 3，循环节点是节点 1
+Env.new([0.001, 1, 0.3, 0.8, 0.5, 0.8, 0], [2, 1, 1, 2, 3, 1] * 0.1, &#x27;lin&#x27;, 3, 1).test(3).plot;
+
+// 这是生成的图：
+(
+e = Env.new([0.001, 1, 0.3, 0.8, 0.5, 0.8, 0], [2, 1, 1, 2, 3, 1] * 0.001, &#x27;lin&#x27;, 3, 1);
+e.plot; { EnvGen.ar(e, Trig.ar(Impulse.ar(0), 10*0.001)) }.plot(0.02);
+)</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 包络段（envelope segment）的起始电平始终是你当前所处的电平。例如，当 gate 被释放并且你跳转到 release 段时，电平不会跳转到 release 段起始处的电平，而是从当前所处的任意电平，在 release 段指定的持续时间内，变化到 release 段的目标电平。包络开头有一个额外的电平用于设置初始电平。之后，每个节点都是一个目标电平和一个持续时间，因此节点零的持续时间等于 times[0]，目标电平等于 levels[1]。循环会跳回 loop 节点。该段的终点就是该段的目标电平，而该段的持续时间就是电平从当前电平变化到目标电平所经过的时间。</p></blockquote>
+
+<h4 id=".streamArg"><code>streamArg</code></h4>
+
+<p>返回与 <code>asStream</code> 相同的输出。</p>
+
+<h3 id="blend">blend</h3>
+
+<pre><code>a = Env([0, 0.2, 1, 0.2, 0.2, 0], [0.5, 0.01, 0.01, 0.3, 0.2]);
+a.test.plot;
+
+b = Env([0, 0.4, 1, 0.2, 0.5, 0], [0.05, 0.4, [0.01, 0.1], 0.1, 0.4]);
+b.test.plot;
+
+(
+Task({
+    f = (0, 0.2 .. 1);
+    f.do { |u|
+        blend(a, b, u).test.plot;
+        2.wait;
+        Window.allWindows.pop.close; // 关闭最后打开的窗口
+    }
+}).play(AppClock);
+)
+
+// 混合一个 SynthDef
+(
+SynthDef(\help_EnvBlend, { |out, factor = 0|
+    Out.ar(out, EnvGen.kr(blend(Env.perc, Env.sine, factor), 1.0, doneAction: Done.freeSelf)
+        * SinOsc.ar(440, 0, 0.1)
+    )
+}).add
+);
+
+(
+{
+    var factors = (0, 0.1..1);
+    factors.do { |f| Synth(\help_EnvBlend, [\factor, f.postln]); 1.wait };
+}.fork
+);</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/Env.html" rel="noreferrer noopener">Classes/Env.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

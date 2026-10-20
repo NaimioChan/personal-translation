@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Routine - SuperCollider 文档</title>
+<meta name="description" content="可以在中间返回，然后从离开处继续执行的函数">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Routine</h1>
+
+<p><em>可以在中间返回，然后从离开处继续执行的函数</em></p>
+
+<p><a href="Classes-Thread.html">Thread</a> : <a href="Classes-Stream.html">Stream</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-Stream.html">Stream</a></p>
+
+<p>子类：<a href="Classes-FuncStreamAsRoutine.html">FuncStreamAsRoutine</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>例程运行一个 <a href="Classes-Function.html">Function</a>，并允许它在中间挂起，然后在离开处再次恢复。此功能由其父类 <a href="Classes-Thread.html">Thread</a> 提供支持。实际上，例程可用于实现协程，就像 Scheme 和其他一些语言中的那样。</p>
+
+<p>Routine 在首次调用 <a href="#-next">-next</a> 时被<strong>启动</strong>，此时将从头开始运行该 Function。当它“yield”时（在 Function 内使用 <a href="Classes-Object.html#-yield">Object: -yield</a>）被<strong>挂起</strong>，然后再次使用 <a href="#-next">-next</a> 时被<strong>恢复</strong>。当 Function 返回时，Routine 被视为<strong>停止</strong>，此后调用 <a href="#-next">-next</a> 将不起作用——除非使用 <a href="#-reset">-reset</a> 将该 Routine <strong>重置</strong>，这会将该 Function 倒回到开头。你可以在 Function 返回之前使用 <a href="#-stop">-stop</a> 停止一个 Routine。</p>
+
+<p>当一个例程被<strong>调度</strong>到<a href="Classes-Clock.html">时钟</a>上时（例如使用<a href="#-play">-play</a>），它将在预定的时间启动或恢复。例程产生的值将作为重新调度该例程的时间差。（参见<a href="#-awake">-awake</a>）。</p>
+
+<p>由于 Routine 继承自 <a href="Classes-Thread.html">Thread</a>，它有自己的关联<a href="Classes-Thread.html#-beats">逻辑时间</a>等。当 Routine 启动或恢复时，它成为<a href="Classes-Thread.html#.thisThread">当前线程</a>。</p>
+
+<p>Routine 也继承自 <a href="Classes-Stream.html">Stream</a>，因此共享其使用数学运算进行组合和“过滤”的能力。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>Routine.new(func, stackSize: 512)</code></h4>
+
+<p><em>来自父类：<a href="Classes-Thread.html">Thread</a></em></p>
+
+<p>创建一个 Routine 实例，将带有要运行代码的 Function 传递给它。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>func</p></td><td class="argumentdesc"><p>一个包含供 Thread 运行的代码的 Function。</p></td></tr>
+<tr><td class="argumentname"><p>stackSize</p></td><td class="argumentdesc"><p>调用栈大小（一个 Integer）。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>a = Routine.new({ 1.yield; 2.yield });
+a.next.postln;
+a.next.postln;
+a.next.postln;</code></pre>
+
+<p>Function 类提供了自己的快捷方法 <code>r</code>，它调用 <code>Routine.new</code>，因此也可以写成：</p>
+
+<pre><code>a = r { 1.yield; 2.yield };</code></pre>
+
+<h3 id="Undocumented class methods">未文档化的类方法</h3>
+
+<h4 id="*run"><code>Routine.run(func, stackSize, clock, quant)</code></h4>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h4 id="-next"><code>.next(inval)</code></h4>
+
+<p>此方法根据例程的状态执行不同操作：</p>
+
+<ul>
+<li>启动该例程（如果尚未启动或已被 <a href="#-reset">reset</a>），即从头运行其函数，并传入 <code>inval</code> 参数。</li>
+<li>如果 Routine 已被挂起（它已 yield），则恢复它；即从在某个 Object 上调用 <a href="Classes-Object.html#-yield">yield</a> 的位置恢复其 Function，并将 <code>inval</code> 参数作为 <code>yield</code> 的返回值传入。</li>
+<li>如果例程已停止（因为其函数已返回，或已调用 <a href="#-stop">-stop</a>），则不做任何操作。</li>
+</ul>
+
+<p><code>thisThread</code>：由于 Routine 继承自 <a href="Classes-Thread.html">Thread</a>，它在启动或恢复时会成为<em>当前线程</em>；即在 Routine 函数中使用的 <a href="Classes-Thread.html#.thisThread">thisThread</a> 将返回该 Routine。</p>
+
+<p>时间：就在调用 <code>next</code> 之前，<code>thisThread</code> 指向另一个例程或顶层线程。在 <code>next</code> 调用期间，它成为父线程（参见 <a href="Classes-Thread.html#-parent">Thread: -parent</a>）。随后 <code>next</code> 在父线程的时钟上、以父线程的逻辑时间进行求值。</p>
+
+<p><code>next</code> 的同义词是 <a href="#-value">-value</a> 和 <a href="#-resume">-resume</a>。</p>
+
+<h4>返回值：</h4>
+
+<ul>
+<li>要么是 Routine 所 yield 的值（即在 Routine 函数内部调用 <a href="Classes-Object.html#-yield">yield</a> 的对象），</li>
+<li>...或 <code>nil</code>，如果例程已停止。</li>
+</ul>
+
+<h4>讨论：</h4>
+
+<p>当通过调用此方法（或其同义词之一）启动一个 Routine 时，该方法的参数会作为 Routine Function 的参数传入：</p>
+
+<pre><code>Routine { |inval|
+    inval.postln;
+}.value(&quot;hello routine&quot;);</code></pre>
+
+<p>在例程已经产出之后（它已在其函数中对某个对象调用 <code>yield</code> 的位置处被挂起），调用此方法（或其同义词）会恢复执行该函数，而此方法的参数将成为 <code>yield</code> 的返回值。要在函数内部访问该值，你必须将其赋给一个变量——通常，会复用函数的参数：</p>
+
+<pre><code>(
+r = Routine { |inval|
+    inval.postln;
+    inval = 123.yield;
+    inval.postln;
+}
+)
+
+r.value(&quot;hello routine&quot;);
+r.value(&quot;goodbye routine&quot;);</code></pre>
+
+<p>通常，一个 Routine 会多次 yield，每次 yield 的结果都会被重新赋值给其 Function 的参数。</p>
+
+<pre><code>(
+r = Routine { |inval|
+    inval.postln; // 启动时输出传入的值。
+    5.do { |i|
+        inval = (i + 10).yield;
+        inval.postln; // 恢复时输出传入的值。
+    }
+}
+)
+(
+5.do {
+    r.value(&quot;hello routine&quot;).postln; // 打印 Routine 产生的值。
+}
+)</code></pre>
+
+<h4 id="-value"><code>.value(inval)</code></h4>
+
+<p>等价于 <a href="#-next">-next</a>。</p>
+
+<h4 id="-resume"><code>.resume(inval)</code></h4>
+
+<p>等价于 <a href="#-next">-next</a>。</p>
+
+<h4 id="-stop"><code>.stop</code></h4>
+
+<p>相当于 Routine 函数执行到末尾或返回：此后，该 Routine 将不再运行（<a href="#-next">-next</a> 方法没有效果并返回 <code>nil</code>），除非调用 <a href="#-reset">-reset</a>。</p>
+
+<h4 id="-reset"><code>.reset</code></h4>
+
+<p>使得下次调用 <a href="#-next">-next</a> 时，例程从头开始。</p>
+
+<h4>讨论：</h4>
+
+<p>如果一个 Routine 被停止（其 Function 已返回或已调用 <a href="#-stop">-stop</a>），它将永远不会再次运行（<a href="#-next">-next</a> 方法没有效果并返回 <code>nil</code>），除非调用此方法。</p>
+
+<p>Routine 无法重置自身，除非调用 <a href="Classes-Object.html#-yieldAndReset">Object: -yieldAndReset</a>。</p>
+
+<p>参见：<a href="Classes-Object.html#-yield">Object: -yield</a>、<a href="Classes-Object.html#-alwaysYield">Object: -alwaysYield</a></p>
+
+<h4 id="-play"><code>.play(clock, quant)</code></h4>
+
+<p><em>来自父类：<a href="Classes-Stream.html">Stream</a></em></p>
+
+<p>在指定的 <a href="Classes-Clock.html">Clock</a> 上调度该 Routine，时间由 <code>quant</code> 指定。到了该时间，Routine 会被唤醒（通过调用 <a href="Classes-Routine.html#-awake">Routine: -awake</a>），设置时钟和时间并对 Routine 求值。如果 Routine 产生一个数字，该数字对应的拍数会被加到当前时间上，并重新调度该 Routine。（此行为与调度 <a href="Classes-Stream.html">Stream</a> 或 <a href="Classes-Function.html">Function</a> 兼容。）</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>clock</p></td><td class="argumentdesc"><p>一个 Clock，默认是 TempoClock</p></td></tr>
+<tr><td class="argumentname"><p>quant</p></td><td class="argumentdesc"><p>参见 <a href="Classes-Quant.html">Quant</a> 帮助文件</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>在例程中使用 <a href="Classes-Object.html#-idle">Object: -idle</a>，在此时间结束之前返回各值。时间相对于该线程的时钟来计量。</p>
+
+<pre><code>// 持续 6 秒，返回 200，然后继续
+(
+r = Routine {
+        199.yield;
+        189.yield;
+        200.idle(6);
+        199.yield;
+        189.yield;
+};
+
+fork {
+    loop {
+        r.value.postln;
+        1.wait;
+    }
+}
+);
+
+// 该值也可以是流或函数
+(
+r = Routine {
+        199.yield;
+        189.yield;
+        Routine { 100.do { |i| i.yield } }.idle(6);
+        199.yield;
+        189.yield;
+};
+
+fork {
+    loop {
+        r.value.postln;
+        1.wait;
+    }
+}
+);</code></pre>
+
+<h4 id="-reschedule"><code>.reschedule(argClock, quant)</code></h4>
+
+<p>如果某个 Routine 当前已被调度到某个时钟上，它将预期在特定时间、特定时钟上“唤醒”。<code>reschedule</code> 允许你切换到不同的时钟或更晚的时间。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>argClock</p></td><td class="argumentdesc"><p>用于运行该 Routine 的新时钟。如果为 <code>nil</code>，则不会更改该 routine 的时钟。（注意：目前与 <a href="Classes-AppClock.html">AppClock</a> 不兼容；重新调度依赖于方法 <code>schedAbs</code>，而 AppClock 未实现该方法。）</p></td></tr>
+<tr><td class="argumentname"><p>quant</p></td><td class="argumentdesc"><p>一个量化说明符，标识一个<em>晚于</em>下一个已调度时间的时间。若为 <code>nil</code>，则使用 <code>nextBeat</code> 的当前值。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<ul>
+<li><p>重新调度到不同的时钟在秒的层面上是连续的，但在拍的层面上不一定连续。基于时间的模式（例如 Pseg，或将 Env 用作流）可能不会连续遵循包络形状。（Pseg 和 Env-as-stream 以正在播放的时钟上的拍来度量时间。在正常使用中，时钟从不改变，因此时间会单调地推进并穿过包络的断点。如果线程被重新调度到不同的时钟，拍值在新时钟上极不可能相同，因此包络会在时间上向前或向后跳跃。）</p>
+
+<p>切换时钟时，<code>reschedule</code> 会首先根据给定的 <code>quant</code> 以拍为单位计算出新的“唤醒”时间。然后将该 <code>beats</code> 值转换为同一时刻下新时钟的 <code>beats</code> 值。如果旧时钟的速度为 1，且 Routine 正在等待 1 拍，则下一次“唤醒”应在一秒后发生。在不带 <code>quant</code> 的情况下重新调度时，下一次“唤醒”<em>仍然</em>会在一秒后发生——但 <code>beats</code> 值会针对新时钟进行调整。</p></li>
+<li>目前 <code>quant</code> 会被解析为比该 Routine 当前的 <code>nextBeat</code> <em>更晚</em>的时间。如果你试图强制将其提前，则很可能会出现某种不连续。这是因为 Routine 在正常唤醒之前无法重新调度。变通方法是把该 Routine 切换到另一个 <a href="Classes-Task.html">Task</a> 包装器中。</li>
+<li>目前例程必须正在播放（已在某个时钟上调度）。这是因为交接给新时钟或新时间发生在该线程的"唤醒"过程中。若例程未在播放，则它不会唤醒，什么也不会发生。</li>
+</ul>
+
+<pre><code>// 重新调度到不同的时钟，时间相同
+c = TempoClock.new;
+
+(
+t = Routine {
+    var lastSeconds = thisThread.seconds;
+    loop {
+        1.0.wait;
+        [thisThread.beats, thisThread.seconds - lastSeconds].postln;
+        lastSeconds = thisThread.seconds;
+    }
+}.play;
+)
+
+t.reschedule(c);  // 整个过程中秒数增量为 1.0
+
+t.stop;
+
+// 重新调度到更晚的时间，同一时钟
+(
+t = Routine {
+    var lastSeconds = thisThread.seconds;
+    loop {
+        1.0.wait;
+        [thisThread.beats, thisThread.seconds - lastSeconds].postln;
+        lastSeconds = thisThread.seconds;
+    }
+}.play;
+)
+
+t.reschedule(quant: 1);
+
+t.stop;
+
+// 重新调度到更早的时间（变通方法，唯一可行的方式）
+// 要求你从 PauseStream 开始！
+// 如果 &#x27;t&#x27; 最初是 Routine，则这不起作用。
+(
+t = PauseStream(Routine {
+    var lastSeconds = thisThread.seconds;
+    loop {
+        1.0.wait;
+        [thisThread.beats, thisThread.seconds - lastSeconds].postln;
+        lastSeconds = thisThread.seconds;
+    }
+}).play;
+)
+
+// 稍后短于 1 拍
+(
+u = PauseStream(t.stream);
+TempoClock.schedAbs(t.nextBeat.trunc, u.refresh);
+t.stop;
+)
+
+u.stop;</code></pre>
+
+<h4 id="-awake"><code>.awake(inBeats, inSeconds, inClock)</code></h4>
+
+<p>此方法由 <a href="Classes-Clock.html">Clock</a> 在其调度时间到达时调用，该 Clock 是例程被调度所在的时钟。它会调用 <a href="#-next">-next</a>，并将以拍为单位的调度时间作为参数传入。<code>next</code> 返回的值（即例程所产出的值）将依次由该方法返回，从而决定例程下一次被重新调度的时间。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>inBeats</p></td><td class="argumentdesc"><p>调度时间，以拍为单位。这等于当前逻辑时间（<a href="Classes-Thread.html#-beats">Thread: -beats</a>）。</p></td></tr>
+<tr><td class="argumentname"><p>inSeconds</p></td><td class="argumentdesc"><p>调度时间，以秒为单位。它等于当前逻辑时间（<a href="Classes-Thread.html#-seconds">Thread: -seconds</a>）。</p></td></tr>
+<tr><td class="argumentname"><p>inClock</p></td><td class="argumentdesc"><p>唤醒例程的时钟。</p></td></tr>
+</table>
+
+<h4 id="-p"><code>.p</code></h4>
+
+<p>将例程转换为<a href="Classes-Pattern.html">模式</a>（的子类）。</p>
+
+<h4>返回值：</h4>
+
+<p>一个 <a href="Classes-Prout.html">Prout</a>，它（响应 <code>asStream</code>）充当原始例程（<code>p</code> 的接收者）的独立副本的生成器。</p>
+
+<h4>讨论：</h4>
+
+<p>任何 Pattern 的子类在响应 <code>asStream</code> 时都返回一个 Stream。然而，返回的 Stream 的确切子类取决于 Pattern 的类。特别地，Prout 在响应 <code>asStream</code> 时返回一个 Routine。因此，制作 Routine 独立副本的一种方法是，用方法 <code>p</code> 从它创建一个 Prout，然后从这个 Prout 创建一个新的 Routine。在紧接着的下面示例中，这第二步通过调用 <code>asStream</code> 显式完成，但在向其他 Pattern 传递参数的上下文中，后一步通常会自动发生，如后续示例所示。</p>
+
+<pre><code>(
+r = Routine { &quot;hi&quot;.yield; &quot;bye&quot;.yield };
+r.next.postln;    // &quot;hi&quot; posted
+
+q = r.p.asStream; // 或者直接：r.p.iter
+q.next.postln;    // &quot;hi&quot; 再次
+
+r.next.postln;    // &quot;bye&quot; 因为 r 保留了自己的状态，独立于 q
+)</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 由 <code>.p.asStream</code> 生成的新例程会从头运行原例程的函数。不会复制原例程的内部状态，只会复制其函数。相关地，<code>Routine.copy</code>（继承自 <code>Thread</code>）不会创建新的独立例程，只会返回接收者。</p></blockquote>
+
+<p>Routine 方法 <code>p</code> 在将返回 Routine 的表达式的结果作为 Pattern 的参数使用的上下文中最为有用，此时意图是将 Routine 的结果用作模式，即多次出现时彼此独立运行。</p>
+
+<pre><code>(
+r = (:2..5); // 一个 seriesIter Routine
+Ptuple([r, r]).asStream.all.postln; // posts [[2, 3], [4, 5]]
+r.next.postln; // nil
+
+p = r.p; // 从 r 创建一个 Pattern；r 已经结束也没关系
+Ptuple([p, p]).asStream.all.postln;
+// posts [[2, 2], [3, 3], [4, 4], [5, 5]]
+
+// 显然，显式地把同一个以 Routine 为值的子表达式写两次
+// 也会创建各自独立的 Routine。
+Ptuple([(:2..5), (:2..5)]).asStream.all.postln;
+// posts [[2, 2], [3, 3], [4, 4], [5, 5]]
+)</code></pre>
+
+<p>在以下示例中，在 <code>Pseq</code> 中直接两次重用同一个 Routine 对象无法复制其输出，因为第一次嵌入已完全消耗了该例程的（非 nil）输出。</p>
+
+<pre><code>(
+r = (:2..6);
+Pseq([r, r]).asStream.all.postln;
+// [2, 3, 4, 5, 6]
+
+p = r.p;
+Pseq([p, p]).asStream.all.postln;
+// [2, 3, 4, 5, 6, 2, 3, 4, 5, 6]
+
+Pseq([(:2..6), (:2..6)]).asStream.all.postln;
+// [2, 3, 4, 5, 6, 2, 3, 4, 5, 6]
+)</code></pre>
+
+<h3 id="Accessible instance variables">可访问的实例变量</h3>
+
+<p>Routine 继承自 <a href="Classes-Thread.html">Thread</a>，这允许访问它的一些状态：</p>
+
+<pre><code>(
+r = Routine { |inval|
+    loop {
+        // thisThread 指该 routine。
+        postf(&quot;beats: % seconds: % time: % \n&quot;,
+            thisThread.beats, thisThread.seconds, Main.elapsedTime
+        );
+        1.0.yield;
+
+    }
+}.play;
+)
+
+r.stop;
+r.beats;
+r.seconds;
+r.clock;</code></pre>
+
+<h4 id="-beats"><code>.beats</code></h4>
+
+<h4 id="-beats"><code>.beats = inBeats</code></h4>
+
+<p><em>来自父类：<a href="Classes-Thread.html">Thread</a></em></p>
+
+<h4>返回值：</h4>
+
+<p>例程的已用拍数（逻辑时间）。当例程未运行时，拍数不会推进。</p>
+
+<h4 id="-seconds"><code>.seconds</code></h4>
+
+<h4 id="-seconds"><code>.seconds = inSeconds</code></h4>
+
+<p><em>来自父类：<a href="Classes-Thread.html">Thread</a></em></p>
+
+<h4>返回值：</h4>
+
+<p>例程已流逝的秒数（逻辑时间）。当例程未播放时，秒数不前进，它是转换后的拍值。</p>
+
+<h4 id="-clock"><code>.clock</code></h4>
+
+<h4 id="-clock"><code>.clock = inClock</code></h4>
+
+<p><em>来自父类：<a href="Classes-Thread.html">Thread</a></em></p>
+
+<h4>返回值：</h4>
+
+<p>线程的时钟。若尚未播放，则为 SystemClock。</p>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-prStart"><code>.prStart(inval)</code></h4>
+
+<h4 id="-prStop"><code>.prStop</code></h4>
+
+<h4 id="-run"><code>.run(inval)</code></h4>
+
+<h4 id="-valueArray"><code>.valueArray(inval)</code></h4>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>(
+var r, outval;
+r = Routine.new({ |inval|
+    (&quot;-&gt;inval was &quot; ++ inval).postln;
+    inval = 1.yield;
+    (&quot;-&gt;inval was &quot; ++ inval).postln;
+    inval = 2.yield;
+    (&quot;-&gt;inval was &quot; ++ inval).postln;
+    inval = 99.yield;
+});
+
+outval = r.next(&#x27;a&#x27;);
+(&quot;&lt;-outval was &quot; ++ outval).postln;
+outval = r.next(&#x27;b&#x27;);
+(&quot;&lt;-outval was &quot; ++ outval).postln;
+r.reset; &quot;reset&quot;.postln;
+outval = r.next(&#x27;c&#x27;);
+(&quot;&lt;-outval was &quot; ++ outval).postln;
+outval = r.next(&#x27;d&#x27;);
+(&quot;&lt;-outval was &quot; ++ outval).postln;
+outval = r.next(&#x27;e&#x27;);
+(&quot;&lt;-outval was &quot; ++ outval).postln;
+outval = r.next(&#x27;f&#x27;);
+(&quot;&lt;-outval was &quot; ++ outval).postln;
+)</code></pre>
+
+<pre><code>// wait
+
+(
+var r;
+r = Routine {
+    10.do({ |a|
+        a.postln;
+        // 通常你会看到 Wait 被用来暂停一个例程
+        // 这里在每个数字之间等待一秒
+        1.wait;
+    });
+    // 说完之前等待半秒
+    0.5.wait;
+    &quot;done&quot;.postln;
+}.play;
+)</code></pre>
+
+<pre><code>// 等待直到
+
+(
+var r;
+r = Routine {
+    var times = { rrand(1.0, 10.0) }.dup(10) + thisThread.beats;
+    times = times.sort;
+    times.do({ |a|
+        waitUntil(a);
+        a.postln;
+    });
+    // 说完之前等待半秒
+    0.5.wait;
+    &quot;done&quot;.postln;
+}.play;
+)</code></pre>
+
+<pre><code>// 使用 Routine 动态设置按钮状态。
+(
+var update, w, b;
+w = Window.new(&quot;State Window&quot;, Rect(150, Window.screenBounds.height - 140, 380, 60));
+
+// 设置按钮标签的便捷方法
+update = {
+    |but, string| but.states = [[string.asString, Color.black, Color.red]];
+    but.refresh;
+};
+
+b = Button(w, Rect(10, 10, 360, 40));
+b.font_(Font(&quot;Impact&quot;, 24));
+
+update.value(b, &quot;there is only one state&quot;);
+
+// 如果某个动作在每次被调用时都应执行不同的操作，那么 routine 就是
+// 正确的选择。这比在外部创建变量并在动作函数中设置它们、
+// 以便在动作之间保持状态要好
+
+b.action_(Routine { |butt|
+    rrand(15, 45).do { |i|
+        update.value(butt, &quot;%. there is still only 1 state&quot;.format(i + 2));
+        0.yield; // 在此停止
+    };
+    w.close;
+});
+
+w.front;
+)</code></pre>
+
+<pre><code>// 使用 Pen 在窗口中动态绘制
+(
+var w, much = 0.02, string, synth;
+
+w = Window.new(&quot;swing&quot;, Rect(100, 100, 300, 500)).front;
+w.view.background_(Color.new255(153, 255, 102).vary);
+
+string = &quot;swing &quot;.dup(24).join;
+
+w.drawFunc = Routine {
+    var i = 0;
+    var size = 40;
+    var func = { |i, j| sin(i * 0.07 + (j * 0.0023) + 1.5pi) * much + 1 };
+    var scale;
+    Pen.font = Font(&quot;Helvetica-Bold&quot;, 40);
+    loop {
+        i = i + 1;
+        string.do {    |char, j|
+
+            scale = func.value(i, j).dup(6);
+
+            Pen.fillColor = Color.new255(0, 120, 120).vary;
+            Pen.matrix = scale * #[1, 0, 0, 1, 1, 0];
+            Pen.stringAtPoint(char.asString,
+                ((size * (j % 9)) - 10) @ (size * (j div: 9))
+            );
+        };
+        0.yield // 停在这里，返回一些不重要的东西
+    }
+};
+
+fork { while { w.isClosed.not } { defer { w.refresh }; 0.04.wait } };
+
+w.front;
+
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/Routine.html" rel="noreferrer noopener">Classes/Routine.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>调试技巧 - SuperCollider 文档</title>
+<meta name="description" content="关于调试 synthdef、客户端代码等的提示">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>调试技巧</h1>
+
+<p><em>关于调试 synthdef、客户端代码等的提示</em></p>
+
+<p>另请参阅：<a href="Guides-Understanding-Errors.html">Understanding errors</a></p>
+
+<h2 id="Debugging synthdefs">调试 synthdef</h2>
+
+<p>调试 synthdef 的难点在于服务器操作不可见。有几种技术可以暴露各种 UGen 的输出。</p>
+
+<h3 id="SendTrig / OSCFunc">SendTrig / OSCFunc</h3>
+
+<p>SendTrig 最初旨在向客户端发回一条触发消息，以便客户端可以在服务器上采取进一步的操作。然而，它也可以用于向客户端发回任何数值，然后该值可以被打印出来。</p>
+
+<p>要打印出这些值，你需要按如下方式创建一个 OSCFunc：</p>
+
+<pre><code>o = OSCFunc({ |msg| msg.postln }, &#x27;/tr&#x27;, s.addr);</code></pre>
+
+<p>每行输出是一个包含四个值的数组：<code>['/tr', defNode, id (from SendTrig), value (from SendTrig)]</code>。</p>
+
+<pre><code>{    var    freq;
+    freq = LFNoise1.kr(2, 600, 800);
+        // 需要 Impulse 来触发要发送的 /tr 消息
+    SendTrig.kr(Impulse.kr(4), 0, freq);
+    SinOsc.ar(freq, 0, 0.3) ! 2
+}.play;
+[ /tr, 1000, 0, 1340.8098144531 ]
+[ /tr, 1000, 0, 1153.9201660156 ]
+[ /tr, 1000, 0, 966.35247802734 ]
+[ /tr, 1000, 0, 629.31628417969 ]
+
+o.free;  // 完成后，你需要清理 OSCFunc</code></pre>
+
+<p>如果你需要跟踪多个值，SendReply 可以将值的数组发送回客户端。</p>
+
+<pre><code>l = List.new;
+o = OSCFunc({ |msg|
+        // msg[3] 是第一个数组值
+        // [3..] 表示取该数组中此后的所有内容
+    l.add(msg[3..]);
+}, &#x27;/freqAmp&#x27;, s.addr);
+
+a = {
+    var    freq, amp;
+    freq = LFNoise0.kr(8, 600, 800);
+    amp = LFNoise1.kr(10, 0.5, 0.5);
+        // 需要 Impulse 来触发要发送的回复
+    SendReply.kr(Impulse.kr(4), &#x27;/freqAmp&#x27;, [freq, amp]);
+    SinOsc.ar(freq, 0, amp) ! 2
+}.play;
+
+a.free;
+o.free;  // 完成后，你需要清理 OSCFunc
+
+// 绘制为两个通道：频率在上图，幅度在下图
+l.flat.plot(numChannels: 2);</code></pre>
+
+<h3 id="Polling">Polling</h3>
+
+<p>轮询允许你通过将某个 UGen 输出的采样打印到 post 窗口来调试 SynthDef。要这样做，请使用 .poll 方法（Poll UGen 的简写），它默认每秒打印 10 次。</p>
+
+<pre><code>{ LFNoise1.kr.poll; }.play;   // 默认轮询</code></pre>
+
+<p>这可能太快了，因此你可以指定每秒应打印该值的次数。</p>
+
+<pre><code>{ LFNoise1.kr.poll(3); }.play;  // 更慢地轮询</code></pre>
+
+<p>你也可以轮询数组</p>
+
+<pre><code>{ [LFNoise1.kr, LFNoise1.kr].poll; }.play;  // 轮询一个数组</code></pre>
+
+<p>当同时有多个值或数组时，poll 会变得难以使用，因为屏幕上会打印太多值，以至于难以分辨哪个是哪个。标签有助于解决这个问题。</p>
+
+<pre><code>{ LFNoise1.kr.poll(3, &quot;a value&quot;); LFNoise1.kr.poll(5, &quot;another value&quot;); }.play;</code></pre>
+
+<p>调试触发器无法通过常规轮询工作，因为触发大多发生在轮询间隔之间。可以传入输出本身来代替每秒轮询次数。这样，值只在有触发时打印，而不是按固定间隔打印。</p>
+
+<pre><code>{ var trig = Dust.kr; trig.poll(trig); }.play;</code></pre>
+
+<p>你可以用类似的方式调试变化不频繁的值，使用 Changed UGen。它仅在值刚刚发生变化时打印该值。</p>
+
+<p>请注意，它会跳过紧接在上一次变化之后发生的变化，因为任何触发都需要先回到零才能再次触发。</p>
+
+<pre><code>{ var steps = LFNoise0.kr; steps.poll(Changed.kr(steps); }.play;</code></pre>
+
+<p>也可以使用单独的触发信号。这对于想要最大程度控制何时进行轮询非常有用。</p>
+
+<pre><code>~synth={ arg t_trig; [LFNoise1.kr, LFNoise1.kr].poll(t_trig); }.play;
+
+// t_trig 中的 t_ 是简写，使 ~synth.set(\t_trig, 1) 触发而不是永久设置
+~synth.set(\t_trig, 1); // 多运行几次这一行</code></pre>
+
+<p>上述所有示例对音频速率 UGen 同样适用。</p>
+
+<pre><code>{ LFNoise1.ar.poll; }.play;</code></pre>
+
+<h3 id="Trace control signals using a control bus">使用控制总线跟踪控制信号</h3>
+
+<p>监视控制值的另一种方法是将信号输出到控制速率总线。然后可以使用 <a href="Classes-Bus.html#-get">Bus: -get</a> 或 <a href="Classes-Bus.html#-getSynchronous">Bus: -getSynchronous</a> 访问该总线。使用 getSynchronous 将值保存到数组或列表中会稍微更直接一些。</p>
+
+<pre><code>b = Bus.control(s, 1);
+
+a = {
+    var    freq;
+    freq = LFNoise1.kr(2, 600, 800);
+    Out.kr(b, freq);        // 此处不需要 Impulse
+    SinOsc.ar(freq, 0, 0.3) ! 2
+}.play;
+
+l = List.new;
+r = fork { loop { l.add(b.getSynchronous); 0.1.wait } };
+
+r.stop;
+a.free;
+
+l.array.plot;  // 以图形方式查看结果</code></pre>
+
+<p>这仅适用于内部或本地服务器。对于远程服务器，例程可以改写如下。</p>
+
+<pre><code>r = fork { loop { b.get({ |value| l.add(value) }); 0.1.wait } };</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 此方法不适用于音频总线，因为数据变化太快，无法支持“get”。</p></blockquote>
+
+<h3 id="Server-side trace">服务器端跟踪</h3>
+
+<p><code>/n_trace</code> 消息使服务器打印节点中所有 UGen 的列表及其输入和输出值。</p>
+
+<p>阅读 synthdef 跟踪信息需要一些练习，但当 synthdef 未按预期工作时，它是最终的信息来源。通过查看输入和输出处的数字可以识别信号流。当一个 UGen 的输出馈入另一个 UGen 的输入时，两端的值将会相同。</p>
+
+<p>举一个具体的例子，让我们看一个无法正常工作的 synthdef。其意图是生成一个失谐锯齿波，并让它通过一组并联谐振滤波器，这些滤波器的截止频率会随机调制。我们运行该 synth 并生成跟踪记录（如下所示）。</p>
+
+<pre><code>SynthDef(\resonz, { |out, freq = 440|
+    var    sig, ffreq;
+    sig = Saw.ar([freq, freq+1], 0.2);
+    ffreq = LFNoise1.kr(2, 1, 0.5);
+    Out.ar(out, Resonz.ar(sig, (800, 1000..1800) * ffreq, 0.1))
+}).send(s);
+
+a = Synth(\resonz);
+a.trace;
+a.free;
+
+        TRACE 1005  resonz    #units: 21
+          unit 0 Control
+            in
+            out 440
+          unit 1 BinaryOpUGen
+            in  440 1
+            out 441
+          unit 2 Saw
+            in  441
+            out 0.451348
+          unit 3 BinaryOpUGen
+            in  0.451348 0.2
+            out 0.0902696
+          unit 4 Saw
+            in  440
+            out -0.367307
+          unit 5 BinaryOpUGen
+            in  -0.367307 0.2
+            out -0.0734615
+          unit 6 LFNoise1
+            in  2
+            out -0.836168
+          unit 7 BinaryOpUGen
+            in  -0.836168 0.5
+            out -0.336168
+          unit 8 BinaryOpUGen
+            in  800 -0.336168
+            out -268.934
+          unit 9 Resonz
+            in  -0.0734615 -268.934 0.1
+            out 843934
+          unit 10 BinaryOpUGen
+            in  1000 -0.336168
+            out -336.168
+          unit 11 Resonz
+            in  0.0902696 -336.168 0.1
+            out 3.02999e+08
+          unit 12 BinaryOpUGen
+            in  1200 -0.336168
+            out -403.402
+          unit 13 Resonz
+            in  -0.0734615 -403.402 0.1
+            out 9.14995e+10
+          unit 14 BinaryOpUGen
+            in  1400 -0.336168
+            out -470.635
+          unit 15 Resonz
+            in  0.0902696 -470.635 0.1
+            out -5.42883
+          unit 16 BinaryOpUGen
+            in  1600 -0.336168
+            out -537.869
+          unit 17 Resonz
+            in  -0.0734615 -537.869 0.1
+            out 515.506
+          unit 18 BinaryOpUGen
+            in  1800 -0.336168
+            out -605.102
+          unit 19 Resonz
+            in  0.0902696 -605.102 0.1
+            out 32785.2
+          unit 20 Out
+            in  0 843934 3.02999e+08 9.14995e+10 -5.42883 515.506 32785.2
+            out</code></pre>
+
+<p>从跟踪结果中立刻能看出两个问题：第一，输出有六个通道（应该只有一个），第二，所有输出都远远超出音频范围 -1..1。第一个问题是因为我们使用多通道扩展生成了一个 Resonz 滤波器数组，但没有将它们混合成单通道。</p>
+
+<p>请注意，在每个 Resonz 之前都没有超出范围的信号。查看 Resonz 的输入，我们看到频率输入为负值，这会使大多数数字滤波器崩溃。</p>
+
+<p>共振频率通过将一个数组乘以一个 LFNoise1 得到。回溯（红色斜体数字）可以看到，LFNoise1 输出的是负数，而我们期望它在 0.5..1.5 之间。但是，mul 和 add 输入被反过来了！</p>
+
+<p>如果仔细观察跟踪输出，你会发现另一个与多通道扩展有关的问题。失谐锯齿波的两个分量进入了交替的 Resonz，而我们期望两者合并后进入每个 Resonz。要修复此问题，还需要将锯齿波混合。</p>
+
+<pre><code>SynthDef(\resonz, { |out, freq = 440|
+    var    sig, ffreq;
+    sig = Mix.ar(Saw.ar([freq, freq+1], 0.2));
+    ffreq = LFNoise1.kr(2, 0.5, 1);
+    Out.ar(out, Mix.ar(Resonz.ar(sig, (800, 1000..1800) * ffreq, 0.1)))
+}).send(s);
+
+a = Synth(\resonz);
+a.trace;
+a.free;</code></pre>
+
+<h2 id="Debugging client-to-server communication">调试客户端到服务器通信</h2>
+
+<p>有些错误源于发送到服务器的 OSC 消息构造不正确。Julian Rohrhuber 的 DebugNetAddr 是一种捕获消息的便捷方法。该类可从以下地址下载：<a href="http://swiki.hfbk-hamburg.de">http://swiki.hfbk-hamburg.de</a>:8888/MusicTechnology/710 。</p>
+
+<p>要使用它，你需要退出当前运行的本地服务器，然后使用 DebugNetAddr 而不是常规 NetAddr 创建一个新服务器。消息将被转储到一个新的文档窗口中。</p>
+
+<pre><code>s.quit;
+
+Server.default = s = Server.new(&#x27;local-debug&#x27;, DebugNetAddr(&quot;localhost&quot;, 57110));
+s.boot;
+s.makeWindow;        // 可选
+
+    latency nil        // 这些消息在启动时发送
+        [ &quot;/notify&quot;, 1 ]
+
+    latency nil
+        [ &quot;/g_new&quot;, 1 ]
+
+a = { SinOsc.ar(440, 0, 0.4) ! 2 }.play;
+
+    latency nil
+        [ &quot;/d_recv&quot;, &quot;data[ 290 ]&quot;, [ 9, &quot;-1589009783&quot;, 1001, 0, 1, &#x27;i_out&#x27;, 0, &#x27;out&#x27;, 0 ] ]
+
+a.free;
+
+    latency nil
+        [ 11, 1001 ]</code></pre>
+
+<h2 id="Debugging client code">调试客户端代码</h2>
+
+<p>SuperCollider 没有单步跟踪功能，这使得客户端调试更加困难，但并非不可能。</p>
+
+<h3 id="Errors">Errors</h3>
+
+<p>学会阅读 SuperCollider 的错误输出至关重要。错误转储通常（尽管并非总是）包含大量信息：执行了什么动作、哪些对象被操作，以及执行流程如何到达那一点。</p>
+
+<p>教程见<a href="Guides-Understanding-Errors.html">理解错误</a>帮助文件。</p>
+
+<p>还有一个用于错误转储的图形化 Inspector，可通过以下命令启用：</p>
+
+<pre><code>Exception.debug = true;        // enable
+Exception.debug = false;    // disable</code></pre>
+
+<p>在大多数情况下，这会比常规错误转储提供更多信息。通常常规错误转储就足够了。如果你使用环境（Environment）或原型式编程，图形检查器是不可或缺的。</p>
+
+<h3 id="Debug output using post statements">使用 post 语句输出调试信息</h3>
+
+<p>最常见的做法是插入语句来打印变量和表达式的值。由于常规的打印方法不会改变表达式的值，因此可以将它们放在语句中间而不改变处理流程。以下两者之间没有显著区别：</p>
+
+<pre><code>if(a &gt; 0) { positive.value(a) };</code></pre>
+
+<p>and</p>
+
+<pre><code>if((a &gt; 0).postln) { positive.value(a) };</code></pre>
+
+<p>常用的方法有：</p>
+
+<pre><code>.postln
+.postcs        // 将对象作为编译字符串发布
+.debug(caller)    // 发布该对象，并附带标识调用者的标签</code></pre>
+
+<pre><code>(
+var    positiveFunc;
+positiveFunc = { |a|
+    a.debug(&#x27;positiveFunc-arg a&#x27;);
+    a*10
+};
+a = 5;
+if (a &gt; 0) { positiveFunc.value(a) };
+)
+
+// output:
+positiveFunc-arg a: 5
+50</code></pre>
+
+<p>caller 参数是可选的；但它对于追踪错误值的来源非常有用。</p>
+
+<p>.debug 的另一个优点是，在源代码中更容易搜索到它们并在之后删除。</p>
+
+<p>要一次打印多个值，请在使用 .debug 或 .postcs 之前将它们包装成一个数组。注意，如果数组的任一成员是集合，postln 会将其隐藏在类名之后：“an Array, a Dictionary”等。如果你预期要打印的是集合，请使用 postcs。</p>
+
+<pre><code>[val1, val2, val3].debug(\myMethod);
+[\callerTag, val1, val2, val3].postcs;</code></pre>
+
+<p>通过在代码中大量散布这些调用，尤其是在函数或方法的开头，调试输出可以为您提供代码块以何种顺序被访问的部分追踪。</p>
+
+<h3 id="dumpBackTrace">dumpBackTrace</h3>
+
+<p>如果你发现某个特定方法或函数被进入，但不知道它是如何到达那里的，你可以对任何对象使用 <code>.dumpBackTrace</code> 方法。你会得到看起来像错误转储的内容，但没有错误。堆栈转储后执行会正常继续。</p>
+
+<pre><code>(
+var    positiveFunc;
+positiveFunc = { |a|
+    a.debug(&#x27;positiveFunc-arg a&#x27;);
+    a.dumpBackTrace;
+    a*10
+};
+a = 5;
+if (a &gt; 0) { positiveFunc.value(a) };
+)
+
+// output:
+positiveFunc-arg a: 5
+CALL STACK:
+    &lt; FunctionDef in closed FunctionDef &gt;
+        arg a = 5
+    &lt; closed FunctionDef &gt;
+        var positiveFunc = &lt;instance of Function&gt;
+    Interpreter-interpretPrintCmdLine
+        arg this = &lt;instance of Interpreter&gt;
+        var res = nil
+        var func = &lt;instance of Function&gt;
+    Process-interpretPrintCmdLine
+        arg this = &lt;instance of Main&gt;
+50</code></pre>
+
+<p>这告诉你该函数来自对一个已关闭的 FunctionDef 的解释（在求值一段代码块时自动创建）。</p>
+
+<p>在方法定义中，建议使用 <code>this.dumpBackTrace</code>；在独立函数中没有 "this"，因此应选取某个任意对象。</p>
+
+<h3 id="Tracing streams">跟踪流</h3>
+
+<p>要查看模式的结果，请使用 .trace 方法。模式输出的每个值都会被发布到主输出。</p>
+
+<pre><code>s.boot;
+SynthDescLib.global.read;
+
+p = Pbind(\degree, Pwalk((0..14), Pdup(Pwhite(1, 4, inf), Prand(#[-2, -1, 1, 2], inf)), Pseq(#[-1, 1], inf), 0), \delta, 0.25, \sustain, 0.2, \instrument, \default).trace.play;
+
+p.stop;</code></pre>
+
+<h3 id="Debugging infinite loops or recursion">调试无限循环或递归</h3>
+
+<pre><code>while(true);</code></pre>
+
+<p>这是个坏主意。它会让 SuperCollider 卡死，你不得不强制退出。有时这会在你的代码中发生，而原因并不明显。调试这些情况非常痛苦，因为你可能不得不强制退出、重新启动 SuperCollider 并重新加载代码，只是为了再试一次。</p>
+
+<pre><code>f = { |func| func.value(func) };
+f.value(f);</code></pre>
+
+<p>另一方面，无限递归更有可能在执行栈空间耗尽时导致 SuperCollider 意外退出。</p>
+
+<p>在 macOS 中，插入 "post" 或 "debug" 调用对无限循环或递归没有帮助，因为发布的输出会保存在缓冲区中直到执行完成。如果执行永不完成，你就永远看不到输出。</p>
+
+<p>一种有用的方法是插入会导致执行停止的语句。最简单的是 .halt，但它不会提供任何有关停止位置、停止方式或如何到达该位置的信息。如果你想要更具描述性的消息，可以构造一个错误并抛出它：</p>
+
+<pre><code>Error(&quot;myFunction-halt&quot;).throw;</code></pre>
+
+<p>在调试会崩溃的代码时，在代码中的某处放置这样一行。如果你得到了错误输出，你就知道无限循环发生在错误之后——所以把 error.throw 移到后面再试一次。如果它崩溃了，你就知道无限循环发生在更早的位置。最终，在经历许多痛苦之后，你就能锁定其位置。</p>
+
+<p>这里是一组“无限循环陷阱”的示例——它们看起来并不像无限循环，但会在你后悔按下回车键之前就把你的代码搞垮：</p>
+
+<pre><code>i = 0;
+while (i &lt; 10) { i.postln; i = i+1 };     // crash</code></pre>
+
+<p>SuperCollider 中 while 循环的语法与 C 不同。上面的循环意味着在循环开始时检查一次 i &lt; 10，如果值为真则循环。由于循环条件只求值一次，它永远不会改变，因此循环永远不会停止。循环条件应写在函数内，即：</p>
+
+<pre><code>i = 0;
+while { i &lt; 10 } { i.postln; i = i+1 };</code></pre>
+
+<p>例程与空数组：</p>
+
+<pre><code>a = Array.new;
+r = Routine({
+    loop {
+        a.do({ |item| item.yield });
+    }
+});
+r.next;    // crash</code></pre>
+
+<p>这看起来相当无害：对数组反复迭代并依次 yield 每一项。但是，如果数组为空，do 循环就永远不会执行，yield 也就永远不会被调用。于是，外层的 loop{} 会永远运行下去，什么也不做。</p>
+
+<p>递归常用于遍历树结构。树结构通常是有限的——无论你沿哪条分支向下，最终都会到达末端。如果你有一个自引用的数据结构，就很容易出现无限递归：</p>
+
+<pre><code>a = (1..10);
+a.put(5, a);    // 现在 a 的其中一个元素就是 a 本身
+a.postcs;        // 崩溃——postcs 必须遍历整个集合，而该集合会自身循环</code></pre>
+
+<p>自引用数据结构有时是设计不佳的标志。如果是这种情况，请避免使用它们。</p>
+
+<pre><code>a = 0;
+SystemClock.sched(2, { a.postln });    // 当调度器触发该函数时崩溃</code></pre>
+
+<p>当已调度的函数执行时，如果它返回一个数字，则该函数将被重新调度为在现在 + 该数字的时间执行。如果该数字为 0，则实际上等同于无限循环。</p>
+
+<p>要修复它，请确保函数返回非数字。</p>
+
+<pre><code>a = 0;
+SystemClock.sched(2, { a.postln; nil });</code></pre>
+
+<h3 id="Removing debugging statements">移除调试语句</h3>
+
+<p>利用格式排版来帮助你的眼睛在需要移除调试语句时定位它们。SuperCollider 代码通常是缩进的。如果你把调试语句完全左对齐，它们会更容易被看到。</p>
+
+<pre><code>a = Array.new;
+r = Routine({
+    loop {
+        &quot;debugging&quot;.postln;    // 看起来像普通代码，并不显眼
+        a.do({ |item| item.yield });
+    }
+});
+r.next;    // crash
+
+// vs:
+
+a = Array.new;
+r = Routine({
+    loop {
+&quot;debugging&quot;.postln;    // 这显然很突出
+        a.do({ |item| item.yield });
+    }
+});
+r.next;    // crash</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Debugging-tips.html" rel="noreferrer noopener">Guides/Debugging-tips.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

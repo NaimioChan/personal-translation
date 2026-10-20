@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13_BinaryOp_synthesis - SuperCollider 文档</title>
+<meta name="description" content="Mark Polishook 教程">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>13_BinaryOp_synthesis</h1>
+
+<p><em>Mark Polishook 教程</em></p>
+
+<p>另见：<a href="Tutorials-Mark_Polishook_tutorial-00_Introductory_tutorial.html">00_入门教程</a></p>
+
+<h2 id="Binary messages">二元消息</h2>
+
+<p>二进制消息的模式是</p>
+
+<table>
+<tr><td><p>RECEIVER</p></td><td><p>OPERATOR</p></td><td><p>OPERAND</p></td></tr>
+</table>
+
+<p>例如</p>
+
+<pre><code>2 * 3</code></pre>
+
+<p>是一个接收者（消息发送到的对象）、一个二元运算符和一个操作数。</p>
+
+<h2 id="Mixing = addition">混音 = 相加</h2>
+
+<p>使用加法（二元运算）来混合两个或多个 ugen。</p>
+
+<pre><code>(
+    // 混合 2 个锯齿波
+    {
+        Saw.ar(500, 0.05)    // 接收器
+        +            // 运算符
+        Saw.ar(600, 0.06)    // 操作数
+    }.scope;
+)
+
+
+(
+// 混合 3 个单元生成器。
+    {
+        Saw.ar(500, 0.05)    // 接收器
+        +            // 运算符
+        Saw.ar(600, 0.06)    // 操作数
+                        // 求值时会产生
+                        // 一个 BinaryOpUGen
+                        // 这个 BinaryOpUGen 随后成为一个接收者，用于一个
+        +                // 加法运算符后跟
+        Saw.ar(700, 0.07)        // 一个操作数
+    }.scope;
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>用 Mix ugen 重写上一个示例。</p>
+
+<pre><code>(
+{
+    Mix.ar(
+        // 将要混合的 ugen 放入一个数组
+        [
+            Saw.ar(500, 0.05),
+            Saw.ar(600, 0.06),
+            Saw.ar(700, 0.06)
+        ]
+    )
+}.scope
+)</code></pre>
+
+<p>或使用 Mix.arFill 创建相同的结果。</p>
+
+<pre><code>{ Mix.arFill(3, { arg i; Saw.ar(500 + (i * 100), 0.05) }) }.scope;</code></pre>
+
+<p>每次对函数求值时，参数 i 都会递增。因此 i 在第一次求值时等于 0，第二次求值时 i 等于 1，第三次求值时 i 等于 2，依此类推。</p>
+
+<h2 id="Scaling = multiplication">缩放 = 乘法</h2>
+
+<p>对 WhiteNoise 生成器施加一个包络，形式为低频正弦波。</p>
+
+<pre><code>{ WhiteNoise.ar(0.1) * SinOsc.kr(1, 1) }.scope;
+
+(
+    // 缩放和混合
+    // ... 模仿火车？
+    {
+        (WhiteNoise.ar(0.1) * SinOsc.kr(1, 1))
+        +
+        (BrownNoise.ar(0.1) * SinOsc.kr(2, 1))
+
+    }.scope;
+)</code></pre>
+
+<h2 id="Envelopes">Envelopes</h2>
+
+<p>用包络动态调制 ugen 中的任意参数（例如频率、相位或幅度）。</p>
+
+<pre><code>// 调制振幅
+{ SinOsc.ar(440, 0, 0.1) * EnvGen.kr(Env.sine(1), doneAction: Done.freeSelf) }.scope;</code></pre>
+
+<p>将 doneAction 参数（控件）设为 2，可确保包络到达终点后，SuperCollider 会释放它用于 SinOsc 和 EnvGen 实例的内存。</p>
+
+<h2 id="Keyword arguments">关键字参数</h2>
+
+<p>关键字使代码更易于阅读，并且允许参数以任意顺序呈现。在这里，doneAction 和 timeScale 参数以关键字风格表达。</p>
+
+<pre><code>(
+SynthDef(&quot;timeScale&quot;, { arg ts = 1;
+    Out.ar(
+        0,
+        SinOsc.ar(440, 0, 0.4)
+        *
+        EnvGen.kr(
+            Env.sine(1),
+            doneAction: Done.freeSelf,
+            timeScale: ts    // 缩放包络的持续时间
+        )
+    )
+}).add;
+)
+
+Synth(&quot;timeScale&quot;, [\ts, 0.1]); // timeScale 控制包络的持续时间</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<pre><code>// 为每个新 synth 缩放包络的持续时间
+(
+r = Routine({
+    loop({
+        Synth(&quot;timeScale&quot;, [\ts, 0.01.rrand(0.3)]);
+        0.5.wait;
+    })
+});
+)
+r.play</code></pre>
+
+<h2 id="Additive Synthesis">加法合成</h2>
+
+<p>加法合成正如其名。各分量被相加（混合）在一起。</p>
+
+<pre><code>(
+{    // 对该函数求值 12 次
+    var n = 12;
+    Mix.arFill(
+        n,
+        {
+            SinOsc.ar(
+                [67.0.rrand(2000), 67.0.rrand(2000)],
+                0,
+                n.reciprocal * 0.75
+            )
+        }
+    )
+    *
+    EnvGen.kr(Env.perc(11, 6), doneAction: Done.freeSelf)
+}.scope
+)</code></pre>
+
+<h2 id="Envelopes">Envelopes</h2>
+
+<p>加法合成的承诺在于，人们可以通过叠加正弦波来创建任何可以想象的声音。</p>
+
+<p>加法合成的问题在于，每个正弦波及其包络都必须显式指定。</p>
+
+<p>通过用包络缩放正弦波，然后混合结果来创建细致的纹理。</p>
+
+<pre><code>(
+{    var n = 12;
+
+    Mix.arFill(
+            n,                        // 生成 n 个正弦波
+            {
+            SinOsc.ar(                    // 每个都有一个可能的频率介于
+                [67.0.rrand(2000), 67.0.rrand(2000)],    // low.rrand(high) ... 浮点数值
+                0,
+                n.reciprocal                // 缩放每个正弦波的振幅
+                                    // 根据 n 的值
+            )
+            *
+            EnvGen.kr(                    // 给每个正弦波加上包络
+                Env.sine(2.0.rrand(17)),
+                doneAction: Done.none                 // 仅在以下情况下释放包络
+                                    // 整个声音已完成（为什么？）
+            )
+        }
+    )
+    *                                // 在整个 patch 上放置一个包络
+    EnvGen.kr(
+        Env.perc(11, 6),
+        doneAction: Done.freeSelf,
+        levelScale: 0.75
+    )
+
+}.scope
+)</code></pre>
+
+<p>（或使用 <a href="Classes-Klang.html">Klang</a> UGen 产生类似效果）。</p>
+
+<h2 id="Ring modulation">环形调制</h2>
+
+<p>将两个 UGen 相乘。</p>
+
+<pre><code>{ SinOsc.ar(440, 0, 0.571) * SinOsc.kr(880) }.scope
+
+// 使用 lfo 来调制调制器的幅度
+(
+    {
+        SinOsc.ar(440, 0, 0.571)
+        *
+        (SinOsc.kr(880)                // 将调制器和 lfo 用括号括起来
+        *                     // why ... ?
+        SinOsc.kr([6.99, 8.01].reciprocal)
+        )
+    }.scope
+)</code></pre>
+
+<h2 id="Amplitude modulation">振幅调制</h2>
+
+<p>将两个 UGen 相乘，并将调制器的值限制为正值（使用 .abs 消息计算“绝对值”），以创建 Charles Dodge 所称的“经典”振幅调制。</p>
+
+<pre><code>// 使用 lfo 来调制调制器的幅度
+(
+    {
+        SinOsc.ar(440, 0, 0.571)
+        *
+        (SinOsc.kr(880).abs            // 将调制器和 lfo 用括号括起来
+        *                     // why ... ?
+        SinOsc.kr([6.99, 8.01].reciprocal)
+        )
+    }.scope
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>比较“经典”振幅调制与环形调制</p>
+
+<pre><code>// &quot;classic&quot;
+{ SinOsc.ar(440, 0, 0.571) * SinOsc.kr(880).abs }.scope
+
+// &quot;ring&quot;
+// ……有什么区别？
+{ SinOsc.ar(440, 0, 0.571) * SinOsc.kr(880) }.scope</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>转到 <a href="Tutorials-Mark_Polishook_tutorial-14_Subtractive_synthesis.html">14_Subtractive_synthesis</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Mark_Polishook_tutorial/13_BinaryOp_synthesis.html" rel="noreferrer noopener">Tutorials/Mark_Polishook_tutorial/13_BinaryOp_synthesis.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>asTarget - SuperCollider 文档</title>
+<meta name="description" content="转换为有效的 Node Target">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>asTarget</h1>
+
+<p><em>转换为有效的 Node Target</em></p>
+
+<p>另请参阅：<a href="Classes-Node.html">Node</a></p>
+
+<h4 id=".asTarget"><code>asTarget</code></h4>
+
+<p>下面列出的类实现了方法 <code>asTarget</code>。该方法在 <a href="Classes-Node.html">Node</a> 类（<a href="Classes-Group.html">Group</a> 和 <a href="Classes-Synth.html">Synth</a>）中被广泛使用，用于将非 Node 对象转换为合适的目标。这使得 nil 和 <a href="Classes-Server.html">Server</a> 的实例可以用作目标。在编写内部创建节点的类时，这可能很有用，但在大多数情况下，正常使用中几乎不需要调用 asTarget。</p>
+
+<p>有关实现 <code>asTarget</code> 的类的更新列表，请参见 <a href="https://docs.supercollider.online/Overviews/Methods.html#asTarget">Methods: asTarget</a> 中的 asTarget</p>
+
+<dl>
+<dt><a href="Classes-Node.html#-asTarget">Node: -asTarget</a></dt>
+<dd><p>返回 Node 本身的实例。Node 的子类（Synth 和 Group）是有效目标，无需转换。</p></dd>
+<dt><a href="Classes-Server.html#-asTarget">Server: -asTarget</a></dt>
+<dd><p>返回一个 Group 对象，表示此 Server 实例的 Default Group。请注意，该对象可能与其他表示默认组的对象不完全相同，但会是等价的。</p></dd>
+<dd><pre><code>s = Server.default;
+g = s.asTarget;     // s 的默认组
+h = s.defaultGroup; // 再次
+g == h;             // true
+g === h;            // false</code></pre></dd>
+<dt><a href="Classes-Nil.html#-asTarget">Nil: -asTarget</a></dt>
+<dd><p>返回一个 Group 对象，表示当前默认服务器的默认组。</p></dd>
+<dd><pre><code>s = Server.default;
+g = nil.asTarget;
+g == s.defaultGroup; // true</code></pre></dd>
+<dt><a href="Classes-Integer.html#-asTarget">Integer: -asTarget</a></dt>
+<dd><p>返回一个 Group 对象，表示当前默认 Server 上的一个组节点，以该 Integer 作为其节点 ID 编号。</p></dd>
+<dd><blockquote class="note"><p><strong>注意：</strong> 尽管这在某些情况下很方便，但它不会在默认服务器上创建相应的节点，也不会检查以确保该节点存在。此外，它不会直接访问服务器的 NodeIDAllocator，因此节点 ID 可能会重复。由于这些原因，使用此方法时应格外小心。当处理非默认 Server 时，Group-basicNew 更安全也更简单，否则需要设置 server 实例变量以确保正确的定位。</p></blockquote></dd>
+<dd><pre><code>/////// 展示问题
+
+s = Server.default;
+s.boot;
+g = s.nextNodeID.asTarget;
+x = Synth.head(g, &quot;default&quot;);   // 但服务器上不存在 g
+s.sendMsg(*g.addToHeadMsg);     // 现在它被发送到默认服务器，在默认组中
+x = Synth.head(g, &quot;default&quot;);   // 现在这样可行
+x.free; g.free;
+
+// 如果不使用默认 Server，Integer-asTarget 可能会出现问题
+
+Server.default = Server.local;
+Server.default.boot;            // 退出默认服务器
+i = Server.internal; i.boot;
+g = i.nextNodeID.asTarget;
+i.sendMsg(*g.addToHeadMsg);     // 似乎可行，但是……
+x = Synth.head(g, &quot;default&quot;);   // 糟糕，这发送到了默认服务器，所以找不到 Group
+g.server == Server.default;     // true，所以这就是问题所在
+g.server = i;
+x = Synth.head(g, &quot;default&quot;);   // 现在到正确的位置
+x.free; g.free;</code></pre></dd>
+<dd><pre><code>/////// 一个更实用的示例
+
+s = Server.default;
+s.boot;
+s.sendMsg(\g_new, x = s.nextNodeID);
+// ...
+
+// 现在，如果由于某种原因我们需要使用 Node 对象
+y = Synth.head(x.asTarget, &quot;default&quot;);
+
+// 这比 Group.basicNew(s, x); 更简单，前提是你使用的是默认服务器：
+z = Synth.head(Group.basicNew(s, x), &quot;default&quot;);
+
+y.free; z.free; x.asTarget.free;</code></pre></dd>
+</dl>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Reference/asTarget.html" rel="noreferrer noopener">Reference/asTarget.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jitlib_basic_concepts_04 - SuperCollider 文档</title>
+<meta name="description" content="NodeProxy 中的定时">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>jitlib_basic_concepts_04</h1>
+
+<p><em>NodeProxy 中的定时</em></p>
+
+<p>另请参阅：<a href="Overviews-JITLib.html">JITLib</a>、<a href="Tutorials-JITLib-jitlib_basic_concepts_03.html">jitlib_basic_concepts_03</a></p>
+
+<p>发生在 NodeProxy 上的变化，最重要的是设置其源，通常是在调用 put 方法时完成的（或者在 ProxySpace 中，通过赋值操作 =）。有时，希望相对于时钟对这些变化进行定时。</p>
+
+<ul>
+<li><a href="#a)%20clock">a) 时钟</a></li>
+<li><a href="#b)%20quant%20and%20offset">b) 量化和偏移</a></li>
+<li><a href="#c)%20connecting%20client%20and%20server%20tempo">c) 客户端与服务器速度</a></li>
+<li><a href="#d)%20sample%20accurate%20output">d) 采样精确输出</a></li>
+</ul>
+
+<h2 id="a) clock">a) 时钟</h2>
+
+<p>一般来说，每个节点代理都可以有自己的时间基准，通常是一个速度时钟。时钟负责新函数插入的定时，默认在时钟的下一个拍点进行。</p>
+
+<pre><code>p = ProxySpace.push(s.boot);
+~x.play; ~y.play;
+
+// 这两个 synth 在它们被插入时启动：
+~x = { Ringz.ar(Impulse.ar(1), 400, 0.05).dup };
+~y = { Ringz.ar(Impulse.ar(1), 600, 0.05).dup };
+
+// 添加一个公共时钟：
+~x.clock = TempoClock.default; ~x.quant = 1.0;
+~y.clock = TempoClock.default; ~y.quant = 1.0;
+
+// 现在它们同步了
+~x = { Ringz.ar(Impulse.ar(1), 400, 0.05).dup };
+~y = { Ringz.ar(Impulse.ar(1), 600, 0.05).dup };
+
+// 为简单起见，可以为整个 proxy space 提供一个 clock 和一个 quant：
+
+p.clock = TempoClock.default; p.quant = 1.0;
+~y = { Ringz.ar(Impulse.ar(1), 800, 0.05).dup };
+
+~z.play;
+~z = { Ringz.ar(Impulse.ar(1), [500, 514], 0.8).dup * 0.1};
+~z = { Ringz.ar(Impulse.ar(1), exprand(300, 400 ! 2), 1.8).dup * 0.1 };
+~z = { Ringz.ar(Impulse.ar(2), exprand(300, 3400 ! 2), 0.08).dup * 0.2 };
+~z.end;
+
+p.clear; // 全部清除。</code></pre>
+
+<h3 id="sequence of events">事件序列</h3>
+
+<p>当向代理中插入新函数时，会构建 synthdef 并发送到服务器，服务器在完成时发回一条消息。然后代理等待下一个节拍来启动 synth。当将节点代理与模式一起使用时，模式使用时钟作为调度器来播放。</p>
+
+<h2 id="b) quant and offset">b) quant 与 offset</h2>
+
+<p>为了能够控制插入的偏移/量化点，可以使用 'quant' 实例变量，它既可以是一个数字，也可以是一个形如 [quant, offset] 的数组，就像在 pattern.play(quant) 中一样。</p>
+
+<pre><code>~z.play; ~y.play;
+~z = { Ringz.ar(Impulse.ar(2), exprand(300, 3400 ! 2), 0.08).dup * 0.2 };
+~y.quant = [1, 0.3]; // 偏移量为 0.3，量化为 1.0
+~y = { Ringz.ar(Impulse.ar(1), 600, 0.05).dup };
+~y.quant = [2, 1/3]; // 偏移量为 1/3，量化为 2.0
+~y = { Ringz.ar(Impulse.ar(0.5), 600, 0.05).dup };</code></pre>
+
+<p>quant 和 offset 调度用于以下操作：<strong>play</strong>、<strong>put</strong>、<strong>removeAt</strong>、<strong>setNodeMap</strong>、<strong>wakeUp</strong>、<strong>rebuild</strong>（以及重建操作 lag、setRates、bus_）。有关 SC 中量化的更多信息，请参见 <a href="Classes-Quant.html">Quant</a>。</p>
+
+<h2 id="c) connecting client and server tempo">c) 连接客户端与服务器速度</h2>
+
+<p>ProxySpace 有一个方法 <a href="Classes-ProxySpace.html#-makeTempoClock">ProxySpace: -makeTempoClock</a>，它会创建一个 <a href="Classes-TempoBusClock.html">TempoBusClock</a> 实例以及一个与之保持同步的节点代理（~tempo）。</p>
+
+<pre><code>p.makeTempoClock(2.0); // 创建一个新的 tempoclock，速度为 2 拍/秒
+~y.play; ~x.play;
+~y.quant = 1; // 将量化值设回 1，偏移量设为 0
+~y = { Ringz.ar(Impulse.ar(~tempo.kr), 600, 0.05).dup }; // 脉冲使用速度
+~x = Pbind(\instrument, \default, \freq, Pseq([300, 400], inf)); // pattern 使用 tempoclock
+
+p.clock.tempo = 1.0; // 将速度设为 1
+p.clock.tempo = 2.2; // 将速度设为 2.2
+
+~x.free;
+~y.free;</code></pre>
+
+<h2 id="d) sample accurate output">d) 采样精确输出</h2>
+
+<p>为提高效率，NodeProxy 使用普通的 Out UGen 写入其总线。如果需要采样精确的播放（<a href="Classes-OffsetOut.html">OffsetOut</a>），可以将 ProxySynthDef 类变量 <a href="Classes-ProxySynthDef.html#-sampleAccurate">ProxySynthDef: -sampleAccurate</a> 设为 true。注意，对于来自外部源的音频直通，这会带来最多一个块（例如约 1 ms）的延迟。</p>
+
+<pre><code>// example
+
+ProxySynthDef.sampleAccurate = false;
+
+~x.play;
+
+// 颗粒自行释放
+~x = { SinOsc.ar(800) * EnvGen.ar(Env.perc(0.001, 0.03, 0.4), doneAction: Done.freeSelf) };
+
+
+// 抖动音调。
+(
+r = Routine {
+    loop {
+        200.do { arg i;
+            ~x.spawn;
+            (0.005).wait;
+        };
+        1.wait;
+    }
+}.play;
+)
+
+ProxySynthDef.sampleAccurate = true;
+
+// 稳定的音调，因为采样精确。
+
+~x.rebuild;
+
+r.stop;
+
+p.clear; // 全部移除。</code></pre>
+
+<p>上一页：<a href="Tutorials-JITLib-jitlib_basic_concepts_03.html">jitlib_basic_concepts_03</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/JITLib/jitlib_basic_concepts_04.html" rel="noreferrer noopener">Tutorials/JITLib/jitlib_basic_concepts_04.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

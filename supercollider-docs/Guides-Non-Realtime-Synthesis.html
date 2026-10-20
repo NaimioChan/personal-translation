@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>非实时合成（NRT） - SuperCollider 文档</title>
+<meta name="description" content="使用 OSC 命令二进制文件的非实时合成">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>非实时合成（NRT）</h1>
+
+<p><em>使用 OSC 命令二进制文件的非实时合成</em></p>
+
+<p>参见：<a href="Classes-Score.html">Score</a></p>
+
+<h2 id="Realtime vs. Non-Realtime Synthesis">实时与非实时合成</h2>
+
+<p>当你正常启动 SuperCollider 服务器（scsynth，或在支持的系统上使用 supernova）时，它以<em>实时</em>模式运行：</p>
+
+<ul>
+<li>服务器以硬件采样率所决定的速率持续处理音频。</li>
+<li>服务器通过网络接口接收 OSC 命令，并在下一个可用时机或由时间戳指定的时间处理这些命令。</li>
+<li>服务器也可以将 OSC 消息发送回客户端。</li>
+</ul>
+
+<p>如果服务器以 -N 开关启动，则以<em>非实时</em>（NRT）模式运行：</p>
+
+<ul>
+<li>服务器仅根据工作负载，以尽可能快或尽可能慢的速度处理音频。不会尝试与任何其他时间参考同步。</li>
+<li>服务器仅从预先准备好的 OSC 命令文件（即“score”）中接收命令。</li>
+<li>在运行过程中没有网络连接，也不与进程进行交互。</li>
+</ul>
+
+<p><strong>何时使用 NRT 模式：</strong>如果音频处理可以完全提前安排好，并且你需要“超光速”处理（或者处理量太大无法实时完成），NRT 可能是合适的。</p>
+
+<p><strong>何时不应使用 NRT 模式：</strong>如果你需要在特定时间与服务器进程交互，NRT 并不适用。例如，如果你的代码根据从 <a href="Classes-SendReply.html">SendReply</a>、<a href="Classes-Bus.html#-get">Bus: -get</a>（<code>/c_get</code>）或 <a href="Classes-Buffer.html#-get">Buffer: -get</a>（<code>/b_get</code>）收到的数据、或节点通知消息，来决定即将发生的事件，那么在 NRT 模式下这些数据将不可用。</p>
+
+<h2 id="Basic usage of Score">Score 的基本用法</h2>
+
+<p>建议使用 <a href="Classes-Score.html">Score</a> 对象来运行 NRT 进程。Score 对象：</p>
+
+<ul>
+<li>以正确的格式为你准备二进制 OSC 文件；</li>
+<li>管理 NRT 服务器进程；</li>
+<li>可以选择实时播放 Score 或其部分内容以进行测试。</li>
+</ul>
+
+<pre><code>(
+var server = Server(\nrt,
+    options: ServerOptions.new
+    .numOutputBusChannels_(2)
+    .numInputBusChannels_(2)
+);
+
+a = Score([
+    [0.0, [&#x27;/d_recv&#x27;,
+        SynthDef(\NRTsine, { |out, freq = 440|
+            Out.ar(out, SinOsc.ar(freq, 0, 0.2).dup)
+        }).asBytes
+    ]],
+    [0.0, (x = Synth.basicNew(\NRTsine, server, 1000)).newMsg(args: [freq: 400])],
+    [1.0, x.freeMsg]
+]);
+
+a.recordNRT(
+    outputFilePath: &quot;~/nrt-help.wav&quot;.standardizePath,
+    headerFormat: &quot;wav&quot;,
+    sampleFormat: &quot;int16&quot;,
+    options: server.options,
+    duration: 1,
+    action: { &quot;done&quot;.postln }
+);
+
+server.remove;
+)</code></pre>
+
+<h3 id="Timed messages">定时消息</h3>
+
+<p>新的 Score 对象需要一个带时间的命令列表。</p>
+
+<p>每个命令都是一个数组，例如 <code>['/n_set', 1000, 'gate', 0]</code>。</p>
+
+<p>每条命令通过被放入另一个数组来绑定到一个时间，时间（浮点数，单位为拍）放在前面：</p>
+
+<pre><code>[143.2647423, [&#x27;/n_set&#x27;, 1000, &#x27;gate&#x27;, 0]]</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 时间会根据时钟的速度进行调整。<a href="Classes-Score.html#*new">Score: *new</a> 允许你指定一个 <a href="Classes-TempoClock.html">TempoClock</a>；如果不指定，则会使用 <code>TempoClock.default</code>。</p></blockquote>
+
+<p>服务器抽象对象（Synth、Group、Buffer 等）包含可为你提供 OSC 消息的方法。因此，Score 中经常会包含如下惯用写法：</p>
+
+<ul>
+<li>创建一个组：<code>[time, Group.basicNew(server).newMsg]</code></li>
+<li>创建 Synth：<code>[time, Synth.basicNew(\defname, server).newMsg(target, args: [...])]</code></li>
+<li>从磁盘读取缓冲区：<code>[time, Buffer(server).allocReadMsg(path)]</code></li>
+</ul>
+
+<blockquote class="note"><p><strong>注意：</strong> <a href="Classes-Synth.html">Synth</a> 或 <a href="Classes-Buffer.html">Buffer</a> 的常规用法会立即与服务器通信：<code>Synth.new(...)</code> 发送 <code>/s_new</code>；<code>Buffer.alloc(server, ...)</code> 发送 <code>/b_alloc</code>。要构建 NRT 乐谱，先将对象创建为占位符（不立即通信），然后向占位符索取消息：<a href="Classes-Synth.html#*basicNew">Synth: *basicNew</a> 与 <a href="Classes-Synth.html#-newMsg">Synth: -newMsg</a>，或者 <a href="Classes-Buffer.html#*new">Buffer: *new</a> 与 <a href="Classes-Buffer.html#-allocMsg">Buffer: -allocMsg</a> 或 <a href="Classes-Buffer.html#-allocReadMsg">Buffer: -allocReadMsg</a>。不需要类似 <a href="Classes-Buffer.html#-allocMsg">Buffer: -allocMsg</a> 的总线分配消息。如果你只用过实时合成，这种代码风格并不熟悉，但值得练习。（例如 <code>newMsg</code> 的结果已经是表示该消息的数组。因此每个 Score 项只需是一个包含时间和方法调用的数组即可。只有在手工编写消息时，才需要显式写出子数组。）</p></blockquote>
+
+<p>有关其他“...Msg”方法，请查阅服务器抽象类的帮助文件。</p>
+
+<p>如果你将 <code>Synth.basicNew(...)</code> 的结果保存到一个变量中，那么你之后可以使用 <a href="Classes-Node.html#-freeMsg">Node: -freeMsg</a> 或 <a href="Classes-Node.html#-releaseMsg">Node: -releaseMsg</a> 释放它，例如：</p>
+
+<pre><code>[1.0, (x = Synth.basicNew(\default, server)).newMsg(args: [freq: 200])],
+[2.0, x.releaseMsg]</code></pre>
+
+<p>对于 <a href="Classes-SynthDef.html">SynthDef</a>，没有 <code>addMsg</code> 或 <code>recvMsg</code> 方法。按如下方式将 SynthDef 添加到 Score 中：</p>
+
+<pre><code>[0.0, [&#x27;/d_recv&#x27;, SynthDef(...).asBytes]]</code></pre>
+
+<p>非常大的 SynthDef 需要写入磁盘，而<em>不</em>是在 Score 中作为 OSC 消息渲染。SuperCollider 语言客户端将单条 OSC 消息的大小限制为 65516 字节。如果 SynthDef 超过此限制，创建 Score 对象将失败，并显示错误消息 <code>ERROR: makeSynthMsgWithTags: buffer overflow</code>。请按以下方式解决此错误消息：</p>
+
+<pre><code>(
+SynthDef(\veryLarge, {
+    // ...非常大的 UGen 图...
+}).writeDefFile;
+)
+
+(
+x = Score([
+    // 不要在这里为 \veryLarge 放置 \d_recv 消息！
+    // 让 NRT 服务器从磁盘文件读取它。
+    ...
+]);
+)</code></pre>
+
+<h3 id="Rendering a Score using ">使用 'recordNRT' 渲染 Score</h3>
+
+<p>要渲染 Score，请使用 <a href="Classes-Score.html#-recordNRT">Score: -recordNRT</a> 方法。以下是一个粗略的模板，后面是对 <code>recordNRT</code> 参数的说明。</p>
+
+<pre><code>(
+a = Score(...);
+
+a.recordNRT(
+    oscFilePath: ,
+    outputFilePath: ,
+    inputFilePath: ,
+    sampleRate: ,
+    headerFormat: ,
+    sampleFormat: ,
+    options: ,
+    completionString: ,
+    duration: ,
+    action:
+);
+)</code></pre>
+
+<dl>
+<dt>oscFilePath</dt>
+<dd><p>建议省略（保留为 nil）。Score 会为你生成一个临时文件名。</p></dd>
+<dt>outputFilePath</dt>
+<dd><p>你想要的输出音频文件（完整路径）。</p></dd>
+<dt>inputFilePath</dt>
+<dd><p>可选。如果提供已有的音频文件，其内容将流式传输到 NRT 服务器的硬件输入总线。</p></dd>
+<dt>sampleRate</dt>
+<dd><p>输出文件采样率。</p></dd>
+<dt>headerFormat</dt>
+<dd><p>参见 SoundFile: -headerFormat。</p></dd>
+<dt>sampleFormat</dt>
+<dd><p>参见 SoundFile: -sampleFormat。</p></dd>
+<dt>options</dt>
+<dd><p>一个 ServerOptions 实例。特别地，这对于设置所需的输出通道数很重要，例如 ServerOptions.new.numOutputBusChannels_(2)。</p></dd>
+<dt>completionString</dt>
+<dd><p>未记录。无明显用途。</p></dd>
+<dt>duration</dt>
+<dd><p>输出文件所需的总长度，以秒为单位。</p></dd>
+<dt>action</dt>
+<dd><p>渲染完成时要执行的函数。</p></dd>
+</dl>
+
+<p>其中，<code>outputFilePath</code>、<code>options</code> 和 <code>duration</code> 尤为重要。请确保至少指定这些。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> NRT 处理会持续到 score 文件中的最后一个时间戳。如果你为 recordNRT 指定了 <code>duration</code>，Score 会自动在 score 末尾附加一条带有给定时间戳的哑命令，确保输出文件至少有这么长。</p></blockquote>
+
+<p>如果你反复渲染 NRT 乐谱，可以设置 <code>Score.options = ServerOptions.new...</code>，<code>recordNRT</code> 将默认使用这组服务器选项。</p>
+
+<h3 id="Score files">Score 文件</h3>
+
+<p><code>recordNRT</code> 允许你选择性地指定二进制 OSC 乐谱文件的路径。如果你想将文件保留用于存档目的，或在 <code>recordNRT</code> 的动作函数中删除该文件，这会很有用。</p>
+
+<p>如果不提供路径，<code>recordNRT</code> 会在系统的临时文件位置为你生成一个。这些文件在渲染后不会自动删除。某些系统可能会在一段时间后自动清理旧的临时文件。否则，你可以自行处理：</p>
+
+<pre><code>var oscPath = PathName.tmp +/+ &quot;mytempscore&quot;;
+
+x = Score([ ... ]);
+
+x.recordNRT(oscFilePath: oscPath, ..., action: {
+    File.delete(oscPath)
+});</code></pre>
+
+<h3 id="Using system SynthDefs">使用系统 SynthDef</h3>
+
+<p>有些代码需要若干假定已存在于服务器上的 SynthDef（<a href="Classes-SystemSynthDefs.html">SystemSynthDefs</a>）。以实时模式启动服务器时，它们会被自动发送。在非实时模式下，则需要将它们显式添加到乐谱中：</p>
+
+<pre><code>x = Score.new;
+x.addSystemSynthDefs;</code></pre>
+
+<h3 id="Server instance">服务器实例</h3>
+
+<p>如果你想使用服务器抽象对象（例如 Synth、Group、Buffer），你可能还希望它们为你分配节点 ID 或缓冲区与总线编号。<a href="Classes-Synth.html#*basicNew">Synth: *basicNew</a> 和 <a href="Classes-Buffer.html#*new">Buffer: *new</a> 在你未提供 ID（将其保留为 nil）时会使用服务器的分配器。不过，如果你不小心使用了默认服务器，你为 NRT 分配的任何 ID 都会在默认的实时服务器中被标记为已分配。为避免这种情况，你可以创建一个单独的 Server 实例，仅用于生成 Score，然后在渲染后移除该实例。这是一个仅客户端对象；你不需要启动它。</p>
+
+<p>用默认服务器 <code>s</code> 进行 Score 生成在技术上是不正确的，但对于快速而粗糙的使用来说，也许可以接受。本文档中的示例演示了将专用 Server 对象作为最佳实践来使用。遵循这一最佳实践很可能可以避免 NRT Score 生成影响默认服务器实例的问题；不过，在常见用法中，这类问题可能并不严重。"风险由用户自行承担。"</p>
+
+<h3 id="Server resources">服务器资源</h3>
+
+<p>NRT 服务器是<em>一个独立的服务器进程</em>，与任何其他服务器分离。每次运行 Score 时，它都会启动一个全新的服务器进程。每个新服务器都从空白状态开始。特别是，你添加的任何 SynthDef 或加载的任何缓冲区都不会自动对新服务器可用。</p>
+
+<p>因此，你的 Score 必须包含准备这些资源的指令。</p>
+
+<p>一个非常常见的错误是：将缓冲区加载到实时服务器中，然后运行非实时服务器，结果发现资源不可用。例如，这个示例以常规方式添加了一个 SynthDef（仅添加到内存中），而该 SynthDef 不会被自动传输到 NRT 服务器。</p>
+
+<pre><code>// 不正确
+(
+SynthDef(\NRTsine, { |out, freq = 440|
+    Out.ar(out, SinOsc.ar(freq, 0, 0.2).dup)
+}).add;
+)
+
+(
+var server = Server(\nrt,
+    options: ServerOptions.new
+    .numOutputBusChannels_(2)
+    .numInputBusChannels_(2)
+);
+
+a = Score([
+    [0.0, (x = Synth.basicNew(\NRTsine, server, 1000)).newMsg(args: [freq: 400])],
+    [1.0, x.freeMsg]
+]);
+
+a.recordNRT(
+    outputFilePath: PathName.tmp +/+ &quot;nrt-help-fail.wav&quot;,
+    headerFormat: &quot;wav&quot;,
+    sampleFormat: &quot;int16&quot;,
+    options: server.options,
+    duration: 1,
+    action: { &quot;done&quot;.postln }
+);
+
+server.remove;
+)</code></pre>
+
+<pre><code>-&gt;
+nextOSCPacket 0
+*** ERROR: SynthDef NRTsine not found
+FAILURE IN SERVER /s_new SynthDef not found</code></pre>
+
+<pre><code>File.delete(PathName.tmp +/+ &quot;nrt-help-fail.wav&quot;);</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 另一项将 SynthDef 发送到 NRT 服务器的常用技术是使用 <a href="Classes-SynthDef.html#-writeDefFile">SynthDef: -writeDefFile</a> 来避免此问题。其工作方式是：将 SynthDef 写入默认的 SynthDef 目录；随后，NRT 服务器在启动时会从默认位置读取 SynthDef。这种方法完全可行，但其缺点是在磁盘上留下了你可能日后不再需要的 <code>.scsyndef</code> 文件。出于这一原因，本文档演示如何在不使用磁盘文件的情况下让 NRT 服务器可以使用 SynthDef。</p></blockquote>
+
+<p>好消息是，NRT 服务器不必等待诸如接收 SynthDef 或加载缓冲区之类的“繁重”操作。在实时服务器中被视为异步的命令，在 NRT 中表现为同步命令。因此，你只需将全部 SynthDef 和缓冲区前置到 Score 中时间为 0.0 的位置，然后在时间 0.0 也开始音频处理即可。（不过，你可能需要为音频处理设置一个轻微的偏移，因为 <code>sort</code> 可能不知道时间 0.0 的哪些条目必须排在最前面。）下面的示例演示了这一点。</p>
+
+<h2 id="Examples">示例</h2>
+
+<h3 id="Algorithmic generation of Synth messages">Synth 消息的算法生成</h3>
+
+<p>前面的示例为简单起见只添加了一个 synth。另一种方法是使用"setup"消息创建初始 Score，并为音符添加更多 Synth 消息。</p>
+
+<pre><code>(
+var server = Server(\nrt,
+    options: ServerOptions.new
+    .numOutputBusChannels_(2)
+    .numInputBusChannels_(2)
+),
+defaultGroup = Group.basicNew(server);
+
+var time = 0;
+
+x = Score([
+    [0.0, [&#x27;/d_recv&#x27;,
+        SynthDef(\singrain, { |out, freq = 440, time = 0.1, amp = 0.1|
+            var eg = EnvGen.kr(Env.perc(0.01, time), doneAction: 2),
+            sig = SinOsc.ar(freq) * amp;
+            Out.ar(out, (sig * eg).dup);
+        }).asBytes
+    ]],
+    [0.0, defaultGroup.newMsg]
+]);
+
+100.do {
+    x.add([time, Synth.basicNew(\singrain, server)
+        .newMsg(g, [freq: exprand(200, 800), time: exprand(0.1, 1.0)])
+    ]);
+    time = time + exprand(0.02, 0.25)
+};
+
+x.recordNRT(
+    outputFilePath: &quot;~/nrt.wav&quot;.standardizePath,
+    sampleRate: 44100,
+    headerFormat: &quot;wav&quot;,
+    sampleFormat: &quot;int16&quot;,
+    options: server.options,
+    duration: x.endTime + 1
+);
+
+server.remove;
+)</code></pre>
+
+<h3 id="NRT processing of an audio file">音频文件的 NRT 处理</h3>
+
+<p>对一个非常长的音频文件应用自定义效果，是 NRT 的一个特别好的用途：创建一个 Score，在其中定义一个效果 SynthDef，并在输入文件的持续时间内运行它。你可以使用 <code>recordNRT</code> 的输入文件参数，将源音频送到 NRT 服务器的硬件输入，并用 <a href="Classes-SoundIn.html">SoundIn</a> 读取它。</p>
+
+<p>示例音频文件不是很长，但这里的处理几乎是瞬时的。</p>
+
+<pre><code>(
+var server,
+inputFile = SoundFile.openRead(ExampleFiles.child);
+
+inputFile.close;  // 不需要保持打开；我们只需要统计数据
+
+server = Server(\nrt,
+    options: ServerOptions.new
+    .numOutputBusChannels_(2)
+    .numInputBusChannels_(inputFile.numChannels)
+);
+
+x = Score([
+    [0.0, [&#x27;/d_recv&#x27;,
+        SynthDef(\fft, {
+            var in = SoundIn.ar([0]),
+            fft = FFT(LocalBuf(1024, 1), in);
+            fft = PV_MagFreeze(fft, ToggleFF.kr(Dust.kr(12)));
+            Out.ar(0, IFFT(fft).dup)
+        }).asBytes
+    ]],
+    [0.0, Synth.basicNew(\fft, server).newMsg]
+]);
+
+x.recordNRT(
+    outputFilePath: &quot;~/nrt.wav&quot;.standardizePath,
+    inputFilePath: inputFile.path,
+    sampleRate: 44100,
+    headerFormat: &quot;wav&quot;,
+    sampleFormat: &quot;int16&quot;,
+    options: server.options,
+    duration: inputFile.duration
+);
+
+server.remove;
+)</code></pre>
+
+<h3 id="Generating NRT scores from patterns">从模式生成 NRT 乐谱</h3>
+
+<p>事件模式可以通过 <code>asScore</code> 转换为 Score。（注意，<code>asScore</code> 内部会创建一个 Server 实例用于分配器。因此，此示例不需要创建 Server。）</p>
+
+<p>首先，是一个使用默认 SynthDef 的简单示例。注意，默认 SynthDef 默认不会保存到磁盘，因此有必要将其包含在 score 中。<code>asScore</code> 中轻微的时间偏移是必要的，以确保 SynthDef 消息先到达。</p>
+
+<pre><code>(
+x = Pbind(
+    \freq, Pexprand(200, 800, inf),
+    \dur, Pexprand(0.8, 1.25, inf) * Pgeom(0.01, 1.0143978590819, 400),
+    \legato, 3,
+).asScore(10, timeOffset: 0.001);
+
+x.add([0.0, [\d_recv, SynthDescLib.global[\default].def.asBytes]]);
+x.sort;
+
+x.recordNRT(
+    outputFilePath: &quot;~/nrt.wav&quot;.standardizePath,
+    sampleRate: 44100,
+    headerFormat: &quot;wav&quot;,
+    sampleFormat: &quot;int16&quot;,
+    options: ServerOptions.new.numOutputBusChannels_(2),
+    duration: 10
+);
+)</code></pre>
+
+<p>要使用缓冲区和总线，建议通过仅为非实时进程创建一个 Server 对象来避免与实时服务器实例发生冲突。无需启动此服务器，只需使用其分配器。渲染之后，你可以安全地 <code>remove</code> 该服务器实例。</p>
+
+<pre><code>(
+var server = Server(\nrt,
+    options: ServerOptions.new
+    .numOutputBusChannels_(2)
+    .numInputBusChannels_(2)
+),
+def = SynthDef(\buf1, { |out, bufnum, rate = 1, time = 0.1, start = 0, amp = 0.1|
+    var eg = EnvGen.kr(Env.perc(0.01, time), doneAction: 2),
+    sig = PlayBuf.ar(1, bufnum, rate, startPos: start);
+    Out.ar(out, (sig * (eg * amp)).dup);
+}),
+// 该 pattern 需要一个用于 buffer 的占位符
+buf = Buffer.new(server, 0, 1);
+
+def.add;  // 该模式需要在 SynthDescLib 中有定义
+
+x = Pbind(
+    \instrument, \buf1,
+    \bufnum, buf,
+    \rate, Pexprand(0.5, 2, inf),
+    \start, Pwhite(0, 50000, inf),
+    \time, 0.1,
+    \dur, Pexprand(0.05, 0.5, inf),
+    \legato, 3,
+).asScore(duration: 20, timeOffset: 0.001);
+
+// 乐谱还需要 def 和 buffer
+x.add([0.0, [\d_recv, def.asBytes]]);
+x.add([0.0, buf.allocReadMsg(ExampleFiles.child)]);
+x.sort;
+
+x.recordNRT(
+    outputFilePath: &quot;~/nrt.wav&quot;.standardizePath,
+    sampleRate: 44100,
+    headerFormat: &quot;wav&quot;,
+    sampleFormat: &quot;int16&quot;,
+    options: server.options,
+    duration: 20
+);
+
+server.remove;
+)</code></pre>
+
+<p>另请参阅 <a href="Classes-Pproto.html">Pproto</a>，了解在模式对象内初始化缓冲区和其他资源的另一种方式。<code>Pproto</code> 并不支持所有类型的资源，但在典型情况下，它可能比上述方法更方便。</p>
+
+<h3 id="Analysis using a Non-Realtime server">使用非实时服务器进行分析</h3>
+
+<p>NRT 服务器也可用于从声音文件中提取分析数据。主要问题有：</p>
+
+<dl>
+<dt>抑制音频文件输出</dt>
+<dd><p>在 macOS 和 Linux 环境中，输出文件路径使用 /dev/null。在 Windows 中，使用 NUL。</p></dd>
+<dt>检索分析数据。</dt>
+<dd><p>最简单的方法是在 NRT 乐谱的开头分配一个缓冲区，并使用 BufWr 填充该缓冲区。在乐谱末尾，将缓冲区写入临时文件。然后你可以在语言端使用 SoundFile 访问数据。参见示例。</p></dd>
+</dl>
+
+<pre><code>// 示例：将起音点提取到缓冲区中。
+
+(
+fork {
+    var server = Server(\nrt,
+        options: ServerOptions.new
+        .numOutputBusChannels_(2)
+        .numInputBusChannels_(2)
+    );
+    var resultbuf, resultpath, oscpath, score, dur, sf, cond, size, data;
+
+    // 获取时长
+    sf = SoundFile.openRead(ExampleFiles.child);
+    dur = sf.duration;
+    sf.close;
+
+    resultpath = PathName.tmp +/+ UniqueID.next ++ &quot;.wav&quot;;
+    oscpath = PathName.tmp +/+ UniqueID.next ++ &quot;.osc&quot;;
+
+    score = Score([
+        [0, (resultbuf = Buffer.new(server, 1000, 1, 0)).allocMsg],
+        [0, [\d_recv, SynthDef(\onsets, {
+            var sig = SoundIn.ar(0), // 将来自 NRT 输入文件
+            fft = FFT(LocalBuf(512, 1), sig),
+            trig = Onsets.kr(fft),
+            // 统计触发次数：这是将数据保存到 resultbuf 的索引
+            i = PulseCount.kr(trig),
+            // 计数时间（秒）
+            timer = Sweep.ar(1);
+            // &#x27;i&#x27; 必须是音频速率才能用于 BufWr.ar
+            BufWr.ar(timer, resultbuf, K2A.ar(i), loop: 0);
+            BufWr.kr(i, resultbuf, DC.kr(0), 0);  // 索引 0 中的点数
+        }).asBytes]],
+        [0, Synth.basicNew(\onsets, server, 1000).newMsg],
+        [dur, resultbuf.writeMsg(resultpath, headerFormat: &quot;wav&quot;, sampleFormat: &quot;float&quot;)]
+    ]);
+
+    cond = Condition.new;
+
+    // osc 文件路径、输出路径、输入路径——输入是要分析的音频文件
+    score.recordNRT(oscpath, &quot;/dev/null&quot;, sf.path, sampleRate: sf.sampleRate,
+        options: ServerOptions.new
+            .verbosity_(-1)
+            .numInputBusChannels_(sf.numChannels)
+            .numOutputBusChannels_(sf.numChannels)
+            .sampleRate_(sf.sampleRate),
+        action: { cond.unhang }  // 这会在 NRT 完成后重新唤醒进程
+    );
+    cond.hang;  // 等待完成
+
+    sf = SoundFile.openRead(resultpath);
+    // 获取大小：开头的一帧
+    sf.readData(size = FloatArray.newClear(1));
+    size = size[0];
+    // 现在处理其余数据
+    sf.readData(data = FloatArray.newClear(size));
+    sf.close;
+
+    File.delete(oscpath);
+    File.delete(resultpath);
+    server.remove;
+
+    data.postln;  // 这些就是你的起音点！
+};
+)</code></pre>
+
+<h2 id="OSC file format">OSC 文件格式</h2>
+
+<p>如果由于某种原因你需要不使用 Score 自行编写 OSC 命令文件，通用方法是：</p>
+
+<ol>
+<li>打开一个文件用于写入：<code>File(path, "w")</code>。</li>
+<li><p>对于每个 OSC 命令：</p>
+
+<ol>
+<li>将命令创建为数组，并保存到诸如 <code>cmd</code> 的变量中。</li>
+<li>转换为二进制：<code>cmd = cmd.asRawOSC;</code></li>
+<li>将字节大小写为整数：<code>file.write(cmd.size);</code></li>
+<li>写入二进制命令：<code>file.write(cmd);</code></li>
+</ol></li>
+</ol>
+
+<pre><code>f = File(PathName.tmp +/+ &quot;Cmds.osc&quot;, &quot;w&quot;);
+
+// 在 0.2 秒处启动一个正弦振荡器。
+c = [0.2, [\s_new, \default, 1001, 0, 0]].asRawOSC;
+f.write(c.size); // 每个 bundle 前面都有一个 32 位大小。
+f.write(c); // 写入 bundle 数据。
+
+// 在 3.0 秒时停止正弦振荡器。
+c = [3.0, [\n_free, 1001]].asRawOSC;
+f.write(c.size);
+f.write(c);
+
+// scsynth 在最后一条命令后立即停止处理，因此这里有一个
+// 空操作命令来标记命令流的结束。
+c = [3.2, [0]].asRawOSC;
+f.write(c.size);
+f.write(c);
+
+f.close;
+
+// 渲染后，始终记得清理你的烂摊子：
+File.delete(PathName.tmp +/+ &quot;Cmds.osc&quot;);</code></pre>
+
+<h2 id="Bus allocation and synth/LFO mapping">总线分配与 synth/LFO 映射</h2>
+
+<p>在此示例中，使用一个控制总线和 LFO 映射来对源声音产生各种影响。</p>
+
+<pre><code>(
+var nrtserver = Server(\nrt,
+    options: ServerOptions.new
+    .numOutputBusChannels_(2)
+    .numInputBusChannels_(2)
+);
+
+//控制总线分配
+var bus = Bus.control(nrtserver, 2);
+var lfo, sine;
+
+//LFO
+SynthDef.new(\lfo, {|out, freq=100|
+    Out.kr(out, LFNoise0.kr(freq).exprange(20.0,1000))
+}).load;
+
+lfo = Synth.basicNew(\lfo, server: nrtserver);
+
+SynthDef.new(\NRTsine, {|out=0, freq=440|
+    Out.ar(out, SinOsc.ar(freq, 0, 0.2).dup)
+}).load;
+
+sine = Synth.basicNew(\NRTsine, server: nrtserver);
+
+a = Score([
+    [0.0, lfo.newMsg(args:[\out, bus])],
+    [0.0, sine.newMsg],
+    [0.0, sine.mapMsg(\freq, bus)],
+]);
+
+a.recordNRT(
+    outputFilePath: &quot;~/nrtbus-help.wav&quot;.standardizePath,
+    headerFormat: &quot;wav&quot;,
+    sampleFormat: &quot;int16&quot;,
+    options: nrtserver.options,
+    duration: 1,
+    action: { &quot;done&quot;.postln }
+);
+
+nrtserver.remove;
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Non-Realtime-Synthesis.html" rel="noreferrer noopener">Guides/Non-Realtime-Synthesis.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

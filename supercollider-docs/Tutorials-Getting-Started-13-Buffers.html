@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13. 缓冲区 - SuperCollider 文档</title>
+<meta name="description" content="SuperCollider 入门">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>13. 缓冲区</h1>
+
+<p><em>SuperCollider 入门</em></p>
+
+<p>另请参阅：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+
+<p>缓冲区表示服务器缓冲区，即服务器上有序的浮点数数组。'float' 是 floating point number（浮点数）的缩写，指带小数点的数字，例如 1.3。这与整数不同，整数是正或负的整数（或零），书写时不带小数点。所以 1 是整数，而 1.0 是浮点数。</p>
+
+<p>服务器缓冲区可以是单声道或多声道，是服务器端存储数据的常用方式。它们最常见的用途是在内存中保存声音文件，但任何可以用浮点数表示的数据都可以存储在缓冲区中。</p>
+
+<p>与总线一样，缓冲区的数量在启动服务器之前设置（使用 <a href="Classes-ServerOptions.html">ServerOptions</a>），但在可以使用缓冲区之前，需要为其分配内存，这是一个异步步骤。同样与总线一样，缓冲区是有编号的，从 0 开始。使用 Buffer 会负责分配编号，并避免冲突。</p>
+
+<p>你可以把缓冲区看作服务器端的 Array 等价物，但没有所有优雅的 OOP 功能。幸运的是，借助 Buffer 以及在客户端应用中按需操作数据的能力，你几乎可以用缓冲区数据做任何想做的事。服务器的缓冲区是全局的，也就是说它们可以被任何 synth 访问，并且可以同时被多个 synth 访问。它们可以在被读取的<em>同时</em>被写入，甚至改变大小。</p>
+
+<p>Buffer 的许多方法都有大量参数。无需赘言，完整信息请参阅 <a href="Classes-Buffer.html">Buffer</a> 帮助文件。</p>
+
+<h2 id="Making a Buffer Object and Allocating Memory">创建缓冲区对象并分配内存</h2>
+
+<p>创建一个 Buffer 对象并在服务器应用中分配所需的内存非常容易。你可以使用 Buffer 的 alloc 方法一步完成：</p>
+
+<pre><code>s.boot;
+b = Buffer.alloc(s, 100, 2);    // 分配 2 个通道和 100 帧
+b.free;                // 释放内存（当你使用完毕后）</code></pre>
+
+<p>上面的示例分配了一个 100 帧的 2 声道缓冲区。实际存储的值的数量为 numChannels * numFrames，因此在这种情况下将有 200 个浮点数。所以在这种情况下，每一帧是一对值。</p>
+
+<p>如果你想按秒而不是按帧来分配，可以这样做：</p>
+
+<pre><code>b = Buffer.alloc(s, s.sampleRate * 8.0, 2); // 一个 8 秒立体声缓冲区
+b.free;</code></pre>
+
+<p>Buffer 的 'free' 方法会释放服务器上的内存，并返回 Buffer 的编号以便重新分配。执行此操作后，不应再使用该 Buffer 对象。</p>
+
+<h2 id="Using Buffers with Sound Files">将缓冲区与声音文件配合使用</h2>
+
+<p>Buffer 还有另一个名为 'read' 的类方法，它从磁盘读取声音文件到内存，并返回一个 Buffer 对象。使用 UGen PlayBuf，我们可以播放该文件。</p>
+
+<pre><code>// ExampleFiles 帮助定位示例中使用的音频文件
+p = ExampleFiles.child;
+// 查看路径以了解位置和路径的格式
+p.postln;
+// 读取声音文件
+b = Buffer.read(s, p);
+
+// 现在播放它
+(
+x = SynthDef(&quot;tutorial-PlayBuf&quot;,{ arg out = 0, bufnum;
+    Out.ar( out,
+        PlayBuf.ar(1, bufnum, BufRateScale.kr(bufnum))
+    )
+}).play(s,[\bufnum, b]);
+)
+x.free; b.free;</code></pre>
+
+<p>PlayBuf.ar 有若干参数，允许你控制其工作方式的各个方面。请查看 <a href="Classes-PlayBuf.html">PlayBuf</a> 帮助文件以了解所有参数的详细信息，但现在我们只关注上面示例中使用的前三个参数。</p>
+
+<pre><code>PlayBuf.ar(
+    1,                // 声道数量
+    bufnum,             // 要播放的缓冲区编号
+    BufRateScale.kr(bufnum)        // 播放速率
+    )</code></pre>
+
+<p>通道数：使用 PlayBuf 时，必须让它知道它将读取的任何缓冲区将有多少个通道。<em>你不能将此作为 SynthDef 中的参数并在之后更改。</em>为什么？请记住，SynthDef 必须具有固定数量的输出通道。因此，单通道的 PlayBuf 始终是单通道的 PlayBuf。如果你需要能播放不同通道数的版本，请创建多个 SynthDef 或使用 Function-play。</p>
+
+<p>缓冲区编号：如上所述，缓冲区是有编号的，从零开始。你可以使用缓冲区的 <strong>bufnum</strong> 方法获取其编号，但通常不需要这样做，因为 Buffer 对象可以直接作为 UGen 输入或 Synth 参数传递。</p>
+
+<p>播放速率：速率为 1 表示正常速度，2 表示两倍快，等等。但这里我们看到一个名为 BufRateScale 的 UGen。它的作用是检查缓冲区的采样率（该采样率在加载时被设置为与声音文件对应），并输出对应于正常速度的速率。这很有用，因为例如，如果我们加载的声音文件采样率为 11025 Hz，使用播放速率 1 的 PlayBuf 将使用服务器的采样率（通常为 44100 Hz）来播放它，即快四倍！BufRateScale 因此将一切恢复为正常。</p>
+
+<h2 id="Streaming a File in From Disk">从磁盘流式读取文件</h2>
+
+<p>在某些情况下，例如处理非常大的文件时，你可能不希望将声音完全加载到内存中。相反，你可以使用 UGen DiskIn 和 Buffer 的 'cueSoundFile' 方法，一次一点地从磁盘流式读取它：</p>
+
+<pre><code>(
+SynthDef(&quot;tutorial-Buffer-cue&quot;,{ arg out=0,bufnum;
+    Out.ar(out,
+        DiskIn.ar( 1, bufnum )
+    )
+}).add;
+)
+
+b = Buffer.cueSoundFile(s,ExampleFiles.apollo11, 0, 1);
+y = Synth.new(&quot;tutorial-Buffer-cue&quot;, [\bufnum,b], s);
+
+b.free; y.free;</code></pre>
+
+<p>这不如 PlayBuf 灵活（没有速率控制），但可以节省内存。<a href="#footnote_1" id="footnote_org_1">1</a></p>
+
+<h2 id="More on Instance Variables and Action Functions">关于实例变量和动作函数的更多内容</h2>
+
+<p>现在再讲一点面向对象编程。请记住，各个对象将数据存储在<em>实例变量</em>中。部分实例变量具有所谓的 getter 或 setter 方法，可用于获取或设置其值。我们已经在 Buffer 的 'bufnum' 方法中见识过这一点，它就是用于获取缓冲区编号实例变量的 getter。</p>
+
+<p>缓冲区还有许多其他带有 getter 的实例变量，可提供有用的信息。我们目前感兴趣的是 numChannels、numFrames 和 sampleRate。这些在处理声音文件时特别有用，因为在加载文件之前，我们可能并不掌握所有这些信息。</p>
+
+<pre><code>// 观察 post 窗口
+b = Buffer.read(s, ExampleFiles.child);
+b.bufnum;
+b.numFrames;
+b.numChannels;
+b.sampleRate;
+b.free;</code></pre>
+
+<p>现在（就像我们的 Bus-get 示例中使用 action 函数的例子那样；参见 <a href="Tutorials-Getting-Started-11-Busses.html">11. Busses</a>），由于客户端与服务器之间存在较小的消息传递延迟，当你执行诸如将文件读入缓冲区之类的操作时，实例变量不会立即更新。因此，Buffer 中的许多方法将 action 函数作为参数。请记住，action 函数只是一个 Function，它会在客户端收到回复并更新 Buffer 的变量之后被求值。它接收 Buffer 对象作为参数。</p>
+
+<pre><code>// 带有一个 action 函数
+// 注意这些变量不会立即更新
+(
+b = Buffer.read(s, ExampleFiles.child, action: { arg buffer;
+    (&quot;numFrames after update:&quot; + buffer.numFrames).postln;
+    x = { PlayBuf.ar(1, buffer, BufRateScale.kr(buffer)) }.play;
+});
+
+// 注意，下一行会在 action 函数之前执行
+(&quot;numFrames before update:&quot; + b.numFrames).postln;
+)
+x.free; b.free;</code></pre>
+
+<p>在上面的例子中，客户端向服务器应用发送读取命令，同时请求更新 Buffer 的实例变量所需的信息。然后它设置好动作函数，以便在收到回复时执行，并继续执行代码块。这就是为什么“Before update...”那一行会先执行。</p>
+
+<h2 id="Recording into Buffers">录制到缓冲区</h2>
+
+<p>除了 PlayBuf，还有一个名为 RecordBuf 的 UGen，它允许你录制到缓冲区中。</p>
+
+<pre><code>b = Buffer.alloc(s, s.sampleRate * 5, 1); // 一个 5 秒的单声道 Buffer
+
+// 录制四秒
+(
+x = SynthDef(&quot;tutorial-RecordBuf&quot;,{ arg out=0,bufnum=0;
+    var noise;
+    noise = PinkNoise.ar(0.3);    // 录制一些 PinkNoise
+    RecordBuf.ar(noise, bufnum);     // 默认情况下会循环
+}).play(s,[\out, 0, \bufnum, b]);
+)
+
+// 几秒后释放录音 synth
+x.free;
+
+// 播放回来
+(
+SynthDef(&quot;tutorial-playback&quot;,{ arg out=0,bufnum=0;
+    var playbuf;
+    playbuf = PlayBuf.ar(1,bufnum);
+    FreeSelfWhenDone.kr(playbuf); // 当 PlayBuf 播放完毕后释放合成器
+    Out.ar(out, playbuf);
+}).play(s,[\out, 0, \bufnum, b]);
+)
+b.free;</code></pre>
+
+<p>有关其所有选项的详细信息，请参阅 <a href="Classes-RecordBuf.html">RecordBuf</a> 帮助文件。</p>
+
+<h2 id="Accessing Data">访问数据</h2>
+
+<p>Buffer 有许多方法可供你获取或设置缓冲区中的值。Buffer-get 和 Buffer-set 使用简单，接受索引作为参数。多声道缓冲区的数据是交错的，因此对于双声道缓冲区，索引 0 = 帧1-声道1，索引 1 = 帧1-声道2，索引 2 = 帧2-声道1，依此类推。'get' 接受一个动作函数。</p>
+
+<pre><code>b = Buffer.alloc(s, 8, 1);
+b.set(7, 0.5);             // 将索引 7 处的值设为 0.5
+b.get(7, {|msg| msg.postln});    // 获取索引 7 处的值并在收到回复时发布
+b.free;</code></pre>
+
+<p>方法 'getn' 和 'setn' 允许你获取和设置相邻值的范围。'setn' 接受一个起始索引和一个要设置的值数组，'getn' 接受一个起始索引、要获取的值的数量以及一个动作函数。</p>
+
+<pre><code>b = Buffer.alloc(s,16);
+b.setn(0, [1, 2, 3]);                // 设置前 3 个值
+b.getn(0, 3, {|msg| msg.postln});        // 获取它们
+b.setn(0, Array.fill(b.numFrames, {1.0.rand}));    // 用随机值填充缓冲区
+b.getn(0, b.numFrames, {|msg| msg.postln});    // 获取它们
+b.free;</code></pre>
+
+<p>一次可以获取或设置的值数量有上限（使用 UDP 时通常为 1633，这是默认值）。这是因为网络数据包大小有限制。为克服这一点，Buffer 有两个方法 'loadCollection' 和 'loadToFloatArray'，允许你通过将数据写入磁盘，然后根据需要加载到客户端或服务器，来设置或获取大量数据。</p>
+
+<pre><code>(
+// 生成一些白噪声
+v = FloatArray.fill(44100, {1.0.rand2});
+b = Buffer.alloc(s, 44100);
+)
+(
+// 将 FloatArray 加载到 b 中，然后播放它
+b.loadCollection(v, action: {|buf|
+    x = { PlayBuf.ar(buf.numChannels, buf, BufRateScale.kr(buf), loop: 1)
+        * 0.2 }.play;
+});
+)
+x.free;
+
+// 现在取回 FloatArray，并将其与 v 比较；这会输出 &#x27;true&#x27;
+// 参数 0、-1 表示从开头开始并加载整个缓冲区
+b.loadToFloatArray(0, -1, {|floatArray| (floatArray == v).postln });
+b.free;</code></pre>
+
+<p>FloatArray 只是 Array 的一个子类，只能包含浮点数。</p>
+
+<h2 id="Plotting and Playing">绘图与播放</h2>
+
+<p>缓冲区有两个有用的便捷方法：'plot' 和 'play'。</p>
+
+<pre><code>// 查看波形
+b = Buffer.read(s, ExampleFiles.child);
+b.plot;
+
+// 播放内容
+// 此方法接受一个参数：loop。如果为 false（默认值），则生成的 synth 会被
+// 自动释放
+b.play;             // 自我释放
+x = b.play(true);        // 循环所以不会释放
+x.free; b.free;</code></pre>
+
+<h2 id="Other Uses For Buffers">缓冲区的其他用途</h2>
+
+<p>除了用于加载声音文件之外，缓冲区还适用于任何需要在服务器上使用大型和/或全局可访问数据集的场合。它们的另一种用法示例是作为波整形（waveshaping）的查找表。</p>
+
+<pre><code>b = Buffer.alloc(s, 512, 1);
+b.cheby([1,0,1,1,0,1]);
+(
+x = play({
+    Shaper.ar(
+        b,
+        SinOsc.ar(300, 0, Line.kr(0,1,6)),
+        0.5
+    )
+});
+)
+x.free; b.free;</code></pre>
+
+<p>Shaper UGen 对输入源执行波形整形。方法 'cheby' 会用一系列切比雪夫多项式填充缓冲区，这是此过程所需要的。（如果你不完全理解这些内容，不必担心。）Buffer 有许多类似的方法，可用不同的波形填充缓冲区。</p>
+
+<p>缓冲区还有许多其他用途。你会在整个文档中遇到它们。</p>
+
+<p>更多信息请参见：</p>
+
+<p><a href="Classes-Buffer.html">Buffer</a>、<a href="Classes-PlayBuf.html">PlayBuf</a>、<a href="Classes-RecordBuf.html">RecordBuf</a>、<a href="Classes-SynthDef.html">SynthDef</a>、<a href="Classes-BufRateScale.html">BufRateScale</a>、<a href="Classes-Shaper.html">Shaper</a></p>
+
+<p>____________________</p>
+
+<p>本文档是教程 <strong>Getting Started With SuperCollider</strong> 的一部分。</p>
+
+<p>点击此处继续下一节：<a href="Tutorials-Getting-Started-14-Scheduling-Events.html">14. Scheduling Events</a></p>
+
+<p>点击此处返回目录：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+
+<p class="footnote" id="footnote_1">[<a href="#footnote_org_1">1</a>] - 关于从磁盘流式播放时的可变播放速率，请参阅 <a href="Classes-VDiskIn.html">VDiskIn</a> UGen。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Getting-Started/13-Buffers.html" rel="noreferrer noopener">Tutorials/Getting-Started/13-Buffers.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

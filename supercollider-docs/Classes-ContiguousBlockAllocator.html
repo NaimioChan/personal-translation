@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ContiguousBlockAllocator - SuperCollider 文档</title>
+<meta name="description" content="以便更好地处理动态分配">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>ContiguousBlockAllocator</h1>
+
+<p><em>以便更好地处理动态分配</em></p>
+
+<p><a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-Server.html">Server</a>、<a href="Classes-PowerOfTwoAllocator.html">PowerOfTwoAllocator</a>、<a href="Guides-MultiClient_Setups.html">Multi-client Setups</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>服务器中用于分配总线编号和缓冲区编号的默认分配器。与其前身 <a href="Classes-PowerOfTwoAllocator.html">PowerOfTwoAllocator</a> 相比，它可以在其范围的开始处保留一块编号，并且可以偏移其整个编号范围以支持多个 clientID。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>ContiguousBlockAllocator.new(size, pos: 0, addrOffset: 0)</code></h4>
+
+<p>创建一个具有 <em>size</em> 个槽位的新分配器。你可以屏蔽掉前 <em>pos</em> 个槽位（服务器的 audioBusAllocator 这样做是为了预留硬件输入和输出总线）。</p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h3 id="Public interface">公共接口</h3>
+
+<h4 id="-alloc"><code>.alloc(n: 1)</code></h4>
+
+<p>返回宽度为 <em>n</em> 个槽位的空闲块的起始索引。默认为 1 个槽位。</p>
+
+<p>请注意，返回的地址不保证是能满足所请求大小的最低可能地址。不过它应当与先前分配的块相邻（以最小化地址空间的碎片化）。</p>
+
+<h4 id="-free"><code>.free(address)</code></h4>
+
+<p>释放先前从 <em>address</em> 开始分配的块。</p>
+
+<h4 id="-reserve"><code>.reserve(address, size: 1, warn: true)</code></h4>
+
+<p>将特定范围的地址标记为已使用，以便 alloc 方法不会返回该范围内的任何地址。</p>
+
+<h4 id="-findAvailable"><code>.findAvailable(n)</code></h4>
+
+<p>给定所需块的整数宽度，查找并返回一个 <code>ContiguousBlock</code> 对象，其 <code>start</code> 为该块的起始地址，其 <code>size</code> 为该宽度。此方法仅查询分配器；它不会改变状态。如果你通过 <code>findAvailable</code> 获得了一个地址，则无法保证后续调用不会返回相同的地址。因此，一般来说应使用 <a href="#-alloc">-alloc</a> 来请求地址。（<code>alloc</code> 会调用 <code>findAvailable</code>，然后调用 <code>reserve</code>。）</p>
+
+<p>此方法可以被视为“半私有”：它对查询可能有用，但一般来说，你可以从 <a href="#-alloc">-alloc</a>、<a href="#-free">-free</a> 和 <a href="#-reserve">-reserve</a> 获取你所需的一切。</p>
+
+<h3 id="Status and debugging">状态与调试</h3>
+
+<p>你可以查询这些状态变量，但不建议在公共接口之外更改它们。</p>
+
+<h4 id="-debug"><code>.debug(text)</code></h4>
+
+<p>发布分配器的内部状态以供调试。</p>
+
+<h4 id="-size"><code>.size</code></h4>
+
+<p>它可以分配的 id 编号数量。</p>
+
+<h4 id="-pos"><code>.pos</code></h4>
+
+<p>分配器为保留块（例如用于硬件输入和输出总线）提供的偏移量。</p>
+
+<h4 id="-addrOffset"><code>.addrOffset</code></h4>
+
+<p>分配器地址范围的偏移量，用于容纳多个 clientID。</p>
+
+<h4 id="-top"><code>.top</code></h4>
+
+<p>最后一个空块的地址。</p>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>c = ContiguousBlockAllocator(10);
+c.alloc(5);  // 0 = 第一个可用
+c.alloc(2);  // 5
+c.alloc(4);  // nil —— 没有可用的 4 块
+
+c.free(1);  // no-op：1 处没有任何内容需要释放
+
+c.free(0);
+
+c.alloc(3);  // 0：先尝试复用之前释放的空间
+
+c.alloc(3);  // 7
+
+
+// 邻接
+c = ContiguousBlockAllocator(24);
+
+// 每 4 个保留一个
+(0, 4 .. 23).do { |i| c.reserve(i) };
+
+10.do { c.findAvailable(1).postln };</code></pre>
+
+<p>在第二个示例的最后一行中，<code>findAvailable</code> 可能定位到索引 1、5、9、13 或 17 中的任意一个。（在其它空白区域找不到合适块之前，不会使用 21。）如果你分配单个地址，那么大小为三的空闲块将始终缩减为大小为二的空闲块（而不是将空闲空间对半分割并得到两个大小为单地址的空闲块）。</p>
+
+<p>令人意外的是，该算法并不偏向较低索引的块；但如果两个地址 A 和 B 之前已被使用并释放，若 A &lt; B，则没有内在理由偏好 A。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/ContiguousBlockAllocator.html" rel="noreferrer noopener">Classes/ContiguousBlockAllocator.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>对象原型化 - SuperCollider 文档</title>
+<meta name="description" content="编写运行时“类”">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>对象原型化</h1>
+
+<p><em>编写运行时“类”</em></p>
+
+<p>参见：<a href="Classes-IdentityDictionary.html">IdentityDictionary</a></p>
+
+<p>如果不重新编译语言，就无法创建或编辑类……但如果你确实需要这样做呢？</p>
+
+<p>对象原型是一种中间方案，让你可以在运行时构建类似类的结构。它通过利用类 <a href="Classes-IdentityDictionary.html">IdentityDictionary</a>（通常使用其子类 <a href="Classes-Event.html">Event</a>）以及特殊方法 <a href="Classes-Object.html#-doesNotUnderstand">Object: -doesNotUnderstand</a> 来工作。虽然这种方法存在一些奇特之处，但它极其强大。</p>
+
+<h2 id="Instance Variables (Members)">实例变量（成员）</h2>
+
+<p>类似实例变量的东西可以通过仅向 <a href="Classes-IdentityDictionary.html">IdentityDictionary</a> 添加键来创建</p>
+
+<pre><code>a = (meow: 10)
+a.meow // 10
+a.meow = 20;
+a.meow // 20;</code></pre>
+
+<p>与普通类不同，你可以在运行时创建新的实例变量。</p>
+
+<pre><code>a = (meow: 10)
+a.woof = 4;
+a.woof // 4
+a.meow // 10</code></pre>
+
+<h2 id="Methods">Methods</h2>
+
+<p>通过将函数赋值给某个键，你可以像调用普通实例方法一样调用该函数。</p>
+
+<p>然而，<a href="Classes-IdentityDictionary.html">IdentityDictionary</a> 作为第一个参数传入该函数。通常，我们将这个参数称为 <code>self</code>，因为它所起的作用类似于关键字 <code>this</code>。</p>
+
+<pre><code>a = ( speak: { |self, adverb| &quot;I say &#x27;%&#x27; %.&quot;.format(self.word, adverb) } );
+a.word = &quot;meow&quot;;
+a.speak(adverb: &quot;loudly&quot;) // 我大声说“喵”。</code></pre>
+
+<p><a href="Reference-Functions.html#Variable%20Arguments">Functions: Variable Arguments</a> 也适用。</p>
+
+<pre><code>a = ( speak: {|self... words, kwargs| &quot;I say &#x27;%&#x27; %.&quot;.format(words, kwargs.asDict[\adverb]) } );
+
+a.speak(&quot;meow&quot;, &quot;woof&quot;, adverb: &quot;loudly&quot;) // 我大声说 &quot;[meow, woof]&quot;。</code></pre>
+
+<h2 id="Constructors">Constructors</h2>
+
+<p>没有直接的方法来模拟构造函数，但这不成问题，因为我们可以简单地创建一个返回 <a href="Classes-IdentityDictionary.html">IdentityDictionary</a> 的函数。</p>
+
+<pre><code>(
+var makeSpeaker = { |word|
+    (
+        word: word,
+        speak: { |self, adverb| &quot;I say \&quot;%\&quot; %.&quot;.format(self.word, adverb) }
+    )
+};
+
+var cat = makeSpeaker.(&quot;meow&quot;);
+var dog = makeSpeaker.(&quot;woof&quot;);
+
+cat.speak(&quot;loudly&quot;).postln; // 我大声说“喵”。
+dog.speak(&quot;quietly&quot;).postln; // 我轻声说“汪”。
+)</code></pre>
+
+<h2 id="Private Instance Variables (Members)">私有实例变量（成员）</h2>
+
+<p>这些可以在构造函数内部作为普通变量实现，但是，你不会把它们添加到字典中。</p>
+
+<pre><code>(
+var makeSpeaker = {
+    var secretWords = &quot;I&#x27;m a cat&quot;;
+    (
+        assign_secret: { |self, secret| secretWords = secret },
+        speak_secrets: { |self| &quot;My secret is \&quot;%\&quot;.&quot;.format(secretWords.value) }
+    )
+};
+
+var p1 = makeSpeaker.();
+
+p1.speak_secrets().postln; // 我的秘密是 &quot;I&#x27;m a cat&quot;。
+p1.assign_secret(&quot;I&#x27;m a dog&quot;);
+p1.speak_secrets().postln; // 我的秘密是 &quot;I&#x27;m a dog&quot;。
+)</code></pre>
+
+<h2 id="Dangers">Dangers</h2>
+
+<p>与类相比有两个缺点。</p>
+
+<p>第一点是，任何键（包括 'methods'）都可以随时被覆盖。本质上，使 <a href="Classes-IdentityDictionary.html">IdentityDictionary</a> 强大的特性，也使其脆弱且容易被破坏。避免这一错误的唯一方法是在向对象原型添加键时保持警惕。</p>
+
+<p>第二个缺点是，你不能拥有与 <a href="Classes-Event.html">Event</a> 或任何父类中的方法同名的键，否则会调用真实类的方法，而不是你编写的伪方法。</p>
+
+<pre><code>a = (numChannels: 10)
+a.numChannels // 1</code></pre>
+
+<p>如上所示，人们期望返回的值是 <code>10</code>，但实际调用的是 <a href="Classes-Object.html#-numChannels">Object: -numChannels</a>，并返回了值 <code>1</code>。</p>
+
+<p>有两种方法可以缓解这一问题。<strong>其一</strong>，在 snake case 中使用更长的键或名称，而不是 pascal case：即 names_written_like_this，而非 ratherThanNamesWrittenLikeThis，因为 SuperCollider 只使用后者。</p>
+
+<p><strong>两个</strong>，赋值在括号之外，此时会生成警告。</p>
+
+<pre><code>a = ();
+a.numChannels = 30; // 警告：……</code></pre>
+
+<h2 id="Inheritance">Inheritance</h2>
+
+<p>这是通过 <a href="Classes-IdentityDictionary.html#-'parent'%20and%20'proto'%20variables">IdentityDictionary: -'parent' 和 'proto' 变量</a> 实现的。从技术上讲，这可以用于做比继承更多的事情，但这里只展示继承。</p>
+
+<p>这是通过将 <code>parent</code> 赋给另一个字典来查找其中的键实现的。</p>
+
+<pre><code>a = (word: &quot;meow&quot; );
+b = (speak: {|self| &quot;I say \&quot;%\&quot;.&quot;.format(self.word) } );
+b.parent = a; // 将 &#x27;a&#x27; 指定为父节点。
+b.speak // 我说 &quot;喵&quot;。</code></pre>
+
+<p>这类似于 Javascript 和其他原型语言的工作方式。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/ObjectPrototyping.html" rel="noreferrer noopener">Guides/ObjectPrototyping.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

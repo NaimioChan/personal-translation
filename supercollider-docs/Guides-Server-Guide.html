@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>服务器指南 - SuperCollider 文档</title>
+<meta name="description" content="在不同情况下使用 Server 对象">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>服务器指南</h1>
+
+<p><em>在不同情况下使用 Server 对象</em></p>
+
+<p>另请参阅：<a href="Classes-Server.html">Server</a>、<a href="Classes-ServerOptions.html">ServerOptions</a>、<a href="Reference-Server-Architecture.html">Server Architecture</a>、<a href="Reference-Server-Command-Reference.html">Server Command Reference</a>、<a href="Guides-MultiClient_Setups.html">Multi-client Setups</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>Server 对象是服务器应用程序的客户端侧表示，用于从 SuperCollider 语言应用程序控制该应用程序。（有关这种区别的更多细节，请参见 <a href="Guides-ClientVsServer.html">Client vs Server</a>。）它转发 OSC 消息，并拥有若干分配器，用于跟踪节点、总线和缓冲区的 ID。</p>
+
+<p>服务器应用程序是一个命令行程序，因此除 OSC 消息外，所有命令都是 UNIX 命令。</p>
+
+<p>由 Server 对象表示的服务器应用程序可能运行在与客户端相同的机器上（与语言应用程序处于相同的地址空间，或分开运行；见下文），也可能运行在远程机器上。</p>
+
+<p>服务器的大部分选项都通过其 ServerOptions 实例进行控制。有关详细信息，请参阅 <a href="Classes-ServerOptions.html">ServerOptions</a> 帮助文件。</p>
+
+<h3 id="Paths">Paths</h3>
+
+<p>在本地机器上运行的服务器应用有两个 UNIX 环境变量：<code>SC_SYNTHDEF_PATH</code> 和 <code>SC_PLUGIN_PATH</code>。它们指示启动时加载的 synthdef 和 ugen 插件所在的目录。这些目录是在硬编码的默认 synthdef/ 和 plugin/ 目录之外的额外目录。</p>
+
+<p>这些可以在 SC 内使用类 <a href="Classes-String.html">String</a> 的 getenv 和 setenv 方法进行设置。</p>
+
+<pre><code>// 当本地服务器启动时，将加载此目录中的所有定义
+&quot;SC_SYNTHDEF_PATH&quot;.setenv(&quot;~/scwork/&quot;.standardizePath);
+&quot;echo $SC_SYNTHDEF_PATH&quot;.unixCmd;</code></pre>
+
+<h3 id="The default group">默认组</h3>
+
+<p>当 Server 启动时，会有一个 ID 为 0 的顶层组，它定义了节点树的根。（这由 <a href="Classes-Group.html">Group</a> 的子类 <a href="Classes-RootNode.html">RootNode</a> 表示。）如果服务器应用是从 SCLang 内部启动的（而非从命令行启动），则启动后会自动调用方法 <code>initTree</code>。这还会创建一个 ID 为 1 的 <a href="Reference-default_group.html">Default Group</a>，它是使用对象风格时所有 <a href="Classes-Node.html">Node</a> 的默认组。这提供了一个可预测的基本节点树，使得 Server-scope、Server-record 等方法可以在不遇到执行顺序问题的情况下正常工作。</p>
+
+<p>默认组是持久的，即它会在重启、按 cmd-. 等操作之后被重新创建。更多信息请参见 <a href="Classes-RootNode.html">RootNode</a> 和 <a href="Reference-default_group.html">Default Group</a>。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果服务器是从命令行启动的，那么如果你需要默认组，则必须手动调用 <code>initTree</code> 来初始化它。请参见下面的 <code>initTree</code>。</p></blockquote>
+
+<h3 id="Local vs. Internal">本地与内部</h3>
+
+<p>一般来说，在单机工作时，可能会使用启动时创建并存储在类变量 <a href="Classes-Server.html#*local">*local</a> 和 <a href="Classes-Server.html#*internal">*internal</a> 中的两个 Server 对象之一。在 SuperCollider.app（OSX）中，会创建两个 GUI 窗口来控制它们。使用 <a href="Classes-Server.html#-makeGui">-makeGui</a> 手动创建 GUI 窗口。</p>
+
+<p>两者的区别在于：本地服务器作为独立应用程序运行，拥有自己的地址空间；而内部服务器与语言/客户端应用程序运行在同一空间内。</p>
+
+<p>本地服务器和内部服务器都支持<a href="Classes-Server.html#-scope">作用域</a>和<a href="Classes-Bus.html#Synchronous%20Control%20Bus%20Methods">同步总线访问</a>。</p>
+
+<p>本地服务器以及运行在你本地机器上的任何其他服务器应用有一个优势：如果语言应用崩溃，它（因而可能还有你的作品）将继续运行。因此这是一种本质上更稳健的配置。但要注意，即使服务器上的 synth 继续运行，如果语言应用崩溃，任何语言侧的排序和控制都将终止。</p>
+
+<p>目前，使用内部服务器通常没有好处，但为了向后兼容，它仍然保留。</p>
+
+<h3 id="The default Server">默认服务器</h3>
+
+<p>始终存在一个默认服务器，它存储在类变量 <code>default</code> 中。任何未指定目标而创建的 <a href="Classes-Synth.html">Synth</a> 或 <a href="Classes-Group.html">Group</a> 都将在默认服务器上创建。在启动时，它被设置为本地服务器（见上文），但可以设置为任意服务器。</p>
+
+<h3 id="Local vs. Remote Servers, Multi-client Configurations">本地与远程服务器，多客户端配置</h3>
+
+<p>大多数情况下，用户使用的服务器应用与 SC 语言客户端运行在同一台机器上。只要知道服务器的 IP 地址和端口，就可以通过网络使用运行在不同机器上的服务器。<a href="Classes-Server.html#*remote">*remote</a> 方法提供了一种便捷的方式来实现这一点。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 要启用远程连接，你需要修改服务器的 <a href="Classes-ServerOptions.html">ServerOptions</a> 中的 <a href="Classes-ServerOptions.html#-bindAddress">ServerOptions: -bindAddress</a>，因为默认值只允许来自本机的连接。<code>s.options.bindAddress = "0.0.0.0"</code> 将允许来自任何地址的连接。</p></blockquote>
+
+<p>这种方法的一个常见变体是多个客户端使用同一个服务器。如果你希望这样做，需要将服务器的 <a href="Classes-ServerOptions.html#-maxLogins">ServerOptions: -maxLogins</a> 设置为至少等于你希望允许的客户端数量。当客户端注册 <a href="Classes-Server.html#-notify">notifications</a> 时，服务器会提供一个客户端 ID。这还会配置分配器，以避免在分配 <a href="Classes-Node.html">Nodes</a>、<a href="Classes-Buffer.html">Buffers</a> 或 <a href="Classes-Bus.html">Busses</a> 时发生冲突。更多信息请参见 <a href="Guides-MultiClient_Setups.html">Multi-client Setups</a>。</p>
+
+<p>为了使用 tcp 连接远程服务器，应首先使用 <code>-t</code> 选项启动远程服务器，例如如下所示：</p>
+
+<pre><code>// 在运行服务器的机器上
+(
+s.options.protocol = \tcp; // 设置为使用 tcp
+s.options.bindAddress = &quot;0.0.0.0&quot;; // 允许来自任何地址的连接
+s.options.maxLogins = 2; // 设置为正确的客户端数量
+s.boot;
+)</code></pre>
+
+<p>然后运行以下代码：</p>
+
+<pre><code>// 在远程机器上连接到服务器
+(
+o = ServerOptions.new;
+o.protocol_(\tcp);
+t = Server.remote(\remote, NetAddr(&quot;192.168.0.130&quot;, 57110), o); // 设置为正确的地址和端口
+t.addr.connect;
+t.startAliveThread( 0 );
+t.doWhenBooted({ &quot;remote tcp server started&quot;.postln; t.notify; t.initTree });
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Server-Guide.html" rel="noreferrer noopener">Guides/Server-Guide.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

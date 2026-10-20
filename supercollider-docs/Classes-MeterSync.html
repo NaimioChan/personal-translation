@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeterSync - SuperCollider 文档</title>
+<meta name="description" content="同步 SuperCollider LinkClock 对等体的小节线">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>MeterSync</h1>
+
+<p><em>同步 SuperCollider LinkClock 对等体的小节线</em></p>
+
+<p><a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-LinkClock.html">LinkClock</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>此类在 Ableton Link 协议之外实现了额外的网络消息传递，以确保 SuperCollider <a href="Classes-LinkClock.html">LinkClock</a> 对等端与其他 LinkClock 对等端遵循相同的节拍（beatsPerBar）和小节线。</p>
+
+<p>该类，或相关方法 <a href="Classes-LinkClock.html#-enableMeterSync">LinkClock: -enableMeterSync</a> 和 <a href="Classes-LinkClock.html#-disableMeterSync">LinkClock: -disableMeterSync</a>，应用于所有已链接的机器都应遵循同一拍号<em>并且</em>拍号在演出过程中会发生变化的演出场合。</p>
+
+<p>如果拍号不会改变（典型用例是始终为 4/4 拍），那么只需在所有对等端上设置 <code>myLinkClock.quantum = beatsPerBar</code>。（参见 <a href="Classes-LinkClock.html#-quantum">LinkClock: -quantum</a>。）</p>
+
+<p>理论上，MeterSync 可与任何响应 <code>beatsPerBar</code>、<code>beatInBar</code> 和 <code>baseBarBeats</code> 方法的 SuperCollider 时钟一起使用。目前仅在 <a href="Classes-LinkClock.html">LinkClock</a> 上测试过。与 <a href="Classes-TempoClock.html">TempoClock</a> 一起使用没有意义，因为 TempoClock 不会做任何事情来将其节拍与任何其他机器同步。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 此类仅考虑 SuperCollider LinkClock 对等体的小节线位置！其他支持 Link 的应用程序不实现此协议。</p></blockquote>
+
+<h3 id="Background">Background</h3>
+
+<p>SuperCollider 使用两个数字定义 <em>meter</em>：</p>
+
+<dl>
+<dt><a href="Classes-TempoClock.html#-beatsPerBar">TempoClock: -beatsPerBar</a></dt>
+<dd><p>一小节包含多少拍（4 = 4/4 拍，3 = 3/4 拍）。</p></dd>
+<dt><a href="Classes-TempoClock.html#-baseBarBeat">TempoClock: -baseBarBeat</a></dt>
+<dd><p>节拍器最后改变时的拍值。</p></dd>
+</dl>
+
+<p>例如，如果一个时钟运行四小节 4/4 拍，然后切换到 3/4 拍，则小节线<em>不是</em> 3 的倍数。拍号在第 16 拍改变，因此新的小节线将是 <code>16 + (3 * n)</code>（<code>n</code> 是整数）。此时，beatsPerBar = 3 且 baseBarBeat = 16。</p>
+
+<p>Ableton Link 维护一个<em>量子</em>，它类似于 <a href="Classes-TempoClock.html#-beatsPerBar">TempoClock: -beatsPerBar</a>。如果所有对等方遵循相同的拍号并具有相同的量子，则 Link 本身会同步小节线。（因此，在始终使用一致拍号的常规用例中，完全不需要使用 <code>MeterSync</code>。）</p>
+
+<p>然而，在更改 Link 量子时，Link 并不保证拍值会一致地递增。设置量子应在演出开始前完成，而不是在演出过程中进行。</p>
+
+<p>SuperCollider 可以独立于 Link quantum 更改其 <code>beatsPerBar</code>。但是，在这种情况下，各对等端之间的小节线可能无法同步。</p>
+
+<p><code>MeterSync</code> 通过查询其他 SuperCollider Link 对等端的当前节拍位置来解决此问题。如果本地机器与其他对等端不同，则本地机器会调整其 <code>baseBarBeat</code>，以与其他对等端保持节拍同步。（拍数照常推进；只有小节线位置会被调整。）</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>MeterSync.new(clock, id, ports)</code></h4>
+
+<p>返回一个与特定时钟对象关联的新实例。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>clock</p></td><td class="argumentdesc"><p>此实例控制的时钟。</p></td></tr>
+<tr><td class="argumentname"><p>id</p></td><td class="argumentdesc"><p>可选。一个整数，用于唯一标识此实例。如果未提供，将随机选择一个整数。</p></td></tr>
+<tr><td class="argumentname"><p>ports</p></td><td class="argumentdesc"><p>可选。一个端口号数组，同步消息将被发送到这些端口。（sclang 实例通常使用端口 57120，但如果该端口已被占用，它们会依次尝试 57121 等。此处的默认值是尝试 57120-57127 中的全部端口。）</p></td></tr>
+</table>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h4 id="-free"><code>.free</code></h4>
+
+<p>释放此实例，并禁用关联时钟的度量同步。</p>
+
+<h4 id="-resyncMeter"><code>.resyncMeter(round, verbose: true)</code></h4>
+
+<p>调整时钟的小节线位置，以与网络上的其他 SuperCollider 对等端匹配。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>round</p></td><td class="argumentdesc"><p>可选。强制指定特定的细分：round = 1 假定四分音符作为度量基础；round = 0.5 假定八分音符（例如 5/8 拍）。如果未提供，将根据来自其他对等方传入的 beatsPerBar 值计算。</p></td></tr>
+<tr><td class="argumentname"><p>verbose</p></td><td class="argumentdesc"><p>布尔值。如果为 false，则抑制信息消息。</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>该实例。</p>
+
+<h4 id="-queryMeter"><code>.queryMeter(action, timeout: 0.2)</code></h4>
+
+<p>从其他对等方查询节拍信息，并收集结果。通常，你不需要调用此方法。它提供给你，以便在你想验证同步或实现自定义行为时使用。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>action</p></td><td class="argumentdesc"><p>在获得结果后要执行的函数。结果作为参数传递给此函数：一个包含以下内容的 Event 的 List：</p>
+
+<ul>
+<li>id：远程对等方的 ID（整数）。</li>
+<li>beats：应答时远程时钟的节拍数。</li>
+<li>beatsPerBar：远端时钟的拍号。</li>
+<li>baseBarBeat：远程时钟的节拍基准。</li>
+<li>beatInBar：远程时钟在小节内的节拍位置。</li>
+<li>queriedAtBeat：<em>查询</em>时钟的查询时间，以拍为单位。</li>
+<li>syncMeter：布尔值。如果为 true，则远程时钟正在同步小节线。如果为 false，则远程时钟有一个应答的 MeterSync 对象，但它已被禁用。</li>
+</ul></td></tr>
+<tr><td class="argumentname"><p>timeout</p></td><td class="argumentdesc"><p>Float。等待回复的秒数。（它将始终等待整个超时时间。LinkClock 知道它的 <a href="Classes-LinkClock.html#-numPeers">LinkClock: -numPeers</a>，但只有 SuperCollider 对等端会回答查询，并且无法知道有多少对等端是 SuperCollider。）</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>该实例。回复是异步的；使用 <code>action</code> 函数来响应。</p>
+
+<h4 id="-id"><code>.id</code></h4>
+
+<p>获取唯一标识此实例的整数 ID。该 ID 在初始化时设置（<a href="Classes-LinkClock.html#-enableMeterSync">LinkClock: -enableMeterSync</a> 或 <a href="#*new">*new</a>）。要更改它，请释放当前实例并创建一个新实例。</p>
+
+<h4 id="-ports"><code>.ports</code></h4>
+
+<p>获取将发送同步消息的端口数组。这些端口在初始化时设置（<a href="Classes-LinkClock.html#-enableMeterSync">LinkClock: -enableMeterSync</a> 或 <a href="#*new">*new</a>）。要更改它们，请释放当前实例并创建一个新实例。</p>
+
+<h4>返回值：</h4>
+
+<p>一个整数端口号组成的数组。</p>
+
+<h4 id="-adjustMeterBase"><code>.adjustMeterBase(localBeats, remoteBeats, round: 1)</code></h4>
+
+<p>一个便捷方法，在给定本地节拍位置和远程节拍位置的情况下调整时钟的 baseBarBeat。通常你不需要调用此方法。它适用于你自己分析 <a href="Classes-MeterSync.html#-queryMeter">MeterSync: -queryMeter</a> 结果并希望以自己的方式调整小节线的情况。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>localBeats</p></td><td class="argumentdesc"><p>本地时钟的拍数。通常这应源自 <code>result[index][\queriedAtBeat]</code>（其中 <code>result</code> 来自 <a href="Classes-MeterSync.html#-queryMeter">MeterSync: -queryMeter</a>）。强烈建议使用它而不是 <code>clock.beats</code>，因为查询时间不会加上超时时间。</p></td></tr>
+<tr><td class="argumentname"><p>remoteBeats</p></td><td class="argumentdesc"><p>本地时钟的拍数。通常应从 <code>result[index][\beats]</code> 推导得出。</p></td></tr>
+<tr><td class="argumentname"><p>round</p></td><td class="argumentdesc"><p>可选。强制指定细分：round = 1（默认值）假定四分音符为度量基准；round = 0.5 假定八分音符（例如 5/8 拍）。</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>该实例。</p>
+
+<pre><code>// You *may* do something like this optionally,
+// if something went wrong.
+// Normally you should just call &#x27;resyncMeter&#x27;
+// and it&#x27;s all done for you.
+
+l = LinkClock.new.latency_(s.latency);
+m = MeterSync(l);
+
+(
+m.queryMeter({ |result|
+    result.postln;
+    m.adjustMeterBase(result[0][\queriedAtBeat], result[0][\beatInBar]);
+});
+)
+
+l.stop;  // 自动清理 &#x27;m&#x27;</code></pre>
+
+<h4 id="-enabled"><code>.enabled</code></h4>
+
+<h4 id="-enabled"><code>.enabled = bool</code></h4>
+
+<p>启用或禁用节拍器同步。如果禁用，此实例将不再响应来自对等节点的节拍器变更。它仍会响应 queryMeter，并在回复中包含 <code>'syncMeter': false</code>（因此你可以相应地过滤 queryMeter 的结果）。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>bool</p></td><td class="argumentdesc"><p>true = 启用，false = 禁用。</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>Boolean.</p>
+
+<h4 id="-clock"><code>.clock</code></h4>
+
+<h4 id="-clock"><code>.clock =</code></h4>
+
+<p>返回由该实例控制的时钟。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 你无法更改关联的时钟对象。应改为 <a href="Classes-MeterSync.html#-free">MeterSync: -free</a> 此实例，并为另一个时钟创建新实例。</p></blockquote>
+
+<h4 id="-repeats"><code>.repeats</code></h4>
+
+<h4 id="-repeats"><code>.repeats = value</code></h4>
+
+<p>获取或设置 OSC 消息的重复次数。</p>
+
+<p>UDP 不检测消息传递失败；因此消息可能会丢失。如果发生这种情况，LinkClock 对等体可能无法正确同步，且 <a href="#-resyncMeter">-resyncMeter</a> 可能无法恢复。为防止此问题，同步消息会发送 'repeats' 次。默认值为 4。</p>
+
+<h4 id="-delta"><code>.delta</code></h4>
+
+<h4 id="-delta"><code>.delta = value</code></h4>
+
+<p>获取或设置 OSC 消息重复之间的秒数。</p>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>l = LinkClock.new.latency_(s.latency).enableMeterSync;
+
+// 如果节拍器失步，尝试重新同步：
+l.getMeterSync.resyncMeter;
+
+// 其他时钟的时基是什么？
+l.getMeterSync.queryMeter({ |result|
+    result.do { |row| row.postln };
+});
+
+// 我想要不同的 ID 和/或端口：先释放，再重建
+l.disableMeterSync;
+l.enableMeterSync(1000, (57120..57135));</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/MeterSync.html" rel="noreferrer noopener">Classes/MeterSync.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

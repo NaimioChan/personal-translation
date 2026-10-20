@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南食谱 07：节奏变化 - SuperCollider 文档</title>
+<meta name="description" content="不断变化的鼓点">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南食谱 07：节奏变化</h1>
+
+<p><em>不断变化的鼓点</em></p>
+
+<p>另请参阅：<a href="Tutorials-A-Practical-Guide-PG_Cookbook06_Phrase_Network.html">Pattern Guide Cookbook 06: Phrase Network</a>、<a href="Tutorials-A-Practical-Guide-PG_Cookbook08_Swing.html">Pattern Guide Cookbook 08: Swing</a></p>
+
+<h2 id="Creating variations on a base rhythmic pattern">在基础节奏模式上创建变化</h2>
+
+<p>通常，模式是无状态对象。这似乎排除了对模式正在播放的材料进行即时更改的可能性。实际上，修改现有的模式对象很棘手，而且并不总是合适的（因为这种方法无法将其更改限制在做出更改的那一个流中）。</p>
+
+<p><a href="Classes-Plazy.html">Plazy</a> 提供了另一种方法：使用一个函数周期性地生成新的模式对象，并依次逐个播放这些模式。（Plazy 只嵌入一个模式；将 Plazy 包装在 <a href="Classes-Pn.html">Pn</a> 中可使其多次执行。）</p>
+
+<p>这个例子中的逻辑稍微复杂一些：对于每个小节，先为每个声部（底鼓、军鼓和踩镲）创建包含基本节奏型的数组，再插入具有不同幅度和时值的装饰音符。用数组来保存节奏数据，是因为这种节奏生成方式需要感知整个小节（未来），而模式通常不会向前看。</p>
+
+<p>这提示了一种用于数据存储的对象，它还将封装每个部分独有的逻辑。我们之前看到，<a href="Classes-Penvir.html">Penvir</a> 为从模式创建的每个流维护一个独立的环境。换句话说，Penvir 允许使用一个同时封装自定义逻辑和其将要操作的数据的对象来建模更复杂的行为。</p>
+
+<p>三个部分要添加的具体装饰略有不同，因此有三个环境。有些函数是共享的；我们不是将它们复制粘贴到每个环境中，而是将它们放入一个单独的环境，并将其用作每个鼓部分环境的父环境。</p>
+
+<p>大部分逻辑位于鼓声部的环境中，并且主要由直接的数组操作组成。让我们拆解使用这些环境来生成音符的模式：</p>
+
+<pre><code>~kik = Penvir(~kikEnvir, Pn(Plazy({
+    ~init.value;
+    ~addNotes.value;
+    Pbindf(
+        Pbind(
+            \instrument, \kik,
+            \preamp, 0.4,
+            \dur, 0.25,
+            *(~pbindPairs.value(#[amp, decay2]))
+        ),
+        \freq, Pif(Pkey(\amp) &gt; 0, 1, \rest)
+    )
+}), inf)).play(quant: 4);</code></pre>
+
+<dl>
+<dt><code>Penvir(~kikEnvir, ...)</code></dt>
+<dd><p>告诉所包含的模式在底鼓的环境中运行。</p></dd>
+<dt><code>Pn(..., inf)</code></dt>
+<dd><p>将所包含的模式（Plazy）重复无限次。</p></dd>
+<dt><code>Plazy({ ... })</code></dt>
+<dd><p>该函数可以做任何它喜欢的事情，只要它返回某种模式即可。函数的前两行完成了主要工作，尤其是 ~addNotes.value，它调用环境以使用节奏生成器代码。这会更改环境中的数据，然后在 ~pbindPairs.value() 行中将这些数据插入 Pbind。该模式将播放完毕；当它结束时，Plazy 将控制权交还给其父级 -- Pn，后者重复 Plazy。</p></dd>
+<dt><code>Pbindf(..., \freq, ...)</code></dt>
+<dd><p>Pbindf 将新值添加到来自另一个模式的事件中。这种用法是为了利用默认事件的一个特性。如果 \freq 键是一个符号（而不是数字或数组），该事件表示休止，服务器上不会播放任何内容。SynthDef 是否有 freq 控制无关紧要；此位置上的符号会产生休止。这里用一个简单的条件在 amp == 0 时产生休止。</p></dd>
+<dt><code>Pbind(...)</code></dt>
+<dd><p>笔记的要点：来自环境的 SynthDef 名称、常规参数和节奏值。（* 语法说明了需要 Pbindf 的原因。\freq 表达式必须跟在 pbindPairs 结果之后，但无法在 *(...) 之后放置额外参数。Pbindf 允许在仍接受额外值的同时关闭内部的 Pbind。）</p></dd>
+</dl>
+
+<p><strong>第三方扩展提醒</strong>：这种在模式风格的控制流与面向对象建模之间的混合体虽然强大，但存在一些局限，主要是在继承（子类化）方面的困难。<strong>ddwChucklib</strong> quark（它依赖 ddwPrototype）扩展了面向对象建模的可能性，同时支持模式处理模式自身之外的数据的能力。</p>
+
+<h3 id="Example">Example</h3>
+
+<pre><code>(
+// 这个底鼓在廉价音箱上听起来不太好
+// 但如果你的监听音箱有不错的低音，它就很带感
+SynthDef(\kik, { |basefreq = 50, ratio = 7, sweeptime = 0.05, preamp = 1, amp = 1,
+        decay1 = 0.3, decay1L = 0.8, decay2 = 0.15, out|
+    var    fcurve = EnvGen.kr(Env([basefreq * ratio, basefreq], [sweeptime], \exp)),
+        env = EnvGen.kr(Env([1, decay1L, 0], [decay1, decay2], -4), doneAction: Done.freeSelf),
+        sig = SinOsc.ar(fcurve, 0.5pi, preamp).distort * env * amp;
+    Out.ar(out, sig ! 2)
+}).add;
+
+SynthDef(\kraftySnr, { |amp = 1, freq = 2000, rq = 3, decay = 0.3, pan, out|
+    var    sig = PinkNoise.ar(amp),
+        env = EnvGen.kr(Env.perc(0.01, decay), doneAction: Done.freeSelf);
+    sig = BPF.ar(sig, freq, rq, env);
+    Out.ar(out, Pan2.ar(sig, pan))
+}).add;
+
+~commonFuncs = (
+        // 保存起始时间，以识别 4 小节循环的最后一小节
+    init: {
+        if(~startTime.isNil) { ~startTime = thisThread.clock.beats };
+    },
+        // 将节奏数组转换为模式
+    pbindPairs: { |keys|
+        var    pairs = Array(keys.size * 2);
+        keys.do({ |key|
+            if(key.envirGet.notNil) { pairs.add(key).add(Pseq(key.envirGet, 1)) };
+        });
+        pairs
+    },
+        // 识别节奏数组中的休止符
+        // （以便知道在哪里放置音符）
+    getRestIndices: { |array|
+        var    result = Array(array.size);
+        array.do({ |item, i|
+            if(item == 0) { result.add(i) }
+        });
+        result
+    }
+);
+)
+
+(
+TempoClock.default.tempo = 104 / 60;
+
+~kikEnvir = (
+    parent: ~commonFuncs,
+        // 每个小节中保持恒定的节奏型
+    baseAmp: #[1, 0, 0, 0,  0, 0, 0.7, 0,  0, 1, 0, 0,  0, 0, 0, 0] * 0.5,
+    baseDecay: #[0.15, 0, 0, 0,  0, 0, 0.15, 0,  0, 0.15, 0, 0,  0, 0, 0, 0],
+    addNotes: {
+        var    beat16pos = (thisThread.clock.beats - ~startTime) % 16,
+            available = ~getRestIndices.(~baseAmp);
+        ~amp = ~baseAmp.copy;
+        ~decay2 = ~baseDecay.copy;
+            // 如果是 4 拍循环的最后一小节，则做更密集的加花
+        if(beat16pos.inclusivelyBetween(12, 16)) {
+            available.scramble[..rrand(5, 10)].do({ |index|
+                    // 渐强
+                ~amp[index] = index.linexp(0, 15, 0.2, 0.5);
+                ~decay2[index] = 0.15;
+            });
+        } {
+            available.scramble[..rrand(0, 2)].do({ |index|
+                ~amp[index] = rrand(0.15, 0.3);
+                ~decay2[index] = rrand(0.05, 0.1);
+            });
+        }
+    }
+);
+
+~snrEnvir = (
+    parent: ~commonFuncs,
+    baseAmp: #[0, 0, 0, 0,  1, 0, 0, 0,  0, 0, 0, 0,  1, 0, 0, 0] * 1.5,
+    baseDecay: #[0, 0, 0, 0,  0.7, 0, 0, 0,  0, 0, 0, 0,  0.4, 0, 0, 0],
+    addNotes: {
+        var    beat16pos = (thisThread.clock.beats - ~startTime) % 16,
+            available = ~getRestIndices.(~baseAmp),
+            choice;
+        ~amp = ~baseAmp.copy;
+        ~decay = ~baseDecay.copy;
+        if(beat16pos.inclusivelyBetween(12, 16)) {
+            available.scramble[..rrand(5, 9)].do({ |index|
+                ~amp[index] = index.linexp(0, 15, 0.5, 1.8);
+                ~decay[index] = rrand(0.2, 0.4);
+            });
+        } {
+            available.scramble[..rrand(1, 3)].do({ |index|
+                ~amp[index] = rrand(0.15, 0.3);
+                ~decay[index] = rrand(0.2, 0.4);
+            });
+        }
+    }
+);
+
+~hhEnvir = (
+    parent: ~commonFuncs,
+    baseAmp: 15 ! 16,
+    baseDelta: 0.25 ! 16,
+    addNotes: {
+        var    beat16pos = (thisThread.clock.beats - ~startTime) % 16,
+            available = (0..15),
+            toAdd;
+            // 如果是 4 拍循环的最后一小节，则做更密集的加花
+        ~amp = ~baseAmp.copy;
+        ~dur = ~baseDelta.copy;
+        if(beat16pos.inclusivelyBetween(12, 16)) {
+            toAdd = available.scramble[..rrand(2, 5)]
+        } {
+            toAdd = available.scramble[..rrand(0, 1)]
+        };
+        toAdd.do({ |index|
+            ~amp[index] = ~doubleTimeAmps;
+            ~dur[index] = ~doubleTimeDurs;
+        });
+    },
+    doubleTimeAmps: Pseq(#[15, 10], 1),
+    doubleTimeDurs: Pn(0.125, 2)
+);
+
+
+~kik = Penvir(~kikEnvir, Pn(Plazy({
+    ~init.value;
+    ~addNotes.value;
+    Pbindf(
+        Pbind(
+            \instrument, \kik,
+            \preamp, 0.4,
+            \dur, 0.25,
+            *(~pbindPairs.value(#[amp, decay2]))
+        ),
+            // 默认 Event 会检查 \freq --
+            // 如果是一个符号，如 \rest 或甚至只是 \，
+            // 该事件是休止符，不会播放任何 synth
+        \freq, Pif(Pkey(\amp) &gt; 0, 1, \rest)
+    )
+}), inf)).play(quant: 4);
+
+~snr = Penvir(~snrEnvir, Pn(Plazy({
+    ~init.value;
+    ~addNotes.value;
+    Pbindf(
+        Pbind(
+            \instrument, \kraftySnr,
+            \dur, 0.25,
+            *(~pbindPairs.value(#[amp, decay]))
+        ),
+        \freq, Pif(Pkey(\amp) &gt; 0, 5000, \rest)
+    )
+}), inf)).play(quant: 4);
+
+~hh = Penvir(~hhEnvir, Pn(Plazy({
+    ~init.value;
+    ~addNotes.value;
+    Pbindf(
+        Pbind(
+            \instrument, \kraftySnr,
+            \rq, 0.06,
+            \amp, 15,
+            \decay, 0.04,
+            *(~pbindPairs.value(#[amp, dur]))
+        ),
+        \freq, Pif(Pkey(\amp) &gt; 0, 12000, \rest)
+    )
+}), inf)).play(quant: 4);
+)
+
+// 在小节线前停止
+t = TempoClock.default;
+t.schedAbs(t.nextTimeOnGrid(4, -0.001), {
+    [~kik, ~snr, ~hh].do(_.stop);
+});</code></pre>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook06_Phrase_Network.html">Pattern Guide Cookbook 06: Phrase Network</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook08_Swing.html">模式指南 Cookbook 08：Swing</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_Cookbook07_Rhythmic_Variations.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_Cookbook07_Rhythmic_Variations.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

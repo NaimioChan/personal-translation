@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 06b：基于时间的模式 - SuperCollider 文档</title>
+<meta name="description" content="以时间作为求值基础的模式">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 06b：基于时间的模式</h1>
+
+<p><em>以时间作为求值基础的模式</em></p>
+
+<p>另请参阅：<a href="Tutorials-A-Practical-Guide-PG_06a_Repetition_Contraint_Patterns.html">Pattern Guide 06a: Repetition Constraint Patterns</a>、<a href="Tutorials-A-Practical-Guide-PG_06c_Composition_of_Patterns.html">Pattern Guide 06c: Composition of Patterns</a></p>
+
+<h2 id="Time-based patterns">基于时间的模式</h2>
+
+<p>这里的“基于时间的模式”是指将时间作为其计算一部分的值模式。事件模式在时钟上播放时自然是时间驱动的。（技术上可以从事件流请求事件而不在 EventStreamPlayer 中运行它，但这不是典型用法。）</p>
+
+<p>这些模式中的大多数都通过在模式嵌入值流的那一刻记住时钟的当前时间来工作。那么，用于计算的时间值就是求值时刻的时钟时间减去起始时间——也就是模式开始嵌入以来经过的拍数。如果模式被多次嵌入，起始时间也会重置，以便模式从头重新开始。</p>
+
+<p>没有什么能阻止在调度上下文之外使用这些模式。在本文档中，该上下文是在时钟上播放的事件模式，但由这些模式生成的流也可以用于调度的例程或函数中。只有调度上下文才能确保值请求的精确时序。</p>
+
+<dl>
+<dt><code>Ptime(repeats)</code></dt>
+<dd><p>返回自嵌入以来经过的时间量。这个模式的一个巧妙用法是在一定时间后停止值流/模式。</p></dd>
+<dd><p>这个 <a href="Classes-Pif.html">Pif</a> 模式使用 Ptime 在请求第一个值之后正好 4 拍内从 true 分支获取值。之后条件将变为 false，Pif 回到 false 分支，即 nil。这会导致流停止。（这类似于事件模式的 <a href="Classes-Pfindur.html">Pfindur</a>，但 Pif/Ptime 对值模式也同样有效。）</p></dd>
+<dd><pre><code>// 这是一个非常有用的技巧：类似 Pfindur，但用于值模式
+(
+p = Pbind(
+    \degree, Pif(Ptime(inf) &lt; 4.0, Pwhite(-4, 11, inf)),
+    \dur, 0.25
+).play;
+)</code></pre></dd>
+<dt><code>Pstep(levels, durs, repeats)</code></dt>
+<dd><p>为其对应的时长重复一个电平值，然后移动到下一个。</p></dd>
+<dt><code>Pseg(levels, durs, curves, repeats)</code></dt>
+<dd><p>与 Pstep 类似，但它会插值到下一个值，而不是在持续时间结束时突然步进。默认情况下插值是线性的，但可以使用任何包络段曲线。levels、durs 和 curves 应当是模式。</p></dd>
+<dd><pre><code>// curve 为 5——曲线看起来是这样的，先上升后下降
+Env(#[0, 1, 0], #[1, 1], 5).plot;
+
+(
+p = Pbind(
+        // 使用 \note 是因为 Pseg 会给出分数音符编号
+        // 不能使用 \degree，因为它对非整数的处理方式不同
+    \note, Pseg(
+        Pwhite(-7, 19, inf),    // 半音音高编号
+            // 自然音级数字的替代版本
+            // PdegreeToKey 执行与 \degree --&gt; \note 相同的转换
+//        PdegreeToKey(Pwhite(-4, 11, inf), Pkey(\scale), 12),
+        Pwhite(1, 4, inf) * 0.5,
+        5, inf),
+    \dur, 0.125
+).play;
+)
+
+p.stop;</code></pre></dd>
+</dl>
+
+<h3 id="Using envelopes as patterns">将包络用作模式</h3>
+
+<p><a href="Classes-Env.html">Env</a> 支持流协议：<code>asStream</code> 将 Env 转换为流，并且可以使用 <code>next</code> 从中获取定时值。包络流返回包络在经过时间处应有的值，其方式与 <code>.at(time)</code> 返回包络在指定时间处的值相同。</p>
+
+<pre><code>e = Env.linen(1, 1, 1);
+e.at(2);    // == 1
+e.at(2.5);    // == 0.5
+
+// 打印包络值
+r = fork {
+    var stream = e.asStream;
+    12.do({
+        stream.next.postln;
+        0.25.wait;
+    });
+};
+
+// 使用包络将音符从左到右再返回地声像
+p = Pbind(
+    \degree, Pwhite(-4, 11, 32),
+    \pan, Env(#[-1, 1, -1], #[2, 2], \sin),
+    \dur, 0.125
+).play;
+
+p.stop;</code></pre>
+
+<p><code>releaseNode</code> 和 <code>loopNode</code> 这两个包络参数不会生效，因为它们只有在与带门控的 EnvGen 配合使用的 Synth 中才有意义。</p>
+
+<p>当包络结束时，流将无限期保持最终电平。<code>Pif(Ptime(inf) &lt; totalTime, Env(...))</code> 技巧可以让它改为停止。</p>
+
+<pre><code>// 使用包络将音符从左到右再返回进行声像处理
+// 播放一个周期
+(
+p = Pbind(
+        // 改为 inf：我们不需要确切知道需要多少事件
+    \degree, Pwhite(-4, 11, inf),
+    \pan, Pif(Ptime(inf) &lt;= 4.0, Env(#[-1, 1, -1], #[2, 2], \sin)),
+    \dur, 0.125
+).play;
+)
+
+p.stop;
+
+// 要让包络持续循环，将 Pif 包裹在 Pn 内
+(
+p = Pbind(
+    \degree, Pwhite(-4, 11, inf),
+    \pan, Pn(Pif(Ptime(inf) &lt;= 4.0, Env(#[-1, 1, -1], #[2, 2], \sin)), inf),
+    \dur, 0.125
+).play;
+)
+
+p.stop;</code></pre>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_06a_Repetition_Contraint_Patterns.html">Pattern Guide 06a: Repetition Constraint Patterns</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_06c_Composition_of_Patterns.html">Pattern Guide 06c：模式的组合</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_06b_Time_Based_Patterns.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_06b_Time_Based_Patterns.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

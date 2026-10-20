@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PartConv - SuperCollider 文档</title>
+<meta name="description" content="实时分区卷积">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>PartConv</h1>
+
+<p><em>实时分区卷积</em></p>
+
+<p><a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>另请参见：<a href="Classes-Convolution.html">Convolution</a>、<a href="Classes-Convolution2.html">Convolution2</a>、<a href="Classes-Convolution2L.html">Convolution2L</a>、<a href="Classes-Convolution3.html">Convolution3</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>分区卷积。必须提供各种额外的缓冲区。</p>
+
+<p>仅支持单声道脉冲响应！如果输入为多声道，则需要独立的 PartConv，每个声道一个。</p>
+
+<p>但妙处在于：脉冲响应可以任意大（CPU 负载随 IR 大小增加。基于 fftsize 选择存在各种权衡，因为 FFT 更稀少但更大。此插件使用分摊（amortisation）来分散处理并避免尖峰）。</p>
+
+<p>归一化因子难以预料；卷积会将输入的多个副本叠加在自身上，因此很容易过载。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*ar"><code>PartConv.ar(in, fftsize, irbufnum, mul: 1.0, add: 0.0)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>in</p></td><td class="argumentdesc"><p>处理目标。</p></td></tr>
+<tr><td class="argumentname"><p>fftsize</p></td><td class="argumentdesc"><p>频谱卷积的分区大小（分区大小的两倍）。你必须确保块大小能整除分区大小，并且每个分区至少有两个块（以便进行摊销）。</p></td></tr>
+<tr><td class="argumentname"><p>irbufnum</p></td><td class="argumentdesc"><p>为脉冲响应的每个分区准备的频谱缓冲区。</p></td></tr>
+<tr><td class="argumentname"><p>mul</p></td><td class="argumentdesc"></td></tr>
+<tr><td class="argumentname"><p>add</p></td><td class="argumentdesc"></td></tr>
+</table>
+
+<h3 id="Undocumented class methods">未文档化的类方法</h3>
+
+<h4 id="*calcBufSize"><code>PartConv.calcBufSize(fftsize, irbuffer)</code></h4>
+
+<h4 id="*calcNumPartitions"><code>PartConv.calcNumPartitions(fftsize, irbuffer)</code></h4>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 准备工作；本质上是分配一个脉冲响应缓冲区，然后
+// 遵循特殊的缓冲区准备步骤来设置插件所需的数据。
+// 提供了不同的选项（已注释掉），用于从声音文件加载脉冲响应。
+(
+
+ // 4096 在我的机器上也能工作；1024 太频繁且摊销被过度推进，8192 则 FFT 负载更高
+~fftsize = 2048;
+
+s.waitForBoot {
+
+    {
+        var ir, irbuffer, bufsize;
+
+        // // MONO ONLY
+        // 预先存在的脉冲响应声音文件
+        // （也可以使用任何通用声音文件来实现交叉合成效果）
+        // irbuffer = Buffer.read(s, &quot;/Volumes/data/audio/ir/ir2.wav&quot;);
+
+        // 合成可敬的 &#x27;Dan Stowell&#x27; 脉冲响应
+
+        ir = [1] ++ 0.dup(100) ++ (
+            (1, 0.99998 .. 0)
+            .collect { |f|
+                f = f.squared.squared;
+                f = if(f.coin) { 0 }{ f.squared };
+                f = if(0.5.coin) { 0 - f } { f }
+            } * 0.1
+        );
+        ir = ir.normalizeSum;
+
+        irbuffer = Buffer.loadCollection(s, ir);
+
+        s.sync;
+
+        bufsize = PartConv.calcBufSize(~fftsize, irbuffer);
+
+        // ~numpartitions = PartConv.calcNumPartitions(~fftsize, irbuffer);
+
+        ~irspectrum = Buffer.alloc(s, bufsize, 1);
+        ~irspectrum.preparePartConv(irbuffer, ~fftsize);
+
+        s.sync;
+
+        irbuffer.free; // 不再需要时域数据，只需要频谱版本
+    }.fork;
+
+}
+)
+
+
+
+~target = Buffer.read(s, ExampleFiles.child);
+
+(
+{
+    var input = PlayBuf.ar(1, ~target, loop: 1);
+    PartConv.ar(input, ~fftsize, ~irspectrum.bufnum, 0.5)
+}.play
+)
+
+
+// 与实时输入进行卷积
+(
+{
+    var input = SoundIn.ar(0);
+    PartConv.ar(input, ~fftsize, ~irspectrum.bufnum)
+}.play
+)
+
+
+// 应该能取回原始脉冲响应（每四秒一次）
+(
+{
+    var input = Impulse.ar(0.25);
+    PartConv.ar(input, ~fftsize, ~irspectrum.bufnum)
+}.play
+)
+
+
+// 只在完成示例后释放缓冲区
+// 如果你在 PartConv 仍在运行时释放，服务器不会崩溃，但 PartConv 输出会突然降为零
+(
+~irspectrum.free;
+~target.free;
+currentEnvironment.clear;
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/PartConv.html" rel="noreferrer noopener">Classes/PartConv.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

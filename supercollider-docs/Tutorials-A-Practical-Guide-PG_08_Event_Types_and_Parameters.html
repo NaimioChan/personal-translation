@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 08：事件类型与参数 - SuperCollider 文档</title>
+<meta name="description" content="描述默认事件中定义的事件类型及其期望的参数">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 08：事件类型与参数</h1>
+
+<p><em>描述默认事件中定义的事件类型及其期望的参数</em></p>
+
+<p>另请参见：<a href="Tutorials-A-Practical-Guide-PG_07_Value_Conversions.html">Pattern Guide 07: Value Conversions</a>、<a href="Tutorials-A-Practical-Guide-PG_Cookbook01_Basic_Sequencing.html">Pattern Guide Cookbook 01: Basic Sequencing</a></p>
+
+<h2 id="Event types">事件类型</h2>
+
+<p>一个常见的问题是："Pbind 中哪些参数有特殊含义？" 也许令人惊讶的是，它们都没有！这是因为 Pbind 只是把数据放入结果事件中；它并不关心这些数据是什么。</p>
+
+<p>播放模式时使用的事件原型定义了要执行的操作，参数就是在这里定义的。大多数模式会使用默认事件原型（ <code>Event.default</code> ）播放，因此这是最常用的参数来源。</p>
+
+<p>默认事件原型定义了许多“事件类型”，每种类型执行不同的任务。<code>\type</code> 键决定执行哪个动作，而重要参数取决于事件类型。</p>
+
+<p>事件类型非常多！然而，常用的只有少数几种。<code>\note</code> 事件类型是目前最典型的。其他类型属于辅助性质，在编写用于生成适合非实时渲染的 <a href="Classes-Score.html">Score</a> 的模式时最为有用。</p>
+
+<p>在查看事件类型本身之前，让我们先回顾一些在许多事件类型中通用的标准参数。（并非每个通用参数都会在每种事件类型中使用，但它们会出现在很多地方。）</p>
+
+<h2 id="Common parameters">常用参数</h2>
+
+<h3 id="Timing control">定时控制</h3>
+
+<dl>
+<dt>\delta</dt>
+<dd><p>距离下一个事件的拍数。若未显式给出 \delta，则根据 ~dur * ~stretch 计算得出。</p></dd>
+<dt>\lag</dt>
+<dd><p>延迟事件服务器消息的秒数。</p></dd>
+<dt>\timingOffset</dt>
+<dd><p>延迟事件服务器消息的拍数。结合 Quant，这允许在客户端中控制不同模式之间事件准备的顺序，而不会使本应一起播放的声音事件失去同步。Pattern Guide 06g: Data Sharing 中有一个使用它从贝斯模式向和弦模式传递数据的示例。</p></dd>
+<dt>\sustain</dt>
+<dd><p>在服务器上释放 Synth 节点之前等待的拍数。SynthDef 必须有一个 gate 参数才能发送显式释放；否则，模式假定音符将使用定时包络自行释放。如果未直接给出，\sustain 由 ~dur * ~legato * ~stretch 计算得出。</p></dd>
+<dt>\sendGate</dt>
+<dd><p>释放音符的默认行为是在 SynthDesc 中查找名为 \gate 的参数。如果存在，事件将向服务器发送 node.set(\gate, 0) 消息。如果不存在，则不会发送释放消息；此时假定 SynthDef 会在给定时间后自行释放。\sendGate 会覆盖此行为：true 表示无论参数是否存在都强制发送释放消息，false 表示抑制释放消息。</p></dd>
+<dd><p>覆盖它并不是典型用法；尽管如此，对于某些特殊情况，它可能有用。</p></dd>
+<dt>\tempo</dt>
+<dd><p>可选。如果给定一个值（单位为每秒拍数），它将改变播放该模式的 TempoClock 的速度。此处音符时值保持不变，但时钟速度改变。</p></dd>
+<dd><blockquote class="note"><p><strong>注意：</strong> 更改速度会影响在同一时钟上播放的所有模式。</p></blockquote></dd>
+<dd><pre><code>Pbind(
+    \curve, Pseg(Pseq([0, 1, 0], 1), 15),
+    \degree, Pwhite(-7, 0, inf) + Pkey(\curve).linlin(0, 1, 0, 14).asInteger,
+    \dur, 0.5,
+    \tempo, Pkey(\curve).linlin(0, 1, 1, 10)
+).play;</code></pre></dd>
+</dl>
+
+<h3 id="Node control">节点控制</h3>
+
+<dl>
+<dt>\addAction</dt>
+<dd><p>如何在事件中相对于给定的 \group 添加 synth 或 group 节点。参见 Synth。</p></dd>
+<dt>\amp</dt>
+<dd><p>没有正式定义为特殊参数，但这通常用于 Synth 的 amplitude。SynthDef 应当有一个 amp 参数并用它来控制音量。\amp 可以选择性地由 \db 计算得出。</p></dd>
+<dt>\id</dt>
+<dd><p>此事件中新创建节点的期望 id。通常为 nil，此时 ID 将从 server.nextNodeID 获取。</p></dd>
+<dt>\instrument</dt>
+<dd><p>将为其创建节点的 SynthDef 名称。只应给出一个名称（与其他参数不同，其他参数会“多通道扩展”以创建多个节点）。</p></dd>
+<dt>\group</dt>
+<dd><p>新节点将相对于其创建的目标节点。类似于 Synth(defName, args, target, addAction) 中的 target。</p></dd>
+<dt>\out</dt>
+<dd><p>通常用于 Synth 的输出总线。使用 Pbus 或 Pfxb 时，会分配一个音频总线来隔离模式的信号。来自该模式的所有事件都会在 \out 槽中接收到新的总线编号，并且正在播放的 SynthDef 应使用 out 参数作为输出 UGen 的目标，例如 Out.ar(out, ...) 。</p></dd>
+</dl>
+
+<h3 id="User function hooks">用户函数钩子</h3>
+
+<dl>
+<dt>\finish</dt>
+<dd><p>一个将在 play 被调用之后、但在事件类型处理之前执行的函数。可使用它来操作事件数据。</p></dd>
+<dt>\callback</dt>
+<dd><p>一个在事件完成其所有工作后执行的函数。该回调可用于记录。完成的事件预期将新的节点 ID 存储在 ~id 下；借助这些 ID，你可以注册函数来监视节点状态或设置节点控件等。该函数接收已完成的事件作为其参数。</p></dd>
+</dl>
+
+<h2 id="Event Types">事件类型</h2>
+
+<h3 id="Node control">节点控制</h3>
+
+<dl>
+<dt>rest</dt>
+<dd><p>正如人们所料，\rest 除了等待到下一个事件所需的时长外，不做任何事。</p></dd>
+<dt>note</dt>
+<dd><p>这是默认的事件类型，在未指定 \type 时使用。它会在服务器上播放一个或多个 Synth 节点，如果 SynthDef 具有 gate 参数，则在 \sustain 拍之后自动释放。</p></dd>
+<dd><dl>
+<dt>标准定时与节点控制参数</dt>
+<dt>sendGate</dt>
+<dd><p>覆盖 SynthDef 对 gate 参数的行为。如果 SynthDef 有 gate，设置 sendGate = false 可阻止发送释放消息。很少使用。</p></dd>
+<dt>strum</dt>
+<dd><p>如果产生多个音符（通常是和弦，通过向某个音高参数提供数组来给出），\strum 是每个后续音符起始延迟的拍数。使用 \strum 时，另一个键会生效，即 \strumEndsTogether。如果为 false（默认值），每个被 strum 的节点将播放其完整时值，释放将错开。如果为 true，释放将同时发生。</p></dd>
+<dd><pre><code>p = Pbind(
+        // 数组被“多声道扩展”为每个 Synth 一个
+    \degree, #[2, 5, 8, 11, 13, 16],
+    \octave, 3,
+    \dur, 2,
+    \sustain, 3,
+        // 非零的 strum 会使各个声音错开进入
+    \strum, 0.12
+).play(quant: 2);
+
+p.stop;</code></pre></dd>
+</dl></dd>
+<dt>on</dt>
+<dd><p>启动一个 Synth 节点（或多个节点）而不释放。节点 ID 位于事件的 ~id 变量中。这些 ID 可用于 off、set 和 kill 事件类型。</p></dd>
+<dd><dl>
+<dt>标准定时与节点控制参数</dt>
+<dt>（不使用 sendGate 和 strum 参数）</dt>
+</dl></dd>
+<dt>off</dt>
+<dd><p>尽可能优雅地释放服务器节点。如果 SynthDef 有 gate 参数，则 gate 将被设为 0 或用户指定的值。否则，节点将被 n_free 粗暴地杀死。</p></dd>
+<dd><dl>
+<dt>标准定时控制参数</dt>
+<dt>hasGate</dt>
+<dd><p>真或假，告诉事件该 SynthDef 是否有 gate 参数。默认假定为真。</p></dd>
+<dt>id</dt>
+<dd><p>必须显式给出节点 ID。</p></dd>
+<dt>gate</dt>
+<dd><p>默认情况下，gate 将被设置为 0。负值会在 EnvGen 中触发“强制释放”。详情请参阅 EnvGen 帮助文件。</p></dd>
+</dl></dd>
+<dt>kill</dt>
+<dd><p>使用 n_free 立即移除节点。</p></dd>
+<dd><dl>
+<dt>标准定时控制参数</dt>
+<dt>id</dt>
+<dd><p>必须显式给出节点 ID。</p></dd>
+</dl></dd>
+<dt>set</dt>
+<dd><p>向现有节点的控制输入发送新值。</p></dd>
+<dd><dl>
+<dt>标准定时控制参数</dt>
+<dt>id</dt>
+<dd><p>必须显式给出节点 ID。这可以是一个整数 ID 或 Synth/Group 节点对象。</p></dd>
+</dl></dd>
+</dl>
+
+<p>有两种方式指定参数名称：通过<em>乐器</em>和通过<em>参数数组</em>。</p>
+
+<p>- <em>按乐器</em>：</p>
+
+<dl>
+<dt>instrument</dt>
+<dd><p>应再次给出 SynthDef 名称，以便事件知道哪些事件值与该节点相关。</p></dd>
+<dt>args</dt>
+<dd><p>默认情况下，\args 键包含默认 synthdef 的控制名称。要从乐器名称获取参数名，必须用空数组（或任何非集合对象）覆盖此默认值。</p></dd>
+<dd><pre><code>(
+SynthDef(\event_set, { |freq = 440, gate = 1, amp = 0.1, lagTime = 0.1,
+        ffreq = 2000, detune = 1.005, out = 0|
+    var    sig = Saw.ar(Lag.kr(freq, lagTime) * [1, detune]).sum * amp
+            * EnvGen.kr(Env.adsr, gate, doneAction: Done.freeSelf);
+    Out.ar(out, sig ! 2);
+}).add;
+)
+
+a = Synth(\event_set);
+
+(
+p = Pbind(
+    \type, \set,
+    \id, a,
+    \instrument, \event_set,
+    \args, #[],
+    \freq, Pexprand(200, 600, inf),
+    \dur, Pwhite(1, 5, inf) * 0.125
+).play;
+)
+
+p.stop;
+a.free;</code></pre></dd>
+</dl>
+
+<p>- <em>按参数名</em>：</p>
+
+<dl>
+<dt>args</dt>
+<dd><p>在此处以数组形式提供 Synth 参数名称列表，例如 [\freq, \amp, \pan]。无需通过这种方式提供乐器名称。</p></dd>
+<dd><pre><code>a = Synth(\event_set);
+
+(
+p = Pbind(
+    \type, \set,
+    \id, a,
+    \args, #[\freq],
+    \freq, Pexprand(200, 600, inf),
+    \dur, Pwhite(1, 5, inf) * 0.125
+).play;
+)
+
+p.stop;
+a.free;</code></pre></dd>
+</dl>
+
+<dl>
+<dt>monoNote</dt>
+<dt>monoOff</dt>
+<dt>monoSet</dt>
+<dd><p>这些事件类型由 Pmono 和 PmonoArtic 内部使用。不应直接使用它们。</p></dd>
+</dl>
+
+<h3 id="Server control">服务器控制</h3>
+
+<dl>
+<dt>group</dt>
+<dd><p>创建一个新组（或多个组）。</p></dd>
+<dd><dl>
+<dt>标准定时与节点控制参数</dt>
+<dt>id</dt>
+<dd><p>（可选）新组的 ID。如果未指定，则只能在 .play 之后从事件中找到新 ID（仅限一个组）。要创建多个组，必须提供 ID 数组。</p></dd>
+</dl></dd>
+<dt>bus</dt>
+<dd><p>设置一个控制总线或连续控制总线的值。这假定你已经有了总线索引。</p></dd>
+<dd><dl>
+<dt>标准定时控制参数</dt>
+<dt>array</dt>
+<dd><p>要发送到总线的值。如果只有一个值，则不必是数组。</p></dd>
+<dt>out</dt>
+<dd><p>要设置的第一个总线索引。可以使用 Bus 对象。</p></dd>
+</dl></dd>
+</dl>
+
+<h3 id="Buffer control">缓冲区控制</h3>
+
+<p>所有这些缓冲区事件类型都要求提供缓冲区编号。它们不会自动从服务器的缓冲区分配器中获取缓冲区编号。允许使用 Buffer 对象 —— 你可以先使用 <code>Buffer.alloc</code> 或 <code>Buffer.new</code> 创建 Buffer，然后在控制事件中使用该对象。另请参阅下文<a href="#Event%20types%20with%20cleanup">带清理的事件类型</a>，了解其他对用户更友好的 Buffer 控制选项。</p>
+
+<dl>
+<dt>alloc</dt>
+<dd><p>在服务器上为缓冲区分配内存。每个事件只能分配一个缓冲区。</p></dd>
+<dd><dl>
+<dt>标准定时控制参数</dt>
+<dt>bufnum, numchannels, numframes</dt>
+<dd><p>参见 Buffer 帮助文件。</p></dd>
+</dl></dd>
+<dt>free</dt>
+<dd><p>在服务器上释放缓冲区的内存。</p></dd>
+<dd><dl>
+<dt>标准定时控制参数</dt>
+<dt>bufnum</dt>
+<dd><p>要释放的缓冲区编号（仅一个）。</p></dd>
+</dl></dd>
+<dt>gen</dt>
+<dd><p>使用服务器的一个 b_gen 插件在缓冲区中生成波表数据。Buffer 帮助文件中有关于标准插件的更多细节。</p></dd>
+<dd><dl>
+<dt>标准定时控制参数</dt>
+<dt>bufnum</dt>
+<dt>gencmd</dt>
+<dd><p>生成器插件名称：\sine1、\sine2、\sine3、\cheby。</p></dd>
+<dt>genflags</dt>
+<dd><p>三个标志位，各自关联一个数字：normalize = 1，asWavetable = 2，clearFirst = 4。将所需标志位对应的数字相加。通常所有标志位都为 true，合计为 7。</p></dd>
+<dt>genarray</dt>
+<dd><p>插件的参数数据。有关每种插件的格式详细信息，请参阅服务器命令参考帮助文件。</p></dd>
+</dl></dd>
+<dt>load</dt>
+<dd><p>使用 b_allocRead 在服务器中分配缓冲区内存并将声音文件加载到其中。</p></dd>
+<dd><dl>
+<dt>标准定时控制参数</dt>
+<dt>bufnum</dt>
+<dt>filename</dt>
+<dd><p>磁盘文件路径。</p></dd>
+<dt>frame</dt>
+<dd><p>开始读取的帧（默认 0）。</p></dd>
+<dt>numframes</dt>
+<dd><p>要读取的帧数（默认 0，表示加载整个文件）。</p></dd>
+</dl></dd>
+<dt>read</dt>
+<dd><p>将声音文件读入已在服务器上分配的缓冲区。此事件类型适合为 DiskIn 使用而预备声音文件。</p></dd>
+<dd><dl>
+<dt>标准定时控制参数</dt>
+<dt>bufnum</dt>
+<dt>filename</dt>
+<dd><p>磁盘文件路径。</p></dd>
+<dt>frame</dt>
+<dd><p>要读取的起始声音文件帧（默认 0）。</p></dd>
+<dt>numframes</dt>
+<dd><p>要读取的帧数（默认 0，表示加载整个文件）。</p></dd>
+<dt>bufpos</dt>
+<dd><p>起始缓冲区帧（默认 0）。</p></dd>
+<dt>leaveOpen</dt>
+<dd><p>1 = 保持文件打开（供 DiskIn 使用）。0 = 读取后关闭磁盘文件。默认值 = 0。</p></dd>
+</dl></dd>
+</dl>
+
+<h3 id="Event types with cleanup">带清理的事件类型</h3>
+
+<p>这些事件类型独特地与自动清理事件类型相关联。播放其中一种事件类型会分配一个服务器资源。之后，可以通过将事件类型改为相应的清理类型并再次播放该事件来释放该资源。资源处于活动状态时，该事件可在其他事件或 Synth 消息中用作对该资源的引用。</p>
+
+<pre><code>// 创建一个缓冲区
+b = (type: \allocRead, path: ExampleFiles.child).play;
+
+a = { PlayBuf.ar(1, b, doneAction: Done.freeSelf) }.play;
+
+// 移除缓冲区
+EventTypesWithCleanup.cleanup(b);</code></pre>
+
+<p>参见 <a href="Tutorials-A-Practical-Guide-PG_06f_Server_Control.html">Pattern Guide 06f: Server Control</a> 中的 Pproto 示例，它展示了如何使用这些来在模式结束时清理服务器对象。</p>
+
+<dl>
+<dt>audioBus</dt>
+<dd><p>从服务器分配一个音频总线索引。</p></dd>
+<dd><dl>
+<dt>channels</dt>
+<dd><p>要分配的通道数。</p></dd>
+</dl></dd>
+<dt>controlBus</dt>
+<dd><p>从服务器分配一个控制总线索引。</p></dd>
+<dd><dl>
+<dt>channels</dt>
+<dd><p>要分配的通道数。</p></dd>
+</dl></dd>
+<dt>buffer</dt>
+<dd><p>如果未指定，则分配一个缓冲区编号，并在服务器上预留内存。</p></dd>
+<dd><dl>
+<dt>bufNum</dt>
+<dd><p>（可选）缓冲区编号。如果未给出，将从服务器获取一个空闲编号。</p></dd>
+<dt>numBufs</dt>
+<dd><p>要保留的连续缓冲区数量（默认 = 1）。</p></dd>
+<dt>numFrames</dt>
+<dd><p>帧数。</p></dd>
+<dt>numChannels</dt>
+<dd><p>通道数。</p></dd>
+</dl></dd>
+<dt>allocRead</dt>
+<dd><p>将磁盘文件读入服务器内存。完成后关闭文件。</p></dd>
+<dd><dl>
+<dt>bufNum</dt>
+<dd><p>（可选）缓冲区编号。如果未给出，将从服务器获取一个空闲编号。</p></dd>
+<dt>path</dt>
+<dd><p>磁盘上声音文件的路径。</p></dd>
+<dt>firstFileFrame</dt>
+<dd><p>从文件中的何处开始读取。</p></dd>
+<dt>numFrames</dt>
+<dd><p>帧数。如果未给出，则读取整个文件。</p></dd>
+</dl></dd>
+<dt>cue</dt>
+<dd><p>提示一个声音文件（通常与 DiskIn 一起使用）。</p></dd>
+<dd><dl>
+<dt>bufNum</dt>
+<dd><p>（可选）缓冲区编号。如果未给出，将从服务器获取一个空闲编号。</p></dd>
+<dt>path</dt>
+<dd><p>磁盘上声音文件的路径。</p></dd>
+<dt>firstFileFrame</dt>
+<dd><p>从文件中的何处开始读取。</p></dd>
+<dt>numFrames</dt>
+<dd><p>帧数。如果未给出，则读取整个文件。</p></dd>
+<dt>firstBufferFrame</dt>
+<dd><p>在缓冲区中开始放入文件数据的位置。</p></dd>
+<dt>leaveOpen</dt>
+<dd><p>1 = 保持文件打开（供 DiskIn 使用）。0 = 读取后关闭磁盘文件。默认值 = 0。</p></dd>
+</dl></dd>
+<dt>table</dt>
+<dd><p>用预设数据填充缓冲区。这使用 /b_setn 来传输数据，因此所有数据必须能装入一个数据报中。可能需要通过试验来找出上限。</p></dd>
+<dd><dl>
+<dt>bufNum</dt>
+<dd><p>（可选）缓冲区编号。如果未给出，将从服务器获取一个空闲编号。</p></dd>
+<dt>amps</dt>
+<dd><p>要放入缓冲区的值。这些值都应为 Float。</p></dd>
+</dl></dd>
+<dt>cheby</dt>
+<dd><p>为波形整形生成切比雪夫传递函数。</p></dd>
+<dd><dl>
+<dt>bufNum</dt>
+<dd><p>（可选）缓冲区编号。如果未给出，将从服务器获取一个空闲编号。</p></dd>
+<dt>numFrames</dt>
+<dd><p>帧数，应为 2 的幂。</p></dd>
+<dt>numChannels</dt>
+<dd><p>通道数。</p></dd>
+<dt>genflags</dt>
+<dd><p>三个标志位，各自关联一个数字：normalize = 1，asWavetable = 2，clearFirst = 4。将所需标志位对应的数字相加。通常所有标志位都为 true，合计为 7。</p></dd>
+<dt>amps</dt>
+<dd><p>每个分音的振幅（即多项式系数）。</p></dd>
+</dl></dd>
+<dt>sine1</dt>
+<dd><p>镜像 Buffer 的 sine1 方法，使用给定的分音振幅生成具有整数倍谐波频谱的波表。</p></dd>
+<dd><dl>
+<dt>bufNum</dt>
+<dd><p>（可选）缓冲区编号。如果未给出，将从服务器获取一个空闲编号。</p></dd>
+<dt>numFrames</dt>
+<dd><p>帧数，应为 2 的幂。</p></dd>
+<dt>numChannels</dt>
+<dd><p>通道数。</p></dd>
+<dt>genflags</dt>
+<dd><p>见上文。</p></dd>
+<dt>amps</dt>
+<dd><p>每个分音的振幅数组。</p></dd>
+</dl></dd>
+<dt>sine2</dt>
+<dd><p>与 sine1 类似，但还给出每个分音的频率比。</p></dd>
+<dd><dl>
+<dt>与 sine1 相同的参数，外加：</dt>
+<dt>freqs</dt>
+<dd><p>每个分音的频率数组。1.0 为基频；其正弦波占据整个缓冲区时长。</p></dd>
+</dl></dd>
+<dt>sine3</dt>
+<dd><p>类似 sine2，但也可以提供每个分音的相位。</p></dd>
+<dd><dl>
+<dt>与 sine1 相同的参数，外加：</dt>
+<dt>phases</dt>
+<dd><p>每个分音的相位数组，以弧度为单位（0.0 - 2pi）。</p></dd>
+</dl></dd>
+</dl>
+
+<h3 id="MIDI output">MIDI 输出</h3>
+
+<dl>
+<dt>midi</dt>
+<dd><p>向 MIDIOut 对象发送若干类型之一的 MIDI 消息。</p></dd>
+<dd><dl>
+<dt>标准 Timing 控制参数（除了 timingOffset，它未被使用）</dt>
+<dt>midicmd</dt>
+<dd><p>要发送的 MIDI 消息类型。这也决定了该事件中应出现的其他参数。</p></dd>
+<dt>midiout</dt>
+<dd><p>MIDI 输出对象，连接到 MIDIClient.destinations 中列出的某个 MIDI 设备。</p></dd>
+<dt>chan</dt>
+<dd><p>设备上应接收该消息的 MIDI 通道号（0-15）。这适用于所有 midicmd，但全局的（smpte、songPtr、sysex）除外。</p></dd>
+</dl></dd>
+</dl>
+
+<dl>
+<dt>可用的 midicmds：</dt>
+<dd><dl>
+<dt>noteOn</dt>
+<dd><p>开始一个音符，并可选地停止它。如果给出多个频率，则为每个频率发送一对 noteOn/noteOff，并且也支持 \strum。</p></dd>
+<dd><dl>
+<dt>chan</dt>
+<dd><p>MIDI 通道（0-15）。</p></dd>
+<dt>midinote</dt>
+<dd><p>要触发的音符号。这可以根据 Pattern Guide 07: Value Conversions 中描述的标准音高层级来计算（例外是仅支持 12TET）。</p></dd>
+<dt>amp</dt>
+<dd><p>MIDI velocity = amp * 127。</p></dd>
+<dt>sustain</dt>
+<dd><p>在发送对应的 note off 消息之前等待多少拍。如果没有直接给出，则按 ~sustain = ~dur * ~legato * ~stretch 计算（与标准 \note 事件类型相同）。</p></dd>
+<dt>hasGate</dt>
+<dd><p>通常为 true。如果为 false，则不会发送音符关闭消息。</p></dd>
+</dl></dd>
+<dt>noteOff</dt>
+<dd><p>发送一个显式的 note off 消息（如果在 note on 事件中 hasGate 被设为 false，则很有用）。</p></dd>
+<dd><dl>
+<dt>chan</dt>
+<dd><p>MIDI 通道（0-15）。</p></dd>
+<dt>midinote</dt>
+<dd><p>音符编号。</p></dd>
+<dt>amp</dt>
+<dd><p>释放力度（部分合成器支持）。</p></dd>
+</dl></dd>
+<dt>allNotesOff</dt>
+<dd><p>"Panic" 消息，终止通道上的所有音符。</p></dd>
+<dd><dl>
+<dt>chan</dt>
+<dd><p>MIDI 通道（0-15）。</p></dd>
+</dl></dd>
+<dt>control</dt>
+<dd><p>连续控制器消息。</p></dd>
+<dd><dl>
+<dt>chan</dt>
+<dd><p>MIDI 通道（0-15）。</p></dd>
+<dt>ctlNum</dt>
+<dd><p>要接收新值的控制器编号。</p></dd>
+<dt>control</dt>
+<dd><p>新值（0-127）。</p></dd>
+</dl></dd>
+<dt>bend</dt>
+<dd><p>弯音消息。</p></dd>
+<dd><dl>
+<dt>chan</dt>
+<dd><p>MIDI 通道（0-15）。</p></dd>
+<dt>val</dt>
+<dd><p>新值（0-16383）。8191 为居中。</p></dd>
+</dl></dd>
+<dt>touch</dt>
+<dd><p>触后消息。</p></dd>
+<dd><dl>
+<dt>chan</dt>
+<dd><p>MIDI 通道（0-15）。</p></dd>
+<dt>val</dt>
+<dd><p>新值（0-127）。</p></dd>
+</dl></dd>
+<dt>polyTouch</dt>
+<dd><p>复音触后消息（并非所有合成器都支持）。</p></dd>
+<dd><dl>
+<dt>chan</dt>
+<dd><p>MIDI 通道（0-15）。</p></dd>
+<dt>midinote</dt>
+<dd><p>用于获取新 after touch 值的音符编号。与 note on 一样，它可以根据标准音高层级计算。</p></dd>
+<dt>polyTouch</dt>
+<dd><p>新值（0-127）。</p></dd>
+</dl></dd>
+<dt>program</dt>
+<dd><p>音色切换消息。</p></dd>
+<dd><dl>
+<dt>chan</dt>
+<dd><p>MIDI 通道（0-15）。</p></dd>
+<dt>progNum</dt>
+<dd><p>音色编号（0-127）。</p></dd>
+</dl></dd>
+<dt>smpte</dt>
+<dd><p>发送 MIDI Time Code 消息。</p></dd>
+<dd><dl>
+<dt>Arguments</dt>
+<dd><p>帧、秒、分钟、小时、frameRate</p></dd>
+</dl></dd>
+<dt>songPtr</dt>
+<dd><p>歌曲指针消息。</p></dd>
+<dd><dl>
+<dt>songPtr</dt>
+<dd><p>指针值 (0-16383)。</p></dd>
+</dl></dd>
+<dt>sysex</dt>
+<dd><p>系统独占消息。</p></dd>
+<dd><dl>
+<dt>array</dt>
+<dd><p>按顺序包含 sysex 字节的 Int8Array。</p></dd>
+<dd><blockquote class="note"><p><strong>注意：</strong> 非常重要：数组在模式中通常会发生多通道扩展。因此，必须将 Int8Array 包裹在另一个数组中以防止此行为。应写为 <code>[Int8Array[...]]</code>，而不是只写 <code>Int8Array[...]</code>。</p></blockquote></dd>
+</dl></dd>
+</dl></dd>
+</dl>
+
+<h3 id="Miscellaneous">Miscellaneous</h3>
+
+<dl>
+<dt>composite</dt>
+<dd><p>执行任意数量的事件类型，以 ~types 给出。你应确保各参数相互兼容。使用 \composite 可以播放一个 Synth 并为相同音高发送 MIDI。但在同一个事件中，无法为 Synth 使用一个频率而为 MIDI 使用另一个频率（那种情况需要两个不同的事件）。</p></dd>
+<dd><dl>
+<dt>types</dt>
+<dd><p>一个 Symbol 数组，列出要执行的事件类型。</p></dd>
+</dl></dd>
+<dd><pre><code>MIDIClient.init;
+m = MIDIOut(0);
+
+// 应同时播放一个 synth *和* 一个外部 MIDI 音符
+(type: \composite, types: [\note, \midi], midiout: m, degree: 0, dur: 3).play;</code></pre></dd>
+<dt>phrase</dt>
+<dd><p>参见 recursive_phrasing。</p></dd>
+<dt>setProperties</dt>
+<dd><p>设置属于给定对象的变量。一种可能的用途是用模式控制 GUI。</p></dd>
+<dd><dl>
+<dt>receiver</dt>
+<dd><p>要修改的对象。</p></dd>
+<dt>args</dt>
+<dd><p>要在接收者中设置的变量名列表。接收者应为其中每个变量名提供一个 setter 方法——variableName_。新值将从事件中查找。</p></dd>
+</dl></dd>
+<dd><pre><code>// 可视化布朗运动
+w = Window(&quot;Brownian motion&quot;, Rect(10, 100, 500, 50));
+x = Slider(w, Rect(10, 15, 480, 20));
+w.front;
+
+p = Pbind(
+    \type, \setProperties,
+    \receiver, x,
+        // 这意味着，对每个事件调用 x.value_()
+    \args, [\value],
+        // 并在 \value 下查找该值
+    \value, Pbrown(0, 1, 0.1, inf),
+    \delta, 0.1
+).play;
+
+p.stop;</code></pre></dd>
+</dl>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_07_Value_Conversions.html">Pattern Guide 07: Value Conversions</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook01_Basic_Sequencing.html">Pattern Guide Cookbook 01: Basic Sequencing</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_08_Event_Types_and_Parameters.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_08_Event_Types_and_Parameters.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

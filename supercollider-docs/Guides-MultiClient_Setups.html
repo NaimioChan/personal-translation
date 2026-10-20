@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多客户端设置 - SuperCollider 文档</title>
+<meta name="description" content="如何在 SuperCollider 中为多个客户端设置和共享服务器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>多客户端设置</h1>
+
+<p><em>如何在 SuperCollider 中为多个客户端设置和共享服务器</em></p>
+
+<p>另请参见：<a href="Classes-ServerOptions.html">ServerOptions</a>、<a href="Classes-Server.html">Server</a></p>
+
+<p><span id="kw_server"> </span><span id="kw_multi-client"> </span></p>
+
+<h2 id="Multi client-server setups - discussion and tests">多客户端-服务器设置——讨论与测试</h2>
+
+<p>SC 与其声音服务器之间的 OSC 通信为网络音乐提供了许多选项：多台计算机可以同时运行 supercollider 和关联的声音服务器。为清晰起见，“服务器进程”指的是正在运行的 scsynth 或 supernova 进程。“服务器对象”又称“客户端”，是服务器在 sclang 中的表示，例如 <code>Server.local, s, Server(\elsewhere, NetAddr("163.234.56.78"))</code>。</p>
+
+<h3 id="What are clientIDs, and how do servers get them?">什么是 clientID，服务器如何获取它们？</h3>
+
+<p>当多个用户在同一个服务器上工作时，某些资源需要在用户/客户端之间共享：</p>
+
+<ul>
+<li>永久和临时 nodeID（由 Server:nodeAllocator 处理），</li>
+<li>私有的控制总线和音频总线通道（由 Server:audioBusAllocator、Server:controlBusAllocator 处理）</li>
+<li>缓冲区编号（由 Server:bufferAllocator 处理）。</li>
+</ul>
+
+<p>这种共享是通过声明预期登录多少个客户端/用户来处理的 - <code>server.options.maxLogins</code> - 并且 scsynth 会在每个客户端登录时自动为其分配不同的 clientID。</p>
+
+<p>最常见的情况是只有一个用户/客户端，它始终获得 clientID 0，并控制所有可用资源（即每个分配器的完整编号范围）。</p>
+
+<p>当多个客户端登录时，会发生以下情况：</p>
+
+<ul>
+<li>启动时，scsynth（服务器进程）以固定的 maxLogins 限制启动。</li>
+<li>当本地或远程服务器对象/客户端没有用户指定的 clientID 时，scsynth 会发回下一个空闲的 clientID，客户端使用该 clientID。</li>
+<li>当使用特定 clientID 创建本地或远程服务器对象/客户端时，如果该编号空闲，scsynth 会返回该编号；否则返回下一个空闲的 clientID；无论哪种情况，客户端都应使用空闲编号，因为另一个编号可能与已登录的客户端冲突。</li>
+<li>如果客户端已经注册并尝试再次注册（在重启或网络问题之后），scsynth 会发回一条失败消息以及该客户端之前拥有的 clientID，客户端将使用该 clientID。</li>
+<li>[After pull request #3181] scsynth 还会返回它启动时使用的 maxLogins 值，因此客户端也可以据此调整其内部分配器设置。</li>
+</ul>
+
+<h3 id="Code examples and tests">代码示例与测试</h3>
+
+<p>同一服务器上多个客户端的推荐用法是：为所有客户端使用相同的选项设置，并从不同的 sclang 实例（通常位于不同的笔记本电脑上）登录到 scsynth 进程。</p>
+
+<pre><code>// 在运行 scsynth 的机器上，它可以是默认服务器。
+// 设置预期的最大客户端登录数：
+s.options.maxLogins = 8;
+// 现在重启服务器，使其具有 maxLogins
+s.reboot;
+
+// 从另一个 sclang 实例登录到 scsynth：
+s.options.maxLogins = 8;
+// 运行 scsynth 的机器在标准端口上的示例 NetAddr
+s.addr = NetAddr(&quot;168.192.1.20&quot;, 57110);</code></pre>
+
+<p>当多客户端设置需要固定 clientID 时，推荐的做法是在创建时设置每个 clientID。</p>
+
+<pre><code>s.options.maxLogins = 8;
+
+r = Server(
+    \remote4,
+    // 运行 scsynth 的机器在标准端口上的示例 NetAddr
+    NetAddr(&quot;168.192.1.2&quot;, 57110),
+    s.options,        // 确保所有远程服务器使用相同的选项
+    4                // 需要时，手动设置固定的客户端
+);
+
+// 现在 s 知道它可以从服务器登录响应中更改 clientID
+// （因为 userSpecifiedClientID 为 false）
+s.userSpecifiedClientID;
+// 而 z 知道保留其 clientID
+r.userSpecifiedClientID;</code></pre>
+
+<h3 id="Separate defaultGroups">分离的 defaultGroups</h3>
+
+<p>关于默认组的信息，请参阅 <a href="Reference-default_group.html">Default Group</a>。</p>
+
+<p>每个向服务器注册的客户端都有自己的 defaultGroup。属于一个客户端的所有节点都在其 defaultGroup 中，并且可以被专门寻址，这样客户端就只能释放自己的节点，而不去触碰此服务器上其他客户端的节点。</p>
+
+<p>客户端还知道所有可能登录的其他客户端的 defaultGroups，因此它可以对其他客户端进行推理，并按需保持共享友好，详见下文 CmdPeriod 行为小节。</p>
+
+<p><code>s.defaultGroups;</code></p>
+
+<h3 id="Easy-to-trace nodeIDs">易于追踪的 nodeID</h3>
+
+<p>关于节点分配的详细信息，请参见 NodeIDAllocator 和 ReadableNodeIDAllocator 类及其帮助文件。NodeIDAllocator 的方案也被许多非 sclang 客户端的分配范围所遵循；在包含这些客户端的网络中，NodeIDAllocator 将是安全的选择。</p>
+
+<pre><code>// NodeIDAllocator 使用固定的二进制前缀 (2 ** 26) * clientID：
+Server.nodeAllocClass = NodeIDAllocator;
+s.newAllocators;
+r.newAllocators;  // 重建分配器
+// clientID 0 有组 1：
+s.clientID;        // 0
+s.defaultGroup;  // Group(1)
+s.defaultGroupID; // 1
+
+// 对于服务器 r：
+r.clientID;         // 4
+r.nodeAllocator.idOffset; // lookup the offset: (2 ** 26 * 4)
+r.defaultGroup;        // Group(268435457) : idOffset + 1
+
+r.defaultGroupID;     // 268435457
+r.options.maxLogins    // 8
+
+// 反向计算节点属于哪个 clientID
+r.defaultGroupID mod: (2 ** 26); // 1 是相对于 idOffset 相对 ID 的 nodeID
+r.defaultGroupID &gt;&gt; 26;
+r.nextNodeID ;   // 从 defaultGroupID + 1000 开始
+r.nextNodeID &gt;&gt; 26; // 从长 nodeID 获取 clientID
+
+
+// ReadableNodeIDAllocator 使用十进制前缀——以作演示：
+Server.nodeAllocClass = ReadableNodeIDAllocator;
+s.newAllocators;
+r.newAllocators;  // 重建分配器
+
+// 对于 clientID 0，没有任何变化：
+s.clientID;       // 0
+s.defaultGroup;   // Group(1)
+s.defaultGroupID; // 1
+
+// 对于服务器 r：
+r.clientID;         // 4
+r.nodeAllocator.idOffset;  // 十进制偏移，使 clientID 成为前缀
+r.defaultGroupID;     // 400000001 - 便于识别 nodeID 来源
+r.defaultGroup;        // Group(400000001)
+r.options.maxLogins    // 8
+
+// s.defaultGroup 可以通过多种方式查找：
+r.defaultGroupID;  // 400000001
+r.defaultGroup;    // Group(400000001)
+r.asGroup;         // Group(400000001)
+r.asTarget;        // Group(400000001)
+
+
+// 临时节点 ID 可读地属于 clientID 4，从 4...1000 开始
+5.do { r.nextNodeID.postln };
+5.do { s.nextNodeID.postln };
+
+
+// 为演示起见，将 r 的 addr 切换为指向本地 scsynth，
+// 这样我们可以在单台机器上测试分配器编号：
+r.addr = s.addr;
+// 每当创建一个可访问的声音进程时，它都会获得一个 nodeID；
+// 这里有四种不同的创建声音的方式，看看它们的 nodeID：
+r.reboot;
+r.plotTree;
+Server.default = r;
+
+// Synth
+x = Synth(\default, nil);
+x.release;
+
+x = { Dust.ar(10!2).lag(0.002) }.play(r);
+x.release(2);
+
+Pbind(\degree, Pseq((0..7).mirror), \dur, 0.15, \server, r).play;
+
+// JITLib 节点代理
+Ndef(\x, { Dust.ar(10 ! 2) });
+Ndef(\x).play;
+Ndef(\x).filter(10, { |in| Ringz.ar(in, [600, 800], 0.03) }).play;
+Ndef(\x).end(3);</code></pre>
+
+<h3 id="Bus channel and buffer numbers">总线通道和缓冲区编号</h3>
+
+<p>音频总线和控制总线以及缓冲区的分配器将 scsynth 的完整数字范围按预期客户端数量均匀划分。</p>
+
+<pre><code>// clientID 的默认值为 0，maxLogins 为 1
+Server.default = Server.local;
+s.clientID;   // 0
+s.options.maxLogins; // 默认 1
+
+// 你可以手动设置 maxLogins_ - 不推荐，仅用于此处测试：
+s.options.maxLogins_(1); // 默认 1
+
+s.options.numAudioBusChannels;
+// 使用 newAllocators 方法相应地创建分配器范围
+s.newBusAllocators;
+s.audioBusAllocator.size;
+
+// 可分配 1024 个 bus，起始于硬件 IO bus 之后。
+Bus.audio(s, 2);
+
+//  手动将 maxLogins_ 设为 8——不推荐，这里仅用于演示：
+s.options.maxLogins_(8);
+s.newBusAllocators; // 每个客户端分配 128 = 1024 / 8 个总线。
+s.audioBusAllocator.size;
+3.collect { Bus.audio(s, 2) };
+// 分配 1024 个控制总线，从 0 开始
+s.controlBusAllocator.size;
+3.collect { Bus.control(s, 2) };
+
+r.options.dump
+r.newBusAllocators;
+// 音频总线范围从 1024 总范围中的 512 开始
+3.collect { Bus.audio(r, 2) }; // 512, 514, 516
+// 控制总线范围从 16384 总范围中的 8192 开始
+3.collect { Bus.control(r, 2) };</code></pre>
+
+<p>缓冲区分配使用相同的类 ContiguousBlockAllocator，因此工作方式相同。</p>
+
+<pre><code>// 显示缓冲区分配
+Server.default = Server.local;
+s.bufferAllocator.size;
+3.collect { Buffer(s) }; // 从 0 开始
+
+r.bufferAllocator.size;
+3.collect { Buffer(r) }; // 从 256 开始
+
+// 这里更希望有更多缓冲区分配示例？</code></pre>
+
+<h3 id="Configuring CmdPeriod behavior">配置 CmdPeriod 行为</h3>
+
+<p>在网络演出中，让客户端对远程服务器上“自己的”声音拥有精心选择的紧急访问权限很有用；并且给本地客户端更多紧急权限可能也有意义。两者都可以轻松配置。</p>
+
+<p><strong>默认行为</strong></p>
+
+<p>默认情况下，本地客户端会终止所有声音，并仅重建其 defaultGroup；在远程客户端上，CmdPeriod 完全不影响远程服务器。</p>
+
+<pre><code>// 默认 - 单个客户端：
+s.options.maxLogins_(1);
+s.reboot;
+s.plotTree;        // 观察以调试
+s.defaultGroup; // Group(1)
+s.defaultGroups; //  只有一个客户端，所以这是 [ Group(1) ]
+(dur: inf).play;  // 播放测试声音
+Group(0);   // 在根层级创建另一个组
+s.freeAll;  // 声音和添加的组消亡，只剩下 Group(1)
+
+// 使用 CmdPeriod 时相同：
+(dur: inf).play;  // 播放测试声音
+Group(0);   // 在根层级创建另一个组
+CmdPeriod.run; // 模拟 CmdPeriod 按键操作
+
+
+// 展示行为和 4 客户端设置下的支持方法：
+s.options.maxLogins_(4);
+s.reboot;
+s.defaultGroups; // 4 个默认组，每个可能的客户端一个。
+// 将特定 clientID 的 defaultGroups 发送到 scsynth：-&gt; cf plotTree
+s.sendDefaultGroupsForIDs([0, 1]); // 添加第二个 defaultGroup
+
+// 发送所有默认组
+s.sendDefaultGroups; // plotTree 中的四个组
+
+// s.tree 在每次 CmdPeriod 后都会被求值。
+// 确保 s.tree 中没有任何内容：
+s.tree = nil;
+s.freeAll; // &lt;- 默认情况下，也会释放其他客户端的 defaultGroups。</code></pre>
+
+<p><strong>远程友好的本地父级设置</strong></p>
+
+<p>现在，服务器上的所有声音都如预期般消失了。但其他客户端现在无法启动新的 synth，因为它们的 defaultGroups 也消失了！</p>
+
+<p>因此，本地客户端应重建它们，以便其他客户端可以重新开始播放：</p>
+
+<pre><code>// - 最简单的选项：
+s.tree = { s.sendDefaultGroups; };
+(dur: inf).play;  // 测试声音
+Group(0);   // 在根层级创建第二个组
+CmdPeriod.run; // 模拟 CmdPeriod 按键操作
+// -&gt; 仍会停止所有声音，但随后会重建所有 defaultGroups，
+// 这样其他客户端可以继续。</code></pre>
+
+<p><strong>让远程客户端控制它们的声音</strong></p>
+
+<pre><code>// 创建一个模拟的远程服务器
+x = Server(\pseudoRem3, s.addr, s.options, 3);
+// 方法到
+~freeMyGroupX = { x.freeMyGroup };
+CmdPeriod.add(~freeMyGroupX);
+// 从中伪造播放声音：
+(dur: 10, group: x.defaultGroup).play;
+(dur: 10, degree: 2).play; // 以及一个在 home 客户端上
+
+~freeMyGroupX.value; // 只释放 \pseudoRem3 中的那个
+
+CmdPeriod.remove(~freeMyGroupX);
+
+strong::Symmetrical / democratic setups::
+
+The home client on the machine where scsynth runs may want to be just like the others. It is simple to make the home client more polite:
+code::
+// 首先，禁用通用的 freeAll：
+CmdPeriod.freeServers = false;
+s.tree = nil;
+s.sendDefaultGroups;
+// 并向 CmdPeriod 添加一个自定义动作：
+~freeMyGroupS = { s.freeMyGroup };
+CmdPeriod.add(~freeMyGroupS);
+(dur: inf).play;  // 测试声音
+// 模拟来自不同客户端的第二个声音：
+(dur: inf, degree: 2, group: s.defaultGroups[3]).play;
+
+CmdPeriod.run; // 模拟 CmdPeriod 按键操作
+// -&gt; 只停止 s.defaultGroup，其他保持不变
+
+CmdPeriod.remove(~freeMyGroupS); // cleanup
+s.freeAll;</code></pre>
+
+<p><strong>赋予一切更多力量</strong></p>
+
+<p>在一个不那么友好的对称设置中，CmdPeriod 会停止所有客户端上的所有声音，但保持所有 defaultGroups 运行。</p>
+
+<pre><code>~myserver = s; // s 在本机，远程客户端在其他机器上
+~myserver.sendDefaultGroups;
+~freeDefaultGroups = { ~myserver.freeDefaultGroups };
+CmdPeriod.add(~freeDefaultGroups);
+(dur: inf).play;  // 测试声音
+// 来自客户端 1 的假声音：
+(dur: inf, degree: 2, group: s.defaultGroups[1].nodeID).play;
+
+CmdPeriod.run; // 模拟 CmdPeriod 按键操作
+// -&gt; 所有客户端停止所有组中的声音，组保留。</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/MultiClient_Setups.html" rel="noreferrer noopener">Guides/MultiClient_Setups.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

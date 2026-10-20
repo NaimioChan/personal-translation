@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>理解错误 - SuperCollider 文档</title>
+<meta name="description" content="理解错误的指南">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>理解错误</h1>
+
+<p><em>理解错误的指南</em></p>
+
+<p>另请参阅：<a href="Guides-Debugging-tips.html">调试技巧</a></p>
+
+<h2 id="Reading error dumps">读取错误转储</h2>
+
+<p>当 sc3 向用户报告错误时，通常包含三个部分：</p>
+
+<ul>
+<li>错误文本</li>
+<li>导致错误的方法的接收者的转储，和/或方法调用的任何参数</li>
+<li>到错误发生点为止的调用栈转储</li>
+</ul>
+
+<p>例如：</p>
+
+<pre><code>1.blech  // 没有类实现此方法；因此你会得到一个错误
+
+// 错误文本
+ERROR: Message &#x27;blech&#x27; not understood.
+
+// 接收者与参数
+RECEIVER:
+   Integer 1
+ARGS:
+Instance of Array {    (02207560, gc=01, fmt=01, flg=11, set=00)
+  indexed slots [0]
+}
+
+// 调用栈
+CALL STACK:
+    DoesNotUnderstandError-reportError
+        arg this = &lt;instance of DoesNotUnderstandError&gt;
+    Nil-handleError
+        arg this = nil
+        arg error = &lt;instance of DoesNotUnderstandError&gt;
+    Object-throw
+        arg this = &lt;instance of DoesNotUnderstandError&gt;
+    Object-doesNotUnderstand
+        arg this = 1
+        arg selector = &#x27;blech&#x27;
+        arg args = [*0]
+    &lt; closed FunctionDef &gt;  (no arguments or variables)
+    Interpreter-interpretPrintCmdLine
+        arg this = &lt;instance of Interpreter&gt;
+        var res = nil
+        var func = &lt;instance of Function&gt;
+    Process-interpretPrintCmdLine
+        arg this = &lt;instance of Main&gt;</code></pre>
+
+<p>这些部分中的每一部分都提供了关于错误原因的有价值信息。如果你理解错误输出的含义，调试会容易得多。</p>
+
+<dl>
+<dt>错误文本</dt>
+<dd><p>描述错误的字符串。在本例中，“Message 'xxx' not understood”表示你试图在一个未实现该方法 xxx 的类上使用它。</p></dd>
+<dt>接收者与参数</dt>
+<dd><p>该方法被应用于一个整数（1），且没有参数（参数数组的大小为 0）。</p></dd>
+<dt>调用栈</dt>
+<dd><p>调用栈中的执行顺序是相反的：栈顶显示最近的调用。</p></dd>
+</dl>
+
+<p>大多数错误的调用栈都会显示与这里相同的顶部三个调用（在错误类上调用 reportError 方法、在 Nil 上调用 handleError、在错误对象上调用 throw）。你可以忽略这三个调用。</p>
+
+<p>以下是核心部分：错误发生在一个对象未被理解时。继续往下读，它发生在一个函数定义内部。（每次你高亮一段代码并按下回车键，代码就会被编译成一个函数定义并执行。因此，这个函数定义简单地指代提交给解释器的文本。）而这一切都始于解释并打印命令行的指令。</p>
+
+<p>下面是一个稍微复杂一些的例子，展示了如何使用调用栈中每次调用所列出的变量来帮助定位错误。</p>
+
+<pre><code>Routine({
+    var a;
+    a = 5;
+    loop {
+        var b;
+        b = 20.rand;
+        b.postln.ecky_ecky_phtang;   // &quot;NI!!!!&quot;
+        a.wait;
+    }
+}).play;
+
+ERROR: Message &#x27;ecky_ecky_phtang&#x27; not understood.
+RECEIVER:
+   Integer 6
+ARGS:
+Instance of Array {    (02207560, gc=01, fmt=01, flg=11, set=00)
+  indexed slots [0]
+}
+CALL STACK:
+    DoesNotUnderstandError-reportError
+        arg this = &lt;instance of DoesNotUnderstandError&gt;
+    Nil-handleError
+        arg this = nil
+        arg error = &lt;instance of DoesNotUnderstandError&gt;
+    Object-throw
+        arg this = &lt;instance of DoesNotUnderstandError&gt;
+    Object-doesNotUnderstand
+        arg this = 6
+        arg selector = &#x27;ecky_ecky_phtang&#x27;
+        arg args = [*0]
+    &lt; FunctionDef in closed FunctionDef &gt;
+        var b = 6
+    Function-loop
+        arg this = &lt;instance of Function&gt;
+    &lt; FunctionDef in closed FunctionDef &gt;
+        var a = 5
+    Routine-prStart
+        arg this = &lt;instance of Routine&gt;
+        arg inval = 1542.075067</code></pre>
+
+<p>这次从下往上读，以按时间顺序追踪流程：这一次，执行不是从命令行开始的，而是从调度器内启动的一个例程（Routine({...}).play）开始的。请注意，有两个调用被标识为“FunctionDef in closed FunctionDef”，它们可以通过其中包含的变量来区分。较早的调用（从下往上第二个）定义了变量“a”，而另一个定义了“b”。因此，要在代码中定位错误，你应该寻找一个定义了变量“b”的函数，它在一个例程内被另一个定义了“a”的函数调用。</p>
+
+<p>如果错误不是发生在你编写的函数定义内部，而是发生在类库中的某个方法内部呢？该方法可能存在 bug，或者你可能以为该方法接受某种参数，而实际上它期望的是别的参数。</p>
+
+<p>如果你在调用栈中双击 "ClassName-methodName" 这样的构造，整个内容会被选中。然后你可以按 cmd-J 打开方法定义并查看源代码。</p>
+
+<h2 id="Error objects and error handling">错误对象与错误处理</h2>
+
+<p>sc3 使用 Error 对象来实现错误报告，Error 对象是 Error 类或其子类的实例。任何代码（无论是类库中的代码还是任何用户应用程序中的代码）都可以随时按如下方式抛出错误：</p>
+
+<pre><code>Error(&quot;This is a basic error.&quot;).throw;</code></pre>
+
+<p>你也可以通过使用 <code>try</code> 或 <code>protect</code> 代替 <code>value</code> 来执行函数，从而捕获函数内部发生的异常。</p>
+
+<dl>
+<dt>try</dt>
+<dd><p>执行第一个函数。出错时，执行第二个函数并抑制该错误。第二个函数可以根据需要重新抛出错误，从而让你决定哪些错误将被报告、哪些被抑制。在此示例中，我们不重新抛出错误，因此错误被吞掉，执行继续到末尾。</p></dd>
+<dd><pre><code>try { 1.blech } { |error| &quot;oops&quot;.postln };
+&quot;next line&quot;.postln;
+
+oops
+next line</code></pre></dd>
+<dt>protect</dt>
+<dd><p>执行第一个函数。出错时，在报告错误之前执行第二个函数。当 protect 之前的步骤进行了某些更改且出错时需要撤销这些更改时，这很有用。参见 Environment:use 中的示例。</p></dd>
+<dd><pre><code>protect { 1.blech } { |error| &quot;oops&quot;.postln };
+&quot;next line&quot;.postln;
+
+oops  // 如果没有 protect，这不会被发布
+ERROR: Message &#x27;blech&#x27; not understood.
+RECEIVER:
+   Integer 1
+ARGS:
+Instance of Array {    (02207560, gc=01, fmt=01, flg=11, set=00)
+  indexed slots [0]
+}
+CALL STACK:
+    DoesNotUnderstandError-reportError
+        arg this = &lt;instance of DoesNotUnderstandError&gt;</code></pre></dd>
+</dl>
+
+<p>在 2004 年 8 月之前，如果没有错误，try 和 protect 不会将函数的值返回给调用者。</p>
+
+<pre><code>try { 1+1 }
+
+a Function</code></pre>
+
+<p>较新的构建（自 2004 年 8 月初以来）确实会返回函数的值。非错误对象可以使用 Exception 类抛出。</p>
+
+<pre><code>try { 1+1 }
+2
+
+// 无法将 Point 加到整数上 - 二元运算失败错误
+// 改为返回 catch 函数的结果
+try { 1+Point(0, 0) } { 2*5 }
+10</code></pre>
+
+<h2 id="Common primitive errors">常见原语错误</h2>
+
+<h3 id="operation cannot be called from this Process.">无法从此 Process 调用该操作。</h3>
+
+<p>这通常是在例程或调度函数中执行 GUI 操作的结果，而这些代码运行在 AppClock 之外的某个时钟上。AppClock 是唯一可以执行 GUI 操作的时钟，因为它是较低优先级的线程。如果 CPU 正忙于音频合成或为音乐事件维护精确调度，AppClock 事件将被延迟，直到 CPU 足够空闲。</p>
+
+<p>解决方案：按如下方式编写 GUI 更新。defer 会在 AppClock 上调度该函数。</p>
+
+<pre><code>{ myGUIObject.value_(newValue) }.defer;</code></pre>
+
+<h3 id="Attempted write to immutable object.">尝试写入不可变对象。</h3>
+
+<pre><code>#[0, 1, 2].put(1, 3)
+
+ERROR: Primitive &#x27;_BasicPut&#x27; failed.
+Attempted write to immutable object.</code></pre>
+
+<p><code>#[0, 1, 2]</code> 是一个字面量数组。字面量数组不能被操作——只能被索引。它们不能在内部被更改。</p>
+
+<p>解决方案：先复制数组。</p>
+
+<pre><code>#[0, 1, 2].copy.put(1, 3)
+
+[ 0, 3, 2 ]</code></pre>
+
+<h3 id="Index not an Integer.">索引不是整数。</h3>
+
+<pre><code>#[0, 1, 2].at(\1)
+
+ERROR: Primitive &#x27;_BasicAt&#x27; failed.
+Index not an Integer</code></pre>
+
+<p>数组只能使用整数索引（或者，自 2004 年 8 月起的构建中，可使用浮点数）。</p>
+
+<p>解决方案：使用 <code>.asInteger</code></p>
+
+<pre><code>#[0, 1, 2].at(\1.asInteger)
+1</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果该对象无法转换为整数，你将得到一个“Does not understand”错误！</p></blockquote>
+
+<h3 id="Index out of range.">索引超出范围。</h3>
+
+<pre><code>[0, 1, 2].put(5, 5)
+
+ERROR: Primitive &#x27;_BasicPut&#x27; failed.
+Index out of range.</code></pre>
+
+<p>数组的大小是有限的。如果你试图将一个对象放入数组的某个槽位，但该槽位因数组太小而不存在，就会得到这个错误。</p>
+
+<p>解决方案：扩展数组。</p>
+
+<pre><code>[0, 1, 2].extend(6).put(5, 5)
+
+[ 0, 1, 2, nil, nil, 5 ]</code></pre>
+
+<p>请注意，如果传给 extend() 的参数小于数组，那么数组将被截断。如果不确定，请使用 max：</p>
+
+<pre><code>i = rrand(5, 10);
+a = [0, 1, 2];
+a.extend(max(i+1, a.size)).put(i, 100);</code></pre>
+
+<p>为什么是 i+1？大小为 4 的数组允许 0、1、2 和 3 作为索引（从 0 开始的 4 个元素）。</p>
+
+<p>如果是新数组，请使用 .newClear 而不是 .new。</p>
+
+<pre><code>a = Array.new(4);
+a.put(3, 1);
+ERROR: Primitive &#x27;_BasicPut&#x27; failed.
+Index out of range.
+
+a = Array.newClear(4);
+a.put(3, 1);
+[ nil, nil, nil, 1 ]</code></pre>
+
+<h2 id="A common warning">常见警告</h2>
+
+<pre><code>WARNING: FunctionDef contains variable declarations and so will not be inlined.</code></pre>
+
+<p>可以安全地忽略此警告。即使收到此警告，你的代码仍会运行。</p>
+
+<p>内联是一种编译器优化，它将函数内部的操作取出并放置到包含该函数的主线中。例如，</p>
+
+<pre><code>// 内联
+{ while { 0.9.coin } { 10.rand.postln }
+}.def.dumpByteCodes;
+
+BYTECODES: (16)
+  0   40       PushLiteral Float 0.9   3FECCCCC CCCCCCCD  // { 0.9.coin }
+  1   0D 2C    SendSpecialUnaryArithMsgX &#x27;coin&#x27;
+  3   F9 00 09 JumpIfFalsePushNil 9  (15)
+  6   2C 0A    PushInt 10                              // { 10.rand.postln }
+  8   0D 25    SendSpecialUnaryArithMsgX &#x27;rand&#x27;
+ 10   C1 38    SendSpecialMsg &#x27;postln&#x27;
+ 12   FD 00 0D JumpBak 13  (0)
+ 15   F2       BlockReturn
+a FunctionDef in closed FunctionDef</code></pre>
+
+<p>此函数包含另外两个函数。一个是 while 循环的条件；另一个是 while 循环的动作。编译器将其转换为单个代码块，使用跳转指令来处理循环和退出。</p>
+
+<p>然而，如果其中一个函数定义了变量，那么该函数就需要一个单独的执行帧。在这种情况下，编译器必须将函数定义对象压入栈中。</p>
+
+<pre><code>// 不内联
+{ while { 0.9.coin } {
+    var a;    // 这里的变量会阻止优化
+    a = 10.rand;
+    a.postln
+  }
+}.def.dumpByteCodes;
+
+BYTECODES: (7)
+  0   04 00    PushLiteralX instance of FunctionDef in closed FunctionDef
+  2   04 01    PushLiteralX instance of FunctionDef in closed FunctionDef
+  4   C2 0C    SendSpecialMsg &#x27;while&#x27;
+  6   F2       BlockReturn
+a FunctionDef in closed FunctionDef</code></pre>
+
+<p>内联代码会运行得更快，因为压入和使用不同的执行帧对虚拟机来说是额外的工作。如果你非常在意速度，可以把这条警告当作一个指示，说明你也许还能进一步优化代码。</p>
+
+<p>有时，无法避免未优化的代码。具体来说，</p>
+
+<pre><code>// 内联、优化，但你会得到卡住的音符
+Routine({
+  var synth;
+  { synth = Synth(&quot;someSynth&quot;, [...args...]);
+    thisThread.clock.sched(10, {
+      synth.free;
+    });
+    2.wait;
+  }.loop;
+}).play;
+
+// 未内联，但不会卡住音符
+Routine({
+  { var synth;
+    synth = Synth(&quot;someSynth&quot;, [...args...]);
+    thisThread.clock.sched(10, {
+      synth.free;
+    });
+    2.wait;
+  }.loop;
+}).play;</code></pre>
+
+<p>第一个例程可以优化，因为循环内部没有变量声明。但是，synth 变量在每次迭代时都会变化，这意味着当第一次释放发生时，你不再能访问到第一个音符。因此第一个音符将永远不会终止。</p>
+
+<p>在第二种情况下，每个音符都有自己的 synth 变量，因此音符会如预期那样被终止。你会收到一条警告，但这样更好，因为结果正确。</p>
+
+<p>上述问题的一个解决方案是使用带局部变量的函数。</p>
+
+<pre><code>(
+Routine({
+    var func;
+    func = {
+        var synth; // 此变量是函数的局部变量
+        synth = Synth(&quot;default&quot;);
+        [\play, synth].postln;
+        thisThread.clock.sched(4.5, {
+            synth.free;
+            [\free, synth].postln;
+        });
+    };
+    { func.value; 1.wait; }.loop
+}).play;
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Understanding-Errors.html" rel="noreferrer noopener">Guides/Understanding-Errors.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
