@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LinkClock - SuperCollider 文档</title>
+<meta name="description" content="与 Ableton Link 同步的调度器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>LinkClock</h1>
+
+<p><em>与 Ableton Link 同步的调度器</em></p>
+
+<p>参见：<a href="Classes-TempoClock.html">TempoClock</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>LinkClock 是一种基于 <a href="Classes-TempoClock.html">TempoClock</a> 的时钟，它依赖于 <a href="https://www.ableton.com/en/link/">Ableton Link</a>，这是一种在本地网络上同步相位（小节内的节拍）和速度的协议。</p>
+
+<h3 id="Link behavior">链接行为</h3>
+
+<p>Link 尽可能在同步的同时，允许应用程序按自己的节奏运行：</p>
+
+<ul>
+<li>速度：任何应用程序都可以随时改变速度。</li>
+<li>Beat：整数拍应在所有应用程序中同时发声。</li>
+<li>相位（类似于 SuperCollider 的 <a href="Classes-TempoClock.html#-beatInBar">TempoClock: -beatInBar</a>）：一个 peer 中的强拍应对应其他 peer 中的强拍。</li>
+</ul>
+
+<p>Link 不会同步精确的拍数。两个加入同一 Link 会话的 SuperCollider 对等端，在 4/4 拍中，可能分别位于第 4 拍和第 16 拍（它们都是小节线），但它们不应位于第 4.0 拍和第 19.0 拍。</p>
+
+<p>许多启用 Link 的应用程序（DAW）可以启动和停止整个时间线。SuperCollider 的时钟不会停止。DAW 在开始播放时，应锁定到 SuperCollider 在小节内的相位。你可以注册函数来响应其他对等端的启动或停止。（SuperCollider 并不知道是哪个其他对等端启动或停止了。）</p>
+
+<h3 id="Latency">Latency</h3>
+
+<p>Link 协调给定节拍的<em>发声时间</em>。</p>
+
+<p>所有音频应用程序都必须提前准备好事件和音频处理，以便信号能在正确的时间到达音频接口。SuperCollider 为此使用 OSC 时间戳，根据当前时间（以秒为单位）加上一个 <code>latency</code> 偏移量来计算时间戳。</p>
+
+<p>因此，为了与其他应用程序协调，<code>LinkClock</code> 必须以相同的固定偏移量比期望的发声时间更早运行。也就是说，它应具有与服务器相同的（正）延迟偏移：</p>
+
+<pre><code>t = LinkClock.new.latency_(Server.default.latency);</code></pre>
+
+<p>之后，服务器消息应以相同的延迟量发送。由模式生成的事件会自动应用服务器对象的延迟。对于其他消息，请使用 <a href="Classes-Server.html#-makeBundle">Server: -makeBundle</a>。</p>
+
+<p>在延迟为正的情况下，如果检查 <code>t.beats</code>，它会显得比其他应用中显示的节拍更晚。这是正常的。SuperCollider 中的时钟必须提前运行，事件才能准时发声。</p>
+
+<p>（由于时钟和服务器有独立的延迟设置，因此可以相对于其他应用程序调整时序。例如，如果你发现 SuperCollider 的声音稍晚，可以略微增加 LinkClock 的延迟，使时钟提前，而不影响消息传递延迟。理想情况下这应该没有必要，但应用程序之间的协调可能很棘手。）</p>
+
+<p>这确实会对速度变化产生影响。SuperCollider 只有在其他对等端发送速度变化之后才会接收到它们，这对我们的时钟来说可能稍晚。在实践中，这意味着落在延迟间隙内的事件可能会稍微不同步，但同步应该会很快恢复。（因此，Link 并不适合涉及频繁速度或拍号变化的音乐。）</p>
+
+<h3 id="beatsPerBar and quantum">beatsPerBar 与 quantum</h3>
+
+<p>对于每一个时刻，Ableton Link 都知道拍子、以秒计的时间以及<em>相位</em>。相位是相对于<em>量子</em>来度量的。共享相同量子的 Link 对等端将同步小节线。</p>
+
+<p>例如，假设 quantum = 4。Peer A 当前位于第 33 拍。Peer B 加入网络。Peer A 的上一个小节线是第 32 拍，因此 phase = 1。Peer B 的拍计数器应调整为具有相同的相位：在实践中，它将从 -3 开始。</p>
+
+<table>
+<tr><td><p>Phase</p></td><td><p>Peer A 节拍</p></td><td><p>Peer B 节拍</p></td><td><p>Notes</p></td></tr>
+<tr><td><p>0</p></td><td><p>32</p></td><td><p>--</p></td><td></td></tr>
+<tr><td><p>1</p></td><td><p>33</p></td><td><p>-3</p></td><td><p>Link 为 B 计算得 -3</p></td></tr>
+<tr><td><p>2</p></td><td><p>34</p></td><td><p>-2</p></td><td></td></tr>
+<tr><td><p>3</p></td><td><p>35</p></td><td><p>-1</p></td><td></td></tr>
+<tr><td><p>0</p></td><td><p>36</p></td><td><p>0</p></td><td><p>小节线（同步）</p></td></tr>
+</table>
+
+<p>如果你改变 quantum，Link 不保证拍子会保持相同的时长。拍子可能变短或变长，以尝试保持相位同步。</p>
+
+<p>因此，你<em>不应</em>在演出过程中更改 quantum。Ableton 建议在开始前设置好 quantum。之后，你可以根据需要更改 SuperCollider 的 <code>beatsPerBar</code>，而无需更改 quantum，从而使 Link 的相位参考保持一致。</p>
+
+<p>SuperCollider 对等端可以选择通过 <a href="Classes-LinkClock.html#-enableMeterSync">LinkClock: -enableMeterSync</a> 来同步小节线和所有拍号变化。这与 Link 的 quantum 无关，并且可以安全地在演出中途使用。参见 <a href="Classes-MeterSync.html">MeterSync</a>。</p>
+
+<h3 id="Notifications">Notifications</h3>
+
+<p>LinkClock 的状态可能会被其他已连接的 Link 对等节点更改。LinkClock 使用依赖通知将新状态转发给其他感兴趣的对象。</p>
+
+<table>
+<tr><td><p>Notification</p></td><td><p>Event</p></td></tr>
+<tr><td><p>\tempo</p></td><td><p>速度已改变</p></td></tr>
+<tr><td><p>\meter</p></td><td><p>时钟的 beatsPerBar 已更改</p></td></tr>
+<tr><td><p>\linkStart</p></td><td><p>外部对等端开始播放</p></td></tr>
+<tr><td><p>\linkStop</p></td><td><p>外部对等端停止播放</p></td></tr>
+<tr><td><p>\numPeers</p></td><td><p>连接的节点数量发生变化</p></td></tr>
+<tr><td><p>\resynced</p></td><td><p>在 -enableMeterSync 之后，每当 MeterSync 的 -resyncMeter 调用成功完成时，都会发送一个 \resynced 通知。传递一个 Boolean 参数：如果找到了其他 SuperCollider 对等节点则为 true，否则为 false。</p></td></tr>
+</table>
+
+<p>（请注意，Link 不会在对等端之间同步节拍；此通知继承自 TempoClock。<a href="Classes-LinkClock.html#-isSyncingMeter">LinkClock: -isSyncingMeter</a> 是 SuperCollider 特有的同步节拍方式；它不属于 Link 协议。）</p>
+
+<p>注册接收通知最方便的方式是使用 <a href="Classes-SimpleController.html">SimpleController</a>。参见下面的示例。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>.new</code></h4>
+
+<p>创建一个新的 LinkClock 实例。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>tempo</p></td><td class="argumentdesc"><p>初始 <a href="#-tempo">tempo</a>。默认为 <code>1</code>。</p></td></tr>
+<tr><td class="argumentname"><p>beats</p></td><td class="argumentdesc"><p>以拍为单位的时间，对应于参考时间。默认为 <code>0</code>。</p></td></tr>
+<tr><td class="argumentname"><p>seconds</p></td><td class="argumentdesc"><p>参考时间，以秒为单位。参见 <a href="Classes-TempoClock.html#*new">TempoClock: *new</a>。</p></td></tr>
+<tr><td class="argumentname"><p>queueSize</p></td><td class="argumentdesc"><p>调度队列的存储大小。参见 <a href="Classes-TempoClock.html#*new">TempoClock: *new</a>。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>如果在本地网络上发现了现有的 Link 会话，对象会连接到该会话并使用其属性：<code>tempo</code> 参数会被丢弃，转而使用会话的速度，而 <code>beat</code> 参数会被调整，以确保所有对等端之间正确的节拍和相位同步。如果 SuperCollider 是第一个加入的，则会在本地创建一个新的 Link 会话，并使用构造函数的参数进行初始化。</p>
+
+<h4 id="*newFromTempoClock"><code>.newFromTempoClock</code></h4>
+
+<p>创建一个从 <a href="Classes-TempoClock.html">TempoClock</a> 派生的 LinkClock 新实例。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>clock</p></td><td class="argumentdesc"><p>用于创建 LinkClock 的 <a href="Classes-TempoClock.html">TempoClock</a>。</p></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<p>LinkClock 的 <a href="#-tempo">tempo</a>、<a href="#-beats">beats</a>、<a href="#-seconds">seconds</a> 和 <a href="#-beatsPerBar">beatsPerBar</a> 值被设置为 TempoClock 的对应值。随后 TempoClock 被停止，它的所有任务都由新创建的 LinkClock 重新调度，因此它们现在与 Link 会话同步。</p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h4 id="-latency"><code>.latency</code></h4>
+
+<p>获取或设置 <code>LinkClock</code> 应考虑的 OSC 消息延迟秒数。通常，应将其设置为与服务器对象的延迟相匹配。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>lat</p></td><td class="argumentdesc"><p>一个 Float。</p></td></tr>
+</table>
+
+<h4 id="-tempo"><code>.tempo</code></h4>
+
+<p>在当前逻辑时间设置或获取当前会话速度。注意，速度可能随时被另一个对等端改变；在这种情况下，LinkClock 会广播一个 <code>\tempo</code> 通知（参见 <a href="Classes-LinkClock.html#Notifications">LinkClock: Notifications</a>）。</p>
+
+<h4 id="-beats"><code>.beats</code></h4>
+
+<p>设置或获取以拍为单位的当前逻辑时间。如果你尝试设置拍数，Link 可能会调整你给定的值，以与其他 peer 保持同步。</p>
+
+<h4 id="-numPeers"><code>.numPeers</code></h4>
+
+<p>获取连接到当前 Link 会话的对等节点数量。当对等节点加入或离开会话时，LinkClock 会广播一个 <code>\numPeers</code> 通知（参见 <a href="Classes-LinkClock.html#Notifications">LinkClock: Notifications</a>）。</p>
+
+<h4 id="-quantum"><code>.quantum</code></h4>
+
+<p>获取或设置 Link 的内部 quantum（见上文 <a href="#beatsPerBar%20and%20quantum">beatsPerBar and quantum</a>）。通常应在演出开始时进行此操作，或者完全不进行。在演出期间更改 quantum 是有风险的。局部更改拍号的方式与 TempoClock 中相同：<a href="Classes-TempoClock.html#-beatsPerBar">TempoClock: -beatsPerBar</a>。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>quantum</p></td><td class="argumentdesc"><p>一个 Integer 或 Float。</p></td></tr>
+</table>
+
+<h4 id="-enableMeterSync"><code>.enableMeterSync</code></h4>
+
+<p>通过在内部创建 <a href="Classes-MeterSync.html">MeterSync</a> 对象来激活 SuperCollider 小节线同步。（如果已启用，则不会创建新对象。）</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>id</p></td><td class="argumentdesc"><p>可选：一个整数 ID，唯一标识此实例。如果未提供，将随机选择一个。</p></td></tr>
+<tr><td class="argumentname"><p>ports</p></td><td class="argumentdesc"><p>可选：一个端口号数组，小节线同步消息将被发送到这些端口。</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>该 LinkClock 实例（用于支持链式配置方法，例如 <code>l = LinkClock.new.latency_(s.latency).enableMeterSync</code>，在这种情况下你希望 <code>l</code> 是时钟对象）。要访问 MeterSync 对象，请使用 <a href="#-getMeterSync">-getMeterSync</a>。</p>
+
+<h4 id="-disableMeterSync"><code>.disableMeterSync</code></h4>
+
+<p>移除所有小节线同步对象。</p>
+
+<h4 id="-isSyncingMeter"><code>.isSyncingMeter</code></h4>
+
+<h4>返回值：</h4>
+
+<p>一个布尔值，如果小节线同步处于活动状态则为 <code>true</code>，否则为 <code>false</code>。（如果你独立创建小节线同步对象，此答案可能不正确。）</p>
+
+<h4 id="-getMeterSync"><code>.getMeterSync</code></h4>
+
+<h4>返回值：</h4>
+
+<p>先前由 <a href="#-enableMeterSync">-enableMeterSync</a> 创建的 MeterSync 对象。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 尽管冗余且不推荐，但可以通过执行 <code>clock.enableMeterSync</code> 和 <code>m = SCClockMeterSync(clock)</code> 来创建多个小节线同步对象。<code>getMeterSync</code> <em>仅</em>能访问由 <code>clock.enableMeterSync</code> 创建的对象。因此，建议在所有情况下都使用 <code>clock.enableMeterSync</code>。</p></blockquote>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>(
+s.waitForBoot({
+    SynthDef(\click, { |freq = 400, amp = 0.2|
+        var sig = SinOsc.ar(freq, 0.5pi) *
+            Env.perc(0.001, 0.06).ar(Done.freeSelf, levelScale: amp);
+        OffsetOut.ar(0, sig.dup)
+    }).add;
+});
+)
+
+// 创建一个同步时钟
+l = LinkClock(1).latency_(Server.default.latency);
+
+// 用于监视状态的 GUI
+(
+var win = Window(&quot;LinkClock&quot;, Rect(200, 200, 500, 100)).front,
+peersBox, tempoBox, barsBox, beatsBox,
+font = Font.default.copy.size_(32),
+boldFont = font.boldVariant,
+controller, task;
+
+win.layout = HLayout(
+    StaticText().font_(font).string_(&quot;Peers:&quot;),
+    peersBox = NumberBox().font_(boldFont).align_(\center).fixedWidth_(80),
+    StaticText().font_(font).string_(&quot;Tempo:&quot;),
+    tempoBox = NumberBox().font_(boldFont).align_(\center).fixedWidth_(120),
+    StaticText().font_(font).string_(&quot;Now:&quot;),
+    barsBox = NumberBox().font_(boldFont).align_(\center).fixedWidth_(80),
+    beatsBox = NumberBox().font_(boldFont).align_(\center).fixedWidth_(80)
+);
+
+[peersBox, barsBox, beatsBox].do { |view| view.enabled_(false) };
+
+tempoBox.action = { |view| l.tempo = view.value / 60 };
+tempoBox.value = l.tempo * 60;
+peersBox.value = l.numPeers;
+
+task = Routine {
+    var bars, beats;
+    loop {
+        bars = l.bar;
+        beats = l.beatInBar;
+        {
+            barsBox.value = bars;
+            beatsBox.value = beats;
+        }.defer(l.latency);
+        1.0.wait;
+    }
+}.play(l, quant: 1);
+
+controller = SimpleController(l)
+.put(\tempo, {
+    defer { tempoBox.value = l.tempo * 60 }
+})
+.put(\numPeers, {
+    defer { peersBox.value = l.numPeers }
+})
+.put(\stop, { defer { win.close } });
+
+win.onClose = { task.stop; controller.remove };
+)
+
+// 现在使用 Ableton Link 启动一个程序来测试同步
+
+// pattern 会自动应用服务器延迟，
+// 因此这里应该是同步的
+p = Pbind(\instrument, \click, \freq, Pseq([900, Pn(400, 3)], inf)).play(l, quant: 4);
+
+// 在 Task 中, 你需要自行处理延迟:
+(
+r = Task {
+    loop {
+        s.makeBundle(s.latency, {
+            Synth(\click, [freq: exprand(500, 1200)])
+        });
+        1.wait;
+    }
+}.play(l, quant: 4);
+)
+
+// 在另一个应用程序中更改速度应该会影响 SC 中的速度
+// 在 SC 中更改速度应该会影响每个连接的应用程序
+l.tempo = 90/60;
+
+// 开始/停止通知
+// 远程对等端应启用开始/停止同步
+(
+q = nil;
+c = SimpleController(l)
+.put(\linkStart, {
+    if(q.isNil) {
+        q = Pbind(
+            \degree, Pn(Pseries(0, 1, 8), inf),
+            \dur, 0.25
+        ).play(l, quant: -1);
+    }
+})
+.put(\linkStop, {
+    q.stop;
+    q = nil;
+})
+.put(\stop, { c.remove });  // 如果时钟停止则清理
+)
+
+p.stop;
+r.stop;
+l.stop;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/LinkClock.html" rel="noreferrer noopener">Classes/LinkClock.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

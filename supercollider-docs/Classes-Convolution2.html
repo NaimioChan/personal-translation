@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Convolution2 - SuperCollider 文档</title>
+<meta name="description" content="实时固定内核卷积器。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Convolution2</h1>
+
+<p><em>实时固定内核卷积器。</em></p>
+
+<p><a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>另请参阅：<a href="Classes-Convolution.html">Convolution</a>、<a href="Classes-Convolution2L.html">Convolution2L</a>、<a href="Classes-Convolution3.html">Convolution3</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>使用固定核进行严格卷积，可通过触发信号更新该核。</p>
+
+<p>在内部，该单元使用 FFT 来加速计算，这意味着 (a) 你必须指定“framesize”，并且 (b) 如果核长于该 framesize，其末尾部分将被忽略。</p>
+
+<p>另请参见 Steven W. Smith 的 <a href="http://www.dspguide.com/ch18.htm">http://www.dspguide.com/ch18.htm</a>。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*ar"><code>Convolution2.ar(in, kernel, trigger: 0, framesize: 2048, mul: 1.0, add: 0.0)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>in</p></td><td class="argumentdesc"><p>处理目标。</p></td></tr>
+<tr><td class="argumentname"><p>kernel</p></td><td class="argumentdesc"><p>固定核的缓冲区索引，可以与触发组合进行调制。其大小必须 &lt;= framesize。</p></td></tr>
+<tr><td class="argumentname"><p>trigger</p></td><td class="argumentdesc"><p>在从非正值变为正值时更新内核。</p></td></tr>
+<tr><td class="argumentname"><p>framesize</p></td><td class="argumentdesc"><p>FFT 帧的大小，必须是 2 的幂（512、1024、2048、4096 是常用选择）。卷积在内部使用该数值的两倍。请注意，随着幂次提高，卷积的运行开销会逐渐增大！可用的最大值为 2^16 = 16384。（此上限是 SC 源代码中定义的 "SC_FFT_MAXSIZE" 的一半。）比这更大的卷积可以使用 <a href="Classes-PartConv.html">PartConv</a> 完成。</p></td></tr>
+<tr><td class="argumentname"><p>mul</p></td><td class="argumentdesc"></td></tr>
+<tr><td class="argumentname"><p>add</p></td><td class="argumentdesc"></td></tr>
+</table>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>( // 分配三个缓冲区
+b = Buffer.alloc(s, 2048);
+c = Buffer.alloc(s, 2048);
+d = Buffer.alloc(s, 2048);
+
+b.zero;
+c.zero;
+d.zero;
+)
+
+(
+50.do({ |it| c.set(20*it+10, 1.0.rand) });
+3.do({ |it| b.set(400*it+100, 1) });
+20.do({ |it| d.set(40*it+20, 1) });
+)
+
+
+(
+SynthDef(&quot;conv-test&quot;, { |out, kernel, trig = 0|
+    var input;
+
+    input = Impulse.ar(1);
+
+    // 帧大小必须是 2 的幂
+    Out.ar(out, Convolution2.ar(input, kernel, trig, 2048, 0.5));
+}).add
+
+)
+
+
+x = Synth.new(&quot;conv-test&quot;, [\kernel, b.bufnum]);
+
+// 更改缓冲区编号：
+x.set(\kernel, c.bufnum);
+x.set(\trig, 0);
+x.set(\trig, 1); // 在此触发之后，更改将生效。
+x.set(\kernel, d.bufnum);
+x.set(\trig, 0);
+x.set(\trig, 1); // 在此触发之后，更改将生效。
+
+d.zero;
+40.do({ |it| d.set(20*it+10, 1) }); // 改变缓冲区的内容
+x.set(\trig, 0);
+x.set(\trig, 1); // 在此触发之后，更改将生效。
+
+x.set(\kernel, b.bufnum);
+x.set(\trig, 0);
+x.set(\trig, 1); // 在此触发之后，更改将生效。
+
+
+// 下一个示例
+b = Buffer.read(s, ExampleFiles.child);
+
+(
+    { var input, kernel;
+
+    input = SoundIn.ar(0);
+
+    // 帧大小必须是 2 的幂
+    Out.ar(0, Convolution2.ar(input, b.bufnum, 0, 512, 0.5));
+     }.play;
+
+)
+
+
+// 另一个示例
+(
+// 帧大小必须是 2 的幂——Convolution2 会将 FFT 大小调整为该值的两倍
+// 目前最大为 a = 8192，对应 FFT 大小 16384
+a = 2048;
+s = Server.local;
+// 内核缓冲区
+g = Buffer.alloc(s, a, 1);
+)
+
+(
+g.set(0, 1.0);
+100.do({ |i| g.set(a.rand, (i+1).reciprocal) });
+)
+
+(
+// 随机脉冲响应
+
+{
+    var input, inputAmp, threshhold, gate;
+
+    input = SoundIn.ar(0);
+    inputAmp = Amplitude.kr(input);
+    threshhold = 0.02;    // 噪声门限阈值
+    gate = Lag.kr(inputAmp &gt; threshhold, 0.01);
+
+    Convolution2.ar(input*gate, g.bufnum, 0, a, 0.5)
+}.play;
+
+)
+
+// 最后一个例子
+(
+b = Buffer.alloc(s, 512, 1);
+b.sine1(1.0/[1, 2, 3, 4, 5, 6], true, true, true);
+)
+
+(
+{
+    var input, kernel;
+
+    input = SoundIn.ar(0);
+
+    // 帧大小必须是 2 的幂
+    Convolution2.ar(input, b.bufnum, 0, 512, 0.5)
+}.play;
+
+)</code></pre>
+
+<p>不必像第一个例子那样自己触发内核更新，你可以改用 UGen 触发信号来完成。在下一个例子中，我们使用两个 Convolution2 UGen 来连续、平滑地改变脉冲响应：<a href="Classes-RecordBuf.html">RecordBuf</a> 每隔 <code>trigPeriod</code> 秒录制一次随机频率的 <a href="Classes-Saw.html">Saw</a> 振荡器。录制结束后紧接着（trigPeriod 借助 <a href="Classes-TDelay.html">TDelay</a> UGen 被延迟了缓冲区时长 <a href="Classes-BufDur.html">BufDur</a>），两个卷积 UGen 交替更新各自的内核（使用两个触发器 convTrigs）。在内核更新的频率上，交叉淡化器 <a href="Classes-XFade2.html">XFade2</a> 在 conv1 与 conv2 之间移动，它使用一个频率为触发频率一半的三角振荡器 <a href="Classes-LFTri.html">LFTri</a> 作为声像输入。结果就是 Dust 脉冲获得不断变化的频谱染色：</p>
+
+<pre><code>b = Buffer.alloc(s, 2048, 1, _.zeroMsg);
+(
+x = { |i_kernel, density = 100, trigPeriod = 5.0, cutOff = 1000, minFreq = 200, maxFreq = 2000|
+    var input, trigFreq, recTrig, irSig, convTrig, convTrigs, bufFrames, conv1, conv2;
+    
+    input = LPF.ar(Dust2.ar(density), cutOff);
+    trigFreq = trigPeriod.reciprocal;
+    recTrig = Impulse.kr(trigFreq);
+    irSig = Saw.ar(TExpRand.kr(minFreq, maxFreq, recTrig), 0.4);
+    RecordBuf.ar(irSig, i_kernel, recTrig, loop: 0, trigger: recTrig);
+    
+    convTrig = TDelay.kr(recTrig, BufDur.ir(i_kernel));
+    // 将更新拆分到两个触发上。 
+    // 注意 [1, 0] 会创建 MultiChannel 扩展！
+    convTrigs = PulseDivider.kr(convTrig, 2, [1, 0]);
+    
+    bufFrames = BufFrames.ir(i_kernel);
+    // create the two alternatingly updated convolution ugens
+    #conv1, conv2 = Convolution2.ar(input, i_kernel, convTrigs, bufFrames);
+    
+    XFade2.ar(conv1, conv2, LFTri.kr(trigFreq * 0.5, 1)) ! 2;
+    
+}.play(s, [\i_kernel, b]);
+)
+
+x.set(\trigPeriod, 0.1);    // 快速变化
+x.set(\trigPeriod, 10.0);    // 缓慢变化
+x.free;    // 删除 synth</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/Convolution2.html" rel="noreferrer noopener">Classes/Convolution2.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

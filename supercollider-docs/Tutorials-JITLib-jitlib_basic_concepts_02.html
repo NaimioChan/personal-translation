@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jitlib_basic_concepts_02 - SuperCollider 文档</title>
+<meta name="description" content="代理空间 - 基本概念">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>jitlib_basic_concepts_02</h1>
+
+<p><em>代理空间 - 基本概念</em></p>
+
+<p>另请参阅：<a href="Overviews-JITLib.html">JITLib</a>、<a href="Tutorials-JITLib-jitlib_basic_concepts_01.html">jitlib_basic_concepts_01</a>、<a href="Tutorials-JITLib-jitlib_basic_concepts_03.html">jitlib_basic_concepts_03</a></p>
+
+<p>节点代理的外部结构，在 proxyspace 和环境中引用。</p>
+
+<p>本文档涵盖：</p>
+
+<ul>
+<li><a href="#a)%20normal%20environment%20lookup">a) 常规环境查找</a></li>
+<li><a href="#b)%20a%20proxyspace%20as%20an%20environment">b) 将 proxyspace 作为环境</a></li>
+<li><a href="#c)%20using%20the%20proxyspace%20to%20change%20processes%20on%20the%20fly">c) 使用 proxyspace 即时更改过程</a></li>
+<li><a href="#d)%20when%20are%20the%20node%20proxies%20initialized?">d) 节点代理何时初始化？</a></li>
+<li><a href="#e)%20moving%20out%20of%20the%20proxy%20space">e) 移出 proxy space</a></li>
+<li><a href="#f)%20using%20ProxySpace%20together%20with%20other%20Environments">f) 将 ProxySpace 与其他 Environments 一起使用</a></li>
+</ul>
+
+<h2 id="a) normal environment lookup">a) 常规环境查找</h2>
+
+<pre><code>currentEnvironment.postln; // anEnvironment（如果没有，说明你还没离开上一个帮助页面..）
+
+~a; // 访问环境：其中没有存储任何内容：nil
+~a = 9; // 存储一些内容
+~a;     // 现在 9 已存储
+~a + 100; // 用它计算
+
+currentEnvironment.postln; // 值存储在环境中
+
+~b + ~a; // 导致错误：~b 为 nil。
+~b = -90; // set ~b
+
+~b + ~a; // 现在这可以工作了。
+
+// 注意，你始终也可以从外部访问环境（或 ProxySpace）：
+
+x = currentEnvironment;
+x[\a] + x[\b] // 等价于 ~b + ~a
+
+// 或者，如果 &quot;know&quot; 为真，你可以用类似消息的语法访问命名对象：
+x.know = true;
+x.a + x.b;</code></pre>
+
+<p>延伸阅读：<a href="Classes-Environment.html">Environment</a></p>
+
+<h2 id="b) a proxyspace as an environment">b) 作为环境的 proxyspace</h2>
+
+<p>可以用一种特殊类型的环境替换当前环境，即 ProxySpace。该环境表示在服务器上播放音频的进程。</p>
+
+<pre><code>p = ProxySpace.new(s);    // 创建一个新环境，暂时将其存储在变量 p 中。
+p.push;            // 将它压入，使 i 成为当前环境。
+currentEnvironment.postln;
+currentEnvironment === p; // 并且它们完全相同。
+
+~x;        // 访问时会自动创建一个 NodeProxy（未初始化）。
+~x + ~y;    // 这会立即生效，因为查找不会返回 nil，
+        // 而是一个占位符（代理）
+
+p.postln;    // 现在环境中有两个空占位符。</code></pre>
+
+<h2 id="c) using the proxyspace to change processes on the fly">c) 使用代理空间动态更改进程</h2>
+
+<pre><code>// 启动服务器
+s.boot;
+
+
+// 一旦将声音函数（或任何兼容的输入）分配给 proxy
+// 该声音就在它自己的私有总线上播放（因此还听不到。）
+(
+~x = {
+    RLPF.ar(Impulse.ar(4) * 5, [850, 950], 0.2)
+}
+)
+
+// 该 proxy 已通过其首次赋值完成初始化。
+// 它以音频速率播放（因为我们赋了一个音频速率的 ugen 函数）
+// 并且它有两个声道（因为该函数具有立体声输出）
+
+~x.index;    // nodeproxy 拥有一个私有总线，因此其信号可以以多种方式使用。
+        // proxy 总线的索引是什么？这会将索引输出到 postwindow
+        // 之前是 .ir(nil)，现在初始化为 .ar(2)
+
+~x.bus // 代理的总线是什么？
+
+
+~x.play;    // 现在监听它。会创建一个 monitor（参见 Monitor）来播放该信号
+        // 输出到公共总线——默认情况下是总线 0，即第一个音频输出总线。
+        // 这个监听功能独立于 proxy 本身。
+        // 更多信息参见：jitlib_basic_concepts_03（c 部分）
+
+
+
+// 声音函数可以随时更改：
+(
+~x = {
+    RLPF.ar(Impulse.ar([5, 7]) * 5, [1450, 1234], 0.2)
+}
+)
+
+// 你可以非常轻松地调整声音函数以符合你的喜好
+// 只需用小的（或大的）变体替换它：
+
+        // 过滤更高频率：
+~x = {    RLPF.ar(Impulse.ar([5, 7]) * 5, [1800, 2000], 0.2) }
+
+        // 相同的脉冲比率（5/8），不同的脉冲速度：
+~x = {    RLPF.ar(Impulse.ar([5, 8] * 3.2) * 5, [1800, 2000], 0.2) }
+
+        // 不同的滤波器：
+~x = {    Ringz.ar(Impulse.ar([5, 8] * 3.2), [1800, 2000], 0.05) }
+
+// 如果你设置了 proxy 的 fadeTime，就可以手工创建小型的
+// 纹理：
+
+~x.fadeTime = 3;
+        // 每次使用不同的滤波器频率：
+~x = {    Ringz.ar(Impulse.ar([5, 8] * rrand(0.5, 1.5)) * 0.5, ({ exprand(200, 4000) } ! 2), 0.05) }
+
+
+
+// 这里是另一个代理：
+~y = { Pan2.ar(Dust.ar(20), 0) };
+
+~y.bus; // 它有两个声道，就像 ~x. 一样，但它在另一个（私有的）总线上播放。
+
+// 注意 ~y 不能直接听到，
+// 但可以像任何其他代理中的 UGen 一样使用它
+(
+~x = {
+    RLPF.ar(~y.ar * 8, [1450, 1234], 0.2)
+}
+)
+
+// 当 proxy 改变时，结果动态改变：
+
+~y = { Impulse.ar(MouseX.kr(2, 18, 1)) * [1, 1] };
+
+~y = { PinkNoise.ar(MouseX.kr(0, 0.2) * [1, 1]) };
+
+~y = { Impulse.ar([MouseX.kr(2, 18, 1), MouseY.kr(2, 18, 1)]) };
+
+
+
+// 停止监听。代理在后台运行。
+
+~x.stop;
+
+~y.bus; // ~y 正在另一个总线上播放……
+~x.bus; // 比 ~x 大。
+
+// 我们也可以直接监听 ~y：
+~y.play;
+
+// 要移除代理源，可以使用 nil：
+
+~y = nil;
+
+// 停止监听
+~y.stop;</code></pre>
+
+<p>延伸阅读：<a href="Tutorials-JITLib-proxyspace_examples.html">ProxySpace 示例</a>、<a href="Classes-Bus.html">Bus</a>、<a href="Classes-AbstractFunction.html">AbstractFunction</a></p>
+
+<h2 id="d) when are the node proxies initialized?">d) 节点代理何时初始化？</h2>
+
+<p>默认情况下，节点代理的总线初始化在其首次被使用时立即进行。后续的输入会尽可能调整到该总线。</p>
+
+<pre><code>~z2 = { LFNoise0.kr([1, 2, 3, 4]) }; // 一个四通道控制速率代理
+~z2.bus.postln;
+
+~z100 = 0.5;    // 常量值会创建一个单声道控制速率 proxy。
+~z100.bus.postln;
+
+~z34.ar(3)         // 第一次访问（带 numChannels 参数）会分配总线
+~z34.bus.postln;    // 一个 3 声道音频代理
+
+// 这些初始化可以通过使用 clear: 来移除
+~z34.clear;
+~z34.bus.postln;</code></pre>
+
+<p>此初始化会在代理首次使用时发生。之后，代理可以根据需要使用其他 rate/numChannels 组合进行访问（rate 会被转换，numChannels 通过环绕进行扩展，通道数过多的源也会被环绕）。</p>
+
+<pre><code>~u.play(0, 2);    // 初始化 2 个音频通道（默认）。0 是输出总线编号。
+        // 如果代理未初始化，play 默认为 2 个通道。
+        // 这里显式给出只是为了更清晰。
+~u = { PinkNoise.ar(0.2) }; // 只使用一个
+~u.numChannels;    // 2 个声道
+~u.clear; // ... 或清除它。
+
+// 如果反过来求值，则只使用一个声道：
+
+~u = { PinkNoise.ar(0.2) };    // 初始化 1 个音频通道
+~u.play(0, 2);            // 播放 2 个声道：1 声道被扩展为 2 个。
+                // .play 的 numChannels 默认为 proxy 的 numChannels。
+                // 这里显式给出，以便扩展声道
+~u.numChannels;    // 1 声道
+~u.clear;</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 在 sc3.7 中，你可以使用 <a href="Classes-NodeProxy.html#-mold">NodeProxy: -mold</a> 消息动态调整 rate 和 numChannels，该 proxy 也可以设置为根据输入动态调整（<a href="Classes-NodeProxy.html#-reshaping">NodeProxy: -reshaping</a>）。</p></blockquote>
+
+<pre><code>~u.mold(1); // 重塑为单声道。</code></pre>
+
+<p>显式初始化使用可变类型输入的代理可能会很有用：</p>
+
+<pre><code>~b.kr(8); ~c.ar;    // 显式初始化
+p.postln;        // 发布整个代理空间</code></pre>
+
+<h2 id="e) moving out of the proxy space">e) 移出代理空间</h2>
+
+<pre><code>// 播放音频：
+~x.play;
+
+~x = { PinkNoise.ar(0.5) };
+
+// p 是代理空间：
+p.postln;
+
+// 要结束 p 中的所有进程，请使用 end：
+p.end(2) // 2 秒淡出。
+
+// 要移除所有进程并将其总线索引归还给总线分配器，请使用 clear：
+p.clear;
+
+currentEnvironment.postln;
+
+// 恢复原始环境：
+
+p.pop;
+
+currentEnvironment.postln;
+
+~a + ~b; // 旧值仍然在这里。
+
+p === currentEnvironment; // 现在已不再如此。
+
+// 移除内容，以便垃圾回收器可以释放它们的内存。
+p.clear;
+
+// 注意，如果你使用这种访问方案，对象不会被垃圾回收
+// 直到键被设为 nil。这是使用普通环境时的常见错误。
+
+// 清除普通环境中的所有内容：
+
+currentEnvironment.clear;</code></pre>
+
+<h2 id="f) using ProxySpace together with other Environments">f) 将 ProxySpace 与其他环境一起使用</h2>
+
+<p>使用代理空间作为节点代理的访问方案，可能会妨碍将环境作为伪变量的常规用法。以下是一些应对方法。</p>
+
+<pre><code>//////////////    EnvirDocument 目前不可用 ////////////
+//// 如果你想照常继续使用当前环境，可以将
+//// proxyspace 的作用域限制到一个文档（注意：目前仅限 mac）
+//
+//EnvirDocument(p, &quot;proxyspace&quot;);    // 要测试这一点，请在此处检查 currentEnvironment
+//                    // 以及在 envir 文档中。
+
+// 你也可以间接访问代理空间及其中的代理：
+p[\x].play;
+p[\x] = { SinOsc.ar(450, 0, 0.1) };
+
+// 或者：当 proxyspace 被 push 后，你可以间接地使用普通 environment：
+p.push;
+d = ();
+d[\buffer1] = Buffer.alloc(s, 1024);
+d.use { ~buffer1.postln; ~zz = 81; }; // 若需多次访问该环境，请使用 .use
+
+
+// 要直接访问 proxy space 的内部环境，
+// 例如检查某个 proxy 是否存在，可以使用 .envir：
+
+p.envir.postln;
+p.envir[\x].postln;    // 存在此名称的代理
+p.envir[\nono].postln;    // 没有此名称的代理。
+
+// p[\nono].postln;    // 这个访问本会创建一个名为 \nono 的新 proxy。</code></pre>
+
+<p>上一页：<a href="Tutorials-JITLib-jitlib_basic_concepts_01.html">jitlib_basic_concepts_01</a> 下一页：<a href="Tutorials-JITLib-jitlib_basic_concepts_03.html">jitlib_basic_concepts_03</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/JITLib/jitlib_basic_concepts_02.html" rel="noreferrer noopener">Tutorials/JITLib/jitlib_basic_concepts_02.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

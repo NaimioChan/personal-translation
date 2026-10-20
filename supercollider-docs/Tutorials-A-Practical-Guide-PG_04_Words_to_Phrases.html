@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 04：从词到短语 - SuperCollider 文档</title>
+<meta name="description" content="嵌套模式，按乐句编排音乐">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 04：从词到短语</h1>
+
+<p><em>嵌套模式，按乐句编排音乐</em></p>
+
+<p>另请参见：<a href="Tutorials-A-Practical-Guide-PG_03_What_Is_Pbind.html">Pattern 指南 03：什么是 Pbind</a>、<a href="Tutorials-A-Practical-Guide-PG_05_Math_on_Patterns.html">Pattern 指南 05：Pattern 上的数学运算</a></p>
+
+<h2 id="From words to phrases">从单词到短语</h2>
+
+<p>单个模式本身并不那么有趣。但模式可以组合使用以获得更复杂的结果。</p>
+
+<h3 id="Patterns within list patterns">列表模式中的模式</h3>
+
+<p>我们见过从预设列表中返回数字的列表模式（<a href="Classes-Pseq.html">Pseq</a>、<a href="Classes-Prand.html">Prand</a> 等），它们按给定的顺序或随机重排后返回。列表中也可以包含其他模式。当列表模式在其列表中遇到另一个模式时，内层模式会被<em>嵌入</em>到流中。也就是说，内层模式接管控制，直到它没有值可返回为止。然后控制权交还给外层列表模式。这类似于在另一个函数中间调用一个函数。</p>
+
+<p>嵌入层数没有预设限制。</p>
+
+<p>如果单个模式像一个词，那么使用其他模式的列表模式则更像一个句子或短语。您可以在不同行为之间交替，既可以像下面的示例那样按可预测的顺序，也可以通过使用随机顺序列表模式之一来随机交替。</p>
+
+<pre><code>// 缩放音段，顺序为：上行、上行、下行（重复）
+(
+TempoClock.default.tempo = 1;
+p = Pbind(
+    \degree, Pseq([
+        Pseries({ rrand(0, 7) }, 1, { rrand(4, 8) }),    // up (step = 1)
+        Pseries({ rrand(0, 7) }, 1, { rrand(4, 8) }),    // up (step = 1)
+        Pseries({ rrand(7, 14) }, -1, { rrand(4, 8) })    // down (step = -1)
+    ], inf),
+    \dur, 0.125
+).play;
+)
+
+p.stop;</code></pre>
+
+<p>但事情变得更有趣了——列表模式并不关心它们包围的是值模式（如上一例所示）还是事件模式。这意味着你可以编写一组 Pbind 风格的、每个代表一个乐句的模式，然后把它们串联起来。下一个例子更长，但这只是因为乐句模式的数量更多。不过结构非常简单：<code>Pxrand([Pbind(), Pmono(), Pmono()...], inf)</code>。其中一些乐句是用 Pmono 编写的，以便在音符之间滑音。</p>
+
+<pre><code>(
+SynthDef(\bass, { |out, freq = 440, gate = 1, amp = 0.5, slideTime = 0.17, ffreq = 1100, width = 0.15,
+        detune = 1.005, preamp = 4|
+    var    sig,
+        env = Env.adsr(0.01, 0.3, 0.4, 0.1);
+    freq = Lag.kr(freq, slideTime);
+    sig = Mix(VarSaw.ar([freq, freq * detune], 0, width, preamp)).distort * amp
+        * EnvGen.kr(env, gate, doneAction: Done.freeSelf);
+    sig = LPF.ar(sig, ffreq);
+    Out.ar(out, sig ! 2)
+}).add;
+)
+
+(
+TempoClock.default.tempo = 132/60;
+p = Pxrand([
+    Pbind(            // 重复音符
+        \instrument, \bass,
+        \midinote, 36,
+        \dur, Pseq([0.75, 0.25, 0.25, 0.25, 0.5], 1),
+        \legato, Pseq([0.9, 0.3, 0.3, 0.3, 0.3], 1),
+        \amp, 0.5, \detune, 1.005
+    ),
+    Pmono(\bass,        // 八度跳变
+        \midinote, Pseq([36, 48, 36], 1),
+        \dur, Pseq([0.25, 0.25, 0.5], 1),
+        \amp, 0.5, \detune, 1.005
+    ),
+    Pmono(\bass,        // 三全音跳进
+        \midinote, Pseq([36, 42, 41, 33], 1),
+        \dur, Pseq([0.25, 0.25, 0.25, 0.75], 1),
+        \amp, 0.5, \detune, 1.005
+    ),
+    Pmono(\bass,        // 减三和弦
+        \midinote, Pseq([36, 39, 36, 42], 1),
+        \dur, Pseq([0.25, 0.5, 0.25, 0.5], 1),
+        \amp, 0.5, \detune, 1.005
+    )
+], inf).play(quant: 1);
+)
+
+p.stop;</code></pre>
+
+<p><strong>快捷记法</strong>：就像可以用 ++ 连接数组一样，也可以用同样的方式连接模式。写 <code>pattern1 ++ pattern2</code> 等同于写 <code>Pseq([pattern1, pattern2], 1)</code>。</p>
+
+<h3 id="Some ways to string together patterns">一些将模式串联起来的方法</h3>
+
+<dl>
+<dt>Sequentially</dt>
+<dd><p>每个子模式每次都按相同顺序跟随下一个。请使用 Pseq 或 Pser。</p></dd>
+<dt>随机顺序</dt>
+<dd><p>完全随机顺序的子模式（Prand），无重复的随机顺序（Pxrand），或按一组概率决定的随机顺序（Pwrand）。Pshuf 创建一个随机排序并重复使用它。</p></dd>
+<dt>直接数组索引</dt>
+<dd><p>模式可以通过索引以任意顺序选择。这比 Pwrand 提供了更多控制。Pindex 和 Pswitch 都可以用于此目的。</p></dd>
+<dd><pre><code>// 音阶度数分段，每第五个选择仅为奇数（降序）
+(
+var    n = 10,
+    scaleSegments = Array.fill(n, { |i|
+        if(i.odd) {
+            Pseries(11, -1, rrand(5, 10))
+        } {
+            Pseries(rrand(-4, 4), 1, i+2)
+        }
+    });
+
+TempoClock.default.tempo = 1;
+p = Pbind(
+    \degree, Pswitch(scaleSegments, Pseq([Pwhite(0, n-1, 4), Pwhite(0, n-1, 1).select(_.odd)], inf)),
+    \dur, 0.125
+).play;
+)
+
+p.stop;</code></pre></dd>
+<dt>有限状态机（Pfsm、Pdfsm）</dt>
+<dd><p>有限状态机是一种将某个项与其可能的后继项关联起来的方式。它更接近于一种“语法”，而不是纯粹的随机选择。Pfsm 将有限状态机定义为一组可能的“入口点”，随后是机器可能“状态”的列表，并且对于每个状态，都有一个可能跟在当前状态之后的状态列表。状态可以是单个值或模式，这意味着乐句可以链接到在顺序上“说得通”的其他乐句（并且可以防止不想要的转换）。</p></dd>
+<dd><p>如果这听起来有点像是马尔可夫链，那是因为 Pfsm 实现是马尔可夫链的一个特例，其中从有效后继状态中选择下一个状态的概率相等。在马尔可夫链中，概率是根据对真实世界数据流的分析来加权的。</p></dd>
+<dd><p>Pfsm 帮助文件包含了组织单个值和模式短语的非常好的示例。另请参阅 <a href="Tutorials-A-Practical-Guide-PG_Cookbook06_Phrase_Network.html">Pattern Guide Cookbook 06: Phrase Network</a>，了解使用 Pfsm 生成一段老套爵士独奏的应用。</p></dd>
+<dd><p>名称 <a href="Classes-Pdfsm.html">Pdfsm</a> 代表“确定性有限状态机”，其中没有随机选择。</p></dd>
+<dd><p>- <strong>第三方扩展提醒</strong>：SuperCollider 的一个良好的马尔可夫链实现存在于 MathLib quark 中。</p></dd>
+</dl>
+
+<h3 id="Library of named sub-patterns">命名子模式库</h3>
+
+<p>管理乐句的一种非常有效的方法是建立一个库，更准确地说是一个子模式的 <a href="Classes-Dictionary.html">Dictionary</a>，然后一次调用一个。<a href="Classes-Psym.html">Psym</a> 就是用于此的模式。这样做的好处是，你可以把乐句存储在单独的地方，而你实际演奏的模式则简单得多，并在高得多的层次上描述音乐意图。</p>
+
+<pre><code>// 使用上面的 bass SynthDef
+(
+~phrases = (
+    repeated: Pbind(
+        \instrument, \bass,
+        \midinote, 36,
+        \dur, Pseq([0.75, 0.25, 0.25, 0.25, 0.5], 1),
+        \legato, Pseq([0.9, 0.3, 0.3, 0.3, 0.3], 1),
+        \amp, 0.5, \detune, 1.005
+    ),
+    octave: Pmono(\bass,
+        \midinote, Pseq([36, 48, 36], 1),
+        \dur, Pseq([0.25, 0.25, 0.5], 1),
+        \amp, 0.5, \detune, 1.005
+    ),
+    tritone: Pmono(\bass,
+        \midinote, Pseq([36, 42, 41, 33], 1),
+        \dur, Pseq([0.25, 0.25, 0.25, 0.75], 1),
+        \amp, 0.5, \detune, 1.005
+    ),
+    dim: Pmono(\bass,
+        \midinote, Pseq([36, 39, 36, 42], 1),
+        \dur, Pseq([0.25, 0.5, 0.25, 0.5], 1),
+        \amp, 0.5, \detune, 1.005
+    )
+);
+
+TempoClock.default.tempo = 128/60;
+
+// 更高层的控制模式现在非常简单
+p = Psym(Pxrand(#[repeated, octave, tritone, dim], inf), ~phrases).play;
+)
+
+p.stop;</code></pre>
+
+<p>一个包含大量嵌入的复杂模式可能难以阅读，因为将音符级别的细节与更大的结构分开需要更多工作。选择乐句的模式——<code>Pxrand(#[repeated, octave, tritone, dim], inf)</code>——本身是不言自明的，而 Psym 则透明地填充细节。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 由于事件模式需要一些特殊处理，Psym 有两个版本。<a href="Classes-Psym.html">Psym</a> 处理事件模式，而 <a href="Classes-Pnsym.html">Pnsym</a> 用于值模式。可以这样理解：Pbind 可以包含在 Psym 中，但 Psym 包含 Pnsym。( Psym ( Pbind ( Pnsym ) ) ) 好的用法：<code>Psym(**, (pattern1: Pbind(**))</code><code>Pbind(\someValue, Pnsym(**, (pattern1: Pwhite(**)))</code> 不好的用法：<code>Pbind(\someValue, Psym(**, (pattern1: Pwhite(**)))</code></p></blockquote>
+
+<h3 id="Switching between patterns for individual values">在模式之间切换以获取各个值</h3>
+
+<p>在上面的示例中，如果列表模式在其输入值中遇到另一个模式，则子模式会完整嵌入，然后列表模式才被允许继续。有时你可能只想从子模式中获取一个值，然后在下一个事件中选择不同的子模式。Pswitch、Psym 和 Pnsym 有完全做到这一点的类似物：<a href="Classes-Pswitch1.html">Pswitch1</a>、Psym1 和 Pnsym1。</p>
+
+<pre><code>// 两个不同范围内的随机音高；用抛硬币来决定此事件使用哪个
+// 70% 低，30% 高
+(
+TempoClock.default.tempo = 1;
+p = Pbind(
+    \degree, Pswitch1([Pwhite(7, 14, inf), Pwhite(-7, 0, inf)], Pfunc { 0.7.coin.binaryValue }),
+    \dur, 0.25
+).play;
+)
+
+p.stop;</code></pre>
+
+<p>与以下内容比较：</p>
+
+<pre><code>(
+p = Pbind(
+    \degree, Pswitch([Pwhite(7, 14, inf), Pwhite(-7, 0, inf)], Pfunc { 0.7.coin.binaryValue }),
+    \dur, 0.25
+).play;
+)
+
+p.stop;</code></pre>
+
+<p>使用 Pswitch 时，会从列表中选择一项并持续播放直到其结束。但两个 Pwhite 模式的长度都是无限的，因此先被选中的那个会一直保持控制权。Pswitch1 则在每个事件时都进行掷硬币，并且只嵌入一项。</p>
+
+<p>Psym1 和 Pnsym1 的行为类似，都是为每个事件选择要查找模式的名称。</p>
+
+<h3 id="Related: Conditional patterns">相关：条件模式</h3>
+
+<p><a href="Classes-Pif.html">Pif</a> 支持这种结构：如果布尔模式的下一个值为 true，则返回模式 A 的下一个项，否则从模式 B 中取。另一种写法是在 Pwhite 上直接使用布尔测试，而不必为抛硬币编写 Pfunc，以此重写 Pswitch1 示例。这样可能更易读。但是，这仅在有两个备选项时有效。Pswitch1 和 Psym1 允许任意数量的选择。</p>
+
+<pre><code>(
+TempoClock.default.tempo = 1;
+p = Pbind(
+        // 翻译：if(0.7.coin) { rrand(-7, 0) } { rrand(7, 14 }
+    \degree, Pif(Pwhite(0.0, 1.0, inf) &lt; 0.7, Pwhite(-7, 0, inf), Pwhite(7, 14, inf)),
+    \dur, 0.25
+).play;
+)
+
+p.stop;</code></pre>
+
+<p>我们将在 <a href="Tutorials-A-Practical-Guide-PG_06e_Language_Control.html">Pattern Guide 06e: Language Control</a> 中看到，Pif 可用于之前在 Pbind 中计算出的值。当 Pbind 的值流能够感知事件中的其他值时，这大大增强了 Pbind 所能管理的智能性。</p>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_03_What_Is_Pbind.html">模式指南 03：什么是 Pbind</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_05_Math_on_Patterns.html">模式指南 05：模式上的数学运算</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_04_Words_to_Phrases.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_04_Words_to_Phrases.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

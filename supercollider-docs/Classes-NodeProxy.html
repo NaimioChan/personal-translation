@@ -1,0 +1,1294 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NodeProxy - SuperCollider 文档</title>
+<meta name="description" content="服务器上的一个引用">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>NodeProxy</h1>
+
+<p><em>服务器上的一个引用</em></p>
+
+<p><a href="Classes-BusPlug.html">BusPlug</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-ProxySpace.html">ProxySpace</a></p>
+
+<p>子类：<a href="Classes-Ndef.html">Ndef</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>一般来说，<strong>代理</strong>是某个事物的占位符。节点代理是<strong>在服务器上播放的某个事物</strong>的占位符，并写入有限数量的总线（通常是一个 synth，但也可以是生成 synth 的事件流）。NodeProxy 对象可以在播放时被替换和重新组合。它们也可用于构建一个更大的结构，供后续使用和修改。概述：<a href="Overviews-JITLib.html">JITLib</a>。</p>
+
+<p>NodeProxy 在 <a href="Classes-ProxySpace.html">ProxySpace</a> 内部使用，并且是 <a href="Classes-Ndef.html">Ndef</a> 的父类，便于轻松访问和组合大量占位符。</p>
+
+<p>节点代理的图形编辑器：<a href="Classes-NdefGui.html">NdefGui</a>。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> NodeProxy 在<em>私有总线</em>上播放。如果你想<strong>听到</strong>输出，请使用 <a href="#-play">-play</a> 和 <a href="#-stop">-stop</a>。要释放内部播放器并停止监听：<a href="#-end">-end</a>。完全移除所有内部设置：<a href="#-clear">-clear</a></p></blockquote>
+
+<h3 id="Further reading">延伸阅读</h3>
+
+<ul>
+<li><a href="Tutorials-JITLib-the_lazy_proxy.html">the_lazy_proxy</a></li>
+<li><a href="Tutorials-JITLib-jitlib_efficiency.html">jitlib_efficiency</a></li>
+<li><a href="Tutorials-JITLib-jitlib_fading.html">jitlib_fading</a></li>
+<li><a href="Tutorials-JITLib-jitlib_asCompileString.html">jitlib_asCompileString</a></li>
+<li><a href="Reference-NodeProxy_roles.html">NodeProxy 角色</a></li>
+</ul>
+
+<h3 id="First Example">第一个示例</h3>
+
+<pre><code>s.boot;
+
+a = NodeProxy.new.play; // 播放到硬件输出。
+a.fadeTime = 2; // fadeTime 指定交叉淡化
+// 设置源
+a.source = { SinOsc.ar([350, 351.3], 0, 0.2) };
+a.source = { Pulse.ar([350, 351.3] / 4, 0.4) * 0.2 };
+a.source = Pbind(\dur, 0.03, \freq, Pbrown(0, 1, 0.1, inf).linexp(0, 1, 200, 350));
+
+b = NodeProxy.new;
+a.source = { Ringz.ar(b.ar, [350, 351.3] * 8, 0.2) * 4 };
+b.source = { Impulse.ar([5, 7]/2, [0, 0.5]) };
+
+a.clear(3); // 3 秒后清除
+b.clear(3);</code></pre>
+
+<h2 id="classmethods">类方法</h2>
+
+<h3 id="Creation">Creation</h3>
+
+<h4 id="*new"><code>NodeProxy.new(server, rate, numChannels, inputs)</code></h4>
+
+<p>返回 NodeProxy 的新实例。</p>
+
+<pre><code>// 新建节点代理
+a = NodeProxy(s, \audio, 4);
+a.numChannels;
+a.clear; // 移除总线。
+a.numChannels; // nil.</code></pre>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于运行并分配总线的服务器（默认：<code>Server.default</code>）</p></td></tr>
+<tr><td class="argumentname"><p>rate</p></td><td class="argumentdesc"><p>如果给定，代理将初始化为此速率</p></td></tr>
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>如果给定，代理将被初始化为该数量的通道</p></td></tr>
+<tr><td class="argumentname"><p>inputs</p></td><td class="argumentdesc"><p>如果给定，proxy 将使用给定的输入作为后续槽位上的对象进行初始化。</p></td></tr>
+</table>
+
+<h4 id="*audio"><code>NodeProxy.audio(server, numChannels)</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>在给定服务器上创建一个新的音频速率实例。</p>
+
+<h4 id="*control"><code>NodeProxy.control(server, numChannels)</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>在给定服务器上创建一个新的控制率实例。</p>
+
+<h4 id="*for"><code>NodeProxy.for(bus)</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>使用给定的 <a href="Classes-Bus.html">Bus</a> 创建一个实例。</p>
+
+<h3 id="Accessing Class Variables">访问类变量</h3>
+
+<h4 id="*defaultNumAudio"><code>NodeProxy.defaultNumAudio</code></h4>
+
+<h4 id="*defaultNumAudio"><code>NodeProxy.defaultNumAudio = value</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>以音频速率初始化且未指定具体数量时默认的声道数（默认值：2）。</p>
+
+<h4 id="*defaultNumControl"><code>NodeProxy.defaultNumControl</code></h4>
+
+<h4 id="*defaultNumControl"><code>NodeProxy.defaultNumControl = value</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>在控制率下初始化且未指定具体数量时使用的默认通道数（默认值：1）。</p>
+
+<h4 id="*defaultFadeTime"><code>NodeProxy.defaultFadeTime</code></h4>
+
+<p>所有实例默认都有的、连续源替换之间的重叠时间。每个实例都有自己的值，可通过 <code>fadeTime_</code> 设置。</p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h3 id="Listening to the output">监听输出</h3>
+
+<h4 id="-play"><code>.play(out, numChannels, group, multi: false, vol, fadeTime, addAction)</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>从具有若干声道的总线索引播放到另一个具有若干声道的索引，在 <a href="Classes-Group.html">Group</a> 内（即目标组或服务器）。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>out</p></td><td class="argumentdesc"><p>总线索引</p></td></tr>
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>要输出的通道数。如果 BusPlug 为中性，或重塑为弹性，则将其初始化为该数量。如果该数量超过可用通道数，则进行环绕。如果未指定该数量，且重塑为弹性，则会自动扩展。</p></td></tr>
+<tr><td class="argumentname"><p>group</p></td><td class="argumentdesc"><p>用于播放监视器 synth 的目标 <a href="Classes-Group.html">Group</a> 或 <a href="Classes-Server.html">Server</a>。</p></td></tr>
+<tr><td class="argumentname"><p>multi</p></td><td class="argumentdesc"><p>保留旧的播放链接并添加新的链接</p></td></tr>
+<tr><td class="argumentname"><p>vol</p></td><td class="argumentdesc"><p>用于监听的总体音量</p></td></tr>
+<tr><td class="argumentname"><p>fadeTime</p></td><td class="argumentdesc"><p>淡入 / 淡出时间</p></td></tr>
+<tr><td class="argumentname"><p>addAction</p></td><td class="argumentdesc"><p>在节点树中何处播放监听 synth</p></td></tr>
+</table>
+
+<h4 id="-playN"><code>.playN(outs, amps, ins, vol, fadeTime, group, addAction)</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>在非连续通道上播放。参见：<a href="Classes-Monitor.html">Monitor</a> 和 <a href="Reference-playN.html">playN</a></p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>outs</p></td><td class="argumentdesc"><p>目标声道数组（或单个值）</p></td></tr>
+<tr><td class="argumentname"><p>amps</p></td><td class="argumentdesc"><p>每个通道的振幅数组（或单个值）</p></td></tr>
+<tr><td class="argumentname"><p>ins</p></td><td class="argumentdesc"><p>总线内源声道偏移量的数组（或单个值）</p></td></tr>
+<tr><td class="argumentname"><p>vol</p></td><td class="argumentdesc"><p>总音量（乘以 amps）</p></td></tr>
+<tr><td class="argumentname"><p>fadeTime</p></td><td class="argumentdesc"><p>用于淡入 / 淡出的 fadeTimes 数组（或单个值）</p></td></tr>
+<tr><td class="argumentname"><p>group</p></td><td class="argumentdesc"><p>用于播放监视器 synth 的目标 <a href="Classes-Group.html">Group</a> 或 <a href="Classes-Server.html">Server</a>。</p></td></tr>
+<tr><td class="argumentname"><p>addAction</p></td><td class="argumentdesc"><p>在节点树中何处播放监听 synth</p></td></tr>
+</table>
+
+<h4 id="-stop"><code>.stop(fadeTime, reset: false)</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>停止播放公共通道。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>fadeTime</p></td><td class="argumentdesc"><p>此动作的衰减时间</p></td></tr>
+<tr><td class="argumentname"><p>reset</p></td><td class="argumentdesc"><p>如果设置为 true，则重置所有监控状态。否则保留之前的播放参数。</p></td></tr>
+</table>
+
+<h4 id="-end"><code>.end(fadeTime, reset: false)</code></h4>
+
+<p>释放 synth 并停止播放。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>fadeTime</p></td><td class="argumentdesc"><p>此操作的交叉淡入淡出时间。</p></td></tr>
+<tr><td class="argumentname"><p>reset</p></td><td class="argumentdesc"><p>如果设置为 true，则重置所有监控状态。否则保留之前的播放参数。</p></td></tr>
+</table>
+
+<h3 id="Embedding and Combining the proxy">嵌入与组合代理</h3>
+
+<h4 id="-ar"><code>.ar(numChannels, offset: 0, clip: &#x27;wrap&#x27;)</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<h4 id="-kr"><code>.kr(numChannels, offset: 0, clip: &#x27;wrap&#x27;)</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>返回一个指向我的输出的 numChannels 的链接。如果未初始化，则创建一个匹配的总线。通常，<strong>ar 默认为立体声，kr 默认为单声道</strong>。这可以在 classvars 中设置：<a href="#*defaultNumAudio">*defaultNumAudio</a>、<a href="#*defaultNumControl">*defaultNumControl</a></p>
+
+<p>为保持一致，当未给出 numChannels 时，它始终返回信号数组。要使其成为单个 ugen 输出，请使用 <code>numChannels = 1</code>。另见：<a href="Classes-InBus.html">InBus</a>。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>返回的通道数。如果接收者是中性的或重塑是弹性的，则将其初始化为此数字。如果这多于可用的通道，则使用 clip 行为（见下文）。如果设置为 <code>1</code>，它将返回一个 <a href="Classes-InBus.html">InBus</a> 的实例，否则返回一个包含一个或多个 InBus 实例的 Array。</p></td></tr>
+<tr><td class="argumentname"><p>offset</p></td><td class="argumentdesc"><p>读取具有比 numChannels 更多通道的总线时的通道偏移，在相邻通道之间交叉淡化。</p></td></tr>
+<tr><td class="argumentname"><p>clip</p></td><td class="argumentdesc"><p>如果设为 'wrap'，超出范围的通道将环绕；如果设为 'clip'，则重复最后一个通道。</p></td></tr>
+</table>
+
+<h4 id="-<--"><code>&lt;--(proxy)</code></h4>
+
+<p>用法：<strong>proxyA &lt;-- proxyB</strong>。将 proxyA 的源设置为 proxyB，并播放 proxyA。如果 proxyB 正在播放，则将其淡出。这在以下情况下很方便：</p>
+
+<pre><code>b = NodeProxy.new.play;
+b.source = { PinkNoise.ar(0.2.dup) };
+// 现在我想通过一个新的 proxy 来过滤 b。
+a = NodeProxy.new;
+a &lt;-- b; a.source = { HPF.ar(b.ar, 7000) };
+a.source = { HPF.ar(b.ar, 3000) }; // 更改源
+a.clear; b.clear;</code></pre>
+
+<h4 id="-<<>"><code>&lt;&lt;&gt;(proxy, key: &#x27;in&#x27;)</code></h4>
+
+<p>链式调用。用法：<strong>proxyA &lt;&lt;&gt; proxyB &lt;&lt;&gt; proxyC &lt;&lt;&gt; ...</strong>。将 proxyC 的源映射到 proxyB 的 <code>\in</code> 参数，并将 proxyB 映射到 proxyA 的 in 参数。</p>
+
+<pre><code>a = NodeProxy.new.play;
+a.source = { RLPF.ar(\in.ar(0!2), [4600, 7000], 0.1) };
+b = NodeProxy.new.source_ { Impulse.ar([5, 7] / 2) };
+a &lt;&lt;&gt; b;</code></pre>
+
+<h4 id="-<>>"><code>&lt;&gt;&gt;(proxy, key: &#x27;in&#x27;)</code></h4>
+
+<p>上述的反向操作。用法：<strong>proxyA &lt;&gt;&gt; proxyB &lt;&gt;&gt; proxyC &lt;&gt;&gt; ...</strong>。</p>
+
+<h3 id="Setting the source">设置源</h3>
+
+<p>NodeProxy 维护若干槽位，这些槽位可以作为源并在同一总线上混合。默认源是槽位 0。所有对象都可以在运行过程中交换，也可以在此之前和之后交换。通常，源会立即激活。如果要“安静地”交换源，将节点代理设为睡眠（awake = false），或使用消息 prime()。</p>
+
+<p>请参阅 <a href="#Supported%20sources">Supported sources</a> 部分下的列表</p>
+
+<h4 id="-source"><code>.source</code></h4>
+
+<h4 id="-source"><code>.source = obj</code></h4>
+
+<p>通过 proxy 播放一个新的 synth，并释放/移除任何旧的 synth。</p>
+
+<pre><code>a = NodeProxy(s);
+a.play;
+a.source = { Pulse.ar(130, Saw.kr(0.3)) * 0.1 }; // 在运行时修改此行</code></pre>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>obj</p></td><td class="argumentdesc"><p>可以是受支持的输入之一（参见 <a href="#Supported%20sources">Supported sources</a>）</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 设置重塑后（例如设为 \elastic），设置源会改变代理的通道数。这意味着其总线会改变，从中读取信号的子代理也可能随之改变。参见 <a href="#Routing">Routing</a> 中的示例。</p></blockquote></td></tr>
+</table>
+
+<h3 id="Routing">Routing</h3>
+
+<p>信号可以在任意数量的节点代理之间路由。</p>
+
+<p>另见：<a href="Classes-BusPlug.html#-ar">BusPlug: -ar</a>、<a href="Classes-BusPlug.html#-value">BusPlug: -value</a>、<a href="#Reshaping">重塑</a>。</p>
+
+<p>这里有一个简单示例，使用 Ndef（NodeProxy 的工作方式类似）：</p>
+
+<pre><code>Ndef(\maus, { MouseX.kr });
+Ndef(\haus, { Pan2.ar(Blip.ar(Ndef.kr(\maus, 1) * 70), SinOsc.kr(Ndef.ar(\maus, 1) * 5)) }).play;</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果你不指定声道数，像 <code>Ndef.kr(\maus)</code> 这样的表达式将返回一个数组。随后，例如被 <code>Pan2</code> UGen 使用时，你可能会收到消息：<code>WARNING: Synth output should be a flat array.</code> 如果你希望输出确实是单声道，请显式写为：<code>Ndef.kr(\maus, 1)</code></p></blockquote>
+
+<p>使用弹性重塑时，如果你在路由中省略通道数，可以使用父级来扩展子级：</p>
+
+<pre><code>Ndef(\maus, { MouseX.kr });
+Ndef(\haus, { Blip.ar(Ndef.kr(\maus) * 70) }).play;
+Ndef(\haus).reshaping = \elastic;
+Ndef(\maus).reshaping = \elastic;
+Ndef(\maus, { LFNoise0.kr(1 ! 8) + 1 }); // 现在可以听到 8 个并行的音频通道。</code></pre>
+
+<h3 id="Reserved parameters">保留参数</h3>
+
+<p>如果给定的 UGen 函数中不存在三个参数，则会自动指定它们。你可以覆盖它们的使用：<code>[\out, \gate, \fadeTime]</code></p>
+
+<h3 id="Specifying your own envelope">自定义包络</h3>
+
+<p>如果传递给代理的 UGen 函数有自己的包络，并且该包络可以释放 synth，则节点代理使用此包络而不是创建自己的包络。如果你提供了 <code>fadeTime</code> 参数，则将使用代理的 fadeTime。</p>
+
+<pre><code>Ndef(\sound).fadeTime = 3;
+(
+Ndef(\sound, { |fadeTime = 1, gate = 1|
+    var e = Env.adsr(fadeTime, 0.01, 0.4, fadeTime).ar(2, gate);
+    SinOsc.ar(100 + (e * 700), SinOsc.ar(208) * (1 - e) * 6) * e * 0.1
+}).play
+)</code></pre>
+
+<h3 id="Making copies">制作副本</h3>
+
+<h4 id="-copy"><code>.copy</code></h4>
+
+<p>复制隐藏的内部状态，使新代理独立于旧代理，但会保留对源对象的引用。渲染后的 SynthDef 会被缓存，因此该方法比直接将同一函数赋给新代理更高效。按照设计，监视器会被复制，但不会运行（请使用 play 以相同配置启动它）。</p>
+
+<pre><code>a = NodeProxy(s);
+a.source = { |freq = 444| Blip.ar(freq * [1, 1.03], 200) * 0.1 };
+a.play;
+a.set(\freq, 555);
+b = a.copy;
+b.play;
+b.set(\freq, 222);</code></pre>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果需要，你也可以复制代理的一部分，例如 <a href="Classes-Monitor.html">Monitor</a>（通常将输出送回硬件总线）和 <a href="Classes-NodeMap.html">NodeMap</a>，后者维护映射和设置作用域。</p></blockquote>
+
+<pre><code>s.scope(4);
+a = NodeProxy(s);
+a.source = { |freq = 234| Blip.ar(freq * [1, 1.03], 20) * 0.5 };
+a.playN([0, 1, 3], [0.04, 0.3, 0.1], vol: 1); // 一些复杂的路由
+a.set(\freq, 123);
+
+b = NodeProxy(s);
+b.source = { |freq = 1000| SinOsc.ar(freq * 3 * { { rrand(0.9, 1.1) }.dup(8) }.dup(2)).mean * 0.5 };
+b.monitor = a.monitor.copy;
+b.nodeMap = a.nodeMap.copy;
+b.play;
+a.stop;</code></pre>
+
+<h4 id="-copyState"><code>.copyState(proxy)</code></h4>
+
+<p>将一个代理的内部设置复制到另一个代理。旧状态会被清除。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>proxy</p></td><td class="argumentdesc"><p>其内部状态被复制的 proxy。</p></td></tr>
+</table>
+
+<h3 id="Reshaping">Reshaping</h3>
+
+<h4 id="-reshaping"><code>.reshaping</code></h4>
+
+<h4 id="-reshaping"><code>.reshaping = value</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>决定添加新源时的行为。当前选项：</p>
+
+<table>
+<tr><td><p>nil</p></td><td><p>初始化后保持相同总线——这是默认设置</p></td></tr>
+<tr><td><p>\elastic</p></td><td><p>发生变化时，按需收缩和扩展，替换总线。监视器和子代理会被调整。</p></td></tr>
+<tr><td><p>\expanding</p></td><td><p>发生变化时，仅根据需要增长，替换总线。监视器代理和子代理会被调整。</p></td></tr>
+</table>
+
+<pre><code>a = NodeProxy(s);
+a.reshaping = \elastic;
+a.play(0, 2); // 播放立体声
+a.source = { BPF.ar(Dust.ar(8 ! 8), (0..5).nthPrime * 300, 0.01) * 20 };
+a.numChannels; // 8</code></pre>
+
+<h4 id="-mold"><code>.mold(numChannels, rate, argReshaping, fadeTime)</code></h4>
+
+<p>将代理调整到给定的速率 / numChannels。如果有任何子代理具有弹性 <a href="#-reshaping">-reshaping</a>，它们也会相应调整。</p>
+
+<pre><code>a = NodeProxy(s);
+a.play;
+a.source = { BPF.ar(Impulse.ar({ rrand(1.0, 2.0) } ! a.numChannels), (0..5).nthPrime * 300, 0.01) * 20 };
+a.numChannels; // 2
+a.mold(8);
+a.numChannels; // 8</code></pre>
+
+<h3 id="Other ways to set or change the sources">设置或更改源的其他方式</h3>
+
+<h4 id="-prime"><code>.prime(obj)</code></h4>
+
+<p>设置源但不启动 synth。之后可使用 <a href="#-send">-send</a> 启动它。正在运行的 synth 会被释放，且若 proxy 仍处于中性状态则将其初始化。</p>
+
+<h4 id="-add"><code>.add(obj, channelOffset: 0, extraArgs, now: true)</code></h4>
+
+<p>在当前源的基础上添加新源</p>
+
+<h4 id="-removeAt"><code>.removeAt(index, fadeTime)</code></h4>
+
+<p>移除索引 i 处的对象及其 synth（如果存在）。如果未提供索引，则全部移除。</p>
+
+<h4 id="-removeLast"><code>.removeLast(fadeTime)</code></h4>
+
+<p>如果存在，移除最后一个对象及其 synth。</p>
+
+<h4 id="-put"><code>.put(index, obj, channelOffset: 0, extraArgs, now: true)</code></h4>
+
+<p>按索引设置源。对象可以插入到任意索引处，只有索引的顺序是相关的。在内部，NodeProxy 使用 <a href="Classes-Order.html">Order</a> 来访问源。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>index</p></td><td class="argumentdesc"><p>对象应放置在内部顺序中的位置。如果为 <code>-1</code>，则释放所有对象</p></td></tr>
+<tr><td class="argumentname"><p>obj</p></td><td class="argumentdesc"><p>有效的源（参见 <a href="#Supported%20sources">Supported sources</a>）。</p></td></tr>
+<tr><td class="argumentname"><p>channelOffset</p></td><td class="argumentdesc"><p>在多通道设置下，当对象的 numChannels 小于代理时，设置此项会很有用</p></td></tr>
+<tr><td class="argumentname"><p>extraArgs</p></td><td class="argumentdesc"><p>可直接随对象发送的参数（非缓存）</p></td></tr>
+<tr><td class="argumentname"><p>now</p></td><td class="argumentdesc"><p>如果设置为 false，则只准备源而不启动对象（参见 <a href="#-prime">-prime</a>）</p>
+
+<pre><code>// put 可以与数组索引语法一起使用：
+a = NodeProxy.new.play;
+a[0] = { SinOsc.ar(Rand(200, 899)) * 0.1.dup };
+a[2] = { SinOsc.ar(Rand(200, 899)) * 0.1.dup };
+a.sources.do(_.postcs);
+// 使用多个索引扩展为多个对象
+a[0..5] = { SinOsc.ar(Rand(200, 899)) * 0.1.dup };
+a.sources.do(_.postcs);
+a.send; // 交换 synth，将源作为定义使用
+a.clear;</code></pre></td></tr>
+</table>
+
+<h3 id="Controlling the running processes">控制正在运行的进程</h3>
+
+<h4 id="-pause"><code>.pause</code></h4>
+
+<p>暂停所有对象并将 proxy 设置为暂停</p>
+
+<h4 id="-resume"><code>.resume</code></h4>
+
+<p>如果已暂停，则启动所有对象</p>
+
+<h4 id="-rebuild"><code>.rebuild</code></h4>
+
+<p>从源代码重新构建所有 SynthDef。</p>
+
+<h4 id="-orderNodes"><code>.orderNodes( ... proxies)</code></h4>
+
+<p>将此组到最后一个组的顺序进行排列。当对外部输入进行过滤以<strong>最小化延迟</strong>时，这一点可能很重要。注意，如果提供了 <a href="#-parentGroup">-parentGroup</a>，则节点必须位于同一个 parentGroup 中。</p>
+
+<h3 id="Release and cleaning up">释放与清理</h3>
+
+<h4 id="-free"><code>.free(fadeTime, freeGroup: true)</code></h4>
+
+<p>释放所有正在运行的 synth 和该组。如果有模式正在播放，则停止它们。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>fadeTime</p></td><td class="argumentdesc"><p>此动作的衰减时间</p></td></tr>
+<tr><td class="argumentname"><p>freeGroup</p></td><td class="argumentdesc"><p>一个布尔值</p></td></tr>
+</table>
+
+<h4 id="-release"><code>.release(fadeTime)</code></h4>
+
+<p>释放正在运行的 Synth。如果有模式正在播放，则停止它们。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>fadeTime</p></td><td class="argumentdesc"><p>此动作的衰减时间</p></td></tr>
+</table>
+
+<h4 id="-clear"><code>.clear(fadeTime: 0)</code></h4>
+
+<p>将所有内容重置为 nil，使 rate/numChannels 失效</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>fadeTime</p></td><td class="argumentdesc"><p>如果给出了 fadeTime，则先淡出，然后清除。</p></td></tr>
+</table>
+
+<h4 id="-schedAfterFade"><code>.schedAfterFade(func)</code></h4>
+
+<p>在 fadeTime 和服务器延迟过去之后调用一个函数。如果代理指定了 <code>quant</code> 值，则在 quant 网格上的下一个时间点之后 <code>fadeTime + latency</code> 秒求值该函数；否则，淡出延迟立即开始。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>func</p></td><td class="argumentdesc"><p>要在适当时机调用的函数</p></td></tr>
+</table>
+
+<h3 id="Accessing Instance Variables">访问实例变量</h3>
+
+<h4 id="-sources"><code>.sources</code></h4>
+
+<h4 id="-sources"><code>.sources = list</code></h4>
+
+<p>返回所有源的数组</p>
+
+<h4 id="-source"><code>.source</code></h4>
+
+<h4 id="-source"><code>.source = obj</code></h4>
+
+<p>返回第一个源。</p>
+
+<h4 id="-server"><code>.server</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>节点代理的服务器（一个 <a href="Classes-Server.html">Server</a>）。</p>
+
+<h4 id="-bus"><code>.bus</code></h4>
+
+<h4 id="-bus"><code>.bus = inBus</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>节点代理的私有总线（一个 <a href="Classes-Bus.html">Bus</a>）。因为它有私有总线，所以无法直接听到——通过（.play 或 playN）监听会将其路由到硬件输出通道。</p>
+
+<h4 id="-rate"><code>.rate</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>总线速率（默认值：nil）。速率和通道数量由实例创建时（.control/.audio）确定，或通过从第一个源进行惰性初始化来确定（参见 <a href="Tutorials-JITLib-the_lazy_proxy.html">the_lazy_proxy</a>）</p>
+
+<h4 id="-numChannels"><code>.numChannels</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>总线 numChannels（默认值：nil）</p>
+
+<h4 id="-isNeutral"><code>.isNeutral</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>如果 proxy 没有已初始化的 bus，则为 true。</p>
+
+<h4 id="-group"><code>.group</code></h4>
+
+<h4 id="-group"><code>.group = inGroup</code></h4>
+
+<p>节点代理的组（一个 <a href="Classes-Group.html">Group</a>）。它由代理维护，作为放置所有 synth 的上下文。</p>
+
+<h4 id="-parentGroup"><code>.parentGroup</code></h4>
+
+<h4 id="-parentGroup"><code>.parentGroup = node</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>访问 parentGroup（默认值：nil），将其设置后可将代理的组运行在另一个组中。该组必须在外部进行维护（保持播放等）。</p>
+
+<h4 id="-clock"><code>.clock</code></h4>
+
+<h4 id="-clock"><code>.clock = value</code></h4>
+
+<p>一个时钟，可设置为适应不同的计时方案，例如按拍准确替换源。</p>
+
+<h4 id="-quant"><code>.quant</code></h4>
+
+<h4 id="-quant"><code>.quant = value</code></h4>
+
+<p>一个 quant 值，用于指定对源进行量化的替换。与 SuperCollider 中 quant 的一般用法兼容。</p>
+
+<h4 id="-quantize"><code>.quantize( ... proxies)</code></h4>
+
+<p>按 quant 重新发送并调整以同步代理。</p>
+
+<h4 id="-monitor"><code>.monitor</code></h4>
+
+<h4 id="-monitor"><code>.monitor = value</code></h4>
+
+<p><em>来自父类：<a href="Classes-BusPlug.html">BusPlug</a></em></p>
+
+<p>访问 <a href="Classes-Monitor.html">Monitor</a> 对象，它回放该代理私有总线的输出。</p>
+
+<h4 id="-loaded"><code>.loaded</code></h4>
+
+<p>如果该对象已在服务器上初始化（例如已存储 synthDef），则返回 true。</p>
+
+<h4 id="-paused"><code>.paused</code></h4>
+
+<p>如果进程已暂停，则返回 true。</p>
+
+<h4 id="-awake"><code>.awake</code></h4>
+
+<h4 id="-awake"><code>.awake = value</code></h4>
+
+<p>若设为 false（默认值：true），更改源不会立即启动新的 synth。当 synth 由 <a href="#-spawn">-spawn</a> 触发，且声音的改变不应重复发送时，这很有用。</p>
+
+<h4 id="-fadeTime"><code>.fadeTime</code></h4>
+
+<h4 id="-fadeTime"><code>.fadeTime = dur</code></h4>
+
+<p>设置交叉淡化时间。参见：<a href="Tutorials-JITLib-jitlib_fading.html">jitlib_fading</a> 。</p>
+
+<h3 id="Setting synth controls">设置 synth 控件</h3>
+
+<h4 id="-set"><code>.set( ... args)</code></h4>
+
+<h4 id="-map"><code>.map( ... args)</code></h4>
+
+<h4 id="-setn"><code>.setn( ... args)</code></h4>
+
+<p>NodeProxy 的行为类似于其 <a href="Classes-NodeMap.html">NodeMap</a>，并且与 <a href="Classes-Synth.html">Synth</a> 非常相似。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 现在 map、setn、mapn 和 xmap 方法只是为了向后兼容而存在。所有操作都由 set 完成。</p></blockquote>
+
+<pre><code>a = NodeProxy(s); a.play;
+a.source = { Splay.ar(Blip.ar(\freq.kr(18 ! 4))) * 0.2 };
+a.set(\freq, [1, 3, 56, 13]);
+a.source = { Splay.ar(SinOsc.ar(LFSaw.ar(\freq.kr(18 ! 4)) * 250 + 400)) * 0.2 };
+b = NodeProxy(s); b.source = { MouseX.kr(0, 3) *  [1, 3, 56, 13] };
+a.set(\freq, b);
+a.clear; b.clear;</code></pre>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>... args</p></td><td class="argumentdesc"><p>一个由成对元素组成的数组：<strong>key, value, key, value, ...</strong></p>
+
+<p>唯一键（一个 <a href="Classes-Symbol.html">Symbol</a>）指定要设置的控件名称。</p>
+
+<p>对于 value，可以指定任何响应 "asControlInput" 的对象，特别是：</p>
+
+<dl>
+<dt>number</dt>
+<dd><p>将控件设置为该数字</p></dd>
+<dt>数字数组</dt>
+<dd><p>将后续控制通道设置为相应的值</p></dd>
+<dt>节点代理</dt>
+<dd><p>将后续控制通道映射到对应的代理输出通道</p></dd>
+</dl></td></tr>
+</table>
+
+<h4 id="-seti"><code>.seti( ... args)</code></h4>
+
+<p>设置数组化控件的一部分，类似于 <a href="Classes-Synth.html#-seti">Synth: -seti</a>。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>... args</p></td><td class="argumentdesc"><p>由 <strong>name、index、value</strong> 构成的三元组序列。</p>
+
+<dl>
+<dt>name</dt>
+<dd><p>数组化控制的名称</p></dd>
+<dt>index</dt>
+<dd><p>数组中的索引</p></dd>
+<dt>value</dt>
+<dd><p>要设置的新值，可以是一个数组，用于设置一段元素范围。</p></dd>
+</dl></td></tr>
+</table>
+
+<h4>讨论：</h4>
+
+<pre><code>// 5 声道 NodeProxy，为方便起见在 Ndef 中初始化
+(
+Ndef(\sin).mold(5, \audio, \elastic);
+Ndef(\sin)[0] = {
+    SinOsc.ar(
+        \freq.kr([200, 201, 202, 204, 205]),
+        SinOsc.kr(\phase.kr([0, 0, 0, 0, 0])).range(0, 2pi)
+    )
+}
+)
+
+// 输出混音器：混合降为 2 个声道并将声道分布到声像上
+(
+Ndef(\out).mold(2, \audio, \elastic);
+Ndef(\out)[0] = {
+    // 5 通道输入
+    Splay.ar(\in.ar(0!5), level: \amp.kr(0.3))
+}
+)
+
+// 将 Ndef(\sin) 路由通过 Ndef(\out)
+(
+Ndef(\out) &lt;&lt;&gt; Ndef(\sin);
+Ndef(\out).play;
+)
+
+// 在第四通道中改变频率和相位
+Ndef(\sin).seti(\freq, 3, 137, \phase, 1, 11)
+
+// 第 1 个通道 310hz，第 3 个 207hz
+Ndef(\sin).seti(\freq, [0, 2], [310, 207])
+
+// 索引超出范围，参数数组长度不同
+// 34 % 5 =&gt; 4, 12 % 5 =&gt; 2, 56 % 5 =&gt; 1
+Ndef(\sin).seti(\freq, [34, 12, 56], [376, 199])
+Ndef(\sin).getKeysValues // -&gt; [[freq, [310, 376, 199, 137, 376]]]
+
+Ndef.clear(10)</code></pre>
+
+<h4 id="-unset"><code>.unset( ... keys)</code></h4>
+
+<h4 id="-unmap"><code>.unmap( ... keys)</code></h4>
+
+<p>移除指定的设置并取消映射或取消设置 synth。</p>
+
+<h4 id="-xset"><code>.xset( ... args)</code></h4>
+
+<p>以交叉淡入到新设置的方式执行 set/map。交叉淡入时间为 NodeProxy 的 <a href="#-fadeTime">-fadeTime</a>。</p>
+
+<h4 id="-lag"><code>.lag( ... args)</code></h4>
+
+<p>设置这些参数的滞后值（与 <a href="#-setRates">-setRates</a> 相同）。要移除这些设置，请使用：<code>lag(\key1, nil, key2, nil, ...)</code></p>
+
+<h4 id="-setRates"><code>.setRates( ... args)</code></h4>
+
+<p>设置 synthDef 参数的默认速率（\tr、\ir、数值）。速率为 nil 则移除该设置。</p>
+
+<h4 id="-controlNames"><code>.controlNames(except, addNodeMap: true)</code></h4>
+
+<p>返回所有槽的 <a href="Classes-ControlName.html">ControlName</a> 对象，<strong>除了</strong>此列表中的名称（默认：<code>[\out, \i_out, \gate, \fadeTime]</code>，这些名称在内部使用）。当节点代理接收到某个给定键的 <code>set</code> 时，相应 <code>ControlName</code> 的 <code>defaultValue</code> 包含被传入的对象，该对象可以是任何类型的对象。</p>
+
+<h4 id="-controlKeys"><code>.controlKeys(except, noInternalKeys: true)</code></h4>
+
+<p>返回所有槽中所有控件名对象的键（符号），<strong>但</strong>不包括此列表中列出的名称。（默认：无）。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>except</p></td><td class="argumentdesc"><p>名称列表</p></td></tr>
+<tr><td class="argumentname"><p>noInternalKeys</p></td><td class="argumentdesc"><p>如果 noInternalKeys 为 true（默认值：true），则忽略键 <code>[\out, \i_out, \gate, \fadeTime]</code> 。</p></td></tr>
+</table>
+
+<h4 id="-getKeysValues"><code>.getKeysValues(keys, except, withDefaults: true, noInternalKeys: true)</code></h4>
+
+<p>从 <a href="Classes-NodeMap.html">NodeMap</a>（设置）和默认参数中获取所有键值对。</p>
+
+<h4 id="-controlKeysValues"><code>.controlKeysValues(keys, except)</code></h4>
+
+<p>获取默认参数中的所有键值对。</p>
+
+<h4 id="-findControlName"><code>.findControlName(key)</code></h4>
+
+<p>在源对象中搜索给定的控制名符号，并返回该 <a href="Classes-ControlName.html">ControlName</a>。</p>
+
+<h4 id="-specs"><code>.specs</code></h4>
+
+<p>从 SynthDef 元数据中获取 specs 数组。注意，对于具有多个源的 NodeProxy，结果将是一个包含所有源 SynthDef 的 specs 的字典。</p>
+
+<pre><code>~p = NodeProxy.audio(Server.default, 2);
+~p.put(0, { SinOsc.ar(\freq.kr(100, spec: [50, 400])) });
+~p.put(1, { WhiteNoise.ar(\noiseAmp.kr(0.1, spec: [0, 1])) });
+~p.specs.postln;</code></pre>
+
+<h3 id="Sending synths to server explicitly">显式地将 synth 发送到服务器</h3>
+
+<p>通常，进程（通常是 synth）在其各自的源被添加到代理时启动。然而，进程也可以重新启动，或者代理可以在休眠状态下使用，然后进程可以被显式启动。</p>
+
+<h4 id="-send"><code>.send(extraArgs, index, freeLast: true)</code></h4>
+
+<p>发送一个新的 synth 而不释放旧的。如果源是流或模式，则启动一个新的。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>extraArgs</p></td><td class="argumentdesc"><p>用于设置 synth 的参数。参数列表仅应用于该 synth。此处指定的参数会覆盖节点映射中的设置，但不会改动它们。</p></td></tr>
+<tr><td class="argumentname"><p>index</p></td><td class="argumentdesc"><p>向哪个槽位发送新的 synth。如果为 nil，则使用全部。（默认：nil）</p></td></tr>
+<tr><td class="argumentname"><p>freeLast</p></td><td class="argumentdesc"><p>是否释放该索引处的最后一个 synth（默认：true）</p></td></tr>
+</table>
+
+<h4 id="-sendAll"><code>.sendAll(extraArgs, freeLast: true)</code></h4>
+
+<p>发送所有 synth，或重启所有对象。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>extraArgs</p></td><td class="argumentdesc"><p>用于设置合成器的参数。参数列表仅应用于该合成器。</p></td></tr>
+<tr><td class="argumentname"><p>freeLast</p></td><td class="argumentdesc"><p>是否释放该索引处的最后一个 synth（默认：true）</p></td></tr>
+</table>
+
+<h4 id="-sendEach"><code>.sendEach(extraArgs, freeLast: true)</code></h4>
+
+<p>与 send 类似，只是分别对各个对象进行迭代。</p>
+
+<h4 id="-wakeUp"><code>.wakeUp</code></h4>
+
+<p>在代理未被任何输出使用（.play 或 .ar/.kr）之前，它不会在服务器上运行。你可以唤醒它以强制其播放。通常不需要这样做。</p>
+
+<h3 id="Storing as code">存储为代码</h3>
+
+<h4 id="-asCode"><code>.asCode(includeSettings: true, includeMonitor: true, envir)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc</a></em></p>
+
+<p>将代理存储为可执行代码。更多示例另见 <a href="Tutorials-JITLib-jitlib_asCompileString.html">jitlib_asCompileString</a>。</p>
+
+<pre><code>// Ndef
+Ndef(\a, { Saw.ar(12) }).asCode;
+
+// 在已推入的代理空间中
+p = ProxySpace.push(s.boot);
+~x = { Saw.ar(123, 0.1) };
+~x.play;
+~x.asCode;
+
+p.end.pop;
+
+// 匿名 nodeproxy 也会发布指令：
+x = NodeProxy.new.source = { DC.ar };
+x.asCode;
+
+x.free;</code></pre>
+
+<h3 id="GUI">GUI</h3>
+
+<h4 id="-edit"><code>.edit(nSliders, parent, bounds)</code></h4>
+
+<p>返回此 proxy 的一个新的 <a href="Classes-NodeProxyEditor.html">NodeProxyEditor</a> 实例。</p>
+
+<pre><code>a = NodeProxy.new;
+a.edit;
+
+(
+a.source = { |freq = 440, rate = 2|
+    SinOsc.ar(freq * [1, 1.625]) * SinOsc.kr(rate).max(0) * 0.2
+}
+);</code></pre>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-addChild"><code>.addChild(proxy)</code></h4>
+
+<h4 id="-addNodeMapControlNames"><code>.addNodeMapControlNames(objCtlNames, except: [])</code></h4>
+
+<h4 id="-asGroup"><code>.asGroup</code></h4>
+
+<h4 id="-asNodeID"><code>.asNodeID</code></h4>
+
+<h4 id="-asTarget"><code>.asTarget</code></h4>
+
+<h4 id="-at"><code>.at(index)</code></h4>
+
+<h4 id="-children"><code>.children</code></h4>
+
+<h4 id="-cleanNodeMap"><code>.cleanNodeMap</code></h4>
+
+<h4 id="-deepWakeUp"><code>.deepWakeUp</code></h4>
+
+<h4 id="-defaultGroupID"><code>.defaultGroupID</code></h4>
+
+<h4 id="-document"><code>.document(includeSettings: true, includeMonitor: true)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc</a></em></p>
+
+<h4 id="-filter"><code>.filter(i, func)</code></h4>
+
+<h4 id="-findFirstSpecFor"><code>.findFirstSpecFor(controlName)</code></h4>
+
+<h4 id="-findInOpenDocuments"><code>.findInOpenDocuments(index: 0)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc</a></em></p>
+
+<h4 id="-freeBus"><code>.freeBus</code></h4>
+
+<h4 id="-getBundle"><code>.getBundle</code></h4>
+
+<h4 id="-getFamily"><code>.getFamily(set, alreadyAsked)</code></h4>
+
+<h4 id="-getStructure"><code>.getStructure(alreadyAsked)</code></h4>
+
+<h4 id="-internalKeys"><code>.internalKeys</code></h4>
+
+<h4 id="-isPlaying"><code>.isPlaying</code></h4>
+
+<h4 id="-key"><code>.key(envir)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc</a></em></p>
+
+<h4 id="-loadToBundle"><code>.loadToBundle(bundle)</code></h4>
+
+<h4 id="-mapEnvir"><code>.mapEnvir( ... keys)</code></h4>
+
+<h4 id="-moveBeforeMsg"><code>.moveBeforeMsg( ... proxies)</code></h4>
+
+<h4 id="-nameDef"><code>.nameDef(name, index: 0)</code></h4>
+
+<h4 id="-nodeID"><code>.nodeID</code></h4>
+
+<h4 id="-nodeMap"><code>.nodeMap</code></h4>
+
+<h4 id="-nodeMap"><code>.nodeMap = map</code></h4>
+
+<h4 id="-objects"><code>.objects</code></h4>
+
+<h4 id="-playEditString"><code>.playEditString(usePlayN, dropDefaults: false, nameStr)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc</a></em></p>
+
+<h4 id="-playNDialog"><code>.playNDialog(bounds, usePlayN)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc</a></em></p>
+
+<h4 id="-playNString"><code>.playNString(dropDefaults: false)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc</a></em></p>
+
+<h4 id="-playString"><code>.playString(dropDefaults: false)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc</a></em></p>
+
+<h4 id="-prepareOtherObjects"><code>.prepareOtherObjects(bundle, index, busChanged)</code></h4>
+
+<h4 id="-prepareToBundle"><code>.prepareToBundle(argGroup, bundle, addAction: &#x27;addToTail&#x27;)</code></h4>
+
+<h4 id="-putAll"><code>.putAll(list, index: 0, channelOffset: 0)</code></h4>
+
+<h4 id="-putNewObject"><code>.putNewObject(bundle, index, container, extraArgs, now)</code></h4>
+
+<h4 id="-putSeries"><code>.putSeries(first, second, last, value)</code></h4>
+
+<h4 id="-read"><code>.read(proxies)</code></h4>
+
+<h4 id="-readFromBus"><code>.readFromBus(busses)</code></h4>
+
+<h4 id="-reallocBusIfNeeded"><code>.reallocBusIfNeeded</code></h4>
+
+<h4 id="-rebuildDeepToBundle"><code>.rebuildDeepToBundle(bundle, busWasChangedExternally: true, checkedAlready, timeArgs)</code></h4>
+
+<h4 id="-rebuildToBundle"><code>.rebuildToBundle(bundle, timeArgs)</code></h4>
+
+<h4 id="-removeAll"><code>.removeAll(fadeTime)</code></h4>
+
+<h4 id="-removeAllToBundle"><code>.removeAllToBundle(bundle, fadeTime)</code></h4>
+
+<h4 id="-removeChild"><code>.removeChild(proxy)</code></h4>
+
+<h4 id="-removeFirst"><code>.removeFirst(fadeTime)</code></h4>
+
+<h4 id="-removeToBundle"><code>.removeToBundle(bundle, index, fadeTime)</code></h4>
+
+<h4 id="-resetNodeMap"><code>.resetNodeMap</code></h4>
+
+<h4 id="-sendAllToBundle"><code>.sendAllToBundle(bundle, extraArgs)</code></h4>
+
+<h4 id="-sendEachToBundle"><code>.sendEachToBundle(bundle, extraArgs)</code></h4>
+
+<h4 id="-sendObjectToBundle"><code>.sendObjectToBundle(bundle, object, extraArgs, index)</code></h4>
+
+<h4 id="-servStr"><code>.servStr</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/extStoreOn.sc</a></em></p>
+
+<h4 id="-serverQuit"><code>.serverQuit</code></h4>
+
+<h4 id="-setBus"><code>.setBus(argBus)</code></h4>
+
+<h4 id="-setGroup"><code>.setGroup(args, useLatency: false)</code></h4>
+
+<h4 id="-setNodeMap"><code>.setNodeMap(map, xfade: true)</code></h4>
+
+<h4 id="-shouldAddObject"><code>.shouldAddObject(obj)</code></h4>
+
+<h4 id="-spawn"><code>.spawn(extraArgs, index: 0)</code></h4>
+
+<h4 id="-stopAllToBundle"><code>.stopAllToBundle(bundle, fadeTime)</code></h4>
+
+<h4 id="-supplementNodeMap"><code>.supplementNodeMap(keys, replaceOldKeys: false)</code></h4>
+
+<h4 id="-trace"><code>.trace(index: 0)</code></h4>
+
+<h4 id="-typeStr"><code>.typeStr</code></h4>
+
+<h4 id="-unsetToBundle"><code>.unsetToBundle(bundle, keys)</code></h4>
+
+<h4 id="-wakeUpParentsToBundle"><code>.wakeUpParentsToBundle(bundle, checkedAlready)</code></h4>
+
+<h4 id="-wakeUpToBundle"><code>.wakeUpToBundle(bundle, checkedAlready)</code></h4>
+
+<h4 id="-xFadePerform"><code>.xFadePerform(selector, args)</code></h4>
+
+<h4 id="-xmap"><code>.xmap( ... args)</code></h4>
+
+<h4 id="-xsetn"><code>.xsetn( ... args)</code></h4>
+
+<h4 id="-xunset"><code>.xunset( ... args)</code></h4>
+
+<h2 id="examples">示例</h2>
+
+<p>更多信息，请参见 <a href="Classes-ProxySpace.html">ProxySpace</a></p>
+
+<pre><code>///////////////////// using node proxy with ugen functions /////////////////////
+
+s.boot;
+
+a = NodeProxy.audio(s, 2);
+a.play; // 播放到硬件输出，返回一个包含 synth 的 group
+
+// 设置源
+a.source = { SinOsc.ar([350, 351.3], 0, 0.2) };
+
+// 现在该代理有两个声道：
+a.numChannels.postln;
+a.source = { SinOsc.ar([390, 286] * 1.2, 0, 0.2) };
+
+// 超出通道数时环绕：
+a.source = { SinOsc.ar([390, 286, 400, 420, 300] * 1.2, 0, 0.2) };
+
+// 其他输入
+a.source = { WhiteNoise.ar([0.01, 0.01]) };
+a.source = 0;
+a.source = \default; // 服务器上的 synthDef
+a.source = SynthDef(&quot;w&quot;, { |out = 0| Out.ar(out, SinOsc.ar([Rand(430, 600), 600], 0, 0.2)) });
+a.source = nil; // 移除任何对象
+
+// 反馈
+a.source = { SinOsc.ar(a.ar * 7000 * LFNoise1.kr(1, 0.3, 0.6) + 200, 0, 0.1) };
+a.source = { SinOsc.ar(a.ar * 6000 * MouseX.kr(0, 2) + [100, 104], 0, 0.1) };
+
+// fadeTime
+a.fadeTime = 2.0;
+a.source = { SinOsc.ar([390, 286] * ExpRand(1, 3), 0, 0.2) };
+
+
+// 添加节点
+a.add({ SinOsc.ar([50, 390]*1.25, 0, 0.1) });
+a.add({ BrownNoise.ar([0.02, 0.02]) });
+
+// 在索引处设置节点：
+a[0] = { SinOsc.ar(700 * LFNoise1.kr(1, 0.3, 0.6) + 200, 0, 0.1) };
+a[1] = { LFPulse.kr(3, 0.3) * SinOsc.ar(500, 0, 0.1) };
+a[2] = { LFPulse.kr(3.5, 0.3) * SinOsc.ar(600, 0, 0.1) };
+a[3] = { SinOsc.ar([1, 1.25] * 840, 0, 0.1) };
+
+// 滤波：第一个参数是之前的 bus 内容。更多参数可以照常使用。
+a[3] = \filter -&gt; { |in| in * SinOsc.ar(Rand(100, 1000)) };
+a[2] = \filter -&gt; { |in| in * MouseY.kr(0, 1) };
+a[8] = \filter -&gt; { |in| in * MouseX.kr(0, 1) };
+a[4] = \filter -&gt; { |in| in * SinOsc.ar(ExpRand(1, 5)).max(0) };
+
+
+
+// 设置控制项
+a.fadeTime = 2.0;
+a.source = { |f = 400| SinOsc.ar(f * [1, 1.2] * rrand(0.9, 1.1), 0, 0.1) };
+a.set(\f, rrand(900, 300));
+a.set(\f, rrand(1500, 700));
+a.xset(\f, rrand(1500, 700)); // 交叉淡化的设置
+a.source = { |f = 400| RLPF.ar(Pulse.ar(f * [1, 1.02] * 0.05, 0.5, 0.2), f * 0.58, 0.2) };
+
+// 控制延迟
+a.lag(\f, 0.5); // 这些对象会在内部重新构建并发送到服务器。
+a.set(\f, rrand(1500, 700));
+a.lag(\f, nil);
+a.set(\f, rrand(1500, 700));
+
+a.fadeTime = 1.0;
+
+// 将控制器映射到其他节点代理
+
+c = NodeProxy.control(s, 2);
+c.source = { SinOsc.kr([10, 20] * 0.1, 0, 150, 1300) };
+a.map(\f, c);
+a[0] = { |f = 400| RHPF.ar(Pulse.ar(f * [1, 1.2] * 0.05, 0.5, 0.2), f * 0.58, 0.2) };
+c.source = { SinOsc.kr([10, 16] * 0.02, 0, 50, 700) };
+c.source = { Line.kr(300, 1500, 10) + SinOsc.kr(20 * [1, 2], 0, 100) };
+a[1] = { |f| LFPar.ar(f % MouseX.kr(1, 40, 1) * 4 + 360, 0, 0.2) };
+
+// 将一个 proxy 的多个通道映射到另一个 proxy 的多个控制
+// 最近行为已更改！
+
+a.source = { |f = #[400, 400]| LPF.ar(Pulse.ar(f[0] * [0.4, 1], 0.2, 0.2), f[1] * 3) };
+a.map(\f, c); // 多声道代理 c 被映射到 a 的多声道控件
+a.source = { |f = #[400, 400]| LPF.ar(Pulse.ar(f, 0.2, 0.2), f[1]) };
+a.source = { |f = #[400, 400]| Formant.ar(140, f * 1.5, 100, 0.1) };
+c.source = { SinOsc.kr([Line.kr(1, 30, 10), 1], 0, [100, 700], [300, 700]) };
+c.source = 400;
+
+
+c.fadeTime = 5.5;
+c.source = { LFNoise0.kr([2.3, 1.0], [100, 700], [300, 1700]) };
+c.source = { SinOsc.kr([2.3, 1.0], 0, [100, 700], [300, 1700]) };
+c.source = 400;
+
+
+// 表现得像 sc2 插件
+c.gate(1400, 0.1);
+c.gate(1000, 0.1);
+c.line(1000, 1);
+
+// 直接访问
+a.lineAt(\f, 300, 2);
+a.xlineAt(\f, 600, 0.3);
+a.gateAt(\f, 1600, 0.3);
+
+
+// 更改 nodeMaps
+a.unmap(\f);
+n = a.nodeMap.copy;
+n.set(\f, 700);
+a.fadeToMap(n);
+n = a.nodeMap.copy;
+n.set(\f, 400);
+a.fadeTime = 1.0;
+a.fadeToMap(n, [\f]); // 到新映射的线性插值：实验性
+a.map(\f, c); // 恢复映射
+
+
+// 发送包络（最多 8 个电平）
+w = Env.new(Array.rand(3, 400, 1000), Array.rand(2, 0.3, 0.001), -4);
+c.env(w);
+c.env(w);
+w = Env.new(Array.rand(8, 400, 1000), Array.rand(7, 0.03, 0.1));
+c.env(w);
+c.env(w);
+
+// 停止合成，然后唤醒代理：
+
+a.stop; // 停止监听
+a.play; // 启动监视器
+a.end;    // 释放合成器并停止监视器
+c.free;    // 释放控制代理 c</code></pre>
+
+<pre><code>///////////////////// channel offset/object index /////////////////////
+
+
+a = NodeProxy.audio(s, 2);
+a.play;
+a[0] = { Ringz.ar(Impulse.ar(5, 0, 0.1), 1260) };
+a.put(1, { Ringz.ar(Impulse.ar(5.3, 0, 0.1), 420) }, 1);
+a.put(0, { Ringz.ar(Dust.ar([1, 1]*15.3, 0.1), 720) }, 1);
+a.put(1, { Ringz.ar(Impulse.ar(5.3, 0, 0.1), 420) }, 1);
+a.end;</code></pre>
+
+<pre><code>///////////////////// beat accurate playing /////////////////////
+
+
+
+
+a = NodeProxy.audio(s, 2);
+a.play;
+
+a.quant = 2.0; // 将更改量化到下一个 2.0 拍的倍数
+a.source = { Ringz.ar(Impulse.ar(0.5, 0, 0.3), 3000, 0.01) };
+a[1] = { Ringz.ar(Impulse.ar([0.5, 1], 0, 0.3), 1000, 0.01) };
+a[2] = { Ringz.ar(Impulse.ar([3, 5]/2, 0, 0.3), 8000, 0.01) };
+a[3] = { Ringz.ar(Impulse.ar([3, 5]*16, 0, 0.3), 5000, 0.01) * LFPulse.kr(0.5, 0, 0.05) };
+
+a.removeLast;
+a.removeAt(2);
+
+a.clear;</code></pre>
+
+<pre><code>///////////////////// using patterns - event streams /////////////////////
+
+
+(
+// 必须有 &#x27;out&#x27; 或 &#x27;i_out&#x27; 参数才能正常工作
+SynthDef(&quot;who&quot;, { |freq, gate = 1, out = 0, ffreq = 800, amp = 0.1|
+    var env;
+    env = Env.asr(0.01, amp, 0.5);
+    Out.ar(out, Pan2.ar(
+        Formant.ar(freq, ffreq, 300, EnvGen.kr(env, gate, doneAction: Done.freeSelf)), Rand(-1.0, 1.0))
+    )
+}).add;
+
+)
+
+
+(
+s.boot;
+a = NodeProxy.audio(s, 2);
+a.fadeTime = 2;
+b = NodeProxy.audio(s, 2);
+b.fadeTime = 3;
+)
+
+a.play; // 监控输出
+
+// 在 b 中静默播放该模式
+b.source = Pbind(\instrument, \who, \freq, 500, \ffreq, 700, \legato, 0.02);
+
+// 通过 a 播放 b：
+a.source = b;
+
+// 用环形调制对 b 进行滤波：
+a.source = { b.ar * SinOsc.ar(SinOsc.kr(0.2, 300, 330)) }; // 过滤 pattern 的输入
+a.source = { b.ar * LFCub.ar([2, 8], add: -0.5) }; // 过滤 pattern 的输入
+
+a.source = b;
+
+// 将 b 映射到另一个代理
+c = NodeProxy.control(s, 1).fadeTime_(1);
+c.source = { SinOsc.kr(2, 0, 400, 700) };
+
+
+// 现在可以简单地将控制节点代理嵌入到事件模式中。
+// （这对 \degree、\midinote 等不适用。）
+// 嵌入到其他模式中时，它仍会返回自身。
+
+
+b.source = Pbind(\instrument, \who, \freq, 500, \ffreq, c, \legato, 0.02);
+
+c.source = { SinOsc.kr(SinOsc.kr(0.2, 0, 10, 10), 0, 400, 700) };
+
+c.source = { LFNoise1.kr(5, 1300, 1500) };
+c.source = { MouseX.kr(100, 5500, 1) };
+
+(
+b.source = Pbind(
+            \instrument, \who,
+            \freq, Pseq([600, 350, 300], inf),
+            \legato, 0.1,
+            \ffreq, Pseq([c, 100, c, 100, 300, 600], inf), // 在模式中使用代理
+            \dur, Pseq([1, 0.5, 0.75, 0.25] * 0.4, inf),
+            \amp, Pseq([0.2, 0.2, 0.1, 0.1, 0.2], inf)
+        );
+)
+
+
+
+b[2] = Pbind(\instrument, \who, \freq, 620, \ffreq, Prand([500, c], inf), \legato, 0.1, \dur, 0.1);
+b[3] = Pbind(\instrument, \who, \ffreq, 5000, \freq, Pseq([720, 800], inf), \legato, 0.1, \dur, 0.1, \amp, 0.01);
+b[4] = Pbind(\instrument, \who, \freq, Pseq([700, 400], inf), \legato, 0.1, \ffreq, 200);
+b[1] = { WhiteNoise.ar([0.01, 0.01]) };
+b[4] = { |ffreq = 800| Resonz.ar(WhiteNoise.ar([1, 1]), ffreq, 0.05) };
+
+
+b.map(\ffreq, c); // 将控件映射到代理
+b.removeLast;
+b.removeLast;
+a.source = { b.ar * WhiteNoise.ar(0.1, 1) };
+a.source = { b.ar * WhiteNoise.ar(0.1, 1) + (b.ar * SinOsc.ar(SinOsc.kr(0.01, 0, 50, 330))) };
+
+c.source = { XLine.kr(1900, 10, 10) };
+
+a.clear(10); b.clear(10); c.clear(10); // 淡出并清除所有内容（释放 bus、group 和 synth）</code></pre>
+
+<h2 id="Supported sources">支持的源</h2>
+
+<dl>
+<dt><a href="Classes-NodeProxy.html">NodeProxy</a></dt>
+<dd><p>通过读取另一个 NodeProxy 的总线来播放。</p></dd>
+<dt><a href="Classes-Function.html">Function</a></dt>
+<dd><p>被解释为 ugen 函数，并播放一个 Synth，类似于 Function.play。</p></dd>
+<dt><a href="Classes-SimpleNumber.html">SimpleNumber</a></dt>
+<dd><p>将此值连续写入总线，覆盖先前的总线值。</p></dd>
+<dt>数字的 <a href="Classes-Array.html">Array</a></dt>
+<dd><p>连续将值写入总线，覆盖之前的总线值。</p></dd>
+<dt><a href="Classes-Bus.html">Bus</a></dt>
+<dd><p>读取总线上的信号。</p></dd>
+<dt><a href="Classes-SynthDef.html">SynthDef</a></dt>
+<dd><p>使用该 SynthDef 播放一个 Synth。</p></dd>
+<dt><a href="Classes-Symbol.html">Symbol</a></dt>
+<dd><p>使用此名称的 SynthDef 播放一个 Synth。</p></dd>
+<dt><a href="Classes-Pattern.html">Pattern</a></dt>
+<dd><p>作为事件模式播放（使用 Pbind 或其他事件模式）。</p></dd>
+<dt><a href="Classes-Stream.html">Stream</a></dt>
+<dd><p>作为事件流播放（返回事件的流）。</p></dd>
+<dt>nil</dt>
+<dd><p>Nil 会移除所有对象。</p></dd>
+<dt><a href="Classes-Pdef.html">Pdef</a>、<a href="Classes-EventPatternProxy.html">EventPatternProxy</a></dt>
+<dd><p>像流一样播放。</p></dd>
+<dt><a href="Classes-Task.html">Task</a></dt>
+<dd><p>已播放，未分配输出。</p></dd>
+<dt><a href="Classes-Tdef.html">Tdef</a></dt>
+<dd><p>像 Task 一样播放</p></dd>
+<dt><a href="Classes-Event.html">Event</a></dt>
+<dd><p>像在模式中一样播放。</p></dd>
+<dt>关联（<a href="Reference-NodeProxy_roles.html">NodeProxy 角色</a>）：</dt>
+<dd><dl>
+<dt>(\filter -&gt; func)</dt>
+<dd><p>过滤先前的输入（带后置控制）</p></dd>
+<dt>(\filterIn -> func)</dt>
+<dd><p>过滤先前的输入（使用 pre 控制）</p></dd>
+<dt>(\set -&gt; 事件模式)</dt>
+<dd><p>使用模式的 event 键来设置控件</p></dd>
+<dt>(\setbus -> 事件模式)</dt>
+<dd><p>用事件模式设置总线。总线值为每个事件的 \value 键。</p></dd>
+<dt>(\setsrc -> 事件模式)</dt>
+<dd><p>用事件模式设置 source。source 为事件的 \source 键。</p></dd>
+<dt>(\control -&gt; 数组或数字)</dt>
+<dd><p>准备好一种按索引设置值的高效方式</p></dd>
+<dt>(\mix -&gt; func)</dt>
+<dd><p>混合音频</p></dd>
+</dl></dd>
+<dt>关键库：</dt>
+<dd><dl>
+<dt>AbstractPlayer</dt>
+<dd><p>在单独的总线中启动，并映射到此总线</p></dd>
+<dt>Instr</dt>
+<dd><p>转换为播放器并启动</p></dd>
+</dl></dd>
+</dl>
+
+<p>可以添加其他来源的定义 - 参见：<a href="Reference-NodeProxy_roles.html">NodeProxy roles</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/NodeProxy.html" rel="noreferrer noopener">Classes/NodeProxy.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

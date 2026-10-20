@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CondVar - SuperCollider 文档</title>
+<meta name="description" content="条件变量：阻塞一个或多个线程，直到某个条件为真">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>CondVar</h1>
+
+<p><em>条件变量：阻塞一个或多个线程，直到某个条件为真</em></p>
+
+<p><a href="Classes-Object.html">Object</a></p>
+
+<p>CondVar 是一个<strong>条件变量</strong>，一种低层同步工具，允许一个或多个线程等待直到某个条件变为真。虽然名称中有“变量”，但条件变量并不像例如 <a href="Classes-FlowVar.html">FlowVar</a> 那样包装一个变量。这里所指的条件完全在 CondVar 对象之外，可以是代码中任意状态。CondVar 支持两种基本操作：等待和发信号。等待是指挂起当前线程的执行，直到相关条件在未来某一时刻变为真。发信号是指向其他线程表明条件现在已为真，它们应当继续执行。</p>
+
+<p>在等待 CondVar 时，你可以选择传入一个谓词（一个对象，通常是一个 Function，用 <code>value</code> 求值时返回 Boolean）作为参数。这带来了使用 CondVar 的两种常见方式：</p>
+
+<ul>
+<li><p>手动检查你的条件</p>
+
+<ol>
+<li>首先，检查条件，以防它已经为真。</li>
+<li>如果条件为假，则调用不带谓词的 wait 或 waitFor。这会挂起当前线程的执行。</li>
+<li>当 CondVar 被信号通知或超时到期时，线程会继续执行。此时应再次检查条件，若不满足则继续等待。</li>
+</ol>
+
+<p>这通常采取如下形式的 while 循环：<code>while { /* condition is false */ } { /* wait on condition */ }</code>。</p></li>
+<li>让 CondVar 为你检查条件：使用带谓词的 wait 或 waitFor 调用，它会处理上述三个步骤。</li>
+</ul>
+
+<p>以下代码说明了这两种方法：</p>
+
+<pre><code>// 版本 1：`wait` 不带谓词——需要 while 循环
+(
+var c = CondVar();
+// 我们这里的资源将是一个 &quot;message&quot;，在可用时设置为某个字符串，
+// 在不可用时设置为空。此资源
+// 初始时不可用。
+var message = &quot;&quot;;
+
+// 我们添加这些延迟是为了明确哪个线程先运行。试着
+// 更改这些值，看看会发生什么！
+var waitThreadDelay = 1;
+var signalThreadDelay = 2;
+
+// 这两个分叉线程将共享条件变量 `c`
+// 以及条件状态 `message`。
+fork {
+    waitThreadDelay.wait;
+    while { message.isEmpty } {
+        &quot;Resource is unavailable, waiting now&quot;.postln;
+        c.wait;
+    };
+    &quot;Resource is available, message is: &#x27;%&#x27;\n&quot;.postf(message);
+};
+
+fork {
+    signalThreadDelay.wait;
+    message = &quot;meow, world!&quot;;
+    c.signalOne;
+    &quot;Resource was made available and waiting thread was signaled&quot;.postln;
+};
+)
+
+// 版本 2：`wait` 带谓词——不需要 while 循环
+(
+var c = CondVar(), message = &quot;&quot;;
+var waitThreadDelay = 1;
+var signalThreadDelay = 2;
+
+fork {
+    waitThreadDelay.wait;
+    c.wait({ message.notEmpty });
+    &quot;Resource is available, message is: &#x27;%&#x27;\n&quot;.postf(message);
+};
+
+fork {
+    signalThreadDelay.wait;
+    message = &quot;meow, world!&quot;;
+    c.signalOne;
+    &quot;Resource was made available and waiting thread was signaled&quot;.postln;
+};
+)</code></pre>
+
+<p>在内部，CondVar 不过是一个等待条件变为 true 的线程队列。在发送信号时，你可以选择只唤醒队列中下一个等待的线程（如果存在）（<code>signalOne</code>），或者唤醒队列中所有等待的线程（<code>signalAll</code>）。</p>
+
+<p>注意，队列中的线程不会在收到信号后立即恢复。它们被安排在发出信号的线程放弃控制权之后立即恢复，无论是通过 <code>yield</code> 还是 <code>wait</code>，或者到达正在运行的 Routine 的末尾。在上面的示例中，<code>signalOne</code> Routine 直接结束，因此无需 <code>yield</code> 任何内容。</p>
+
+<p>在其他语言中，你可能会看到条件变量也使用互斥锁进行同步。这通常是保护对条件状态共享访问所必需的。然而，由于 SuperCollider 的解释器是单线程的，每个运行中的线程都隐式持有全局解释器互斥锁，因此更细粒度的互斥锁是不必要的。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>CondVar.new</code></h4>
+
+<p>创建一个新实例。</p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h4 id="-wait"><code>.wait(predicate)</code></h4>
+
+<p>其行为取决于是否给出了 <code>predicate</code>。如果没有给出 <code>predicate</code>，此方法只是阻塞当前线程，直到它被 <code>signalOne</code> 或 <code>signalAll</code> 唤醒。否则，此方法等价于 <code>while { predicate.value.not } { cond.wait }</code>。换句话说，只有当谓词为假时线程才会阻塞，否则它会阻塞，并且只有在线程已被信号通知且谓词为 true 时才继续执行。</p>
+
+<p>此方法只能在 <a href="Classes-Routine.html">Routine</a> 或 Routine 包装器（例如 <a href="Classes-Task.html">Task</a> 或 <a href="Classes-Tdef.html">Tdef</a>）内调用。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>predicate</p></td><td class="argumentdesc"><p>在阻塞之前、以及在由 <code>signalOne</code> 或 <code>signalAll</code> 唤醒后恢复之前要检查的条件。如果 <code>predicate.value.not</code> 为 <code>true</code>，则恢复执行。通常，这是一个返回布尔值的 Function。</p>
+
+<p><code>predicate</code> 总是在调用 <code>wait</code> 的线程上执行。如果对 predicate 求值抛出异常，该异常将在调用 <code>wait</code> 的线程上向上传播，并且该线程将不再等待此 CondVar。</p>
+
+<p>当 <code>wait</code> 返回时，谓词为真。稍后可能不再为真，例如当它依赖于系统时间或服务器状态等外部因素时。</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>此对象</p>
+
+<h4 id="-waitFor"><code>.waitFor(timeoutBeats, predicate)</code></h4>
+
+<p>类似于 <code>wait</code>，但如果相对超时 <code>timeoutBeats</code> 到期，线程也会解除阻塞。</p>
+
+<p>如果 <code>predicate</code> 为 <code>nil</code>，此方法会阻塞当前线程，直到它被 <code>signalOne</code> 或 <code>signalAll</code> 唤醒，或者超时到期。如果 <code>predicate</code> 不为 <code>nil</code>，则当 <code>predicate.value</code> 为 true 时此方法立即返回，否则将阻塞，直到超时到期，或者直到线程被 <code>signalOne</code> 或 <code>signalAll</code> 唤醒且 <code>predicate.value</code> 为 true。</p>
+
+<p>由于解释器的线程调度器不是抢占式的，到期的超时只会在其他线程空闲时唤醒线程。不能保证线程会在超时时间到期附近被唤醒，甚至不能保证它会被唤醒。例如，如果其他线程进入无限循环且永不 yield，就可能发生这种情况。</p>
+
+<p>此方法只能在 <a href="Classes-Routine.html">Routine</a> 或 Routine 包装器（例如 <a href="Classes-Task.html">Task</a> 或 <a href="Classes-Tdef.html">Tdef</a>）内调用。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>timeoutBeats</p></td><td class="argumentdesc"><p>超时前要等待的时长，以拍为单位。该值按以下规则转换：如果它的类是 Integer 或 Float，则保持不变；否则，如果它响应 <code>asInteger</code>，则调用该方法；否则，如果它响应 <code>asFloat</code>，则调用该方法。在此之后，如果得到的值不是 Integer 或 Float，则抛出错误。如果得到的值是 <code>inf</code> 或不是数字（NaN），也会抛出错误。如果得到的值小于或等于 0，那么当 <code>predicate</code> 不为 nil 时，<code>waitFor</code> 立即返回 <code>predicate.value</code> 的结果，否则返回 <code>false</code>。</p>
+
+<p>进行这些严格检查是为了保护处理超时的线程。</p></td></tr>
+<tr><td class="argumentname"><p>predicate</p></td><td class="argumentdesc"><p>在阻塞之前、以及在由 <code>signalOne</code> 或 <code>signalAll</code> 或超时唤醒后恢复之前要检查的条件。通常，这是一个返回 Boolean 的 Function。</p>
+
+<p><code>predicate</code> 总是在调用 <code>wait</code> 的线程上执行。如果对 predicate 求值抛出异常，该异常将在调用 <code>wait</code> 的线程上向上传播，并且该线程将不再等待此 CondVar。</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>如果线程是因为超时到期而被唤醒，那么在给定了 <code>predicate.value</code> 的情况下返回它；如果 <code>predicate</code> 为 <code>nil</code>，则返回 <code>false</code>。否则返回 <code>true</code>。</p>
+
+<p>换句话说，如果 <code>predicate</code> 非 nil，返回值为 <code>true</code> 表示在线程恢复时 <code>predicate.value</code> 为真。</p>
+
+<h4 id="-signalOne"><code>.signalOne</code></h4>
+
+<p>唤醒一个正在等待此 Condition 的线程。线程按照调用 <code>wait</code> 或 <code>waitFor</code> 的顺序被唤醒。如果一个线程被唤醒并且之前是带谓词等待的，而该谓词仍为 <code>false</code>，它将再次 <code>wait</code> 并被放到等待此 CondVar 的线程队列末尾。在这种情况下，不会唤醒另一个线程。</p>
+
+<h4>返回值：</h4>
+
+<p>此对象</p>
+
+<h4 id="-signalAll"><code>.signalAll</code></h4>
+
+<p>唤醒所有在该 Condition 上等待的线程。线程按调用 <code>wait</code> 或 <code>waitFor</code> 的顺序被唤醒。如果线程以谓词形式等待，且被唤醒后其谓词仍为 <code>false</code>，它们将以调用此方法之前的相同顺序再次阻塞。</p>
+
+<h4>返回值：</h4>
+
+<p>此对象</p>
+
+<h4 id="-shallowCopy"><code>.shallowCopy</code></h4>
+
+<h4 id="-copy"><code>.copy</code></h4>
+
+<p><em>来自父类：<a href="Classes-Object.html">Object</a></em></p>
+
+<h4 id="-deepCopy"><code>.deepCopy</code></h4>
+
+<p>抛出 <code>ShouldNotImplementError</code>；CondVar 不能被复制、浅复制或深复制。</p>
+
+<h2 id="examples">示例</h2>
+
+<h3 id="Simple interactive example">简单的交互示例</h3>
+
+<pre><code>(
+c = CondVar();
+
+Routine {
+    1.wait;
+    &quot;waited for 1 second&quot;.postln;
+    1.wait;
+    &quot;waited for another second, now waiting for you to run &#x27;c.signalOne&#x27;...&quot;.postln;
+    c.wait;
+    &quot;the condition is no longer waiting&quot;.postln;
+    1.wait;
+    &quot;waited for another second, now waiting for you...&quot;.postln;
+    c.wait;
+    &quot;the condition is no longer waiting&quot;.postln;
+    1.wait;
+    &quot;the end&quot;.postln;
+}.play;
+)
+
+// 运行此行以解除例程阻塞
+c.signalOne;</code></pre>
+
+<h3 id="Producer-consumer queue: single producer, single consumer">生产者-消费者队列：单生产者、单消费者</h3>
+
+<p>以下示例展示了使用 CondVar 管理一个简单的生产者-消费者队列，其中有一个消费者和一个生产者。</p>
+
+<p>生产者线程将“任务”添加到队列，而消费者线程则移除并“处理”它们。当没有工作要做时，消费者必须等待直到有工作可用。当工作太多时，生产者线程应避免创建更多任务。试着调整每个线程的等待时间，看看会发生什么。</p>
+
+<pre><code>(
+var full = CondVar(), empty = CondVar();
+var queue = Array();
+var maxQueueSize = 5;
+// producer 和 consumer 会在任务之间等待一段时长，
+// 该时长处于这些范围中的某处。随着时间推移，你会看到队列在 0 到 maxQueueSize 之间
+// 增长和缩小，但 CondVar 会让一切保持
+// 同步。
+var producerWaitTimeRange = [0.1, 1];
+var consumerWaitTimeRange = [0.1, 1];
+
+// 每个线程中的 &quot;wait&quot; 模拟异步执行某些任务，
+// 在此期间可能创建其他任务。如果我们的任务
+// 总是同步创建和/或执行，就不需要
+// 在两个线程之间共享队列。
+
+// 生产者线程
+fork {
+    var counter = 0; // 我们的“任务”目前只是一个递增的数字
+    var task;
+    loop {
+        // 这保证了当我们从 `wait` 返回时，
+        // 队列中有足够的空间来添加另一个任务。为了越过
+        // 这一点，我们必须等待消费者调用
+        // signalOne。
+        full.wait({ queue.size &lt; maxQueueSize });
+
+        task = counter;
+        counter = counter + 1;
+        queue = queue.add(task);
+        postf(&quot;Producer created a task: %. Current queue size: %\n&quot;,
+            task, queue.size);
+
+        // Now that we&#x27;ve added a task to the queue, we have to let
+        // the consumer thread know in case it was waiting on us.
+        empty.signalOne;
+
+        wait(rrand(producerWaitTimeRange[0], producerWaitTimeRange[1]));
+    }
+};
+
+// 消费者线程
+fork {
+    var task;
+    loop {
+        // 与生产者线程中一样，这会阻塞我们，直到
+        // 队列中有内容，并且我们已经收到
+        // 生产者的信号。
+        empty.wait({ queue.notEmpty });
+
+        task = queue.removeAt(0);
+        postf(&quot;Consumer processed a task: %. Current queue size: %\n&quot;,
+            task, queue.size);
+
+        // 我们需要向生产者发出信号，以防它正在等待
+        // 我们向队列插入某些内容。
+        full.signalOne;
+
+        wait(rrand(consumerWaitTimeRange[0], consumerWaitTimeRange[1]));
+    }
+};
+)</code></pre>
+
+<h3 id="Producer-consumer queue: multiple producers, multiple consumers">生产者-消费者队列：多个生产者，多个消费者</h3>
+
+<p>这里是另一个生产者-消费者示例，包含多个生产者和多个消费者。注意上面的代码可以多么容易地被泛化。</p>
+
+<pre><code>(
+var full = CondVar(), empty = CondVar();
+var queue = Array();
+var counter = 0; // 这次 task 计数器在所有 producers 之间共享
+
+// 尝试对这些参数进行实验
+var maxQueueSize = 10;
+var numProducers = 3;
+var numConsumers = 3;
+var producerWaitTimeRange = [0.3, 1.5];
+var consumerWaitTimeRange = [0.3, 1.5];
+
+// 生产者线程
+numProducers.do { |index|
+    fork {
+        var task;
+        loop {
+            full.wait({ queue.size &lt; maxQueueSize });
+
+            task = counter;
+            counter = counter + 1;
+            queue = queue.add(task);
+            postf(&quot;Producer % created a task: %. Current queue size: %\n&quot;,
+                index, task, queue.size);
+
+            // 尽管可能有多个消费者等待
+            // 在这个条件上，但其中只有一个能真正利用
+            // 我们刚刚创建的新任务。所以我们使用
+            // signalOne 而不是 signalAll。
+            empty.signalOne;
+
+            wait(rrand(producerWaitTimeRange[0], producerWaitTimeRange[1]));
+        }
+    }
+};
+
+// 消费者线程
+numConsumers.do { |index|
+    fork {
+        var task;
+        loop {
+            empty.wait({ queue.notEmpty });
+
+            task = queue.removeAt(0);
+            postf(&quot;Consumer % processed a task: %. Current queue size: %\n&quot;,
+                index, task, queue.size);
+
+            full.signalOne;
+
+            wait(rrand(consumerWaitTimeRange[0], consumerWaitTimeRange[1]));
+        }
+    }
+}
+)</code></pre>
+
+<h3 id="Using timeouts">使用超时</h3>
+
+<p>有时，你想等待一个可能永远不会成立的外部条件，或者想在等待了很长时间后做点别的事情。这时使用 <code>waitFor</code> 很合适。在我们的示例中，我们使用一个有时无法设置所需条件的例程来模拟这个“不可靠”的任务。一些实际例子可能是服务器上的长时间异步任务，或者对 unixCmd 的调用没有及时完成，或者没有产生我们想要的结果。</p>
+
+<pre><code>(
+var condition = CondVar();
+
+// 我们这个“不可靠”的任务有一半时间会通知我们它已完成，
+// 但另一半时间它会通知失败。
+fork {
+    var coinFlip;
+    1.wait;
+    coinFlip = 0.5.coin;
+    postf(&quot;Flip gave us: % ; %signalling the condition\n&quot;, coinFlip,
+        if(coinFlip, &quot;not &quot;, &quot;&quot;));
+    if(coinFlip) { condition.signalOne };
+};
+
+fork {
+    // 在这种情况下，随机硬币投掷成功就是我们的整个
+    // 条件，因此我们不向 waitFor 传递任何谓词。
+    if(condition.waitFor(2)) {
+        &quot;Coin flip succeeded!&quot;.postln
+    } {
+        &quot;Coin flip failed, and we timed out&quot;.postln
+    };
+};
+)</code></pre>
+
+<p>我们也可以重写此示例，使得无论如何都会收到信号，但条件仍可能不会成立。</p>
+
+<pre><code>(
+var condition = CondVar();
+var coinFlip = false;
+
+fork {
+    // 现在抛硬币有多次成功的机会，但它仍
+    // 可能不会在我们 2 秒的时间窗口内成功。
+    5.do { |i|
+        0.2.wait;
+        coinFlip = 0.25.coin;
+        &quot;Flip number %: got %\n&quot;.postf(i + 1, coinFlip);
+        condition.signalOne;
+    }
+};
+
+fork {
+    // 除非超时，或者我们被通知
+    // *并且*谓词为真，否则我们不会退出 `waitFor`。
+    if(condition.waitFor(2, { coinFlip })) {
+        &quot;Coin flip succeeded!&quot;.postln
+    } {
+        &quot;Coin flip failed, and we timed out&quot;.postln
+    };
+};
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/CondVar.html" rel="noreferrer noopener">Classes/CondVar.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

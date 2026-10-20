@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>节点消息传递 - SuperCollider 文档</title>
+<meta name="description" content="使用 OSC 向节点发送消息">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>节点消息传递</h1>
+
+<p><em>使用 OSC 向节点发送消息</em></p>
+
+<h2 id="Introduction">Introduction</h2>
+
+<p>在 sc-lang 内，向服务器发送命令最直接、最快的方式是向 <a href="Classes-Server.html">Server</a> 对象发送消息。如果你在 shell 中，可以使用 sendOSC（可从 CNMAT 获取）。</p>
+
+<p>此消息传递方案在以下内容中有详细说明：</p>
+
+<ul>
+<li><a href="Reference-Server-Architecture.html">服务器架构</a></li>
+<li><a href="Reference-Server-Command-Reference.html">服务器命令参考</a></li>
+<li><a href="Tutorials-Server_Tutorial.html">服务器教程</a></li>
+</ul>
+
+<h2 id="Messaging nodes">消息传递节点</h2>
+
+<p>在服务器上创建节点（synth 和组）时，我们唯一需要知道的是 nodeID 和服务器（准确地说，是它的地址）。</p>
+
+<p>为了与 synth 通信，需要发送带有其 nodeID 的消息。如果你不打算在节点创建之后与其通信（并且该节点会在没有外部消息的情况下自行结束），则可以将节点 id 设置为 -1，这在服务器中相当于 nil。</p>
+
+<p>一旦你想要传递对某个节点的引用，并考虑到你可能不只有一个服务器，创建一个 <a href="Classes-Synth.html">Synth</a> 或 <a href="Classes-Group.html">Group</a> 对象可能会很有用。这些对象也会响应消息，在需要时可用于获取服务器端节点的状态。</p>
+
+<p>有关节点对象的更详细帮助文件，请参阅 <a href="Classes-Node.html">Node</a>、<a href="Classes-Synth.html">Synth</a> 和 <a href="Classes-Group.html">Group</a> 帮助。</p>
+
+<p>等价于</p>
+
+<pre><code>n = s.nextNodeID;
+s.sendMsg(&quot;/s_new&quot;, &quot;default&quot;, n);
+s.sendMsg(&quot;/n_free&quot;, n);</code></pre>
+
+<p>is</p>
+
+<pre><code>n = Synth(&quot;default&quot;);
+n.free;</code></pre>
+
+<p>在传递参数时：</p>
+
+<pre><code>n = s.nextNodeID;
+s.sendMsg(&quot;/s_new&quot;, &quot;default&quot;, n, 0, 0, &quot;freq&quot;, 850);
+s.sendMsg(&quot;/n_set&quot;, n, &quot;freq&quot;, 500);
+s.sendMsg(&quot;/n_free&quot;, n);</code></pre>
+
+<p>它是</p>
+
+<pre><code>n = Synth(&quot;default&quot;, [\freq, 850]);
+n.set(\freq, 500)
+n.free;</code></pre>
+
+<p>注意可以使用 Symbol 代替 String：</p>
+
+<pre><code>n = s.nextNodeID;
+s.sendMsg(\s_new, \default, n, 0, 0, \freq, 850);
+s.sendMsg(\n_set, n, \freq, 500);
+s.sendMsg(\n_free, n);</code></pre>
+
+<p>and:</p>
+
+<pre><code>n = Synth(\default, [\freq, 850]);
+n.set(\freq, 500)
+n.free;</code></pre>
+
+<p>关于应当使用节点对象还是直接使用消息，这个问题的答案在一定程度上取决于上下文，在一定程度上也属于个人偏好。</p>
+
+<p>节点对象的封装带来了一定的泛化能力，这意味着其他复合对象可以响应相同的消息，从而利用多态性。它们还提供了一定程度的便利，例如跟踪索引和 ID 等。</p>
+
+<p>在某些情况下，例如对于颗粒合成，建议直接使用消息，因为节点对象无法带来任何好处（即无需向它们发送消息），而且它们会增加客户端的 CPU 负载。</p>
+
+<pre><code>(
+SynthDef(&quot;grain&quot;, {
+    Out.ar(0, Line.kr(0.1, 0, 0.01, doneAction: Done.freeSelf) * FSinOsc.ar(12000))
+}).send(s);
+)
+
+(
+Routine({
+    20.do({
+        s.sendMsg(&quot;/s_new&quot;, &quot;grain&quot;, -1);
+        0.01.wait;
+    })
+}).play;
+)</code></pre>
+
+<p>在需要跟踪 synth 状态的情况下，建议使用节点对象并将其注册到 <a href="Classes-NodeWatcher.html">NodeWatcher</a>。（参见帮助文件）</p>
+
+<p>除了这类情况之外，使用消息加数值型全局表示的组合，还是使用对象表示，取决于个人偏好。两者可以混用，而且在使用消息风格时也能获得对象风格的某些优势。例如 <code>Server.nextNodeID</code> 允许以消息风格使用动态分配的 ID。笼统地说，大概可以认为对象风格更方便，但消息风格更高效，因为减少了客户端 CPU 负载。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 重要：如果你希望拥有 default_group 的功能（例如无问题地使用 Server 的 record 和 scope 功能），你应将 ID 1（即 default_group）视为节点树的根，而不是 ID 0（即 RootNode）。详见 default_group。</p></blockquote>
+
+<p>请注意，<a href="Classes-Function.html#-play">Function-play</a> 和 <a href="Classes-SynthDef.html#-play">SynthDef-play</a> 会返回一个 synth 对象，可用于向其发送消息。</p>
+
+<pre><code>x = { arg freq=1000; Ringz.ar(Crackle.ar(1.95, 0.1), freq, 0.05) }.play(s);
+x.set(\freq, 1500);
+x.free;</code></pre>
+
+<h2 id="Argument lists in node messages">节点消息中的参数列表</h2>
+
+<p>若干节点消息接受值列表，用于映射到 Synth 节点的控制上，正如前面已经给出的一些示例中那样：</p>
+
+<pre><code>s.sendMsg(\s_new, \default, n, 0, 0, \freq, 850);
+n = Synth(\default, [\freq, 850]);</code></pre>
+
+<p>参数列表通常以交替对的形式出现，控制标识符位于值之前。通常控制标识符是一个名称，如上所示，但它也可以是一个整数索引。（使用整数对服务器来说稍快一些，但会使代码更难阅读，并且如果 SynthDef 结构发生变化，可能会引入错误。）了解控制索引的一种方法是将 SynthDef .add 到 <a href="Classes-SynthDescLib.html">SynthDescLib</a> 中，然后从 <a href="Classes-SynthDesc.html">SynthDesc</a> 获取所有控制的列表。</p>
+
+<pre><code>    (
+        SynthDef(\controlList, { |out = 0, freq = 440, amp = 0.1, detune = #[0.999, 1.001], gate = 1|
+            var    sig = Mix(Saw.ar(freq * (detune ++ [1]), amp)),
+            env = EnvGen.kr(Env.adsr, gate, doneAction: Done.freeSelf);
+            Out.ar(out, (sig * env) ! 2);
+        }).add;
+
+        SynthDescLib.global[\controlList]
+    )</code></pre>
+
+<p>Prints:</p>
+
+<pre><code>SynthDesc &#x27;controlList&#x27;
+Controls:
+ControlName  P 0 freq control 440
+ControlName  P 1 amp control 0.10000000149012
+ControlName  P 2 detune control 0.9990000128746
+ControlName  P 3 ? control 1.00100004673
+ControlName  P 4 gate control 1
+ControlName  P 5 out control 0
+   O audio 0 2</code></pre>
+
+<p>该列表显示 'freq' 控制的索引为 0，'amp' 为 1，依此类推。Detune 被定义为“数组参数”，占据索引 2-3。</p>
+
+<p>拥有大量控制参数的 SynthDef 可能需要额外一点代码才能打印完整列表。</p>
+
+<pre><code>SynthDescLib.global[\controlList].controls.do(_.postln); &quot;&quot;</code></pre>
+
+<p>在 SuperCollider 3.3 之前，按名称设置数组参数的唯一方法是使用 n_setn（或 Node 的 setn 方法）。从 3.3 版本开始，数组参数可以透明地包含在 s_new 或 n_set 消息中。</p>
+
+<h3 id="Messaging style">消息传递风格</h3>
+
+<p>注意列表中用于界定数组的字符 $[ 和 $]：</p>
+
+<pre><code>n = s.nextNodeID;
+s.sendMsg(\s_new, \controlList, n, 0, 0, \detune, $[, 0.95, 1.005, $], \freq, 220);
+s.sendMsg(\n_set, n, \gate, 0);</code></pre>
+
+<h3 id="Object style">对象风格</h3>
+
+<p>Node 对象会自动为你插入 $[ 和 $]：</p>
+
+<pre><code>n = Synth(\controlList, [\detune, [0.95, 1.005], \freq, 220]);
+n.set(\detune, [0.99, 1.01]);
+n.release;</code></pre>
+
+<h3 id="Event style">事件样式</h3>
+
+<p>在事件中为某个参数提供数组已经有另一种含义：多通道扩展，即为数组中的每个元素创建一个单独的节点。如果数组的所有元素都应发送到同一个节点，则应将数组参数再包裹在一层数组中：</p>
+
+<pre><code>(instrument: \controlList, freq: 220, detune: [[0.95, 1.005]], sustain: 2).play;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/NodeMessaging.html" rel="noreferrer noopener">Guides/NodeMessaging.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 06c：模式的组合 - SuperCollider 文档</title>
+<meta name="description" content="让多个事件模式作为一个整体运作">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 06c：模式的组合</h1>
+
+<p><em>让多个事件模式作为一个整体运作</em></p>
+
+<p>另见：<a href="Tutorials-A-Practical-Guide-PG_06b_Time_Based_Patterns.html">Pattern Guide 06b: Time Based Patterns</a>、<a href="Tutorials-A-Practical-Guide-PG_06d_Parallel_Patterns.html">Pattern Guide 06d: Parallel Patterns</a></p>
+
+<h2 id="Adding values to a base event pattern (Or, &quot;Pattern Composition&quot;)">向基础事件模式添加值（即“模式组合”）</h2>
+
+<p>使用模式的一种方式是将所有内容预先写入模式中。这具有清晰易懂的优点。另一种方式是通过创建更小、更简单的模式并将其结果组合成具有来自所有组件模式的键和值的单一事件，从而实现行为的模块化。</p>
+
+<p>这与计算机科学中的“函数组合”概念有关，其中复杂的计算可以不是写成一个单一的大函数，而是写成几个较小的函数，然后将它们链接成一个单一函数。由于 Function 在 SuperCollider 中是普通对象，因此很容易对一个函数执行操作并返回一个组合函数（之后可以像任何其他函数一样使用）。<a href="http://en.wikipedia.org/wiki/Function_composition_(computer_science)">http://en.wikipedia.org/wiki/Function_composition_(computer_science)</a></p>
+
+<p>在数学中，<code>·</code> 运算符表示函数复合。</p>
+
+<pre><code>f(x) = x + 1
+g(x) = x * 2
+
+g · f = g(f(x)) = (x + 1) * 2</code></pre>
+
+<p><code>g · f</code> 表示先求值 <code>f</code>，然后将其结果传给 <code>g</code>。<code>·</code> 运算符在 SuperCollider 中写作 <code>&lt;&gt;</code>。</p>
+
+<pre><code>f = { |x| x + 1 };
+g = { |x| x * 2 };
+
+h = (g &lt;&gt; f);
+--&gt; a Function
+
+h.value(1);
+--&gt; 4    // == (1+1) * 2
+
+(f &lt;&gt; g).value(1)
+--&gt; 3    // == (1*2) + 1
+
+// g · f == g(f(x)) -- 先计算 f，然后将其结果传递给 g
+g.value(f.value(1));
+--&gt; 4</code></pre>
+
+<p>事件模式可以类似地组合。</p>
+
+<dl>
+<dt><code>Pbindf(pattern, pairs)</code></dt>
+<dd><p>向已有的 Pbind 风格模式添加新的键值对。Pbindf(Pbind(\a, patternA), \b, patternB, \c, patternC) 与 Pbind(\a, patternA, \b, patternB, \c, patternC) 得到相同的结果。</p></dd>
+<dt><code>Pchain(patterns)</code></dt>
+<dd><p>Chains 将 Pbind 风格的模式串联在一起，使它们所有的键值对都进入同一个事件。例如，如果你的代码一部分创建了 Pbind 实例 a = Pbind(\a, patternA)，另一部分创建了 b = Pbind(\b, patternB, \c, patternC)，你可以用 Pchain(b, a) 将 \b 和 \c 追加到 \a 的结果中。子模式按相反顺序求值，这与函数复合的记法一致。</p></dd>
+<dd><p>为音乐目的，你可以让代码的一部分创建一个定义节奏的模式，另一部分定义音高素材，然后用 <a href="Classes-Pchain.html">Pchain</a> 将它们组合起来。</p></dd>
+<dd><pre><code>~rhythm = Pbind(
+    \dur, Pwrand(#[0.125, 0.25, 0.5], #[0.3, 0.5, 0.2], inf),
+    \legato, Pwrand(#[0.1, 0.6, 1.01], #[0.1, 0.3, 0.6], inf)
+);
+~melody = Pbind(
+    \degree, Pwhite(-4, 11, inf)
+);
+
+p = Pchain(~melody, ~rhythm).play;
+p.stop;</code></pre></dd>
+<dd><p>这本身对算法作曲就有很好的潜力。将 <a href="Classes-EventPatternProxy.html">EventPatternProxy</a> 引入其中，使得可以即时地换入换出不同的旋律和节奏组件，而没有任何中断。我们甚至可以改变模式的类型（<a href="Classes-Pbind.html">Pbind</a>、<a href="Classes-Pmono.html">Pmono</a>、<a href="Classes-PmonoArtic.html">PmonoArtic</a>）而不产生不良影响。</p></dd>
+<dd><pre><code>~rhythm = EventPatternProxy(Pbind(
+    \dur, Pwrand(#[0.125, 0.25, 0.5], #[0.3, 0.5, 0.2], inf),
+    \legato, Pwrand(#[0.1, 0.6, 1.01], #[0.1, 0.3, 0.6], inf)
+));
+
+~melody = EventPatternProxy(Pbind(
+    \degree, Pwhite(-4, 11, inf)
+));
+
+p = Pchain(~melody, ~rhythm).play;
+
+~melody.source = PmonoArtic(\default, \degree, Pseries(4, Prand(#[-1, 1], inf), inf).fold(-4, 11));
+
+~melody.source = Pbind(\degree, Pseries(4, Pwrand(#[-2, -1, 1, 2], #[0.3, 0.2, 0.2, 0.3], inf), inf).fold(-4, 11));
+
+p.stop;</code></pre></dd>
+</dl>
+
+<h3 id="Pset and cousins">Pset 及其同类</h3>
+
+<p>一组模式类允许覆盖单个事件键，或者执行一次加法或乘法。<a href="Classes-Pkey.html">Pkey</a> 与 <a href="Classes-Pchain.html">Pchain</a> 或 <a href="Classes-Pbindf.html">Pbindf</a> 这些“模式组合”类结合使用时，可以完成下列各类能做的所有事情（不过在某些情况下这种替代写法可能更方便）。</p>
+
+<dl>
+<dt><code>Pset(name, value, pattern)</code></dt>
+<dd><p>从模式中获取一个事件，然后将值模式中的下一个值放入 name 键。如果源模式为同一个 name 指定了值，源中的值将被新值替换。</p></dd>
+<dt><code>Padd(name, value, pattern)</code></dt>
+<dd><p>获取下一个事件后，将 name 的值替换为其现有值加上 value 中的下一个数字。</p></dd>
+<dt><code>Pmul(name, value, pattern)</code></dt>
+<dd><p>获取下一个事件后，将 name 的值替换为其现有值乘以 value 中的下一个数字。</p></dd>
+</dl>
+
+<p>这些模式保留在库中主要是为了向后兼容，因为它们的行为可以很容易地使用 <a href="Classes-Pbindf.html">Pbindf</a> 来复现。</p>
+
+<table>
+<tr><td><p>Pset(name, value, pattern)</p></td><td><p>Pbindf(pattern, name, value)</p></td></tr>
+<tr><td><p>Padd(name, value, pattern)</p></td><td><p>Pbindf(pattern, name, Pkey(name) + value)</p></td></tr>
+<tr><td><p>Pmul(name, value, pattern)</p></td><td><p>Pbindf(pattern, name, Pkey(name) * value)</p></td></tr>
+</table>
+
+<p>模式 <a href="Classes-Psetpre.html">Psetpre</a>、<a href="Classes-Paddpre.html">Paddpre</a> 和 <a href="Classes-Pmulpre.html">Pmulpre</a> 反转了求值顺序。<a href="Classes-Pchain.html">Pchain</a> 能够复制此功能。</p>
+
+<dl>
+<dt><code>Psetpre(name, value, pattern)</code></dt>
+<dd><p>获取下一个值并将其放入事件原型中，然后再求值模式。</p></dd>
+</dl>
+
+<table>
+<tr><td><p>Psetpre(name, value, pattern)</p></td><td><p>Pchain(pattern, Pbind(name, value))</p></td></tr>
+<tr><td><p>Paddpre(name, value, pattern)</p></td><td><p>Pchain(pattern, Pbind(name, Pkey(name) + value))</p></td></tr>
+</table>
+
+<p><code>Pmulpre</code> 类似。</p>
+
+<p>第三组——<a href="Classes-Psetp.html">Psetp</a>、<a href="Classes-Paddp.html">Paddp</a>、<a href="Classes-Pmulp.html">Pmulp</a>——行为略有不同，会嵌套模式求值。</p>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_06b_Time_Based_Patterns.html">模式指南 06b：基于时间的模式</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_06d_Parallel_Patterns.html">模式指南 06d：并行模式</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_06c_Composition_of_Patterns.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_06c_Composition_of_Patterns.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

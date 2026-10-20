@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PV_Copy - SuperCollider 文档</title>
+<meta name="description" content="复制一个 FFT 缓冲区">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>PV_Copy</h1>
+
+<p><em>复制一个 FFT 缓冲区</em></p>
+
+<p><a href="Classes-PV_MagMul.html">PV_MagMul</a> : <a href="Classes-PV_ChainUGen.html">PV_ChainUGen</a> : <a href="Classes-WidthFirstUGen.html">WidthFirstUGen</a> : <a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>将 <code>bufferA</code> 中的频谱帧复制到 <code>bufferB</code>。这允许并行处理频谱数据，而无需多个 FFT UGen。此外，它还允许在 FFT 链中的给定点提取数据，例如用于监视目的。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 从 SC 3.7 起，在并行处理需要时，PV_Copy 的实例会被自动添加。请参阅 <a href="Guides-FFT-Overview.html">FFT Overview</a> 了解当前实现。本文档仅为遗留目的而提供。显式使用 PV_Copy 的现有代码应继续工作。</p></blockquote>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>PV_Copy.new(bufferA, bufferB)</code></h4>
+
+<p><em>来自父类：<a href="Classes-PV_MagMul.html">PV_MagMul</a></em></p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>bufferA</p></td><td class="argumentdesc"><p>源缓冲区。</p></td></tr>
+<tr><td class="argumentname"><p>bufferB</p></td><td class="argumentdesc"><p>目标缓冲区。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> <code>bufferA</code> 和 <code>bufferB</code> 必须大小相同。</p></blockquote></td></tr>
+</table>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 读取声音文件
+d = Buffer.read(s, ExampleFiles.child);
+
+
+// 在原始白噪声和经过 magmul 处理的白噪声之间交叉淡化
+(
+{
+    var in, in2, chain, chainB, chainC;
+    in = PlayBuf.ar(1, d, BufRateScale.kr(d), loop: 1) * 2;
+    in2 = WhiteNoise.ar;
+    chain = FFT(LocalBuf(2048), in);
+    chainB = FFT(LocalBuf(2048), in2);
+    chainC = PV_Copy(chain, LocalBuf(2048));
+    chainB = PV_MagMul(chainB, chainC);
+    XFade2.ar(IFFT(chain), IFFT(chainB) * 0.1, SinOsc.kr(0.2, 1.5pi));
+}.play
+
+)
+
+
+// 同上，但使用 Blip 实现“声码器”交叉合成效果
+(
+{
+    var in, in2, chain, chainB, chainC;
+    in = PlayBuf.ar(1, d, BufRateScale.kr(d), loop: 1) * 2;
+    in2 = Blip.ar(100, 50);
+    chain = FFT(LocalBuf(2048), in);
+    chainB = FFT(LocalBuf(2048), in2);
+    chainC = PV_Copy(chain, LocalBuf(2048));
+    chainB = PV_MagMul(chainB, chainC);
+    XFade2.ar(IFFT(chain), IFFT(chainB) * 0.1, SinOsc.ar(0.2));
+}.play
+
+)
+
+
+
+// 频谱‘声像’
+(
+{
+    var in, chain, chainB, pan;
+    in = PlayBuf.ar(1, d, BufRateScale.kr(d), loop: 1);
+    chain = FFT(LocalBuf(2048), in);
+    chainB = PV_Copy(chain, LocalBuf(2048));
+    pan = MouseX.kr(0.001, 1.001, &#x27;exponential&#x27;) - 0.001;
+    chain = PV_BrickWall(chain, pan);
+    chainB = PV_BrickWall(chainB, -1 + pan);
+    IFFT([chain, chainB])
+}.play
+)
+
+// 释放声音文件缓冲区
+d.free;
+
+
+
+
+
+// 概念验证：副本具有相同的数据
+// 用于绘制数据的全局 buffer
+(
+b = Buffer.alloc(s, 2048, 1);
+c = Buffer.alloc(s, 2048, 1);
+)
+
+//  静默地将一些 FFT 数据录制到缓冲区中
+(
+x = {
+    var inA, chainA, chainB;
+    inA = LFClipNoise.ar(100);
+    chainA = FFT(b, inA);
+    chainB = PV_Copy(chainA, c);
+    IFFT(chainA) - IFFT(chainB); // 概念验证：相消为零
+}.play;
+)
+x.free;
+
+// 经过 IFFTed 的帧包含相同的加窗输出数据
+(
+b.plot(\b, Rect(200, 430, 700, 300));
+c.plot(\c, Rect(200, 100, 700, 300));
+)
+
+// 释放缓冲区
+[b, c].do(_.free);
+
+
+
+// 多个幅度图
+
+
+
+(
+~fftSize = 2048;
+~allBuffers = ();
+~copyToBuffer = { |chain, name|
+    var buffer = Buffer.alloc(s, ~fftSize);
+    ~allBuffers.put(name, buffer);
+    PV_Copy(chain, buffer)
+};
+)
+
+(
+x = { var in, chain, chainB, chainC;
+    in = WhiteNoise.ar;
+    chain = FFT(LocalBuf(~fftSize), in);
+    chain = ~copyToBuffer.(chain, &#x27;initial&#x27;); // 初始频谱
+    chain = PV_RectComb(chain, 20, 0, 0.2);
+    chain = ~copyToBuffer.(chain, &#x27;After RectComb&#x27;); // 经过 comb 后
+    2.do { chain = PV_MagSquared(chain) };
+    chain = ~copyToBuffer.(chain, &#x27;After MagSquared&#x27;); // 取模平方后
+    0.00001 * Pan2.ar(IFFT(chain)); // 静默播放
+}.play
+)
+
+
+x.free;
+
+// 打印所有缓冲区
+(
+~allBuffers.keysValuesDo { |name, buffer, i|
+    buffer.getToFloatArray(action: { |array|
+        var z, x;
+        // 初始时，数据以复数形式表示
+        z = array.clump(2).flop;
+        z = z.collect { |each| Signal.newFrom(each) };
+        x = Complex(z[0], z[1]);
+        { x.magnitude.plot(name, Rect(200, 100 + (230 * i), 700, 200)) }.defer
+    });
+}
+)
+
+ // 释放 buffers 并清理
+(
+~allBuffers.do { |x| x.free };
+~allBuffers = nil;
+~copyToBuffer = nil;
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/PV_Copy.html" rel="noreferrer noopener">Classes/PV_Copy.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

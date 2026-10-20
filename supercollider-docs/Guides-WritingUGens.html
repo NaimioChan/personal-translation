@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>编写 Unit Generator - SuperCollider 文档</title>
+<meta name="description" content="开始编写 unit generator">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>编写 Unit Generator</h1>
+
+<p><em>开始编写 unit generator</em></p>
+
+<p>另请参阅：<a href="Reference-ServerPluginAPI.html">Server Plugin API</a></p>
+
+<p>SuperCollider 拥有一个庞大的 unit generator 库，可以以无限的方式组合，但有时即使这些也不够用。你可能需要一种不寻常的信号处理算法，或者你正遇到效率问题，可以通过将 SynthDef 的部分内容压缩为单个 UGen 来解决。</p>
+
+<p>UGen 定义在用 C++ 编写的服务器插件中。服务器插件不应与 quark 混淆，后者扩展了 SuperCollider 语言。UGen 或多或少独立于解释器存在，你不需要对 SC 有太多熟悉就能编写它们。</p>
+
+<p>编写 UGen 并不太难，但可以说远不如 SuperCollider 提供的高级工具方便和直观。你需要一个构建系统和大量样板代码——即使是相当基础的信号处理操作也可能需要大量代码。你没有即时的实时编程环境，而且错误很容易导致服务器崩溃。SuperCollider 的 UGen 稳定且经过充分测试，自定义 UGen 最好被视为在 SC 的局限性无法逾越时的最后手段。</p>
+
+<h2 id="Pseudo-UGens">Pseudo-UGens</h2>
+
+<p>在我们进入真正的 UGen 之前，为了完整性，我们先快速绕个弯。伪 UGen 是一段 SuperCollider 代码，它缩写了一组会被反复使用的特定 UGen 配置。伪 UGen 是一个类，表面上类似于 UGen 类，但它只返回现有 UGen 的组合。它没有效率上的节省，但确实省去了打字。</p>
+
+<p>下面的示例只有 <code>.ar</code> 方法，但你同样可以轻松地同时拥有 <code>.ar</code> 和 <code>.kr</code> 方法。</p>
+
+<pre><code>BoringMixer {
+    *ar { arg left, right;
+        ^(left + right) * 0.5;
+    }
+}</code></pre>
+
+<p>SC 中伪 UGen 的示例包括 <a href="Classes-BLowPass4.html">BLowPass4</a> 和 <a href="Classes-BHiPass4.html">BHiPass4</a>，它们会分解为 <a href="Classes-SOS.html">SOS</a> UGen。</p>
+
+<p>对这些类可以包含什么内容几乎没有限制，但你应牢记以下几点：</p>
+
+<ul>
+<li>在你的类的帮助文件中留下一条说明，指明它是一个伪 UGen，这是一种礼貌的做法。</li>
+<li>为避免混淆，伪 UGen 不应继承自基类 <a href="Classes-UGen.html">UGen</a>。</li>
+<li>一个 SynthDef 只能有两对 <a href="Classes-LocalIn.html">LocalIn</a>/<a href="Classes-LocalOut.html">LocalOut</a> 配对——一对用于控制速率，一对用于音频速率。将 LocalIn 和 LocalOut 放入伪 UGen 中是个坏主意，因为它可能会干扰 SynthDef 中的其他反馈环路。</li>
+</ul>
+
+<h2 id="Basics of UGens">UGen 基础</h2>
+
+<p>一个（真正的）UGen 需要两个组成部分：一个用于服务器的插件，以及一个用于语言的类。该类放在普通的 <code>*.sc</code> 文件中，并在语言中为你的 UGen 定义接口。这个类通常只有几行代码，最终调用类方法 <a href="Classes-UGen.html#-multiNew">UGen: -multiNew</a>。</p>
+
+<p>服务器插件是定义实际 UGen 行为的地方。它由用 C++ 编写的动态加载库提供，其格式取决于平台：</p>
+
+<ul>
+<li>*nix 下的 <code>*.so</code></li>
+<li>Windows 的 <code>*.dll</code></li>
+<li>macOS 的 <code>*.scx</code></li>
+</ul>
+
+<p>一个插件文件可以包含多个 UGen，它还可以定义 UGen 之外的东西，例如缓冲区填充（"/b_gen"）命令。</p>
+
+<p>当服务器启动时，它会在 <code>Platform.userExtensionDir</code> 中查找插件文件。由于 sclang 也在同一位置查找类文件，因此类文件和库文件可以放在同一处。</p>
+
+<p>插件在服务器启动期间加载，因此在（重新）编译插件之后必须重启服务器。如果你修改了插件文件但没有修改类文件，则无需重启解释器。</p>
+
+<h2 id="FAUST">FAUST</h2>
+
+<p>FAUST<a href="#footnote_1" id="footnote_org_1">1</a> 是一种开源 DSP 语言，用于描述实时音频单元。它可以编译为 SuperCollider 插件，从而提供了一种在 SuperCollider 中创建 UGen 的简便方法。</p>
+
+<p>FAUST 提供了一个对 SuperCollider 用户有用的 shell 脚本，名为 <code>faust2supercollider</code>。它可将 .dsp 文件编译为类文件和服务器插件，然后你可以将它们放入扩展目录中。</p>
+
+<p>FAUST 插件的开发往往很快，并且可以轻松地移植到其他环境。不幸的是，它们无法利用服务器的所有功能，例如访问缓冲区或随机数生成器，而且一些逻辑非常复杂的 UGen 很难或无法用 FAUST 编写。此外，FAUST 编译器相当智能，但其结果未必总能提供最佳效率。如果你正在开发的 UGen 遇到了这些限制，就该转而使用手写 C++ 了。</p>
+
+<h2 id="Example Plugins">示例插件</h2>
+
+<p>要了解编写 UGen 所需的必要组成部分，最好的办法通常是研究完整的示例。我们在 <a href="https://github.com/supercollider/example-plugins">https://github.com/supercollider/example-plugins</a> 建了一个 GitHub 仓库，其中包含一些大致按复杂度编号的示例插件。该仓库中的每个目录都是自包含的，并带有自己的构建系统，因此你可以复制出某个目录，作为编写自己的 UGen 的起点。这些插件的源代码都附有大量注释。</p>
+
+<p>第一个示例 BoringMixer 非常精简。该 UGen 是无状态的，并且只有一个计算函数，即音频速率。</p>
+
+<p>MySaw 引入了状态和多个计算函数。AnalogEcho 通过内部缓冲区引入了实时内存管理，并演示了如何从样本数组进行三次插值。</p>
+
+<h2 id="Anatomy of a UGen">UGen 剖析</h2>
+
+<p>SC 源代码中有一个头文件 <code>include/plugin_interface/SC_PlugIn.h</code>，它为你提供访问服务器架构的接口以及一组辅助函数。这些内容记录在 <a href="Reference-ServerPluginAPI.html">Server Plugin API</a> 中。</p>
+
+<h3 id="The Entry Point">入口点</h3>
+
+<p>加载库时，服务器会调用库中的一个函数，该函数由 <code>PluginLoad()</code> 宏定义。这个入口点有两项职责：</p>
+
+<ul>
+<li>它需要将传入的指向 InterfaceTable 的指针存储在一个全局变量中。</li>
+<li>它注册单元生成器。</li>
+</ul>
+
+<p>Unit Generator 通过在 InterfaceTable 中调用一个函数来定义，并传入 unit generator 的名称、其 C 数据结构的大小，以及用于构造和析构它的函数指针。有 4 个宏可用于简化这一过程。</p>
+
+<dl>
+<dt>DefineSimpleUnit</dt>
+<dd><p>定义一个“简单”的单元生成器</p></dd>
+<dt>DefineDtorUnit</dt>
+<dd><p>定义一个带析构器的单元生成器</p></dd>
+<dt>DefineSimpleCantAliasUnit</dt>
+<dd><p>定义一个“简单”的单元生成器，其输入和输出缓冲区不能互为别名</p></dd>
+<dt>DefineDtorCantAliasUnit</dt>
+<dd><p>定义一个带析构函数的 unit generator，其输入和输出缓冲区不能互为别名</p></dd>
+</dl>
+
+<p>这些宏依赖于特定的命名约定：</p>
+
+<ul>
+<li>单元生成器结构体的命名与插件相同。</li>
+<li>unit generator 构造函数命名为 <code>PluginName_Ctor</code></li>
+<li>单元生成器的析构函数名为 <code>PluginName_Dtor</code></li>
+</ul>
+
+<h3 id="The Exit Point">退出点</h3>
+
+<p>可选的 <code>PluginUnload()</code> 宏会导出一个函数，该函数在库被反初始化时、即在库被卸载之前被调用。这仅在少数情况下需要，通常用于无法在全局对象析构函数中安全完成的资源清理。例如，<code>DiskIO_UGens.cpp</code> 和 <code>UIUGens.cpp</code> 中的 DiskIO UGen 和 UI UGen 分别使用卸载函数来安全地汇合它们的工作线程。</p>
+
+<h3 id="The Calculation Function">计算函数</h3>
+
+<p>UGen 的核心是其计算函数，该函数在每个控制周期被调用，并以 UGen 对象作为参数。（这适用于控制速率和音频速率 UGen——需求速率则不同。）在此函数中，UGen 从其输入读取并写入其输出。</p>
+
+<p>计算函数在 <code>PluginName_Ctor</code> 函数中通过 <code>SETCALC</code> 宏进行选择。你可以随意命名计算函数，但约定是 <code>PluginName_next</code>。</p>
+
+<p>UGen 通常有多个计算函数，具体取决于 UGen 本身的速率及其输入的速率。例如，Phasor 可以是 .ar 或 .kr，其参数可以是 .ar 或 .kr。因此它有四个计算函数：Phasor_next_aa、Phasor_next_ak、Phasor_next_ka 和 Phasor_next_kk。不过，对于你自己的 UGen，你不需要如此详尽。例如，<a href="Classes-FreeVerb.html">FreeVerb</a> 只有一个计算函数。谁会想要一个控制速率的混响呢？</p>
+
+<h3 id="Building Unit Generator Plugins">构建 Unit Generator 插件</h3>
+
+<p>构建插件最可移植的方式是使用 cmake<a href="#footnote_2" id="footnote_org_2">2</a>，一个跨平台的构建系统。</p>
+
+<p>示例仓库中的示例包含 <code>CMakeLists.txt</code> 文件。</p>
+
+<h2 id="Coding Guidelines">编码规范</h2>
+
+<p>单位生成器插件从实时上下文中调用，这意味着需要特别小心以避免音频中断。</p>
+
+<dl>
+<dt>STL 容器</dt>
+<dd><p>通常不建议使用 STL 容器，因为它们会在内部申请内存。使用 STL 容器的唯一方式是提供一个 Allocator，它映射到服务器的内存分配函数。</p></dd>
+<dt>阻塞式 API 调用</dt>
+<dd><p>单元生成器不应调用任何可能阻塞当前线程执行的代码。特别是应避免系统调用。如果需要与其他线程同步，必须以无锁方式进行。</p></dd>
+</dl>
+
+<h3 id="Memory Allocation">内存分配</h3>
+
+<p>不要通过 <code>malloc</code> / <code>free</code> 或 <code>new</code>/ <code>delete</code> 从操作系统分配内存。而应通过 <code>RTAlloc</code> / <code>RTFree</code> 使用实时内存分配器。</p>
+
+<dl>
+<dt>请记住用 <code>RTFree</code> 释放你通过 <code>RTAlloc</code> 分配的内存</dt>
+<dd><p>与 malloc/free 一样，你有责任释放所有分配的内存。请记得在析构函数中包含 RTFree 调用。</p></dd>
+<dt>确保你的指针被初始化为 <code>nullptr</code></dt>
+<dd><p>未初始化的指针可能带有垃圾地址，当 RTFree 试图释放这样的指针时，可能导致服务器崩溃。为防止这种情况，请确保在构造函数中尽早将成员指针初始化为 nullptr。</p></dd>
+<dt>使用 <code>ClearUnitIfMemFailed</code></dt>
+<dd><p>此宏用于在内存分配后检查你的指针。如果其中任何一个仍为 nullptr，则意味着 RTAlloc 未能为其分配内存。该宏随后会打印一条错误消息，将 UGen 的计算函数设置为空操作，并立即从调用函数返回。由于这可能导致你的构造函数提前退出，因此如上所述，将所有指针尽可能早地初始化为 nullptr 是至关重要的。</p></dd>
+<dd><p><code>ClearUnitIfMemFailed</code> 可以传入单个指针，也可以通过用 <code>&amp;&amp;</code> 运算符将它们串联起来，同时检查多个指针（参见下面的示例）。</p></dd>
+<dt>用于 PV 和 FFT UGen</dt>
+<dd><p>FFT 链中的 UGen（例如 FFT Overview: PV and FFT UGens in the Standard Library 中列出的那些）应改用 ClearFFTUnitIfMemFailed。这是因为在分配失败时，ClearUnitIfMemFailed 会让它们输出 0，而 FFT 链中的下一个 UGen 会将其解释为“FFT 数据已准备好在缓冲区编号 0 上处理”，但事实并非如此。ClearFFTUnitIfMemFailed 则会将其输出设为 -1，意味着 FFT 数据尚未准备好，从而阻止 FFT 链其余部分的进一步处理。更多信息请参见 FFT Overview: How FFT UGens communicate。</p></dd>
+<dd><p><code>ClearFFTUnitIfMemFailed</code> 定义在 <code>FFT_UGens.h</code> 中</p></dd>
+</dl>
+
+<p>最小示例，C 风格：</p>
+
+<pre><code>struct MyUnit : public Unit {
+  float* m_values;
+  float* m_moreValues;
+}
+void MyUnit_Ctor(MyUnit* unit) {
+  // 1. 确保指针初始化为 nullptr
+  unit-&gt;m_values = unit-&gt;m_moreValues = nullptr;
+  // 2. 分配内存
+  unit-&gt;m_values = (float*) RTAlloc(unit-&gt;mWorld, 64 * sizeof(float));
+  unit-&gt;m_moreValues = (float*) RTAlloc(unit-&gt;mWorld, 128 * sizeof(float));
+  // 3. 如果任何分配失败，则清除单元
+  ClearUnitIfMemFailed(unit-&gt;m_values &amp;&amp; unit-&gt;m_moreValues);
+  // 4. 现在可以随意访问内存
+  memset(unit-&gt;m_values, 0, 64 * sizeof(float));
+}
+
+void MyUnit_Dtor(MyUnit* unit) {
+  // 5. 释放已分配的内存
+  RTFree(unit-&gt;mWorld, unit-&gt;m_values);
+  RTFree(unit-&gt;mWorld, unit-&gt;m_moreValues);
+}</code></pre>
+
+<p>或者，用 C++ 类风格：</p>
+
+<pre><code>namespace MyUnit {
+  // 1. 使用初始化列表确保指针初始化为 nullptr
+  MyUnit::MyUnit():
+    mValues(nullptr),
+    mMoreValues(nullptr) {
+    // 你需要定义 unit 才能使用 ClearUnitIfMemFailed
+    Unit* unit = (Unit*) this;
+    // 2. 分配内存
+    mValues = (float*) RTAlloc(unit-&gt;mWorld, 64 * sizeof(float));
+    mMoreValues = (float*) RTAlloc(unit-&gt;mWorld, 128 * sizeof(float));
+    // 3. 如果任何分配失败，则清除单元
+    ClearUnitIfMemFailed(mValues &amp;&amp; mMoreValues);
+    // 4. 现在可以随意访问内存
+    memset(mValues, 0, 64 * sizeof(float));
+  }
+
+  MyUnit::~MyUnit() {
+    // 5. 释放已分配的内存
+    RTFree(mWorld, mValues);
+    RTFree(mWorld, mMoreValues);
+  }
+}</code></pre>
+
+<h3 id="Thread Safety">线程安全</h3>
+
+<p>SuperCollider 服务器有两种不同的实现。<strong>scsynth</strong> 是传统服务器，<strong>supernova</strong> 是支持多处理器音频合成的新实现。由于 <strong>supernova</strong> 中的插件可以被多个线程同时调用，因此对全局数据结构的写访问需要同步。</p>
+
+<dl>
+<dt>共享全局数据结构</dt>
+<dd><p>单元生成器不应共享会被写入的数据结构。虽然将全局数据结构用于只读目的是安全的（例如不同的单元生成器可以使用相同的常量波表），但被单元生成器修改的数据结构不应在不同实例之间共享。</p></dd>
+<dt>资源锁定</dt>
+<dd><p>SuperCollider 的缓冲区和总线是全局数据结构，访问需要同步。这在内部通过读写自旋锁完成。这通过使用 SC_Unit.h 中定义的 ACQUIRE_、RELEASE_ 和 LOCK_ 宏来完成。作为例外，wavetable 格式的缓冲区不需要加锁。</p></dd>
+</dl>
+
+<h3 id="Deadlock Prevention">死锁预防</h3>
+
+<p>为了防止死锁，实现了一种简单的死锁预防方案，基于以下约束。</p>
+
+<ul>
+<li>仅在需要时锁定资源：很少有单元生成器实际上需要同时访问多个资源。此规则的主要例外是 FFT Chain UGen，它们同时访问多个缓冲区。目前没有已知的单元生成器会同时访问缓冲区和总线。</li>
+<li>尽可能获取读锁。由于多个 UGen 可以同时获取同一资源的读锁，因此使用它们可以减少争用。</li>
+<li>资源必须按照明确定义的顺序获取：总线应先于缓冲区获取，高索引资源应先于低索引资源获取。</li>
+</ul>
+
+<p class="footnote" id="footnote_1">[<a href="#footnote_org_1">1</a>] - <a href="https://faust.grame.fr/">https://faust.grame.fr/</a></p>
+
+<p class="footnote" id="footnote_2">[<a href="#footnote_org_2">2</a>] - <a href="https://www.cmake.org">https://www.cmake.org</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/WritingUGens.html" rel="noreferrer noopener">Guides/WritingUGens.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

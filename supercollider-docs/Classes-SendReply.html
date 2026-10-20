@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SendReply - SuperCollider 文档</title>
+<meta name="description" content="从服务器向所有已通知的客户端发送一个值数组">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>SendReply</h1>
+
+<p><em>从服务器向所有已通知的客户端发送一个值数组</em></p>
+
+<p><a href="Classes-SendTrig.html">SendTrig</a> : <a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-SendTrig.html">SendTrig</a>、<a href="Classes-OSCFunc.html">OSCFunc</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>消息会发送给所有已通知的客户端。参见 <a href="Classes-Server.html">Server</a>。</p>
+
+<ul>
+<li><p>cmdName</p>
+
+<ul>
+<li>int - 节点 ID</li>
+<li>int - 回复 ID</li>
+<li>... floats - 值。</li>
+</ul></li>
+</ul>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*ar"><code>SendReply.ar(trig: 0.0, cmdName: &#x27;/reply&#x27;, values, replyID: -1)</code></h4>
+
+<h4 id="*kr"><code>SendReply.kr(trig: 0.0, cmdName: &#x27;/reply&#x27;, values, replyID: -1)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>trig</p></td><td class="argumentdesc"><p>从非正到正的转变会触发一条消息。</p></td></tr>
+<tr><td class="argumentname"><p>cmdName</p></td><td class="argumentdesc"><p>一个字符串或符号，作为消息名称。</p></td></tr>
+<tr><td class="argumentname"><p>values</p></td><td class="argumentdesc"><p>ugens 数组，或有效的 ugen 输入。</p></td></tr>
+<tr><td class="argumentname"><p>replyID</p></td><td class="argumentdesc"><p>整数 id（类似于 <a href="Classes-SendTrig.html">SendTrig</a>）。</p></td></tr>
+</table>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>(
+{
+    SendReply.kr(Impulse.kr(3), &#x27;/the_answer&#x27;, [40, 41, 42, 43] + MouseX.kr, 1905);
+}.play(s);
+)
+
+o = OSCFunc({ |msg| msg.postln }, &#x27;/the_answer&#x27;);
+
+
+// 多通道扩展
+(
+{
+    SendReply.kr(Impulse.kr(3),
+        &#x27;/the_answer&#x27;,
+        values: [[40, 80], [41, 56], 42, [43, 100, 200]],
+        replyID: [1905, 1906, 1907, 1908]
+    );
+}.play(s);
+)
+
+o.free;
+
+// 通过 OSC 在网络中发送音频参数
+// 由于 SendReply 只能响应主机，这展示了如何
+// 通过 sclang 向一个单独的目标发送数据。
+(
+SynthDef(\amplitudeAnalysis, { |in = 0, rate = 60|
+    var input = SoundIn.ar(in);
+    var amp = Amplitude.kr(input);
+    var freq = Pitch.kr(input);
+    var trig = Impulse.kr(rate);
+    SendReply.kr(trig, &#x27;/analysis&#x27;, [amp, freq[0], freq[1]]);
+}).add;
+)
+
+// 示例目标地址 - 在此处插入你的目标主机和端口
+~testNetAddr = NetAddr(&quot;127.0.0.1&quot;, 5000);
+~mySynth = Synth(\amplitudeAnalysis);
+
+(
+OSCdef(\listener, { |msg|
+    var data = msg[3..];
+    data.postln;
+    ~testNetAddr.sendMsg(&quot;data&quot;, data);
+}, &#x27;/analysis&#x27;);
+)
+
+~mySynth.set(\rate, 10); // 降低速度...</code></pre>
+
+<h3 id="Identitying the time a message was sent">标识消息发送的时间</h3>
+
+<p>有时，我们需要知道消息是何时发送的。由于 <code>SendReply</code> 只能发送消息（消息没有时间戳），而不能发送 bundle（bundle 有时间戳），因此我们无法使用 <a href="Classes-OSCdef.html">OSCdef</a> 函数的 <code>time</code> 参数。取而代之的是，你可以使用 <a href="Classes-Sweep.html">Sweep</a> UGen 随数据一起发送时间戳。</p>
+
+<pre><code>(
+{ SendReply.ar(Impulse.ar(4), &quot;/reply&quot;, [Sweep.ar, SinOsc.ar(0.3)]); 0 }.play;
+OSCdef(\x, { |msg|
+    var time, value;
+    time = msg[3];
+    value = msg[4];
+    &quot;value % occurred at time %&quot;.format(value, time).postln;
+}, &quot;/reply&quot;);
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/SendReply.html" rel="noreferrer noopener">Classes/SendReply.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

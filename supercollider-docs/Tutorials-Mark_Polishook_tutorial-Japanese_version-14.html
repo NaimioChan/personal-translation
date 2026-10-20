@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14 - SuperCollider 文档</title>
+<meta name="description" content="Mark Polishook 教程（JP）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>14</h1>
+
+<p><em>Mark Polishook 教程（JP）</em></p>
+
+<p>另见：<a href="Tutorials-Mark_Polishook_tutorial-00_Introductory_tutorial.html">00_入门教程</a></p>
+
+<h2 id="キャリアとモジュレータ">キャリアとモジュレータ</h2>
+
+<p>在其最简单的形式中，自 20 世纪 80 年代起就广为人知、并被雅马哈 DX7 采用的频率调制（FM）合成，是利用一个振荡器来调制另一个振荡器的频率。在 FM 合成中，用于施加调制的振荡器通常被指定为以音频速率运行，其振幅由包络或其他振荡器（即低频振荡器）来塑造。</p>
+
+<p>在 FM 合成中，音色取决于调制器对载波的作用效果。因此，调制器通常被指定为以音频速率运行。</p>
+
+<pre><code>(
+SynthDef(&quot;fm1&quot;, { arg bus = 0, freq = 440, carPartial = 1, modPartial = 1, index = 3, mul = 0.05;
+
+    // 索引值通常从 0 到 24
+    // carPartial :: modPartial =&gt; 载波/调制比
+
+    var mod;
+    var car;
+
+    mod = SinOsc.ar(
+        freq * modPartial,
+        0,
+        freq * index * LFNoise1.kr(5.reciprocal).abs
+    );
+
+    car = SinOsc.ar(
+        (freq * carPartial) + mod,
+        0,
+        mul
+    );
+
+    Out.ar(
+        bus,
+        car
+    )
+}).add;
+)
+
+(
+Synth(&quot;fm1&quot;, [\bus, 0, \freq, 440, \carPartial, 1, \modPartial, 2.4]);
+Synth(&quot;fm1&quot;, [\bus, 1, \freq, 442, \carPartial, 1, \modPartial, 2.401]);
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<h2 id="周波数変調とリバーブ">周波数変調とリバーブ</h2>
+
+<pre><code>// 这是来自（SC2 发行包中的）&quot;01 Why SuperCollider document&quot; 的混响
+(
+SynthDef(&quot;preDelay&quot;, { arg inbus = 2;
+    Out.ar(
+        4,
+        DelayN.ar(In.ar(inbus, 1), 0.048, 0.048)
+    )
+}).add;
+
+SynthDef(&quot;combs&quot;, {
+    Out.ar(
+        6,
+        Mix.arFill(7, { CombL.ar(In.ar(4, 1), 0.1, LFNoise1.kr(Rand(0, 0.1), 0.04, 0.05), 15) })
+    )
+}).add;
+
+SynthDef(&quot;allpass&quot;, { arg gain = 0.2;
+    var source;
+    source = In.ar(6, 1);
+    4.do({ source = AllpassN.ar(source, 0.050, [Rand(0, 0.05), Rand(0, 0.05)], 1) });
+    Out.ar(
+        8,
+        source * gain
+    )
+}).add;
+
+SynthDef(&quot;theMixer&quot;, { arg gain = 1;
+    Out.ar(
+        0,
+        Mix.ar([In.ar(2, 1), In.ar(8, 2)]) * gain
+    )
+}).add;
+)
+
+(
+Synth(&quot;fm1&quot;, [\bus, 2, \freq, 440, \carPartial, 1, \modPartial, 1.99, \mul, 0.071]);
+Synth(&quot;fm1&quot;, [\bus, 2, \freq, 442, \carPartial, 1, \modPartial, 2.401, \mul, 0.071]);
+Synth.tail(s, &quot;preDelay&quot;);
+Synth.tail(s, &quot;combs&quot;);
+Synth.tail(s, &quot;allpass&quot;);
+Synth.tail(s, &quot;theMixer&quot;, [\gain, 0.64]);
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<h2 id="コンポーネント">コンポーネント</h2>
+
+<p>通过将“fm”的 SynthDef 分割为两个部分——一个 SynthDef 作为调制器、一个 SynthDef 作为载波——可以提升其功能性。载波的信号可以由两个或更多调制器进行处理。</p>
+
+<pre><code>(
+SynthDef(&quot;carrier&quot;, { arg inbus = 2, outbus = 0, freq = 440, carPartial = 1, index = 3, mul = 0.2;
+
+    // 索引值通常从 0 到 24
+    // carPartial :: modPartial =&gt; 载波/调制比
+
+    var mod;
+    var car;
+
+    mod = In.ar(inbus, 1);
+
+    Out.ar(
+        outbus,
+        SinOsc.ar((freq * carPartial) + mod, 0, mul);
+    )
+}).add;
+
+SynthDef(&quot;modulator&quot;, { arg outbus = 2, freq, modPartial = 1, index = 3;
+    Out.ar(
+        outbus,
+        SinOsc.ar(freq * modPartial, 0, freq)
+        *
+        LFNoise1.kr(Rand(3, 6).reciprocal).abs
+        *
+        index
+    )
+}).add;
+)
+
+(
+var freq = 440;
+// 左チャンネルのためのモジュレータ
+Synth.head(s, &quot;modulator&quot;, [\outbus, 2, \freq, freq, \modPartial, 0.649, \index, 2]);
+Synth.head(s, &quot;modulator&quot;, [\outbus, 2, \freq, freq, \modPartial, 1.683, \index, 2.31]);
+
+// 右チャンネルのためのモジュレータ
+Synth.head(s, &quot;modulator&quot;, [\outbus, 4, \freq, freq, \modPartial, 0.729, \index, 1.43]);
+Synth.head(s, &quot;modulator&quot;, [\outbus, 4, \freq, freq, \modPartial, 2.19, \index, 1.76]);
+
+// 左と右のチャンネルのためのキャリア
+Synth.tail(s, &quot;carrier&quot;, [\inbus, 2, \outbus, 0, \freq, freq, \carPartial, 1]);
+Synth.tail(s, &quot;carrier&quot;, [\inbus, 4, \outbus, 1, \freq, freq, \carPartial, 0.97]);
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<h2 id="コンポーネントとリバーブ">コンポーネントとリバーブ</h2>
+
+<p>此示例结合了前面定义的混响和两个 SynthDef（一个是调制器，另一个是载波）所说明的模型。</p>
+
+<pre><code>(
+var freq;
+// キャリアとモジュレータのためのランダムな基本周波数を生成する
+freq = 330.0.rrand(500);
+
+// 左チャンネルのためのモジュレータ
+Synth.head(s, &quot;modulator&quot;, [\outbus, 60, \freq, freq, \modPartial, 0.649, \index, 2]);
+Synth.head(s, &quot;modulator&quot;, [\outbus, 60, \freq, freq, \modPartial, 1.683, \index, 2.31]);
+
+// 右チャンネルのためのモジュレータ
+Synth.head(s, &quot;modulator&quot;, [\outbus, 62, \freq, freq, \modPartial, 1.11, \index, 1.43]);
+Synth.head(s, &quot;modulator&quot;, [\outbus, 62, \freq, freq, \modPartial, 0.729, \index, 1.76]);
+
+// 左と右のチャンネルのためのキャリア
+Synth.tail(s, &quot;carrier&quot;, [\inbus, 60, \outbus, 100, \freq, freq, \carPartial, 1]);
+Synth.tail(s, &quot;carrier&quot;, [\inbus, 62, \outbus, 100, \freq, freq+1, \carPartial, 2.91]);
+
+Synth.tail(s, &quot;preDelay&quot;, [\inbus, 100]);
+Synth.tail(s, &quot;combs&quot;);
+Synth.tail(s, &quot;allpass&quot;);
+Synth.tail(s, &quot;theMixer&quot;, [\gain, 0.2]);
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>转到 <a href="Tutorials-Mark_Polishook_tutorial-Japanese_version-15.html">15</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Mark_Polishook_tutorial/Japanese_version/14.html" rel="noreferrer noopener">Tutorials/Mark_Polishook_tutorial/Japanese_version/14.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

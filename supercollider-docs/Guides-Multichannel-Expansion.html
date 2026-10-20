@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多声道扩展 - SuperCollider 文档</title>
+<meta name="description" content="解释多通道扩展与表示">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>多声道扩展</h1>
+
+<p><em>解释多通道扩展与表示</em></p>
+
+<h2 id="Multiple channels as Arrays">将多个通道作为数组</h2>
+
+<p>多个音频通道表示为 <a href="Classes-Array.html">Array</a>。</p>
+
+<pre><code>s.boot;
+// 一个声道
+{ Blip.ar(800,4,0.1) }.play;
+
+// 两个声道
+{ [ Blip.ar(800,4,0.1), WhiteNoise.ar(0.1) ] }.play;</code></pre>
+
+<p>每个输出声道会输出到不同的扬声器，因此对于立体声输出，这里的上限是 2。如果你有受支持的多声道音频接口或声卡，则可以输出该声卡支持的所有声道数。</p>
+
+<p>所有 <a href="Classes-UGen.html">UGen</a> 都只有一个输出。这种统一性便于使用数组操作来处理多通道结构。</p>
+
+<p>为了实现多通道输出，UGen 会为每个输出创建一个单独的 UGen，称为 <a href="Classes-OutputProxy.html">OutputProxy</a>。OutputProxy 只是多通道 UGen 输出的占位符。OutputProxy 是在内部创建的，你永远不需要自己创建它们，但了解它们的存在是好的，这样当你遇到它们时就知道它们是什么。</p>
+
+<pre><code>// 查看 Pan2 的输出：
+Pan2.ar(PinkNoise.ar(0.1), FSinOsc.kr(3)).dump;
+
+play({ Pan2.ar(PinkNoise.ar(0.1), FSinOsc.kr(1)); });</code></pre>
+
+<h2 id="Multichannel expansion">多通道扩展</h2>
+
+<p>当把一个 <a href="Classes-Array.html">Array</a> 作为输入提供给一个 unit generator 时，会导致生成一个由该 unit generator 的多个副本组成的数组，每个副本使用输入数组中的不同值。这称为多通道扩展。除了少数特殊的 unit generator 外，所有 unit generator 都会执行多通道扩展。只有 Arrays 会被扩展，没有其他类型的 Collection，甚至 Array 的子类也不会。</p>
+
+<pre><code>{ Blip.ar(500,8,0.1) }.play // 一个声道
+
+// freq 输入中的数组会导致创建一个包含 2 个 Blip 的 Array：
+{ Blip.ar([499,600],8,0.1) }.play // 两个声道
+
+Blip.ar(500,8,0.1).postln // 创建了一个单元生成器。
+
+Blip.ar([500,601],8,0.1).postln // 创建了两个 unit generator。</code></pre>
+
+<p>多通道扩展会通过表达式图传播。当以输入数组调用 unit generator 构造函数时，它会返回一个实例数组。如果该数组作为另一个构造函数的输入，则又会创建一个数组，依此类推。</p>
+
+<pre><code>{ RLPF.ar(Saw.ar([100,250],0.05), XLine.kr(8000,400,5), 0.05) }.play;
+
+// Saw 的频率输入数组 [100,250] 会使 Saw.ar 返回
+// 两个 Saw 组成的数组，该数组又使 RLPF.ar 创建两个 RLPF。
+// 两个 RLPF 共享同一个 XLine 实例。</code></pre>
+
+<p>当构造函数由两个或多个数组参数化时，创建的通道数等于最长的数组，参数从各数组中并行提取。较短的数组将回绕。</p>
+
+<p>例如，以下内容：</p>
+
+<pre><code>Pulse.ar([400, 500, 600],[0.5, 0.1], 0.2)</code></pre>
+
+<p>等价于：</p>
+
+<pre><code>[ Pulse.ar(400,0.5,0.2), Pulse.ar(500,0.1,0.2), Pulse.ar(600,0.5,0.2) ]</code></pre>
+
+<p>下面给出一个基于上述 Saw 示例的更复杂的例子。在这个例子中，<a href="Classes-XLine.html">XLine</a> 被扩展为两个实例，一个从 8000 Hz 到 400 Hz，另一个朝相反方向从 500 Hz 到 7000 Hz。这两个 XLine 与两个 Saw 振荡器“配对”，用于为两份 <a href="Classes-RLPF.html">RLPF</a> 提供参数。因此，在左声道上，一个 100 Hz 的 Saw 被从 8000 Hz 到 400 Hz 滤波，而在右声道上，一个 250 Hz 的 Saw 被从 500 Hz 到 7000 Hz 滤波。</p>
+
+<pre><code>{ RLPF.ar(Saw.ar([100,250],0.05), XLine.kr([8000,500],[400,7000],5), 0.05) }.play;</code></pre>
+
+<h3 id="Expanding methods and operators">展开方法与运算符</h3>
+
+<p>许多运算符和方法也会进行多通道扩展。例如所有常见数学运算符：</p>
+
+<pre><code>{ Saw.ar([100,250]) * [0.5,0.8] }.play;
+{ Saw.ar(LFNoise1.kr(1).range(0,100) + [100,250]) }.play;</code></pre>
+
+<p>还有各种 UGen 便捷函数，如 <code>.clip2</code>、<code>.lag</code> 和 <code>.range</code>：</p>
+
+<pre><code>{ Saw.ar(LFNoise1.kr(1).range(100,[200,300])) }.play;
+{ Saw.ar(LFPulse.kr(1).range(100,[200,300]).lag([0.1,0.2])) }.play;</code></pre>
+
+<p>扩展由在 <a href="Classes-SequenceableCollection.html">SequenceableCollection</a> 中定义的包装方法处理。</p>
+
+<p>你可以使用 <a href="Classes-Object.html#-multiChannelPerform">Object: -multiChannelPerform</a> 对任何类型的任何方法进行多通道扩展：</p>
+
+<pre><code>[&quot;foo&quot;,&quot;bar&quot;].multiChannelPerform(\toUpper);</code></pre>
+
+<p>较短的数组会回绕：</p>
+
+<pre><code>[&quot;foo&quot;,&quot;bar&quot;,&quot;zoo&quot;].multiChannelPerform(&#x27;++&#x27;, [&quot;l&quot;,&quot;ba&quot;])</code></pre>
+
+<h3 id="Using flop and flop1 for multichannel expansion">使用 flop 和 flop1 进行多通道扩展</h3>
+
+<p>方法 flop 交换列与行，从而可推导出一系列参数集合：</p>
+
+<pre><code>(
+SynthDef(&quot;help_multichannel&quot;, { |out=0, freq=440, mod=0.1, modrange=20|
+    Out.ar(out,
+        SinOsc.ar(
+            LFPar.kr(mod, 0, modrange) + freq
+        ) * EnvGate(0.1)
+    )
+}).add;
+)</code></pre>
+
+<pre><code>(
+var freq, mod, modrange;
+
+freq = Array.exprand(8, 400, 5000);
+mod = Array.exprand(8, 0.1, 2);
+modrange = Array.rand(8, 0.1, 40);
+
+fork {
+    [\freq, freq, \mod, mod, \modrange, modrange].flop.do { |args|
+        args.postln;
+        Synth(&quot;help_multichannel&quot;, args);
+        0.3.wait;
+    }
+};
+)</code></pre>
+
+<p>类似地，<a href="Classes-Function.html#-flop">Function:flop</a> 和 <a href="Classes-Function.html#-flop1">Function:flop1</a> 返回一个未求值的函数，求值时会展开为其参数。</p>
+
+<pre><code>// if 的多通道扩展，这里用于防止除以零。
+// flop 总是返回一个数组
+f = { |a, b| if(b != 0) { a / b } { 0 } }.flop;
+f.value([1, 2, 3, 4], [0, 10, 1000]); //  -&gt; [ 0, 0.2, 0.003, 0 ]
+f.value(2, 4); // [ 0.5 ]（始终返回一个数组）
+
+// if 的多通道扩展，此处用于防止除以零
+// flop1 仅在参数包含数组时返回数组
+f = { |a, b| if(b != 0) { a / b } { 0 } }.flop1;
+f.value([1, 2, 3, 4], [0, 10, 1000]); //  -&gt; [ 0, 0.2, 0.003, 0 ]
+f.value([2], 4); // -&gt; [0.5]
+f.value(2, 4); // -&gt; 0.5</code></pre>
+
+<pre><code>// 多通道扩展一个 fork 出 task 的函数
+(
+SynthDef(\blip, { |out, freq|
+    Out.ar(out,
+        Line.ar(0.1, 0, 0.05, 1, 0, 2) * Pulse.ar(freq * [1, 1.02])
+    )
+}).add;
+
+a = { |dur=1, x=1, n=10, freq=400|
+    fork {
+        n.do {
+            if(x.coin) { Synth(\blip, [\freq, freq]) };
+            (dur / n).wait;
+        }
+    }
+}.flop;
+)
+
+a.value(5, [0.3, 0.3, 0.2], [12, 32, 64], [1000, 710, 700]);</code></pre>
+
+<h3 id="Multichannel expansion in Patterns">模式中的多声道扩展</h3>
+
+<p>多通道扩展并不完全遵循人们从前述内容中可能预期的方案。例如，以下代码无法正确进行多通道扩展：</p>
+
+<pre><code>(
+SynthDef(\help_multichannel, { |out=0, freq=#[342, 145]|
+    var env = EnvGate.new;
+    Out.ar(out, [SinOsc.ar(freq[0]), Saw.ar(freq[1])] * env * 0.2)
+}).add
+)
+
+// 未按预期工作
+// 只有左声道的 freq 被正确设置
+(
+a = Pbind(
+    \instrument, \help_multichannel,
+    \freq, Pseq([[342, 145], [187, 564], [234, 135]], inf),
+    \dur, 0.5
+).play;
+)</code></pre>
+
+<p>而是将数组参数包裹在额外的一对方括号中：</p>
+
+<pre><code>a.stop;
+
+// 两个通道的频率均按预期设置
+(
+a = Pbind(
+    \instrument, \help_multichannel,
+    \freq, Pseq([[[342, 145]], [[187, 564]], [[234, 135]]], inf),
+    \dur, 0.5
+).play;
+)</code></pre>
+
+<p>在底层，这是 .flop 如何准备给定参数以传递给 Synth 的结果：</p>
+
+<pre><code>// 单方括号
+[\freq, [342, 145]].flop
+// --&gt; [ [ freq, 342 ], [ freq, 145 ] ]
+
+// 双方括号
+[\freq, [[342, 145]]].flop
+// --&gt; [ [ freq, [ 342, 145 ] ] ]</code></pre>
+
+<h2 id="Pitfalls">Pitfalls</h2>
+
+<p>有些 UGen 会从单声道输入创建立体声输出，在多声道扩展方面的行为可能与预期不符。</p>
+
+<p>例如，<a href="Classes-Pan2.html">Pan2</a>：</p>
+
+<pre><code>{ Pan2.ar(SinOsc.ar([500,600]),[-0.5,0.5]) }.play;</code></pre>
+
+<p>这里的预期可能是两个正弦波会得到各自独立的声像位置。确实如此，但 Pan2 会展开为嵌套在外层数组中的两个立体声 UGen，从而总共产生四个输出通道。<code>play</code> 会为它们各添加一个 <a href="Classes-Out.html">Out</a> UGen，导致两个 Pan2 都写入同一个输出总线：</p>
+
+<pre><code>Pan2.ar(SinOsc.ar([500,600]),[-0.5,0.5])
+
+// 打印：
+// [ [ an OutputProxy, an OutputProxy ], [ an OutputProxy, an OutputProxy ] ]</code></pre>
+
+<p>在这种情况下，解决方案很简单，就是将嵌套的四个声道求和为单个立体声声道：</p>
+
+<pre><code>{ Pan2.ar(SinOsc.ar([500,600]),[-0.5,0.5]).sum }.play;</code></pre>
+
+<p>如果我们查看上面代码生成的 UGen 图，可以看到它是正确的。两个 Pan2 混合在一起，产生单个立体声输出：</p>
+
+<pre><code>{ Pan2.ar(SinOsc.ar([500,600]),[-0.5,0.5]).sum }.asSynthDef.dumpUGens
+
+// 输出：
+// [ 0_Control, scalar, nil ]
+// [ 1_SinOsc, audio, [ 500, 0 ] ]
+// [ 2_Pan2, audio, [ 1_SinOsc, -0.5, 1 ] ]
+// [ 3_SinOsc, audio, [ 600, 0 ] ]
+// [ 4_Pan2, audio, [ 3_SinOsc, 0.5, 1 ] ]
+// [ 5_+, audio, [ 2_Pan2[0], 4_Pan2[0] ] ]
+// [ 6_+, audio, [ 2_Pan2[1], 4_Pan2[1] ] ]
+// [ 7_Out, audio, [ 0_Control[0], 5_+, 6_+ ] ]</code></pre>
+
+<h2 id="Protecting arrays against expansion">保护数组免受扩展</h2>
+
+<p>某些 UGen，例如 <a href="Classes-Klank.html">Klank</a>，需要以数组作为输入。由于所有数组都会被展开，你需要用 <a href="Classes-Ref.html">Ref</a> 对象来保护某些数组。Ref 实例是一个带有名为 'value' 的单个槽的对象，用作对象的容器。<code>Ref.new(object)</code> 是创建 Ref 的一种方式，但还有一种语法捷径。反引号 <code>`</code> 是一个一元运算符，等价于调用 <code>Ref.new(something)</code>。因此，要保护作为 Klank 或类似 UGen 输入的数组，你可以这样写：</p>
+
+<pre><code>Klank.ar(`[[400,500,600],[1,2,1]], z)</code></pre>
+
+<p>你仍然可以通过给它一个由 Ref 包装的数组组成的数组来创建多个 Klank。</p>
+
+<pre><code>Klank.ar([ `[[400,500,600],[1,2,1]],  `[[700,800,900],[1,2,1]] ], z)</code></pre>
+
+<p>等价于：</p>
+
+<pre><code>[ Klank.ar(`[[400,500,600],[1,2,1]], z),  Klank.ar(`[[700,800,900],[1,2,1]], z)]</code></pre>
+
+<p>当传递给 Klank 时，也是 Refs 的多通道扩展：</p>
+
+<pre><code>Klank.ar(`[[[400,500,600], [700,800,900]],[1,2,1]], z)</code></pre>
+
+<p>，它等价于：</p>
+
+<pre><code>[ Klank.ar(`[[400,500,600],[1,2,1]], z),  Klank.ar(`[[700,800,900],[1,2,1]], z)]</code></pre>
+
+<h2 id="Reducing channel expansion with Mix">使用 Mix 减少声道扩展</h2>
+
+<p><a href="Classes-Mix.html">Mix</a> 对象提供了将多通道数组缩减为单通道的手段。</p>
+
+<pre><code>Mix.new([a, b, c]) // 通道数组</code></pre>
+
+<p>or</p>
+
+<pre><code>[a, b, c].sum</code></pre>
+
+<p>等价于：</p>
+
+<pre><code>a + b + c  // 混合为一个</code></pre>
+
+<p>Mix 比使用 + 更高效，因为它可以一次执行多次加法。但主要优势在于它可以处理通道数任意或在运行时确定的情况。</p>
+
+<pre><code>// Pulse 的三个通道被混合到一个通道
+{ Mix.new(  Pulse.ar([400, 501, 600], [0.5, 0.1], 0.1) ) }.play</code></pre>
+
+<p>Mix 的多通道扩展方式不同。Mix 接收一个数组作为输入（且该数组未被 Ref 保护）。这个数组不会导致 Mix 被复制。数组的所有元素在单个 Mix 对象中混合在一起。另一方面，如果该数组包含一个或多个数组，则会在下一层执行多通道扩展。这允许你混合立体声（双元素）数组组成的数组，从而得到一个双通道数组。例如：</p>
+
+<pre><code>Mix.new( [ [a, b], [c, d], [e, f] ] ) // 输入是立体声对组成的数组</code></pre>
+
+<p>等价于：</p>
+
+<pre><code>// 混合为单个立体声对
+[ Mix.new( [a, c, e] ), Mix.new( [b, d, f] ) ]</code></pre>
+
+<p>目前它不是递归的。你不能对数组的数组的数组使用 Mix。</p>
+
+<p>以下是最后一个示例，演示多通道扩展和 Mix。通过更改变量 'n'，你可以更改 patch 中的声部数量。你的机器能处理多少个声部？</p>
+
+<pre><code>(
+{
+    var n;
+    n = 8; // &#x27;voices&#x27; 的数量
+    Mix.new( // 将所有立体声对混合为单声道。
+        Pan2.ar( // 将声音声像定位到立体声位置
+            CombL.ar( // 用作弦共振器的梳状滤波器
+                Dust.ar( // 随机脉冲作为激励函数
+                    // 一个数组，用于让 Dust 扩展到 n 个通道
+                    // 1 表示平均每秒一个脉冲
+                    Array.fill(n, 1),
+                    0.3 // 振幅
+                ),
+                0.01, // 最大延迟时间（秒）
+                // 为每个 &#x27;string&#x27; 生成不同随机长度的数组
+                Array.fill(n, {0.004.rand+0.0003}),
+                4 // 衰减时间（秒）
+            ),
+            Array.fill(n,{1.0.rand2}) // 为每个声音分配不同的声像位置
+        )
+    )
+}.play;
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Multichannel-Expansion.html" rel="noreferrer noopener">Guides/Multichannel-Expansion.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

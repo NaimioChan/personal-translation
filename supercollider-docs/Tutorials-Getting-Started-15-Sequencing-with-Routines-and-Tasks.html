@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15. 使用例程和任务进行排序 - SuperCollider 文档</title>
+<meta name="description" content="SuperCollider 入门">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>15. 使用例程和任务进行排序</h1>
+
+<p><em>SuperCollider 入门</em></p>
+
+<p>另请参阅：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+
+<p>当你调度一个函数时（如在 Scheduling Events 教程中所示），该函数总是从头开始并一直运行到结尾。对于音序而言，更有用的是拥有一个能够运行到中途、返回一个值，然后在下次需要时从上次停止处继续的控制结构。在 SuperCollider 中，这就是 Routine。</p>
+
+<p>例程可用于数据处理，例如</p>
+
+<pre><code>(
+r = Routine({
+    &quot;abcde&quot;.yield;
+    &quot;fghij&quot;.yield;
+    &quot;klmno&quot;.yield;
+    &quot;pqrst&quot;.yield;
+    &quot;uvwxy&quot;.yield;
+    &quot;z{|}~&quot;.yield;
+});
+)
+
+r.next;    // 从 Routine 获取下一个值
+6.do({ r.next.postln });</code></pre>
+
+<p>第一次调用 next 时，例程产生 <strong>"abcde"</strong>。这个产生的值成为 r.next 的结果，并在 post 窗口中打印。第二次调用 next 时，执行从第一个 yield 之后继续，继续处理第二个字符串，以此类推。当没有更多可产生的值时，r.next 返回 nil。</p>
+
+<p>我们将回到使用例程进行数据生成的话题。对于音序而言，更重要的是当时钟上调度一个例程并且该例程返回时间值时会发生什么。</p>
+
+<h2 id="Scheduling routines">调度例程</h2>
+
+<p>回想一下，当你在时钟上调度一个函数时，函数返回的数字会被视为时间值——具体来说，是直到该函数应再次执行的时长。例程产生的数字也是同样处理。</p>
+
+<pre><code>(
+r = Routine({
+    var delta;
+    loop {
+        delta = rrand(1, 3) * 0.5;
+        &quot;Will wait &quot;.post; delta.postln;
+        delta.yield;
+    }
+});
+)
+
+r.next;
+
+TempoClock.default.sched(0, r);
+
+r.stop;</code></pre>
+
+<p>现在让我们用播放 synth 的指令替换那些发布语句。准备工作：</p>
+
+<pre><code>(
+SynthDef(\singrain, { |freq = 440, amp = 0.2, sustain = 1, out|
+    var sig;
+    sig = SinOsc.ar(freq, 0, amp) * EnvGen.kr(Env.perc(0.01, sustain), doneAction: Done.freeSelf);
+    Out.ar(out, sig ! 2);    // sig ! 2 等同于 [sig, sig]
+}).add;
+
+r = Routine({
+    var delta;
+    loop {
+        delta = rrand(1, 3) * 0.5;
+        Synth(\singrain, [freq: exprand(200, 800), amp: rrand(0.1, 0.5), sustain: delta * 0.8]);
+        delta.yield;
+    }
+});
+)</code></pre>
+
+<p>调度一个例程有一定意义，但播放一个例程似乎更直观。</p>
+
+<pre><code>r.play;
+
+r.stop;</code></pre>
+
+<p>就是这样——我们的第一个序列。</p>
+
+<h2 id="Pause and resume: Task">暂停与恢复：Task</h2>
+
+<p>例程有一个棘手的小特性，可能限制其作为音乐对象的实用性。一旦停止例程，你只能从头重新开始它。没有办法从停止的位置重放例程。</p>
+
+<p>Task 是一种可以随意暂停和恢复的变体。例如，让我们遍历一个 C 大调音阶。注意，SuperCollider 的所有控制结构在 Routine 或 Task 内都是有效的。还要注意，我们可以用 'wait' 作为 'yield' 的同义词。</p>
+
+<pre><code>(
+t = Task({
+    loop {
+        [60, 62, 64, 65, 67, 69, 71, 72].do({ |midi|
+            Synth(\singrain, [freq: midi.midicps, amp: 0.2, sustain: 0.1]);
+            0.125.wait;
+        });
+    }
+}).play;
+)
+
+// 可能会在音阶中间停止
+t.stop;
+
+t.play;    // 应从下一个音符继续
+
+t.stop;</code></pre>
+
+<p>本教程的剩余部分将使用 Task。</p>
+
+<h2 id="When do you want to start?">你想什么时候开始？</h2>
+
+<p>默认情况下，对 Task 应用 <strong>play</strong> 会立即启动该 Task。大多数时候会有许多任务同时运行，它们应当彼此同步。虽然某处或许存在能在恰到好处的时刻按下回车键以实现精确同步的大师，但我们大多数人更青睐更可靠的机制。</p>
+
+<p>play 接受多个参数来控制其行为。</p>
+
+<pre><code>aRoutine.play(clock, quant)
+aTask.play(argClock, doReset, quant)</code></pre>
+
+<dl>
+<dt><strong>clock</strong>（Routine）或 <strong>argClock</strong>（Task）</dt>
+<dd><p>该序列应由哪个时钟处理调度</p></dd>
+<dt><strong>doReset</strong>（仅 Task）</dt>
+<dd><p>如果为 true，则在播放前将序列重置到开头；如果为 false（默认值），则继续</p></dd>
+<dt><strong>quant</strong></dt>
+<dd><p>精确起始时间的规范</p></dd>
+</dl>
+
+<p>quant 参数使用两个数的基本模型，这可以与西方的小节概念相关联：</p>
+
+<p>quant：大致对应小节长度；当前时间向上取整到该数字的下一个倍数 phase：在小节内的位置（0 = 小节开头）</p>
+
+<p>为方便起见，如果你只想从该小节的开头开始，可以将小节长度作为数字给出。由两个数字组成的数组会告诉 SuperCollider 小节长度和相位。</p>
+
+<p>为了了解这在实践中如何工作，让我们采用上面的 C 大调音阶，并稍微错开播放它的两个副本。我们将把节奏放慢到十六分音符（0.25），并让第二个副本从小节的八分音符处开始。我们需要两个任务来完成这一操作，它们将在一个函数中创建。</p>
+
+<pre><code>(
+f = {
+    Task({
+        loop {
+            [60, 62, 64, 65, 67, 69, 71, 72].do({ |midi|
+                Synth(\singrain, [freq: midi.midicps, amp: 0.2, sustain: 0.1]);
+                0.25.wait;
+            });
+        }
+    });
+};
+)
+
+t = f.value.play(quant: 4);        // 从下一个 4 拍边界开始
+
+u = f.value.play(quant: [4, 0.5]);    // 下一个 4 拍边界 + 半拍
+
+t.stop; u.stop;</code></pre>
+
+<h2 id="Using data routines in note sequencing">在音符排序中使用数据例程</h2>
+
+<p>前一个示例通过在 Task 内循环遍历一个数组来控制一个参数（音高）的生成。如果你想控制多个参数，该怎么办呢？</p>
+
+<p>请记住，例程除了具备调度能力外，还可以生成数据。你可以在序列中引用任意数量的数据例程。</p>
+
+<pre><code>(
+var midi, dur;
+midi = Routine({
+    [60, 72, 71, 67, 69, 71, 72, 60, 69, 67].do({ |midi| midi.yield });
+});
+dur = Routine({
+    [2, 2, 1, 0.5, 0.5, 1, 1, 2, 2, 3].do({ |dur| dur.yield });
+});
+
+SynthDef(\smooth, { |freq = 440, sustain = 1, amp = 0.5, out|
+    var sig;
+    sig = SinOsc.ar(freq, 0, amp) * EnvGen.kr(Env.linen(0.05, sustain, 0.1), doneAction: Done.freeSelf);
+    Out.ar(out, sig ! 2)
+}).add;
+
+r = Task({
+    var delta;
+    while {
+        delta = dur.next;
+        delta.notNil
+    } {
+        Synth(\smooth, [freq: midi.next.midicps, sustain: delta]);
+        delta.yield;
+    }
+}).play(quant: TempoClock.default.beats + 1.0);
+)</code></pre>
+
+<p>注意，routine 用于数据，而 task 用于播放。此外，与之前的无限序列不同，这个序列在数据耗尽时会停止。这正是 while 循环的目的——只要 'dur' 数据流持续产生值，它就会继续。（关于 <strong>while</strong> 的更多内容，参见 <a href="Reference-Control-Structures.html">Control Structures</a> 帮助文件。）</p>
+
+<p>一定有更简单的方法来编写数据流——反复编写相同的 do 循环确实很不方便。事实上，确实有这样的方法，将在下一个教程中介绍：使用模式进行序列编排。</p>
+
+<p>（这里我们使用 quant 只是将 Task 的起始延迟一拍。这是因为 synthdef 在服务器上准备好使用需要一些时间。如果没有它，第一个音符将不会被听到。）</p>
+
+<h2 id="A note on server messaging and timing">关于服务器消息传递与时序的说明</h2>
+
+<p>像前面示例中那样使用 Synth 可能会导致虽小但有时可察觉的定时不准确。这是因为将 OSC 消息从你的代码传输到服务器需要一小段时间，而这段时间并不总是恒定的。SuperCollider 对此的处理方式是为你提供选项：发送带有时间戳的消息，告诉服务器该消息应当在何时精确生效。一个 <strong>latency</strong> 值被用于计算该时间戳。</p>
+
+<p>延迟的工作原理是将自身加到时钟上的当前时间。如果所有消息都以相同的延迟值发出，它们的时间将相对于彼此以及相对于时钟都是精确的。<a href="Guides-ServerTiming.html">调度与服务器计时</a>帮助文件更详细地解释了其工作原理，但你实际上并不需要了解所有这些才能使用它。要点是使用一致的、较小的延迟值来实现完美的计时。（Server 对象有一个 latency 变量，你可以使用它来保持一致。）</p>
+
+<p>下面的示例说明了你可能听到的各种不准确之处。不准确的程度在不同系统上可能或多或少较为明显。它使用上面的 \singrain SynthDef，并每秒播放 10 个音符。</p>
+
+<pre><code>(
+t = Task({
+    loop {
+        Synth(\singrain, [freq: exprand(400, 1200), sustain: 0.08]);
+        0.1.wait;
+    }
+}).play;
+)
+
+t.stop;</code></pre>
+
+<p>为传出的 Synth 添加延迟的最简单方法是使用 Server 的 <strong>makeBundle</strong> 方法。现在不必担心它的工作原理——重要的是它使用第一个值作为延迟，并根据该延迟运行函数产生的消息。</p>
+
+<pre><code>(
+t = Task({
+    loop {
+        s.makeBundle(s.latency, {
+            Synth(\singrain, [freq: exprand(400, 1200), sustain: 0.08]);
+        });
+        0.1.wait;
+    }
+}).play;
+)
+
+t.stop;</code></pre>
+
+<p>另请参阅：</p>
+
+<p><a href="Classes-Routine.html">Routine</a>、<a href="Classes-Task.html">Task</a>、<a href="Classes-Quant.html">Quant</a>、<a href="Guides-ServerTiming.html">Scheduling and Server timing</a>、<a href="Guides-Bundled-Messages.html">Bundled Server Messages</a></p>
+
+<h2 id="Suggested Exercise">建议练习</h2>
+
+<p>制作一个更有趣的 SynthDef 来替代 \smooth SynthDef。使用更多参数以获得更大的变化空间。然后修改 'Over the Rainbow' 示例中的数据流，并添加新的数据流来演奏一段不同的、更具表现力的曲调。</p>
+
+<p>____________________</p>
+
+<p>本文档是教程 <strong>Getting Started With SuperCollider</strong> 的一部分。</p>
+
+<p>点击此处继续下一节：<a href="Tutorials-Getting-Started-16-Sequencing-with-Patterns.html">16. 使用模式进行音序编排</a></p>
+
+<p>点击此处返回目录：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Getting-Started/15-Sequencing-with-Routines-and-Tasks.html" rel="noreferrer noopener">Tutorials/Getting-Started/15-Sequencing-with-Routines-and-Tasks.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 06d：并行模式 - SuperCollider 文档</title>
+<meta name="description" content="同时运行多个事件模式">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 06d：并行模式</h1>
+
+<p><em>同时运行多个事件模式</em></p>
+
+<p>参见：<a href="Tutorials-A-Practical-Guide-PG_06c_Composition_of_Patterns.html">模式指南 06c：模式的组合</a>、<a href="Tutorials-A-Practical-Guide-PG_06e_Language_Control.html">模式指南 06e：语言控制</a></p>
+
+<h2 id="Parallelizing event patterns">并行化事件模式</h2>
+
+<p>有几种不同的方式可以让多个模式同时播放。最明显的是分别播放它们。模式的事件在各自的时钟上独立调度并并发运行。这些模式都不需要了解其他模式的任何信息。这种方法的一个优点是模式可以独立停止和启动。</p>
+
+<p>另一种方法是将它们合并成一个并行流。结果是单个模式对象，只能作为一个整体来播放或停止。这会失去一定程度的交互控制，但有时合并多个模式是必要的——例如，将模式转换为 Score 对象以便进行 NRT 渲染。</p>
+
+<dl>
+<dt><code>Ppar(list, repeats)</code></dt>
+<dd><p>同时启动列表中每个事件模式。当最后一个结束时，Ppar 也会停止。如果 repeats &gt; 1，所有子模式将从头重新开始。</p></dd>
+<dt><code>Ptpar(list, repeats)</code></dt>
+<dd><p>这里，列表由 [timeOffset0, pattern0, timeOffset1, pattern1...] 组成。每个模式在其时间偏移所给定的拍数之后开始。这些模式可以相对于彼此在不同的时间开始。</p></dd>
+<dt><code>Pgpar(list, repeats)</code></dt>
+<dd><p>类似 Ppar，但它为每个子模式创建一个单独的组。</p></dd>
+<dt><code>Pgtpar(list, repeats)</code></dt>
+<dd><p>这类似于 Ptpar，但为子模式使用单独的组。</p></dd>
+</dl>
+
+<p>关于将 <a href="Classes-Ppar.html">Ppar</a> 和 <a href="Classes-Pseq.html">Pseq</a> 结合使用来构建整首作品（Kraftwerk 的 "Spacelab"）的优秀示例，可在 examples/pieces/spacelab.scd 中找到。</p>
+
+<h3 id="Dynamic parallelizing">动态并行化</h3>
+
+<p>Ppar 及其同类适用于一组固定的并行模式——也就是说，你需要事先知道有多少个模式会并行。一旦并行模式开始，就无法再向其添加更多流。若要持续添加流，请使用 <a href="Classes-Pspawner.html">Pspawner</a> 和 <a href="Classes-Pspawn.html">Pspawn</a>。就本概述而言，将通过几个简单的示例说明一些基本特性。这些类还有更多能力；具体细节请参阅其帮助文件。</p>
+
+<dl>
+<dt><code>Pspawner(routineFunc)</code></dt>
+<dd><p>该函数在 Routine 中运行。一个 Spawner 对象会被传入此 Routine，该对象用于向并行流中添加流或从中移除流。新模式可以按顺序或并行添加。</p></dd>
+<dt><code>Pspawn(pattern, spawnProtoEvent)</code></dt>
+<dd><p>支持 Pspawner 的大部分功能，但使用模式来控制 Spawner 对象，而不是例程函数。</p></dd>
+<dd><p>此示例使用 <a href="Classes-Pspawner.html">Pspawner</a> 以不同速度触发重叠的音阶段。与 Ppar 不同——后者只能处理固定数量然后停止——Pspawner 可以无限持续下去。</p></dd>
+<dd><pre><code>(
+p = Pspawner({ |sp|    // sp = Spawner 对象
+    loop {
+            // 并行运行一个新 pattern
+            // 该 pattern 是有限的
+            // 经过几个事件后，它停止，Pspawner 便不再理会它
+        sp.par(Pbind(
+            \degree, Pseries(rrand(-5, 7), #[-1, 1].choose, rrand(4, 7)),
+            \pan, rrand(-1.0, 1.0),
+            \dur, rrand(0.1, 0.3)    // 每个模式选择一次持续时间
+        ));
+            // 告诉 Spawner 稍等片刻再让下一个 pattern 开始
+            // 不要为此使用 numBeats.wait！
+            // 一切都必须通过 Spawner 进行
+        sp.wait(rrand(1, 4) * 0.25);
+    }
+}).play;
+)
+
+p.stop;</code></pre></dd>
+<dd><p>同样，使用 <a href="Classes-Pspawn.html">Pspawn</a> 编写：</p></dd>
+<dd><pre><code>(
+p = Pspawn(Pbind(
+    \method, \par,        // 并行嵌入模式
+        // 在 Pfunc 中生成子模式（这样每次都会有一个新模式）
+        // Pfunc 返回模式而不渲染流
+        // -- 对 Pspawn 很重要
+        // 有关嵌入模式的其他方法，请参阅 Pspawn 帮助文件
+    \pattern, Pfunc {
+        Pbind(
+            \degree, Pseries(rrand(-5, 7), #[-1, 1].choose, rrand(4, 7)),
+            \pan, rrand(-1.0, 1.0),
+            \dur, rrand(0.1, 0.3)    // 每个模式选择一次持续时间
+        )
+    },
+        // \delta 键会自动用于 spawner.wait() 调用
+    \delta, Pwhite(1, 4, inf) * 0.25
+)).play;
+)
+
+p.stop;</code></pre></dd>
+</dl>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_06c_Composition_of_Patterns.html">Pattern Guide 06c: Composition of Patterns</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_06e_Language_Control.html">Pattern Guide 06e：语言控制</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_06d_Parallel_Patterns.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_06d_Parallel_Patterns.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreqShift - SuperCollider 文档</title>
+<meta name="description" content="移频器。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>FreqShift</h1>
+
+<p><em>移频器。</em></p>
+
+<p><a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-Hilbert.html">Hilbert</a>、<a href="Classes-HilbertFIR.html">HilbertFIR</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>FreqShift 实现的是单边带幅度调制，也称为频率偏移，但不要与音高偏移混淆。频率偏移会将信号的所有分量按固定的量移动，但不保留原始的谐波关系。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*ar"><code>FreqShift.ar(in, freq: 0.0, phase: 0.0, mul: 1.0, add: 0.0)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>in</p></td><td class="argumentdesc"><p>输入信号。</p></td></tr>
+<tr><td class="argumentname"><p>freq</p></td><td class="argumentdesc"><p>每秒的偏移周期数。</p></td></tr>
+<tr><td class="argumentname"><p>phase</p></td><td class="argumentdesc"><p>频移的相位（0..2pi）。</p></td></tr>
+<tr><td class="argumentname"><p>mul</p></td><td class="argumentdesc"></td></tr>
+<tr><td class="argumentname"><p>add</p></td><td class="argumentdesc"></td></tr>
+</table>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 将 100Hz 的音调以 1 Hz 的幅度提升到 500Hz
+{ FreqShift.ar(SinOsc.ar(100), XLine.kr(1, 500, 5), 0, [0.1, 0.1]) }.play(s);
+
+// 将复音从 1 Hz 升到 500 Hz 的频移
+{ FreqShift.ar(Klang.ar(`[[101, 303, 606, 808]]), XLine.kr(1, 500, 10), 0, [0.1, 0.1]) }.play(s);
+
+// 调制移调和相位
+{ FreqShift.ar(SinOsc.ar(10), LFNoise2.ar(0.3, 1500), SinOsc.ar(500).range(0, 2pi), [0.1, 0.1]) }.play(s);
+
+// 无处不在的 houston 示例
+(
+b = Buffer.read(s, ExampleFiles.child);
+{ FreqShift.ar(PlayBuf.ar(1, b.bufnum, BufRateScale.kr(b.bufnum), loop: 1), LFNoise0.kr(0.45, 1000), 0, [1, 1]) }.play(s);
+)
+
+// 移动的带通噪声
+{ FreqShift.ar(BPF.ar(WhiteNoise.ar(0.2), 1000, 0.001), LFNoise0.kr(5.5, 1000), 0, [32, 32]) }.play(s);</code></pre>
+
+<h3 id="More Examples">更多示例</h3>
+
+<p>发送一个 SynthDef，运行该例程，然后发送另一个 SynthDef</p>
+
+<pre><code>// 通过 FreqShift 实现简单的失谐与音高调制
+(
+SynthDef(\frqShift1, { |out, freq, detune = 1.5|
+    var e1, left, right;
+    e1 = EnvGen.ar(Env.new([0, 0.1, 0], [1, 2.3]), 1, doneAction: Done.freeSelf);
+    left = SinOsc.ar(freq, 0, e1); // 原始音调
+    left = left + FreqShift.ar(left, freq * detune); // 移位并加回原始值
+    right = FreqShift.ar(left, SinOsc.kr(3.23, 0, 5));
+    Out.ar(out, [left, right] * 0.1);
+}).add;
+)
+
+// 该 routine
+(
+r = Routine({
+    var table, pitch;
+    table = [0, 2, 4, 5, 7, 9, 11, 12];
+    inf.do {
+        pitch = (48+(12*2.rand) + table.choose).midicps;
+        Synth.grain(\frqShift1, [\freq, pitch]);
+        3.wait;
+    };
+}).play;
+)
+
+// 将脉冲波向相反方向移动
+(
+SynthDef(\frqShift1, { |out, freq, detune = 0.15|
+    var e1, snd, left, right;
+    e1 = EnvGen.ar(Env.new([0, 1, 0], [0.02, 3.2]), 1, doneAction: Done.freeSelf);
+    right = FreqShift.ar(snd, XLine.kr(0.1, 200, 2));
+    snd = Pulse.ar(freq, SinOsc.kr(2.3).range(0.2, 0.8), e1); // 原始音调
+    left = FreqShift.ar(snd, XLine.kr(-0.1, -200, 2)); // 移位并加回原始值
+    Out.ar(out, [left, right] * 0.1);
+}).add
+)
+
+// FreqShift &gt;&gt; feedback &gt;&gt;&gt; FreqShiftc
+(
+SynthDef(&quot;frqShift1&quot;, { |out, freq|
+    var e1, snd, snd2, in;
+    in = FreqShift.ar(InFeedback.ar(0, 1) * 3.2, XLine.ar(0.01, freq * 1.5, 1)); // 移动反馈
+    e1 = Env.new([0, 0.1, 0], [0.02, 2.98]);
+    snd = SinOsc.ar(freq, 0, EnvGen.ar(e1, 1, doneAction: Done.freeSelf));
+    snd2 = FreqShift.ar(snd+in, SinOsc.ar(4.24, 0.5, 3), 0, 0.5); // 微妙的调制偏移
+    OffsetOut.ar(0, Limiter.ar(snd2 + snd * 0.5, 1, 0.005) ! 2);
+}).add;
+)
+
+
+// ssllooww columbia tuned shift detune
+(
+r.stop; // 停止旧例程
+Buffer.read(s, ExampleFiles.child, bufnum: 99);
+
+SynthDef(\frqShift1, { |out, freq, bufnum|
+    var e1, snd, left, right;
+    e1 = Env.new([0, 1, 0], [3, 1], -4);
+    snd = PlayBuf.ar(1, bufnum, BufRateScale.kr(bufnum) * 0.01, loop: 1);
+    // 输出的细微偏移
+    left = FreqShift.ar(snd, freq * 2, 0, EnvGen.ar(e1, 1, doneAction: Done.freeSelf));
+    right = FreqShift.ar(snd, freq * 3, 0, EnvGen.ar(e1, 1, doneAction: Done.freeSelf));
+    Out.ar(out, [left, right] * 3);
+}).add;
+)
+
+// 该 routine
+(
+r = Routine({
+    var table, pitch;
+    table = [0, 2, 4, 5, 7, 9, 11, 12];
+    inf.do{
+        pitch = (48+(12*2.rand) + table.choose).midicps;
+        s.sendMsg(\s_new, \frqShift1, -1, 1, 1, \freq, pitch, \bufnum, 99);
+        3.wait;
+        };
+    }).play
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/FreqShift.html" rel="noreferrer noopener">Classes/FreqShift.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

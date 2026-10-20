@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>跟踪进程 - SuperCollider 文档</title>
+<meta name="description" content="在 SC 中追踪进程">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>跟踪进程</h1>
+
+<p><em>在 SC 中追踪进程</em></p>
+
+<p>另请参阅：<a href="Guides-Debugging-tips.html">调试技巧</a></p>
+
+<p>运行中的系统里发生了什么？在 SC 中，各种方法有助于在不同层级获取进程信息：服务器端和客户端（在 sclang 中）。</p>
+
+<h2 id="Tracing sclang processes">跟踪 sclang 进程</h2>
+
+<p>为了更清楚地了解由诸如任务之类的进程所创建的对象，或者仅仅通过求值一小段代码所创建的对象，可以在代码中的任何位置插入诸如 postln 和 postcs 之类的消息。</p>
+
+<p>计算 n 个后续平方的和</p>
+
+<pre><code>var n = 8, x = 0;
+(1..n).do { |num| x = x + num.squared };
+x</code></pre>
+
+<p>我们这样做时会发生什么？</p>
+
+<pre><code>var n = 8, x = 0;
+(1..n).do { |num| x = x + num.squared.postln; };
+x</code></pre>
+
+<p>或更详细地说：</p>
+
+<pre><code>var n = 8, x = 0;
+(1..n).do { |num| [\before, x].postln; x = x + num.squared; [\after, x].postln;};
+x</code></pre>
+
+<p>当发布多个值时，一些更详细的发布可能有用。postf 格式化字符串并为 % 字符插入值。这里需要单独的语句。</p>
+
+<pre><code>var n = 8, x = 0;
+(1..n).do { |num| x = x + num.squared; &quot;num: % num-squared: % new x: %\n&quot;.postf(num, num.squared, x) };
+x</code></pre>
+
+<p>在某些情况下，postln 只会输出部分数据，或输出简化表示。</p>
+
+<pre><code>// n 乘以 200 个随机数
+// 只会在 123 之后加上……等等……
+var n = 3;
+(1..n).do { |num| { 1000.rand }.dup(200).postln };</code></pre>
+
+<p>输出编译字符串，即重新创建接收者（此处为数组）所需的代码</p>
+
+<pre><code>var n = 3;
+(1..n).do { |num| { num.rand }.dup(200).postcs };</code></pre>
+
+<h3 id="Streams, tasks and routines">流、任务与例程</h3>
+
+<p>在流、任务和例程中，这同样有效：</p>
+
+<pre><code>fork {
+    var n = 14;
+    (1..n).do { |num|
+        { num.rand }.dup(200).postcs;
+        1.wait;
+    };
+}</code></pre>
+
+<pre><code>fork {
+    var str = Routine { |in| 10.do { in = in.rand.yield } };
+    12.0.do { |i|
+        str.next(i).postln;
+        0.5.wait;
+    };
+}</code></pre>
+
+<p>用于创建一个模式，一旦被使用便会发布其值，可以使用消息 trace（其返回一个 Ptrace）</p>
+
+<pre><code>a = Pseq([1, 4, 1, Pwhite(0, 6, 3), 100, 39], inf).trace(prefix: &quot;value: &quot;);
+b = a.asStream;
+b.next;
+b.next;
+b.next;
+b.next;</code></pre>
+
+<p>在运行中的流中：</p>
+
+<pre><code>Pbind(
+    \degree, Pseq([1, 4, 1, Pwhite(0, 6, 3), 100, 39], inf).trace(prefix: &quot;value: &quot;),
+    \dur, 0.2
+).play</code></pre>
+
+<p>仅发布事件的一个槽位</p>
+
+<pre><code>Pbind(
+    \degree, Pseq([1, 4, 1, Pwhite(0, 6, 3), 100, 39], inf),
+    \dur, 0.2
+).trace(\degree).play</code></pre>
+
+<p>同时多个槽位：</p>
+
+<pre><code>Pbind(
+    \degree, Pseq([1, 4, 1, Pwhite(0, 6, 3), 100, 39], inf),
+    \dur, Pwhite(0.2, 0.4, inf)
+).trace([\degree, \dur], prefix: [&quot;degree &quot;, &quot;dur &quot;]).play</code></pre>
+
+<h2 id="Tracing server processes">跟踪服务器进程</h2>
+
+<p>对 UGen 使用 postln 或 post 只会返回该 UGen，而不会返回它在运行中的 synth 里产生的值。poll 消息会创建一个 Poll UGen，当给定时间值时它会按固定间隔发布，或作为对触发的响应发布（参见 <a href="Classes-Poll.html">Poll</a> 帮助文件）</p>
+
+<pre><code>// postln 只返回 UGen 本身（此处为 MulAdd）
+{ SinOsc.ar(SinOsc.kr(0.2, 0, 300, 400).postln) * 0.1 }.play;
+
+// poll 追踪数值
+{ SinOsc.ar(SinOsc.kr(0.2, 0, 300, 400).poll) * 0.1 }.play;
+
+// 使用标签：
+{ SinOsc.ar(SinOsc.kr(0.2, 0, 300, 400).poll(label: &quot;freq&quot;)) * 0.1 }.play;</code></pre>
+
+<p>对于 demand ugens，poll 不起作用——这些 ugens 由 Demand 或 Duty UGen 按特定间隔调用。消息 dpoll 会创建一个 Dpoll ugen，当它们被调用时进行发布（参见 <a href="Classes-Dpoll.html">Dpoll</a> 帮助文件）</p>
+
+<pre><code>{ SinOsc.ar(Duty.kr(0.5, 0, (Dseries(0, 1, inf) * 200 + 300).dpoll)) * 0.1 }.play;
+
+{ SinOsc.ar(Duty.kr(0.5, 0, (Dseries(0, 1, inf) * 200 + 300).dpoll(label: &quot;freq&quot;))) * 0.1 }.play;</code></pre>
+
+<p>示波器窗口可以提供有关正在进行的声的有价值信息（参见 <a href="Classes-Stethoscope.html">Stethoscope</a> 帮助）：</p>
+
+<pre><code>{ SinOsc.ar(SinOsc.kr(0.2, 0, 300, 400)) * 0.1 }.scope;</code></pre>
+
+<p>FreqScope 窗口可用于观察输出的频谱：</p>
+
+<pre><code>// 创建一个新的分析器
+FreqScope.new;
+
+{ SinOsc.ar(SinOsc.ar(0.2, 0, 3000, 4000)) * 0.1 }.play;
+{ SinOsc.ar(SinOsc.ar((1..4) * 0.02, 0, 3000, 4000)).sum * 0.1 }.play;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Tracing-Processes.html" rel="noreferrer noopener">Guides/Tracing-Processes.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

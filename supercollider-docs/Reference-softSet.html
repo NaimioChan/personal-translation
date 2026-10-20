@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>softSet - SuperCollider 文档</title>
+<meta name="description" content="有条件地设置代理参数值">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>softSet</h1>
+
+<p><em>有条件地设置代理参数值</em></p>
+
+<p>参见：<a href="Reference-softVol_.html">softVol_</a>、<a href="Reference-softPut.html">softPut</a></p>
+
+<h2 id="description">说明</h2>
+
+<p><code>softSet</code> 是 <a href="Classes-NodeProxy.html">NodeProxy</a> 和 <a href="Classes-Ndef.html">Ndef</a> 的扩展方法，仅在两种情况下设置 nodeproxy 参数值：</p>
+
+<ul>
+<li>如果新值足够接近当前参数值；</li>
+<li>或者，如果设置控制器知道先前的值并将其一并发送。这里的想法是，如果控制器知道它执行了上一次的值更改，它就有权立即跳转。</li>
+</ul>
+
+<p>典型用途是切换到预设，然后使用推子盒，并避免可能发生的控制器突然跳变（软接管）。</p>
+
+<h4 id=".softSet"><code>softSet(param, val, within = 0.025, mapped=false, lastVal, spec)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>param</p></td><td class="argumentdesc"><p>要设置的参数名称</p></td></tr>
+<tr><td class="argumentname"><p>val</p></td><td class="argumentdesc"><p>要设置 param 的值（可以是已映射或未映射的）</p></td></tr>
+<tr><td class="argumentname"><p>within</p></td><td class="argumentdesc"><p>集合被接受时的归一化范围 - 默认为 0.025</p></td></tr>
+<tr><td class="argumentname"><p>lastVal</p></td><td class="argumentdesc"><p>控件先前设置的值 - 参见最后的示例。</p></td></tr>
+<tr><td class="argumentname"><p>mapped</p></td><td class="argumentdesc"><p>一个标志，表示 <strong>val</strong> 是映射的（在 param.asSpec 范围内）还是未映射的（0.0-1.0）</p></td></tr>
+<tr><td class="argumentname"><p>spec</p></td><td class="argumentdesc"><p>可以传入一个 <a href="Classes-ControlSpec.html">ControlSpec</a>。如果为 nil，则使用 param.asSpec。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 如果未给出 spec，softSet 仅允许设置。</p></blockquote></td></tr>
+</table>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>Ndef(\test, { |freq=200| Splay.ar(SinOsc.ar(freq * Array.rand(12, 0.95, 1.05))) });
+Ndef(\test).play(vol: 0.1);
+
+Ndef(\test).gui(4)
+
+Ndef(\test).set(\freq, 300);
+
+        // 3 midi steps == 0.02362;
+Ndef(\test).softSet(\freq, 320, 0.03); // ok
+Ndef(\test).softSet(\freq, 280, 0.03); // ok
+Ndef(\test).softSet(\freq, 200, 0.03); // 如果跳变过大则返回 false
+
+Ndef(\test).set(\freq, 600);
+
+    // softSet 可能有风险——如果控制器移动得太快，可能会丢失一个参数。
+    // 所以，如果我们知道最后一个值（例如因为同一个控制器
+    // 知道自己已设置成该值），那么跳变是没问题的：
+Ndef(\test).softSet(\freq, 330, 0.03, lastVal: 630);
+
+Ndef(\test).softSet(\freq, rrand(300, 350), 0.01);    // 有时是，有时不是
+
+
+    // 使用未映射的、即归一化的值来设置：
+
+Ndef(\test).set(\freq, 600);    // ok
+Ndef(\test).softSet(\freq, 0.5, 0.05, mapped: false);    // ok
+Ndef(\test).softSet(\freq, 0.45, 0.03, mapped: false);    // 不，太大了
+Ndef(\test).softSet(\freq, 0.3, 0.03, mapped: false, lastVal: 0.5);    // 但如果 lastVal 接近就没问题
+
+
+    // softSet 的示例，softSet 知道 lastVal，
+    // softVol_ 和 softVol_ 知道 lastVol：
+(
+w = Window(&quot;softSet, softVol&quot;, Rect(500, 200, 400, 240)).front;
+w.view.addFlowLayout;
+NdefGui(Ndef(\test), 2, w);
+
+    // 如果摆动太快可能会失去控制
+EZSlider(w, 340@30, \softSet, \freq, { |sl|
+    Ndef(\test).softSet(\freq, sl.value, 0.05)
+});
+
+    // 知道它处于控制之中
+EZSlider(w, 340@30, \knowsLast, \freq, Routine { |sl|
+    var newVal, lastVal;
+    loop {
+        newVal = sl.value;
+        Ndef(\test).softSet(\freq, newVal, 0.05, lastVal: lastVal);
+        lastVal = newVal;
+        \dummy.yield;
+    }
+});
+
+    // 音量同理——不太安全
+EZSlider(w, 340@30, \softVol, \amp, { |sl|
+    Ndef(\test).softVol_(sl.value, 0.05)
+});
+    // safer
+EZSlider(w, 340@30, \knowLastV, \amp, Routine { |sl|
+    var newVal, lastVal;
+    loop {
+        newVal = sl.value;
+        Ndef(\test).softVol_(sl.value, 0.05, lastVal: lastVal);
+        lastVal = newVal;
+        \dummy.yield;
+    }
+});
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Reference/softSet.html" rel="noreferrer noopener">Reference/softSet.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

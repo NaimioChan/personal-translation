@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>17_Delays_reverbs - SuperCollider 文档</title>
+<meta name="description" content="Mark Polishook 教程">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>17_Delays_reverbs</h1>
+
+<p><em>Mark Polishook 教程</em></p>
+
+<p>另见：<a href="Tutorials-Mark_Polishook_tutorial-00_Introductory_tutorial.html">00_入门教程</a></p>
+
+<h2 id="Time-based filters">基于时间的滤波器</h2>
+
+<p>Delay、Comb 和 Allpass 系列 UGen 创建基于时间的效应，以提供位置感和空间感。</p>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<pre><code>// 2 个 synthdef——第 1 个用于生成颗粒，第 2 个用于延迟它们
+
+// 生成颗粒的 synthdef 在左声道
+// 延迟颗粒的 synthdef 在右声道
+(
+SynthDef(&quot;someGrains&quot;, { arg centerFreq = 777, freqDev = 200, grainFreq = 2;
+    var gate;
+    gate = Impulse.kr(grainFreq);
+    Out.ar(
+        0,
+        SinOsc.ar(
+            LFNoise0.kr(4, freqDev, centerFreq),
+            0,
+            EnvGen.kr(Env.sine(0.1), gate, 0.1)
+        )
+    )
+}).add;
+
+SynthDef(&quot;aDelay&quot;, { arg delay = 0.25;
+    Out.ar(
+        1,
+        DelayN.ar(
+            In.ar(0, 1),
+            delay,
+            delay
+        )
+    )
+}).add;
+)
+
+////////////////////////////////////////////////
+// 测试这些 grains……然后把它们关掉
+// ……它们全都在左声道……很好！
+Synth(&quot;someGrains&quot;);
+////////////////////////////////////////////////
+
+// 创建 2 个组，第 1 个用于源，第 2 个用于效果
+(
+~source = Group.head(s);
+~effects = Group.tail(s);
+)
+
+// 将颗粒放入延迟中……源在左侧，延迟后的源在右侧
+(
+Synth.head(~source, &quot;someGrains&quot;);
+Synth.head(~effects, &quot;aDelay&quot;);
+)</code></pre>
+
+<h2 id="Feedback filters">反馈滤波器</h2>
+
+<p>Comb 和 Allpass 滤波器是将部分输出反馈到其输入的 UGen 示例。Allpass 滤波器会改变通过它们的信号的相位。因此，尽管它们似乎与 comb 滤波器差别不大，却仍然很有用。</p>
+
+<pre><code>/////////////////////////////////////////////////////////////////////////////////////////
+// 打开内部服务器！！
+// 首先是一个梳状滤波器，然后是具有（相同参数的）全通滤波器 - 比较它们
+/////////////////////////////////////////////////////////////////////////////////////////
+
+// 梳状滤波器示例
+(
+{
+    CombN.ar(
+        SinOsc.ar(500.rrand(1000), 0, 0.2) * Line.kr(1, 0, 0.1),
+        0.3,
+        0.25,
+        6
+    )
+}.scope;
+)
+
+// allpass 示例——与 comb 示例差别不大
+(
+{
+    AllpassN.ar(
+        SinOsc.ar(500.rrand(1000), 0, 0.2) * Line.kr(1, 0, 0.1),
+        0.3,
+        0.25,
+        6
+    )
+}.scope;
+)</code></pre>
+
+<pre><code>/////////////////////////////////////////////////////////////////////////////////////////
+//
+// 先是一个 comb 示例，然后是一个 allpass
+// 两个示例具有相同的参数
+// 这两个示例的延迟时间都相对较短……0.1 秒
+//
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+// comb
+(
+{
+    CombN.ar(
+        SinOsc.ar(500.rrand(1000), 0, 0.2) * Line.kr(1, 0, 0.1),
+        0.1,
+        0.025,
+        6
+    )
+}.scope;
+)
+
+// allpass……这个例子与梳状滤波器有什么区别？
+(
+{
+    AllpassN.ar(
+        SinOsc.ar(500.rrand(1000), 0, 0.2) * Line.kr(1, 0, 0.1),
+        0.1,
+        0.025,
+        6
+    )
+}.scope
+)</code></pre>
+
+<h2 id="Reverberation">Reverberation</h2>
+
+<p>下一个示例由 James McCartney 编写。它出自 SuperCollider2 发行版中附带的 <em>Why Supercollider 2.0?</em> 文档。</p>
+
+<p>该示例大致是一个 Schroeder 混响——信号经过一组并联的梳状滤波器，然后再经过一系列全通滤波器。</p>
+
+<pre><code>(
+{
+var s, z, y;
+    // 10 个声部的随机正弦打击乐声音：
+s = Mix.ar(Array.fill(10, { Resonz.ar(Dust.ar(0.2, 50), 200 + 3000.0.rand, 0.003)}) );
+    // 混响预延迟时间：
+z = DelayN.ar(s, 0.048);
+    // 7 个长度调制的梳状延迟并行：
+y = Mix.ar(Array.fill(7,{ CombL.ar(z, 0.1, LFNoise1.kr(0.1.rand, 0.04, 0.05), 15) }));
+    // 两条并行的 4 个 allpass 延迟链（共 8 个）：
+4.do({ y = AllpassN.ar(y, 0.050, [0.050.rand, 0.050.rand], 1) });
+    // 将原始声音添加到混响中并播放：
+s+(0.2*y)
+}.scope
+)</code></pre>
+
+<h2 id="Components">Components</h2>
+
+<p>以下展示了将 JMC 示例划分为组件的一种方法。</p>
+
+<pre><code>(
+SynthDef(&quot;filteredDust&quot;, {
+    Out.ar(
+        2,
+        Mix.arFill(10, { Resonz.ar(Dust.ar(0.2, 50), Rand(200, 3200), 0.003) })
+    )
+}).add;
+
+SynthDef(&quot;preDelay&quot;, {
+    ReplaceOut.ar(
+        4,
+        DelayN.ar(In.ar(2, 1), 0.048, 0.048)
+    )
+}).add;
+
+SynthDef(&quot;combs&quot;, {
+    ReplaceOut.ar(
+        6,
+        Mix.arFill(7, { CombL.ar(In.ar(4, 1), 0.1, LFNoise1.kr(Rand(0, 0.1), 0.04, 0.05), 15) })
+    )
+}).add;
+
+SynthDef(&quot;allpass&quot;, { arg gain = 0.2;
+    var source;
+    source = In.ar(6, 1);
+    4.do({ source = AllpassN.ar(source, 0.050, [Rand(0, 0.05), Rand(0, 0.05)], 1) });
+    ReplaceOut.ar(
+        8,
+        source * gain
+    )
+}).add;
+
+SynthDef(&quot;theMixer&quot;, { arg gain = 1;
+    ReplaceOut.ar(
+        0,
+        Mix.ar([In.ar(2, 1), In.ar(8, 2)]) * gain
+    )
+}).add;
+)
+
+// 每执行一行，它就成为尾节点。结果是
+// &quot;filteredDust&quot; 是第一个节点，而 &quot;theMixer&quot; 是最后一个节点 ...
+// ... 正是我们需要的
+(
+Synth.tail(s, &quot;filteredDust&quot;);
+Synth.tail(s, &quot;preDelay&quot;);
+Synth.tail(s, &quot;combs&quot;);
+Synth.tail(s, &quot;allpass&quot;);
+Synth.tail(s, &quot;theMixer&quot;);
+)
+
+(
+s.queryAllNodes;
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>或者，使用组来控制执行顺序。</p>
+
+<pre><code>(
+~source = Group.tail(s);
+~proc1 = Group.tail(s);
+~proc2 = Group.tail(s);
+~proc3 = Group.tail(s);
+~final = Group.tail(s);
+)
+
+// 下面的节点按上述顺序分配给各个组，
+(
+Synth.head(~final, &quot;theMixer&quot;);
+Synth.head(~proc3, &quot;allpass&quot;);
+Synth.head(~proc2, &quot;combs&quot;);
+Synth.head(~proc1, &quot;preDelay&quot;);
+Synth.head(~source, &quot;filteredDust&quot;);
+)
+
+(
+s.queryAllNodes;
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>作为背景参考，下面是 SuperCollider 2 发行版中 <strong>01 为什么选择 SuperCollider</strong> 文档（作者 James McCartney）的完整文本。</p>
+
+<h2 id="Why SuperCollider 2.0?">为什么是 SuperCollider 2.0？</h2>
+
+<p>SuperCollider 2.0 版是一门新的编程语言。<strong>为什么要发明一门新语言而不使用现有语言？</strong> 计算机音乐作曲是一个规格说明问题。声音合成与声音的作曲都是复杂问题，需要一门具有高度表达力的语言来应对这种复杂性。实时信号处理是一个需要高效实现且操作时间有界的问题。当时没有一门语言能结合我进行数字音乐合成所想要和需要的各项特性。SuperCollider 语言最像 Smalltalk。一切都是对象。它具有类对象、方法、动态类型、完整闭包、默认参数、变长参数列表、多重赋值等特性。其实现提供了快速、常数时间的方法查找、实时垃圾回收，以及大多数函数上下文的栈分配，同时保持完整的闭包语义。SuperCollider 虚拟机的设计使其能够在中断级别运行。当时没有其他现成可用的语言既具备高级特性、实时性，又能够在中断级别运行。</p>
+
+<p>SuperCollider 1.0 版本被完全重写，使其既更具表达力又更高效。这要求根据第一版的经验重新思考实现方式。我认为新版本从这种重新思考中获益良多。它并非只是功能更多的 1.0 版本。</p>
+
+<p><strong>为什么使用基于文本的语言而不是图形语言？</strong>对此至少有两个答案。<strong>动态性</strong>：大多数图形化合成环境使用静态分配的 unit generator。在 SuperCollider 中，用户可以创建动态地、以嵌套方式产生事件的结构。Patch 可以动态构建，并且不仅可以通过来自静态乐谱的浮点数进行参数化，还可以通过其他 unit generator 图进行参数化。或者你可以即时地以算法方式构建 patch。这种流动性在具有静态分配 unit generator 的语言中是不可能的。<strong>简洁性</strong>：在 SuperCollider 中，patch 中的对称性可以通过多通道扩展或程序化 patch 构建来利用。例如，下面这个简短的程序生成了一个包含 49 个 unit generator 的 patch。在图形程序中，这可能需要大量的时间和空间来连接。另一个优点是，下面 patch 的大小可以通过仅更改几个常量来轻松扩展或收缩。</p>
+
+<pre><code>(
+{
+    // 10 个声部的随机正弦打击乐声音：
+s = Mix.ar(Array.fill(10, { Resonz.ar(Dust.ar(0.2, 50), 200 + 3000.0.rand, 0.003)}) );
+    // 混响预延迟时间：
+z = DelayN.ar(s, 0.048);
+    // 7 个长度调制的梳状延迟并行：
+y = Mix.ar(Array.fill(7,{ CombL.ar(z, 0.1, LFNoise1.kr(0.1.rand, 0.04, 0.05), 15) }));
+    // 两条并行的 4 个 allpass 延迟链（共 8 个）：
+4.do({ y = AllpassN.ar(y, 0.050, [0.050.rand, 0.050.rand], 1) });
+    // 将原始声音添加到混响中并播放：
+s+(0.2*y)
+}.play )</code></pre>
+
+<p>图形化合成环境正变得随处可见。似乎每个月都会有一个新的环境发布。它们中没有一个具备 SuperCollider 完整编程环境那样的动态灵活性。翻一翻 SuperCollider 的帮助文件和示例，你自己看看就知道了。</p>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>转到 <a href="Tutorials-Mark_Polishook_tutorial-18_Frequency_modulation.html">18_Frequency_modulation</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Mark_Polishook_tutorial/17_Delays_reverbs.html" rel="noreferrer noopener">Tutorials/Mark_Polishook_tutorial/17_Delays_reverbs.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

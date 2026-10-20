@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12. 组 - SuperCollider 文档</title>
+<meta name="description" content="SuperCollider 入门">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>12. 组</h1>
+
+<p><em>SuperCollider 入门</em></p>
+
+<p>另请参阅：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+
+<p>我们关于服务器上 synth 顺序的讨论引出了组这个主题。服务器上的 synth 是所谓<em>节点</em>的一种类型。还有另一种节点类型：组。组就是节点的集合，可以包含 synth、其他组或两者的组合。它们主要在两个方面的用途：首先，它们非常有助于控制顺序；其次，它们让你可以轻松地将节点分组并一次性向它们发送消息。你可能已经猜到了，在客户端应用中有一个方便的 Server 抽象对象来表示组节点：Group。</p>
+
+<h2 id="Groups as Ordering Tools">作为排序工具的组</h2>
+
+<p>组在控制顺序方面非常有用。与 synth 一样，它们接受 targets 和 addActions 作为参数，因此很容易将它们放到合适的位置。</p>
+
+<pre><code>g = Group.new;
+h = Group.before(g);
+g.free; h.free;</code></pre>
+
+<p>这对于将效果或处理与声音源保持分离，并按正确顺序排列等场景非常有用。让我们重新审视上一节中的混响示例。</p>
+
+<pre><code>(
+// 立体声版本
+SynthDef(\tutorial_DecaySin2, { arg outBus = 0, effectBus, direct = 0.5, freq = 440;
+    var source;
+    // 1.0.rand2 返回 -1 到 1 之间的随机数，这里用于随机声像
+    source = Pan2.ar(Decay2.ar(Impulse.ar(Rand(0.3, 1), 0, 0.125), 0.3, 1,
+        SinOsc.ar(SinOsc.kr(0.2, 0, 110, freq))), Rand(-1.0, 1.0));
+    Out.ar(outBus, source * direct);
+    Out.ar(effectBus, source * (1 - direct));
+}).add;
+
+SynthDef(\tutorial_Reverb2, { arg outBus = 0, inBus;
+    var input;
+    input = In.ar(inBus, 2);
+    16.do({ input = AllpassC.ar(input, 0.04, Rand(0.001,0.04), 3)});
+    Out.ar(outBus, input);
+}).add;
+)
+
+// 现在我们为效果器和合成器创建组
+(
+~sources = Group.new;
+~effects = Group.after(~sources);     // 确保它在之后
+~bus = Bus.audio(s, 2);         // 这将是我们的立体声效果总线
+)
+
+// 现在合成器位于组中。默认的 addAction 是 \addToHead
+(
+x = Synth(\tutorial_Reverb2, [\inBus, ~bus], ~effects);
+y = Synth(\tutorial_DecaySin2, [\effectBus, ~bus, \outBus, 0], ~sources);
+z = Synth(\tutorial_DecaySin2, [\effectBus, ~bus, \outBus, 0, \freq, 660], ~sources);
+)
+
+// 我们可以在这里添加其他源和效果 synth
+
+~sources.free; ~effects.free; // 这同时释放了它们的内容（x、y、z）
+~bus.free;
+
+// 移除对 ~sources 和 ~effects 环境变量的引用：
+currentEnvironment.clear;</code></pre>
+
+<p>注意，我们可能并不关心组内源与效果的顺序，唯一重要的是所有效果 Synth 都位于其所处理的源 Synth 之后。</p>
+
+<p>如果你想知道 '~sources' 和 '~effects' 这些名称的来历，在单词前加波浪号（~）是创建<em>环境</em>变量的一种方式。目前，你只需知道它们可以像解释器变量一样使用（无需声明，且是持久的），并且允许使用更具描述性的名称。在不需要后续直接访问的地方，应考虑使用<strong>变量定义</strong>和 <a href="Classes-Function.html">Function</a> —— 大量环境变量可能导致难以发现的 bug。记得<strong>清除</strong> currentEnvironment（见上文）以避免干扰。</p>
+
+<pre><code>// 为确保无误，创建一个新的 Environment：
+Environment.new.push;
+
+// 一些代码..
+
+// 恢复旧环境
+currentEnvironment.pop;</code></pre>
+
+<h2 id="All the addActions">所有 addAction</h2>
+
+<p>此时，介绍其余 add action 大概是有益的。除了 \addBefore 和 \addAfter 之外，还有（很少使用的）\addReplace，以及两个适用于 Group 的 add action：\addToHead 和 \addToTail。前者把接收者添加到组的开头，因此它将最先执行；后者添加到组的末尾，因此它将最后执行。与其他 addAction 一样，\addToHead 和 \addToTail 也有名为 'head' 和 'tail' 的便捷方法。</p>
+
+<pre><code>g = Group.new;
+h = Group.head(g);        // 将 h 添加到 g 的头部
+x = Synth.tail(h, \default);    // 将 x 添加到 h 的尾部
+s.queryAllNodes;        // 这将输出节点层次结构的表示
+x.free; h.free; g.free;</code></pre>
+
+<h2>'queryAllNodes' 与节点 ID</h2>
+
+<p>服务器有一个名为 'queryAllNodes' 的方法，它会发布服务器节点树的表示。执行上面的示例时，你应该在 post 窗口中看到类似以下内容：</p>
+
+<pre><code>nodes on localhost:
+a Server
+Group(0)
+        Group(1)
+                Group(1000)
+                        Group(1001)
+                                Synth 1002</code></pre>
+
+<p>当你在这里看到打印出的 Group 时，位于其下方并向右缩进的任何内容都包含在其中。节点的顺序是从上到下。你看到的数字称为节点 ID，是服务器用来跟踪节点的方式。通常在使用 Server 抽象对象时，你不需要处理节点 ID，因为这些对象会跟踪它们，并在适当的时候分配和释放它们。</p>
+
+<p>你可能一直想知道，为什么我们只创建了两个组，上面却列出了四个组。前两个组（ID 为 0 和 1）是特殊的组，称为 RootNode 和“默认组”。</p>
+
+<h2 id="The Root Node and the Default Group">根节点与默认组</h2>
+
+<p>当服务器应用启动时，会创建一个节点 ID 为 0 的特殊组。它表示服务器节点树的顶端。有一个特殊的服务器抽象对象来表示它，称为 RootNode。此外还会创建另一个 ID 为 1 的组，称为默认组。它是所有 Node 的默认目标，也是当您将 Server 作为目标提供时将得到的内容。如果您不指定目标或传入 nil，您将得到默认 Server 的默认组。</p>
+
+<pre><code>s.boot;
+a = Synth.new(\default); // 在默认 Server 的默认组中创建一个 synth
+a.group; // 返回一个 Group 对象。注意 post 窗口中的 ID 为 1（默认组）</code></pre>
+
+<p>默认组有一个重要的用途：它提供了一个可预测的基础节点树，使得 Server-scope 和 Server-record 之类的方法（它们创建的节点<em>必须</em>位于其他所有节点之后）能够正常工作，而不会遇到执行顺序问题。在下面的示例中，作用域节点将位于默认组之后。</p>
+
+<pre><code>{ SinOsc.ar(mul: 0.2) }.scope(1);
+
+// 观察 post 窗口；
+s.queryAllNodes;
+
+// 我们的 SinOsc synth 位于默认 group（ID 1）内
+// scope 节点（&#x27;stethoscope&#x27;）位于默认 group 之后，所以没有问题</code></pre>
+
+<p>通常你应该把节点添加到默认组或其中包含的组里，而<em>不要</em>添加到它之前或之后。例如，当添加一个“效果”synth 时，应抵制把它添加到默认组之后的诱惑，而应在默认组内创建一个单独的源组。这样可以避免作用域或录音方面的问题。</p>
+
+<pre><code>default group [
+    source group [
+        source synth1
+        source synth2
+    ]
+    effects synth
+]
+recording synth</code></pre>
+
+<h2 id="Groups as, well, groups...">组，嗯，就是组……</h2>
+
+<p>组的另一个主要用途是让你可以轻松地将多个 synth 作为一个整体来处理。如果你向组发送 'set' 消息，它会把该消息应用到其中包含的所有节点。</p>
+
+<pre><code>g = Group.new;
+
+// 在 g 中创建 4 个合成器
+// 1.0.rand2 返回一个从 -1 到 1 的随机数。
+4.do({ { arg amp = 0.1; Pan2.ar(SinOsc.ar(440 + 110.rand, 0, amp), 1.0.rand2) }.play(g); });
+
+g.set(\amp, 0.005); // 将它们全部调低
+
+g.free;</code></pre>
+
+<h2 id="Groups, their Inheritance, and More on Tracking Down Help">组、它们的继承关系，以及更多关于查找帮助的内容</h2>
+
+<p>现在讲一点 OOP 理论。Group 和 Synth 都是所谓<em>子类</em>的例子。你可以把子类看作父类的子项，父类称为它们的<em>父类</em>。所有子类都继承其父类的方法。它们可以用自己的实现<em>重写</em>某些方法（利用<em>多态</em>），但一般来说子类会响应其父类的所有方法，以及一些自己的方法。有些类是<em>抽象类</em>，这意味着你实际上不会创建它们的实例，它们的存在只是为子类提供一组公共的方法和变量。</p>
+
+<p>例如，我们可以想象一个名为 Dog 的抽象类，它有许多子类，如 Terrier、BassetHound 等。这些子类可能都有 'run' 方法，但并非都需要 'herdSheep' 方法。</p>
+
+<p>这种工作方式具有某些优点：如果你需要修改某个继承的方法，只需在一处进行修改，所有继承它的子类也会随之改变。同样，如果你想扩展某个类以制作自己的个性化变体或增强版本，你可以自动获得父类的全部功能。</p>
+
+<p>继承可以向上追溯许多层级，也就是说，一个类的父类也可能有父类。（但是，一个类不能有多个直接父类。）事实上，SC 中的所有对象都继承自一个名为 Object 的类，该类定义了一组方法，其所有子类要么继承要么重写这些方法。</p>
+
+<p>Group 和 Synth 是抽象类 <a href="Classes-Node.html">Node</a> 的子类。因此，它们的部分方法定义在 Node 中，并且（也许实际上更重要的是）<em>记录在 Node 的帮助文件中</em>。</p>
+
+<p>因此，如果你在查看帮助文件时找不到某个类所响应的特定方法，你可能需要转到该类的父类的帮助文件，或者沿着继承链向上查找。大多数类在其帮助文件顶部列出了其父类。你也可以使用以下方法来获取此类信息并查找文档（观察 post 窗口）：</p>
+
+<pre><code>Group.superclass;                 // 这将返回 &#x27;Node&#x27;
+Group.superclass.help;
+Group.findRespondingMethodFor(&#x27;set&#x27;);        // 节点集
+Group.findRespondingMethodFor(&#x27;postln&#x27;);    // Object-postln;
+Group.helpFileForMethod(&#x27;postln&#x27;);         // 打开类 Object 的帮助文件</code></pre>
+
+<p>更多信息请参见：</p>
+
+<p><a href="Classes-Group.html">Group</a>、<a href="Classes-Node.html">Node</a>、<a href="Reference-default_group.html">Default Group</a>、<a href="Classes-RootNode.html">RootNode</a>、<a href="Guides-Intro-to-Objects.html">Introduction to Objects</a>、<a href="Guides-Order-of-execution.html">Order of execution</a>、<a href="Classes-Synth.html">Synth</a>、<a href="Guides-More-On-Getting-Help.html">More on Getting Help</a>、<a href="Guides-Internal-Snooping.html">Internal Snooping (Introspection)</a></p>
+
+<p>____________________</p>
+
+<p>本文档是教程 <strong>Getting Started With SuperCollider</strong> 的一部分。</p>
+
+<p>点击此处继续下一节：<a href="Tutorials-Getting-Started-13-Buffers.html">13. 缓冲区</a></p>
+
+<p>点击此处返回目录：<a href="Tutorials-Getting-Started-00-Getting-Started-With-SC.html">00. Getting Started With SC</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Getting-Started/12-Groups.html" rel="noreferrer noopener">Tutorials/Getting-Started/12-Groups.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

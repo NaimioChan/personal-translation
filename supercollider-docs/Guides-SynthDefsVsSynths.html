@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SynthDef 与 Synth 的对比 - SuperCollider 文档</title>
+<meta name="description" content="使用预编译的 SynthDef，而非始终即时编译">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>SynthDef 与 Synth 的对比</h1>
+
+<p><em>使用预编译的 SynthDef，而非始终即时编译</em></p>
+
+<p>在 SC2 中，<code>Synth.play</code> 是编译 <em>ugenGraphFunc</em> 并播放它的标准方式。每次执行 <code>Synth.play</code>，或生成一个新事件时，该函数都会被重新编译。另一方面，SC3 利用了所谓的 SynthDef。<a href="Classes-SynthDef.html">SynthDef</a> 接受一个 <em>ugenGraphFunc</em>，并将其编译为一种服务器应用能够理解的字节码（类似于 Java 字节码）。服务器读取 <a href="Classes-SynthDef.html">SynthDef</a> 并基于它创建一个 synth 节点。</p>
+
+<p>SynthDef 可以预编译并保存到磁盘。任何保存在 synthdefs/ 目录中（或环境变量 SC_SYNTHDEF_PATH 所设置的任何目录中）的 def，都会在本地 <a href="Classes-Server.html">Server</a> 启动时被加载到内存中。如果新 <a href="Classes-Synth.html">Synth</a> 中使用的 def 已经编译并加载，那么创建新 <a href="Classes-Synth.html">Synth</a> 时的 CPU 峰值会比 SC2 中少得多。</p>
+
+<p>SynthDef 也可以被编译并加载到<a href="Classes-Server.html">服务器</a>中，而无需将它们写入磁盘。这可以在演出过程中完成。</p>
+
+<p>这样做的缺点是，预编译的 SynthDef 缺少了一些编程灵活性，而这是 SC2 的一大优势。不过，通过设置和更改参数（这些参数是你内建在 <em>ugenGraphFunc</em> 中的），以及通过 <a href="Classes-Rand.html">Rand</a> 和 <a href="Classes-TRand.html">TRand</a> 等新的 UGen，大部分灵活性得以恢复。</p>
+
+<p>在需要最大灵活性时，仍然可以即时编译并发送 SynthDef，不过这会带来类似 SC2 的 CPU 尖峰以及少量消息延迟。</p>
+
+<p>重要的是要理解，创建和发送 SynthDef 是<em>异步</em>的。这意味着无法精确确定编译并发送一个 <a href="Classes-SynthDef.html">SynthDef</a> 需要多长时间，因而也无法确定它何时可用于创建新的 Synth。一个简单的解决办法是将代码分块执行，一次选择一块。更复杂的方法是使用完成消息。<code>SynthDef.play</code> 会为你处理这一点，并返回一个 <a href="Classes-Synth.html">Synth</a> 对象，之后你可以对它进行操作。参见下面的示例</p>
+
+<p>另一个重要的区别是 SC2 中的 Synth 与 SC3 中的 <a href="Classes-Synth.html">Synth</a>。后者是一个客户端对象，表示服务器上的一个 synth 节点。尽管它具有一些相同的方法，但它的工作方式并不相同。在 SC3 中没有顶层的 Synth，所有调度和其他 Synth 的创建都发生在其中。只有表示服务器上 synth 节点的 <a href="Classes-Synth.html">Synth</a> 对象。这些对象可以在任何时间、任何作用域内创建。</p>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>s.boot;
+
+// 编译一个 SynthDef 并将其写入磁盘
+(
+SynthDef(&quot;Help-SynthDef&quot;, { arg out = 0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).writeDefFile;
+)
+
+// 编译、写入并加载到服务器
+(
+SynthDef(&quot;Help-SynthDef&quot;, { arg out = 0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).load(s);
+)
+
+// 将其加载到服务器而不写入磁盘
+(
+SynthDef(&quot;Help-SynthDef&quot;, { arg out = 0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).send(s);
+)
+
+// 用它创建一个 Synth
+x = Synth.new(&quot;Help-SynthDef&quot;, s);
+x.free;
+
+// 用于编译并写入 SynthDef，然后在完成后在 Synth 中播放它的简写方法。
+// 看起来很熟悉？
+(
+x = SynthDef(&quot;Help-SynthDef&quot;, { arg out = 0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).play(s);
+)
+// 以上仅在 def 已发送到服务器后才启动新的 Synth。
+// 注意 SynthDef.play 返回一个 Synth 对象！
+
+x.set(\out, 1); // 更改其中一个参数
+x.free;
+
+// 带有参数的 SynthDef，该参数会在每次创建新 Synth 时随机确定
+// （多试几次以听出差异）
+(
+SynthDef(&quot;help-RandFreq&quot;, { arg out = 0;
+    Out.ar(
+        out,
+        FSinOsc.ar(
+            Rand(200.0, 400.0), // 频率在 200 到 400 Hz 之间
+            0, Line.kr(0.2, 0, 1, doneAction: Done.freeSelf)
+        )
+    )
+}).play(s);
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/SynthDefsVsSynths.html" rel="noreferrer noopener">Guides/SynthDefsVsSynths.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

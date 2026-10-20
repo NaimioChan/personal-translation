@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>服务器架构 - SuperCollider 文档</title>
+<meta name="description" content="SuperCollider 3 Synth 服务器架构">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>服务器架构</h1>
+
+<p><em>SuperCollider 3 Synth 服务器架构</em></p>
+
+<p>另请参见：<a href="Classes-Server.html">Server</a>、<a href="Reference-Server-Command-Reference.html">Server Command Reference</a>、<a href="Reference-AudioDeviceSelection.html">Audio device selection</a></p>
+
+<p>版权所有 © 2002 James McCartney</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 2010 年由 Jonatan Liljedahl 转换为新的帮助系统。本文档中的一些内容已过时。</p></blockquote>
+
+<h2 id="Introduction">Introduction</h2>
+
+<p>SuperCollider 3 Synth Server 是一个简单但强大的合成引擎。合成运行时，可以创建、销毁新模块并重新连接它们，可以创建和重新分配采样缓冲区。效果处理过程可以被创建并在预定时间动态接入信号流中。所有运行中的模块都按照定义执行顺序的节点树进行排序。模块之间的连接通过全局音频总线和控制总线完成。</p>
+
+<p>所有命令都通过 TCP 或 UDP 接收，使用简化版的 <a href="https://docs.supercollider.online/Browse.html#OpenSoundControl">Open Sound Control</a>（OSC）。Synth 服务器及其客户端可以位于同一台机器上，也可以跨网络。Synth 服务器不发送或接收 MIDI。预期由客户端发送所有控制命令。如果需要 MIDI，则由客户端负责接收它并将其转换为适合 Synth 引擎的 OSC 命令。</p>
+
+<p>Synth 定义存储在由 SuperCollider 语言应用程序生成的文件中。Unit generator 定义是 Mach-O 捆绑包（不要与 CFBundle 混淆）。Unit generator API 是一个简单的 C 接口。</p>
+
+<h2 id="Main Design Concepts">主要设计概念</h2>
+
+<h3 id="Node">Node</h3>
+
+<p>Node 是由 synth 引擎运行的节点树中可寻址的节点。它有两种类型：Synth 和 Group。树定义了所有 Synth 的执行顺序。所有节点都有一个整数 ID。</p>
+
+<h3 id="Group">Group</h3>
+
+<p>组是由节点组成的集合，以链表形式表示。新节点可以添加到组的头部或尾部。组内的节点可以一起控制。组内的节点既可以是 Synth，也可以是其他组。启动时存在一个 ID 为 0 的顶层组，它定义了树的根。如果服务器是从 SCLang 内部启动的（而非从命令行启动），则还会存在一个 ID 为 1 的“默认组”，它是所有新节点的默认目标。更多信息请参见 <a href="Classes-RootNode.html">RootNode</a> 和 <a href="Reference-default_group.html">Default Group</a>。</p>
+
+<h3 id="Synth">Synth</h3>
+
+<p>Synth 是一组一起运行的 unit generator 的集合。可以通过向合成引擎发送命令来寻址和控制它们。它们读取输入，并将输出写入全局音频总线和控制总线。Synth 可以拥有自己的本地控制，通过向服务器发送命令来设置。</p>
+
+<h3 id="Synth Definition">Synth 定义</h3>
+
+<p>Synth 由 Synth Definition 创建。Synth Definition 文件由 SuperCollider 语言应用程序创建，并被加载到 synth 服务器中。Synth Definition 通过名称来引用。</p>
+
+<h3 id="Audio Buses">音频总线</h3>
+
+<p>Synth 通过一个单一的全局音频总线数组相互发送音频信号。音频总线由从零开始的整数索引。使用总线而不是将 synth 直接相互连接，允许 synth 将自身连接到其他 synth 的共同体中，而无需具体了解它们。编号最低的总线被写入音频硬件输出。紧跟在输出总线之后的是输入总线，从音频硬件输入读取。定义为输入和输出的总线通道数量不必与硬件匹配。</p>
+
+<h3 id="Control Buses">控制总线</h3>
+
+<p>Synth 可以通过一个单一的控制总线全局数组相互发送控制信号。总线使用从零开始的整数进行索引。</p>
+
+<h3 id="Buffers">Buffers</h3>
+
+<p>缓冲区是 32 位浮点值的数组，附带一个小的描述性头部。缓冲区存储在一个全局数组中，由从零开始的整数索引。在合成运行期间，缓冲区可以被安全地分配、加载和释放，即使 unit generator 正在使用它们。缓冲区用于波表、采样缓冲区、延迟线、包络，或任何其他可以使用浮点值数组的需求。声音文件可以被加载到缓冲区中或从缓冲区写出。</p>
+
+<h3 id="Unit Generator Definitions">单元生成器定义</h3>
+
+<p>Unit Generator Definitions 是程序启动时自动加载的插件。它们是二进制代码库，被 Synths 用作构建块来构建合成算法。Unit Generator Definitions 的名称与构建 Synth Definitions 时使用的 SuperCollider 语言类的名称相匹配。</p>
+
+<h2 id="Command Line Arguments">命令行参数</h2>
+
+<p>必须提供 -u 或 -t 之一。两者均可提供。</p>
+
+<dl>
+<dt>-u udp-port-number</dt>
+<dd><p>端口号 0-65535。</p></dd>
+<dt>-t tcp-port-number</dt>
+<dd><p>端口号 0-65535</p></dd>
+<dt>-v 详细程度</dt>
+<dd><p>控制服务器消息的详细程度。值为 0 是正常行为。-1 抑制信息性消息。-2 抑制信息性消息和许多错误消息，以及来自 Poll 的消息。默认值为 0。</p></dd>
+<dt>-a num-audio-bus-channels</dt>
+<dd><p>音频总线通道数（默认 = 1024）。为音频总线分配的空间为：(numchannels * (blocksize + 1) * 4)</p></dd>
+<dt>-i num-input-bus-channels</dt>
+<dd><p>音频输入总线通道数（默认 = 8）</p></dd>
+<dt>-o num-output-bus-channels</dt>
+<dd><p>音频输出总线通道数（默认 = 8）</p></dd>
+<dt>-c num-control-bus-channels</dt>
+<dd><p>控制总线通道数（默认 = 16384）。为控制总线分配的空间为：(numchannels * 8)</p></dd>
+<dt>-b num-buffers</dt>
+<dd><p>采样缓冲区数量（默认 = 1024）</p></dd>
+<dt>-n 最大节点数</dt>
+<dd><p>最大节点数（默认 = 1024）</p></dd>
+<dt>-d max-synth-defs</dt>
+<dd><p>合成器定义的最大数量（默认 = 1024）</p></dd>
+<dt>-D 1 或 0</dt>
+<dd><p>如果为零，则合成器定义在启动时不会被加载。（默认值 = 1）</p></dd>
+<dt>-z block-size</dt>
+<dd><p>一个控制周期内的采样数。（默认值 = 64）</p></dd>
+<dt>-Z preferred-hardware-buffer-size</dt>
+<dd><p>如果非零，它将尝试设置硬件缓冲区帧大小。（默认值 = 0）</p></dd>
+<dt>-S 首选采样率</dt>
+<dd><p>若非零，将尝试设置硬件采样率。（默认值 = 0）</p></dd>
+<dt>-m 实时内存大小</dt>
+<dd><p>实时内存的千字节数。此内存用于分配 Synth 以及 unit generator 自身分配的任何内存。（默认值 = 8192）</p></dd>
+<dt>-r random-number-generators</dt>
+<dd><p>可设置种子的随机数生成器的数量。（默认 = 64）</p></dd>
+<dt>-w max-interconnect-buffers</dt>
+<dd><p>为用于互连单元发生器的缓冲区分配的最大缓冲区数量。它设定了可在运行时加载的 synth def 的复杂度上限。如果在启动时加载了更复杂的 synth-def，此值将增加，但一旦合成开始便无法再增加。（默认值 = 64）</p></dd>
+<dt>-l max-logins</dt>
+<dd><p>存储的命名返回地址的最大数量（默认 = 64）。也是接受的 TCP 连接的最大数量</p></dd>
+<dt>-p session-password</dt>
+<dd><p>使用 TCP 时，会话密码必须是发送的第一条命令。默认没有密码。UDP 端口从不要求密码，因此如果需要密码保护，请使用 TCP。</p></dd>
+<dt>-H device-name-H input-device-name output-device-name</dt>
+<dd><p>硬件 I/O 设备的名称。如果未提供，则使用默认设备。更多详情请参阅音频设备选择。</p></dd>
+<dd><blockquote class="note"><p><strong>注意：</strong> 要仅指定输入设备并使用默认输出设备，或仅指定输出设备并使用默认输入设备，请使用空字符串：<code>'-H "" output-device-name'</code> 或 <code>'-H input-device-name ""'</code></p></blockquote></dd>
+<dt>-I input-streams-enable-string</dt>
+<dd><p>允许关闭设备上你不感兴趣的输入流。例如，如果字符串为 01100，则仅启用设备上的第二个和第三个输入流。关闭流可以减少 CPU 负载。</p></dd>
+<dt>-O output-streams-enable-string</dt>
+<dd><p>允许关闭设备上你不感兴趣的输出流。例如，如果字符串为 11000，则设备上只有前两个输出流会被启用。关闭流可以减少 CPU 负载。</p></dd>
+<dt>-N cmd-filename input-filename output-filename sample-rate header-format sample-format</dt>
+<dd><p>以非实时模式运行。</p></dd>
+<dd><p>cmd-filename 应是一个文件，其中包含按时间升序排列的 OSC 包。如果 cmd-filename 为下划线字符 _，则 OSC 将从标准输入流式读取。</p></dd>
+<dd><p>音频输入将取自 input-filename。如果 input-filename 是下划线字符 _，则不会读取任何输入文件。</p></dd>
+<dd><p>输出将被写入 output-filename。</p></dd>
+<dd><p>输出文件的采样率由 sample-rate 指定。输出文件的 header-format 应为以下之一：AIFF、WAVE、NeXT。输出文件的 sample-format 应为以下之一：int16、int24、int32、float、double。输出文件中的通道数由 -o 参数指定。</p></dd>
+</dl>
+
+<h3 id="Example">Example</h3>
+
+<pre><code>scsynth -u 57117 &gt;synth_log &amp;
+
+    Accept commands via UDP on port 57117.
+    Send output to file &quot;synth_log&quot;
+    Run asynchronously: &amp;.
+
+scsynth -N score.osc _ out.aiff 48000 AIFF int24
+
+    Run in non real time mode with command file score.osc,
+    no input file, and output file named out.aiff.
+    Sample rate is 48000. Output file header format is aiff,
+    sample format is 24 bit integer.</code></pre>
+
+<h2 id="Binary Format of Messages">消息的二进制格式</h2>
+
+<p>消息的格式与 Open Sound Control 消息类似，区别在于不对命令名进行模式匹配。当通过 TCP 流式传输时，每条消息前都有一个 32 位整数，给出该消息的字节长度。UDP 数据报已经包含此长度信息。</p>
+
+<h3 id="Types">Types</h3>
+
+<p>所有值均采用网络字节序。</p>
+
+<table>
+<tr><td><p>long</p></td><td><p>一个 64 位整数。仅用于时间戳。</p></td></tr>
+<tr><td><p>int</p></td><td><p>一个 32 位整数。</p></td></tr>
+<tr><td><p>float</p></td><td><p>一个 32 位单精度浮点数。</p></td></tr>
+<tr><td><p>double</p></td><td><p>一个 64 位双精度浮点数。</p></td></tr>
+<tr><td><p>string</p></td><td><p>一个 OSC 格式字符串：8 位 ASCII 字符，零填充至 4 字节的倍数。</p></td></tr>
+<tr><td><p>bytes</p></td><td><p>一个数据缓冲区，前面有一个 32 位长度字段，并填充到 4 字节的倍数。</p></td></tr>
+</table>
+
+<h3 id="Tags">Tags</h3>
+
+<p>命令参数具有单字符标签，这些标签出现在标签字符串中以标识其类型。</p>
+
+<table>
+<tr><td><p>'i'</p></td><td><p>一个 int</p></td></tr>
+<tr><td><p>'f'</p></td><td><p>一个 float</p></td></tr>
+<tr><td><p>'s'</p></td><td><p>一个字符串</p></td></tr>
+<tr><td><p>'b'</p></td><td><p>bytes</p></td></tr>
+<tr><td><p>'d'</p></td><td><p>一个 double</p></td></tr>
+<tr><td><p>'t'</p></td><td><p>一个时间戳</p></td></tr>
+</table>
+
+<h3 id="Command">Command</h3>
+
+<p>一个 Command 由以下部分组成：</p>
+
+<table>
+<tr><td><p>string</p></td><td><p>命令名称。参见下面的命令参考。</p></td></tr>
+<tr><td><p>string</p></td><td><p>一个字符串，其中的标签由后续参数的类型定义。标签字符串以逗号 ',' 字符开头。</p></td></tr>
+<tr><td><p>...</p></td><td><p>类型为 int、float、string 或 bytes 的参数的任意组合。</p></td></tr>
+</table>
+
+<h3 id="Bundle">Bundle</h3>
+
+<p>一个 Bundle 由以下部分组成：</p>
+
+<table>
+<tr><td><p>时间戳</p></td><td><p>long。时间戳采用 Open Sound Control 定义的相同格式：高 32 位表示自 1900 年起的秒数，低 32 位表示一秒的 32 位小数部分。</p></td></tr>
+<tr><td><p>...</p></td><td><p>一系列 Command，每个前面都有一个 32 位整数表示的字节长度。</p></td></tr>
+</table>
+
+<h3 id="Message">Message</h3>
+
+<p>一个 Message 由以下部分组成：</p>
+
+<dl>
+<dt>使用 UDP</dt>
+<dd><ul>
+<li>一个 Bundle 或一个 Command。</li>
+</ul></dd>
+<dt>使用 TCP</dt>
+<dd><ul>
+<li>int32 - 后续消息的字节长度。</li>
+<li>一个 Bundle 或一个 Command。</li>
+</ul></dd>
+</dl>
+
+<h2 id="Glossary">Glossary</h2>
+
+<dl>
+<dt>buffer</dt>
+<dd><p>一个头部和浮点采样数据数组。缓冲区用于声音文件、延迟线、全局控制数组以及合成器间补丁点数组。</p></dd>
+<dt>group</dt>
+<dd><p>一个节点的链表。组提供了同时控制许多节点执行的方式。组是一种节点。</p></dd>
+<dt>MIDI</dt>
+<dd><p>一种在合成器之间发送音乐控制数据的协议。</p></dd>
+<dt>node</dt>
+<dd><p>对象树中的一个对象，由 synth 引擎按深度优先遍历顺序执行。节点有两种类型：synth 和组。</p></dd>
+<dt>Open Sound Control</dt>
+<dd><p>由 UCBerkeley 的 CNMAT 定义的一种用于控制合成器的协议。参见 http://cnmat.cnmat.berkeley.edu/OSC/ 。</p></dd>
+<dt>OSC</dt>
+<dd><p>参见 Open Sound Control。</p></dd>
+<dt>synth</dt>
+<dd><p>一个声音处理模块。类似于其他系统中的“voice”。Synth 通过编号来引用。</p></dd>
+<dt>synth 定义</dt>
+<dd><p>用于创建新 synth 的定义。类似于其他系统中的“instrument”。</p></dd>
+<dt>TCP</dt>
+<dd><p>一种用于通过网络流式传输数据的协议。</p></dd>
+<dt>UDP</dt>
+<dd><p>一种用于在网络上发送数据报的协议。</p></dd>
+</dl>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Reference/Server-Architecture.html" rel="noreferrer noopener">Reference/Server-Architecture.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

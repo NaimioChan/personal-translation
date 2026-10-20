@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 Cookbook 03：外部控制 - SuperCollider 文档</title>
+<meta name="description" content="通过外部设备进行模式控制">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 Cookbook 03：外部控制</h1>
+
+<p><em>通过外部设备进行模式控制</em></p>
+
+<p>参见：<a href="Tutorials-A-Practical-Guide-PG_Cookbook02_Manipulating_Patterns.html">模式指南食谱 02：操作模式</a>、<a href="Tutorials-A-Practical-Guide-PG_Cookbook04_Sending_MIDI.html">模式指南食谱 04：发送 MIDI</a></p>
+
+<h2 id="Pattern control by external device">通过外部设备进行模式控制</h2>
+
+<h3 id="Control of parameters by MIDI or HID">通过 MIDI 或 HID 控制参数</h3>
+
+<p>最好的方法是将传入的值保存到一个变量中，然后使用 <a href="Classes-Pfunc.html">Pfunc</a> 为每个事件访问该变量。</p>
+
+<pre><code>(
+~legato = 1;
+c = MIDIFunc.cc({ |value, num, chan, src|
+    ~legato = value.linlin(0, 127, 0.1, 2.5)
+}, 1);    // 1 表示 modwheel
+)
+
+(
+p = Pbind(
+    \degree, Pwhite(-7, 12, inf),
+    \dur, Pwrand([0.25, Pn(0.125, 2)], #[0.8, 0.2], inf),
+    \legato, Pfunc { ~legato }    // 获取由 MIDI 控制设置的值
+).play;
+)
+
+p.stop;
+c.free;</code></pre>
+
+<p>如果 Pbind 中的 Pfunc <code>{ }</code> 令人烦恼，<a href="Classes-PatternProxy.html">PatternProxy</a> 或 <a href="Classes-Pdefn.html">Pdefn</a> 也可以达到目的。</p>
+
+<pre><code>(
+~legato = PatternProxy(1);
+c = MIDIFunc.cc({ |value, num, chan, src|
+    ~legato.source = value.linlin(0, 127, 0.1, 2.5)
+}, 1);
+)
+
+(
+p = Pbind(
+    \degree, Pwhite(-7, 12, inf),
+    \dur, Pwrand([0.25, Pn(0.125, 2)], #[0.8, 0.2], inf),
+    \legato, ~legato
+).play;
+)
+
+p.stop;
+c.remove;</code></pre>
+
+<h3 id="Triggering patterns by external control">通过外部控制触发模式</h3>
+
+<p>向模式发送 <code>play</code> 可以发生在许多不同对象类型的动作函数中：GUI、MIDI、OSCFunc、HID 动作。这允许从各种接口触发模式。</p>
+
+<p>动作函数几乎不可能与时钟精确同步地触发。如果正在播放的模式需要与其他模式按时运行，请使用 <code>quant</code> 参数来控制其起始时间（参见 <a href="Classes-Quant.html">Quant</a>）。</p>
+
+<h3 id="Triggering a pattern by a GUI">通过 GUI 触发模式</h3>
+
+<pre><code>(
+var    pattern = Pbind(
+        \degree, Pseries(7, Pwhite(1, 3, inf) * Prand(#[-1, 1], inf), inf).fold(0, 14)
+            + Prand(#[[0, -2, -4], [0, -3, -5], [0, -2, -5], [0, -1, -4]], inf),
+        \dur, Pwrand(#[1, 0.5], #[0.8, 0.2], inf)
+    ),
+    player, window;
+
+window = Window.new(&quot;Pattern trigger&quot;, Rect(5, 100, 150, 100))
+        // onClose 相当重要
+        // 没有它，关闭窗口可能会让 pattern 继续播放
+    .onClose_({ player.stop });
+Button.new(window, Rect(5, 5, 140, 90))
+    .states_([[&quot;Pattern GO&quot;], [&quot;Pattern STOP&quot;]])
+    .font_(Font.new(&quot;Helvetica&quot;, 18))
+    .action_({ |button|
+        if(button.value == 1 and: { player.isNil or: { player.isPlaying.not } }) {
+            player = pattern.play;
+        } {
+            player.stop;
+            button.value = 0;
+        };
+    });
+window.front;
+)
+
+p.stop;</code></pre>
+
+<h3 id="Triggering a pattern by MIDI">通过 MIDI 触发模式</h3>
+
+<pre><code>(
+var    pattern = Pbind(
+        \degree, Pseries(7, Pwhite(1, 3, inf) * Prand(#[-1, 1], inf), inf).fold(0, 14)
+            + Prand(#[[0, -2, -4], [0, -3, -5], [0, -2, -5], [0, -1, -4]], inf),
+        \dur, Pwrand(#[1, 0.5], #[0.8, 0.2], inf)
+    ),
+    player;
+
+~noteOnFunc = MIDIFunc.noteOn({
+    if(player.isNil or: { player.isPlaying.not }) {
+        player = pattern.play;
+    } {
+        player.stop;
+    };
+// 60 将此 MIDIFunc 限制为仅监听中央 C
+// 但它会从任何端口、任何通道拾取该音符
+}, 60);
+)
+
+// 完成时
+~noteOnFunc.free;</code></pre>
+
+<h3 id="Triggering a pattern by signal amplitude">通过信号幅度触发模式</h3>
+
+<p>基于音频振幅触发模式要稍微棘手一些——不是因为播放模式更难，而是因为识别触发应在何时发生更为复杂。在 SuperCollider 中最直接的方法是使用 <a href="Classes-Amplitude.html">Amplitude</a> UGen 获取输入信号的音量，并将其与阈值进行比较。音量可能会快速波动，因此 Amplitude 的 <code>releaseTime</code> 参数被设为较高的值。这使测得的振幅更缓慢地回落至基线，从而防止触发过于频繁地发出。</p>
+
+<p>实际阈值取决于输入信号，因此示例中弹出一个简易窗口，用于查看实测振幅并据此设置阈值和衰减。默认情况下，该 synth 监听第一个硬件输入总线，但您可以在代码中按如下方式修改，以使用不同的输入总线：</p>
+
+<pre><code>    inbus: s.options.numOutputBusChannels</code></pre>
+
+<p>在此配置中，第一个触发启动模式，第二个触发停止模式。你可能希望模式在输入信号高于阈值时播放，并在信号降至更安静的电平时停止。比较 <code>amp &gt;= thresh</code> 只能在信号从较柔变到更低时发送触发，因此如果我们希望模式在信号变得安静时停止，就需要在双向越过阈值时都发送触发。</p>
+
+<pre><code>    var    amp = Amplitude.kr(In.ar(inbus, 1), attackTime: 0.01, releaseTime: decay),
+        trig = HPZ1.kr(amp &gt;= thresh);
+    SendTrig.kr(trig.abs, 1, trig);</code></pre>
+
+<p><a href="Classes-HPZ1.html">HPZ1</a> 在其输入上升时为正，下降时为负。因此，基于绝对值触发会在任何变化时发送触发。响应触发的客户端可能需要知道变化的方向，因此我们将 HPZ1 的值发送回去，客户端可以根据此值的符号决定采取何种动作。</p>
+
+<p>在此示例中，仅当信号上升到阈值以上时才测量触发。</p>
+
+<pre><code>(
+var    pattern = Pbind(
+        \degree, Pseries(7, Pwhite(1, 3, inf) * Prand(#[-1, 1], inf), inf).fold(0, 14)
+            + Prand(#[[0, -2, -4], [0, -3, -5], [0, -2, -5], [0, -1, -4]], inf),
+        \dur, Pwrand(#[1, 0.5], #[0.8, 0.2], inf)
+    ),
+    player;
+
+// 用于调整阈值和衰减时间的快捷 GUI
+~w = Window(&quot;threshold setting&quot;, Rect(15, 100, 300, 100))
+    .onClose_({
+        ~ampSynth.free;
+        ~ampUpdater.free;
+        ~oscTrigResp.free;
+        player.stop;
+    });
+~w.view.decorator = FlowLayout(~w.view.bounds, 2@2, 2@2);
+~ampView = EZSlider(~w, 295@20, &quot;amplitude&quot;, \amp, labelWidth: 80, numberWidth: 60);
+~ampView.sliderView.canFocus_(false).enabled_(false);
+~ampView.numberView.canFocus_(false).enabled_(false);
+StaticText(~w, 295@5).background_(Color.gray);
+~threshView = EZSlider(~w, 295@30, &quot;threshold&quot;, \amp, action: { |ez|
+    ~ampSynth.set(\thresh, ez.value);
+}, initVal: 0.4, labelWidth: 80, numberWidth: 60);
+~decayView = EZSlider(~w, 295@30, &quot;decay&quot;, #[0.1, 100, \exp], action: { |ez|
+    ~ampSynth.set(\decay, ez.value);
+}, initVal: 80.0, labelWidth: 80, numberWidth: 60);
+
+~w.front;
+
+~ampSynth = SynthDef(\ampSynth, { |inbus, thresh = 0.8, decay = 1|
+    var    amp = Amplitude.kr(In.ar(inbus, 1), attackTime: 0.01, releaseTime: decay);
+        // 这个触发器（id==0）仅用于更新 GUI
+    SendReply.kr(Impulse.kr(10), &#x27;/amp&#x27;, amp);
+        // 此触发器仅在振幅越过阈值时发送
+    SendReply.kr(amp &gt;= thresh, &#x27;/amptrig&#x27;);
+}).play(args: [inbus: s.options.numOutputBusChannels, thresh: ~threshView.value, decay: ~decayView.value]);
+
+~ampUpdater = OSCFunc({ |msg|
+    defer { ~ampView.value = msg[3] }
+}, &#x27;/amp&#x27;, s.addr);
+
+~oscTrigResp = OSCFunc({ |msg|
+    if(player.isNil or: { player.isPlaying.not }) {
+        player = pattern.play;
+    } {
+        player.stop;
+    };
+}, &#x27;/amptrig&#x27;, s.addr);
+)</code></pre>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook02_Manipulating_Patterns.html">Pattern Guide Cookbook 02: Manipulating Patterns</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_Cookbook04_Sending_MIDI.html">模式指南实用手册 04：发送 MIDI</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_Cookbook03_External_Control.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_Cookbook03_External_Control.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

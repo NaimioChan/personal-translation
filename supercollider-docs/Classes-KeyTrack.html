@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyTrack - SuperCollider 文档</title>
+<meta name="description" content="按键跟踪器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>KeyTrack</h1>
+
+<p><em>按键跟踪器</em></p>
+
+<p><a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-BeatTrack.html">BeatTrack</a>, <a href="Classes-Loudness.html">Loudness</a>, <a href="Classes-MFCC.html">MFCC</a>, <a href="Classes-Onsets.html">Onsets</a>, <a href="Classes-Pitch.html">Pitch</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>一个基于 FFT 各 bin 能量音级轮廓（pitch class profile）的（12TET 大调/小调）调性跟踪器，并将其与所有移调的大调和小调音阶模板进行匹配。它假定 A 音为 440 Hz 的协奏音高参考。输出为 0-11 表示 C 大调到 B 大调，12-23 表示 C 小调到 B 小调。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*kr"><code>KeyTrack.kr(chain, keydecay: 2.0, chromaleak: 0.5)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>chain</p></td><td class="argumentdesc"><p>[fft] 要跟踪的音频输入。必须已由 4096 大小的 FFT 预先分析。除下文所述外，其他 FFT 大小均无效。</p></td></tr>
+<tr><td class="argumentname"><p>keydecay</p></td><td class="argumentdesc"><p>[sk] 窗口对最终键判决的影响衰减 40dB（至其原始值的 0.01）所需的秒数。</p></td></tr>
+<tr><td class="argumentname"><p>chromaleak</p></td><td class="argumentdesc"><p>[sk] 每一帧中，色度值被设为前一值乘以 chromadecay。0.0 会使每一帧都重新开始，不保留记忆。</p></td></tr>
+</table>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 以下文件是我机器上的测试素材；你需要在此替换为你自己的文件名
+// A 大调
+d = Buffer.read(s, &quot;/Volumes/data/stevebeattrack/samples/100.wav&quot;);
+// F 大调；难以追踪！
+d = Buffer.read(s, &quot;/Volumes/data/stevebeattrack/samples/115.wav&quot;);
+
+// 直接明了，因为没有瞬态；训练集来自 MIREX2006
+// 01 = A 大调
+// 57 = b 小调
+// 78 e 小调
+// 08 降B 大调
+
+d = Buffer.read(s, &quot;/Users/nickcollins/Desktop/ML/training_wav/78.wav&quot;)
+
+(
+{
+    var in, fft, resample;
+    var key, transientdetection;
+
+    in = PlayBuf.ar(1, d, BufRateScale.kr(d), 1, 0, 1);
+
+    // 使用标准 hop 为 FFT 大小的一半 = 2048 个采样
+    fft = FFT(LocalBuf(4096), in);  // 对于采样率 44100 和 48000
+    fft = FFT(LocalBuf(8192), in);   // 适用于采样率 88200 和 96000
+
+    key = KeyTrack.kr(fft, 2.0, 0.5);
+
+    key.poll;
+
+    Pan2.ar(in)
+}.play
+)</code></pre>
+
+<pre><code>// 交替的大调和小调和弦作为测试
+(
+{
+    var in, fft, resample;
+    var key, transientdetection;
+
+    in = Mix(SinOsc.ar((60 + [0, MouseX.kr(3, 4).round(1), 7]).midicps, 0, 0.1));
+
+    // 大调属七和弦与小七和弦；此处偏好大调
+    // in = Mix(SinOsc.ar((60 + (MouseY.kr(0, 11).round(1.0)) + [0, MouseX.kr(3, 4).round(1), 7, 10]).midicps, 0, 0.1));
+
+    fft = FFT(LocalBuf(4096), in);  // 对于采样率 44100 和 48000
+
+    key = KeyTrack.kr(fft);
+
+    key.poll;
+
+    Pan2.ar(in)
+}.play
+)</code></pre>
+
+<pre><code>// 听听 KeyTrack 的判断：
+
+d = Buffer.read(s, &quot;/Users/nickcollins/Desktop/ML/training_wav/78.wav&quot;)
+
+(
+{
+    var in, fft, resample, chord, rootnote, sympath;
+    var key, transientdetection;
+
+    in = PlayBuf.ar(1, d, BufRateScale.kr(d), 1, 0, 1);
+
+    fft = FFT(LocalBuf(4096), in);  // 对于采样率 44100 和 48000
+
+    key = KeyTrack.kr(fft, 2.0, 0.5);
+    key.poll;
+    key = Median.kr(101, key); // 移除异常抖动
+
+    chord = if(key &lt; 12, #[0, 4, 7], #[0, 3, 7]);
+    rootnote = if(key &lt; 12, key, key-12) + 60;
+
+    sympath = SinOsc.ar((rootnote + chord).midicps, 0, 0.4).mean;
+
+    Pan2.ar(in, -0.5) + Pan2.ar(sympath, 0.5)
+}.play
+)</code></pre>
+
+<pre><code>/*
+研究笔记：
+参见 MIREX2006 音频调性跟踪竞赛以及 Emilia Gomez 的博士论文《音乐音频信号的调性描述》
+
+以下代码用于创建该 UGen 的数据集，并将作为扩展的基础
+
+需要为 44100 和 48000 各准备一组频段数据
+
+KeyTrack 计算，需要为每个半音音调构建 FFT 频段数组和权重。
+更高分辨率，4096 FFT，避开低八度，那里太杂乱
+
+60*6*2 个输出数组
+*/
+
+(
+var fftN, fftBins, binsize;
+var midinotes;
+var sr;
+var wtlist, binlist;
+
+sr = 48000; // 44100;
+
+fftN = 4096;
+fftBins = fftN.div(2);
+binsize = sr / fftN;
+
+midinotes = (33..92); // 60 notes, 55 Hz up to 1661.2187903198 Hz
+
+wtlist = List[];
+binlist = List[];
+
+// 每个音符有六个谐波位置
+midinotes.do{ |note|
+    var freq, whichbin, lowerbin, prop;
+
+    freq = note.midicps;
+
+    6.do{ |j|
+        var partialfreq, partialamp;
+
+        partialamp = 1.0 / (j + 1);
+        partialfreq = freq * (j + 1);
+
+        whichbin = partialfreq / binsize;
+        lowerbin = whichbin.asInteger;
+        prop = 1.0 - (whichbin - lowerbin);
+
+        binlist.add(lowerbin).add(lowerbin + 1);
+        wtlist.add(prop * partialamp).add((1.0 - prop) * partialamp);
+
+    };
+
+};
+
+
+Post &lt;&lt; (binlist) &lt;&lt; nl&lt;&lt; nl;
+
+Post &lt;&lt; (wtlist) &lt;&lt; nl&lt;&lt; nl;
+
+binlist.size.postln;
+wtlist.size.postln;
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/KeyTrack.html" rel="noreferrer noopener">Classes/KeyTrack.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

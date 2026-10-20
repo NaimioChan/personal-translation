@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>理解流、模式和事件 - 第 5 部分 - SuperCollider 文档</title>
+<meta name="description" content="Event.default">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>理解流、模式和事件 - 第 5 部分</h1>
+
+<p><em>Event.default</em></p>
+
+<p>另请参阅：<a href="Tutorials-Streams-Patterns-Events1.html">理解流、模式与事件 - 第 1 部分</a>、<a href="Tutorials-Streams-Patterns-Events2.html">理解流、模式与事件 - 第 2 部分</a>、<a href="Tutorials-Streams-Patterns-Events3.html">理解流、模式与事件 - 第 3 部分</a>、<a href="Tutorials-Streams-Patterns-Events4.html">理解流、模式与事件 - 第 4 部分</a>、<a href="Tutorials-Streams-Patterns-Events6.html">理解流、模式与事件 - 第 6 部分</a>、<a href="Tutorials-Streams-Patterns-Events7.html">理解流、模式与事件 - 第 7 部分</a></p>
+
+<p>关于默认 Event 的更多内容：</p>
+
+<h2 id="protoEvents">protoEvents</h2>
+
+<p>protoEvent 包含许多有用参数的默认值。</p>
+
+<p>默认的 protoEvent 是 <code>Event.default</code>。它为 duration、envelope、instrument 提供默认绑定，使一个非常简单的 Pattern 可以直接播放：</p>
+
+<pre><code>(
+// 一个无尽的中央 C 序列
+Pbind.new.play
+)</code></pre>
+
+<p>通过添加其他绑定，你可以覆盖 protoEvent 中的默认值。</p>
+
+<pre><code>(
+// 时长为 0.25 拍（十六分音符）
+Pbind( \dur, 0.25 ).play
+)</code></pre>
+
+<pre><code>(
+// 以 midinote 指定音高
+// 另见下面的音高模型
+Pbind(
+    \dur, 0.125,
+    \legato, 0.2,
+    \midinote, Pseq(#[60, 62, 64, 65, 67, 69, 71, 72], inf)
+).play
+)</code></pre>
+
+<h2 id="~finish">~finish</h2>
+
+<p>Event.default 包含一个绑定到 Symbol <code>'finish'</code> 的函数，该函数会为每个新生成的事件调用，以完成任何依赖于该事件中其他值的计算。</p>
+
+<h2 id="The pitch model">音高模型</h2>
+
+<p>Event.default 实现了一个多级音高模型，允许使用调式音阶级数、等分音符值、midi 音符值或赫兹频率进行作曲。这些不同的音高指定方式都可以互换使用。</p>
+
+<p>其工作方式是由于绑定到音高模型符号的默认值。</p>
+
+<p>音高模型中最底层的 Symbol 是 <code>'freq'</code>。<code>'freq'</code> 的默认绑定是一个 <a href="Classes-Function.html">Function</a>，它通过获取 <code>'midinote'</code> 的值、加上移调值并使用 <code>midicps</code> 将其转换为赫兹来计算频率。</p>
+
+<pre><code>    ~freq = {
+        (~midinote.value + ~ctranspose).midicps;
+    };</code></pre>
+
+<p>如果直接使用 <code>'freq'</code> 进行组合，则会覆盖此默认函数。</p>
+
+<pre><code>(
+Pbind(
+    \dur, 0.25,
+    \freq, Pseq(#[300, 400, 500, 700, 900], inf)
+).play;
+)</code></pre>
+
+<p>Event.default 的 <code>'finish'</code> 函数向 <code>'freq'</code> 的当前绑定发送 value 消息，以获取频率的值，并给该值加上一个失谐值，从而以赫兹为单位移调频率。</p>
+
+<pre><code>(
+Pbind(
+    \dur, 0.25,
+    \detune, -20,
+    \freq, Pseq(#[300, 400, 500, 700, 900], inf)
+).play
+)</code></pre>
+
+<p>下一层是 <code>'midinote'</code>，默认绑定到此函数：</p>
+
+<pre><code>    ~midinote = {
+        (~note.value + ~gtranspose + (~octave * divs) + ~root)
+                * 12.0 / ~stepsPerOctave;
+    };</code></pre>
+
+<p>此函数获取绑定到 <code>'note'</code> 的值，该值以某种平均律表示，不一定是 12 平均律。它加上一个音阶移调值 <code>'gtranspose'</code>，并从所使用的每八度音符数缩放到每八度 12 个音符的 MIDI 键值。如果你直接用 <code>'midinote'</code> 作曲，那么它将覆盖此函数。</p>
+
+<pre><code>(
+Pbind(
+    \dur, 0.2,
+    \midinote, Pseq([ Pshuf(#[60, 61, 62, 63, 64, 65, 66, 67], 3) ], inf)
+).play
+)</code></pre>
+
+<p>更高一层是 <code>'note'</code>，它由该函数默认定义：</p>
+
+<pre><code>    ~note = {
+        var divs;
+        divs = ~stepsPerOctave;
+        (~degree + ~mtranspose).degreeToKey(~scale, divs);
+    };</code></pre>
+
+<p>此函数从指定音阶音高的下一级更高层变量中推导出音符值。这些变量定义如下：</p>
+
+<pre><code>    ~stepsPerOctave = 12.0;</code></pre>
+
+<p>这个调律将一个八度等分为该数量的份数。由此变量定义的等程调律称为音阶。例如，如果你想以音分为单位工作，可以将其设为 1200.0。</p>
+
+<pre><code>    ~octave = 5.0;</code></pre>
+
+<p>当前八度。中央 C 是八度 5 中的最低音。</p>
+
+<pre><code>    ~root = 0.0;</code></pre>
+
+<p>以 <code>~stepsPerOctave</code> 定义的等分单位给出的音阶的根音。</p>
+
+<pre><code>    ~scale = #[0, 2, 4, 5, 7, 9, 11]; // 自然大调音阶</code></pre>
+
+<p>一组以 <code>~stepsPerOctave</code> 定义的等分音阶音高。</p>
+
+<pre><code>    ~degree = 0;</code></pre>
+
+<p><code>~scale</code> 中的音阶度数索引。0 是根音，音阶按照 <code>degreeToKey</code> 定义的方式回绕。</p>
+
+<pre><code>    ~mtranspose = 0;</code></pre>
+
+<p>添加到音阶度数上的调式移调值。</p>
+
+<pre><code>    ~gtranspose = 0;</code></pre>
+
+<p>添加到音阶音高上的音阶移调值。</p>
+
+<pre><code>    ~ctranspose = 0;</code></pre>
+
+<p>以半音表示的半音移调值。</p>
+
+<h2 id="Pitch model Examples">音高模型示例</h2>
+
+<pre><code>(
+// 一个简单的音阶度数序列
+Pbind(
+        // -7 是低 8 度，-3 是低 4 度，
+        // 0 是根音，2 是高 3 度，4 是高 5 度，7 是高 8 度。
+    \degree, Pseq([ Pshuf(#[-7,-3,0,2,4,7], 4), Pseq([0,1,2,3,4,5,6,7]) ], inf),
+    \dur, 0.15
+).play
+)
+
+
+(
+// 改变八度
+Pbind(
+    \dur, 0.15,
+    \octave, 4,
+    \degree, Pseq([ Pshuf(#[-7,-3,0,2,4,7], 4), Pseq([0,1,2,3,4,5,6,7]) ], inf)
+).play
+)
+
+
+(
+// 更改音阶
+Pbind(
+    \dur, 0.15,
+    \scale, [0, 2, 3, 5, 7, 8, 10],
+    \degree, Pseq([ Pshuf(#[-7,-3,0,2,4,7], 4), Pseq([0,1,2,3,4,5,6,7]) ], inf)
+).play
+)
+
+
+(
+// 调式移调
+var notes;
+notes = Pseq([ Pshuf(#[-7,-3,0,2,4,7], 4), Pseq([0,1,2,3,4,5,6,7]) ], 1);
+Pseq([
+    Pbind(
+        \dur, 0.15,
+        \mtranspose, 0,
+        \degree, notes
+    ),
+    Pbind(
+        \dur, 0.15,
+        \mtranspose, 1,
+        \degree, notes
+    ),
+    Pbind(
+        \dur, 0.15,
+        \mtranspose, 2,
+        \degree, notes
+    )
+], inf).play
+)
+
+
+(
+// 半音移调
+var notes;
+notes = Pseq([ Pshuf(#[-7,-3,0,2,4,7], 4), Pseq([0,1,2,3,4,5,6,7]) ], 1);
+Pseq([
+    Pbind(
+        \dur, 0.15,
+        \ctranspose, 0,
+        \degree, notes
+    ),
+    Pbind(
+        \dur, 0.15,
+        \ctranspose, 3,
+        \degree, notes
+    ),
+    Pbind(
+        \dur, 0.15,
+        \ctranspose, -3,
+        \degree, notes
+    )
+], inf).play
+)
+
+
+(
+// 频率失谐
+var notes;
+notes = Pseq([ Pshuf(#[-7,-3,0,2,4,7], 4), Pseq([0,1,2,3,4,5,6,7]) ], 1);
+Pseq([
+    Pbind(
+        \dur, 0.15,
+        \detune, 0,
+        \degree, notes
+    ),
+    Pbind(
+        \dur, 0.15,
+        \detune, 20,
+        \degree, notes
+    ),
+    Pbind(
+        \dur, 0.15,
+        \detune, 40,
+        \degree, notes
+    )
+], inf).play
+)
+
+
+(
+// 和弦。如果 Stream 为 pitch 返回一个音高数组，
+// 就会演奏和弦。
+Pbind(
+    \dur, 0.15,
+    \degree, Pseq([
+        Pshuf(#[-7,-3,0,2,4,7], 4)+[0,4],
+        Pseq( [0,1,2,3,4,5,6,7] )+[0,2]
+    ], inf)
+).play
+)
+
+
+(
+// 用非 12 平均律作曲。72 音平均律。
+Pbind(
+    \stepsPerOctave, 72,
+    \note, Pseq([
+            // 1/1, 7/6, 3/2, 7/4, 9/8
+        Pseq([ [0,16,42,58,84], Pseq([ 0, 16, 42, 58, 72, 84 ], 2), [0,16,42,58,84] ], 1),
+            // 1/1, 6/5, 3/2, 9/5, 9/8
+        Pseq([ [0,19,42,61,84], Pseq([ 0, 19, 42, 61, 72, 84 ], 2), [0,19,42,61,84] ], 1),
+            // 1/1, 5/4, 3/2, 15/8, 9/8
+        Pseq([ [0,23,42,65,84], Pseq([ 0, 23, 42, 65, 72, 84 ], 2), [0,23,42,65,84] ], 1),
+            // 1/1, 9/7, 3/2, 27/14, 9/8
+        Pseq([ [0,26,42,68,84], Pseq([ 0, 26, 42, 68, 72, 84 ], 2), [0,26,42,68,84] ], 1)
+        ], inf),
+    \dur, Pseq([ 1.2, Pseq([0.15], 12), 1.2], inf)
+).play
+)</code></pre>
+
+<h2 id="The duration model">时长模型</h2>
+
+<p>时值以拍表示，并绑定到 <code>'dur'</code> 符号。音符的持续时长可以直接以拍表示，也可以通过使用 legato 值来表示，该值乘以音符时值即可得到持续时长。</p>
+
+<pre><code>(
+// 改变持续时间
+Pbind(
+    \dur, Pseq([ Pgeom(0.05, 1.1, 24), Pgeom(0.5, 0.909, 24) ], inf),
+    \midinote, Pseq(#[60, 58], inf)
+).play
+)
+
+
+(
+// 改变 legato 值
+Pbind(
+    \dur, 0.2,
+    \legato, Pseq([ Pseries(0.05, 0.05, 40), Pseries(2.05, -0.05, 40) ], inf),
+    \midinote, Pseq(#[48, 51, 55, 58, 60, 58, 55, 51], inf)
+).play
+)</code></pre>
+
+<p>转到下一个文件：<a href="Tutorials-Streams-Patterns-Events6.html">理解流、模式和事件 - 第 6 部分</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Streams-Patterns-Events5.html" rel="noreferrer noopener">Tutorials/Streams-Patterns-Events5.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11 - SuperCollider 文档</title>
+<meta name="description" content="Mark Polishook 教程（JP）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>11</h1>
+
+<p><em>Mark Polishook 教程（JP）</em></p>
+
+<p>另见：<a href="Tutorials-Mark_Polishook_tutorial-00_Introductory_tutorial.html">00_入门教程</a></p>
+
+<h2 id="複数のSynthDef">複数のSynthDef</h2>
+
+<p>几乎所有合成过程都可以在单个 SynthDef 中指定。然而，对于复杂的情况，也可以分解为各个组件部分。</p>
+
+<p>SuperColliderでは、groupがシンセを組み合わせるメカニズムを提供します。</p>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<h2 id="Groupはリンク・リスト">Group是链接・列表</h2>
+
+<p>group 最重要的方面是它所引用的节点是有序的。有序这一概念很重要，因为在 SuperCollider 中，它意味着可以保证一个合成过程先于另一个发生。</p>
+
+<p>SuperCollider 使用一种称为链接列表的机制来按顺序排列节点。链接列表是一种动态数据结构，可以轻松移动节点。例如，可以将第一个节点移到最后。或者，可以将列表中某个位置的节点放置到列表中的任意位置。链接列表的第一个项始终是 ".head"。链接列表的最后一个项始终是 ".tail"。</p>
+
+<p>置きたいと思うところにノードを置くことができるというのは、ディレイやリバーブの様に、ソースをフィルターに送る時には重要です。こうした場合には、ソースのシンセシス・プロセスが亜エフェクトよりも先に行われるというのが重要なのです。</p>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<h2 id="ルートノード">ルートノード</h2>
+
+<p>ルートノードはいつもサーバーに存在するグループです。全てのノードは、それがシンセであってもグループであっても、木の葉や枝の様にそれに接続されます。</p>
+
+<p>１つのシンセしか実行されていない場合、それは次の様にルートノード・グループに接続されています。</p>
+
+<pre><code>    Group (RootNode, ID 0)
+      /
+     /
+Synth (ID 1000)</code></pre>
+
+<p>この図の状態を生成するためのコードは</p>
+
+<pre><code>(
+SynthDef(&quot;ringModulation&quot;, {
+    Out.ar(
+        0,
+        Mix.ar(
+            SinOsc.ar([440.067, 441.013], 0, 1)
+            *
+            SinOsc.ar([111, 109], 0, 0.2)
+        )
+    )
+}).add;
+)
+
+Synth(&quot;ringModulation&quot;);</code></pre>
+
+<p>です。</p>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>ルートノードに二つのシンセが接続されている図は次の様になります。</p>
+
+<pre><code>    Group (RootNode, ID 0)
+      /\
+     /  \
+Synth    Synth
+(ID 1000) (ID 1001)</code></pre>
+
+<p>この図の状態を生成するためのコードは</p>
+
+<pre><code>(
+SynthDef(&quot;pitchFromNoise&quot;, { arg out = 0;
+    Out.ar(
+        out,
+        Resonz.ar(
+            WhiteNoise.ar(15),
+            LFNoise0.kr(2, 110, 660),
+            0.005
+        )
+    )
+}).add;
+)
+
+
+(
+Synth(&quot;ringModulation&quot;);
+Synth(&quot;pitchFromNoise&quot;, [\out, 1]);
+)</code></pre>
+
+<p>です。</p>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>ノードが確実に正しい順序に並べられる様にするというのはユーザーの責任です。そういうわけで、２つのシンセは与えられた順序で評価されなければならないのです。</p>
+
+<pre><code>(
+SynthDef(&quot;firstNode-source&quot;, {
+    Out.ar(
+        0,
+        Saw.ar([200, 201], 0.05)
+    )
+}).add;
+
+SynthDef(&quot;secondNode-filter&quot;, {
+    ReplaceOut.ar(
+        0,
+        LPF.ar(
+            In.ar(0, 2),
+            Lag.kr(
+                LFNoise0.kr([4, 4.001], 500, 1000),
+                0.1
+            )
+        )
+    )
+}).add;
+)
+
+// &quot;firstNode-source&quot;は最初に実行されなければならない
+//  もし &quot;secondNode-filter&quot;が先に評価されれば、&quot;firstNode-source&quot;はそれを通して処理されなくなってしまう
+(
+Synth(&quot;firstNode-source&quot;);
+Synth(&quot;secondNode-filter&quot;)
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>この２つのシンセを記述するための安全な方法は次の様になります。</p>
+
+<pre><code>(
+Synth.head(s, &quot;firstNode-source&quot;);
+Synth.tail(s, &quot;secondNode-filter&quot;);
+)</code></pre>
+
+<p>在此示例中，我们依靠 .head 消息和 .tail 消息按正确顺序放置 synth。这里的正确顺序是指："firstNode-source" 位于根节点组的开头，"secondNode-filter" 位于根节点组的末尾。</p>
+
+<p>因此，"firstNode-source" 成为链表中的第一个项，"secondNode-filter" 成为第二个项。即使两个 synth 的求值顺序发生改变，这个顺序也保持不变。</p>
+
+<pre><code>(
+Synth.tail(s, &quot;secondNode-filter&quot;);
+Synth.head(s, &quot;firstNode-source&quot;);
+)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>先の例を記述するためのよりよい方法は、２つのシンセをそれぞれのグループに配置するということです。</p>
+
+<pre><code>    Group (RootNode, ID 0)
+      /\
+     /  \
+Group    Group
+  |        |
+  |        |
+Synth    Synth</code></pre>
+
+<pre><code>(
+~source = Group.head(s);    // グループをルートノードの先頭に加える
+~effect = Group.tail(s);    // グループをルートノードの最後に加える
+)
+
+(
+// シンセを適切なグループに追加する
+Synth.head(~effect, &quot;secondNode-filter&quot;);
+Synth.head(~source, &quot;firstNode-source&quot;);
+)</code></pre>
+
+<p>この考え方は、ルートノードに対してシンセではなくグループを求められる順序で結びつけるということです。一度グループがルートノードに求められる順序で結びつけられると、それによってシンセはしかるべきグループに結びつけられるようにできます。</p>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>グループは、シンセを確実に適切な順序で実行するようにするという以外の目的にも用いることができます。例えば、個々のシンセに対してではなく、グループに対して１つのメッセージを送ることで、グループの中の全てのシンセに対して１つのコントロールをセットすることができます。</p>
+
+<pre><code>// 以下のSynthDefは全て共通のコントロール名（mul）を持つ
+(
+// 3つのSynthDefとグループを作成する
+SynthDef(&quot;synthNumber1&quot;, { arg mul = 0.2;
+    Out.ar(
+        0,
+        BrownNoise.ar(mul) * LFNoise0.kr([1, 1.01])
+    )
+    }, [0.1]).add;
+SynthDef(&quot;synthNumber2&quot;, { arg mul = 0.2;
+    Out.ar(
+        0,
+        WhiteNoise.ar(mul) * LFNoise1.kr([2.99, 3])
+    )
+    }, [0.1]).add;
+SynthDef(&quot;synthNumber3&quot;, { arg mul = 0.2;
+    Out.ar(
+        0,
+        PinkNoise.ar(mul) * LFNoise2.kr([0.79, 0.67])
+    )
+}, [0.1]).add;
+)
+
+(
+// グループを作成する
+~myGroup = Group.new;
+)
+
+(
+// 3つのシンセを加える
+Synth.head(~myGroup, &quot;synthNumber1&quot;);
+Synth.head(~myGroup, &quot;synthNumber2&quot;);
+Synth.head(~myGroup, &quot;synthNumber3&quot;);
+)
+
+// 3つのシンセのそれぞれの\mulコントロール、新しい（そして同じ）値にセットする
+~myGroup.set(\mul, 0.05)</code></pre>
+
+<p>////////////////////////////////////////////////////////////////////////////////////////////////////</p>
+
+<p>转到 <a href="Tutorials-Mark_Polishook_tutorial-Japanese_version-12.html">12</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Mark_Polishook_tutorial/Japanese_version/11.html" rel="noreferrer noopener">Tutorials/Mark_Polishook_tutorial/Japanese_version/11.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

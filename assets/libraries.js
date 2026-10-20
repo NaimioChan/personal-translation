@@ -68,5 +68,9 @@ window.PT_LIBRARIES = [
   { dir: 'vst3-dev-portal', title: 'VST 3 开发者门户',
     desc: 'Steinberg VST 3 开发者门户的中文译本。',
     source: 'https://steinbergmedia.github.io/vst3_dev_portal/',
-    updated: '2026-10-19', pages: 161 }
+    updated: '2026-10-19', pages: 161 },
+  { dir: 'supercollider-docs', title: 'SuperCollider 文档',
+    desc: 'SuperCollider 3.14.1 官方帮助文档的中文译本。',
+    source: 'https://docs.supercollider.online/',
+    updated: '2026-10-20', pages: 1278 }
 ];

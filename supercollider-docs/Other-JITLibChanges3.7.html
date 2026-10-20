@@ -1,0 +1,1627 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3.7 中的 JITLib 变更 - SuperCollider 文档</title>
+<meta name="description" content="JITLib 的更改日志">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>3.7 中的 JITLib 变更</h1>
+
+<p><em>JITLib 的更改日志</em></p>
+
+<h2 id="Overview">Overview</h2>
+
+<p>总体而言，此版本的改动旨在强化代理作为真正占位符的理念，使其在许多方面表现得与源对象一样：</p>
+
+<ul>
+<li>模式代理现在的行为应更接近其源模式</li>
+<li>节点代理可以根据源 UGen 函数的大小调整其通道数，如果你允许它们这样做</li>
+</ul>
+
+<p>这增加了一点复杂性，但出于各种原因，其他方面可以简化，从而类更少、代码更易读。系统更容易从故障中恢复。一些鲜为人知（或未知）的 bug 也被修复了。</p>
+
+<p>由于代码的许多部分已被修改，其中可能仍存在 bug。下面你会找到一长串（手动）测试，这些测试也应能稍微揭示出你可以对该系统有何期待。</p>
+
+<p>已更改的类：</p>
+
+<ul>
+<li><a href="Classes-NodeProxy.html">NodeProxy</a>、<a href="Classes-BusPlug.html">BusPlug</a>、<a href="Classes-Ndef.html">Ndef</a></li>
+<li><a href="Classes-PatternProxy.html">PatternProxy</a>、<a href="Classes-Pdefn.html">Pdefn</a>、<a href="Classes-EventPatternProxy.html">EventPatternProxy</a>、<a href="Classes-Pdef.html">Pdef</a>、<a href="Classes-ProxySpace.html">ProxySpace</a></li>
+<li><a href="Classes-Monitor.html">Monitor</a>、<a href="Classes-NodeMap.html">NodeMap</a></li>
+</ul>
+
+<blockquote class="note"><p><strong>注意：</strong> 示例使用 Ndef 给出，但同样适用于 ProxySpace 和 NodeProxy：<code>Ndef(\x, 5);</code> 与 ProxySpace 中的 <code>~x = 5;</code> 相同。</p></blockquote>
+
+<p>行为方面最大的变化之一可能是节点代理的弹性<strong>重塑</strong>（参见：<a href="#NodeProxy%20elastic%20behavior%20setting">NodeProxy 弹性行为设置</a>）。默认情况下它是关闭的。如果你想将其作为默认设置进行测试，可以将以下内容添加到启动文件中：</p>
+
+<pre><code>BusPlug.defaultReshaping = \elastic;</code></pre>
+
+<h2 id="Behavior Changes">行为变更</h2>
+
+<h3 id="Changes in pattern proxies (Pdef/Pdefn/Tdef and respective parent classes)">模式代理（Pdef/Pdefn/Tdef 及各自的父类）中的变更</h3>
+
+<ul>
+<li>当代理的源是非流/非模式对象时，每个流只返回该对象一次（默认不循环）</li>
+<li>在模式系统中，非模式对象的角色是模糊的：在某些情况下，当作为模式的输入使用时，它会无休止地返回自身（例如在 <a href="Classes-Pbind.html">Pbind</a> 的值中）。在其他情况下（例如作为 <a href="Classes-Pseq.html">Pseq</a> 列表的元素），它们只被使用一次，然后让位给下一个元素。模式代理实际上应根据其输入表现出相同的行为。这意味着 asStream 和 embedInStream 必须稍作不同的实现：现在所有模式代理对 asStream 和 embedInStream 的行为都与其各自的源对象相同。例如 <code>Pdefn(\x, 800); Pbindef(\freq, Pdefn(\x))</code> 将循环 800，而 <code>Pseq([Pdefn(\x), 900])</code> 将先返回 800，然后返回 900。</li>
+</ul>
+
+<h3 id="Changes in node proxy (NodeProxy, Ndef, BusPlug)">节点代理（NodeProxy、Ndef、BusPlug）中的变更</h3>
+
+<ul>
+<li>controls 现在在创建 synth 时设置，而不是在额外的 set 消息中设置。这意味着 i-rate controls 可以在 nodemap 中设置。</li>
+<li>send 和 spawn 的 extraArgs 现在会覆盖每个 synth 现有的 nodeMap 设置</li>
+<li>当把节点代理的源设为一个数字或一个数字数组时，总线由一个预编译的 synth def 设置，这比构建一个要高效和一致得多。这意味着现在可以放心地以更高频率将源设为一个数字/数组（例如 Ndef(\x, [100, 200])）。</li>
+<li>由于实现原因，现在无法再在单个节点代理中累加数字。一个槽位会覆盖下一个槽位。例如 <code>Ndef(\x)[0] = 100; Ndef(\x)[1] = 200;</code> 的输出将是 200，而不是（像以前那样）300。</li>
+<li>play（Monitor）现在可以从任意数量的声道映射到任意数量的声道</li>
+<li>play 和 playN (Monitor) 之前传递的参数会被保留，并且可以被新参数部分覆盖（消息 clear 会移除它们）。</li>
+<li>nodeProxy.value(n)（例如 <code>SinOsc.ar(Ndef(\x)</code>）将保持代理已有的速率）。</li>
+<li>使用 <code>x.ar(n)</code> 和 <code>x.kr(n)</code> 时，当 <code>n</code> 为 nil 会自动扩展。如果给出了 n，则保持固定。</li>
+<li><code>nodeProxy.ar(n)</code> / <code>nodeProxy.kr(n)</code> 如果未给出 <code>n</code>，它们现在将始终返回一个数组；如果没有给出输入，<code>nodeProxy.value(x)</code> 返回一个数组。这是为了保持普遍一致性：少数 UGen 期望以数组作为输入，而代理的 numChannels 现在可能会变化，因此必须对此加以指定。要得到一个 UGen 而非数组，请分别使用 <code>nodeProxy.ar(1)</code> 或 <code>nodeProxy.kr(1)</code>。</li>
+<li>与之前不同，<code>x.ar(n, offset)</code> 现在会环绕可用的 proxy 总线通道。还有第三个参数（wrap），当设为 false 时会改为裁剪。</li>
+<li>ar/kr 新增了第三个参数 clip：<code>x.ar(n, offset, clip)</code>。将其设为 \wrap 时，会通过环绕来扩展现有通道的输出尺寸（默认值为 \wrap）。如果你希望通过重复最后一个值来保持在范围内，请将其设为 \clip。</li>
+<li>InBus 现在在多通道扩展方面更加灵活和合理，并且有了一份帮助文档</li>
+</ul>
+
+<h3 id="New functionality">新功能</h3>
+
+<ul>
+<li>消息 <a href="Classes-NodeProxy.html#-mold">NodeProxy: -mold</a> 允许在运行时改变代理的通道数和速率。代理的子节点会被自动重新映射，源和监视器都会在各自对应的状态之间交叉淡化。</li>
+<li>注意，重建子项时，父项的时间设置（clock、quant 和 fadeTime）会用于所有其他项。如果需要相关 proxy 拥有不同的时间基准，mold 不会保留它们的时间设置。这种情况下，应将 mold 后 proxy 的 quant 设置为两个 quant 的最小公倍数。</li>
+<li>现在可以直接将 NodeMap 用作 Synth 对象中的参数。</li>
+<li>NodeProxy 可以直接作为 Synth 的参数使用，它会返回其总线索引，或通过 asMap 返回其总线映射参数。请注意，当允许重排时，synth 不会自动更新。你可以注册对 \bus 的依赖。</li>
+<li>节点代理和模式代理现在可以复制：这会复制隐藏的内部状态以使副本独立，但会保留对源对象的引用。在 NodeProxy 中，已渲染的 SynthDef 会被缓存，因此复制效率很高。ProxySpace 或 LazyEnvir 可以被复制，然后独立修改。</li>
+</ul>
+
+<h3 id="NodeProxy elastic behavior setting">NodeProxy 弹性行为设置</h3>
+
+<ul>
+<li>NodeProxy 现在能够根据其源进行重塑。这样做时，它会递归更新所有依赖于它的其他 node proxy。源和监听都会在各自状态之间交叉淡化。</li>
+<li><p>重塑可以在三个层级上设置：</p>
+
+<ul>
+<li>作为全局默认值，例如：<code>BusPlug.defaultReshaping = \elastic</code>。</li>
+<li>对于 ProxySpace，例如：<code>p = ProxySpace.push; p.reshaping = \elastic</code>。</li>
+<li>对于单个 NodeProxy/BusPlug，例如：<code>Ndef(\x).reshaping = \elastic</code>。</li>
+</ul></li>
+<li>默认情况下，重塑为 <code>nil</code>（不自动重塑）。除此之外，目前还有 <code>\elastic</code>：既可收缩也可增长，并改变速率；以及 <code>\expanding</code>：仅增长，但也会调整速率。</li>
+</ul>
+
+<h3 id="A few minor changes">一些细微更改</h3>
+
+<ul>
+<li>空函数 / 或返回 nil 的函数传给节点代理不会失败，而只是播放一个没有输出的 synth</li>
+<li>尝试播放控制速率代理时，仅发出警告而不抛出错误</li>
+<li>代理的源在插入时构建，而不仅仅在服务器运行时构建。这允许独立于服务器运行状态了解其通道数。</li>
+<li>总线在 fadeTime 之后被释放，以避免过早重用。</li>
+<li>proxy 被传入由事件流产生的事件中（<code>~proxy</code>）。</li>
+</ul>
+
+<h2 id="Implementation Changes">实现变更</h2>
+
+<ul>
+<li>NodeProxy 和 BusPlug 的代码已经过重构，使其更易阅读且行为更一致（见下文）。</li>
+<li>NodeMap 现在只是一个 Dictionary（NodeMapSetting 类已被移除）。你可以将 NodeMap 用于多种用途。</li>
+<li>节点代理会跟踪任何使用其输出的其他节点代理，以便在总线发生变化时重建它们（“子节点”）。</li>
+<li>一些方法，如 setSourceLikeInPbind 和 prFadeTime，已不再需要。</li>
+</ul>
+
+<h2 id="Bugs fixed">已修复的 Bug</h2>
+
+<ul>
+<li>当 quant 不为 nil 时，Pattern Proxies 有时无法正确嵌入（已修复）</li>
+<li>当节点代理彼此启动时，它们之间的节点顺序是错误的（已修复）</li>
+<li>一次多次设置 NodeProxy 的源时未能释放相应的 synth（已修复）</li>
+<li>在 NodeProxy 中使用依赖组的事件模式（如 Pfxb）会将它们分配到错误的组（已修复）</li>
+<li>Pdef 中的清理有时不生效。修复了问题 #107。</li>
+</ul>
+
+<h2 id="Example: Elastic NodeProxy">示例：弹性 NodeProxy</h2>
+
+<pre><code>s.boot;
+Ndef.clear;
+Ndef.defaultReshaping = \elastic;
+Ndef(\x).play(0, 2);
+Ndef(\x).fadeTime = 1.3;
+Ndef(\y, { Dust.ar(115, 0.1) });
+Ndef(\x, { Resonz.ar(Ndef.ar(\y), [700, 720], 0.001, 300) });
+Ndef(\y, { Dust2.ar([3, 115], [1, 0.1]) });
+Ndef(\x, { Resonz.ar(Ndef.ar(\y), [600, 1720], 0.01, 100) });
+Ndef(\x, { Splay.ar(Resonz.ar(Ndef(\y), [600, 1720, 820, 1000] * 1.5, 0.01, 100)) });
+Ndef(\y, { Dust.ar([3, 115, 5, 101] * 0.1, [1, 0.1]) });
+Ndef(\y, { Dust.ar([3, 115, 5, 101] * 10, [1, 0.1]/2) });
+Ndef(\y, { Dust.ar([1013, 415, 1115, 101] * (Ndef.kr(\aa) + 1), [0.1, 0.1]/2) });
+
+Ndef(\aa, { Blip.ar([0.03, 0.05, 0.1], 3).exprange(0.1, 100) });
+Ndef(\y, { Dust.ar([1013, 415, 1115, 101] * (Ndef.ar(\aa) + 1), [0.1, 0.1]/2) });
+
+Ndef(\x, { Splay.ar(Resonz.ar(Ndef(\y), [600, 720, 320, 780] * (Ndef.ar(\aa).lag(0.01) * 0.3 + 1), 0.01, 100)).distort });
+Ndef(\aa, { Blip.ar([1, 0.5, 0.4], 30).exprange(0.1, 10) });
+
+
+Ndef(\y, { Impulse.ar([1, 2/3, 4/6, 2] * 100 * DelayC.ar(Ndef(\aa) + 1, 0.5, 0.5, 1, Ndef(\aa)), [0.1, 0.1]/2) });
+Ndef(\y, { Impulse.ar([1, 2/3, 4/6, 2] * 4 * DelayC.ar(Ndef(\aa) + 1, 0.5, 0.5, 1, Ndef(\aa)), [0.1, 0.1]/2) });
+
+
+Ndef(\y, { Impulse.ar([1, 2/3, 4/6, 2, 3] * 100 * DelayC.ar(Ndef.ar(\aa) + 1, 0.5, LFNoise1.kr(0.1 ! 4).range(0, 0.5), 1, Ndef.ar(\aa)), [0.1, 0.1]/2) });
+
+Ndef(\y, { Impulse.ar([1, 2/3, 4/6, 2, 9/8] * 100 * DelayC.ar(Ndef.ar(\aa) + 1, 0.5, LFNoise1.kr(3 ! 2).range(0, 0.5), 1, Ndef(\aa)), [0.1, 0.1]/2) });
+
+Ndef(\x, { Splay.ar(Resonz.ar(SplayAz.ar(4, Ndef.ar(\y)), [600, 720, 320, 780] * (Ndef.ar(\aa).lag(0.01) * 0.3 + 1), 0.01, 100)).distort });</code></pre>
+
+<h2 id="Tests for NodeProxy and Monitor">NodeProxy 和 Monitor 的测试</h2>
+
+<pre><code>// node proxy 的一些测试。
+// 等式应始终成立
+
+////////////////////////////////////// 构建与加载分离 ////////////////////////////////////////////
+// 测试在有和没有服务器运行时的构建与加载
+
+s.quit;
+Ndef.clear;
+x = nil;
+Ndef(\x, { x = &quot;rebuilt&quot;; SinOsc.ar([661.1, 877.1, 551.1]) });
+Ndef(\x).rate == \audio;
+Ndef(\x).numChannels == 3;
+Ndef(\x).loaded == false;
+Ndef(\x).isPlaying == false;
+x == &quot;rebuilt&quot;;
+x = nil;
+
+
+s.boot;
+Ndef(\x).loaded == false;
+Ndef(\x).send;
+x == nil;
+Ndef(\x).isPlaying;
+Ndef(\x).loaded == true;
+Ndef(\x).rebuild;
+x == &quot;rebuilt&quot;;
+Ndef(\x).loaded == true;
+
+s.quit;
+x = nil;
+Ndef(\x).rebuild;
+x == &quot;rebuilt&quot;;
+Ndef(\x).loaded == false;
+Ndef(\x).send;
+Ndef(\x).loaded == true;
+
+// 为大型初始化提供故障保护
+s.options.numWireBufs = 64 * (2**7);
+s.reboot;
+Ndef.clear;
+Ndef(\x).ar(s.options.numAudioBusChannels * 2);
+Ndef(\x).isNeutral;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x, { DC.ar(0 ! (s.options.numAudioBusChannels * 2)) });
+Ndef(\x).isNeutral;
+Ndef(\x).ar(8);
+Ndef(\x).numChannels == 8;
+Ndef(\x, { DC.ar(0 ! (s.options.numAudioBusChannels * 2)) });
+Ndef(\x).numChannels == 8;
+
+
+// 测试 fadeTime
+s.reboot;
+Ndef(\x).fadeTime = 2;
+Ndef(\x).reshaping = \elastic;
+
+Ndef(\x, { Out.kr(122, -1); SinOsc.ar([200, 300]) * 0.1 });
+Ndef(\x, { Out.kr(122, -100); SinOsc.ar([200, 300, 400]) * 0.1 });
+
+// 稍等片刻
+s.getControlBusValue(122) == -100;
+Ndef(\x).clear(1); fork { 1.01.wait; Ndef(\x).isNeutral.postln };
+
+
+
+////////////////////////////////////// 新节点映射 ////////////////////////////////////////////
+// 通用测试
+s.reboot;
+a = NodeMap.new;
+a.upToDate == false;
+a.setMsg == nil;
+a.set(\freq, 700, \amp, [0.1, 0.2], \bus, Bus.audio(s));
+a.setMsg;
+a.asOSCArgArray;
+a.addToEvent(x = (g: 9)); x == ( &#x27;bus&#x27;: 4, &#x27;g&#x27;: 9, &#x27;freq&#x27;: 700, &#x27;amp&#x27;: [ 0.1, 0.2 ] );
+
+// listen
+b = Bus.control(s, 1);
+{ Out.kr(b, SinOsc.kr(3).exprange(300, 1000)) }.play;
+a.set(\freq, b.asMap);
+Synth(\default, a);
+
+
+// 带代理的节点映射
+a = ProxyNodeMap.new;
+a.set(\x, Ndef(\x));
+a.parents.includes(Ndef(\x));
+a.set(\x, 800);
+a.parents.asArray.includes(Ndef(\x)) == false;
+a.set(\x, Ndef(\x));
+Ndef(\x).children == nil;
+
+Ndef(\y).set(\x, Ndef(\x));
+Ndef(\x).children.includes(Ndef(\y));
+Ndef(\y).nodeMap.parents.includes(Ndef(\x));
+Ndef(\y).unset(\x);
+Ndef(\x).children.includes(Ndef(\y)) == false;
+
+s.boot;
+Ndef.clear;
+x = nil;
+OSCdef(\x, { |msg| msg[3..].postln; x = msg[3]; }, &quot;/tr&quot;);
+Ndef(\x, { var val = \freq.kr(0 ! 4); SendReply.kr(Changed.kr(val), &quot;/tr&quot;, val) });
+Ndef(\x).set(\freq, [100, pi, 34, 1]);
+x == 100;
+Ndef(\z, 80);
+Ndef(\x).map(\freq, Ndef(\z));
+x == 80;
+Ndef(\z).children.includes(Ndef(\x));
+Ndef(\x).map(\freq, nil);
+Ndef(\z).children.includes(Ndef(\x)).not;
+
+////// 发送 extraArguments 覆盖 nodemap，因为它位于其后。
+// 看：
+s.waitForBoot({ s.dumpOSC(true)});
+Ndef.clear;
+Ndef(\x).ar(2);
+Ndef(\x, \default);
+Ndef(\x).set(\freq, 800, \x, 70);
+Ndef(\x, \default);
+Ndef(\x, { SinOsc.ar(\freq.ar(440), SinOsc.ar(100 * \x.kr(0 ! 2))) * 0.1 });
+Ndef(\x).set(\freq, 800, \x, 70);
+Ndef(\x).send([\freq, 1000]);
+
+s.dumpOSC(false);
+
+
+// 节点映射和控制名称
+Ndef(\x).clear;
+Ndef(\x, { |freq = 770, amp| [freq, amp]});
+Ndef(\x).controlNames.collect { |x| x.name }.as(Set) == Set[\freq, \amp]
+Ndef(\x).set(\freq, 800, \zzz, 99);
+Ndef(\x).nodeMap.setMsg.includes(\out);
+Ndef(\x).controlNames.collect { |x| x.name }.as(Set) == Set[\freq, \amp, \zzz];
+Ndef(\x).getKeysValues.shape == [3, 2];
+Ndef(\x).getKeysValues.flop[0].as(Set) == Set[\freq, \amp, \zzz];
+
+// 子节点与 nodeMap
+Ndef.clear;
+a = { NodeProxy.control(s) } ! 8;
+Ndef(\x, a.sum);
+a[0].children.includes(Ndef(\x));
+Ndef(\x, 0);
+a[0].children.includes(Ndef(\x)).not;
+
+// 已更新？
+Ndef.clear;
+Ndef(\x).ar(2);
+Ndef(\x).map(\g, Ndef(\y));
+Ndef(\x).nodeMap.asOSCArgArray;
+Ndef(\y).index;
+Ndef(\y).mold(8);
+Ndef(\x).nodeMap.asOSCArgArray; // 看。如何测试？
+
+
+
+
+////////////////////////////////////// internal bus ////////////////////////////////////////////
+
+
+// 模具测试
+s.boot; // 重要
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x, { SinOsc.ar([277, 377, 663]) });
+Ndef(\x).numChannels == 3;
+Ndef(\x).mold(1, \audio);
+Ndef(\x).numChannels == 1;
+Ndef(\x).rebuild;
+Ndef(\x).numChannels == 3;
+Ndef(\x).mold(2, \control);
+Ndef(\x, { SinOsc.kr([277, 377, 663]) });
+Ndef(\x).numChannels == 3;
+Ndef(\x).rate == \control;
+
+Ndef.clear;
+Ndef(\x).reshaping = nil;
+Ndef(\x, { SinOsc.ar([277, 377, 663]) });
+Ndef(\x, { SinOsc.ar([277, 377, 663, 1000]) });
+Ndef(\x).numChannels == 3;
+Ndef(\x).mold;
+Ndef(\x).numChannels == 4;
+Ndef(\x).mold(1, \audio);
+Ndef(\x).numChannels == 1;
+
+s.quit;
+Ndef.clear;
+Ndef(\x).reshaping = nil;
+Ndef(\x, { SinOsc.ar([277, 377, 663]) });
+Ndef(\x, { SinOsc.ar([277, 377, 663, 1000]) });
+Ndef(\x).numChannels == 3;
+Ndef(\x).mold;
+Ndef(\x).numChannels == 4;
+Ndef(\x).mold(1, \audio);
+Ndef(\x).numChannels == 1;
+
+
+Ndef(\x).rebuild;
+Ndef(\x).numChannels == 1;
+Ndef(\x).mold(2, \control);
+Ndef(\x, { SinOsc.kr([277, 377, 663]) });
+Ndef(\x).numChannels == 2;
+
+// 测试通道初始化
+Ndef.clear;
+Ndef(\x).bus;
+Ndef(\x).isNeutral;
+Ndef(\x).ar(3);
+Ndef(\x).ar(4);
+Ndef(\x).numChannels == 3;
+Ndef(\x, [1, 2, 3, 4, 5]);
+Ndef(\x).numChannels == 3;
+Ndef.clear;
+
+Ndef(\x).reshaping = \elastic;
+Ndef(\x).ar(3);
+Ndef(\x).ar(4);
+Ndef(\x).numChannels == 3; // .ar/.kr 不应改变总线，除非是 neutral
+
+Ndef(\x, [1, 2, 3, 4, 5]); // 但设置源应该
+Ndef(\x).numChannels == 5;
+Ndef(\x, [1, 2]);
+Ndef(\x).numChannels == 2;
+Ndef(\x).children == nil;
+
+// listen
+s.boot;
+Ndef.clear;
+Ndef(\x, { Blip.ar([172, 177]/10) * 0.2 });
+s.reboot;
+Ndef(\x).bus
+Ndef(\x).play;
+
+// test
+Ndef.clear;
+Ndef(\x).ar(2);
+Ndef(\x, Ndef(\y));  // 未指定通道的嵌套代理
+Ndef(\x).numChannels == 2;
+Ndef(\y).numChannels == 2;
+Ndef(\y, [1, 2, 3, 4]);
+Ndef(\x).numChannels == 2;
+
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\x).ar(2);
+Ndef(\x, Ndef(\y)); // 未指定通道的嵌套代理
+Ndef(\x).numChannels == 2;
+Ndef(\y).numChannels == 2;
+Ndef(\y, [1, 2, 3, 4]);
+Ndef(\x).numChannels == 4;
+Ndef(\y).numChannels == 4;
+
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\x).ar(2);
+Ndef(\x, { Ndef.ar(\y, 2) }); // 带通道指定的嵌套代理
+Ndef(\x).numChannels == 2;
+Ndef(\y).numChannels == 2;
+Ndef(\y, [1, 2, 3, 4]);
+Ndef(\x).numChannels == 2; // x 保持不变
+Ndef(\y).numChannels == 4; // y 改变
+
+
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\x).ar(2);
+Ndef(\x, { Ndef.ar(\y, 3) }); // 带通道指定的嵌套代理
+Ndef(\x).numChannels == 3; // x 已改变
+Ndef(\y).numChannels == 3;
+Ndef(\y, [1, 2, 3, 4]);
+Ndef(\x).numChannels == 3; // x 保持不变
+Ndef(\y).numChannels == 4; // y 已改变
+
+
+s.boot; // 重要！
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\x).ar(2);
+Ndef(\x, { Ndef.ar(\y) });
+Ndef(\x).numChannels == 2;
+Ndef(\y).numChannels == 2;
+Ndef(\y, [1, 2, 3, 4]);
+Ndef(\x).numChannels == 4;
+Ndef(\y).numChannels == 4;
+Ndef(\y).children.includes(Ndef(\x));
+
+
+
+s.quit; // 重要！
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\x).ar(2);
+Ndef(\x, { Ndef.ar(\y) });
+Ndef(\x).numChannels == 2;
+Ndef(\y).numChannels == 2;
+Ndef(\x).bus;
+Ndef(\y, [1, 2, 3, 4]);
+Ndef(\y).numChannels == 4;
+Ndef(\x).numChannels == 4;
+Ndef(\x).loaded == false;
+Ndef(\x).bus;
+
+s.boot;
+Ndef(\x).play;
+Ndef(\y, [1, 2, 3, 4]);
+Ndef(\x).numChannels == 4;
+Ndef(\y).numChannels == 4;
+Ndef(\y).children.includes(Ndef(\x));
+
+
+// 总线释放的时机
+s.boot; // 重要
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\y).kr(1);
+b = Ndef(\y).bus;
+Ndef(\x).quant = 4;
+//Ndef(\x).fadeTime = 4;
+Ndef(\y, Ndef(\x));
+(
+c = Ndef(\x).clock ? TempoClock.default;
+c.sched(c.timeToNextBeat(4, 0.1), {
+    Ndef(\x, { DC.ar([0, 0, 0]) }); (Ndef(\y).bus != b).postln; (b.index != nil).postln;
+
+});
+fork { 1.wait; c.sched(c.timeToNextBeat(4), { c.sched(Ndef(\x).fadeTime, { (b.index == nil).postln; nil }); nil }) };
+);
+
+
+// 二元运算
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\z).reshaping = \elastic;
+Ndef(\z).kr(3);
+
+Ndef(\x, Ndef(\y) * Ndef(\z)); // 二元运算代理初始化
+Ndef(\x).numChannels == 3;
+Ndef(\y).numChannels == 3;
+Ndef(\y).rate == \control;
+
+Ndef(\z, (1..5));
+Ndef(\x).numChannels == 5;
+Ndef(\y).numChannels == 3;
+Ndef(\z).numChannels == 5;
+
+Ndef(\z, { DC.ar([0, 0, 0]) });
+Ndef(\x).numChannels == 3;
+Ndef(\y).numChannels == 3;
+Ndef(\z).numChannels == 3;
+Ndef(\z).rate == \audio;
+
+
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\z).reshaping = \elastic;
+
+Ndef(\x, { Ndef.ar(\y) * Ndef.ar(\z) * [1, 1, 1] });
+Ndef(\y, 0);
+Ndef(\x).numChannels == 3;
+Ndef(\y).numChannels == 1;
+Ndef(\z).numChannels == 2;
+Ndef(\z, { DC.ar([0, 0, 0, 0, 0]) });
+Ndef(\x).numChannels == 5;
+Ndef(\y).numChannels == 1;
+Ndef(\z).numChannels == 5;
+Ndef(\x).rate == \audio;
+
+Ndef.clear;
+Ndef(\x).ar.numChannels == Ndef.defaultNumAudio;
+Ndef(\y).kr.numChannels == Ndef.defaultNumControl;
+
+
+Ndef.clear;
+Ndef.defaultNumAudio = 8;
+Ndef.defaultNumControl = 3;
+Ndef(\x).ar.numChannels == Ndef.defaultNumAudio;
+Ndef(\y).kr.numChannels == Ndef.defaultNumControl;
+
+s.boot;
+Ndef.clear;
+Ndef(\x).play;
+Ndef(\x).ar.numChannels == Ndef.defaultNumAudio;
+
+
+Ndef.defaultNumAudio = 2;
+Ndef.defaultNumControl = 2;
+Ndef.clear;
+
+// 一元和二元运算初始化
+Ndef.clear;
+a = Ndef(\x) + Ndef(\y);
+Ndef(\x).isNeutral;
+a.rate == \scalar;
+a.numChannels == nil;
+
+a = Ndef(\x) + 1; // 一个数字的 numChannels 为 1
+Ndef(\x).isNeutral;
+a.rate == \scalar;
+a.numChannels == 1;
+
+a = 1 + Ndef(\x); // 一个数字的 numChannels 为 1
+Ndef(\x).isNeutral;
+a.rate == \scalar;
+a.numChannels == 1;
+
+a = Ndef(\x) + { 100 }; // 函数没有速率，numChannels 为 1
+Ndef(\x).isNeutral;
+a.rate == \scalar;
+a.numChannels == 1;
+
+a = Ndef(\x).abs; // 一元运算不影响形状
+a.rate == \scalar;
+a.numChannels == nil;
+
+Ndef.clear;
+Ndef(\y).ar(3); // 将 y 初始化为 3 声道音频
+a = Ndef(\x) + Ndef(\y); // 二元运算将影响操作数
+Ndef(\x).numChannels == nil;
+a.rate == \audio;
+a.numChannels == 3;
+
+Ndef.clear;
+Ndef(\y).ar(3); // 将 y 初始化为 3 声道音频
+a =  Ndef(\y) + Ndef(\x); // 逆二元运算将影响操作数
+Ndef(\x).numChannels == nil;
+a.rate == \audio;
+a.numChannels == 3;
+
+
+// 同时处理多件事
+s.boot;
+Ndef(\x).clear;
+Ndef(\x).reshaping = \elastic;
+20.do { Ndef(\x, { { WhiteNoise.ar } ! rrand(3, 8) }) };
+OSCFunc({ |msg| x = msg[3].postln }, &quot;/tr&quot;);
+Ndef(\x, { SendTrig.kr(TDelay.kr(Impulse.kr(0), 0.1), 0, NumRunningSynths.kr) });
+x == 1;
+//s.plotTree;
+
+Ndef.defaultNumControl
+
+// 直接嵌入
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\z).reshaping = \elastic;
+Ndef(\x, { SinOsc.ar(Ndef(\y)) * 0.1 });
+Ndef(\y).rate == \control;
+Ndef(\y).numChannels == 1;
+Ndef(\x).rate == \audio;
+Ndef(\x).numChannels == 1;
+Ndef(\y, { LFPulse.kr([0.8, 0.6]) });
+Ndef(\y).numChannels == 2;
+Ndef(\x).numChannels == 2;
+
+Ndef(\x, { SinOsc.ar(Ndef(\y) + 300) * 0.1 });
+Ndef(\y).numChannels == 2;
+Ndef(\x).numChannels == 2;
+
+Ndef(\x, Ndef(\z) + Ndef(\u));
+Ndef(\z).numChannels
+Ndef(\z, (1..9));
+Ndef(\x).numChannels == 9;
+
+// 槽位重建测试
+s.quit;
+Ndef.clear; x = nil;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x)[0] = { x = &quot;rebuilt&quot;; SinOsc.ar([277, 377, 663]) };
+x == &quot;rebuilt&quot;;
+x = nil;
+Ndef(\x)[1] = { SinOsc.ar([277, 377, 663, 900]) };
+x == &quot;rebuilt&quot;;
+Ndef(\x).numChannels == 4;
+Ndef(\x)[0] = {  x = &quot;rebuilt&quot;; SinOsc.ar([100, 202]) };
+Ndef(\x).numChannels == 2;
+x = nil;
+Ndef(\x).mold(5);
+x == &quot;rebuilt&quot;;
+Ndef(\x).numChannels == 5;
+
+// 测试槽通道初始化：TODO：它们真的被重建了吗？
+
+Ndef.clear;
+x = 0;
+Ndef(\x)[0] = { &quot;rebuild two&quot;.postln; x = x + 1; SinOsc.kr([1, 2]) };
+Ndef(\x)[1] = { &quot;rebuild four&quot;.postln;  x = x + 1; SinOsc.kr([1, 2, 3, 4]) };
+Ndef(\x)[2] = { &quot;rebuild one&quot;.postln;  x = x + 1; SinOsc.kr(1) };
+Ndef(\x).numChannels == 2;
+x = 0;
+Ndef(\x).mold;
+Ndef(\x).numChannels == 4;
+x == 3;
+
+// 标量输出不会被返回
+Ndef.clear;
+Ndef(\x)[0] = { &quot;rebuild two&quot;.postln; [1, 2] };
+Ndef(\x)[1] = { &quot;rebuild four&quot;.postln; [1, 2, 3, 4] }
+Ndef(\x)[2] = { &quot;rebuild one&quot;.postln; 1 };
+Ndef(\x).rate == \control;
+Ndef(\x).mold; // 同样不应该做任何事。好吧，我想在这种情况下它必须做，除非我们检查整个源集合的最大速率。如果源本身会初始化 proxy，这是不可能的。
+Ndef(\x).isNeutral.not;
+Ndef(\x).mold(4); // 这应该
+Ndef(\x).numChannels == 4;
+Ndef(\x).rate == \control;
+
+
+
+// 映射和初始化测试
+Ndef.clear;
+Ndef(\x).nodeMap.proxy == Ndef(\x);
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\x).map(\freq, Ndef(\y));
+Ndef(\y).children.includes(Ndef(\x));
+Ndef(\y, (1..6));
+Ndef(\y).numChannels == 6;
+Ndef(\x).numChannels == nil;
+Ndef(\x, 8);
+Ndef(\x).numChannels == 1;
+Ndef(\y, { SinOsc.ar(400) });
+Ndef(\x).numChannels == 1; // 正确。映射不应改变 numChannels
+Ndef(\x, { SinOsc.ar(\freq.kr(440 ! 2)) * 0.1 });
+Ndef(\y).numChannels == 1;
+Ndef(\x).numChannels == 2;
+Ndef(\x).rate == \audio;
+Ndef(\x).set(\freq, 500);
+Ndef(\x).unmap(\freq);
+Ndef(\x).unset(\freq);
+Ndef(\y).children.includes(Ndef(\x)).not;
+
+
+
+// bus 参数与重塑测试
+s.options.numOutputBusChannels = 2;
+s.options.numInputBusChannels = 2;
+s.reboot;
+
+Ndef.clear;
+Ndef(\x).ar(2);
+Ndef(\x).asControlInput == [&quot;a4&quot;, &quot;a5&quot;];
+Ndef.clear;
+Ndef(\x).mold(3, \audio);
+Ndef(\x).rate == \audio;
+Ndef(\x).numChannels == 3;
+
+s.boot;
+Ndef.clear;
+a = 10;
+Ndef(\x, { { DC.ar(1.0) } ! a });
+a = 11;
+Ndef(\x).rebuild;
+Ndef(\x).numChannels == 10;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x).rebuild;
+Ndef(\x).numChannels == 11;
+
+
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\x).ar(8);
+Ndef(\y, { Ndef(\x) });
+Ndef(\y).numChannels == 8;
+Ndef(\x).children.includes(Ndef(\y));
+Ndef(\x).clear;
+Ndef(\x, { SinOsc.ar([100, 200, 283]) });
+Ndef(\y).numChannels == 8;
+Ndef(\x).numChannels == 3;
+
+// channelOffset：看
+
+Ndef.clear;
+Ndef(\x).ar(4); // 声道必须正确偏移
+Ndef(\x).put(0, { SinOsc.ar(440) }, channelOffset: 2);
+{ Ndef.ar(\x, 4) }.plot; // 看：第三个通道中应该有一个正弦波
+
+// 听力测试
+Ndef.clear;
+Ndef(\y, { Splay.ar(Ringz.ar(Ndef.ar(\x, 8), ((0..7) * 2 + 72).midicps, 0.1)) }).play;
+Ndef(\x).put(0, { Impulse.ar(1) }, 0);
+Ndef(\x).put(0, { Impulse.ar(2) }, 5);
+Ndef(\x).put(1, { Impulse.ar(2/3) }, 2);
+Ndef(\x).put(2, { Impulse.ar(4) }, 4);
+Ndef(\x).quant = 1.0;
+Ndef(\x).rebuild;
+
+
+// 通过模式实现动态偏移
+Ndef.clear;
+s.boot;
+Ndef(\x).reshaping = \elastic;
+Ndef(\y).reshaping = \elastic;
+Ndef(\x, Pbind(\channelOffset, Pseries(0, 1, inf), \dur, 0.25, \legato, 0.1));
+Ndef(\y, { Ndef.ar(\x).collect { |x| x * SinOsc.ar(exprand(3.0, 3000)) * LFPulse.kr(rrand(10, 50)) } }).play(0, 2);
+Ndef(\x).numChannels == 2;
+Ndef(\x).quant = 4;
+Ndef(\x).mold(4);
+Ndef(\x).mold(8);
+Ndef(\x).mold(16);
+
+////////////////////////////////////// Monitor ////////////////////////////////////////////
+// 测试简单播放
+s.quit;
+Ndef.clear;
+Ndef(\x).play;
+Ndef(\x).isNeutral;
+
+s.boot;
+Ndef(\x).play;
+Ndef(\x).numChannels == NodeProxy.defaultNumAudio;
+Ndef(\x).rate == \audio;
+Ndef(\x).clear;
+Ndef(\x).monitor.isPlaying == false;
+Ndef(\x, (1..5));
+Ndef(\x).play; // 目前：警告并什么都不做。将来：转换速率（system_link_control2audio）
+
+Ndef.clear;
+Ndef(\x, { SinOsc.ar((1..6) * 200) * 0.1 });
+Ndef(\x).play;
+Ndef(\x).monitor.outs == (0..5);
+Ndef(\x).mold(2);
+Ndef(\x).numChannels == 2;
+Ndef(\x).monitor.outs == (0..1);
+Ndef(\x).stop;
+Ndef(\x).play;
+Ndef(\x).monitor.outs == (0..1);
+Ndef(\x).mold;
+Ndef(\x).monitor.outs == (0..5);
+
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x, { SinOsc.ar((1..6) * 200) * 0.1 });
+Ndef(\x).play;
+Ndef(\x).monitor.outs == (0..5);
+Ndef(\x, { SinOsc.ar([300, 439]) * 0.1 });
+Ndef(\x).numChannels == 2;
+Ndef(\x).monitor.outs == [0, 1];
+Ndef(\x, { SinOsc.kr([300, 439]) * 0.1 });
+Ndef(\x, { SinOsc.ar([300, 439]) * 0.1 }); // 再次播放。
+Ndef(\x, { SinOsc.ar((1..6) * 200) * 0.1 });
+
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x).play(4, 3); // 从总线 4，3 个通道
+Ndef(\x).monitor.outs == [4, 5, 6];
+Ndef(\x, { SinOsc.ar((1..6) * 200) * 0.1 });
+Ndef(\x).numChannels == 6;
+Ndef(\x).monitor.outs == [4, 5, 6];
+Ndef(\x).monitor.ins == (Ndef(\x).index + (0..5));
+Ndef(\x, { SinOsc.ar([300, 439]) * 0.1 });
+Ndef(\x).numChannels == 2;
+Ndef(\x).monitor.outs == [4, 5, 6];
+Ndef(\x).monitor.ins == (Ndef(\x).index + (0..1));
+Ndef(\x, { SinOsc.kr([300, 439]) * 0.1 });
+Ndef(\x, { SinOsc.ar([300, 439]) * 0.1 }); // 再次播放。
+Ndef(\x, { SinOsc.ar((1..6) * 200) * 0.1 });
+
+
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x).play;
+Ndef(\x).numChannels == 2;
+Ndef(\x).monitor.outs == [0, 1];
+Ndef(\x).monitor.ins == (Ndef(\x).index + [0, 1]);
+Ndef(\x, { DC.ar([0, 0, 0]) });
+Ndef(\x).numChannels == 3;
+Ndef(\x).monitor.outs == [0, 1, 2];
+Ndef(\x).monitor.ins == (Ndef(\x).index + [0, 1, 2]);
+Ndef(\x).stop;
+Ndef(\x).play;
+Ndef(\x).monitor.outs == [0, 1, 2];
+Ndef(\x).monitor.ins == (Ndef(\x).index + [0, 1, 2]);
+
+
+Ndef.clear;
+Ndef(\x).reshaping = nil;
+Ndef(\y).reshaping = nil;
+Ndef(\x).play;
+Ndef(\x).numChannels == 2;
+Ndef(\x).monitor.outs == [0, 1];
+Ndef(\x).monitor.ins == (Ndef(\x).index + [0, 1]);
+Ndef(\x, { DC.ar([0, 0, 0]) });
+Ndef(\x).numChannels == 2;
+Ndef(\x).monitor.outs == [0, 1]; // OK? 应该是这样吗，大概是的。（可能取决于 s.options.numOutputBusChannels）
+Ndef(\x).monitor.ins == (Ndef(\x).index + [0, 1]);
+Ndef(\x).stop;
+Ndef(\x).play;
+Ndef(\x).monitor.outs == [0, 1]; // 不。[0, 1, 2] 可以吗？应该是这样吗，大概是的。（可能取决于 s.options.numOutputBusChannels）
+Ndef(\x).monitor.ins == (Ndef(\x).index + [0, 1]);
+
+
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x, { Dust.ar(10 ! 2) * 0.1 }).play;
+Ndef(\out) &lt;-- Ndef(\x);
+//{ Trig.ar(InFeedback.ar(0, 2), 0.01) }.plot(0.2);
+Ndef(\x).monitor.isPlaying == false;
+Ndef(\out).monitor.isPlaying == true;
+Ndef(\out, { Ringz.ar(Ndef.ar(\x), [8000, 2888, 3000], 0.1) });
+Ndef(\out).numChannels == 2;
+Ndef(\out).reshaping = \elastic;
+Ndef(\out, { Ringz.ar(Ndef.ar(\x), [8000, 2888, 3000], 0.1) });
+Ndef(\x).numChannels == 2;
+Ndef(\out).numChannels == 3;
+Ndef(\out).monitor.ins.size == 3;
+Ndef(\out).monitor.outs == [0, 1, 2];
+
+// 保留监视器默认值
+Ndef.clear;
+Ndef(\x).playN([0, 3, 5], [0.1, 1], [0, 2], 0.3, [1.0, 2.0]);
+Ndef(\x).monitor.ins == ([0, 2] + Ndef(\x).index);
+Ndef(\x).monitor.outs == [0, 3, 5];
+Ndef(\x).monitor.amps == [0.1, 1];
+Ndef(\x).monitor.vol == 0.3
+Ndef(\x).monitor.fadeTime == [1.0, 2.0];
+Ndef(\x).playN(fadeTime: [0.1, 0.2]);
+Ndef(\x).monitor.fadeTime == [0.1, 0.2];
+Ndef(\x).monitor.outs == [0, 3, 5];
+Ndef(\x).monitor.amps == [0.1, 1];
+Ndef(\x).monitor.vol == 0.3;
+Ndef(\x).stop;
+Ndef(\x).play;
+Ndef(\x).monitor.fadeTime == [0.1, 0.2];
+Ndef(\x).monitor.outs == [0, 3, 5];
+Ndef(\x).monitor.amps == [0.1, 1];
+Ndef(\x).monitor.vol == 0.3;
+Ndef(\x).clear; // 清除它
+Ndef(\x).play;
+Ndef(\x).monitor.fadeTime != [0.1, 0.2];
+Ndef(\x).monitor.outs == [0, 1];
+Ndef(\x).mold(3);
+Ndef(\x).playN([0, 3, 5], [0.1, 1], [0, 2], 0.3, [1.0, 2.0]);
+Ndef(\x).monitor.outs == [0, 3, 5];
+Ndef(\x).mold(7);
+Ndef(\x).monitor.outs == [0, 3, 5];
+Ndef(\x).playN([0, 3, 6]);
+Ndef(\x).monitor.outs == [0, 3, 6];
+Ndef(\x).monitor.amps == [0.1, 1];
+Ndef(\x).monitor.ins == ([0, 2] +  Ndef(\x).index);
+// cmd-period
+Ndef(\x).play;
+Ndef(\x).monitor.outs == [0, 3, 6];
+Ndef(\x).monitor.amps == [0.1, 1];
+Ndef(\x).monitor.ins == ([0, 2] +  Ndef(\x).index);
+
+Ndef(\x).playN(ins: [0, 1]);
+Ndef(\x).monitor.ins == ([0, 1] +  Ndef(\x).index);
+Ndef(\x).playN(ins: [0, 7]);
+Ndef(\x).monitor.ins == ([0, 0] +  Ndef(\x).index); // 在末尾裁剪
+Ndef(\x).mold(9);
+Ndef(\x).monitor.ins == ([0, 7] +  Ndef(\x).index); // 现在未裁剪。
+
+Ndef.clear;
+s.boot;
+Ndef(\x).play(4, 7); // 从总线四播放七个声道
+Ndef(\x).monitor.outs == ((0..6) + 4);
+Ndef(\x).monitor.ins == ((0..6) +  Ndef(\x).index);
+Ndef(\x).playN(fadeTime: [0.1, 0.2]);
+Ndef(\x).monitor.outs == ((0..6) + 4);
+Ndef(\x).monitor.ins == ((0..6) +  Ndef(\x).index);
+Ndef(\x).playN(outs: [0, 2, 3]);
+Ndef(\x).monitor.outs == [0, 2, 3];
+Ndef(\x).monitor.ins == ((0..6) +  Ndef(\x).index);
+
+
+// 已更改的消息
+s.boot;
+x = nil;
+Ndef.clear;
+f = { |...args| x = x ++ args.postln };
+Ndef(\x).addDependant(f);
+Ndef(\x, { SinOsc.ar });
+x.includesAll([\source, \bus]);
+x = nil;
+Ndef(\x).set(\freq, 700);
+x.includesAll([\set]);
+Ndef(\x).map(\freq, 700);
+x.includesAll([\set]); // set == map
+Ndef(\x).unset(\freq, \rate);
+x.includesAll([\unset]);
+Ndef(\x).unmap(\freq, \rate);
+x.includesAll([\unmap]);
+Ndef(\x).reshaping = \elastic;
+x = nil;
+Ndef(\x, { Impulse.kr([1, 2, 3]) });
+x.includesAll([\rebuild, \source]);
+x = nil;
+Ndef(\x).mold(7, \audio);
+x.includesAll([\rebuild]);
+x = nil;
+Ndef(\x).mold(1, \audio);
+x.includesAll([\rebuild, \bus]);
+x = nil;
+Ndef(\x).play;
+x.includesAll([\play]);
+Ndef(\x).clear;
+Ndef(\x).removeDependant(f);
+
+// defaultReshaping
+Ndef.defaultReshaping = \elastic;
+Ndef.clear;
+Ndef(\u).reshaping == Ndef.defaultReshaping;
+Ndef(\u, 8);
+Ndef(\u).rate == \control;
+Ndef(\u, { Blip.ar(1 ! 6) });
+Ndef(\u).rate == \audio;
+Ndef.clear;
+Ndef(\err, { Plippp.ar(800) }); // 创建一个故意的错误
+Ndef(\err).isNeutral; // 仍然未改变
+
+p = ProxySpace(s);
+p.reshaping = \elastic;
+p[\out].reshaping == \elastic;
+p.reshaping = nil;
+p[\out].reshaping == nil;
+
+\control&lt;\scalar;
+\audio&lt;\control;
+
+// 重塑类型：nil、elastic 和 expanding
+
+// reshaping = nil
+Ndef.clear;
+Ndef(\x).reshaping = nil;
+Ndef(\x).kr(1);
+Ndef(\x).rate == \control;
+Ndef(\x, { DC.ar(1) });
+Ndef(\x).numChannels == 1;
+Ndef(\x).rate == \control;
+Ndef(\x, { DC.ar([1, 2]) });
+Ndef(\x).numChannels == 1;
+Ndef(\x, { DC.kr(1) });
+Ndef(\x).numChannels == 1;
+Ndef(\x).rate == \control;
+
+// 重塑 = \elastic
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x).kr(1);
+Ndef(\x).rate == \control;
+Ndef(\x, { DC.ar(1) });
+Ndef(\x).numChannels == 1;
+Ndef(\x).rate == \audio;
+Ndef(\x, { DC.ar([1, 2]) });
+Ndef(\x).numChannels == 2;
+Ndef(\x, { DC.kr(1) });
+Ndef(\x).numChannels == 1;
+Ndef(\x).rate == \control;
+
+// reshaping = \expanding
+// 目前，rate 总是会触发变化。
+Ndef.clear;
+Ndef(\x).reshaping = \expanding;
+Ndef(\x).kr(1);
+Ndef(\x).rate == \control;
+Ndef(\x, { DC.ar(1) });
+Ndef(\x).numChannels == 1;
+Ndef(\x).rate == \audio;
+Ndef(\x, { DC.ar([1, 2]) });
+Ndef(\x).numChannels == 2;
+Ndef(\x, { DC.ar(1) });
+Ndef(\x).numChannels == 2;
+Ndef(\x).rate == \audio;
+Ndef(\x).mold(1); // 强制执行
+Ndef(\x).numChannels == 1;
+
+
+///////// BusPlug 测试
+
+s.boot;
+a = BusPlug(s);
+a.bus == nil;
+a.initBus(\audio, 16);
+a.bus.numChannels == 16;
+a.initBus(\audio, 2) == true;
+a.initBus(\audio, 17) == false;
+a.reshaping = \elastic;
+a.initBus(\audio, 17) == true;
+a.bus.numChannels == 17;
+a.clear;
+a.isNeutral == true;
+
+
+// extraArgs：sendEach 与 sendAll
+Ndef(\x).play;
+Ndef(\x)[0] = { |freq = 900| Blip.ar(freq, 200) * 0.04 };
+Ndef(\x)[1] = { |freq = 900| BPF.ar(PinkNoise.ar(19), freq, 0.01) };
+Ndef(\x).send([\freq, { rrand(340.0, 500.0) } ]);
+Ndef(\x).sendEach([\freq, { rrand(340.0, 500.0) } ]);
+
+
+// 测试映射运算符
+Ndef.clear;
+Ndef.defaultReshaping = \elastic;
+Ndef.all.fadeTime = 3;
+
+Ndef(\x) &lt;&lt;&gt; Ndef(\y) &lt;&lt;&gt; Ndef(\z);
+Ndef(\x).numChannels == 2;
+Ndef(\z).numChannels == 2;
+Ndef(\z, { SinOsc.ar([100, 200, 300] + 520) });
+Ndef(\z).numChannels == 3;
+Ndef(\y).numChannels == 2;
+Ndef(\y, { \in.ar(0 ! 3) * SinOsc.ar(441) });
+Ndef(\y).numChannels == 3;
+Ndef(\x, { \in.ar(0 ! 3) * SinOsc.ar(141) * 0.2 });
+Ndef(\x).play(0, 2);
+Ndef(\y).fadeTime = 2;
+Ndef(\y, { \in.ar(0 ! 3) * SinOsc.ar(141 * 2, SinOsc.ar(Line.kr(1, 12, 10))) });
+
+// 作为 send 参数的 bus
+b = Bus.control(s, 1);
+b.set(440);
+
+Ndef(\x, { |freq = 100| SinOsc.ar(freq) * 0.1 }).play;
+Ndef(\x).send([\freq, b.asMap]);
+
+// 将 proxies 作为 synths 的参数
+SynthDef(\x, { |z=440, out| Out.ar(out, Blip.ar(z) * 0.1) }).add;
+Ndef(\f, { MouseX.kr(400, 700) });
+(instrument: \x, z: Ndef(\f)).play;
+
+// 拼接 nodeMaps：
+a = NodeMap.new;
+a.set(\x, 800);
+Ndef(\x).set(\y, 900);
+Ndef(\x).nodeMap = Ndef(\x).nodeMap ++ a;
+Ndef(\x).nodeMap;
+
+
+
+////////////////////////////////////////////////// Other tests /////////////////////////////////////////////////
+
+
+// 使用合成器进行映射测试。
+
+
+a = { Out.kr(67, SinOsc.kr(1) * 500 + 600) }.play;
+
+b = Synth(\default);
+b.set(\freq, 800);
+b.map(\freq, 67);
+b.map(\freq, -1);
+
+Ndef(\x, \default).play;
+Ndef(\y, { SinOsc.kr(1) * 500 + 600 });
+Ndef(\x).map(\freq, Ndef(\y));
+Ndef(\x).unmap(\freq);
+Ndef(\x).set(\freq, 800);
+
+Ndef(\x).nodeMap
+
+
+// 通过 asAudioRateInput 直接嵌入到 UGen 中
+
+Ndef.clear;
+Ndef(\x).ar(2);
+{ CombL.ar(Ndef(\x)) }.play;
+Ndef(\x, { Dust2.ar(Line.kr(0, 200, 10)) });
+
+Ndef.clear;
+Ndef(\x).kr(2);
+{ CombL.ar(Ndef(\x)) }.play;
+Ndef(\x, { Dust2.kr(Line.kr(0, 200, 10)) });
+
+
+// 复制
+
+a = NodeProxy(s);
+a.set(\gg, 910);
+a.source = 6;
+b = a.copy;
+a.bus !== b.bus;
+a.nodeMap.at(\gg) == b.nodeMap.at(\gg);
+a.source == b.source;
+b.source = 10;
+a.source != b.source;
+a.nodeMap.at(\gg) == b.nodeMap.at(\gg);
+b.set(\gg, 723);
+a.nodeMap.at(\gg) != b.nodeMap.at(\gg);
+
+p = ProxySpace(s);
+p.use { ~x = 891; ~y = 71; ~x.set(\freq, 661) };
+q = p.copy;
+f = { |x, func| x.envir.keys.as(Array).sort.collect { |key| func.(x.envir.at(key)) } };
+f.(p, { |proxy| proxy.source }) == f.(q, { |proxy| proxy.source });
+f.(p, { |proxy| proxy.nodeMap.at(\freq) }) == f.(q, { |proxy| proxy.nodeMap.at(\freq) });
+f.(p, { |proxy| proxy.objects }) != f.(q, { |proxy| proxy.objects });
+p.use { ~x.set(\freq, 0) };
+f.(p, { |proxy| proxy.nodeMap.at(\freq) }) != f.(q, { |proxy| proxy.nodeMap.at(\freq) });
+p.use { ~x = -100 };
+f.(p, { |proxy| proxy.source }) == f.(q, { |proxy| proxy.source });
+
+Ndef(\x).set(\freq, 900);
+Ndef(\x, 7);
+a = Ndef(\y);
+Ndef(\x).copy(\y);
+Ndef(\y) === a;
+Ndef(\y).nodeMap.at(\freq) == 900;
+Ndef(\y).source == 7;
+
+
+// 各种对象
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x, (freq: 100, numChannels: 3));
+Ndef(\x).rate == \audio;
+Ndef(\x).numChannels == 3;
+Ndef(\x, (freq: 100, numChannels: 2));
+Ndef(\x).numChannels == 3;  // 如果 proxy 已初始化，则由用户负责（这样好吗？）
+
+Ndef.clear;
+Ndef(\x, Task { 2.do { &quot;hwert&quot;.scramble.postln; 1.wait } });
+Ndef(\x).isNeutral;
+
+// crucial lib
+Instr(\sin, { arg freq = 440, amp; SinOsc.ar(freq, 0.0, amp) });
+Ndef.clear;
+Ndef(\x).reshaping = \elastic;
+Ndef(\x, Instr(\sin));
+Ndef(\x).rate == \audio;
+Ndef(\x).numChannels == 1;
+Ndef(\x, Patch(\sin, [\freq, 440]));
+Ndef(\x).play;
+
+Instr(\sin, { arg freq, amp; SinOsc.ar(freq, BrownNoise.ar(1 ! 2), amp) });
+
+
+Ndef(\x, Instr(\sin));// 尚不正确，应为 2。
+
+//Ndef(\c, StreamKrDur(Pseq([Prand([530, 600],1), 700, 400, 800, 500].scramble, inf) / 3, 0.2)); // still fails</code></pre>
+
+<h2 id="Tests for PatternProxy">PatternProxy 的测试</h2>
+
+<pre><code>// 一般规则：代理在流和模式中的行为应与其所持有的对象一致
+(
+g = { |f, source, firstSource|
+    var n = 16;
+    var a, b, proxy, pattern;
+    proxy = PatternProxy.new;
+    a = f.(proxy).asStream;
+    if(firstSource.notNil) { proxy.source = firstSource; n.do { a.next } };
+    proxy.source = source;
+    b = f.(source).asStream;
+    Array.fill(n, { a.next }).postln == Array.fill(n, { b.next }).postln
+};
+h = { |f, source|
+    g.(f, source, Pseq([-1], inf));
+}
+)
+
+
+g.( { |x| Pseq([x, 2, 3]) }, 1);
+g.( { |x| Pseq([x, 2, 3]) }, Pseq([10], 2));
+g.( { |x| x }, Pseq([10], 2));
+g.( { |x| x }, 1);
+g.( { |x| Pn(x, 3) }, 1);
+g.( { |x| Pn(x, 3) }, Pseq([10], 2));
+g.( { |x| Pswitch([10, 20, 30], x) }, Pseq([1, 2], 2));
+g.( { |x| Pswitch([10, x, 30], Pseq([0, 1, 2], 2)) }, 80);
+g.( { |x| Pswitch([10, x, 30], Pseq([0, 1, 2], 2)) }, Pseq([1, 2], 2));
+g.( { |x| Pfin(6, x) }, Pseq([0, 1, 2], 2));
+g.( { |x| Pfin(6, x) }, Pseq([0, 1, 2], 1));
+g.( { |x| Pfin(6, x) }, 3);
+
+
+h.( { |x| Pseq([x, 2, 3]) }, 1);
+h.( { |x| Pseq([x, 2, 3]) }, Pseq([10], 2));
+h.( { |x| x }, Pseq([10], 2));
+h.( { |x| x }, 1);
+h.( { |x| Pn(x, 3) }, 1);
+h.( { |x| Pn(x, 3) }, Pseq([10], 2));
+h.( { |x| Pn(Pfin(4, x)) }, Pseq([0, 1, 2], 2));
+h.( { |x| Pn(Pfin(4, x)) }, Pseq([0, 1, 2], 1));
+h.( { |x| Pn(Pfin(4, x)) }, 3);
+
+(
+g = { |f, source|
+    var n = 16;
+    var a, b, proxy, pattern;
+    proxy = EventPatternProxy.new;
+    proxy.source = source;
+    a = Pevent(f.(proxy)).asStream;
+    b = Pevent(f.(proxy.source)).asStream;
+    Array.fill(n, { a.next }).postln == Array.fill(n, { b.next }).postln
+};
+)
+
+a = Pcollect({ |event| event }, (zz: 4));
+a = Pcollect({ |event| event }, Pn((zz: 4)));
+
+
+a = Pcollect({ |event| (aa:9) }, Pbind.new);
+a = Pcollect({ |event| (aa:9) }, (zz: 4));
+x = a.asStream;
+x.next(());
+
+a = Pcollect({ |event| event.put(\test, -100) }, (zz: 4));
+x = a.asStream;
+x.next(());
+
+
+
+
+x = (zz: 4).asStream;
+(aa: 9).processRest( (zz: 4) );
+
+
+a = Pcollect({ |event| event }, (zz: 4));
+x = Pevent(a).asStream;
+x.next;
+
+a = Pcollect({ |event| event[\a] = 9; event }, (zz: 4));
+x = Pevent(a).asStream;
+x.next;
+
+a = Pcollect({ |event| (aa:9) }, (zz: 4));
+x = Pevent(a).asStream;
+x.next;
+
+(aa: 6).next(())
+
+
+Pevent(Pcollect({ |event| event[\zz] = 9; event; }, (zz: 4))).asStream.nextN(8)
+
+
+g.( { |x| Pseq([x, x]) }, (x: 9));
+g.( { |x| Pseq([x, (y: 10)]) }, (x: 9));
+g.( { |x| Pseq([x, (y: 10)]) }, Pbind(\x, Pseq([1, 2, 3])));
+g.( { |x| Pswitch([(x: 10), (x:20), (x:30)], x) }, Pseq([0, 1, 2], 2), 10);
+//g.( { |x| Pgate(Pseq([(x:1), (x:2), (x:3)], inf), \go) &lt;&gt; x }, Pseq([ (go: true), (), (), (go: false)], inf));
+g.( { |x| Pselect({ |event| event[\zz].notNil }, x) }, Pseq([(), (), (zz: 300), (zz: 500)], 2));
+//g.( { |x| Pselect({ |event| event[\zz].notNil }, x) }, (zz: 800));
+g.( { |x| Pcollect({ |event| event[\zz] = 100 }, x) }, Pseq([(), (), (zz: 300), (zz: 500)], 2));
+g.( { |x| Pfset({ ~gg = 8; ~zz = 9; }, x) }, Pbind.new);
+//g.( { |x| Pfset({ ~gg = 8; ~zz = 9; }, x) },  (x: 9));
+g.( { |x| Psetpre({ ~gg = 8; ~zz = 9; }, x) }, Pbind.new);
+g.( { |x| Ppar([x, x]) }, Pbind.new);
+g.( { |x| Ppar([x, x]) }, Pseq([(zz: 300), (zz: 500)], 1));
+g.( { |x| Ppar([x, x], inf) }, Pseq([(zz: 300), (zz: 500)], 1));
+g.( { |x| Pfin(3, x) }, Pseq([(zz: 300), (zz: 500)], 1));
+g.( { |x| Pfin(3, x) }, Pseq([(zz: 300), (zz: 500)], 4));
+
+
+
+// 测试 Patternproxy / Pdefn
+Pdefn.clear;
+Pdefn(\x, Pseq([1, 2, 3]));
+Pdefn(\x).asStream.nextN(4) == [1, 2, 3, nil];
+Pdefn(\x).asStream.nextN(4) == [1, 2, 3, nil];
+Pdefn(\x, Pseq([1, 2, 3], inf));
+Pdefn(\x).asStream.nextN(4) == [1, 2, 3, 1];
+Pdefn(\x, Pseq([1, 2, 3]));
+Pdefn(\x).asStream.nextN(4) == [1, 2, 3, nil];
+
+Pdefn.clear;
+Pdefn(\x, 7);
+Pdefn(\x).asStream.nextN(2) == [7, 7];
+Pdefn(\x).asStream.nextN(2) == [7, 7];
+Pseq([Pdefn(\x), 8]).asStream.nextN(2) == [7, 8];
+Pnsym(Pseq([\x, \y, \x])).asStream.nextN(4) == [7, Pdefn.default, 7, nil];
+Pdefn(\zz).asStream.nextN(2) == Pdefn.default.dup(2);
+
+Pdefn(\x, 7);
+Pdefn(\x).asStream.nextN(2) == 7.dup(2);
+Pdefn(\x, Pseq([1, 2, 3], inf));
+Pdefn(\x).asStream.nextN(4) == [1, 2, 3, 1];
+Pdefn(\x, 8);
+Pdefn(\x).asStream.nextN(2) == 8.dup(2);
+Pnsym(Pseq([\x, \y, \x])).asStream.nextN(4) == [8, Pdefn.default, 8, nil];
+Pdefn(\y, Pseq([1, 2, 3], 1));
+Pnsym(Pseq([\x, \y, \x])).asStream.nextN(5) == [8, 1, 2, 3, 8];
+
+Pdefn(\y, -1);
+Pnsym(Pseq([\x, \y], 2)).asStream.nextN(5) == [8, -1, 8, -1, nil];
+Pdefn(\y, 1);
+Pnsym(Pseq([\x, \y], 2)).asStream.nextN(5) == [8, 1, 8, 1, nil];
+
+Pdefn.clear;
+Pdefn(\x, 7);
+Pdefn(\y, Pseq([10, 20], inf));
+Pnsym1(Pseq([\x, \y, \x, \y], inf)).asStream.nextN(7) == [7, 10, 7, 20, 7, 10, 7];
+Pnsym1(Pseq([\x, \y, \x, \y], 1)).asStream.nextN(7) == [7, 10, 7, 20, nil, nil, nil];
+
+Pdefn.clear;
+Pdefn(\x, Set[1, 2, 3]);
+Pdefn(\x).asStream.nextN(4) == Set[1, 2, 3].dup(4);
+Pdefn(\x, { Pseq([1, 2, 3]) }); // 函数展开
+Pdefn(\x).asStream.nextN(4) == [1, 2, 3, nil];
+Pdefn(\x).set(\first, 7);
+Pdefn(\x, { |envir| Pseq([envir[\first], 2, 3]) }); // 函数展开并将 envir 作为参数
+Pdefn(\x).asStream.nextN(4) == [7, 2, 3, nil];
+
+
+// 测试条件：失败
+Pdefn.clear;
+Pdefn(\x, Pseq([1, 2, 3], inf));
+x = Pdefn(\x).asStream;
+x.next;
+z = false;&quot;&quot;;
+Pdefn(\x).condition = { z };
+Pdefn(\x, Pseq([10, 20, 30]));
+x.nextN(6).postln == [2, 3, 1, 2, 3, 1];
+z = true;
+x.nextN(6).postln == [10, 20, 30, nil, nil, nil];
+
+Pdefn.clear;
+Pdefn(\x, Pseq([1, 2, 3]));
+x = Pdefn(\x).asStream;
+x.next;
+Pdefn(\x).count(2); // 仅每 2 项更新一次
+Pdefn(\x, Pseq([10, 20, 30]));
+x.nextN(6).postln == [2, 10, 20, 30, nil, nil];
+
+
+
+// 测试 EventPatternProxy / Pdef
+
+// 测试将 _single events_ 作为源，embedInStream 与 asStream 对比
+
+Pdef.clear;
+// 两者都只播放一次
+(freq: 700).asStream.play;
+Pdef(\x, (freq: 700)).play;
+
+// &quot;自动&quot; 测试
+Pdef.clear;
+Pdef(\x).player == nil;
+
+Pdef(\x, (freq: 700));
+Pevent(Pdef(\x)).asStream.nextN(2) == [ ( &#x27;freq&#x27;: 700 ), ( &#x27;freq&#x27;: 700 ) ];
+Pevent(Pdef(\x)).asStream.nextN(2) == [ ( &#x27;freq&#x27;: 700 ), ( &#x27;freq&#x27;: 700 ) ];
+Pdef(\x, (freq: 800));
+Pevent(Pdef(\x)).asStream.nextN(2) == [ ( &#x27;freq&#x27;: 800 ), ( &#x27;freq&#x27;: 800 ) ];
+
+Pdef(\y, (freq: 100));
+Pevent(Psym(Pseq([\x, \y]))).asStream.nextN(3) == [ ( &#x27;freq&#x27;: 800 ), ( &#x27;freq&#x27;: 100 ), nil ];
+Pevent(Psym(Pseq([\x, \y]))).asStream.nextN(3) == [ ( &#x27;freq&#x27;: 800 ), ( &#x27;freq&#x27;: 100 ), nil ];
+Pdef(\y, (freq: 200));
+Pevent(Psym(Pseq([\x, \y]))).asStream.nextN(3) == [ ( &#x27;freq&#x27;: 800 ), ( &#x27;freq&#x27;: 200 ), nil ];
+Pdef(\y, Pn((freq: 200)));
+Pevent(Psym(Pseq([\x, \y]))).asStream.nextN(3) == [ ( &#x27;freq&#x27;: 800 ), ( &#x27;freq&#x27;: 200 ),  ( &#x27;freq&#x27;: 200 ) ];
+Pdef(\y, (freq: 200));
+Pevent(Psym(Pseq([\x, \y]))).asStream.nextN(3) == [ ( &#x27;freq&#x27;: 800 ), ( &#x27;freq&#x27;: 200 ), nil ];
+
+// 无限：
+Pdef.clear;
+Pdef.defaultValue == Event.silent;
+Pdef(\x, (freq: 800));
+x = Pevent(Pdef(\x).endless).asStream;
+a = Pdef.defaultValue;
+x.nextN(3) == [(freq: 800), a, a];
+Pdef(\x, (freq: 900).loop);
+x.nextN(3).collect(_[\freq]) == [ 900, 900, 900 ];
+
+Pdefn.clear;
+Pdefn.defaultValue == 1;
+Pdefn(\x, 9);
+x = Pdefn(\x).endless.asStream;
+a = Pdefn.defaultValue;
+x.nextN(3) == [9, a, a];
+Pdefn(\x, Pseq([1, 2, 3]));
+x.nextN(3) == [1, 2, 3];
+
+
+
+// Pbindef
+Pdef.clear;
+Pbindef(\p, \z, 7);
+Pevent(Pbindef(\p)).asStream.nextN(3) == [ ( &#x27;z&#x27;: 7 ), ( &#x27;z&#x27;: 7 ), ( &#x27;z&#x27;: 7 ) ];
+Pbindef(\p, \z, Pn(7, 2));
+Pevent(Pbindef(\p)).asStream.nextN(3) == [ ( &#x27;z&#x27;: 7 ), ( &#x27;z&#x27;: 7 ), nil ];
+Pbindef(\p, \z, 7);
+Pevent(Pbindef(\p)).asStream.nextN(3) == [ ( &#x27;z&#x27;: 7 ), ( &#x27;z&#x27;: 7 ), ( &#x27;z&#x27;: 7 ) ];
+Pbindef(\p, \z, nil);
+Pevent(Pbindef(\p)).asStream.nextN(3) == ().dup(3);
+
+Pdefn.clear;
+Pdefn(\x, 9);
+Pdefn(\y, Pseq([1, 2, 3]));
+Pdefn(\z, Pdefn(\x) + Pdefn(\y));
+Pdefn(\z).asStream.nextN(4) == [ 10, 11, 12, nil ];
+Pdefn(\x, -1);
+Pdefn(\z).asStream.nextN(4) == [ 0, 1, 2, nil ];
+
+// 测试 quant
+Pdefn.clear;
+Pdef.clear;
+Pdefn(\m, 12);
+Pdefn(\m).quant = 2;
+Pbindef(\x,\midinote, Pseq([60,62,64,65,67,65,64,62], inf) + Pdefn(\m));
+
+Pevent(Pbindef(\x)).asStream.nextN(3) == [ ( &#x27;midinote&#x27;: 72 ), ( &#x27;midinote&#x27;: 74 ), ( &#x27;midinote&#x27;: 76 ) ];
+Pbindef(\x,\dur, 0.5);
+Pevent(Pbindef(\x)).asStream.nextN(3) == [ ( &#x27;dur&#x27;: 0.5, &#x27;midinote&#x27;: 72 ), ( &#x27;dur&#x27;: 0.5, &#x27;midinote&#x27;: 74 ), ( &#x27;dur&#x27;: 0.5, &#x27;midinote&#x27;: 76 ) ];
+Pdefn(\m, 11);
+Pevent(Pbindef(\x)).asStream.nextN(3) == [ ( &#x27;dur&#x27;: 0.5, &#x27;midinote&#x27;: 71 ), ( &#x27;dur&#x27;: 0.5, &#x27;midinote&#x27;: 73 ), ( &#x27;dur&#x27;: 0.5, &#x27;midinote&#x27;: 75 ) ];
+
+Pbindef(\x,\dur, 0.25).play(quant:4);
+Pdefn(\m, -4); // 更改在 4 拍边界处生效……
+
+
+
+
+// 测试淡入淡出
+Pdef.clear;
+Pdef(\x).fadeTime = 10;
+Pdef(\x, Pbind(\degree, Pseq((0..5), inf), \dur, 0.1, \legato, 0.2));
+Pdef(\x).play;
+Pdef(\x, Pbind(\degree, Pseq((0..5) + 12, inf), \dur, 0.1, \legato, 0.2));
+Pdef(\x, Pbind(\degree, Pseq((0..5) + 6, inf), \dur, 0.1, \legato, 0.2));
+
+
+// 清理测试
+(
+SynthDef(\echo, { arg out=0, maxdtime=0.2, dtime=0.2, decay=2, gate=1;
+    var env, in;
+    env = Linen.kr(gate, 0.05, 1, 0.1, 2);
+    in = In.ar(out, 2);
+    XOut.ar(out, env, CombL.ar(in * env, maxdtime, dtime, decay, 1, in));
+}, [\ir, \ir, 0.1, 0.1, 0]).add;
+
+SynthDef(\distort, { arg out=0, pregain=40, amp=0.2, gate=1;
+    var env;
+    env = Linen.kr(gate, 0.05, 1, 0.1, 2);
+    XOut.ar(out, env, (In.ar(out, 2) * pregain).distort + Dust2.ar([4, 10, 100], [0.4, 0.01, 0.01]).sum * amp);
+}, [\ir, 0.1, 0.1, 0]).add;
+
+SynthDef(\wah, { arg out=0, gate=1, rate = 0.3, max = 8000, rq = 0.1;
+    var env, in;
+    env = Linen.kr(gate, 0.05, 1, 0.4, 2);
+    in = In.ar(out, 2);
+    XOut.ar(out, env, RLPF.ar(in, LinExp.kr(LFNoise1.kr(rate), -1, 1, 200, max), rq).softclip * 0.8);
+}, [\ir, 0]).add;
+)
+
+(
+Pdef.clear;
+
+Pdef(\p, Pbind(\degree, Prand((0..7),12), \dur, 0.3 / Pseq([1, 1, 1, 2, 3, 1, 1, 3, 1, 1], inf), \legato, 0.2));
+
+Pdef(\q, Pfxb(Pdef(\p), \echo, \dtime, 0.2, \decay, 3));
+
+Pdef(\r, Pfxb(Pdef(\q), \distort, \pregain, 20, \amp, 0.25));
+
+Pdef(\o, Pfxb(Pdef(\r), \wah, \rq, 0.2));
+
+Pdef(\out, Pseq([Pdef(\p), Pdef(\q), Pdef(\r), Pdef(\o)], inf)).play;
+)
+
+Pdef(\o, Pfxb(Pdef(\r), \wah, \rate, 16, \max, 700));
+Pdef(\p, Pbind(\degree, Pseq((0..5)*3, 1), \dur, 0.1, \legato, 0.2));
+Pdef(\out, Pseq([Pdef(\o)], 2)).play;
+
+Pdef(\p, Pbind(\degree, Pshuf([0, 3, 5, 11, 3, 2], 2), \dur, 0.1, \legato, 0.2));
+Pdef(\out, Psym(Pseq(&quot;pqropqooqprppo&quot;, inf))).play;
+
+Pdef(\o, Pfxb(Pdef(\r), \wah, \rate, 56, \max, 7000, \rq, 1.0.rand));
+Pdef(\r, Pfxb(Pdef(\q), \distort, \pregain, 120, \amp, 0.1));
+Pdef(\out).fadeTime = 10;
+
+Pdef(\out, Psym(Pseq(&quot;ppprp&quot;, inf)));
+Pdef(\out, Psym(Pshuf(&quot;ppprqrp&quot;, inf)));
+Pdef(\out, Psym(Pshuf(&quot;o&quot;, inf)));
+Pdef(\out, Pseq([Pdef(\o)], 2)).play;
+
+Pdef(\out, Psym(Pseq(&quot;ppprp&quot;, inf)) &lt;&gt; (mtranspose: 3));
+Pdef(\out, Psym(Pseq(&quot;popoprp&quot;, inf)) &lt;&gt; (mtranspose: [0, 3]));
+Pdef(\out, Pseq([Pdef(\o)], 2)).play;
+Pdef(\out).stop;
+
+
+
+// 在 NodeProxy 中：
+s.plotTree;
+Ndef(\x, Pdef(\out)).play;
+Pdef(\out, Pseq([Pdef(\o)], 2));
+Ndef(\x).set(\mtranspose, 3);
+Ndef(\x).clear;
+
+// 曾经是个问题，持续了 2 年（issue #107），现在应该已修复
+Pdef(\foo, Pmono(\default, \dur, 1/8, \degree, Pseq([1,2,3,4,5],32))).play;
+Pdef(\foo).quant == 1;
+fork { 15.do { Pdef(\foo, Pmono(\default, \dur, 1/8, \degree, Pseq([5,4,3,2,1],inf))); 0.2.wait;}};
+
+
+
+
+Pdef(\foo, Pmono(\default, \dur, 1/8, \degree, Pseq([1,2,3,4,5],32))).play;
+Pdef(\foo).quant == 1;
+fork { 15.do { Pdef(\foo, Pmono(\default, \dur, 1/8, \degree, Pseq([5,4,3,2,1],inf))); 0.2.wait;}};
+
+
+
+
+Tdef(\x, { loop { 1.wait; &quot;wesew&quot;.postln } }).play;
+Tdef(\x, { loop { 0.1.wait; &quot;wesew&quot;.postln } }).play;
+
+// 测试副本
+
+// 模式代理
+a = PatternProxy({ |envir| Pseq([1, 2, 3], inf) + envir[\x] }).set(\x, 0);
+b = a.copy;
+f = { |x| x.asStream.nextN(8).postln };
+
+f.(a) == f.(b);
+a.set(\x, 16);
+f.(a) != f.(b);
+
+a = PatternProxy({ |envir| Pseq([1, 2, 3], inf) + envir[\x] }).set(\x, 0);
+b = a.copy;
+f.(a) == f.(b);
+a.source = Pseq([1, 2, 3, 4], inf);
+f.(a) != f.(b);
+b.source = Pseq([1, 2, 3, 4], inf);
+f.(a) == f.(b);
+
+Pdefn(\a, { |envir| Pseq([1, 2, 3], inf) + envir[\x] }).set(\x, 0);
+Pdefn(\a).copy(\b);
+f = { |x| Pdefn(x).asStream.nextN(8).postln };
+f.(\a) == f.(\b);
+Pdefn(\a).set(\x, 16);
+f.(\a) != f.(\b);
+
+// 事件模式代理
+a = EventPatternProxy({ Pbind(\note, Pseq([1, 2, 3], inf)) }).set(\x, 0);
+b = a.copy;
+f = { |x| Pevent(x).asStream.nextN(8).postln };
+f.(a) == f.(b);
+a.set(\x, 16);
+f.(a) != f.(b);
+
+b = a.copy;
+f.(a) == f.(b);
+a.source = Pbind(\note, 7);
+f.(a) != f.(b);
+b.source = Pbind(\note, 7);
+f.(a) == f.(b);</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Other/JITLibChanges3.7.html" rel="noreferrer noopener">Other/JITLibChanges3.7.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

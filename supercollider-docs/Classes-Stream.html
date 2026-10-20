@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream - SuperCollider 文档</title>
+<meta name="description" content="Stream 是定义流的类的父类">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Stream</h1>
+
+<p><em>Stream 是定义流的类的父类</em></p>
+
+<p><a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>参见：<a href="Classes-Routine.html">Routine</a>、<a href="Classes-FuncStream.html">FuncStream</a>、<a href="Classes-EventStreamPlayer.html">EventStreamPlayer</a></p>
+
+<p>子类：<a href="Classes-BinaryOpStream.html">BinaryOpStream</a>、<a href="Classes-BinaryOpXStream.html">BinaryOpXStream</a>、<a href="Classes-CleanupStream.html">CleanupStream</a>、<a href="Classes-EmbedOnce.html">EmbedOnce</a>、</p>
+
+<h2 id="description">说明</h2>
+
+<p>Stream 是一个抽象类，不直接使用。以下内容尝试记录 Stream 在音乐生成中使用的一些方面。</p>
+
+<h3 id="Overview">Overview</h3>
+
+<p>流表示通过重复的 <strong>next</strong> 消息逐步获取的一系列值。流可以通过 <strong>reset</strong> 消息重新启动。（并非所有流实际上都实现了 reset 语义。）</p>
+
+<p>类 <a href="Classes-Object.html">Object</a> 定义了 <strong>next</strong> 以返回对象自身。因此，每个对象都可以被视为一个流，而大多数对象只是流式返回自身。</p>
+
+<p>在 SuperCollider 中，流主要用于处理文本和生成音乐。</p>
+
+<h3 id="FuncStream(nextFunction, resetFunction)">FuncStream(nextFunction, resetFunction)</h3>
+
+<p><a href="Classes-Function.html">Function</a> 定义了一个由该 Function 本身构成的流，而 <a href="Classes-FuncStream.html">FuncStream</a> 定义了一个由对其 nextFunction 的<em>求值</em>构成的流。</p>
+
+<pre><code>// 示例 1：Function 与 FuncStream 的对比
+(
+    f = { 33.rand };
+    x = FuncStream(f);
+    10.do({ [f.next, x.next].postln });
+)</code></pre>
+
+<pre><code>// 示例 2：reset 函数
+(
+    f = { 33.rand };
+    x = FuncStream(f, { thisThread.randSeed_(345) });
+    x.reset;
+    10.do({ [f.next, x.next].postln });
+    x.reset;
+    10.do({ [f.next, x.next].postln });
+)</code></pre>
+
+<h3 id="Routine(nextFunction, stacksize)">Routine(nextFunction, stacksize)</h3>
+
+<p>在 <a href="Classes-FuncStream.html">FuncStream</a> 中，nextFunction 会为流中的每个元素运行至完成。在 <a href="Classes-Routine.html">Routine</a> 中，nextFunction 通过 <strong>yield</strong> 返回值，并在（收到 <strong>next</strong> 消息时）从 yield 之后的表达式处恢复执行。这使得函数定义中的一系列表达式可以表示一系列不同的事件，就像一份乐谱。</p>
+
+<pre><code>// example
+(
+    x = Routine({
+        1.yield;
+        2.yield;
+        3.yield;
+    });
+    4.do({ x.next.postln });
+)</code></pre>
+
+<p>一旦 nextFunction 执行完毕，例程就只是反复 yield nil。控制结构（例如 <strong>do</strong> 或 <strong>while</strong>）可以在 nextFunction 内使用，其方式类似于乐谱中的反复记号。</p>
+
+<pre><code>// example
+(
+    x = Routine({
+        4.do({
+            [1, 2, 3, 4].do({ |i| i.yield });
+        });
+    });
+    17.do({ x.next.postln });
+)</code></pre>
+
+<h3 id="Playing streams">播放流</h3>
+
+<p>因为流对 value 消息的响应类似于函数，所以它们可以用作调度任务。</p>
+
+<pre><code>// 比较：
+// 一个函数，返回 0.5
+(
+SystemClock.sched(0.0,
+    { &quot;***&quot;.postln; 0.5 }
+);
+)
+
+// 一个流，返回 0.5 和 0.1
+(
+SystemClock.sched(0.0,
+    Routine({ loop {
+        &quot;***&quot;.postln; 0.5.yield;
+        &quot;_*_&quot;.postln; 0.1.yield;
+    } });
+);
+)
+
+// 这就是为什么 &#x27;wait&#x27; 对数字的作用与 &#x27;yield&#x27; 相同
+(
+SystemClock.sched(0.0,
+    Routine({ loop {
+        &quot;***&quot;.postln; 0.5.wait;
+        &quot;_*_&quot;.postln; 0.1.wait;
+    } });
+);
+)</code></pre>
+
+<p>返回<strong>数字</strong>的流可以直接通过 <strong>play</strong> 消息播放。</p>
+
+<pre><code>// 在下一拍播放，偏移量为 0.4
+(
+Routine({ loop {
+    &quot;***&quot;.postln; 0.5.wait;
+    &quot;_*_&quot;.postln; 0.1.wait;
+} }).play(quant: [1, 0.4]);
+)</code></pre>
+
+<p>返回 <strong>Events</strong> 的流需要被包装在 <a href="Classes-EventStreamPlayer.html">EventStreamPlayer</a> 中。Event 的 <strong>delta</strong>（也可以通过 <strong>dur</strong> 设置）被用作调度节拍值：</p>
+
+<pre><code>// 在下一拍播放，偏移量为 0.4
+(
+Routine({ loop {
+    &quot;///&quot;.postln; (delta: 0.5).yield;
+    &quot;_/_&quot;.postln; (delta: 0.1).wait;
+} }).asEventStreamPlayer.play;
+)</code></pre>
+
+<h3 id="Iteration">Iteration</h3>
+
+<p>方法 <a href="#-do">-do</a> 通过迭代流的全部内容来有效地“播放”流。</p>
+
+<p>以下消息通过以某种方式过滤另一个流来创建流：<a href="#-collect">-collect</a>、<a href="#-reject">-reject</a>、<a href="#-select">-select</a>、<a href="#-dot">-dot</a>、<a href="#-interlace">-interlace</a>、<a href="#-appendStream">-appendStream</a>、<a href="#-embedInStream">-embedInStream</a>、<a href="#-trace">-trace</a>。</p>
+
+<h3 id="Composite Streams">复合流</h3>
+
+<p>例程可以相互<strong>嵌入</strong>，使用 <a href="#-embedInStream">-embedInStream</a>：</p>
+
+<pre><code>// example
+(
+x = Routine({
+    2.do({
+        [1, 2, 3, 4].do({ |i| i.yield });
+    });
+});
+y = Routine({
+    100.yield;
+    30.yield;
+    x.embedInStream;
+    440.yield;
+    1910.yield;
+});
+17.do({ y.next.postln });
+)</code></pre>
+
+<p>例程可以像流一样被<strong>连接</strong>：</p>
+
+<pre><code>(
+x = Routine({
+    2.do({
+        [1, 2, 3, 4].do({ |i| i.yield });
+    });
+});
+y = Routine({
+    100.yield;
+    30.yield;
+});
+z = x ++ y;
+17.do({ z.next.postln });
+)</code></pre>
+
+<p>例程可以用组合运算符 &lt;&gt; 进行<strong>组合</strong></p>
+
+<pre><code>(
+x = Routine({ |inval|
+    2.do({
+        [1, 2, 3, 4].do({ |i|
+            if(inval.isNil) { nil.alwaysYield };
+            inval = (i * inval).yield;
+        });
+    });
+});
+y = Routine({
+    100.yield;
+    30.yield;
+    4.do { 1.0.rand.yield };
+});
+z = x &lt;&gt; y;
+17.do({ z.value.postln }); // 在此处调用 .value，因为这是一个函数。
+)</code></pre>
+
+<p>复合流可以定义为使用一元和二元消息对流的组合。</p>
+
+<h3 id="Unary messages">一元消息</h3>
+
+<p>流支持 <a href="Classes-AbstractFunction.html">AbstractFunction</a> 中定义的大多数一元消息：</p>
+
+<pre><code>(
+a = Routine({ 20.do({ 33.rand.yield }) });
+b = Routine({ [-100, 00, 300, 400].do({ |v| v.yield }) });
+
+c = b.neg; // 定义一个复合流
+
+// 枚举并执行所有的一元消息：
+[
+    \neg, \reciprocal, \bitNot, \abs, \asFloat, \asInteger, \ceil,
+    \floor, \frac, \sign, \squared, \cubed, \sqrt, \exp, \midicps,
+    \cpsmidi, \midiratio, \ratiomidi, \ampdb, \dbamp, \octcps,
+    \cpsoct, \log, \log2, \log10, \sin, \cos, \tan, \asin, \acos, \atan,
+    \sinh, \cosh, \tanh, \rand, \rand2, \linrand, \bilinrand, \sum3rand,
+    \distort, \softclip, \coin, \even, \odd, \isPositive, \isNegative,
+    \isStrictlyPositive
+]
+.do({ |msg|
+    postf(&quot;\n msg: % \n&quot;, msg);
+    b.reset.perform(msg).do({ |v| v.post; &quot; &quot;.post });
+});
+nil;
+)</code></pre>
+
+<h3 id="Binary messages">二元消息</h3>
+
+<p>流支持 <a href="Classes-AbstractFunction.html">AbstractFunction</a> 中定义的以下二元消息：</p>
+
+<pre><code>(
+a = Routine({ 20.do({ 33.rand.yield }) });
+b = Routine({ [-100, 00, 300, 400].do({ |v| v.yield }) });
+[
+    &#x27;+&#x27;, &#x27;-&#x27;, &#x27;*&#x27;, &#x27;/&#x27;, \div, &#x27;%&#x27;, &#x27;**&#x27;, 
+    &#x27;&lt;&#x27;, &#x27;&lt;=&#x27;, &#x27;&gt;&#x27;, &#x27;&gt;=&#x27;, &#x27;&amp;&#x27;, &#x27;|&#x27;, \min, \max,
+    \bitXor, \lcm, \gcd, \round, \trunc, \atan2,
+    \hypot, &#x27;&gt;&gt;&#x27;, &#x27;+&gt;&gt;&#x27;, \ring1, \ring2, \ring3, \ring4,
+    \difsqr, \sumsqr, \sqrdif, \absdif, \amclip,
+    \scaleneg, \clip2, \excess, &#x27;&lt;!&#x27;, \rrand, \exprand
+]
+.do({ |msg|
+    postf(&quot;\n msg: % \n&quot;, msg);
+    b.reset.perform(msg).do({ |v| v.post; &quot; &quot;.post });
+});
+nil;
+)</code></pre>
+
+<h2 id="classmethods">类方法</h2>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h4 id="-play"><code>.play(clock, quant)</code></h4>
+
+<p>返回<strong>数字</strong>的流可以直接用<strong>play</strong>消息播放。返回<strong>事件</strong>的流需要包装在 <a href="Classes-EventStreamPlayer.html">EventStreamPlayer</a> 中。参见 <a href="#-asEventStreamPlayer">-asEventStreamPlayer</a>。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>clock</p></td><td class="argumentdesc"><p>一个时钟。默认为 <a href="Classes-TempoClock.html">TempoClock</a>。</p></td></tr>
+<tr><td class="argumentname"><p>quant</p></td><td class="argumentdesc"><p>要么是一个数字 <strong>n</strong>（量化到 <strong>n</strong> 拍），要么是一个数组 <strong>[n, m]</strong>（量化到 n 拍，偏移量为 m）。</p></td></tr>
+</table>
+
+<h4 id="-do"><code>.do(function, inval)</code></h4>
+
+<p>迭代直到遇到 nil。</p>
+
+<blockquote class="warning"><p><strong>警告：</strong> 对无尽头流应用 do 会锁死解释器！</p></blockquote>
+
+<h4 id="-collect"><code>.collect(argCollectFunc)</code></h4>
+
+<p>无限迭代。</p>
+
+<h4 id="-reject"><code>.reject(function)</code></h4>
+
+<p>仅返回 function.value(element) 为 false 的那些元素。</p>
+
+<h4 id="-select"><code>.select(function)</code></h4>
+
+<p>仅返回那些 function.value(element) 为真的元素。</p>
+
+<h4 id="-dot"><code>.dot(function, stream)</code></h4>
+
+<p>对每个元素返回 function.value(this.next, stream.next)。</p>
+
+<h4 id="-interlace"><code>.interlace(function, stream)</code></h4>
+
+<p>对此的每个元素迭代流的全部内容。使用函数合并这些值。</p>
+
+<h4 id="-appendStream"><code>.appendStream(stream)</code></h4>
+
+<p>在其后追加流返回 nil。与 ++ 相同</p>
+
+<h4 id="-embedInStream"><code>.embedInStream(inval)</code></h4>
+
+<p>在调用它的任何 Stream 定义中迭代所有这些内容。</p>
+
+<h4 id="-trace"><code>.trace(key, printStream, prefix: &quot;&quot;)</code></h4>
+
+<p>打印流的结果，同时返回原始值。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>key</p></td><td class="argumentdesc"><p>在流式传输事件时，仅发布此键。</p></td></tr>
+<tr><td class="argumentname"><p>printStream</p></td><td class="argumentdesc"><p>对此流调用 printOn（默认：<a href="Classes-Post.html">Post</a>）。</p></td></tr>
+<tr><td class="argumentname"><p>prefix</p></td><td class="argumentdesc"><p>添加到打印输出中以分隔不同流的字符串。</p></td></tr>
+</table>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-++"><code>++(stream)</code></h4>
+
+<h4 id="-<>"><code>&lt;&gt;(obj)</code></h4>
+
+<h4 id="-all"><code>.all(inval)</code></h4>
+
+<h4 id="-asEventStreamPlayer"><code>.asEventStreamPlayer(protoEvent)</code></h4>
+
+<h4 id="-buildForProxy"><code>.buildForProxy</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/wrapForNodeProxy.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/wrapForNodeProxy.sc</a></em></p>
+
+<h4 id="-collate"><code>.collate(stream)</code></h4>
+
+<h4 id="-composeBinaryOp"><code>.composeBinaryOp(argSelector, argStream, adverb)</code></h4>
+
+<h4 id="-composeNAryOp"><code>.composeNAryOp(argSelector, anArgList)</code></h4>
+
+<h4 id="-composeUnaryOp"><code>.composeUnaryOp(argSelector)</code></h4>
+
+<h4 id="-fastForward"><code>.fastForward(by, tolerance: 0, inevent)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/Patterns/extRoutine.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/Patterns/extRoutine.sc</a></em></p>
+
+<h4 id="-generate"><code>.generate(function, item)</code></h4>
+
+<h4 id="-iter"><code>.iter</code></h4>
+
+<h4 id="-next"><code>.next</code></h4>
+
+<h4 id="-parent"><code>.parent</code></h4>
+
+<h4 id="-proxyControlClass"><code>.proxyControlClass</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/wrapForNodeProxy.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/wrapForNodeProxy.sc</a></em></p>
+
+<h4 id="-put"><code>.put(item)</code></h4>
+
+<h4 id="-putAll"><code>.putAll(aCollection)</code></h4>
+
+<h4 id="-putN"><code>.putN(n, item)</code></h4>
+
+<h4 id="-repeat"><code>.repeat(repeats: inf)</code></h4>
+
+<h4 id="-reverseComposeBinaryOp"><code>.reverseComposeBinaryOp(argSelector, argStream, adverb)</code></h4>
+
+<h4 id="-streamArg"><code>.streamArg</code></h4>
+
+<h4 id="-subSample"><code>.subSample(offset: 0, skipSize: 0)</code></h4>
+
+<h4 id="-value"><code>.value(inval)</code></h4>
+
+<h4 id="-valueArray"><code>.valueArray</code></h4>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/Stream.html" rel="noreferrer noopener">Classes/Stream.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

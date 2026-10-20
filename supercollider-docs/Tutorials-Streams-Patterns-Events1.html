@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>理解流、模式和事件 - 第 1 部分 - SuperCollider 文档</title>
+<meta name="description" content="流与例程">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>理解流、模式和事件 - 第 1 部分</h1>
+
+<p><em>流与例程</em></p>
+
+<p>另请参阅：<a href="Tutorials-Streams-Patterns-Events2.html">理解流、模式和事件 - 第 2 部分</a>、<a href="Tutorials-Streams-Patterns-Events3.html">理解流、模式和事件 - 第 3 部分</a>、<a href="Tutorials-Streams-Patterns-Events4.html">理解流、模式和事件 - 第 4 部分</a>、<a href="Tutorials-Streams-Patterns-Events5.html">理解流、模式和事件 - 第 5 部分</a>、<a href="Tutorials-Streams-Patterns-Events6.html">理解流、模式和事件 - 第 6 部分</a>、<a href="Tutorials-Streams-Patterns-Events7.html">理解流、模式和事件 - 第 7 部分</a></p>
+
+<p>SuperCollider 模式库提供了一种指定音乐过程动态结构变换的方法。它提供了与 Nyquist、Elody、Siren、Kyma、HMSL、DMix 和 Patchwork 中类似的能力。</p>
+
+<p>通过使用协程和流而不是急切求值的函数式方法，它能够以惰性的、逐事件的方式工作，而不是像 Elody 和 Siren 那样采用一次性全部处理的方式。它提供了 HMSL 中那种动态实时控制，同时具备其他系统更通用的事件模型。在 Nyquist 和 Siren 中，某些变换（如 Stretch 和 Transpose）被专门编写进框架中。而在 SuperCollider 的模式中，任何参数都可以应用变换。唯一被特殊处理的是时间，以便并行流可以合并。</p>
+
+<p>为了理解这个框架，必须涵盖若干概念。这些概念体现在 Streams、Patterns 和 Events 的类中。你应当按照所呈现的顺序学习这些概念。该框架是分层构建的。如果你为了先接触有趣的部分而跳过前面的内容，你将会错过一些重要的要点。</p>
+
+<h2 id="Streams">Streams</h2>
+
+<p>流表示一个惰性的值序列。序列中的下一个值通过向流对象发送消息 next 来获取。通过向流对象发送消息 reset，序列可以从头重新开始。流的长度可以是有限的，也可以是无限的。当有限长度的流到达末尾时，它返回 nil。</p>
+
+<p>流可以是任何响应 next 和 reset 消息的对象。任何响应这些消息的对象都可以充当流。碰巧的是，类 <a href="Classes-Object.html">Object</a> 为所有对象定义了 next 和 reset。在 Object 中，next 和 reset 都被定义为返回 <code>this</code>。因此，任何对象在默认情况下都是一个表示其自身无限序列的流。</p>
+
+<pre><code>7.next.postln;    // 7 通过返回自身来响应 next</code></pre>
+
+<h2 id="Stream and its subclasses">流及其子类</h2>
+
+<p>除了由 <a href="Classes-Object.html">Object</a> 实现的默认流之外，还有一个类 <a href="Classes-Stream.html">Stream</a> 提供了更多功能，例如对流进行数学运算和过滤流。</p>
+
+<p>Stream 的一个普遍有用的子类是 <a href="Classes-FuncStream.html">FuncStream</a> 类，它允许用户提供函数以响应 next 和 reset。下面是一个表示无限随机序列的 FuncStream：</p>
+
+<pre><code>(
+var a;
+a = FuncStream.new({ #[1, 2, 3, 4].choose });
+5.do({ a.next.postln; });    // 从流中打印 5 个值
+)</code></pre>
+
+<p>Stream 的另一个有用的子类是 <a href="Classes-Routine.html">Routine</a>，它是一种可以像 Stream 一样运作的特殊函数。例程是可以在中途返回一个值，然后在再次被调用时从该点恢复的函数。yield 消息从例程返回一个值。下次调用该例程时，它从 yield 返回处开始并继续执行。参见 <a href="Classes-Routine.html">Routine</a> 帮助文件。</p>
+
+<p>下面是一个表示有限值序列的例程：</p>
+
+<pre><code>(
+var a;
+a = Routine.new({
+        3.do({ arg i; i.yield; })
+    });
+4.do({ a.next.postln; });    // 从流中打印 4 个值
+)</code></pre>
+
+<p>以及另一个：</p>
+
+<pre><code>(
+var a;
+a = Routine.new({
+        3.do({ arg i;
+            (i+1).do({ arg j; j.yield; })
+        })
+    });
+8.do({ a.next.postln; });    // 从流中打印 8 个值
+)</code></pre>
+
+<h2 id="Math operations on Streams">流上的数学运算</h2>
+
+<p>Stream 是 <a href="Classes-AbstractFunction.html">AbstractFunction</a> 的子类，这意味着可以对流进行数学运算以生成其他流。</p>
+
+<p>对流应用一元运算符：</p>
+
+<pre><code>(
+var a, b;
+// a 是一个从 0 数到 9 的流
+a = Routine.new({
+        10.do({ arg i; i.yield; })
+    });
+b = a.squared;    // 流 b 是流 a 的平方
+12.do({ b.next.postln; });
+)</code></pre>
+
+<p>对流使用二元运算符：</p>
+
+<pre><code>(
+var a, b;
+// a 是一个从 0 数到 9 的流
+a = Routine.new({
+        10.do({ arg i; i.yield; })
+    });
+b = a + 100;    // 向流 a 添加一个常量值
+12.do({ b.next.postln; });
+)</code></pre>
+
+<p>对两个流使用二元运算符：</p>
+
+<pre><code>(
+var a, b, c;
+// a 是一个从 0 数到 9 的流
+a = Routine.new({
+        10.do({ arg i; i.yield; })
+    });
+// b 是一个从 100 到 280 以 20 递增计数的流
+b = Routine.new({
+        forBy (100,280,20, { arg i; i.yield })
+    });
+c = a + b;    // 添加流 a 和 b
+12.do({ c.next.postln; });
+)</code></pre>
+
+<h2 id="Filtering operations on streams">对流进行过滤操作</h2>
+
+<p>流对消息 <code>collect</code>、<code>select</code> 和 <code>reject</code> 的响应是返回一个新的 <a href="Classes-Stream.html">Stream</a>。</p>
+
+<p><code>collect</code> 消息返回一个流，该流由函数以与发送给 <a href="Classes-Collection.html">Collection</a> 的 collect 消息返回修改后的 Collection 相同的方式进行修改。</p>
+
+<pre><code>(
+var a, b;
+// a 是一个从 0 数到 9 的流
+a = Routine.new({
+        10.do({ arg i; i.yield; })
+    });
+// b 是一个将偶数加 100 的流
+b = a.collect({ arg item; if (item.even, { item + 100 },{ item }); });
+6.do({ b.next.postln; });
+)</code></pre>
+
+<p><code>select</code> 消息创建一个流，仅传递用户提供的函数返回 true 的项。</p>
+
+<pre><code>(
+var a, b;
+// a 是一个从 0 数到 9 的流
+a = Routine.new({
+        10.do({ arg i; i.yield; })
+    });
+// b 是一个只返回流 a 中奇数值的流
+b = a.select({ arg item; item.odd; });
+6.do({ b.next.postln; });
+)</code></pre>
+
+<p><code>reject</code> 消息创建一个流，该流只传递用户提供的函数返回 false 的项。</p>
+
+<pre><code>(
+var a, b;
+// a 是一个从 0 数到 9 的流
+a = Routine.new({
+        10.do({ arg i; i.yield; })
+    });
+// b 是一个只返回流 a 中非奇数值的流
+b = a.reject({ arg item; item.odd; });
+6.do({ b.next.postln; });
+)</code></pre>
+
+<h2 id="Making Music with Streams">用流创作音乐</h2>
+
+<p>下面是一个声音示例，展示如何使用流来生成音乐素材。</p>
+
+<pre><code>(
+    s = Server.local;
+    SynthDef(\help_SPE1, { arg i_out=0, freq;
+        var out;
+        out = RLPF.ar(
+            LFSaw.ar( freq, mul: EnvGen.kr( Env.perc, levelScale: 0.3, doneAction: Done.freeSelf )),
+            LFNoise1.kr(1, 36, 110).midicps,
+            0.1
+        );
+        // out = [out, DelayN.ar(out, 0.04, 0.04) ];
+        4.do({ out = AllpassN.ar(out, 0.05, [0.05.rand, 0.05.rand], 4) });
+        Out.ar( i_out, out );
+    }).send(s);
+)
+(
+// 将流视为音高序列
+    var stream, dur;
+    dur = 1/8;
+    stream = Routine.new({
+        loop({
+            if (0.5.coin, {
+                // 五度进行：
+                24.yield;
+                31.yield;
+                36.yield;
+                43.yield;
+                48.yield;
+                55.yield;
+            });
+            rrand(2,5).do({
+                // 变化的琶音
+                60.yield;
+                #[63,65].choose.yield;
+                67.yield;
+                #[70,72,74].choose.yield;
+            });
+            // 随机高音旋律
+            rrand(3,9).do({ #[74,75,77,79,81].choose.yield });
+        });
+    });
+    Routine({
+        loop({
+            Synth(\help_SPE1, [ \freq, stream.next.midicps ] );
+            dur.wait; // yield 的同义词，被 .play 用于调度下一次发生
+        })
+    }).play
+)</code></pre>
+
+<h2 id="Optional:">Optional:</h2>
+
+<p>关于流的更多内容可以从 Timothy Budd 所著的《A Little Smalltalk》一书中了解。他将其称为生成器（Generator），并展示了如何使用它们来解决“八皇后”等问题。</p>
+
+<p>要转到下一个文件：<a href="Tutorials-Streams-Patterns-Events2.html">理解流、模式和事件 - 第 2 部分</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/Streams-Patterns-Events1.html" rel="noreferrer noopener">Tutorials/Streams-Patterns-Events1.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

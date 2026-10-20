@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模式指南 06g：数据共享 - SuperCollider 文档</title>
+<meta name="description" content="编写模式以使用来自其他模式的信息">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>模式指南 06g：数据共享</h1>
+
+<p><em>编写模式以使用来自其他模式的信息</em></p>
+
+<p>参见：<a href="Tutorials-A-Practical-Guide-PG_06f_Server_Control.html">Pattern Guide 06f: Server Control</a>，<a href="Tutorials-A-Practical-Guide-PG_07_Value_Conversions.html">Pattern Guide 07: Value Conversions</a></p>
+
+<h2 id="Sharing data between patterns">在模式之间共享数据</h2>
+
+<p>到目前为止，我们看到的模式都是彼此独立的。单个 Pbind 基于自身的信息工作，这些信息对其他 Pbind 不可用。此外，例如 Pbind 中的 <code>degree</code> 模式并不知道 <code>dur</code> 模式在做什么。让这些数据可用，能增添音乐上的智能。</p>
+
+<p>有几种不同的方式可以将信息从一个模式传输到另一个模式。第一种较简单的方法是从当前正在处理的事件中读取值。第二种是将信息从一个事件模式传递到一个单独的事件模式中。由于两者都是事件模式，它们会产生不同的事件结果，因此第一种方法不适用。</p>
+
+<h3 id="Reading values from the current event">从当前事件读取值</h3>
+
+<p>在 Pbind 中，值模式可以轻松读取已放入事件中的其他值。<a href="Classes-Pkey.html">Pkey</a> 模式会在当前正在处理的事件中查找该键并返回其值。在此基础上，你可以对它执行任何其他对模式友好的操作：过滤模式、数学运算符等。</p>
+
+<dl>
+<dt><code>Pkey(key)</code></dt>
+<dd><p>读取输入事件中的键。输出值，直到输入事件不再包含该键（即值为 nil）。没有 repeats 参数。如果需要限制值的数量，请将 Pkey 包装在 Pfin 中。</p></dd>
+<dd><pre><code>p = Pkey(\a).asStream;
+
+// 输入值是一个事件，其中 \a = 2，\b = 3；code::next:: 的结果是 2
+p.next((a: 2, b: 3));
+
+// 我们也可以对输入事件进行数学运算
+p = (Pkey(\a) * Pkey(\b)).asStream;
+p.next((a: 2, b: 3));    // returns 6 == 2 * 3</code></pre></dd>
+<dd><p>在这个简单示例中，断奏与连奏是根据音阶度数计算的：较低的音符更长，较高的音符更短。这仅仅触及了该技术的皮毛！</p></dd>
+<dd><p>需要注意，Pkey 只能向后查找 Pbind 定义中较早声明的键。Pbind 按给定的顺序处理各个键。在示例中，把 <code>legato</code> 放在最前面并让它引用后面才出现的 <code>degree</code> 是行不通的，因为此时 degree 的值还不可用。</p></dd>
+<dd><pre><code>// 简单的东西——音符越高，长度越短
+(
+p = Pbind(
+    \degree, Pseq([Pseries(-7, 1, 14), Pseries(7, -1, 14)], inf),
+    \dur, 0.25,
+        // \degree 在 Pbind 中更早
+    \legato, Pkey(\degree).linexp(-7, 7, 2.0, 0.05)
+).play;
+)
+
+p.stop;</code></pre></dd>
+</dl>
+
+<h3 id="Other information storage patterns">其他信息存储模式</h3>
+
+<p>这些模式代表了三种不同的策略，用于从一个模式持久化信息并使其可供其他模式使用。</p>
+
+<dl>
+<dt><code>Penvir(envir, pattern, independent)</code></dt>
+<dd><p>用于求值模式的 Stream 通常是 Routine，而 Routine 具有一个特殊特性：它会记住上次产出时所生效的 Environment，并在下次被唤醒时恢复同一环境。Penvir 建立一个环境，模式将在其中运行。该环境可以用值初始化，也可以一开始为空，随后由模式中的元素填充。该环境与正在处理的事件相互独立（实际上，模式既可以是事件模式，也可以是值模式）。对环境的访问取决于函数驱动的模式：Pfunc、Pfuncn、Prout、.collect、.select、.reject 以及类似模式。</p></dd>
+<dd><p><code>independent</code> 标志指定环境是否会为从 Penvir 生成的每个流保持独立。如果为 true（默认值），每当 Penvir 被嵌入到流中时，都会创建一个新环境，该环境继承 <code>envir</code> 提供的初始值。如果为 false，则每个流都使用同一个环境。在这种情况下，同一个环境也可以用于不同的 Penvir 模式，并且一个 Penvir 对环境的修改会传递到所有其他 Penvir -- 因此它对共享数据很有用。</p></dd>
+<dt><code>Pfset(func, pattern, cleanupFunc)</code></dt>
+<dd><p>内嵌时，Pfset 创建一个环境，并使用所提供函数中的环境变量赋值来填充它。对于之后的每次调用，预设环境中的值会在求值子模式之前插入到事件原型中。这是为模式设置默认值的一种方式。它也可用于在服务器上加载对象，不过这需要一些小心，因为每次播放 Pfset 时该对象都会被重新加载，并且你需要负责在 cleanupFunc 中释放以这种方式创建的对象。（Pproto 是另一种方式；参见 Pattern Guide 06f: Server Control 。）</p></dd>
+<dd><pre><code>(
+SynthDef(\playbuf, { |bufnum, start, dur = 1, amp = 0.2, out|
+    var    sig = PlayBuf.ar(1, bufnum, BufRateScale.ir(bufnum), 0, start);
+    sig = sig * amp * EnvGen.kr(Env.linen(0.01, dur, 0.01), doneAction: Done.freeSelf);
+    Out.ar(out, sig ! 2)
+}).add;
+)
+
+(
+TempoClock.default.tempo = 1;
+p = Pfset({
+    ~buf = Buffer.read(s, ExampleFiles.child);
+    0.2.yield;    // sync 似乎与模式不兼容
+    ~bufFrames = ~buf.numFrames;
+}, Pbind(
+    \instrument, \playbuf,
+        // 通过 Pkey 访问 protoevent 中的资源
+    \bufnum, Pkey(\buf),
+    \dur, Pwhite(1, 4, inf) * 0.25,
+        // Pwhite 的上限基于 duration
+        // 因此 start + (dur * samplerate) 永远不会超出 buffer 的末尾
+    \start, Pwhite(0, Pkey(\bufFrames) - (Pkey(\dur) * 44100), inf)
+), { defer(inEnvir { &quot;freeing buffer&quot;.postln; ~buf.free }, 1.1) }).play;
+)
+
+// 显示分配的缓冲区编号（&#x27;true&#x27; 表示 ContiguousBlock）
+s.bufferAllocator.debug;
+
+p.stop;</code></pre></dd>
+<dt><code>Plambda(pattern, scope)</code></dt>
+<dd><p>维护一个 'eventScope' 环境，它在事件被处理时附加到事件上。可以使用 Plet(key, pattern, return) 将值赋入事件作用域，并使用 Pget(key, default, repeats) 从作用域读取。Pget 与 Pkey 有些相似，但它有一个 repeats 参数控制返回值的数量，还有一个默认值，当给定键在事件作用域中未找到时将使用该默认值。</p></dd>
+<dd><p><a href="Classes-Plambda.html">Plambda</a> / <a href="Classes-Plet.html">Plet</a> / <a href="Classes-Pget.html">Pget</a> 的一个独特特性是，Plet 能够同时向事件作用域分配一个值，并向主事件返回另一个值。Plet 将来自其 <code>pattern</code> 的值分配到事件作用域中。<code>return</code> 参数是可选的；如果提供，它给出要返回给 Pbind 的值。</p></dd>
+<dd><p>Plambda 在将最终事件返回给调用者之前移除 eventScope。你可以通过跟踪内部模式来查看该作用域。</p></dd>
+<dd><pre><code>p = Plambda(
+    Pbind(
+        \a, Plet(\z, Pseries(0, 1, inf), Pseries(100, -1, inf)),
+        \b, Pget(\z, 0, inf) * 2
+    ).trace(key: \eventScope, prefix: &quot;\nscope: &quot;)
+).asStream;
+
+p.next(());</code></pre></dd>
+<dd><p>使用 Pkey 也可以做到类似的事情，方法是在事件中使用不对应任何 SynthDef 控制名称的中间值。事件中存在其 synth 不会使用的额外值并无害处；只有所需的值会被发送到服务器。通常这比 Plambda 更简单，但在某些情况下，Plambda 可能是唯一的方法。</p></dd>
+<dd><pre><code>p = Pbind(
+    \z, Pseries(0, 1, inf),
+    \a, Pseries(100, -1, inf),
+    \b, Pkey(\z) * 2
+).asStream;
+
+p.nextN(5, ()).do(_.postln);</code></pre></dd>
+</dl>
+
+<h3 id="Communicating values between separate event patterns">在独立的事件模式之间传递值</h3>
+
+<p>从一个 Pbind 向另一个 Pbind 传递值需要一些小技巧。首先是将完成的事件存储在可访问的位置。Pattern 和 EventStreamPlayer 都不会保存已完成的事件；但是，在模式上调用 <code>collect</code> 会附加一个自定义动作，对每个结果事件执行。这里，我们将事件保存到环境变量中，但它也可以放入全局库、已声明的变量或任何其他数据结构中。</p>
+
+<p>其次，我们必须确保源模式在任何依赖源值的客户端模式之前被求值。唯一的方法是稍微提前调度源，因为在任何时钟上同一时间调度的项可以以任意顺序执行。（没有优先级机制能让某个线程总是先运行。）但是，这个调度要求不应影响音频时序。</p>
+
+<p>解决方案是一种时间偏移机制，它将事件的声音延迟给定的拍数。在该示例中，贝斯模式被安排在整数拍之前 0.1 拍（而和弦模式正好在整数拍上运行）。贝斯模式以 0.1 的时间偏移运行，延迟声音使其出现在整数拍上。两个模式在服务器中一起发声，尽管它们在客户端中的定时不同。</p>
+
+<table>
+<tr><td><p>Beat</p></td><td><p>客户端计时</p></td><td><p>服务器计时</p></td></tr>
+<tr><td><p>0.9</p></td><td><p>Bass 事件已计算</p></td><td><p>（贝斯事件延迟 0.1，此处不发生任何事）</p></td></tr>
+<tr><td><p>1.0</p></td><td><p>计算出的和弦事件</p></td><td><p>贝斯和和弦都发声</p></td></tr>
+</table>
+
+<pre><code>(
+TempoClock.default.tempo = 1;
+
+~bass = Pbind(
+    \degree, Pwhite(0, 7, inf),
+    \octave, 3,    // 降低 2 个八度
+    \dur, Pwhite(1, 4, inf),
+    \legato, 1,
+    \amp, 0.2
+).collect({ |event|
+    ~lastBassEvent = event;
+}).play(quant: Quant(quant: 1, timingOffset: 0.1));
+
+// Quant 对象的简写形式：#[1, 0, 0.1]
+
+~chords = Pbind(
+    \topNote, Pseries(7, Prand(#[-2, -1, 1, 2], inf), inf).fold(2, 14),
+    \bassTriadNotes, Pfunc { ~lastBassEvent[\degree] } + #[0, 2, 4],
+        // 将三和弦合并到最高音
+        // 将三和弦的音符提升到低于最高音的最高八度
+        // div: 是整数除法，所以 x div: 7 * 7 表示下一个更低的 7 的倍数
+    \merge, (Pkey(\topNote) - Pkey(\bassTriadNotes)) div: 7 * 7 + Pkey(\bassTriadNotes),
+        // 如果 topNote 还不在数组中，就把它加入数组
+    \degree, Pfunc { |ev|
+        if(ev[\merge].detect({ |item| item == ev[\topNote] }).isNil) {
+            ev[\merge] ++ ev[\topNote]
+        } {
+            ev[\merge]
+        }
+    },
+    \dur, Pwrand([Pseq([0.5, Pwhite(1, 3, 1), 0.5], 1), 1, 2, 3], #[1, 3, 2, 2].normalizeSum, inf),
+    \amp, 0.05
+).play(quant: 1);
+)
+
+~bass.stop;
+~chords.stop;</code></pre>
+
+<p>和弦模式演示了在模式中表达高层逻辑的一些方式。目标是将根位置三和弦的音符相对于低音音符按八度移调，使所有音符都落在顶部音符（通过级进运动选择）下方的一个八度内。<code>Pkey(\topNote) - Pkey(\bassTriadNotes)</code> 给出将三和弦音符提升到顶部音符所需的移调步数；然后将移调步数截断到下一个更低的八度（<code>x div: 7</code> 是整数除法，产生八度数；乘以 7 得到该八度的音阶度数）。</p>
+
+<pre><code>f = { |topNote, triad|
+    var    x;
+    x = (topNote - triad).debug(&quot;initial transposition steps&quot;);
+    x = (x div: 7).debug(&quot;octaves to transpose&quot;);
+    x = (x * 7).debug(&quot;steps to transpose&quot;);
+    x + triad
+};
+
+f.value(7, #[0, 2, 4]);
+--&gt; [ 7, 2, 4 ] (first inversion triad)</code></pre>
+
+<p>然后检查转置后的数组，看最高音是否已经是其成员。如果不是，就将其添加进去，这样旋律将始终存在。</p>
+
+<p>请注意，模式上的惰性操作定义了此行为的大部分；只有条件数组检查必须写成函数。</p>
+
+<p>上面的示例破坏了模式的一条设计原则。理想情况下，应当能够同时多次播放单个模式对象，而不同的流之间不会相互干扰。将低音音符保存在一个环境变量中意味着并发流无法协同工作，因为它们不能同时使用同一个环境变量。然而，上述方法确实允许两个模式独立地停止和启动，并允许随时添加新的依赖低音的模式。在某些音乐场景中，这种灵活性比遵循模式的设计理想更为重要。</p>
+
+<p>使用 <a href="Classes-Ptpar.html">Ptpar</a> 和 <a href="Classes-Penvir.html">Penvir</a>，可以为事件存储创建独立的环境，并将其作为模式本身的一部分。默认情况下，Penvir 会为其每个流创建环境的新副本，从而保证独立性。当模式运行时，<code>~lastBassEvent = event</code> 会将事件保存在该流的存储环境副本中，并且两个 Pbind 都可以访问它，因为两者都受 Penvir 控制（间接通过 Ptpar）。</p>
+
+<pre><code>(
+p = Penvir((), Ptpar([
+    0.0, Pbind(
+        \degree, Pwhite(0, 7, inf),
+        \octave, 3,    // 降低 2 个八度
+        \dur, Pwhite(1, 4, inf),
+        \legato, 1,
+        \amp, 0.2,
+        \timingOffset, 0.1
+    ).collect({ |event|
+        ~lastBassEvent = event;
+    }),
+    0.1, Pbind(
+        \topNote, Pseries(7, Prand(#[-2, -1, 1, 2], inf), inf).fold(2, 14),
+        \bassTriadNotes, Pfunc { ~lastBassEvent[\degree] } + #[0, 2, 4],
+        \merge, (Pkey(\topNote) - Pkey(\bassTriadNotes)) div: 7 * 7 + Pkey(\bassTriadNotes),
+        \degree, Pfunc { |ev|
+            if(ev[\merge].detect({ |item| item == ev[\topNote] }).isNil) {
+                ev[\merge] ++ ev[\topNote]
+            } {
+                ev[\merge]
+            }
+        },
+        \dur, Pwrand([Pseq([0.5, Pwhite(1, 3, 1), 0.5], 1), 1, 2, 3], #[1, 3, 2, 2].normalizeSum, inf),
+        \amp, 0.05
+    )
+])).play;
+)
+
+p.stop;</code></pre>
+
+<p>上一页：<a href="Tutorials-A-Practical-Guide-PG_06f_Server_Control.html">Pattern Guide 06f：服务器控制</a></p>
+
+<p>下一页：<a href="Tutorials-A-Practical-Guide-PG_07_Value_Conversions.html">Pattern Guide 07：值转换</a></p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/A-Practical-Guide/PG_06g_Data_Sharing.html" rel="noreferrer noopener">Tutorials/A-Practical-Guide/PG_06g_Data_Sharing.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

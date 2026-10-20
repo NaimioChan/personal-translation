@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>默认组 - SuperCollider 文档</title>
+<meta name="description" content="sclang 中自动创建的 Group">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>默认组</h1>
+
+<p><em>sclang 中自动创建的 Group</em></p>
+
+<p>另请参见：<a href="Classes-Group.html">Group</a>、<a href="Classes-RootNode.html">RootNode</a>、<a href="Classes-Node.html">Node</a>、<a href="Guides-NodeMessaging.html">Node Messaging</a>、<a href="Guides-Order-of-execution.html">Order of execution</a></p>
+
+<ul>
+<li><p>根节点（id:0）</p>
+
+<ul>
+<li>默认组（id:1）</li>
+</ul></li>
+</ul>
+
+<p>当服务器启动时，存在一个 ID 为 0 的顶层组，它定义了树的根。这由 Group 的一个子类表示：<a href="Classes-RootNode.html">RootNode</a>。</p>
+
+<p>与根组分开的是 sclang 的“默认组”概念，它在服务器启动时自动创建。你可以通过方法 <a href="Classes-Server.html#-defaultGroup">Server: -defaultGroup</a> 访问它。此组是所有节点的默认外层组，即如果你不指定，得到的就是它。一般来说，你应该在服务器的默认组内创建新节点，而不是在其 RootNode 内。在单客户端设置中，默认组的 ID 将为 1。</p>
+
+<p>请记住，默认组是客户端侧的概念，如果你从命令行或 NRT 模式运行 scsynth，或开发替代客户端，则需要自行创建它们。<a href="#footnote_1" id="footnote_org_1">1</a></p>
+
+<p>这是在对象风格下所有 Node 的默认目标，如果你将一个 <a href="Classes-Server.html">Server</a> 作为目标提供，得到的就是它。如果你不指定目标或传入 nil，你将得到默认 Server 的默认组。</p>
+
+<pre><code>s.boot;
+a = Synth.new(\default); // 在默认 Server 的默认组中创建一个 synth
+a.group; // 注意 Group ID
+a.group == Server.default.defaultGroup;
+// -&gt; true</code></pre>
+
+<p>默认组有一个重要用途：它提供了一个可预测的基本节点树，使得诸如 Server-scope、Server-record 等方法能够在不会遇到执行顺序问题的情况下正常工作。在下面的示例中，作用域节点将位于默认组之后。</p>
+
+<pre><code>s.boot;
+
+{ SinOsc.ar(mul: 0.2) }.scope(1);
+
+// 观察 post 窗口；
+s.queryAllNodes;
+
+// 我们的 SinOsc synth 位于默认组（ID 1）中
+// scope 节点在默认组之后，所以没有问题
+
+s.quit;</code></pre>
+
+<p>注意默认组是持久存在的：它在 Server 的 <code>initTree</code> 方法中创建（与存储在其 tree 实例变量中的任何代码一起执行；详情参见 Server），并在重启后、按下 Cmd-. 后以及所有节点被释放后重新创建。使用 osc 消息时，这意味着 id 为 1 的目标节点始终可以使用：</p>
+
+<pre><code>s.sendMsg(&quot;/s_new&quot;, &quot;snd&quot;, 1832,0,1); // 添加到组 1 的头部</code></pre>
+
+<p>默认组可以被专门释放，但通常没有理由去这样做。</p>
+
+<p>一般来说，应将节点添加到默认组而不是 RootNode，除非有特定理由需要这样做（例如添加一些新的功能，比如录音和示波，这些功能依赖于可预测的基本节点顺序）。使用对象风格时，默认组是所有新节点的默认目标，因此除非明确指定，节点通常不会被添加到 RootNode。当然可以这样做，但只有在充分理解相关问题的情况下才应这样做。</p>
+
+<p>例如，如果将 'effects' synth 放在默认组之后，并调用 Server-record 或 Server-scope，则生成的录音或示波器 synth 可能顺序不正确：</p>
+
+<ul>
+<li><p>默认组</p>
+
+<ul>
+<li>源 synth1</li>
+<li>源 synth2</li>
+</ul></li>
+<li>录制 synth</li>
+<li>效果 synth</li>
+</ul>
+
+<p>在上面的示例中，录音 synth 可能无法捕获效果 synth 的输出，因为它在节点顺序中靠后。</p>
+
+<p>在这种情况下，更好的方法是在默认组内创建一个组，并将效果 synth 放在该组之后。</p>
+
+<ul>
+<li><p>默认组</p>
+
+<ul>
+<li><p>源组</p>
+
+<ul>
+<li>源 synth1</li>
+<li>源 synth2</li>
+</ul></li>
+<li>效果 synth</li>
+</ul></li>
+<li>录制 synth</li>
+</ul>
+
+<h2 id="Default groups in multi-client setups">多客户端设置中的默认组</h2>
+
+<p>更多信息请参见 <a href="Guides-MultiClient_Setups.html">多客户端设置</a>。</p>
+
+<p>默认组机制也用于在多客户端设置中分隔客户端。每个向服务器注册的客户端都有自己独立的默认组。属于一个客户端的所有节点都在其默认组中，并且可以被专门寻址。</p>
+
+<p>这默认使节点保持清晰分离，但客户端也知道所有其他客户端的默认组。这可以通过方法 <a href="Classes-Server.html#-defaultGroups">Server: -defaultGroups</a> 访问，它是一个将客户端 ID 映射到默认组的数组。</p>
+
+<p class="footnote" id="footnote_1">[<a href="#footnote_org_1">1</a>] - 从命令行启动服务器时，你可以手动创建默认组：s.initTree;</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Reference/default_group.html" rel="noreferrer noopener">Reference/default_group.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

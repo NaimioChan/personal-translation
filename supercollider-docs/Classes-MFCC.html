@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MFCC - SuperCollider 文档</title>
+<meta name="description" content="梅尔频率倒谱系数">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>MFCC</h1>
+
+<p><em>梅尔频率倒谱系数</em></p>
+
+<p><a href="Classes-MultiOutUGen.html">MultiOutUGen</a> : <a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>另请参见：<a href="Classes-BeatTrack.html">BeatTrack</a>、<a href="Classes-Loudness.html">Loudness</a>、<a href="Classes-Onsets.html">Onsets</a>、<a href="Classes-Pitch.html">Pitch</a>、<a href="Classes-KeyTrack.html">KeyTrack</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>生成一组 MFCC；这些 MFCC 从基于频带的频率表示（默认使用 Mel 标度）获得，然后进行离散余弦变换（DCT）。DCT 是主成分分析的一种高效近似，因此它允许对数据进行压缩或降维，在这种情况下将 42 个频带读数缩减为更小的一组 MFCC。少量特征（系数）最终描述了频谱。MFCC 通常用作音色描述符。</p>
+
+<p>输出值在一定程度上被归一化到 0.0 至 1.0 范围，但并不保证完全符合此范围。通常，第一个系数会是最大值。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> MFCC UGen 的草稿分别由 Dan Stowell 和 Nick Collins 准备；他们各自的想法在此合并为一个跨平台兼容的 UGen。默认情况下，各频带采用梅尔刻度间距和三角交叉淡变重叠，大致跟踪人类临界频带的间距和带宽。BFCC（Bark）和 EFCC（ERB）等变体在实践中给出了类似的结果；此处使用的梅尔刻度是标准刻度，改编自语音识别文献，现应用于音乐信息检索。</p></blockquote>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*kr"><code>MFCC.kr(chain, numcoeff: 13)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>chain</p></td><td class="argumentdesc"><p>[fft] 要跟踪的音频输入，已由 FFT UGen 预先分析；预期 FFT 大小见下方示例。</p></td></tr>
+<tr><td class="argumentname"><p>numcoeff</p></td><td class="argumentdesc"><p>[s] 系数数量，默认值为 13，最大值为 42；当然，使用较少的系数效率更高！</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p><code>#coeff1, coeff2, ...</code></p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 技术说明：第 0 个系数不会被生成，因为它由将所有频带乘以 1 并求和构成
+
+
+// 假设跳数为 fftsize 的一半，可以
+
+d = Buffer.read(s, ExampleFiles.child);
+
+
+(
+x = {
+    var in, fft, array;
+
+    // in = PlayBuf.ar(1, d, BufRateScale.kr(d), 1, 0, 1);
+
+    in = SoundIn.ar(0);
+    fft = FFT(LocalBuf(1024), in);  // 对于采样率 44100 和 48000
+    // fft = FFT(LocalBuf(2048), in);  // 适用于采样率 88200 和 96000
+
+    array = MFCC.kr(fft);
+
+    array.size.postln;
+
+    Out.kr(0, array); // 控制总线输出
+    Out.ar(0, Pan2.ar(in)); // 音频总线输出
+}.play
+)
+
+
+c = Bus(\control, 0, 13);
+
+// 轮询系数
+c.getn(13, { |val| { val.plot }.defer });
+
+
+// MFCC 值的连续图形显示；关闭窗口前释放例程
+
+(
+var ms;
+
+w = Window.new(&quot;Thirteen MFCC coefficients&quot;, Rect(200, 400, 300, 300));
+
+ms = MultiSliderView.new(w, Rect(10, 10, 260, 280));
+
+ms.value_(Array.fill(13, 0.0));
+ms.valueThumbSize_(20.0);
+ms.indexThumbSize_(20.0);
+ms.gap_(0);
+
+w.front;
+
+r = {
+
+    inf.do {
+
+        c.getn(13, { |val| { ms.value_(val * 0.9) }.defer });
+        0.04.wait; // 每秒 25 帧
+    }
+
+}.fork
+
+)
+
+
+// 整理
+(
+r.stop;
+b.free;
+c.free;
+x.free;
+w.close;
+)</code></pre>
+
+<pre><code>// 计算 Mel 频带；最多允许 42 个系数，因此最多 42 个频带
+// 这段代码的第一部分改编自 Dan Stowell 和 Jamie Bullock 的 Mel 刻度实现
+// 之后可以添加 Bark 和 ERB 选项，以及将数据缓冲区传递给 UGen 以实现其他频率弯曲的可能性
+(
+var mel_freq_max, mel_freq_min, freq_bw_mel, freq_bands, freq_max, freq_min;
+var mel_peak, lin_peak, fft_peak;
+var freqperbin;
+var fftbinstart, fftbinend, fftbinmult, fftbincumul;
+var pos, tmp;
+var sr, fftsize, halffftsize;
+var whichbandscale, lintoscale, scaletolin;
+
+freq_max = 18000;
+freq_min = 80;
+sr = 48000; // 44100;
+fftsize = 1024;
+halffftsize = fftsize.div(2);
+freq_bands = 42;
+
+// whichbandscale = 0; // 0 = mel；1 = bark (CB)；2 = ERB
+//
+// lintoscale = { |freq|
+// switch(whichbandscale, 0, { 1127 * log(1 + (freq / 700)) }, 1, { }, 2, { }).value
+// };
+// scaletolin = { |scalepos|
+// switch(whichbandscale, 0, { 700 * (exp(scalepos / 1127.0) -1) }, 1, { }, 2, { }).value
+// };
+
+lintoscale = { |freq|
+    1127 * log(1 + (freq / 700))
+};
+scaletolin = { |scalepos|
+    700 * (exp(scalepos / 1127.0) -1)
+};
+
+mel_freq_max = lintoscale.value(freq_max); // 1127 * log(1 + (freq_max / 700));
+mel_freq_min = lintoscale.value(freq_min); // 1127 * log(1 + (freq_min / 700));
+freq_bw_mel = (mel_freq_max - mel_freq_min) / freq_bands;
+
+[mel_freq_max, mel_freq_min, freq_bw_mel].postln;
+
+mel_peak = Array.fill(freq_bands + 2, { 0.0 });
+lin_peak = Array.fill(freq_bands + 2, { 0.0 });
+fft_peak = Array.fill(freq_bands + 2, { 0.0 });
+
+freqperbin = sr / fftsize; // SR/N
+
+mel_peak[0] = mel_freq_min;
+lin_peak[0] = freq_min; // === 700 * (exp(mel_peak[0] / 1127) - 1);
+fft_peak[0] = (lin_peak[0] / freqperbin).asInteger;
+
+for(1, freq_bands + 1, { |n|
+
+    mel_peak[n] = mel_peak[n - 1] + freq_bw_mel;
+    lin_peak[n] = scaletolin.value(mel_peak[n]); // 700 * (exp(mel_peak[n] / 1127.0) -1);
+    fft_peak[n] = ((lin_peak[n] / freqperbin).asInteger).min(halffftsize); // fft 大小 // 此处向下取整
+
+});
+
+// Post &lt;&lt; mel_peak &lt;&lt; nl;
+// Post &lt;&lt; lin_peak &lt;&lt; nl;
+// Post &lt;&lt; fft_peak &lt;&lt; nl;
+
+//  [2 / (lin_peak[freq_bands + 1] - lin_peak[freq_bands-1]), 1.0 / (2 / (lin_peak[2] - lin_peak[0]))].postln;
+
+fftbinstart = Array.fill(freq_bands, { 0 });
+fftbinend = Array.fill(freq_bands, { 0 });
+fftbincumul = Array.fill(freq_bands + 1, { 0 });
+fftbinmult = [];
+
+pos = 0;
+
+freq_bands.do { |i|
+
+    // var normmult = 1.0; // 保持功率，不按面积修改频带功率
+    var startbin, endbin, numbins, averager;
+
+    if(i == 0) {
+        startbin = 0;
+        endbin = fft_peak[i + 1] - 1;
+    } {
+        startbin = fft_peak[i - 1] + 1;
+        endbin = fft_peak[i + 1] - 1;
+    };
+
+    numbins = endbin - startbin + 1;
+    averager = 1.0 / numbins;
+
+    // 连续频带中心之间的线性交叉淡化（按功率意图）
+
+    tmp = fft_peak[i] - startbin;
+
+    // 可以除以 averager，但我不确信这在感知上的必要性？
+    // 即 fftbinmult = fftbinmult ++ (Array.series(tmp + 1, 1.0 / (tmp + 1), 1.0 / (tmp + 1)) * averager);
+
+    fftbinmult = fftbinmult ++ (Array.series(tmp + 1, 1.0 / (tmp + 1), 1.0 / (tmp + 1)));
+
+    tmp = endbin - fft_peak[i];
+
+    fftbinmult = fftbinmult ++ (Array.series(tmp, 1.0 + ((-1.0) / (tmp + 1)), (-1.0) / (tmp + 1)));
+
+    fftbinstart[i] = startbin;
+    fftbinend[i] = endbin;
+    fftbincumul[i] = pos;
+
+    pos = pos + (endbin - startbin + 1);
+};
+
+fftbincumul[freq_bands] = pos - 1;
+
+Post &lt;&lt; fftbinstart &lt;&lt; nl;
+Post &lt;&lt; fftbinend &lt;&lt; nl;
+Post &lt;&lt; fftbincumul &lt;&lt; nl;
+Post &lt;&lt; fftbinmult &lt;&lt; nl;
+
+)
+
+
+// future work：参见 http://www.ling.su.se/STAFF/hartmut/bark.htm
+
+// Barks
+a = (26.81 / (1 + (1960 / ((100, 200..22000))))) - 0.53;
+a.plot;
+
+// ERB（粗略计算，仅在 6000Hz 以下真正有效，在 22000 Hz 下真实刻度最高可达 42 而非 37）
+(
+a = Array.fill(220, { |i| 
+    var f = i * 100; 
+    11.17 * log((f + 312) / (f + 14675)) + 43.0 
+})
+)
+a.plot
+
+// 生成 DCT 系数
+// 不要生成 i = 0 的系数，因为它
+a = Array.fill(42, { |i| cos(pi / 42.0 * ((0..41) + 0.5) * (i + 1)) });
+Post &lt;&lt; a.flatten &lt;&lt; nl;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/MFCC.html" rel="noreferrer noopener">Classes/MFCC.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

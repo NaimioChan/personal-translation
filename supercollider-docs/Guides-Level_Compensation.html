@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>混音和声像时的电平补偿 - SuperCollider 文档</title>
+<meta name="description" content="在 SC 中混音和平移时的电平平衡">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>混音和声像时的电平补偿</h1>
+
+<p><em>在 SC 中混音和平移时的电平平衡</em></p>
+
+<p>另请参阅：<a href="Classes-Pan2.html">Pan2</a>、<a href="Classes-PanAz.html">PanAz</a>、<a href="Classes-Splay.html">Splay</a>、<a href="Classes-SplayAz.html">SplayAz</a>、<a href="Classes-LevelComp.html">LevelComp</a></p>
+
+<h2 id="Considerations">Considerations</h2>
+
+<p><a href="Guides-Multichannel-Expansion.html">多通道扩展</a> 是 SuperCollider 的关键特性之一，它使探索复杂的复音合成和空间化变得容易。对这些信号进行混音和声像处理通常涉及从一定数量的输入通道转换到不同数量的输出通道，而有意义地调整信号幅度电平需要考虑两个方面：</p>
+
+<p><strong>1. 技术安全性：新信号的最大幅度会是多少？在最坏情况下，它们是否会使音频硬件削波（超过 +-1.0）？</strong></p>
+
+<p><strong>2. 感知响度：相对于其他存在的信号，新信号应该有多响？</strong></p>
+
+<p>为了平衡这些方面，了解待混音/声像处理的信号会有帮助。SC 中的大多数 UGen 产生的信号振幅为 1.0，因此我们在这里的讨论中将使用该值。</p>
+
+<p><strong>相位相关程度：</strong>各个信号的瞬时峰值在时间上对齐的可能性有多大？两种边界情况分别是完全<strong>同相：</strong>所有声道上的信号相同，因此峰值始终对齐；以及完全<strong>随机相位：</strong>所有声道上都是不同的噪声信号，此时峰值在统计上极不可能对齐。大多数音乐信号都介于这两个极端之间，即在一定程度上相位相关。</p>
+
+<p><strong>等幅补偿</strong>是高度相关信号的安全选择：将总和除以通道数；<strong>等功率补偿</strong>通常用于弱相关信号，因为它通过将总和除以通道数的平方根来保持声能恒定。由于大多数音乐信号介于两个极端之间，因此在有疑问时，针对具体情况加以考虑和测试是合理的。</p>
+
+<p>在声学文献中，此电平补偿因子称为 p 值 [1]，它可以推广如下：</p>
+
+<pre><code>~levelCompFactor = { |numChans=2, p_value=1|
+    numChans ** p_value.clip(0, 1).neg
+};
+~levelCompFactor.value(2, 1); // 等幅，乘以 1/n
+~levelCompFactor.value(2, 0.5); // 等功率，乘以 1/n 的平方根
+~levelCompFactor.value(2, 0); // 保持满电平，不做电平缩放</code></pre>
+
+<p>以下是 Mixing 和 Panning 常见情况的一些示例。</p>
+
+<h3 id="Mixing M channels to 1">将 M 个声道混合为 1 个</h3>
+
+<p>下混为单声道是展示不同电平补偿方法的最简单情形。用于此目的的 UGen 或函数有 <a href="Classes-Mix.html">Mix</a>、<code>sum</code>、<code>mean</code>。</p>
+
+<pre><code>s.meter; s.scope;
+
+n = 10;
+// 10 个通道到 1 个，完全相干同相信号：
+{ (SinOsc.ar ! n) }.plot;
+{ (SinOsc.ar ! n).sum }.plot;       // sum : +-10
+// 等幅：除以通道数 -&gt; 峰值 1
+{ (SinOsc.ar ! n).sum / n }.plot;   // sum
+{ Mix.ar(SinOsc.ar ! n) / n }.plot; // 与 Mix.ar 相同
+{ (SinOsc.ar ! n).mean }.plot;      // 均值直接除以 n！
+
+// 10 个声道到 1 个，与 100Hz 共享根音准相干：
+{ SinOsc.ar((1..n) * 100, 0.5pi) }.plot(0.05);
+
+// 因为峰值恰好重合（相位偏移 0.5pi），
+// 我们必须除以 n 以保持在 +-1 范围内：
+{ SinOsc.ar((1..n) * 100, 0.5pi).sum / n }.plot(0.05);
+{ SinOsc.ar((1..n) * 100, 0.5pi).sum / n }.play;
+
+// 在同一范围内的随机频率下，信号的一致性较低
+{ SinOsc.ar({ rrand(100.0, 1000.0).postln }! n, 0.5pi).sum / n }.play;
+
+// 非常随机的相位信号
+{ PinkNoise.ar(1 ! n) }.play;
+
+// 比较单通道 ...
+{ PinkNoise.ar }.play;
+
+// 使用 n 到 1 的混音并进行等功率补偿：
+// 音量相当相似，可能会削波，但非常罕见
+{ PinkNoise.ar({ 1 } ! n).sum / n.sqrt }.play;</code></pre>
+
+<h3 id="Panning 1 channel to 2">将 1 个声道声像定位到 2 个</h3>
+
+<p><a href="Classes-Pan2.html">Pan2</a> 使用等功率声像：当声像位于中心时，两个信号均为 0.7，即 -3 dB</p>
+
+<pre><code>{ Pan2.ar(DC.ar(1), Line.kr(-1, 1, 0.1)) }.plot(0.1);
+// 声像移动时响度似乎保持不变
+{ Pan2.ar(PinkNoise.ar(0.2), SinOsc.kr(0.3)) }.play;</code></pre>
+
+<p><a href="Classes-LinPan2.html">LinPan2</a> 使用等幅声像：在中间时，两个信号均为 0.5。</p>
+
+<pre><code>{ LinPan2.ar(DC.ar(1), Line.kr(-1, 1, 0.1)) }.plot(0.1);
+// 在中心位置时响度似乎略有下降
+{ LinPan2.ar(PinkNoise.ar(0.2), SinOsc.kr(0.3)) }.play;</code></pre>
+
+<h3 id="Panning 1 channel to N">将 1 个声道声像定位到 N 个</h3>
+
+<p><a href="Classes-PanAz.html">PanAz</a> 使用等功率声像定位，因此在默认宽度为 2 时，它保持能量恒定，与 <a href="Classes-Pan2.html">Pan2</a> 类似。</p>
+
+<pre><code>{ PanAz.ar(4, DC.ar(1), Line.kr(-1, 1, 0.1), orientation: 0) }.plot(0.1);
+
+// 宽度越大，重叠越大，整体能量上升，
+// 因此可能需要为更大的宽度补偿振幅
+{ PanAz.ar(4, DC.ar(1), Line.kr(-1, 1, 0.1), width: 4, orientation: 0) }.plot(0.1);</code></pre>
+
+<h3 id="Mix/Panning M to 2 channels">将 M 个通道混音/声像定位到 2 个通道</h3>
+
+<p><a href="Classes-Splay.html">Splay</a> 使用 <a href="Classes-Pan2.html">Pan2</a> 将输入通道数组混合为立体声，并提供 3 种电平补偿选项：</p>
+
+<pre><code>s.meter; s.scope;
+
+// levelComp 默认为 true，即等功率 -
+// 为向后兼容而保持此方式。
+{ Splay.ar(Saw.ar([20, 30, 50]), 1, levelComp: true) }.scope;
+// 可以关闭 levelComp 以另行设置电平：
+{ Splay.ar(Saw.ar([20, 30, 50]), level: 0.6, levelComp: false) }.scope;
+
+// levelComp 可以是一个数字，介于 0.0 -&gt; 无压缩，
+// 和 1.0 -&gt; 等幅压缩之间，其中 0.5 为等功率，
+// 这允许通过指数手动进行微调：
+{ Splay.ar(Saw.ar([100, 150, 250]), levelComp: 0.5) }.scope;
+
+// 当 spread 设置得较低时，电平和峰值会升高；
+// 最坏的情况是将所有输入声像定位到单个声道：
+{ Splay.ar(Saw.ar([100, 150, 250]), spread: 0, center: 1, levelComp: 0.5) }.scope;</code></pre>
+
+<p>请注意，此 levelComp 因子会随通道数缩放，因此在试验改变通道数时，将其调到 0.5 到 1.0 之间效果会很好。</p>
+
+<h3 id="Mix/Panning M channels to N">将 M 个通道混音/声像定位到 N 个通道</h3>
+
+<p><a href="Classes-SplayAz.html">SplayAz</a> 使用 <a href="Classes-PanAz.html">PanAz</a> 将 M 个输入通道的数组混合为 N 个输出；它有 3 个电平补偿选项：</p>
+
+<pre><code>s.meter; s.scope;
+
+n = 10;
+// levelComp 默认为 true，即等功率：
+{ SplayAz.ar(4, Saw.ar({ exprand(100, 500) }! n), 1, levelComp: true) }.scope;
+// levelComp 可以关闭以手动/凭听觉补偿：
+{ SplayAz.ar(4, Saw.ar({ exprand(100, 500) }! n), level: (1/n).sqrt, levelComp: false) }.scope;
+
+// 与 Splay 中一样，levelComp 可以是 0.0 到 1.0 之间的数字：0.0 -&gt; 不补偿，
+// 1.0 -&gt; 等幅补偿，0.5 为等功率。
+// 这允许通过 levelComp 指数手动微调：
+// 需要 SplayAz 上的 PR
+{ SplayAz.ar(4, Saw.ar({ exprand(100, 500) }! n), level: 0.5, levelComp: 0.7) }.scope;
+
+// 当将 spread 设置得较低时，单个通道上的电平会升高：
+{ SplayAz.ar(4, Saw.ar({ exprand(100, 500) }! n), level: 0.5, spread: 0, orientation: 0) }.scope;
+
+// 最坏情况：全部声像到同一输出通道会增大：
+{ SplayAz.ar(4, Saw.ar({ exprand(100, 500) }! n), level: 0.5) }.scope;
+
+// 当 width 值较高时，整体输出电平也会上升，
+// 因为每个通道被导向更多通道：
+{ SplayAz.ar(4, Saw.ar({ exprand(100, 500) }! n), level: 0.5, width: 4) }.scope;</code></pre>
+
+<p>[1] Laitinen, Mikko-Ville, 等. "Gain normalization in amplitude panning as a function of frequency and room reverberance." Audio Engineering Society Conference: 55th International Conference: Spatial Audio. Audio Engineering Society, 2014.</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Level_Compensation.html" rel="noreferrer noopener">Guides/Level_Compensation.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

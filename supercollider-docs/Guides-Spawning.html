@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>&quot;Spawning&quot; 和 &quot;TSpawning&quot; - SuperCollider 文档</title>
+<meta name="description" content="缺少 Spawn 和 TSpawn UGen 及其各种便捷类">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>&quot;Spawning&quot; 和 &quot;TSpawning&quot;</h1>
+
+<p><em>缺少 Spawn 和 TSpawn UGen 及其各种便捷类</em></p>
+
+<p>在 SC2 中，Spawn 和 TSpawn 是两个最强大且最常用的 UGen。在 SC3 中，所有内容都在其中生成的顶层 Synth 这一概念不再有效。合成始终在运行（至少只要服务器在运行），并且可以即时创建新的 Synth。这种安排比 SC2 带来了更大的灵活性，但需要稍微不同的方法。</p>
+
+<p>在 SC3 中，只需执行代码块即可随时创建 Synth。</p>
+
+<pre><code>// 执行此操作
+(
+x = SynthDef(&quot;Help-SynthDef&quot;, { arg out = 0;
+    Out.ar(out, PinkNoise.ar(0.1))
+}).play; // SynthDef-play 返回一个 Synth 对象。
+)
+
+// 然后执行此操作
+(
+SynthDef(&quot;help-Rand&quot;, { arg out = 0;
+    Out.ar(
+        out,
+        FSinOsc.ar(
+            Rand(200.0, 400.0), // 频率在 200 到 400 Hz 之间
+            0, Line.kr(0.2, 0, 1, doneAction: Done.freeSelf) // 自我释放
+        )
+    )
+}).play(s);
+)
+
+x.free;</code></pre>
+
+<p>时钟，例如 <a href="Classes-SystemClock.html">SystemClock</a>，提供了一种在未来任意时间点调度任务的方法。这类似于 SC2 中的 <code>Synth.sched</code>。</p>
+
+<pre><code>(
+SystemClock.sched(2.0, {
+    &quot;2.0 seconds later&quot;.postln; // 这可以是任何代码，包括创建 Synth
+    nil // 这意味着不要重复
+});
+)</code></pre>
+
+<p>在 SC3 中，基于时间的事件序列可以用 Routine 实现。产生数值的 <a href="Classes-Routine.html">Routine</a> 可以使用时钟进行调度：</p>
+
+<pre><code>(
+var w, r;
+
+w = Window.new(&quot;trem&quot;, Rect(512, 256, 360, 130));
+w.front;
+
+r = Routine({ arg time;
+    60.do({ arg i;
+        0.05.yield; // 等待 0.05 秒
+        {
+            w.bounds = w.bounds.moveBy(10.rand2, 10.rand2);
+            w.alpha = cos(i*0.1pi)*0.5+0.5;
+        }.defer;
+    });
+    1.yield; // 关闭 w 前等待 1 秒
+    w.close;
+});
+
+SystemClock.play(r);
+)</code></pre>
+
+<p>请注意，此实现避免了 SC2 方法中一个较为奇怪的方面：即使不涉及音频，也需要启动一个 Synth 来调度基于时间的行为。</p>
+
+<p><a href="Classes-SystemClock.html">SystemClock</a> 和 <a href="Classes-AppClock.html">AppClock</a>（一个精度较低、可以调用 Cocoa 原语的版本）都只有类方法。因此不需要创建它们的实例。如果你需要一个可单独操作的时钟（例如操作不同事件序列的速度），可以使用 <a href="Classes-TempoClock.html">TempoClock</a>。</p>
+
+<p>下面展示了一个简单的 SC2 Spawn 示例，随后是其转换为 SC3 风格代码的版本。</p>
+
+<pre><code>// 这在 SC3 中不会执行
+(
+Synth.play({
+    Spawn.ar(
+        { EnvGen.ar(Env.perc) * SinOsc.ar(440,0,0.1) },
+        1, // 一个声道
+        1 // 每秒一个新事件
+    )
+})
+)
+
+// SC3 中的同一示例（将执行）
+s.boot;
+(
+SynthDef(&quot;help-EnvGen&quot;,{ arg out = 0;
+    Out.ar(
+        out,
+        EnvGen.kr(Env.perc,1.0,doneAction: Done.freeSelf) * SinOsc.ar(440,0,0.1)
+    )
+}).send(s);
+)
+
+(
+r = Routine.new({ { Synth.new(&quot;help-EnvGen&quot;); 1.yield; }.loop }); // 每秒循环一次
+SystemClock.play(r);
+)</code></pre>
+
+<p>注意，上面的示例使用了预编译的 <a href="Classes-SynthDef.html">SynthDef</a>。与 SC2 风格的 Spawning 相比，这样在创建 Synth 时 CPU 峰值更低。如有必要，也可以动态创建 SynthDef，但通过参数或诸如 <a href="Classes-Rand.html">Rand</a> 和 <a href="Classes-TRand.html">TRand</a> 之类的 UGen 就能实现大量变化。更多细节参见 <a href="Overviews-SC3vsSC2.html#SynthDefsVsSynths">SuperCollider 3 versus SuperCollider 2: SynthDefsVsSynths</a> 一节。</p>
+
+<pre><code>// 即时生成 SynthDef
+s.boot;
+(
+t = TempoClock.new;
+r = Routine.new({
+    10.do({
+        // 可以用参数而不是新的 def 来实现，但这里是为了说明问题
+        SynthDef(&quot;help-EnvGen&quot; ++ i, { arg out = 0;
+            Out.ar(
+                out,
+                EnvGen.kr(Env.perc, 1.0, doneAction: Done.freeSelf)
+                * SinOsc.ar(100 + (100 * t.elapsedBeats), 0, 0.1)
+            )
+        }).play(s);
+        1.yield;
+    });
+}).play(t); // 注意另一种语法：Routine.play(aClock)
+)</code></pre>
+
+<p>请注意播放 Routine 的另一种语法。<code>aClock.play(aRoutine)</code> 与 <code>aRoutine.play(aClock)</code> 在功能上是等价的。两者分别在不同方面带来或多或少的便利，例如向 <a href="Classes-Routine.html">Routine</a> 或 <a href="Classes-Clock.html">Clock</a> 发送消息。（更详细的讨论请参见 play 帮助文件。）例如：</p>
+
+<pre><code>(
+// 这个、那个以及其他
+r = Routine.new({var i = 0; { (&quot;this: &quot; ++ i).postln; i = i + 1; 1.yield; }.loop });
+q = Routine.new({var i = 0; { (&quot;that: &quot; ++ i).postln; i = i + 1; 1.yield; }.loop });
+t = Routine.new({var i = 0; { (&quot;the other: &quot; ++ i).postln; i = i + 1; 1.yield; }.loop });
+)
+
+SystemClock.play(r);    // 启动这个
+SystemClock.play(q);    // 启动那个
+SystemClock.play(t);    // 启动另一个
+
+r.stop;            // 停止这个，但不停止那个或另一个
+q.reset;        // 在播放时重置它
+
+c = TempoClock.new;    // 创建一个 TempoClock
+r.reset;        // 必须重置它，因为它已停止
+c.play(r);        // 在新的时钟中播放此内容；从头开始
+c.tempo = 16;        // 提高这个的速度
+
+SystemClock.clear;    // 清除 SystemClock 中调度的所有内容；这样那个和其他
+            // 但不是这个
+
+c.clear;        // 清除 c 中所有已调度内容，即此内容
+c.play(r);        // 由于它没有被停止，我们不必重置它
+            // 并且它会从上次中断处继续
+
+c.stop;            // 停止 c，销毁其调度器，并释放其 OS 线程</code></pre>
+
+<p>为方便起见，可暂停的调度可以用 <a href="Classes-Task.html">Task</a> 实现。<code>Task.new</code> 接受两个参数，一个函数和一个时钟，并创建自己的 <a href="Classes-Routine.html">Routine</a>。如果不指定时钟，它会为你创建一个 <a href="Classes-TempoClock.html">TempoClock</a>。由于不必显式创建 <a href="Classes-Clock.html">Clock</a> 或 <a href="Classes-Routine.html">Routine</a>，使用 <a href="Classes-Task.html">Task</a> 可以使代码稍微更紧凑。</p>
+
+<pre><code>(
+t = Task.new({
+    inf.do({ arg i;
+        i.postln;
+        0.5.wait
+    });
+});
+)
+
+t.start;        // 启动它
+t.stop;            // 停止它
+t.start;        // 从头重新开始
+t.reset;        // 即时重置
+t.stop;            // 再次停止
+t.resume;        // 从上次中断处重新开始
+t.clock.tempo = 0.25;    // 获取 Task 的时钟并改变速度。这之所以有效，是因为
+            // 默认是 TempoClock。
+t.pause;        // 与 t.stop 相同</code></pre>
+
+<p>TSpawn 的功能可以用 <a href="Classes-SendTrig.html">SendTrig</a> 和 <a href="Classes-OSCFunc.html">OSCFunc</a> 来复现。有关它们的参数和功能的详细信息，请参阅各自的帮助文件。</p>
+
+<pre><code>s.boot;
+(
+// 这个 Synth 将向客户端应用发送一个触发
+SynthDef(&quot;help-SendTrig&quot;, {
+    SendTrig.kr(
+        Dust.kr(1.0), // 触发可以是任何东西，例如 Amplitude.kr(SoundIn.ar(0) &gt; 0.5)
+        0, 0.9
+    );
+}).send(s);
+)
+
+(
+// 这在客户端接收触发，并在服务器上“生成”一个新的 Synth
+OSCFunc({
+    SynthDef(&quot;help-EnvGen&quot;, { arg out = 0;
+        Out.ar(
+            out,
+            EnvGen.kr(Env.perc, 1.0, doneAction: Done.freeSelf)
+            * SinOsc.ar(440, 0, 0.1)
+        )
+    }).play(s);
+}, &#x27;/tr&#x27;, s.addr);
+
+// 开始“生成”
+Synth(&quot;help-SendTrig&quot;);
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Spawning.html" rel="noreferrer noopener">Guides/Spawning.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GUI：将乐器与 View 连接 - SuperCollider 文档</title>
+<meta name="description" content="创建一个与 Synth 交互的视图，Layouts 入门">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>GUI：将乐器与 View 连接</h1>
+
+<p><em>创建一个与 Synth 交互的视图，Layouts 入门</em></p>
+
+<p>另请参阅：<a href="Tutorials-GUI-create_window.html">GUI：创建窗口</a>、<a href="Tutorials-GUI-compose_complex_view.html">GUI：使用基本组件组合视图</a></p>
+
+<h2 id="GUI Tutorial">GUI 教程</h2>
+
+<p>此帮助文件是 <a href="Tutorials-GUI-tutorial_intro.html">GUI 教程</a> 的一部分。</p>
+
+<p>这是 SuperCollider GUI 系统初学者介绍的第二部分。第一部分介绍<a href="Tutorials-GUI-create_window.html">创建窗口</a>，第三部分讨论<a href="Tutorials-GUI-compose_complex_view.html">使用基本 GUI 组件组合视图</a>。</p>
+
+<h2 id="What is this tutorial about?">本教程是关于什么的？</h2>
+
+<p>这是一个教程，帮助你开始使用 SuperCollider 的 GUI 系统来创建视图并使它们与 <a href="Classes-Synth.html">Synth</a> 交互。</p>
+
+<p>它涵盖以下主题：</p>
+
+<ul>
+<li>从 midi 音符列表创建键盘</li>
+<li>创建一个音量滑块和一个时长滑块</li>
+<li>使用布局系统，使控件以网格模式排列</li>
+</ul>
+
+<h2 id="Setup">Setup</h2>
+
+<p>你需要启动<a href="Classes-Server.html">服务器</a>并为其添加一个<a href="Classes-SynthDef.html">SynthDef</a>，我们将在本教程中使用它。</p>
+
+<p>SynthDef 是一个带有打击包络的简单正弦波。</p>
+
+<p>我们将控制 <a href="Classes-Synth.html">Synth</a> 的频率、音量和时长。</p>
+
+<pre><code>// 确保服务器已启动：
+s.boot;
+// 将我们的 SynthDef 添加到服务器：
+(
+SynthDef(\instrView, { |out = 0, amp = 0.25, freq = 440, dur = 1.0|
+    var snd, env;
+
+    env = EnvGen.kr(Env.perc(dur * 0.01, dur * 0.99), doneAction: Done.freeSelf);
+    snd = SinOsc.ar(freq, mul: amp);
+    snd = snd * env;
+    snd = snd!2;
+
+    Out.ar(out, snd);
+}).add;
+)</code></pre>
+
+<p>你可以使用以下代码试用该 Synth：</p>
+
+<pre><code>Synth(\instrView)</code></pre>
+
+<p>我们将从以下代码开始，它尚未连接到我们的 synth，因此还不会产生任何声音：</p>
+
+<pre><code>(
+var window = Window();
+var layout = HLayout();
+var button = Button();
+
+button.string_(&quot;Play&quot;);
+
+window.layout_(layout);
+layout.add(button);
+
+window.front;
+)</code></pre>
+
+<p>如果这段代码对你来说难以理解，你可以在 <a href="Tutorials-GUI-create_window.html">GUI: Create a Window</a> 中找到更多关于它的解释。</p>
+
+<h2 id="Connecting the button">连接按钮</h2>
+
+<p>所以我们从一个简单的按钮开始，遗憾的是，到目前为止它并不太有用。要连接它，你需要<strong>为其 'action' 方法分配一个函数</strong>。</p>
+
+<pre><code>(
+var window = Window();
+var layout = HLayout();
+var button = Button();
+button.string_(&quot;Play&quot;);
+
+button.action_({
+    // 这是按钮将触发的函数主体
+    Synth(\instrView);
+    &quot;ting&quot;.postln;
+});
+
+window.layout_(layout);
+layout.add(button);
+window.front;
+)</code></pre>
+
+<p>由于我们已经知道了播放 synth 的命令，我们只需<strong>配置按钮，使其在被按下时求值该命令</strong>。它还会向控制台发送一条消息，这在调试时可能很有用。</p>
+
+<h2 id="Adding several buttons at once">一次添加多个按钮</h2>
+
+<p>我们现在有一个键盘了，但并不是一个很好的键盘！它只有一个键……我想说这可能已经足够了，但这相当不寻常。</p>
+
+<p>那么让我们<strong>添加第二个键</strong>：</p>
+
+<pre><code>(
+var window = Window();
+var layout = HLayout();
+var button = Button();
+var button2 = Button();
+
+button.string_(&quot;Play&quot;);
+button.action_({ Synth(\instrView); });
+
+button2.string_(&quot;Play 2&quot;);
+button2.action_({ Synth(\instrView); });
+
+window.layout_(layout);
+
+layout.add(button);
+layout.add(button2);
+
+window.front;
+)</code></pre>
+
+<p>如你所见，<strong>布局已自动安排好一切</strong>。</p>
+
+<p>但是<strong>复制粘贴不是添加</strong>按键的好方法。相反，我们可以直接让 SC 创建一个按钮 8 次：</p>
+
+<pre><code>(
+var window = Window();
+var layout = HLayout();
+var numberOfButtons = 8;
+
+// 8 次……
+numberOfButtons.do({
+    // ……创建一个按钮……
+    var button = Button();
+    // ...分配其函数...
+    button.action_({ Synth(\instrView); });
+    // ...并将其添加到布局中。
+    layout.add(button);
+});
+
+window.layout_(layout);
+window.front;
+)</code></pre>
+
+<p>这些按钮感觉太小了。这是因为 <a href="Classes-Button.html">Button</a> <strong>的默认最大高度很低</strong>。我们可以通过重新赋值来改变它：</p>
+
+<pre><code>(
+var window = Window();
+var layout = HLayout();
+var numberOfButtons = 8;
+
+numberOfButtons.do({
+
+    // 更改此属性
+    var button = Button()
+    .maxHeight_(200);
+
+    button.action_({ Synth(\instrView); });
+    layout.add(button);
+});
+
+window.layout_(layout);
+window.front;
+)</code></pre>
+
+<p>所以我们现在有 8 个按钮，但它们发出的声音全都一样。在我看来这算不上什么进展。</p>
+
+<p>我们可以<strong>通过修改 Synth 的参数来改变其参数</strong>：</p>
+
+<pre><code>Synth(\instrView, [\freq, 660]);</code></pre>
+
+<p>我们只需在创建按钮的循环内部引入这一操作。但无需让 SC 执行 8 次，而是对一个频率集合执行此操作。</p>
+
+<p>我们可以<strong>将一组 MIDI 音符转换为频率，并将它们映射到按钮上</strong>：</p>
+
+<pre><code>(
+var window = Window();
+var layout = HLayout();
+// 以频率形式获取 C 大调音阶，使用 MIDI 记谱：
+var frequencies = [60, 62, 64, 65, 67, 69, 71, 72].midicps;
+
+// 对于每个频率...
+frequencies.do({ |frequency|
+
+    // ...这个特定的按钮...
+    var button = Button()
+    .maxHeight_(200);
+
+    // ……将使用这个特定频率。
+    button.action_({
+        Synth(\instrView, [\freq, frequency]);
+    });
+
+    layout.add(button);
+});
+
+window.layout_(layout);
+window.front;
+)</code></pre>
+
+<h2 id="How HLayout and VLayout works">HLayout 和 VLayout 如何工作</h2>
+
+<p>现在我们有了键盘，我们想给视图<strong>实现一个音量滑块</strong>。我们可以通过在布局中插入一个 <a href="Classes-Slider.html">Slider</a> 来实现：</p>
+
+<pre><code>(
+var window = Window();
+var layout = HLayout();
+var frequencies = [60, 62, 64, 65, 67, 69, 71, 72].midicps;
+
+// 创建滑块
+var slider = Slider();
+
+frequencies.do({ |frequency|
+    var button = Button()
+    .maxHeight_(200);
+    button.action_({ Synth(\instrView, [\freq, frequency]); });
+    layout.add(button);
+});
+
+// 将其添加到布局内部
+layout.add(slider);
+
+window.layout_(layout);
+window.front;
+)</code></pre>
+
+<p>音量滑块现在出现在钢琴的右侧，就像它是一个琴键一样。这是因为它与琴键处于相同的布局中。</p>
+
+<p>目前，<strong>Window 只包含一个</strong> <a href="Classes-HLayout.html">HLayout</a>。</p>
+
+<p><strong>HLayout 将 Window 水平分割</strong>，就像是一系列连续的列。</p>
+
+<p><strong>它会将这些视图从左到右逐个分配到这些列中</strong>。</p>
+
+<p>这就是为什么 Slider 被一直推到右侧。通过这种划分，你可以向左侧、右侧以及列之间添加内容。</p>
+
+<p>但你无法垂直排列视图。为此，你需要创建一个 <a href="Classes-VLayout.html">VLayout</a>，而它反过来又无法水平排列视图。<strong>要在 Window 中混合水平和垂直分割，你需要将一些布局插入到其他布局内部。</strong></p>
+
+<p>让我们看一个关于布局层级的例子。在阅读之前执行以下代码，以对其工作方式获得直观认识：</p>
+
+<pre><code>(
+var window = Window();
+var firstLayout = VLayout();
+var secondLayout = HLayout();
+
+var topButton = Button().string_(&quot;top&quot;).maxHeight_(200);
+
+var leftButton = Button().string_(&quot;left&quot;).maxHeight_(200);
+var rightButton = Button().string_(&quot;right&quot;).maxHeight_(200);
+
+// 窗口垂直划分，使用 VLayout：
+window.layout_(firstLayout);
+
+// 我们正在相加两个对象，这会把窗口分成两部分：
+
+// 这将覆盖窗口的顶部区域：
+firstLayout.add(topButton);
+
+// 这会覆盖窗口的底部：
+firstLayout.add(secondLayout);
+
+// 屏幕底部是一个 HLayout，因此它被水平细分
+// 为两部分，因为我们添加了两个对象：
+secondLayout.add(leftButton);
+secondLayout.add(rightButton);
+
+window.front;
+)</code></pre>
+
+<p>窗口首先被垂直划分，然后窗口的底部被水平划分。这意味着有 3 个位置，由 3 个按钮占据。可能需要一些时间才能习惯这种逻辑。</p>
+
+<h2 id="Back to connecting the slider">回到连接滑块</h2>
+
+<p>让我们调整之前的代码，将滑块放置在钢琴上方：</p>
+
+<pre><code>(
+var window = Window();
+var windowLayout = VLayout();
+var pianoLayout = HLayout();
+
+var frequencies = [60, 62, 64, 65, 67, 69, 71, 72].midicps;
+
+var volumeSlider = Slider();
+
+frequencies.do({ |frequency|
+    var button = Button()
+    .maxHeight_(200);
+    button.action_({ Synth(\instrView, [\freq, frequency]); });
+    // 水平分割，&#x27;钢琴布局&#x27;
+    pianoLayout.add(button);
+});
+
+// 垂直分割，&#x27;window&#x27; 布局
+windowLayout.add(volumeSlider);
+windowLayout.add(pianoLayout);
+
+window.layout_(windowLayout);
+window.front;
+)</code></pre>
+
+<p>滑块把一切都挤坏了！这是因为它不在正确的方向上。我们可以用 <code>.orientation</code> 方法修复这个问题。然后我们还可以用 <code>.maxHeight</code> 减小它的最大高度，这样它占用的空间就更少：</p>
+
+<pre><code>(
+var window = Window();
+var windowLayout = VLayout();
+var pianoLayout = HLayout();
+var frequencies = [60, 62, 64, 65, 67, 69, 71, 72].midicps;
+
+// 滑块设置
+var volumeSlider = Slider()
+.orientation_(\horizontal)
+.maxHeight_(60);
+
+frequencies.do({ |frequency|
+    var button = Button()
+    .maxHeight_(200);
+    button.action_({ Synth(\instrView, [\freq, frequency]); });
+    pianoLayout.add(button);
+});
+
+windowLayout.add(volumeSlider);
+windowLayout.add(pianoLayout);
+window.layout_(windowLayout);
+window.front;
+)</code></pre>
+
+<p>到目前为止，我们更改了它的图形属性，但滑块没有任何 <code>action</code>。现在是时候<strong>连接它</strong>了：</p>
+
+<pre><code>(
+var window = Window();
+var windowLayout = VLayout();
+var pianoLayout = HLayout();
+var frequencies = [60, 62, 64, 65, 67, 69, 71, 72].midicps;
+
+// 创建一个变量来存储音量
+var volume = 0.1;
+
+var volumeSlider = Slider()
+.orientation_(\horizontal)
+.maxHeight_(60)
+// 让滑块从正确的值开始
+.value_(volume);
+
+// 当滑块移动时，更新 volume 变量
+volumeSlider.action = {
+    volume = volumeSlider.value;
+};
+
+frequencies.do({ |frequency|
+    var button = Button()
+    .maxHeight_(200);
+    button.action_({
+        // 使用 volume 变量
+        // 在按键时
+        // 修改 Synth 的参数
+        Synth(\instrView, [
+            \freq, frequency,
+            \amp, volume
+        ]);
+
+    });
+    pianoLayout.add(button);
+});
+
+windowLayout.add(volumeSlider);
+windowLayout.add(pianoLayout);
+window.layout_(windowLayout);
+window.front;
+)</code></pre>
+
+<p>在这种情况下，Slider 的 <code>action</code> 函数会将滑块的值赋给一个名为 <code>volume</code> 的变量。当按下“钢琴”上的某个键时，它还会检查这个变量，以便在求值 Synth 命令时传入正确的音量作为参数。</p>
+
+<p>但滑块是如何知道 volume 参数期望什么值的呢？其实它并不知道。我们只是碰巧走运：<strong>滑块的值范围在 0 到 1 之间</strong>，而这恰好是 volume 的正确设置。</p>
+
+<h2 id="Adapting the Slider to the correct value (mapping)">将 Slider 调整为正确的值（映射）</h2>
+
+<p>但如果我们想控制其他范围呢？我们可以使用 <code>.linlin</code> 或 <code>.linexp</code> 将滑块值（介于 0 和 1 之间）映射到 0.1 和 2 之间的值。我们将使用这个新值来控制打击包络的持续时间：</p>
+
+<pre><code>(
+var window = Window();
+var windowLayout = VLayout();
+
+var pianoLayout = HLayout();
+var frequencies = [60, 62, 64, 65, 67, 69, 71, 72].midicps;
+
+var volume = 0.1;
+var volumeSlider = Slider()
+.orientation_(\horizontal)
+.maxHeight_(60)
+.value_(volume)
+.action_({ volume = volumeSlider.value; });
+
+var dur = 1;
+var durMin = 0.1;
+var durMax = 2;
+var durSlider = Slider()
+.orientation_(\horizontal)
+.maxHeight_(60)
+.action_({
+    dur = durSlider.value;
+    // linlin 将一个值
+    // 从一个线性范围
+    // 映射到另一个线性范围
+    dur = dur.linlin(
+        0, 1,
+        durMin, durMax
+    );
+});
+
+frequencies.do({ |frequency|
+    var button = Button()
+    .maxHeight_(200);
+    button.action_({
+        Synth(\instrView, [
+            \freq, frequency,
+            \amp, volume,
+            \dur, dur,
+        ]);
+
+    });
+    pianoLayout.add(button);
+});
+
+windowLayout.add(volumeSlider);
+windowLayout.add(durSlider);
+windowLayout.add(pianoLayout);
+window.layout_(windowLayout);
+window.front;
+)</code></pre>
+
+<p>或者，我们可以使用 <a href="Classes-ControlSpec.html">ControlSpec</a> 来做同样的事情：</p>
+
+<pre><code>var dur = 1;
+var durMin = 0.1;
+var durMax = 2;
+var durSlider = Slider()
+.orientation_(\horizontal)
+.maxHeight_(60)
+.action_({ dur = ControlSpec(durMin, durMax, \lin).map(durSlider.value); });</code></pre>
+
+<h2 id="Adding text, and specifying views ratios">添加文本，并指定视图比例</h2>
+
+<p>最后要做的是为控件添加标签。记住键盘的功能很容易，但滑块若能有一些提示会更好。我们将为此使用 <a href="Classes-StaticText.html">StaticText</a>，配置它的字符串和它的对齐方式。</p>
+
+<pre><code>(
+var window = Window();
+var windowLayout = VLayout();
+var pianoLayout = HLayout();
+var frequencies = [60, 62, 64, 65, 67, 69, 71, 72].midicps;
+
+var volume = 0.1;
+var volumeSlider = Slider()
+.orientation_(\horizontal)
+.maxHeight_(60)
+.value_(volume)
+.action_({ volume = volumeSlider.value; });
+// 创建文本，并赋值一个字符串
+var volumeText = StaticText()
+.string_(&quot;Volume&quot;)
+.align_(\center);
+
+var dur = 1;
+var durMin = 0.1;
+var durMax = 2;
+var durSlider = Slider()
+.orientation_(\horizontal)
+.maxHeight_(60)
+.value_(dur.linlin(durMin, durMax, 0, 1))
+.action_({
+    dur = durSlider.value;
+    dur = dur.linlin(0, 1, durMin, durMax);
+});
+// 这里
+var durText = StaticText()
+.string_(&quot;Duration&quot;)
+.align_(\center);
+
+frequencies.do({ |frequency|
+    var button = Button()
+    .maxHeight_(200);
+    button.action_({
+        Synth(\instrView, [
+            \freq, frequency,
+            \amp, volume,
+            \dur, dur,
+        ]);
+
+    });
+    pianoLayout.add(button);
+});
+
+// 在音量滑块之前插入音量文本：
+windowLayout.add(volumeText, 1);
+windowLayout.add(volumeSlider, 3);
+// 将时长文本插入到时长滑块之前，
+// 音量滑块之后：
+windowLayout.add(durText, 1);
+windowLayout.add(durSlider, 3);
+
+windowLayout.add(pianoLayout, 8);
+window.layout_(windowLayout);
+window.front;
+)</code></pre>
+
+<p>你可以看到，在布局内添加视图时，我还指定了一个数字。这被称为<strong>为视图分配“拉伸”</strong>：</p>
+
+<pre><code>windowLayout.add(volumeSlider, stretch: 3);</code></pre>
+
+<p><strong>拉伸数定义了视图相对于布局内所有视图拉伸总和的比率</strong>。在我们的示例中，键盘的大小与其他视图相同，因为键盘的拉伸值为 8，而所有其他视图的拉伸值之和也是 8。</p>
+
+<p>这意味着 stretch 为 3 的视图将比 stretch 为 1 的视图大 3 倍。stretch 为 6 的视图将比 stretch 为 2 的视图大 3 倍，比 stretch 为 1 的视图大 6 倍。</p>
+
+<p>注意，<strong>使用 stretch 时也会考虑视图的最小和最大尺寸</strong>，这可能会影响视图的实际比例。</p>
+
+<h2 id="Conclusion">Conclusion</h2>
+
+<p>这是一个很长的教程，但掌握了这些基本概念后，你现在应该能够毫无困难地操作每一个 GUI 类。</p>
+
+<p>本系列的下一教程将带你了解使用 GUI 时可能想要实现的常见功能，例如带有标签页、允许你在不同视图之间切换的界面。与我们在这里所做的一样，它讲的是使用基本 GUI 组件来创建界面。你可以在这里访问：<a href="Tutorials-GUI-compose_complex_view.html">GUI：用基本组件组合视图</a>。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/GUI/create_simple_instrument_view.html" rel="noreferrer noopener">Tutorials/GUI/create_simple_instrument_view.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

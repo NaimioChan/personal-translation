@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>the_lazy_proxy - SuperCollider 文档</title>
+<meta name="description" content="惰性代理">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>the_lazy_proxy</h1>
+
+<p><em>惰性代理</em></p>
+
+<p>另请参阅：<a href="Overviews-JITLib.html">JITLib</a>、<a href="Classes-NodeProxy.html">NodeProxy</a>、<a href="Classes-ProxySpace.html">ProxySpace</a></p>
+
+<p>类 <a href="Classes-NodeProxy.html">NodeProxy</a>（以及 <a href="Classes-BusPlug.html">BusPlug</a>）使用惰性求值方案，从分配给它的第一个有意义的输入推导出合适的速率和 numChannels。基本信息请参见 <a href="Classes-NodeProxy.html">NodeProxy</a> 和 <a href="Classes-ProxySpace.html">ProxySpace</a> 帮助文件。因此，只要未设置源，该代理就是<strong>中性的</strong>：</p>
+
+<pre><code>p = ProxySpace.push;
+~x.isNeutral;</code></pre>
+
+<p>一旦第一次设置了源，它就从该输入推导出它的总线参数</p>
+
+<pre><code>~x = { Array.fill(14, { SinOsc.kr(1.0.rand, 0, 100) }) }; //~x 现在是 14 通道控制速率
+~x;</code></pre>
+
+<p>为了重置这些属性，使用 clear：</p>
+
+<pre><code>~x.clear;
+//注意此时不应有其他 proxy 从 ~x 读取：
+//为简单起见，nodeproxy 目前不关心其子节点，只关心其父节点。</code></pre>
+
+<p>为了快速初始化，也可以使用 <code>defineBus</code>：</p>
+
+<pre><code>~x.defineBus(\control, 5);
+// 或者用另一种方式：
+~x.kr(5)</code></pre>
+
+<p>当其他代理从中读取时，这些属性也会被设置：</p>
+
+<pre><code>~x = { LFPulse.kr * ~b.kr(7) }; //kr / ar 的第一个参数是默认的通道数</code></pre>
+
+<p>如果没有传入通道数，则使用默认值：</p>
+
+<pre><code>~test.ar; // 2
+~krtest.kr; // 1</code></pre>
+
+<p>默认值可在类 NodeProxy 中设置：</p>
+
+<pre><code>NodeProxy.defaultNumAudio = 3;
+NodeProxy.defaultNumControl = 13;
+
+~test3.ar; // 3
+~krtest3.kr; // 13
+
+// 将它们设回：
+NodeProxy.defaultNumAudio = 2;
+NodeProxy.defaultNumControl = 1;</code></pre>
+
+<p>同样，如果使用代理作为映射源，则假定为控制速率：</p>
+
+<pre><code>~u;
+~x.map(\zzz, ~u);
+~u;</code></pre>
+
+<p>当执行一元或二元运算时，使用最高的 rate / numChannels 来初始化所有未初始化的代理：</p>
+
+<pre><code>~x.clear;
+~x.defineBus(\control, 5);
+~x = ~e + ~f;
+
+~x.clear; ~e.clear; ~f.clear;
+~e.defineBus(\audio, 1);
+~x = ~e + ~f.squared + ~r;
+~x;
+
+~x.clear; ~e.clear; ~f.clear;
+~e.defineBus(\audio, 3);
+~x = ~e;</code></pre>
+
+<p>如果将 rate-1 代理用作 rate-2 输入，则会转换速率，并按通常的多通道扩展模式扩展通道：</p>
+
+<pre><code>~f.defineBus(\control);
+~f.ar(2);
+
+~f.defineBus(\audio);
+~f.kr(2);
+
+// 如果传入的通道数更少，它只使用前 n 个通道
+~f.defineBus(\audio, 8);
+~f.ar(2);</code></pre>
+
+<p>可以将偏移量作为第二个参数传给 ar/kr</p>
+
+<pre><code>//调制偏移：
+p = ProxySpace.push(s.boot);
+
+~out.play;
+~src = { SinOsc.ar(Array.rand(5, 400, 500.0), SinOsc.ar(Array.exprand(5, 2.1, 500.0)), 0.1) };
+~out = { ~src.ar(1, MouseX.kr(0, 5)) };
+~out = { Mix(~src.ar(3, MouseX.kr(0, 5))) }; //包装偏移量会相应地移动</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/JITLib/the_lazy_proxy.html" rel="noreferrer noopener">Tutorials/JITLib/the_lazy_proxy.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pattern - SuperCollider 文档</title>
+<meta name="description" content="持有列表的抽象类">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Pattern</h1>
+
+<p><em>持有列表的抽象类</em></p>
+
+<p><a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>另请参阅：<a href="Classes-Stream.html">Stream</a>、<a href="Classes-FilterPattern.html">FilterPattern</a>、<a href="Classes-ListPattern.html">ListPattern</a></p>
+
+<p>子类：<a href="Classes-FilterPattern.html">FilterPattern</a>、<a href="Classes-ListPattern.html">ListPattern</a>、<a href="Classes-PatternProxy.html">PatternProxy</a>、<a href="Classes-Pbeta.html">Pbeta</a>、</p>
+
+<h2 id="description">说明</h2>
+
+<h3 id="Patterns versus Streams">模式与流</h3>
+
+<p><strong>Pattern</strong> 是一个抽象类，是 Patterns 库的基础。这些类构成了一种丰富而简洁的音乐记谱语言。名为 <a href="Tutorials-Streams-Patterns-Events1.html">Understanding Streams, Patterns and Events - Part 1</a> 的一系列帮助文件提供了详细介绍。这里尝试进行更简短的描述。</p>
+
+<p><strong>Stream</strong> 是一个响应 <code>next</code>、<code>reset</code> 和 <code>embedInStream</code> 的对象。流表示通过消息 <code>next</code> 一次获取一个值的序列。一条 <code>reset</code> 消息会使流重新开始（许多流实际上会自我重复，但并非所有流都如此）。如果流用完了值，则它对 <code>next</code> 的响应为 <code>nil</code>。消息 <code>embedInStream</code> 允许一个流定义让另一个流“接管”该流的控制权。所有对象都响应 <code>next</code> 和 <code>reset</code>，其中大多数对象在响应 next 时返回自身。因此，数字 7 定义了一个产生无限个 7 序列的 Stream。大多数对象响应 <code>embedInStream</code> 时返回一个只返回该对象一次的 singleton Stream。</p>
+
+<p><strong>Pattern</strong> 是一个响应 <code>asStream</code> 和 <code>embedInStream</code> 的对象。Pattern 定义了 Stream 的行为，并在收到 <code>asStream</code> 消息时创建这样的流。Pattern 与 Stream 之间的区别类似于乐谱与该乐谱的演奏之间的区别，或类与该类的实例之间的区别。所有对象都响应此接口，大多数通过返回自身来响应。因此大多数对象都是模式，它们定义的流是该对象的无限序列，并嵌入为该对象只返回一次的单独流。</p>
+
+<p>模式是依据其他模式而非具体值来定义的。这允许在模式定义中的任何位置用一个任意复杂的模式替换单个值。将流的定义与模式进行比较，有助于说明模式的实用性。</p>
+
+<h3 id="example 1 - Pseq vs. Routine">示例 1 - Pseq 与 Routine</h3>
+
+<p>Pattern 类 <strong>Pseq(array, repetitions)</strong> 定义了一个 Pattern，它将创建一个迭代数组的 Stream。类 <strong>Routine(func, stackSize)</strong> 定义了单个 Stream，在该流中运行的函数被定义为执行数组迭代。</p>
+
+<p>下面使用 <a href="Classes-Pseq.html">Pseq</a> 和 <code>asStream</code> 消息创建了一个流，并直接使用 Routine 创建了一个相同的流。</p>
+
+<pre><code>// Routine 与 Pattern 对比
+(
+    a = [-100, 00, 300, 400];            // 要迭代的数组
+
+    p = Pseq(a);                    // 创建 Pattern
+    q = p.asStream;                    // 让 Pattern 生成一个 Stream
+    r = Routine({ a.do({ |v| v.yield }) }) ;    // 直接创建 Stream
+
+    5.do({ Post &lt;&lt; Char.tab &lt;&lt; r.next &lt;&lt; &quot; &quot; &lt;&lt; q.next &lt;&lt; Char.nl });
+)</code></pre>
+
+<h3 id="example 2 - Nesting patterns">示例 2 - 嵌套模式</h3>
+
+<p>在示例 1 中，使用 <a href="Classes-Pseq.html">Pseq</a> 和 <a href="Classes-Routine.html">Routine</a> 差别不大。但 Pseq 实际上会把它的数组作为<em>要嵌入的模式</em>集合来迭代，允许另一个 Pseq 替换数组中的任意值。另一方面，Routine 则必须完全重新定义。</p>
+
+<pre><code>(
+    var routinesA;
+    a = [3, Pseq([-100, 00, 300, 400]), Pseq([-100, 00, 300, 400].reverse)];
+    routinesA = [[3], [-100, 00, 300, 400], [-100, 00, 300, 400].reverse];
+    p = Pseq(a);
+    q = p.asStream;
+
+    r = Routine({
+        routinesA.do({ |v|
+            v.do({ |i| i.yield })
+        }) ;
+    });
+    10.do({ Post &lt;&lt; Char.tab &lt;&lt; r.next &lt;&lt; &quot; &quot; &lt;&lt; q.next &lt;&lt; Char.nl });
+)</code></pre>
+
+<h3 id="example 3 - Stream-embedInStream">示例 3 - Stream-embedInStream</h3>
+
+<p>消息 <code>embedInStream</code> 正是让模式能够实现这种嵌套的机制。大多数对象（例如下面的数字 3）对 <code>embedInStream</code> 的响应是让自身产出一次然后返回。流对 embedInStream 的响应是迭代自身直至完成，实际上在那个时间段内“接管”了调用它的流。</p>
+
+<p>例程可以简单地通过将 <code>yield</code> 的调用替换为 <code>embedInStream</code> 的调用来执行模式。</p>
+
+<pre><code>(
+    a = [3, Pseq([-100, 00, 300, 400]), Pseq([-100, 00, 300, 400].reverse)];
+
+    r = Routine({ a.do({ |v| v.embedInStream }) }) ;
+    p = Pseq(a);
+    q = p.asStream;
+    10.do({ Post &lt;&lt; Char.tab &lt;&lt; r.next &lt;&lt; &quot; &quot; &lt;&lt; q.next &lt;&lt; Char.nl });
+)</code></pre>
+
+<p>当然，不使用 Pseq 就没有简洁的方式来<em>定义</em>这个流。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 出于效率考虑，<code>embedInStream</code> 的实现假定它是在一个 <a href="Classes-Routine.html">Routine</a> 中被调用的。因此，<code>embedInStream</code> 绝不应在定义 <a href="Classes-FuncStream.html">FuncStream</a> 或 <a href="Classes-Pfunc.html">Pfunc</a>（创建 FuncStream 的模式）的函数内部被调用。</p></blockquote>
+
+<h3 id="Event Patterns">事件模式</h3>
+
+<p><a href="Classes-Event.html">Event</a> 是带有 'play' 方法的 <a href="Classes-Environment.html">Environment</a>。通常，Event 由一组键/值对组成，这些键/值对决定 play 方法实际做什么。值可以是任何对象，包括根据其他命名属性定义的函数。改变这些值可以产生一连串声音，有时被称为“音乐”…… 模式 <a href="Classes-Pbind.html">Pbind</a> 将特定模式与特定名称连接起来。详情请查阅其帮助页面。</p>
+
+<h3 id="Playing Event Patterns">播放事件模式</h3>
+
+<p><a href="#-play">-play</a> 方法并不返回模式本身。相反，它返回实际运行该模式的 <a href="Classes-EventStreamPlayer.html">EventStreamPlayer</a> 对象。控制指令——停止、暂停、恢复、播放、重置——应发送给该 EventStreamPlayer。（同一个模式可以使用不同的 EventStreamPlayer 同时播放多次。）</p>
+
+<pre><code>p = Pbind(...);
+p.play;
+p.stop;    // 不会停止，因为 p 并不是实际正在播放的 EventStreamPlayer
+
+p = Pbind(...).play;
+p.stop;    // 确实会停止，因为 p 是 EventStreamPlayer</code></pre>
+
+<h3 id="Recording Event Patterns">录制事件模式</h3>
+
+<p>模式可以实时或非实时录制。实时录制请参见方法 <a href="#-record">-record</a>。</p>
+
+<p>关于非实时录制，请参阅 <a href="Classes-Score.html">Score</a> 帮助文件，尤其是“从模式创建 Score”。这可能很棘手，因为 NRT 录制会启动一个新的服务器实例。该服务器实例不知道加载到你可能一直用于测试的实时服务器中的缓冲区或其他资源。模式负责（重新）加载任何资源（缓冲区、效果等）。<a href="Classes-Pfset.html">Pfset</a> 或 <a href="Classes-Pproto.html">Pproto</a> 可能有用。</p>
+
+<h2 id="classmethods">类方法</h2>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h4 id="-asStream"><code>.asStream</code></h4>
+
+<p>从此模式返回一个 <a href="Classes-Stream.html">Stream</a>。一个模式可用于生成任意数量的独立流。</p>
+
+<pre><code>a = Pgeom(1, Pwhite(1.01, 1.2), inf);
+b = a.asStream; c = a.asStream;
+
+b.next;
+b.next;
+b.next;
+
+c.next; // c 独立于 b
+c.next;</code></pre>
+
+<h4 id="-embedInStream"><code>.embedInStream(inval)</code></h4>
+
+<p>给定一个 <a href="Classes-Stream.html">Stream</a>（例如 <a href="Classes-Routine.html">Routine</a>），在继续之前从此模式中产出所有值。一个模式可用于为任意数量的独立流产生值。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>inval</p></td><td class="argumentdesc"><p>inval 被传入所有子流，可用于从外部控制它们的行为。</p>
+
+<pre><code>a = Pgeom(1, Pwhite(1.01, 1.2), 5);
+r = Routine { 2.yield; 3.yield; a.embedInStream; 7.yield };
+r.nextN(12); // 来自 r 的下 12 个值</code></pre></td></tr>
+</table>
+
+<h4 id="-play"><code>.play(clock, protoEvent, quant)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>clock</p></td><td class="argumentdesc"><p>将运行该模式的节拍时钟。如果省略，则使用 TempoClock.default。</p></td></tr>
+<tr><td class="argumentname"><p>protoEvent</p></td><td class="argumentdesc"><p>将在每次迭代时馈入模式流的事件原型。如果省略，则使用 event.default。</p></td></tr>
+<tr><td class="argumentname"><p>quant</p></td><td class="argumentdesc"><p>参见 <a href="Classes-Quant.html">Quant</a> 帮助文件。</p></td></tr>
+</table>
+
+<h4 id="-record"><code>.record(path, headerFormat, sampleFormat, numChannels: 2, dur, fadeTime: 0.2, clock, protoEvent, server, out: 0, outNumChannels)</code></h4>
+
+<p>打开一个磁盘文件用于录音，并将该模式播放到其中。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>path</p></td><td class="argumentdesc"><p>录制文件的磁盘位置。如果未指定，会为你生成一个文件名并放在默认录音目录中：<code>thisProcess.platform.recordingsDir</code>。</p></td></tr>
+<tr><td class="argumentname"><p>headerFormat</p></td><td class="argumentdesc"><p>文件格式，默认为 <a href="Classes-Server.html#-recHeaderFormat">Server: -recHeaderFormat</a> —— 关于支持的头部和采样格式，参见 <a href="Classes-SoundFile.html">SoundFile</a>。</p></td></tr>
+<tr><td class="argumentname"><p>sampleFormat</p></td><td class="argumentdesc"><p>采样格式，默认为 <a href="Classes-Server.html#-recSampleFormat">Server: -recSampleFormat</a>。</p></td></tr>
+<tr><td class="argumentname"><p>numChannels</p></td><td class="argumentdesc"><p>要录制的通道数，默认为 2。</p></td></tr>
+<tr><td class="argumentname"><p>dur</p></td><td class="argumentdesc"><p>在停止之前运行模式多长时间。如果为 nil（默认值），模式将自行运行直至结束；然后停止录制。或者，使用 cmd-period 停止录制。如果给定一个数字，模式将运行该数量的拍，然后停止（使用 <a href="Classes-Pfindur.html">Pfindur</a>），同时结束录制。</p></td></tr>
+<tr><td class="argumentname"><p>fadeTime</p></td><td class="argumentdesc"><p>在最后一个事件之后，停止录音前允许的拍数。默认值 = 0.2。</p></td></tr>
+<tr><td class="argumentname"><p>clock</p></td><td class="argumentdesc"><p>用于播放的时钟。如果未另行指定，则使用 TempoClock.default。</p></td></tr>
+<tr><td class="argumentname"><p>protoEvent</p></td><td class="argumentdesc"><p>用于播放的事件原型。如果未另行指定，则回退到 Event.default。</p></td></tr>
+<tr><td class="argumentname"><p>server</p></td><td class="argumentdesc"><p>用于播放和录制的服务器。未另行指定时为 Server.default。</p></td></tr>
+<tr><td class="argumentname"><p>out</p></td><td class="argumentdesc"><p>录制时用于试听模式的输出总线，默认值 = 0。</p></td></tr>
+<tr><td class="argumentname"><p>outNumChannels</p></td><td class="argumentdesc"><p>录制器回放的输出通道数。如果大于 numChannels，outNumChannels 将回绕。</p></td></tr>
+</table>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-++"><code>++(aPattern)</code></h4>
+
+<h4 id="-<>"><code>&lt;&gt;(aPattern)</code></h4>
+
+<h4 id="-addDur"><code>.addDur(x)</code></h4>
+
+<h4 id="-asEventStreamPlayer"><code>.asEventStreamPlayer(protoEvent)</code></h4>
+
+<h4 id="-asScore"><code>.asScore(duration: 1.0, timeOffset: 0.0, protoEvent)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/Common/Control/asScore/asScore.sc">/usr/local/share/SuperCollider/SCClassLibrary/Common/Control/asScore/asScore.sc</a></em></p>
+
+<h4 id="-buildForProxy"><code>.buildForProxy(proxy, channelOffset: 0)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/wrapForNodeProxy.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/wrapForNodeProxy.sc</a></em></p>
+
+<h4 id="-clump"><code>.clump(n)</code></h4>
+
+<h4 id="-collect"><code>.collect(function)</code></h4>
+
+<h4 id="-composeBinaryOp"><code>.composeBinaryOp(operator, pattern, adverb)</code></h4>
+
+<h4 id="-composeNAryOp"><code>.composeNAryOp(selector, argList)</code></h4>
+
+<h4 id="-composeUnaryOp"><code>.composeUnaryOp(operator)</code></h4>
+
+<h4 id="-ctranspose"><code>.ctranspose(n)</code></h4>
+
+<h4 id="-db"><code>.db(db)</code></h4>
+
+<h4 id="-detune"><code>.detune(n)</code></h4>
+
+<h4 id="-differentiate"><code>.differentiate</code></h4>
+
+<h4 id="-do"><code>.do(function)</code></h4>
+
+<h4 id="-drop"><code>.drop(n)</code></h4>
+
+<h4 id="-dupEach"><code>.dupEach(n)</code></h4>
+
+<h4 id="-fin"><code>.fin(n: 1)</code></h4>
+
+<h4 id="-finDur"><code>.finDur(dur, tolerance: 0.001)</code></h4>
+
+<h4 id="-flatten"><code>.flatten(n: 1)</code></h4>
+
+<h4 id="-gtranspose"><code>.gtranspose(n)</code></h4>
+
+<h4 id="-integrate"><code>.integrate</code></h4>
+
+<h4 id="-iter"><code>.iter</code></h4>
+
+<h4 id="-keep"><code>.keep(n)</code></h4>
+
+<h4 id="-lag"><code>.lag(t)</code></h4>
+
+<h4 id="-legato"><code>.legato(x)</code></h4>
+
+<h4 id="-lock"><code>.lock(n: 1)</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/Patterns/extRoutine.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/Patterns/extRoutine.sc</a></em></p>
+
+<h4 id="-mtranspose"><code>.mtranspose(n)</code></h4>
+
+<h4 id="-proxyControlClass"><code>.proxyControlClass</code></h4>
+
+<p><em>来自扩展 <a href="https://github.com/supercollider/supercollider/tree/main/SCClassLibrary/JITLib/ProxySpace/wrapForNodeProxy.sc">/usr/local/share/SuperCollider/SCClassLibrary/JITLib/ProxySpace/wrapForNodeProxy.sc</a></em></p>
+
+<h4 id="-reject"><code>.reject(function)</code></h4>
+
+<h4 id="-repeat"><code>.repeat(n: inf)</code></h4>
+
+<h4 id="-reverseComposeBinaryOp"><code>.reverseComposeBinaryOp(operator, pattern, adverb)</code></h4>
+
+<h4 id="-scaleDur"><code>.scaleDur(x)</code></h4>
+
+<h4 id="-select"><code>.select(function)</code></h4>
+
+<h4 id="-streamArg"><code>.streamArg</code></h4>
+
+<h4 id="-stretch"><code>.stretch(x)</code></h4>
+
+<h4 id="-stutter"><code>.stutter(n)</code></h4>
+
+<h4 id="-trace"><code>.trace(key, printStream, prefix: &quot;&quot;)</code></h4>
+
+<h2 id="examples">示例</h2>
+
+<p>以下是派生自 Pattern 的大多数类的简要示例。这些示例都依赖于第一个代码块中赋给 Interpreter 变量 p、q 和 r 的模式。</p>
+
+<pre><code>s.boot;
+
+(
+SynthDef(\cfstring1, { |i_out, freq = 360, gate = 1, pan, amp = 0.1|
+    var out, eg, fc, osc, a, b, w;
+    fc = LinExp.kr(LFNoise1.kr(Rand(0.25, 0.4)), -1, 1, 500, 2000);
+    osc = Mix.fill(8, { LFSaw.ar(freq * [Rand(0.99, 1.01), Rand(0.99, 1.01)], 0, amp) }).distort * 0.2;
+    eg = EnvGen.kr(Env.asr(1, 1, 1), gate, doneAction: Done.freeSelf);
+    out = eg * RLPF.ar(osc, fc, 0.1);
+    #a, b = out;
+    Out.ar(i_out, Mix.ar(PanAz.ar(4, [a, b], [pan, pan+0.3])));
+}).add;
+
+SynthDef(&quot;sinegrain2&quot;,
+    { |out = 0, freq = 440, sustain = 0.05, pan|
+        var env;
+        env = EnvGen.kr(Env.perc(0.01, sustain, 0.3), doneAction: Done.freeSelf);
+        Out.ar(out, Pan2.ar(SinOsc.ar(freq, 0, env), pan))
+    }).add;
+
+p = Pbind(
+    [\degree, \dur], Pseq([[0, 0.1], [2, 0.1], [3, 0.1], [4, 0.1], [5, 0.8]], 1),
+    \amp, 0.05, \octave, 6, \instrument, \cfstring1, \mtranspose, 0);
+
+q = Pbindf(p, \instrument, \default);
+
+r = Pset(\freq, Pseq([500, 600, 700], 2), q);
+
+)</code></pre>
+
+<h3 id="EVENT PATTERNS - patterns that generate or require event streams">事件模式——生成或需要事件流的模式</h3>
+
+<pre><code>// Pbind(ArrayOfPatternPairs)
+
+p = Pbind(
+    [\degree, \dur], Pseq([[0, 0.1], [2, 0.1], [3, 0.1], [4, 0.1], [5, 0.8]], 1),
+    \amp, 0.05, \octave, 6, \instrument, \cfstring1, \mtranspose, 0);
+
+p.play;
+
+// Ppar(arrayOfPatterns, repeats) - 并行播放
+
+Ppar([Pseq([p], 4), Pseq([Pbindf(q, \ctranspose, -24)], 5)]).play
+
+// Ptpar(arrayOfTimePatternPairs, repeats) - 在不同时间并行播放
+
+Ptpar([1, Pseq([p], 4), 0, Pseq([Pbindf(q, \ctranspose, -24)], 5)]).play
+
+// Pbindf(pattern, ArrayOfNamePatternPairs)
+
+q = Pbindf(p, \instrument, \default);
+q.play;
+
+// Pfset(function, pattern)
+// function 构造一个事件，该事件被传递给 pattern.asStream
+
+Pfset({ ~freq = Pseq([500, 600, 700], 2).asStream }, q).play;
+
+// Pset(name, valPattern, pattern)
+// 逐个事件地设置事件的一个字段（Pmul、Padd 类似）
+
+Pset(\freq, Pseq([500, 600, 700], 2), q).play;
+
+// Psetp(name, valPattern, pattern)
+// 在 pattern 的每次迭代时设置一次（Pmulp、Paddp 类似）
+
+r = Pset(\freq, Pseq([500, 600, 700], 2), q);
+
+Psetp(\legato, Pseq([0.01, 1.1], inf), r).play;
+
+// Psetpre(name, valPattern, pattern)
+// 在将事件传递给模式之前进行设置（Pmulpre、Paddpre 类似）
+
+r = Psetpre(\freq, Pseq([500, 600, 700], 2), q);
+
+Psetp(\legato, Pseq([0.01, 1.1], inf), r).play;
+
+// Pstretch(valPattern, pattern)
+// 之后拉伸时长
+
+r = Psetpre(\freq, Pseq([500, 600, 700], 2), q);
+
+Pstretch(Pn(Env([0.5, 2, 0.5], [10, 10])), Pn(r)).play;
+
+Pset(\stretch, Pn(Env([0.5, 2, 0.5], [10, 10])), Pn(r)).play
+
+// Pstretchp(valPattern, pattern)
+// 之后拉伸时长
+
+r = Psetpre(\freq, Pseq([500, 600, 700], 2), q);
+
+Pstretchp(Pn(Env([0.5, 2, 0.5], [10, 10])), r).play;
+
+// Pfindur(duration, pattern) - 按指定时长播放 pattern
+
+Pfindur(2, Pn(q, inf)).play;
+
+// PfadeIn(pattern, fadeTime, holdTime, tolerance)
+PfadeIn(Pn(q), 3, 0).play(quant: 0);
+
+// PfadeOut(pattern, fadeTime, holdTime, tolerance)
+PfadeOut(Pn(q), 3, 0).play(quant: 0);
+
+// Psync(pattern, quantization, dur, tolerance)
+// pattern 会播放 dur 秒（在 tolerance 容差内），然后播放一段休止，以便下一个 pattern
+
+Pn(Psync(
+    Pbind(\dur, Pwhite(0.2, 0.5).round(0.2),
+        \db, Pseq([-10, -15, -15, -15, -15, -15, -30])
+    ), 2, 3
+)).play
+
+// Plag(duration, pattern)
+
+Ppar([Plag(1.2, Pn(p, 4)), Pn(Pbindf(q, \ctranspose, -24), 5)]).play</code></pre>
+
+<h3 id="GENERAL PATTERNS that work with both event and value streams">适用于 event 流和 value 流的通用模式</h3>
+
+<pre><code>// Ptrace(pattern, key, printStream) - 打印 pattern 的内容
+
+r = Psetpre(\freq, Pseq([500, 600, 700], 2), q);
+
+Ptrace(r).play;
+Ptrace(r, \freq).play;
+
+(
+{ var printStream;
+    printStream = CollStream.new;
+    Pseq([Ptrace(r, \freq, printStream), Pfunc({ printStream.collection.dump; nil })]).play;
+}.value;
+)
+
+// Pseed(seed, pattern) - 设置随机数生成器的种子
+// 以强制重复伪随机模式
+
+Pn(Pseed(44, Pbindf(q, \ctranspose, Pbrown(-3.0, 3.0, 10)))).play;
+
+// Prout(function) - 退出时，该函数必须返回 yield 最后返回的值
+// （否则该模式无法被其他模式可靠地操作）
+
+Prout({ |inval|
+    inval = p.embedInStream(inval);
+    inval = Event.silent(4).yield;
+    inval = q.embedInStream(inval);
+    inval = r.embedInStream(inval);
+    inval;
+}).play
+
+// Pfunc(function) - 该函数不应调用 embedInStream，请改用 Prout。
+
+Pn(Pbindf(q, \legato, Pfunc({ |inval| if (inval.at(\degree) == 5) { 4 } { 0.2 } }))).play
+
+
+
+// 以下 pattern 控制其他 pattern 的排序和重复
+
+// Pseq(arrayOfPatterns, repeats) - 作为序列播放
+
+Pseq([Pseq([p], 4), Pseq([Pbindf(q, \ctranspose, -24)], 5)]).play
+
+// Pser(arrayOfPatterns, num) - 从 arrayOfPatterns 中播放 num 个模式
+
+Pser([p, q, r], 5).play
+
+// Place(arrayOfPatterns, repeats) - 类似于 Pseq，
+// 但本身是数组的数组元素会被迭代，
+// 在第一次重复时嵌入第一个元素，第二次时嵌入第二个，依此类推
+
+Place([[p, q, r], q, r], 5).play
+
+// Pn(pattern, patternRepetitions) - 将 pattern 重复 n 次
+
+Pn(p, 2).play;
+
+// Pfin(eventcount, pattern) - 从 pattern 播放 n 个事件
+
+Pfin(12, Pn(p, inf)).play;
+
+// Pdup(eventRepetitions, pattern) - 将 pattern 中的每个事件重复 n 次
+
+Pdup(4, q).play
+
+// Pwhile(function, pattern)
+
+Pwhile({ coin(0.5).postln }, q).play
+
+// Pswitch(patternList, selectPattern)——当某个 pattern 结束时，根据 select 进行切换
+
+Pswitch([p, q, r], Pwhite(0, 100)).play
+
+// Pswitch1(patternList, selectPattern) - 在每个事件中根据 select 进行切换
+
+Pn(Pswitch1([p, q, r], Pwhite(0, 2))).play
+
+// Prand(patternList, repeats) - 从列表中随机选择
+Prand([p, q, r], inf).play
+
+// Pxrand(patternList, repeats) - 从列表中随机选择且不重复
+Pxrand([p, q, r], inf).play
+
+// Pwrand(patternList, weights, repeats) —— 从列表中加权随机选择
+Pwrand([p, q, r], #[1, 3, 5].normalizeSum, inf).play
+
+// Pwalk(patternList, stepPattern, directionPattern) - 遍历一个 pattern 列表
+
+Pwalk([p, q, r], 1, Pseq([-1, 1], inf)).play
+
+// Pslide(list, repeats, length, step, start)
+
+Pbind(\degree, Pslide(#[1, 2, 3, 4, 5], inf, 3, 1, 0), \dur, 0.2).play
+
+// Pshuf(patternList, repeats) - 从列表中随机选择
+Pn(Pshuf([p, q, r, r, p])).play
+
+// Ptuple(list, repeats)
+
+Pbind(\degree, Ptuple([Pwhite(1, -6), Pbrown(8, 15, 2)]),
+    \dur, Pfunc({ |ev| ev.at(\degree).last/80 round: 0.1 }),
+    \db, Pfunc({ if (coin(0.8)) { -25 } { -20 } })
+).play
+
+
+
+// 以下 pattern 可以改变其他 pattern 返回的值
+
+// Pcollect(function, pattern)
+
+Pcollect({ |inval| inval.use({ ~freq = 1000.rand }); inval }, q).play
+
+// Pselect(function, pattern)
+
+Pselect({ |inval| inval.at(\degree) != 0 }, q).play(quant: 0)
+
+// Preject(function, pattern)
+
+Preject({ |inval| inval.at(\degree) != 0 }, q).play(quant: 0)
+
+// Ppatmod(pattern, function, repeats) -
+// 函数接收当前模式作为参数，并返回下一个要播放的模式
+
+Ppatmod(p, { |oldPat| [p, q, r].choose }, inf).play</code></pre>
+
+<h3 id="VALUE PATTERNS: these patterns define or act on streams of numbers">值模式：这些模式定义或作用于数字流</h3>
+
+<pre><code>// 将 Env 作为模式
+
+Pbindf(Pn(q, inf), \ctranspose, Pn(Env.linen(3, 0, 0.3, 20), inf)).play;
+
+// Pwhite(lo, hi, length)
+
+Pbindf(Pn(q, inf), \ctranspose, Pwhite(-3.0, 3.0)).play;
+
+// Pbrown(lo, hi, step, length)
+
+Pbindf(Pn(q, inf), \ctranspose, Pbrown(-3.0, 3.0, 2)).play;
+
+// Pseries(start, step, length)
+
+Pbindf(Pn(q, inf), \ctranspose, Pseries(0, 0.1, 10)).play;
+
+// Pgeom(start, step, length)
+
+Pbindf(Pn(q, inf), \ctranspose, Pgeom(1, 1.2, 20)).play;
+
+// Pwrap(pattern, lo, hi)
+
+Pbind(\note, Pwrap(Pwhite(0, 128), 10, 20).round(2), \dur, 0.05).play;
+
+// PdegreeToKey(pattern, scale, stepsPerOctave)
+// 这重新实现了 pitchEvent 的一部分（参见 Event）
+
+Pbindf(Pn(q, inf), \note, PdegreeToKey(Pbrown(-8, 8, 2), [0, 2, 4, 5, 7, 9, 11])).play;
+
+// Prewrite(pattern, dict, levels) - 详情请参见帮助页面。
+// （注意使用 Env 来定义某种和弦进行……
+
+Pbind(\degree,
+    Prewrite(0, (
+            0: #[2, 0],
+            1: #[0, 0, 1],
+            2: #[1, 0, 1]
+        ), 4
+    ) + Pn(Env([4, 0, 1, 4, 3, 4], [6.4, 6.4, 6.4, 6.4, 6.4], &#x27;step&#x27;)),
+    \dur, 0.2).play
+
+// Psubdivide(repetitionPattern, patternOfDurations) -
+Pbindf(Pn(q), \dur, Psubdivide(
+    Pseq(#[1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 4, 5, 7, 15], inf),
+    Pseq(#[0.5], inf)
+    )
+).play;
+
+
+// Pstep2add(pat1, pat2)
+// Pstep3add(pat1, pat2, pat3)
+// PstepNadd(pat1, pat2, ...)
+// PstepNfunc(function, patternArray)
+// 通过深度优先遍历组合多个模式
+
+Pbind(
+    \octave, 4,
+    \degree, PstepNadd(
+        Pseq([1, 2, 3]),
+        Pseq([0, -2, [1, 3], -5]),
+        Pshuf([1, 0, 3, 0], 2)
+    ),
+    \dur, PstepNadd(
+        Pseq([1, 0, 0, 1], 2),
+        Pshuf([1, 1, 2, 1], 2)
+    ).loop * (1/8),
+    \legato, Pn(Pshuf([0.2, 0.2, 0.2, 0.5, 0.5, 1.6, 1.4], 4), inf),
+    \scale, #[0, 1, 3, 4, 5, 7, 8]
+).play;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/Pattern.html" rel="noreferrer noopener">Classes/Pattern.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

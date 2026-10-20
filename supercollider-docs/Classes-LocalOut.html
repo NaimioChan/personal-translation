@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalOut - SuperCollider 文档</title>
+<meta name="description" content="写入合成器本地的总线。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>LocalOut</h1>
+
+<p><em>写入合成器本地的总线。</em></p>
+
+<p><a href="Classes-AbstractOut.html">AbstractOut</a> : <a href="Classes-UGen.html">UGen</a> : <a href="Classes-AbstractFunction.html">AbstractFunction</a> : <a href="Classes-Object.html">Object</a></p>
+
+<p>另请参阅：<a href="Classes-LocalIn.html">LocalIn</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>LocalOut 写入封闭 synth 本地总线。这些总线应由 <a href="Classes-LocalIn.html">LocalIn</a> ugen 定义。<code>channelsArray</code> 的通道数必须与 <a href="Classes-LocalIn.html">LocalIn</a> 中声明的通道数相同。这些总线类似全局总线，但如果你想实现使用反馈处理环路的自包含效果，会更方便。</p>
+
+<blockquote class="warning"><p><strong>警告：</strong> 写入 LocalOut 的音频直到下一个周期才会被相应的 <a href="Classes-LocalIn.html">LocalIn</a> 读取，即晚一个块大小的采样。因此，在使用 <a href="Classes-LocalIn.html">LocalIn</a> 创建延迟时间短于音高阈值（即 &lt; 0.05 秒或 &gt; 20Hz）的反馈延迟，或需要采样精确对齐时，务必将此额外延迟考虑在内。参见下面的谐振器示例。</p></blockquote>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*ar"><code>LocalOut.ar(channelsArray)</code></h4>
+
+<h4 id="*kr"><code>LocalOut.kr(channelsArray)</code></h4>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>channelsArray</p></td><td class="argumentdesc"><p>用于写出的通道数组或单个输出。一旦 SynthDef 构建完成，就无法更改其大小。</p></td></tr>
+</table>
+
+<h3 id="Undocumented class methods">未文档化的类方法</h3>
+
+<h4 id="*numFixedArgs"><code>LocalOut.numFixedArgs</code></h4>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-writesToBus"><code>.writesToBus</code></h4>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>(
+{
+    var source, local;
+
+    source = Decay.ar(Impulse.ar(0.3), 0.1) * WhiteNoise.ar(0.2);
+    local = LocalIn.ar(2) + [source, 0]; // 读取反馈，加到源上
+    local = DelayN.ar(local, 0.2, 0.2); // 延迟声音
+
+    // 反转声道以产生乒乓效果，并施加衰减因子
+    LocalOut.ar(local.reverse * 0.8);
+
+    local
+}.play;
+)
+
+
+
+(
+z = SynthDef(&quot;tank&quot;, { |out|
+    var local, in;
+
+    in = Mix.fill(12, {
+        Pan2.ar(
+            Decay2.ar(Dust.ar(0.05), 0.1, 0.5, 0.1)
+                * FSinOsc.ar(IRand(36, 84).midicps).cubed.max(0),
+            Rand(-1, 1))
+    });
+    in = in + Pan2.ar(Decay2.ar(Dust.ar(0.03), 0.04, 0.3) * BrownNoise.ar, 0);
+
+    4.do { in = AllpassN.ar(in, 0.03, { Rand(0.005, 0.02) }.dup, 1) };
+
+    local = LocalIn.ar(2) * 0.98;
+    local = OnePole.ar(local, 0.5);
+
+    local = Rotate2.ar(local[0], local[1], 0.23);
+    local = AllpassN.ar(local, 0.05, { Rand(0.01, 0.05) }.dup, 2);
+
+    local = DelayN.ar(local, 0.3, [0.19, 0.26]);
+    local = AllpassN.ar(local, 0.05, { Rand(0.03, 0.15) }.dup, 2);
+
+    local = LeakDC.ar(local);
+    local = local + in;
+
+    LocalOut.ar(local);
+
+    Out.ar(out, local);
+}).play;
+)
+
+
+
+(
+z = SynthDef(&quot;tape&quot;, { |out|
+    var local, in, amp;
+
+    in = SoundIn.ar([0, 1]);
+
+    amp = Amplitude.kr(Mix.ar(in));
+    in = in * (amp &gt; 0.02); // 噪声门
+
+    local = LocalIn.ar(2);
+    local = OnePole.ar(local, 0.4);
+    local = OnePole.ar(local, -0.08);
+
+    local = Rotate2.ar(local[0], local[1], 0.2);
+
+    local = DelayN.ar(local, 0.25, 0.25);
+
+    local = LeakDC.ar(local);
+    local = ((local + in) * 1.25).softclip;
+
+    LocalOut.ar(local);
+
+    Out.ar(out, local * 0.1);
+}).play;
+)
+
+// 谐振器，必须减去 blockSize 才能正确调音
+(
+
+{
+    var imp, local;
+    local = LocalIn.ar(1);
+    imp = Impulse.ar(1);
+
+    // 用于反馈
+    LocalOut.ar(DelayC.ar(imp + (local * 0.995), 1, 440.reciprocal - ControlRate.ir.reciprocal));
+
+    local
+
+}.play;
+
+{ SinOsc.ar(440, 0, 0.2) }.play; // 比较音高
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/LocalOut.html" rel="noreferrer noopener">Classes/LocalOut.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

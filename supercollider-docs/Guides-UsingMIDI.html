@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使用 MIDI - SuperCollider 文档</title>
+<meta name="description" content="SuperCollider 中 MIDI 支持的说明">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>使用 MIDI</h1>
+
+<p><em>SuperCollider 中 MIDI 支持的说明</em></p>
+
+<p>参见：<a href="Guides-MIDI.html">MIDI</a>、<a href="Classes-MIDIFunc.html">MIDIFunc</a>、<a href="Classes-MIDIdef.html">MIDIdef</a></p>
+
+<p><span id="kw_MIDI"> </span></p>
+
+<h2 id="Introduction">Introduction</h2>
+
+<p>SuperCollider 开箱即用的 MIDI 支持相当完善（尽管不如商业音序器中的那样完整）。你的操作系统可访问的所有 MIDI 设备（macOS 上的 CoreMIDI、Linux 上的 ALSA、Windows 上的 PortMIDI）都可以被 SuperCollider 访问。</p>
+
+<p>主要的 MIDI 类有：</p>
+
+<dl>
+<dt><a href="Classes-MIDIClient.html">MIDIClient</a></dt>
+<dd><p>该类连接到操作系统的 MIDI 层，并获取可用 MIDI 源和目标的列表。有关硬件的信息以 MIDIEndPoint 对象的形式存储在 MIDIClient.sources 和 MIDIClient.destinations 中。必须先初始化 MIDIClient 才能接收 MIDI。请参见示例 Playing notes on your MIDI keyboard。</p></dd>
+<dt><a href="Classes-MIDIFunc.html">MIDIFunc</a></dt>
+<dd><p>接收最常见 MIDI 消息的最佳方式：音符开/关、控制器、弯音、触后、复音触后和音色切换。</p></dd>
+<dt><a href="Classes-MIDIdef.html">MIDIdef</a></dt>
+<dd><p>与 MIDIFunc 相关，此类按名称将多个 MIDIFunc 对象保存在全局存储中。对现场或交互式使用尤其有帮助。</p></dd>
+<dt><a href="Classes-MIDIOut.html">MIDIOut</a></dt>
+<dd><p>支持 MIDI 输出到硬件端口或应用程序间 MIDI 总线。</p></dd>
+<dt><a href="Classes-MIDIEndPoint.html">MIDIEndPoint</a></dt>
+<dd><p>表示由操作系统发布的 MIDI 端口。它包含设备名称、端口名称和唯一标识符（uid）。</p></dd>
+<dt><a href="Classes-MIDIIn.html">MIDIIn</a></dt>
+<dd><p>最低层的 MIDI 输入类。MIDIFunc 和 MIDIdef 使用此类，因此你不必直接使用它。强烈建议避免直接使用此类。</p></dd>
+</dl>
+
+<p>在大多数情况下，每个物理 MIDI 连接（MIDI 接口上的输入/输出插孔对）都有一个 MIDIEndPoint 对象在客户端中表示它。</p>
+
+<h2 id="Receiving MIDI input">接收 MIDI 输入</h2>
+
+<h3 id="MIDIFunc and MIDIdef">MIDIFunc 与 MIDIdef</h3>
+
+<p>对于大多数用途，接收 MIDI 输入的首选方式是使用 <a href="Classes-MIDIFunc.html">MIDIFunc</a> 和 <a href="Classes-MIDIdef.html">MIDIdef</a> 类。这种方式的优势在于可以注册任意数量的响应者，并使用极其灵活的匹配方式。</p>
+
+<p><a href="Classes-MIDIFunc.html">MIDIFunc</a> 有许多便捷方法，允许您注册不同的 MIDI 消息类型。它可以过滤传入的 MIDI 消息，以响应特定设备、通道号或特定消息号，或其范围。</p>
+
+<p>有关使用 note-on 和 note-off 两个 MIDIFunc 的简单示例，请参阅下面的<a href="#Playing%20notes%20on%20your%20MIDI%20keyboard">在 MIDI 键盘上演奏音符</a>。</p>
+
+<h3 id="MIDIFunc and MIDIdef: Filtering based on device or message data">MIDIFunc 和 MIDIdef：基于设备或消息数据进行过滤</h3>
+
+<p>MIDIFunc 和 MIDIdef 可以过滤传入的消息，响应特定的设备、MIDI 通道或数据值。例如，你可能希望一个 MIDIFunc 处理控制器 1，而另一个 MIDIFunc 处理控制器 7。</p>
+
+<p>过滤器由紧跟响应函数的参数设置：<code>MIDIFunc.incomingType({ /* function */ }, msgNum, chan, srcID)</code>，其中 msgNum 的含义取决于消息类型。</p>
+
+<dl>
+<dt>msgNum</dt>
+<dd><p>消息的第一个数据字节。音符开/关消息发送 note_number velocity；msgNum 是音高编号。连续控制器发送 cc_number value；msgNum 是 CC 编号。请查看具体的消息类型以了解详情。</p></dd>
+<dt>chan</dt>
+<dd><p>通道号。大多数 MIDI 设备和软件使用通道 1-16。SuperCollider 使用通道 0-15。在 SuperCollider 中，通常需要从发送设备设置的通道号中减去 1。</p></dd>
+<dt>srcID</dt>
+<dd><p>MIDI 端口的 UID（唯一标识符）。它由系统设置，可通过数组 MIDIClient.sources 中的 MIDIEndPoint 对象获取。（对于 MIDI 输入，请使用 MIDIClient.sources，而不是 destinations。）如果你知道设备的数组索引，可以设置 srcID: MIDIClient.sources[index].uid。如果你知道设备的名称，可以先在数组中搜索匹配的 MIDIEndPoint：srcID: MIDIClient.sources.detect { |e| e.device.containsi("searchstring") }.uid。</p></dd>
+</dl>
+
+<p>任何被省略的过滤器都会匹配所有值——例如，对于全通道响应器，只需省略 <code>chan</code> 过滤器。</p>
+
+<h3 id="MIDIIn">MIDIIn</h3>
+
+<p>MIDIIn 有若干类变量，保存着在 MIDI 事件到来时求值的函数。每个函数的技术细节可在 <a href="Classes-MIDIIn.html">MIDIIn</a> 帮助文件中找到。</p>
+
+<p>但请注意，MIDIIn 不提供基于设备、控制器编号或其他因素过滤传入 MIDI 的功能。这意味着，在实际使用中，MIDIIn 比 <a href="Classes-MIDIFunc.html">MIDIFunc</a> 或 <a href="Classes-MIDIdef.html">MIDIdef</a> 明显更难使用。<strong>通常建议避免直接使用 MIDIIn。</strong>例外是 sysex（系统专用）和 sysrt（MIDI 时钟）消息，目前只有 MIDIIn 支持它们。</p>
+
+<h2 id="Playing notes on your MIDI keyboard">在 MIDI 键盘上演奏音符</h2>
+
+<p>技术问题在于，每个 note on 都需要保存其 synth 对象，以便 note off 消息能够结束正确的服务器端节点。</p>
+
+<pre><code>s.boot;
+
+(
+var notes, on, off;
+
+MIDIClient.init;
+MIDIIn.connectAll;
+
+notes = Array.newClear(128);    // 数组为每个可能的 MIDI 音符都有一个槽位
+
+on = MIDIFunc.noteOn({ |veloc, num, chan, src|
+    notes[num] = Synth(\default, [\freq, num.midicps,
+        \amp, veloc * 0.00315]);
+});
+
+off = MIDIFunc.noteOff({ |veloc, num, chan, src|
+    notes[num].release;
+});
+
+q = { on.free; off.free; };
+)
+
+// 完成时：
+q.value;</code></pre>
+
+<p><a href="Classes-MIDIIn.html">MIDIIn</a> 帮助文件包含一个更详细的示例。</p>
+
+<p>SuperCollider 没有内置类来自动处理这一点。然而，<em>dewdrop_lib</em>，一个在<a href="#Third%20party%20libraries">下文</a>提到的第三方库，包含了 Voicer（用于简化音符开关的记录）和 VoicerMIDISocket（用于通过 MIDI 触发 Voicer 音符）。对此功能感兴趣的用户不妨查看该库。</p>
+
+<h2 id="Sending MIDI out">发送 MIDI 输出</h2>
+
+<p>参见 <a href="Classes-MIDIOut.html">MIDIOut</a> 帮助文件。与 MIDIIn 不同，使用 MIDIOut 时你需要用端口和 uid 创建 MIDIOut 类的实例。你可以拥有多个 MIDIOut 对象，以将 MIDI 发送到不同的物理设备。</p>
+
+<p>许多用户报告了 MIDIOut 的时序问题。当 CPU 繁忙时，尤其是在图形更新期间，发出的 MIDI 消息可能会延迟。在演出场合请谨慎使用。</p>
+
+<h2 id="MIDI synchronization">MIDI 同步</h2>
+
+<p>MIDI 同步可以使用 MIDIIn 的 sysrt 或 smpte 响应函数来执行。实现所需类型的同步由用户负责。</p>
+
+<p>对于 sysrt，外部 MIDI 时钟每四分音符输出 24 个脉冲。响应者应统计传入的脉冲数，并将节奏值乘以 24 以确定需要等待多少个脉冲：</p>
+
+<table>
+<tr><td><p>0.25</p></td><td><p>等待 6 个脉冲（16 分音符）</p></td></tr>
+<tr><td><p>0.5</p></td><td><p>等待 12 个脉冲（8 分音符）</p></td></tr>
+<tr><td><p>2</p></td><td><p>等待 48 个脉冲（二分音符）</p></td></tr>
+</table>
+
+<p>dewdrop_lib（第三方库）包含一个类 MIDISyncClock，它接收 MIDI 时钟消息，并允许调度事件以与外部 MIDI 设备保持同步。详情请参阅 MIDISyncClock 帮助文件。</p>
+
+<p>存在一些重要限制，帮助文件中有讨论。这并不是一个完全受支持的类，但它为需要基本 MIDI 同步功能的用户而保留。</p>
+
+<h2 id="Third party libraries">第三方库</h2>
+
+<p><em>dewdrop_lib</em> 是一个第三方库，提供许多有用的演出功能，可通过 <a href="Classes-Quarks.html">Quarks</a> 接口获取。该库提供了一个用户可扩展的 MIDI 响应器类框架，专为多端口、多通道应用而设计。</p>
+
+<p>其特性包括：</p>
+
+<p>- 用户可扩展：可使用简单函数，并且可将会频繁使用的响应写入继承自框架的类中（参见 BasicMIDISocket 和 BasicMIDIControl 帮助文件）</p>
+
+<p>- 易于使用的类，用于播放 MIDI 音符以及将 MIDI 控制器分配给合成参数</p>
+
+<p>- 一个用户可配置的 MIDI 控制器编号数组，用于简化将事件分配给硬件控制器</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/UsingMIDI.html" rel="noreferrer noopener">Guides/UsingMIDI.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FFT 概述 - SuperCollider 文档</title>
+<meta name="description" content="快速傅里叶变换（FFT）UGen 概述">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>FFT 概述</h1>
+
+<p><em>快速傅里叶变换（FFT）UGen 概述</em></p>
+
+<p>另请参阅：<a href="Classes-FFT.html">FFT</a>、<a href="Classes-IFFT.html">IFFT</a></p>
+
+<h2 id="FFT and IFFT">FFT 与 IFFT</h2>
+
+<p>SuperCollider 实现了若干支持基于快速傅里叶变换（FFT）处理的 UGen。其中最基本的是 FFT 和 IFFT（逆 FFT），它们在时域和频域之间转换数据：</p>
+
+<pre><code>chain = FFT(buffer, input)</code></pre>
+
+<pre><code>output = IFFT(chain)</code></pre>
+
+<p>FFT 需要一个 <a href="Classes-Buffer.html">Buffer</a> 或 <a href="Classes-LocalBuf.html">LocalBuf</a>。缓冲区的大小必须对应 2 的幂，并且还必须是服务器当前<a href="Classes-ServerOptions.html#-blockSize">块大小</a>的倍数。窗口大小等同于缓冲区大小，窗口<a href="Classes-FFT.html#*new">重叠默认为 2（hop = 0.5）</a>。<a href="Classes-FFT.html">FFT</a> 和 <a href="Classes-IFFT.html">IFFT</a> 默认都使用正弦窗口。它们的组合有效地成为汉宁窗（即升正弦，也就是正弦的平方）。</p>
+
+<h2 id="How FFT UGens communicate">FFT UGen 如何通信</h2>
+
+<p><a href="Classes-FFT.html">FFT</a> 以以下格式将频谱数据存储在缓冲区中：</p>
+
+<table>
+<tr><td><p>DC</p></td><td><p>nyquist</p></td><td><p>real 1f</p></td><td><p>imag 1f</p></td><td><p>real 2f</p></td><td><p>imag 2f</p></td><td><p>...</p></td><td><p>实部 (N-1)f</p></td><td><p>虚部 (N-1)f</p></td></tr>
+</table>
+
+<p>其中 <code>f</code> 是对应于窗口大小的频率，<code>N</code> 是窗口大小 / 2。</p>
+
+<p><code>FFT</code> UGen 返回的信号（通常称为 <strong>chain</strong>）恒为 <code>-1</code>，仅当新的 FFT 窗口开始时，该信号才等于缓冲区编号。后续的 FFT UGen 正是通过这种方式写入该缓冲区，并知道何时进行写入。FFT 信息并不在 chain 信号中，而是在缓冲区中。</p>
+
+<pre><code>// FFT 返回信号为 -1，并且对于每个起始窗口，
+// 它是 FFT 缓冲区编号
+
+b = Buffer.alloc(s, 512); // 分配 FFT 缓冲区
+b.bufnum; // 注意缓冲区编号
+
+(
+var dt = s.options.blockSize / s.sampleRate * 16; // 绘制 16 个块
+var min = -2, max = b.bufnum + 4;
+// 输入是 SoundIn，但我们看不到这个信号
+{ FFT(b, SoundIn.ar) }.plot(dt, minval:min, maxval:max).plotMode_(\steps);
+)
+
+b.free; // 再次释放缓冲区</code></pre>
+
+<h2 id="Phase Vocoder UGens and Spectral Processing">相位声码器 UGen 与频谱处理</h2>
+
+<p>在 FFT 与 IFFT 之间，可以将多个 Phase Vocoder UGen（即 <code>PV_...</code>）串联起来，以便在重新转换之前对频谱数据块进行操作。缓冲适量音频、加窗、转换、重叠相加等过程都会自动处理。</p>
+
+<p>有关 UGen 的列表，参见 <a href="#PV%20and%20FFT%20UGens%20in%20the%20Standard%20Library">标准库中的 PV 和 FFT UGen</a>。</p>
+
+<pre><code>(
+{
+  var in, chain;
+    in = WhiteNoise.ar(0.8);
+    chain = FFT(LocalBuf(2048), in); // 编码到频域
+    chain = PV_RandComb(chain, 0.95, Impulse.kr(0.4)); // process
+    IFFT(chain) // 解码到时域
+}.play;
+)</code></pre>
+
+<p>为了对多声道输入信号展开 PV UGen，必须提供合适的缓冲区数组（而不是多声道缓冲区）：</p>
+
+<pre><code>(
+{
+  var in, chain;
+    in = Ringz.ar(Impulse.ar([2, 3]), [700, 800], 0.1) * 5; // 立体声输入
+    chain = FFT({ LocalBuf(2048) } ! 2, in); // 两个本地缓冲区的数组
+    chain = PV_RandComb(chain, 0.95, Impulse.kr(0.4));
+    IFFT(chain) // 返回立体声输出
+}.play;
+)</code></pre>
+
+<p>更多示例，请参见 <a href="#Multichannel%20Expansion%20with%20FFT%20UGens">Multichannel Expansion with FFT UGens</a></p>
+
+<h3 id="Parallel FFT chains">并行 FFT 链</h3>
+
+<p>PV UGen 将其输出数据<em>原地</em>写入，即写回它们读取的同一缓冲区。需要两个缓冲区的 PV UGen 将其数据写入第一个缓冲区，通常称为 'bufferA'。</p>
+
+<pre><code>(
+{
+  var inA, chainA, inB, chainB, chain;
+    inA = LFSaw.ar(MouseY.kr(100, 1000, 1), 0, 0.2);
+    inB = Ringz.ar(Impulse.ar(MouseX.kr(1, 100, 1)), 700, 0.5);
+    // 创建两条并行链
+    chainA = FFT(LocalBuf(2048), inA);
+    chainB = FFT(LocalBuf(2048), inB);
+    chain = PV_MagMul(chainA, chainB); // 写入 bufferA
+    IFFT(chain) * 0.1
+}.play;
+)
+
+d.free;</code></pre>
+
+<p>一个使用声音文件的类似示例：</p>
+
+<pre><code>// 将声音文件读入缓冲区
+d = Buffer.read(s, ExampleFiles.child);
+
+(
+{
+  var inA, chainA, inB, chainB, chain;
+    inA = LFSaw.ar(100, 0, 0.2);
+    inB = PlayBuf.ar(1, d, BufRateScale.kr(d), loop: 1);
+    chainA = FFT(LocalBuf(2048), inA);
+    chainB = FFT(LocalBuf(2048), inB);
+    chain = PV_MagMul(chainA, chainB); // 写入 bufferA
+    IFFT(chain) * 0.1
+}.play;
+)
+
+d.free;</code></pre>
+
+<h3 id="Copying FFT chains">复制 FFT 链</h3>
+
+<p>因为每个 PV UGen 都会覆盖前一个的输出，所以有必要在链中的所需位置将数据复制到额外的缓冲区，以便在不使用多个 FFT UGen 的情况下对输入进行并行处理。<a href="Classes-PV_Copy.html">PV_Copy</a> 可以实现这一点。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 自 SC 3.7 起，PV_Copy 的实例会在需要时自动添加以支持并行处理。显式使用 PV_Copy 的现有代码应继续正常工作。</p></blockquote>
+
+<pre><code>(
+{
+    var in, in2, chainA, chainB, chainC;
+    var mod = LFNoise2.kr(2);
+    in = Blip.ar(mod.exprange(4000, 2), 231);
+    in2 = SinOsc.ar(mod.exprange(200, 4000));
+    chainA = FFT(LocalBuf(2048), in);
+    chainB = FFT(LocalBuf(2048), in2);
+    chainC = PV_Copy(chainA, LocalBuf(2048));
+    chainB = PV_MagMul(chainB, chainC);
+    XFade2.ar(
+        IFFT(chainA) * 0.4,
+        IFFT(chainB) * 0.1,
+        MouseX.kr(-1, 1)
+    );
+}.play
+)</code></pre>
+
+<p>PV 处理也可以共享单个 FFT UGen 来并行处理信号。在以下示例中，'chain0' 和 'chain1' 共享同一个 FFT UGen。SuperCollider 会自动将 'chain' 中的 FFT 数据复制到 Synth 内部的隐藏 LocalBuf 中。在以下示例中，如果 <a href="Classes-PV_PhaseShift.html">PV_PhaseShift</a> UGen 直接作用于 <code>chainA</code>，那么两个 <a href="Classes-IFFT.html">IFFT</a> 单元将产生相同的信号，相加时会相互增强。相反，声音几乎静音——这证明 <code>chainB</code> 位于不同的缓冲区中，即使函数没有显式创建它。</p>
+
+<pre><code>(
+x = { var inA, chainA, chainB;
+    inA = LFClipNoise.ar(100);
+    chainA = FFT(LocalBuf(2048, 1), inA);
+    chainB = PV_PhaseShift(chainA, pi);
+    // 半圆相移应产生一个反相信号
+    // 在实践中，超低频会溜过去
+    // 但你在这里不会听到太多
+    IFFT(chainA) + IFFT(chainB);
+}.play;
+)</code></pre>
+
+<h3 id="Plotting magnitudes">绘制幅度</h3>
+
+<p>请注意，PV UGen 会根据需要在笛卡尔（复数）表示和极坐标表示之间进行转换，因此在使用多个 PV UGen 时，可能无法知道在任意给定时刻这些值会以哪种形式存在。FFT 产生复数输出（见上文）。然而，以下代码会返回一个可靠的幅度图：</p>
+
+<pre><code>c = Buffer.alloc(s,2048,1);
+
+(
+x = { var in, chain, chainB, chainC;
+    in = WhiteNoise.ar;
+    chain = FFT(c, in);
+    0.01 * Pan2.ar(IFFT(chain));
+}.play(s);
+)
+
+(
+Routine({
+    3.do{arg i;
+        c.getToFloatArray(action: { arg array;
+            var z, x;
+            z = array.clump(2).flop;
+            // 初始时数据为复数形式
+            z = [Signal.newFrom(z[0]), Signal.newFrom(z[1])];
+            x = Complex(z[0], z[1]);
+
+            { x.magnitude.plot(&#x27;Initial&#x27;, Rect(200, 600-(200*i), 700, 200)) }.defer
+        });
+        0.1.wait;
+}}).play
+)
+
+x.free;</code></pre>
+
+<h3 id="UGen access to FFT data">UGen 访问 FFT 数据</h3>
+
+<p>可以直接在 synth 图中操作 FFT 数据（如果尚无现成的 PV UGen 能满足需求），使用 pvcalc、pvcalc2、pvcollect 方法即可。下面这个例子使用 <a href="Classes-SequenceableCollection.html#-clump">SequenceableCollection: -clump</a> 和 <a href="Classes-SequenceableCollection.html#-flop">SequenceableCollection: -flop</a> 方法重新排列频谱 bin 的顺序：</p>
+
+<pre><code>c = Buffer.read(s, ExampleFiles.child);
+
+(
+x = {
+    var in, numFrames=2048, chain, v;
+    in = PlayBuf.ar(1, c, loop: 1);
+    chain = FFT(LocalBuf(numFrames), in);
+
+    chain = chain.pvcalc(numFrames, {|mags, phases|
+        /* 调整 mags 和 phases，然后返回它们 */
+        [mags, phases].flop.clump(2).flop.flatten
+    }, tobin: 250);
+
+    0.5 * IFFT(chain).dup
+}.play;
+)
+x.free; c.free;</code></pre>
+
+<h2 id="Multichannel Expansion with FFT UGens">使用 FFT UGens 的多通道扩展</h2>
+
+<p>将多声道展开与 FFT UGen 一起使用时必须小心，因为它们需要独立的缓冲区。像这样的代码可能具有欺骗性：</p>
+
+<pre><code>chain = FFT(bufnum, { WhiteNoise.ar(0.2) }.dup);</code></pre>
+
+<p>上述方法看起来可能有效，但实际上无效。它确实会产生两个 FFT UGen，但由于它们都写入同一个缓冲区，第二个只会覆盖第一个的数据，从而浪费 CPU 且毫无效果。</p>
+
+<p>在使用 FFT UGen 进行多通道扩展时，有必要确保每个 UGen 写入不同的缓冲区。以下是一种实现方式的示例：</p>
+
+<pre><code>(
+SynthDef(&quot;help-multichannel FFT&quot;, { |out=0| // bufnum 是一个数组
+    var in, chain;
+    in = [SinOsc.ar(200, 0, 0.2), WhiteNoise.ar(0.2)];
+    chain = FFT(LocalBuf([2048, 2048]), in); // 每个 FFT 都有不同的缓冲区
+    // 现在我们可以像平常一样进行多声道扩展
+    chain = PV_BrickWall(chain, SinOsc.kr(-0.1));
+
+    Out.ar(out, IFFT(chain));
+}).play;
+)
+
+// 或使用全局缓冲区
+
+b = { Buffer.alloc(s, 2048, 1) }.dup;
+
+(
+SynthDef(&quot;help-multichannel FFT&quot;, { |out=0, bufnum= #[0, 1]| // bufnum 是一个数组
+    var in, chain;
+    in = [SinOsc.ar(200, 0, 0.2), WhiteNoise.ar(0.2)];
+    chain = FFT(bufnum, in); // 每个 FFT 都有不同的缓冲区
+    // 现在我们可以像平常一样进行多声道扩展
+    chain = PV_BrickWall(chain, SinOsc.kr(-0.1));
+
+    Out.ar(out, IFFT(chain));
+}).play(s,[\bufnum, b]);
+)
+
+b.free;</code></pre>
+
+<p>请注意，对 UGen 调用 dup 只是对该 UGen 的引用，因为 UGen 定义的 -copy 只是返回接收者。（更多细节请参阅 <a href="Classes-UGen.html">UGen</a>。）</p>
+
+<pre><code>a = SinOsc.ar;
+a.dup[1] === a
+
+true</code></pre>
+
+<p>形如 <code>IFFT(chain).dup</code> 的代码遍布于 PV 帮助文件中，它只是一种将单声道信号复制为立体声的便捷方式，无需进行额外计算。</p>
+
+<p>另请参见 <a href="Guides-Multichannel-Expansion.html">Multichannel Expansion</a>。</p>
+
+<h2 id="PV and FFT UGens in the Standard Library">标准库中的 PV 和 FFT UGen</h2>
+
+<p>标准 SC 发行版中包含以下 PV UGen：</p>
+
+<dl>
+<dt><a href="Classes-FFT.html">FFT</a></dt>
+<dd><p>快速傅里叶变换</p></dd>
+<dt><a href="Classes-IFFT.html">IFFT</a></dt>
+<dd><p>逆快速傅里叶变换</p></dd>
+<dt><a href="Classes-PV_Add.html">PV_Add</a></dt>
+<dd><p>复数加法</p></dd>
+<dt><a href="Classes-PV_BinScramble.html">PV_BinScramble</a></dt>
+<dd><p>打乱频段</p></dd>
+<dt><a href="Classes-PV_BinShift.html">PV_BinShift</a></dt>
+<dd><p>移动和拉伸 bin 位置</p></dd>
+<dt><a href="Classes-PV_BinWipe.html">PV_BinWipe</a></dt>
+<dd><p>合并两个输入中的低频和高频频段</p></dd>
+<dt><a href="Classes-PV_BrickWall.html">PV_BrickWall</a></dt>
+<dd><p>零 bin</p></dd>
+<dt><a href="Classes-PV_ConformalMap.html">PV_ConformalMap</a></dt>
+<dd><p>复平面攻击</p></dd>
+<dt><a href="Classes-PV_CopyPhase.html">PV_CopyPhase</a></dt>
+<dd><p>复制幅度和相位</p></dd>
+<dt><a href="Classes-PV_Diffuser.html">PV_Diffuser</a></dt>
+<dd><p>随机相位偏移</p></dd>
+<dt><a href="Classes-PV_HainsworthFoote.html">PV_HainsworthFoote</a></dt>
+<dd><p>起始检测</p></dd>
+<dt><a href="Classes-PV_JensenAndersen.html">PV_JensenAndersen</a></dt>
+<dd><p>起始检测</p></dd>
+<dt><a href="Classes-PV_LocalMax.html">PV_LocalMax</a></dt>
+<dd><p>传递为局部最大值的频段</p></dd>
+<dt><a href="Classes-PV_MagAbove.html">PV_MagAbove</a></dt>
+<dd><p>通过高于阈值的频段</p></dd>
+<dt><a href="Classes-PV_MagBelow.html">PV_MagBelow</a></dt>
+<dd><p>通过低于阈值的频段</p></dd>
+<dt><a href="Classes-PV_MagClip.html">PV_MagClip</a></dt>
+<dd><p>将频段裁剪到阈值</p></dd>
+<dt><a href="Classes-PV_MagFreeze.html">PV_MagFreeze</a></dt>
+<dd><p>冻结幅度</p></dd>
+<dt><a href="Classes-PV_MagMul.html">PV_MagMul</a></dt>
+<dd><p>乘以幅度</p></dd>
+<dt><a href="Classes-PV_MagDiv.html">PV_MagDiv</a></dt>
+<dd><p>幅值的除法</p></dd>
+<dt><a href="Classes-PV_MagNoise.html">PV_MagNoise</a></dt>
+<dd><p>将幅度乘以噪声</p></dd>
+<dt><a href="Classes-PV_MagShift.html">PV_MagShift</a></dt>
+<dd><p>移动和拉伸幅度 bin 位置</p></dd>
+<dt><a href="Classes-PV_MagSmear.html">PV_MagSmear</a></dt>
+<dd><p>跨 bin 平均幅度</p></dd>
+<dt><a href="Classes-PV_MagSquared.html">PV_MagSquared</a></dt>
+<dd><p>平方幅度</p></dd>
+<dt><a href="Classes-PV_Max.html">PV_Max</a></dt>
+<dd><p>最大幅度</p></dd>
+<dt><a href="Classes-PV_Min.html">PV_Min</a></dt>
+<dd><p>最小幅度</p></dd>
+<dt><a href="Classes-PV_Mul.html">PV_Mul</a></dt>
+<dd><p>复数乘法</p></dd>
+<dt><a href="Classes-PV_PhaseShift.html">PV_PhaseShift</a></dt>
+<dd><p>移动所有频段的相位</p></dd>
+<dt><a href="Classes-PV_PhaseShift270.html">PV_PhaseShift270</a></dt>
+<dd><p>将相位偏移 270 度</p></dd>
+<dt><a href="Classes-PV_PhaseShift90.html">PV_PhaseShift90</a></dt>
+<dd><p>将相位偏移 90 度</p></dd>
+<dt><a href="Classes-PV_RandComb.html">PV_RandComb</a></dt>
+<dd><p>传递随机频段</p></dd>
+<dt><a href="Classes-PV_RandWipe.html">PV_RandWipe</a></dt>
+<dd><p>按随机 bin 顺序交叉淡化</p></dd>
+<dt><a href="Classes-PV_RectComb.html">PV_RectComb</a></dt>
+<dd><p>在频谱中制造间隙</p></dd>
+<dt><a href="Classes-PV_RectComb2.html">PV_RectComb2</a></dt>
+<dd><p>在频谱中制造间隙</p></dd>
+<dt><a href="Classes-UnpackFFT.html">UnpackFFT</a>、<a href="Classes-PackFFT.html">PackFFT</a>、<a href="Classes-Unpack1FFT.html">Unpack1FFT</a></dt>
+<dd><p>pvcalc、pvcalc2、pvcollect 中使用的“解包”组件（也可单独使用）</p></dd>
+</dl>
+
+<p>有关 FFT UGens 的完整列表，请参见 <strong>UGens&gt;FFT</strong> 中的 <a href="https://docs.supercollider.online/Browse.html#UGens&gt;FFT">Browse: UGens&gt;FFT</a> 页面。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/FFT-Overview.html" rel="noreferrer noopener">Guides/FFT-Overview.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

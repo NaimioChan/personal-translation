@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jitlib_efficiency - SuperCollider 文档</title>
+<meta name="description" content="使用 NodeProxy 高效编码">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>jitlib_efficiency</h1>
+
+<p><em>使用 NodeProxy 高效编码</em></p>
+
+<p>另请参阅：<a href="Overviews-JITLib.html">JITLib</a></p>
+
+<p><a href="Classes-NodeProxy.html">NodeProxy</a>（以及伪装成它的 <a href="Classes-ProxySpace.html">ProxySpace</a>）代表“代词”，即各类声音产生对象的占位符，这些对象能够写入服务器上的特定总线。</p>
+
+<p>要准备这样一个对象以供播放，不同对象需要不同的东西，有些很少，有些则较多。由于使用占位符无法直接看出哪些操作非常高效、哪些不高效，因此这里更详细地展示。</p>
+
+<p>如果你想自动化某些流程（例如由外部接口或任务进行控制），这一点也很重要——有些东西（a）不适合以某些方式使用，此时应改用更好的解决方案；另一些东西（b、c）则高效得多。</p>
+
+<pre><code>a = NodeProxy.audio;
+ProxySpace.push;
+
+a.source = ... is equivalent to ~a = ...
+a.add(...) a.put(0,...) a[0] = ... ~a[0] = ... are equivalent in cpu load.</code></pre>
+
+<h2 id="a) rebuild and send: manual rate">a) 重建并发送：手动速率</h2>
+
+<p>以下代码需要重新构建并发送一个 <a href="Classes-SynthDef.html">SynthDef</a>，因此 CPU 开销最大。虽然对于较慢的使用（尤其是手动使用）来说没问题，但对于自动化来说，最好构建一个 synthdef 并为其赋值。</p>
+
+<pre><code>~a = { someUGenFunction };
+~a = Patch(instrname, args);
+~a = SynthDef(\name, { someUGenFunction });
+
+
+// 重建图时同样适用：
+~a.rebuild
+
+// 当设置以下属性之一时，也会使用此重建：
+server, bus, setRates</code></pre>
+
+<h2 id="b) starting synths and tasks">b) 启动 Synth 与任务</h2>
+
+<p>以下代码向服务器发送命令以启动 synth，这主要加载在服务器上，并取决于 synthdef 的特性：</p>
+
+<pre><code>~a = \synthDefName; // synthdef 已经在服务器上了
+~a = Pbind(\instrument, name, \freq, ...);
+~a = Routine({ loop({ s.sendMsg(&quot;/s_new&quot;, name, ...)}) });
+
+~a.refresh; ~a.wakeUp; // 唤醒已停止的 proxy 不需要重新发送</code></pre>
+
+<p>这些会用新的属性重新发送 synth</p>
+
+<pre><code>~a.send(...)    // 直接发送消息。代理的映射 bundle 被缓存
+~a.sendAll(...)
+
+        // 对于以下情况，如果分配了新键，bundle 会被重新计算。
+        // 如果你使用相同的键但不同的值，bundle 会被修改
+
+~a.xset(...) ~a.xmap(...)
+~a.nodeMap_(a map)
+~a.fadeToMap(a map)
+
+// 这些内容的 synthdefs 已经在服务器上了。
+
+~a.gate, ~a.env, ~a.line, ~a.xline
+
+// 一些更多的计算必须在客户端进行，因此如果自动化，最好使用
+// 上述方法或 synth 中的 lag。
+
+~a.lineAt(key), ~a.xlineAt(key)</code></pre>
+
+<h2 id="c) sending messages to running synths">c) 向运行中的 synth 发送消息</h2>
+
+<p>对于这些，需要进行的计算最少</p>
+
+<pre><code>~a.set(\freq, 400, \dt, 0.2); ~a.unset(\freq); // 如果运行，bundle 将被重新计算
+~a.map(\freq, ~lfo); ~a.unmap(\freq);
+~a.fadeTime = 2;
+~a.gateAt(key)
+
+// 为避免 bundle 重新计算，你可以直接与 group 通信。
+// 交换 synth 时此设置不会被保留
+~a.group.set(\freq, 500);</code></pre>
+
+<h2 id="switching audio">切换音频</h2>
+
+<p>（现在可以用 map 完成！）</p>
+
+<p>todo：重写这一部分。</p>
+
+<p>控制率源可以借助 <strong>map</strong> 或 <strong>xmap</strong> 轻松高效地切换。下面是一个切换已在运行的音频率输入的例子。它的效率与 (b) - 第一个示例（设置 defname）大致相当。目前它仅适用于 1 或 2 个通道。</p>
+
+<pre><code>(
+s.boot;
+p = ProxySpace.push(s);
+)
+
+
+
+~out.play;
+
+~s1 = { Blip.ar(Rand(32,15), 100, 0.5) };
+~s2 = { SinOsc.ar(740, 0, 0.1) };
+~s3 = { Pulse.ar(140, 0.2, 0.1) };
+
+
+~out = { Pan2.ar(~mix.ar(1), MouseX.kr(-1,1)) };
+
+~mix.read(~s1);
+~mix.read(~s2);
+~mix.read(~s3);
+
+//重置源会停止读取
+~mix = \default;
+
+//现在你还可以高效地进行音频交叉淡化：
+~mix.fadeTime = 1.5;
+
+~mix.read(~s1);
+~mix.read(~s2);
+~mix.read(~s3);
+
+// 自动化：
+(
+t = Task({
+    var dt;
+    loop({
+        dt = rrand(0.01, 0.3);
+        ~mix.fadeTime = dt;
+        ~mix.read([~s1, ~s2, ~s3].choose);
+        dt.wait;
+    });
+});
+)
+
+t.play(SystemClock);
+
+
+// 同时更改源：
+~s1 = { Blip.ar(105, 100, 0.2) };
+~s2 = { SinOsc.ar(350, 0, 0.1) };
+~s3 = { Pulse.ar(60, 0.2, 0.1) };
+
+~freq = { MouseX.kr(200, 600, 2) };
+
+~s1 = { Blip.ar(~freq.kr * 0.3, 10, 0.2) };
+~s2 = { SinOsc.ar(~freq.kr, 0, 0.1) };
+~s3 = { Pulse.ar(~freq.kr * 0.2, 0.2, 0.1) };
+
+
+t.stop;
+
+// 注意，重启 ~out 时，输入必须被唤醒。
+// 为避免此问题，你可以将输入添加到 mix nodeMap 的父节点中：
+
+~mix.nodeMap.parents.putAll( (s1: ~s1, s2: ~s2, s3: ~s3) );
+
+// 该 task 也可以添加到 proxy 中：
+(
+~mix.task = Routine({
+    loop({
+        ~mix.fadeTime = rrand(0.01, 0.1);
+        ~mix.read([~s1, ~s2, ~s3].choose);
+        [0.2, 0.4].choose.wait;
+    });
+});
+)</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Tutorials/JITLib/jitlib_efficiency.html" rel="noreferrer noopener">Tutorials/JITLib/jitlib_efficiency.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

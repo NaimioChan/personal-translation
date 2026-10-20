@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuperColliderAU - SuperCollider 文档</title>
+<meta name="description" content="将 scsynth 包装为 AudioUnits 插件">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>SuperColliderAU</h1>
+
+<p><em>将 scsynth 包装为 AudioUnits 插件</em></p>
+
+<p>SuperColliderAU 是一个 AudioUnit 封装，允许在 macOS 上的 AudioUnit 宿主内使用 SuperCollider 服务器。内嵌服务器可以照常通过 OSC 控制。此外，它可以与一个 synth 定义和一个定义其参数的配置文件打包在一起。</p>
+
+<h2 id="Installing">Installing</h2>
+
+<p>将 bundle“SuperColliderAU.component”复制到 /Library/Audio/Plug-ins/Components 或 ~/Library/Audio/Plug-ins/Components</p>
+
+<h2 id="Quick Start">快速开始</h2>
+
+<p>启动一个 Audio Units 宿主应用程序。常见的宿主包括 Apple Logic 和 Ableton Live。受支持宿主的列表可以在 SuperCollider swiki 的此页面中找到（欢迎随时更新）：</p>
+
+<p><a href="http://swiki.hfbk-hamburg.de">http://swiki.hfbk-hamburg.de</a>:8888/MusicTechnology/823</p>
+
+<p>在其余的 AudioUnit 插件中找到 SuperColliderAU，并向一条轨道添加一个实例（如果你不知道如何操作，请查阅宿主软件的手册）。将会出现一个面板，告诉你服务器正在哪个端口上监听 OSC 消息。</p>
+
+<p>现在你可以在 SuperCollider 语言中运行此代码，直接与嵌入式服务器通信：</p>
+
+<pre><code>u = Server(\scau, NetAddr(&quot;127.0.0.1&quot;, 9989)); // 将端口从 9989 改为适合你的正确端口
+u.serverRunning = true;
+u.ping(10); // 对我来说大约得到 0.02——确认通信正常工作
+// 现在让我们创建一个快速的环形调制器效果：
+z = { SoundIn.ar([0,1]) * SinOsc.ar(MouseX.kr(100, 1000)) }.play(u);</code></pre>
+
+<h2 id="Inside the bundle">在 bundle 内部</h2>
+
+<p>作为 AudioUnit 插件，SuperColliderAU 打包在一个组件包中。SuperColliderAU 所需的所有文件都可以在包内的 Resources 文件夹中找到：</p>
+
+<h3 id="serverConfig.plist">serverConfig.plist</h3>
+
+<p>存储服务器的配置参数（参见 <a href="Classes-ServerOptions.html">ServerOptions</a>）</p>
+
+<ul>
+<li>PortNumber：如果可用，scserver 将监听的 udp 端口（否则，它将寻找一个可用端口）。</li>
+<li>BlockSize：服务器的块大小配置。</li>
+<li>MemorySize：分配给此服务器的实时内存量。</li>
+<li>NumWireBufs：用于连接 ugens 的最大缓冲区数量。</li>
+<li>DoNoteOn：（实验性）如果为 true，则当收到 MIDI noteon 或 noteoff 消息时，服务器将发送一个 OSC bundle，设置 "note" 和 "velocity" 参数。为此，你需要一个支持 Midi effect AudioUnits 并向其发送 MIDI 消息的宿主。</li>
+<li>BeatDiv：用于将 Demand UGen 链接到宿主速度。如果设置了此数字，SuperColliderAU 将在每个节拍分度上触发总线 0，并使用总线 1 进行重置。</li>
+</ul>
+
+<h3 id="pluginSpec.plist">pluginSpec.plist</h3>
+
+<p>存储独立插件的参数配置。SuperColliderAU 将使用它来显示和设置你的 synth definition 的参数。注意，synth definition 的默认值必须相同，它们不会由包装器设置。此文件中的值仅用于显示。</p>
+
+<h3 id="synthdefs">synthdefs</h3>
+
+<p>对于独立插件，你应该在此处放置你的 synth 定义。当远程控制服务器时，你只需发送 synth 定义即可。</p>
+
+<h3 id="plugins">plugins</h3>
+
+<p>这里需要你打算与该服务器一起使用的所有 SC 插件。</p>
+
+<h2 id="Making standalone plugins">制作独立插件</h2>
+
+<p>除了在语言内部控制 SuperColliderAU 之外，你还可以创建由宿主使用默认 GUI 控制的 AudioUnits 插件。这可以手动完成：复制 SupercolliderAU.component，添加一个 synthdef 及相关的 SC 插件，并编辑 pluginSpec.plist。然而，如果你想要一个具有唯一标识符的 AudioUnit（该标识符就是你在宿主 GUI 中看到的内容），则必须使用 Rez 重新编译其资源文件（使用新的标识符）。该程序包含在 Apple 的 Developer Tools 中。AudioUnitBuilder quark 中维护了一个自动化整个过程的辅助类。使用 AudioUnitBuilder 类，你无需离开 SuperCollider 即可创建独立的 AudioUnit 插件。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/SuperColliderAU.html" rel="noreferrer noopener">Guides/SuperColliderAU.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

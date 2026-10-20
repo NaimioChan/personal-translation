@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>执行顺序 - SuperCollider 文档</title>
+<meta name="description" content="理解服务器上 synth 的执行顺序">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>执行顺序</h1>
+
+<p><em>理解服务器上 synth 的执行顺序</em></p>
+
+<p>另请参阅：<a href="Classes-Server.html">Server</a>、<a href="Classes-Node.html">Node</a>、<a href="Classes-Group.html">Group</a>、<a href="Classes-ParGroup.html">ParGroup</a>、<a href="Reference-default_group.html">Default Group</a>、<a href="Classes-Bus.html">Bus</a>、<a href="Classes-Out.html">Out</a>、<a href="Classes-ReplaceOut.html">ReplaceOut</a>、<a href="Classes-XOut.html">XOut</a>、<a href="Classes-OffsetOut.html">OffsetOut</a>、<a href="Classes-In.html">In</a>、<a href="Classes-InFeedback.html">InFeedback</a>、<a href="Classes-LocalIn.html">LocalIn</a>、<a href="Classes-LocalOut.html">LocalOut</a>、<a href="Classes-SharedIn.html">SharedIn</a>、<a href="Classes-SharedOut.html">SharedOut</a></p>
+
+<p>执行顺序是使用 SuperCollider 时最关键、也看似最困难的方面之一，但实际上只需在早期规划阶段稍加思考，就能让它为你所用。</p>
+
+<h2 id="Introduction">Introduction</h2>
+
+<p>此上下文中的执行顺序并不是指语言（客户端）中语句的执行顺序。它指的是服务器上 synth 节点的顺序，对应于每个控制周期（blockSize）计算其输出的顺序。无论是否指定执行顺序，每个 synth 和每个组都会进入执行链中的特定位置。</p>
+
+<p>如果你在服务器上有：</p>
+
+<pre><code>    synth 1 ---&gt; synth 2</code></pre>
+
+<p>……在每个控制周期中，与 synth 1 关联的所有 unit generator 都会在 synth 2 中的那些之前执行。</p>
+
+<p>如果你没有任何使用 In.ar 的 synth，就不必担心执行顺序。只有当某个 synth 读取另一个 synth 的输出时，顺序才重要。</p>
+
+<p>规则很简单：如果服务器上有一个 synth（即“效果”）依赖于另一个 synth（“源”）的输出，那么效果在服务器节点链中必须出现在源之后。</p>
+
+<pre><code>    source ---&gt; effect</code></pre>
+
+<p>如果你有：</p>
+
+<pre><code>    effect ---&gt; source</code></pre>
+
+<p>效果 Synth 将听不到源 Synth，你也得不到想要的结果。</p>
+
+<p><img src="https://docs.supercollider.online/Guides/server.png" alt=""></p>
+
+<p>在服务器上，外部信号可以由 Synth 从“公共”输入总线接收（在所述情况中为一个），而不同的 Synth 必须连接到“公共”输出音频总线（在此情况中为两个），以便将信号输出到外部声卡（参见 Bus）。其他总线（控制和音频）都是内部的。一般来说，总线大致可以类比为模拟调音台上的发送、总线或子混音，或者类比为允许路由“流动”信号的管道。如果某个 Synth 在某一节点连接到总线（从而“流入”其中），那么在后续节点从同一总线获取信号的 Synth 将把该流动信号（连同先前输出到该总线的其他内容）作为输入，就像水管中的情形一样。</p>
+
+<h2 id="Some Notes about Servers and Targets">关于服务器与目标的一些说明</h2>
+
+<p>始终存在一个默认服务器，可通过类方法 Server.default 访问或设置。启动时它被设为本地服务器，同时也被赋值给解释器变量 s。</p>
+
+<pre><code>// 执行以下内容并观察 post 窗口
+s === Server.default;
+s === Server.local;
+Server.default = Server.internal; s === Server.default;
+Server.default = Server.local; // 将其返回本地服务器</code></pre>
+
+<p>当<a href="Classes-Server.html">服务器</a>启动时，会有一个 ID 为 0 的顶层组，它定义了节点树的根。这由 Group 的一个子类表示：<a href="Classes-RootNode.html">RootNode</a>。此外还有一个 ID 为 1 的<a href="Reference-default_group.html">默认组</a>。该组是所有节点的默认组。如果将服务器作为目标提供，得到的就是这个组。如果不指定目标或传入 nil，得到的就是默认服务器的默认组。</p>
+
+<p>默认组有一个重要作用：它提供了一个可预测的基础节点树，使 Server:scope 和 Server:record 之类的方法能够正常工作而不会遇到执行顺序问题。因此，通常应在默认组内创建新的节点，而不是在 RootNode 中创建。详见 <a href="Reference-default_group.html">Default Group</a> 和 <a href="Classes-RootNode.html">RootNode</a>。</p>
+
+<h2 id="Controlling order of execution">控制执行顺序</h2>
+
+<p>有三种方式可以控制执行顺序：在创建 synth 的消息中使用 addAction、移动节点以及将 synth 放入组中。使用组是可选的，但它们在帮助组织执行顺序方面最为有效。</p>
+
+<h3 id="Add actions">添加动作</h3>
+
+<p>通过为 <code>Synth.new</code>（或 SynthDef.play、Function.play 等）指定 addAction 参数，可以指定节点相对于目标的位置。目标可以是一个组节点、另一个合成器节点，或一个服务器。</p>
+
+<p>如上所述，默认目标为默认服务器的 default_group（节点 ID 为 1 的组）。</p>
+
+<p>以下 Symbol 是 Synth.new 的有效 addAction：<code>\addToHead, \addToTail, \addBefore, \addAfter, \addReplace</code>。</p>
+
+<dl>
+<dt><code>Synth.new(defName, args, target, addAction)</code></dt>
+<dd><ul>
+<li>如果目标是 Synth，则 \addToHead 和 \addToTail 方法将应用于该 Synth 的组</li>
+<li>如果 target 是一个 Server，它将解析为该 Server 的默认组</li>
+<li>如果 target 为 nil，它将解析为默认 Server 的默认组</li>
+</ul></dd>
+</dl>
+
+<p>对于每个 addAction，类 Synth 也有对应的便捷方法：</p>
+
+<dl>
+<dt><code>Synth.head(aGroup, defName, args)</code></dt>
+<dd><p>将新 synth 添加到由 aGroup 指定的组的头部</p></dd>
+<dd><ul>
+<li>如果 aGroup 是一个 synth 节点，则新 synth 将被添加到该节点所在组的头部</li>
+<li>如果 target 是一个 Server，它将解析为该 Server 的默认组</li>
+<li>如果 target 为 nil，它将解析为默认 Server 的默认组</li>
+</ul></dd>
+<dt><code>Synth.tail(aGroup, defName, args)</code></dt>
+<dd><p>将新 synth 添加到由 aGroup 指定的组的尾部</p></dd>
+<dd><ul>
+<li>如果 aGroup 是一个 synth 节点，则新 synth 将被添加到该节点所在组的尾部</li>
+<li>如果 target 是一个 Server，它将解析为该 Server 的默认组</li>
+<li>如果 target 为 nil，它将解析为默认 Server 的默认组</li>
+</ul></dd>
+<dt><code>Synth.before(aNode, defName, args)</code></dt>
+<dd><p>将新节点添加到由 aNode 指定的节点之前。</p></dd>
+<dt><code>Synth.after(aNode, defName, args)</code></dt>
+<dd><p>将新节点紧接在 aNode 指定的节点之后添加。</p></dd>
+<dt><code>Synth.replace(synthToReplace, defName, args)</code></dt>
+<dd><p>新节点替换由 synthToReplace 指定的节点。目标节点被释放。</p></dd>
+</dl>
+
+<p>使用 Synth.new 而不指定 addAction 将导致使用默认的 addAction。（你可以通过查看类的源代码来检查任何方法参数的默认值。详情请参见 Internal-Snooping。）在执行顺序很重要的情况下，指定 addAction 或使用上面展示的某个便捷方法非常重要。</p>
+
+<h3 id="Moving nodes">移动节点</h3>
+
+<pre><code>    .moveBefore
+    .moveAfter
+    .moveToHead
+    .moveToTail</code></pre>
+
+<p>如果你需要在 synth 和组创建后更改执行顺序，可以使用 move 消息来实现。</p>
+
+<pre><code>    ~fx = Synth.tail(s, &quot;fx&quot;);
+    ~src = Synth.tail(s, &quot;src&quot;);  // 效果将不会被听到，因为它更早
+    ~src.moveBefore(~fx);   // 将源放在效果之前</code></pre>
+
+<h3 id="Groups">Groups</h3>
+
+<p>组可以像 synth 一样被移动。当你移动一个组时，该组中的所有 synth 都会随之移动。这就是组成为管理执行顺序的重要工具的原因。（有关这一点以及组其他便利方面的详细信息，请参阅 Group 帮助文件。）</p>
+
+<pre><code>    Group 1 ---&gt; Group 2</code></pre>
+
+<p>在上述配置中，组 1 中的所有 Synth 将在组 2 中的所有 Synth 之前执行。这是一种非常简便的方法，可以让执行顺序按你期望的方式进行。</p>
+
+<p>确定你的架构，然后创建组以支持该架构。</p>
+
+<h3 id="Parallel Groups">并行组</h3>
+
+<p>在某些情况下，服务器节点之间互不依赖。在多处理器系统上，这些节点可以在不同的 CPU 上求值。这可以通过将这些节点添加到并行组来实现（参见 <a href="Classes-ParGroup.html">ParGroup</a>）。并行组可以视为组，但其包含的节点不保证有特定的执行顺序。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> SuperCollider 的默认服务器 <strong>scsynth</strong> 无法将 synth 分配到不同线程。然而另一种服务器 <strong>supernova</strong> 能够将并行组的内容分配到不同的 CPU。</p></blockquote>
+
+<h3 id="Using order of execution to your advantage">利用执行顺序为你带来优势</h3>
+
+<p>在开始编码之前，先规划好你想要什么，并决定 synth 需要放在哪里。</p>
+
+<p>一种常见配置是让一个例程播放节点，所有这些节点都需要由同一个效果处理。此外，你还希望该效果与同时运行的其他内容相互分离。为确保这一点，应将 synth -&gt; effect 链放在一条私有的音频总线上，然后再将其传输到主输出。</p>
+
+<pre><code>    [Lots of synths] ----&gt; effect ----&gt; transfer</code></pre>
+
+<p>这是使用组的理想场所：</p>
+
+<pre><code>    Group ( [lots of synths] ) ----&gt; effect ----&gt; transfer</code></pre>
+
+<p>为了使代码结构更清晰，也可以为效果创建一个组（即使其中只有一个 synth）：</p>
+
+<pre><code>    Group ( [lots of synths] ) ----&gt; Group ( [effect] ) ----&gt; transfer</code></pre>
+
+<p>我将用一个控制速率 synth 调制参数（音符长度），进一步为这个示例增加难度。</p>
+
+<p>因此，在程序的开头：</p>
+
+<pre><code>s.boot;
+
+(
+l = Bus.control(s, 1);  // 为 LFO 获取一个总线——与执行顺序无关
+b = Bus.audio(s, 2);    // 假设为立体声——这是为了让 src-&gt;fx 链与
+                // 其他类似的链
+~synthgroup = Group.tail(s);
+~fxgroup = Group.tail(s);
+
+// 现在你在 s 的默认组中有了 synthgroup --&gt; fxgroup
+
+// 创建一些用于演奏的 synthdef
+SynthDef(&quot;order-of-ex-dist&quot;, { arg bus, preGain, postGain;
+    var sig;
+    sig = In.ar(bus, 2);
+    sig = (sig * preGain).distort;
+    ReplaceOut.ar(bus, sig * postGain);
+}).add;
+
+SynthDef(&quot;order-of-ex-pulse&quot;, { arg freq, bus, ffreq, pan, lfobus;
+    var sig, noteLen;
+    noteLen = In.kr(lfobus, 1);
+    sig = RLPF.ar(Pulse.ar(freq, 0.2, 0.5), ffreq, 0.3);
+    Out.ar(bus, Pan2.ar(sig, pan)
+        * EnvGen.kr(Env.perc(0.1, 1), timeScale: noteLen, doneAction: Done.freeSelf));
+}).add;
+
+SynthDef(&quot;LFNoise1&quot;, { arg freq, mul, add, bus;
+    Out.kr(bus, LFNoise1.kr(freq, mul:mul, add:add));
+}).add;
+)
+
+// 放置 LFO：
+
+~lfo = Synth.head(s, &quot;LFNoise1&quot;, [\freq, 0.3, \mul, 0.68, \add, 0.7, \bus, l]);
+
+// 然后放置你的效果：
+
+~dist = Synth.tail(~fxgroup, &quot;order-of-ex-dist&quot;, [\bus, b, \preGain, 8, \postGain, 0.6]);
+
+// 将结果传送到主输出，并进行电平缩放
+// 在 s 的默认 group 末尾播放（注意 Function-play 也接受 addActions！
+
+~xfer = { Out.ar(0, 0.25 * In.ar(b, 2)) }.play(s, addAction: \addToTail);
+
+// 然后启动你的例程：
+
+(
+r = Routine({
+    {
+        Synth.tail(~synthgroup, &quot;order-of-ex-pulse&quot;,
+            [\freq, rrand(200, 800), \ffreq, rrand(1000, 15000), \pan, 1.0.rand2,
+            \bus, b, \lfobus, l]);
+        0.07.wait;
+    }.loop;
+}).play(SystemClock);
+)
+
+~dist.run(false);    // 证明失真效果确实在起作用
+~dist.run(true);
+
+// 清理：
+(
+r.stop;
+[~synthgroup, ~fxgroup, b, l, ~lfo, ~xfer].do({ arg x; x.free });
+currentEnvironment.clear; // 清除所有环境变量
+)</code></pre>
+
+<p>注意，在例程中，为源 Synth 使用 Group 可以轻松指定它们彼此之间的相对顺序（它们通过 .tail 方法添加），而无需担心它们相对于效果 Synth 的顺序。</p>
+
+<p>请注意，这种安排通过少量组织性代码，避免了执行顺序上的错误。尽管在这里很直接，但这种安排可以轻松扩展到更大的项目。</p>
+
+<h3 id="Messaging Style">消息传递风格</h3>
+
+<p>以上示例采用“对象风格”。如果你更喜欢使用“消息风格”，上面展示的所有方法都有对应的消息。更多细节请参阅 NodeMessaging 和 Server-Command-Reference。</p>
+
+<h2 id="Feedback">Feedback</h2>
+
+<p>当各种输出 ugen（Out、OffsetOut、XOut）将数据写入总线时，它们会将其与当前周期的任何数据混合，但会覆盖上一周期的任何数据。（ReplaceOut 无论如何都会覆盖所有数据。）因此，取决于节点顺序，给定总线上的数据可能来自当前周期，也可能已有一个周期之久。对于输入 ugen（参见 In 和 InFeedback），In.ar 会检查其读取的任何数据的时间戳，并将上一周期的任何数据置零（供该 synth 内部使用；数据仍保留在总线上）。这对音频数据来说没问题，因为它避免了反馈，但对于控制数据来说，能够从节点顺序中的任何位置读取数据是很有用的。因此，In.kr 也会读取比当前周期更旧的数据。</p>
+
+<p>在某些情况下，我们可能还想从当前节点顺序中稍后位置的节点读取音频。这正是 InFeedback 的用途。由此引入的延迟最大为一个块大小，在默认块大小和采样率下约等于 0.0014 秒。</p>
+
+<p>输出 ugens 的可变混合与覆写行为会使执行顺序在使用 In.kr 或 InFeedback.ar 时变得至关重要。（无文字游戏之意。）例如，对于如下节点顺序，Synth 2 中的 InFeedback ugen 将只接收来自 Synth 1 的数据（-&gt; = 写出；&lt;- = 读入）：</p>
+
+<ol>
+<li>Synth 1 -&gt; busA（此 Synth 在到达 Synth 2 之前覆盖了 Synth3 的输出）</li>
+<li>Synth 2（使用 InFeedback）&lt;- busA</li>
+<li>Synth 3 -&gt; busA</li>
+</ol>
+
+<p>如果 Synth 1 被移到 Synth 2 之后，那么 Synth 2 的 InFeedback 将接收到 Synth 1 和 Synth 3 输出的混合信号。如果 Synth 2 位于 Synth1 和 Synth 3 之后，情况也是如此。在这两种情况下，来自 Synth 1 和 Synth 3 的数据将具有相同的时间戳（当前周期或上一周期），因此不会有任何数据被覆盖。</p>
+
+<p>（同样，如果在节点顺序中，任何 In.ar 比 Synth 2 更早写入 busA，它就会在 Synth 3 的数据到达 Synth 2 之前将该总线清零。即使 Synth 2 之前没有节点写入 busA，也是如此。）</p>
+
+<p>因此，通常为反馈单独分配一条总线很有用。在下面的安排中，无论 Synth 1 在节点顺序中的位置如何，Synth 2 都会接收来自 Synth3 的数据。</p>
+
+<ol>
+<li>Synth 1 -&gt; busA</li>
+<li>Synth 2（使用 InFeedback）&lt;- busB</li>
+<li>Synth 3 -&gt; busB + busA</li>
+</ol>
+
+<p>以下示例演示了 In.kr 的这一问题：</p>
+
+<pre><code>(
+SynthDef(&quot;help-Infreq&quot;, { arg bus;
+    Out.ar(0, FSinOsc.ar(In.kr(bus), 0, 0.5));
+}).add;
+
+SynthDef(&quot;help-Outfreq&quot;, { arg freq = 400, bus;
+    Out.kr(bus, SinOsc.kr(1, 0, freq/40, freq));
+}).add;
+
+b = Bus.control(s,1);
+)
+
+// 将第一个控制 Synth 添加到默认服务器的尾部；此时还没有音频
+x = Synth.tail(s, &quot;help-Outfreq&quot;, [\bus, b]);
+
+// 在它之前添加发声的 Synth；它从上一个周期接收 x 的数据
+y = Synth.before(x, &quot;help-Infreq&quot;, [\bus, b]);
+
+// 在 y 之前添加另一个控制 Synth，位于服务器的头部
+// 现在它会在 y 接收之前覆盖 x 的周期旧数据
+z = Synth.head(s, &quot;help-Outfreq&quot;, [\bus, b, \freq, 800]);
+
+// 获取另一个 bus
+c = Bus.control(s, 1);
+
+// 现在 y 接收 x 的数据，即使 z 仍然存在
+y.set(\bus, c); x.set(\bus, c);
+
+x.free; y.free; z.free;</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Guides/Order-of-execution.html" rel="noreferrer noopener">Guides/Order-of-execution.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

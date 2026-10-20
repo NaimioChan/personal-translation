@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EventStreamCleanup - SuperCollider 文档</title>
+<meta name="description" content="用于收集流内部状态相关信息的辅助类，这些信息需要被释放">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>EventStreamCleanup</h1>
+
+<p><em>用于收集流内部状态相关信息的辅助类，这些信息需要被释放</em></p>
+
+<p><a href="Classes-Object.html">Object</a></p>
+
+<h2 id="description">说明</h2>
+
+<p>由 <a href="Classes-Pmono.html">Pmono</a> 或 <a href="Classes-Pfx.html">Pfx</a> 等对象创建的事件流是特殊的：当它们开始时，会创建一些状态（例如一个新的 synth），该状态在整个流期间持续存在，或至少持续多个事件。当这样的流结束时，它会释放这些状态。然而，还有其他流<strong>可能随时停止其输入流</strong>（例如 <a href="Classes-Pfindur.html">Pfindur</a> 或 <a href="Classes-Pdef.html">Pdef</a>）。此时，嵌入在输入流层次结构中的任何流的状态都必须由它们释放。EventStreamCleanup 收集清理函数，并可以在流被切断时运行它们。</p>
+
+<blockquote class="note"><p><strong>注意：</strong> 因此，所有能结束子模式（以及相应的流）的事件模式都必须使用 EventStreamCleanup。</p></blockquote>
+
+<p>一些可能停止输入流并更新 EventStreamCleanup 的模式示例：</p>
+
+<ul>
+<li><a href="Classes-Pbindf.html">Pbindf</a>（当它的某个参数流结束时，会停止其事件流）</li>
+<li><a href="Classes-Pfin.html">Pfin</a>（在若干事件后停止流）</li>
+<li><a href="Classes-Pfindur.html">Pfindur</a>（在特定经过时间后停止流）</li>
+<li><a href="Classes-Pdef.html">Pdef</a>（当被新的流替换时停止流）</li>
+<li><a href="Classes-Pset.html">Pset</a>（当其参数流结束时停止其事件流）</li>
+<li><a href="Classes-Pswitch1.html">Pswitch1</a>（在固定数量的项目之后或其中一个流结束时停止所有输入流。不是 <a href="Classes-Pswitch.html">Pswitch</a>，后者会完全嵌入每个输入流）</li>
+</ul>
+
+<p>一些创建跨多个事件持续存在的状态的模式示例。它们还通过 EventStreamCleanup 释放该状态：</p>
+
+<ul>
+<li><a href="Classes-Pmono.html">Pmono</a>（启动一个合成器并随时间控制它）</li>
+<li><a href="Classes-Pfx.html">Pfx</a>（启动一个效果 Synth，并让子流的信号通过它）</li>
+<li><a href="Classes-Pproto.html">Pproto</a>（初始化资源并使其保持可用）</li>
+<li><a href="Classes-Pspawner.html">Pspawner</a>（调度流，并在一段时间后释放它们）</li>
+</ul>
+
+<pre><code>// 将模式包裹在停止条件中
+(
+f = { |pat, condition|
+    Prout { |inval|
+        var stream = pat.asStream;
+        var cleanup = EventStreamCleanup.new;
+        var outval;
+        while {
+            outval = stream.next(inval);
+            outval.notNil and: { condition.value(outval) }
+        } {
+            cleanup.update(outval);
+            inval = outval.yield;
+        };
+        cleanup.exit(inval);
+    }
+
+};
+p = Plazy { Pmono(\default, \note, Pgeom(rrand(1, 1.5), rrand(1.05, 2), inf), \harmonic, [0.78, 1, 1.2], \dur, 1/rrand(4, 7), \amp, 0.4) };
+x = f.(p, { |outval| outval[\note] &lt; 20 }); // 始终在 20 处停止
+Pn(x).play; // 循环它。
+);</code></pre>
+
+<h2 id="classmethods">类方法</h2>
+
+<h4 id="*new"><code>EventStreamCleanup.new</code></h4>
+
+<p>创建一个新实例。</p>
+
+<h2 id="instancemethods">实例方法</h2>
+
+<h4 id="-addFunction"><code>.addFunction(event, function)</code></h4>
+
+<p>添加一个新的清理函数，当流在下游某处被结束时会调用该函数。仅在创建需要释放资源的模式（例如 <a href="Classes-Pmono.html">Pmono</a> 或 <a href="Classes-Pfx.html">Pfx</a>）中调用。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>event</p></td><td class="argumentdesc"><p>向下游传递的输出事件，它向任何结束流的模式传达释放资源所需执行的操作。<strong>它必须在 update 之后被 yield！</strong></p></td></tr>
+<tr><td class="argumentname"><p>function</p></td><td class="argumentdesc"><p>用于清理时调用的函数。例如 <code>{ group.free }</code>。</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>一个 <a href="Classes-CallOnce.html">CallOnce</a>，它最多执行一次清理 <code>function</code>。如果需要在 <code>EventStreamCleanup</code> 的控制之外执行清理，则应使用返回的 CallOnce 而不是原始的 <code>function</code>，以便其他引用者得知清理已执行。</p>
+
+<h4 id="-update"><code>.update(event)</code></h4>
+
+<p>对于每个新事件，必须更新清理逻辑以从上游的任何输入流接收信息。此方法由所有可能提前停止的流调用（例如 <a href="Classes-Pmono.html">Pmono</a> 或 <a href="Classes-Pfindur.html">Pfindur</a>）。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>event</p></td><td class="argumentdesc"><p>输入流的 outevent。<strong>它必须在 update 之后被 yield！</strong></p></td></tr>
+</table>
+
+<h4 id="-exit"><code>.exit(event, freeNodes: true)</code></h4>
+
+<p>运行随时间收集的所有函数，并向事件添加适当的信息，以备其作为 inevent 被传递。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>event</p></td><td class="argumentdesc"><p>传递到外部流的 inevent</p></td></tr>
+<tr><td class="argumentname"><p>freeNodes</p></td><td class="argumentdesc"><p>内部使用。</p></td></tr>
+</table>
+
+<h4>返回值：</h4>
+
+<p>一个事件。在 embedInStream 中，必须返回此事件（<code>^cleanup.exit(inevent)</code>）</p>
+
+<h4 id="-functions"><code>.functions</code></h4>
+
+<h4 id="-functions"><code>.functions = value</code></h4>
+
+<p>一组清理函数。</p>
+
+<h4 id="-clear"><code>.clear</code></h4>
+
+<p>清空清理函数，但不求值它们。</p>
+
+<h4 id="-terminate"><code>.terminate(freeNodes: true)</code></h4>
+
+<p>运行随时间收集的所有函数，而不向事件添加信息。</p>
+
+<h4>参数：</h4>
+
+<table class="arguments">
+<tr><td class="argumentname"><p>freeNodes</p></td><td class="argumentdesc"><p>内部使用。</p></td></tr>
+</table>
+
+<h3 id="Undocumented instance methods">未文档化的实例方法</h3>
+
+<h4 id="-addNodeCleanup"><code>.addNodeCleanup(event, function)</code></h4>
+
+<h4 id="-copy"><code>.copy</code></h4>
+
+<h2 id="examples">示例</h2>
+
+<pre><code>// 来自类库的一些代码
+
+// 这里有一个可以在若干步之后从外部结束该流的 pattern
+Pfin : FilterPattern {
+    var &lt;&gt;count;
+    *new { |count, pattern|
+        ^super.new(pattern).count_(count)
+    }
+    storeArgs { ^[count, pattern] }
+
+    embedInStream { |event|
+        var inevent;
+        var stream = pattern.asStream;
+        var cleanup = EventStreamCleanup.new;
+        count.value(event).do({
+            inevent = stream.next(event) ?? { ^event };
+            cleanup.update(inevent);
+            event = inevent.yield;
+        });
+        ^cleanup.exit(event)
+    }
+}
+
+// 这里有一个添加资源的 pattern：一个供事件播放的 bus
+
+Pbus : FilterPattern {
+    var &lt;&gt;numChannels, &lt;&gt;rate, &lt;&gt;dur = 2.0, &lt;&gt;fadeTime;
+
+    *new { |pattern, dur = 2.0, fadeTime = 0.02, numChannels = 2, rate = \audio|
+        ^super.new(pattern).dur_(dur).numChannels_(numChannels).rate_(rate).fadeTime_(fadeTime)
+    }
+
+    storeArgs { ^[pattern, dur, fadeTime, numChannels, rate] }
+
+    embedInStream { |inevent|
+        var server, groupID, linkID, bus, ingroup, cleanup;
+        var patterns, event, freeBus, stream, cleanupEvent;
+
+        cleanup = EventStreamCleanup.new;
+        server = inevent[\server] ?? { Server.default };
+        groupID = server.nextNodeID;
+        linkID = server.nextNodeID;
+        ingroup = inevent[\group];
+
+        // 可以为此使用一个特殊的事件类型：
+        if(rate == \audio) {
+            bus = server.audioBusAllocator.alloc(numChannels);
+            freeBus = { server.audioBusAllocator.free(bus) };
+        } {
+            bus = server.controlBusAllocator.alloc(numChannels);
+            freeBus = { server.controlBusAllocator.free(bus) };
+        };
+
+        CmdPeriod.doOnce(freeBus);
+
+        event = inevent.copy;
+        event[\addAction] = 0; // \addToHead
+        event[\type] = \group;
+        event[\delta] = 0;
+        event[\id] = groupID;
+        event[\group] = ingroup;
+        event.yield;
+
+        inevent = event = inevent.copy;
+
+        event[\type] = \on;
+        event[\group] = groupID;
+        event[\addAction] = 3; // \addBefore
+        event[\delta] = 0;
+        event[\id] = linkID;
+        event[\fadeTime] = fadeTime;
+        event[\instrument] = format(&quot;system_link_%_%&quot;, rate, numChannels);
+        event[\in] = bus;
+        event[\msgFunc] = #{ |out, in, fadeTime, gate = 1|
+            [\out, out, \in, in, \fadeTime, fadeTime, \gate, gate, \doneAction, 3]
+        };
+
+        cleanupEvent = (type: \off, parent: event, fadeTime: fadeTime.abs, hasGate: true, gate: 0);
+
+        cleanup.addFunction(event, { |flag|
+            if(flag) { defer ({ cleanupEvent.play }, dur) };
+        });
+
+        cleanup.addFunction(event, { defer({ freeBus.value }, fadeTime.abs + dur) });
+
+        // doneAction = 3;
+        // 移除并释放此 synth 及前一个节点
+        // （即该组）。
+        inevent = event.yield;
+
+        // 现在嵌入该模式
+        stream = Pchain(pattern, (group: groupID, out: bus)).asStream;
+        loop {
+            event = stream.next(inevent) ?? { ^cleanup.exit(inevent) };
+            cleanup.update(event);
+            inevent = event.yield;
+        }
+    }
+}</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://docs.supercollider.online/Classes/EventStreamCleanup.html" rel="noreferrer noopener">Classes/EventStreamCleanup.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
