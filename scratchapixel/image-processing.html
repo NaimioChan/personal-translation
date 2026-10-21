@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>简单的图像处理 - Scratchapixel 中文译本</title>
+<meta name="description" content="简单的图像处理 · 简单的图像处理（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>简单的图像处理</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="reading-writing-images.html">读写图像（一个简单的图像类）</a></li>
+<li><a style="font-weight:700" href="image-processing.html">简单的图像处理</a></li>
+<li><a href="bookeh-effect.html">例 1：在二维中模拟散景效果</a></li>
+</ol>
+</div>
+<h2>简单的图像处理</h2><p><b>阅读时间：17 分钟。</b></p><h2>回顾：一个简单的图像类</h2><p>在《读写图像》那一课里，我们写了一个非常基础的 Image 类。虽然很基础，这个设计已经有些有意思的特点。比如，我们决定用一个名为 Rgb 的结构来表示像素这个概念（你也可以把它看作颜色）。这个结构的成员变量只是三个 float，各自代表像素三原色中的一种（红、绿、蓝）。</p><pre><code>
+struct Rgb 
+{ 
+    Rgb() : r(0), g(0), b(0)  {} 
+    Rgb(float c) : r(c), g(c), b(c) {} 
+    Rgb(float _r, float _g, float _b) : r(_r), g(_g), b(_b) {} 
+    float r, g, b; 
+}; 
+</code></pre><p>要表示一张图像，图像的尺寸和像素数据就是全部所需。这通常也是一张图像最少需要的信息。分辨率由两个整数定义，分别表示图像宽度和高度（第 24 行）。像素定义为一个动态分配的 Rgb 元素连续数组（第 25 行）。</p><pre><code>
+class Image 
+{ 
+public: 
+	struct Rgb { 
+		Rgb() : r(0), g(0), b(0) {} 
+		Rgb(float rr) : r(rr), g(rr), b(rr) {} 
+		Rgb(float rr, float gg, float bb) : r(rr), g(gg), b(bb) {} 
+		float r, g, b; 
+	}; 
+	Image() : w(0), h(0), pixels(NULL) { /* empty image */ } 
+	Image(const unsigned int &amp;_w, const unsigned int &amp;_h, const Rgb &amp;c = kBlack) : 
+		w(_w), h(_h), pixels(NULL) 
+	{ 
+		pixels = new Rgb[w * h]; 
+		for (int i = 0; i &lt; w * h; ++i) 
+			pixels[i] = c; 
+	} 
+	const Rgb&amp; operator [] (const unsigned int &amp;i) const { return pixels[i]; } 
+	Rgb&amp; operator [] (const unsigned int &amp;i) { return pixels[i]; } 
+	~Image() { if (pixels != NULL) delete [] pixels; } 
+	unsigned int w, h; 
+	Rgb *pixels; 
+	static const Rgb kBlack, kWhite, kRed, kGreen, kBlue; 
+}; 
+ 
+// 一些默认颜色
+const Image::Rgb Image::kBlack = Image::Rgb(0); 
+const Image::Rgb Image::kWhite = Image::Rgb(1); 
+const Image::Rgb Image::kRed = Image::Rgb(1,0,0); 
+const Image::Rgb Image::kGreen = Image::Rgb(0,1,0); 
+const Image::Rgb Image::kBlue = Image::Rgb(0,0,1); 
+</code></pre><p>通常更高效的做法是一次性分配一整块内存存放所有像素，而不是创建一个二维像素数组。实现二维数组有两种基本方式：<b>顺序数组</b>和<b>数组的数组</b>。两种各有优劣。用顺序数组时，各行在内存中依次排布，内存管理简单，速度上也略有优势。</p><pre><code>
+// 分配
+Rgb *pixels = nullotr; 
+// 分配
+pixels = new Rgb[width* heigh]; 
+// 访问
+Rgb pix = pixels[j * width + i];  // 其中 j 是列索引，i 是行索引 
+// 释放内存
+delete [] pixels
+</code></pre><p>用数组的数组时，一维数组的每个元素都是指向另一个数组的指针。这种做法的缺点是内存管理更复杂，往往需要动态分配和释放。</p><pre><code>
+// 分配
+Rob *pixels = nullptr; 
+// 分配
+pixels = new Rgb[width* heigh]; 
+// 访问
+Rgb pix = pixels[j * width + i];  // 其中 j 是列索引，i 是行索引 
+// 释放内存
+delete [] pixels 
+</code></pre><p>对很小的数组来说，两者大概没什么区别！但对较大的数组，前一种方案通常更快。</p><p>关于这个图像类的实现，还有两点值得说。第一，我们会用方括号运算符来访问图像中的像素，而不是直接访问成员变量。严格来说，为了确保你不能直接访问图像类的成员变量，应该把它们设为 private。如果你打算把代码打包成 API，这通常是值得的；但如果只给你自己用，就并非必须（这由你决定，不过我们倾向于把这些成员变量保持为 public，需要时可以直接访问，出于速度考虑这往往更好）：</p><pre><code>
+const Rgb &amp; pix = img.pixels[i]; 
+// 现在可以写成： 
+const Rgb &amp; pix = img[i]; 
+</code></pre><p>我们还在类里以静态常量成员变量的形式定义了一些默认颜色（第 26 行）。这样定义颜色是有用的，它不只是提供便利。看下面这段代码：</p><pre><code>
+const Rgb &amp; pix = img[i]; 
+if (pix != 0) { 
+    ... do something if pix is not black 
+} 
+</code></pre><p>我们拿图像中的一个像素与另一个隐式创建的像素比较。不等号右边的 0 会被隐式转换成一个 Rgb 结构。如果这段代码要执行很多次，每次创建这个结构的开销就会累积起来。我们可以改写成下面这样：</p><pre><code>
+const Rgb &amp; pix = img[i]; 
+if (pix != Image::kBlack) { 
+    ... do something if pix is not black 
+} 
+</code></pre><p>在这种具体情形下，不会创建任何变量，因为我们是拿像素与某个预定义颜色比较。这类微优化看似细微，但当你的代码里积累了很多处时，最终总是划得来的。</p><p>上一章我们还讲了如何读写 PPM 图像，这让我们能把有意义的数据带进程序。但以目前的版本，我们对这些图像做不了多少事。来看看怎样扩展这个 Image 类，对这些图像执行简单的运算。</p><h2>扩展我们的 Image 类：简单的图像处理</h2><p>所谓简单的图像处理，指的是什么？本课设想的这类处理，例如把两张图像相加，或者把一张图像与另一张相乘。虽然简单，但下一章我们会看到，用这些简单运算已经能造出一些有趣的效果。下图展示的是把两张图像相加或合成后得到的结果：</p><figure><img src="https://scratchapixel.com/images/simple-image-manipulations/sim-add.png?" alt=""></figure><p>本课我们不会把所有显而易见的选项都实现（加、乘、除、减等等）。如果你需要更多运算符，我们给出的这几个例子应该足以让你把实现补全。这个练习之所以有意思，还有一个原因：它能展示一些相当复杂的运算在 C++ 里可以多么容易地缩成几行代码。比如，用下面这段代码表达两张图像相加，会有多简单：</p><pre><code>
+Image A, B; 
+Image C = A + B; 
+</code></pre><details open><p>注意：我们始终假设两张图像分辨率相同。你当然可以改代码来处理尺寸不同的情况，但那会让代码更复杂，而且支持这个特性并没有什么教学价值。这留作读者的练习。</p></details><p>如果在 C++ 里利用<a href="http://en.wikipedia.org/wiki/C%2B%2B_operators" target="_blank" rel="noreferrer noopener">运算符重载机制</a>，这件事其实非常简单。看看它是怎么工作的：</p><pre><code>
+Image operator + (const Image &amp;img) 
+{ 
+    Image tmp(*this); 
+    // 把像素逐个相加
+    for (int i = 0; i &lt; w * h; ++i) 
+        tmp[i] += img[i]; 
+ 
+    return tmp; 
+} 
+</code></pre><details open><p>要记住，由于多数现代编译器都支持<b>拷贝省略</b>机制，这个过程中涉及的所有拷贝（把 tmp 图像拷贝到函数返回的临时变量，再把这个临时变量拷贝到接收它的变量）都应当被省略掉。这一点在上一课已经详细讨论过。</p></details><p>我们需要返回一张新图像，它是参与加法的两张图像 A 与 B 相加的结果。为了让代码稍微更优化一点，我们先使用拷贝构造函数，用 A 来初始化返回的图像（tmp）。因为初始化一张图像需要为像素分配内存，我们必须自己定义这个拷贝构造函数（不能用默认的）。它的实现很直白：</p><pre><code>
+// 拷贝构造函数
+Image(const Image &amp;img) : w(img.w), h(img.h), pixels(nullptr) 
+{ 
+    pixels = new Rgb[w * h]; 
+    memcpy(pixels, img.pixels, sizeof(Rgb) * w * h); 
+} 
+</code></pre><p>我们用要拷贝的那张图像的宽度来初始化新图像的宽度和高度。然后为新图像分配像素，并把源图像的像素拷过来。此时临时图像已经带有图像 A 的数据。要完成任务，我们需要遍历图像的像素，把图像 B 的像素值累加到这张临时图像上。记住，施加在图像上的方括号运算符就是用来访问图像像素的（而不是直接访问 Image 类里的 pixels 成员变量）。这一行：</p><pre><code>
+tmp[i] += img[i]
+</code></pre><p>意味着两个像素相加。我们通过重载 Rgb 结构自身（它就像一个类）的 + 运算符来实现这一点：</p><pre><code>
+Rgb&amp; operator += (const Rgb &amp;rgb) 
+{ 
+    r += rgb.r, g += rgb.g, b += rgb.b; 
+    return *this; 
+}
+</code></pre><p>这样就完成了。现在我们能用单个 + 运算符在代码里表达两张图像相加，从而写出非常简洁干净的代码。下面是图像类的完整源码，帮你理解我们加的这些零件如何拼在一起：</p><pre><code>
+class Image 
+{ 
+public: 
+    struct Rgb { 
+        Rgb() : r(0), g(0), b(0) {} 
+        Rgb(float c) : r(c), g(c), b(c) {} 
+        Rgb(float _r, float _g, float _b) : r(_r), g(_g), b(_b) {} 
+        Rgb&amp; operator += (const Rgb &amp;rgb) { r += rgb.r, g += rgb.g, b += rgb.b; return *this; } 
+        float r, g, b; 
+    }; 
+    Image() : w(0), h(0), pixels(NULL) { /* empty image */ } 
+    Image(const unsigned int &amp;_w, const unsigned int &amp;_h, const Rgb &amp;c = kBlack) : 
+        w(_w), h(_h), pixels(NULL) 
+    { 
+        pixels = new Rgb[w * h]; 
+        for (int i = 0; i &lt; w * h; ++i) pixels[i] = c; 
+    } 
+    // 拷贝构造函数
+    Image(const Image &amp;img) : w(img.w), h(img.h), pixels(NULL) 
+    { 
+        pixels = new Rgb[w * h]; 
+        memcpy(pixels, img.pixels, sizeof(Rgb) * w * h); 
+    } 
+    // 结果 = *this + img
+    Image operator + (const Image &amp;img) 
+    { 
+        Image tmp(*this); 
+        for (int i = 0; i &lt; w * h; ++i) 
+            tmp[i] += img[i]; 
+ 
+        return tmp; 
+    } 
+    const Rgb&amp; operator [] (const unsigned int &amp;i) const 
+    { return pixels[i]; } 
+    Rgb&amp; operator [] (const unsigned int &amp;i) 
+    { return pixels[i]; } 
+    ~Image() { if (pixels != nullptr) delete [] pixels; } 
+ 
+    unsigned int w, h; 
+    Rgb *pixels; 
+    static const Rgb kBlack, kWhite, kRed, kGreen, kBlue; 
+}; 
+ 
+// 一些默认颜色
+const Image::Rgb Image::kBlack = Image::Rgb(0); 
+const Image::Rgb Image::kWhite = Image::Rgb(1); 
+const Image::Rgb Image::kRed = Image::Rgb(1,0,0); 
+const Image::Rgb Image::kGreen = Image::Rgb(0,1,0); 
+const Image::Rgb Image::kBlue = Image::Rgb(0,0,1); 
+ 
+int main(int argc, char **argv) 
+{ 
+    try { 
+        Image A = readPPM("..."); 
+        Image B = readPPM("..."); 
+        int w = A.w, h = A.h; 
+        Image C(w, h); C = A + B; 
+    } 
+    catch (const std::exception &amp;e) { 
+        fprintf(stderr, "Error: %s\n", e.what()); 
+    } 
+ 
+    return 0; 
+}
+</code></pre><p>既然已经找到了把两张图像相加的方法，我们就照同样的路子再实现几个运算符。我们会学习如何把两张图像相乘、相除。不过，如果右边那张图像填充的是常量颜色，那我们只需要把左边那张图像乘以（或除以）一个颜色。</p><figure><img src="https://scratchapixel.com/images/simple-image-manipulations/sim-mult.png?" alt=""></figure><p>乘法运算符的实现与加法运算符类似。你只需把方法复制一份，把 "+" 号换成 "*" 号。为了看一个略有不同的情形，我们考虑常量颜色位于乘号左边的情况，如下例所示：</p><pre><code>
+Rgb ConstantColor(1, 0, 0); 
+Image B = ConstantColor * A;
+</code></pre><p>在这种情形下，你需要在类里的运算符定义前加上 C++ 关键字 friend。这样左边的对象实例才能访问右边类实例的成员变量。你完全可以通过把常量颜色挪到乘号右边来避免类里的 friend 方法。但那样你就被迫总是按这个顺序写乘法（图像在左、颜色在右）。这个运算符的代码如下：</p><pre><code>
+friend Image operator * (const Rgb &amp;rgb, const Image &amp;img) 
+{ 
+    Image tmp(img); 
+    tmp *= rub; 
+    return tmp; 
+} 
+</code></pre><p>你还需要改动 Rgb 结构，实现乘法的复合赋值运算符：</p><pre><code>
+Rgb&amp; operator *= (const Rgb &amp;rgb) 
+{ 
+    r *= rgb.r, g *= rgb.g, b *= rgb.b; 
+    return *this; 
+} 
+</code></pre><p>现在来看除法运算符。同样，两张图像相除也是小事一桩：把加法运算符的代码复制一份，把 "+" 号换成 "/" 号。下面的例子里，我们把左边的图像除以一张填充为常量颜色（50% 灰）的图像。注意，把图像除以 0.5 等同于把它乘以 2（这也是右边结果图像更亮的原因）。</p><figure><img src="https://scratchapixel.com/images/simple-image-manipulations/sim-div.png?" alt=""></figure><p>类似地，如果你要用常量颜色去除一张图像，可以沿用我们在乘法里用的同一套做法。同样为了看一个略有不同的情形，我们考虑使用复合除法赋值运算符、且图像除以一个 float 的情况：</p><pre><code>
+float div = 0.5; 
+Image B /= div 
+</code></pre><p>这个运算符在 Image 类里的实现很直白。不过，我们不必在 Rgb 结构里新增除法运算符，可以直接用已实现的乘法运算符，把像素乘以除数的倒数（一除以除数）。</p><pre><code>
+Image&amp; operator /= (const float ÷) 
+{ 
+    float invDiv = 1 / div; 
+    for (int i = 0; i &lt; w * h; ++i) 
+        pixels[i] *= invDiv; 
+ 
+    return *this; 
+}
+</code></pre><p>作为本课的收尾，我们来实现一个稍微复杂一点的图像处理。我们要考虑的情形是：把图像向右、向下各平移给定的像素数，而在一端移出画面的像素会以循环的方式绕回来（从对面一侧重新出现）。换句话说，x 位置超过图像宽度的像素会重新出现在画面左侧（如下例所示）。</p><figure><img src="https://scratchapixel.com/images/simple-image-manipulations/sim-circshift.png?" alt=""></figure><p>注意我们只考虑 x 和 y 方向位移都为正的情况（实现其中任一值为负的情形，留作读者的练习）。我们把这个函数叫作 circshift，原因到下一章会更清楚。不过给个提示：这个函数在 Matlab 以及<a href="http://en.wikipedia.org/wiki/Literate_programming" target="_blank" rel="noreferrer noopener">文学化编程</a>语言 Octave 里也存在。</p><details open><p>文学化程序是用普通人类语言写成的一段不间断的逻辑陈述，很像一篇文章的正文，其中夹入宏来隐藏抽象细节和传统源码。</p></details><p>我们会把这个函数实现为 Image 类的静态方法。让像素环绕，只需对平移后的像素坐标取图像宽度或高度的模即可（第 6 行和第 8 行）：</p><pre><code>
+static Image circshift(const Image &amp;img, const std::pair &amp;shift) 
+{ 
+    Image tmp(img.w, img.h); 
+    int w = img.w, h = img.h; 
+    for (int j = 0; j &lt; h; ++j) { 
+        int mod = (j + shift.second) % h; 
+        for (int i = 0; i &lt; w; ++i) { 
+            int imod = (i + shift.first) % w; 
+            tmp[jmod * w + imod] = img[j * w + i]; 
+         } 
+    } 
+ 
+    return tmp; 
+} 
+</code></pre><p>之后就可以这样使用：</p><pre><code>
+Image A = Image::circshift(B, std::pair(i, j));
+</code></pre><p>这将是本课要研究的最后一个图像处理示例。注意，现在通过以非常文学化的方式组合运算符，表达更复杂的图像与颜色运算已经变得多么轻松简单：</p><p>这将是本课要研究的最后一个图像处理示例。注意，现在通过以非常文学化的方式组合运算符，表达更复杂的图像与颜色运算已经变得多么轻松简单：</p><pre><code>
+Image A = readPPM("..."); 
+Image B = readPPM("..."); 
+Image C(A.w, A.h); 
+C = Image::kRed * A + Image::circshift(B, std::pair(70, 50)); 
+Image D = readPPM("..."); 
+C += D 
+</code></pre><details open><p>练习 1：把图像显示到屏幕上。</p><p>练习 2：实现你在 Photoshop 里用来合并图层的那些混合模式。这些混合模式的列表及其数学公式可以在<a href="http://en.wikipedia.org/wiki/Blend_modes" target="_blank" rel="noreferrer noopener">维基百科</a>上找到。</p><p>练习 3：为图像处理实现多线程。提示：看看<a href="http://en.wikipedia.org/wiki/Divide_and_conquer_algorithm" target="_blank" rel="noreferrer noopener">分治算法</a>。</p></details><h2>我们学到了什么？</h2><p>本章我们展示了如何利用 C++ 的运算符重载机制，以非常简单直观的方式表达对图像的加法、乘法、除法等运算。这些运算可以涉及两张图像，也可以涉及一张图像和一个常量颜色。它们的定义顺序无关紧要，颜色可以在运算符左边，也可以在右边。如果颜色出现在左边，就需要在运算符定义前加上关键字 friend。我们甚至还看过了图像除以单个 float 的情形。所有这些都是也可以实现为复合赋值运算符（如 +=、*=、/= 等）。因为所有这些运算都是用运算符定义的，我们可以轻松地把它们组合起来，做出更复杂的处理，并以文学化的方式描述这些处理。</p><h2>源代码</h2><p>本课的源代码（含下一章的代码）可以在本课最后一章找到。</p><details open><figure><img src="https://scratchapixel.com/images/simple-image-manipulations/sim-kodakmarcie.png?" alt=""></figure><p><b>Marcie 的故事</b>：值得花点笔墨讲讲本课所用这张图像的来历。这张为电影行业从业者所熟知的图像出自柯达之手。官方名称是 KODAK Digital LAD Test Image。按柯达的说法：</p><blockquote><p>KODAK Digital LAD Test Image 是一张数字图像，可用于辅助设置数字胶片记录仪，以产出曝光正确的数字底片，并从这些底片获得令人满意的照片。</p></blockquote><p>在业内，我们一般不正式地称这张图像为 "Marcie"。为了回答这位粉丝的所有疑问——「我在想，这姑娘是谁？"Marcie" 真的叫 Marcie 吗？她现在多大了？还活着吗？她成了明星模特或演员吗？」——她似乎是 <a href="http://en.wikipedia.org/wiki/Marcy_Rylan" target="_blank" rel="noreferrer noopener">Marcy Rylan</a>，确实是一位演员。32MB 的 DPX 格式原始压缩图像可在<a href="https://scratchapixel.com/assets/Simple%20Image%20Manipulations/H-387_Digital_LAD.pdf" target="_blank" rel="noreferrer noopener">此处下载</a>。(c) Kodak。</p><h2>接下来</h2><p>既然我们学会了用 C++ 实现一些简单的图像处理，下一章我们会给出一个例子，把这些运算组合起来做出一种有趣的效果，即散景效果。我们想说明的是：这些运算单独看虽然简单，但把它们组合起来能做到什么，不该被低估。</p></details>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/digital-imaging/simple-image-manipulations/image-processing.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/digital-imaging/simple-image-manipulations/image-processing.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

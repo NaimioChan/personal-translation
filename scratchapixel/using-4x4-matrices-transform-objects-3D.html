@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用 4x4 矩阵在三维中变换物体 - Scratchapixel 中文译本</title>
+<meta name="description" content="用矩阵变换物体 · 用 4x4 矩阵在三维中变换物体（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>用 4x4 矩阵在三维中变换物体</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+
+<h2>用 4x4 矩阵在三维中变换物体</h2><p><b>阅读时间：12 分钟。</b></p><p>本课我们学习用 4x4 变换矩阵改变 3D 物体的位置、旋转和缩放。到目前为止，我们都假设渲染的几何体一直待在模型最初创建时的位置。我们学过如何对任意中心位置求光线与球的交点。而多边形网格在场景中的位置是由构成它的顶点位置确定的，多数情况下这并非我们想要物体在最终场景里所处的位置。因此需要变换它。比如你建了一棵树的模型，却想渲染一片森林的图像。要造出这片森林，你会用做好的树的模型，复制很多份，再对这些副本施加随机变换，让每棵树的缩放、位置和旋转都各不相同。这样一来，你多少能让模型看起来像是独有的，制造出森林由许多不同树的模型组成的错觉。更一般地说，变换可以把任何模型放到渲染场景中它最终的位置（这里的「位置」是广义的，包含位置、旋转和缩放的概念）。在 CG 里，艺术家把这一步叫作<b>布局</b>（layout）或<b>场景陈设</b>（set dressing）（布局也可能包括在场景中摆放相机，相机本身也要被变换）。它做的事就是拿物体建模时的样子（往往会取同一模型的多个副本），把它们到处移动、旋转、缩放。</p><figure><img src="https://scratchapixel.com/images/transformations/trees-transform.png?" alt=""></figure><figure><img src="https://scratchapixel.com/images/transformations/cow-transform.png?" alt=""><figcaption><b>图 1：</b>从物体空间到世界空间。</figcaption></figure><p>3D 模型在 Maya 或 Blender 这类建模软件中创建时，通常以世界原点为中心。更多情况下模型的底部还落在 xz 平面上（Maya 中如此，3DSMax 中是 xy 平面）。处于这个位置时，我们说模型是在<b>物体空间</b>中定义的。如果我们用 4x4 变换矩阵改变这个物体的尺寸、旋转和位置，我们就说物体是在<b>世界空间</b>中定义的，而把这个物体从物体空间变换到世界空间的矩阵，自然就叫<b>物体到世界矩阵</b>（在 OpenGL 以及更普遍的实时图形 API 中，这个矩阵也被称为<b>模型</b>矩阵）。</p><h2>变换顶点</h2><p>从编程角度看，把物体从物体空间变换到世界空间很直接。我们要做的只是遍历网格的所有顶点，用物体到世界矩阵变换它们：</p><pre><code>
+for (uint32_t i = 0; i &lt; numVertices; ++i) { 
+    const Vec3f &amp; vertObjectSpace = vertices[i]; 
+    Vec3f vertWorldSpace; 
+    objectToWorld.multVecMatrix(vertObjectSpace, vertWorldSpace); 
+    vertices[i] = vertWorldSpace; 
+} 
+</code></pre><p>上面的代码是为了清楚而写的，还可以更快。物体到世界矩阵在 3D 应用里往往可以方便地查出来。比如在 Maya 里你可以选中物体，用 Mel 命令 <code>xform -q -ws -m</code> 或 <code>getAttr .worldMatrix</code>。</p><p>物体到世界矩阵是场景中任何物体都具有的属性，因此我们可以把它定义成程序中 <code>Object</code> 类的成员变量。该矩阵会传给类的构造函数（第 4 行）。</p><pre><code>
+class Object 
+{ 
+ public: 
+    Object(const Matrix44f &amp;o2w) : objectToWorld(o2w) {} 
+    virtual ~Object() {} 
+    virtual bool intersect(const Vec3f &amp;, const Vec3f &amp;, float &amp;, uint32_t &amp;, Vec2f &amp;) const = 0; 
+    virtual void getSurfaceProperties(const Vec3f &amp;, const Vec3f &amp;, const uint32_t &amp;, const Vec2f &amp;, Vec3f &amp;, Vec2f &amp;) const = 0; 
+    Matrix44f objectToWorld; 
+}; 
+</code></pre><p>所有物体都能访问这个矩阵，因为它们都派生自这个基类（二次曲面、多边形网格等）。以 <code>TriangleMesh</code> 类为例，它的工作方式如下。物体到世界矩阵传给 <code>TriangleMesh</code> 类的构造函数（第 6 行），后者再把它传给 <code>Object</code> 类的构造函数（第 13 行）。最后，在三角网格类的构造函数里，我们遍历构成网格的所有顶点，把网格顶点设为输入顶点经物体到世界矩阵变换后的结果（第 19-22 行）：</p><pre><code>
+class TriangleMesh : public Object 
+{ 
+public: 
+    // 由面索引数组和顶点索引数组构建三角网格
+    TriangleMesh( 
+        const Matrix44f &amp;o2w, 
+        const uint32_t nfaces, 
+        const std::unique_ptr&amp;ltuint32_t []&gt; &amp;faceIndex, 
+        const std::unique_ptr&amp;ltuint32_t []&gt; &amp;vertsIndex, 
+        const std::unique_ptr&amp;ltVec3f []&gt; &amp;verts, 
+        std::unique_ptr&amp;ltVec3f []&gt; &amp;normals, 
+        std::unique_ptr&amp;ltVec2f []&gt; &amp;st) : 
+        Object(o2w), 
+        numTris(0) 
+    { 
+        ... 
+        // 为存储网格顶点位置分配内存
+        P = std::unique_ptr&amp;ltVec3f []&gt;(new Vec3f[maxVertIndex]); 
+        for (uint32_t i = 0; i &lt; maxVertIndex; ++i) { 
+            // 把物体空间顶点变换到世界空间位置
+            objectToWorld.multVecMatrix(verts[i], P[i]); 
+        } 
+        ... 
+    } 
+}; 
+</code></pre><details open><p>关于变换流水线。</p><figure><img src="https://scratchapixel.com/images/transformations/transform-pipeline.png?" alt=""></figure><p>现在我们对变换流水线有了完整的图景。物体首先从物体空间变换到世界空间。如果使用光栅化，物体随后从世界空间变换到相机空间。接着顶点被投影到屏幕上（用透视投影矩阵）进入屏幕空间，然后重映射到 NDC（这一步是透视投影矩阵的一部分）。最后，NDC 坐标下图像平面上的点被转换成最终的栅格或像素坐标。在光线追踪中，我们只关心物体到世界变换矩阵。光线在世界空间中定义，光线与几何体的求交也在世界空间中进行（也可以像本课后面所述在物体空间中进行，不过这通常更算特例）。</p></details><h2>变换法线</h2><p>还记得<a href="transforming-normals.html">几何</a>那门课里讲过，当我们用 4x4 矩阵变换点和向量时，法线必须用<b>该物体到相机矩阵的逆的转置</b>来变换。因此，除了在 Object 类构造函数里设置物体到世界矩阵，我们还会计算世界到物体矩阵（第 4 行），变换法线时要用到它：</p><pre><code>
+class Object 
+{ 
+ public: 
+    Object(const Matrix44f &amp;o2w) : objectToWorld(o2w), worldToObject(o2w.inverse()) {} 
+    virtual ~Object() {} 
+    virtual bool intersect(const Vec3f &amp;, const Vec3f &amp;, float &amp;, uint32_t &amp;, Vec2f &amp;) const = 0; 
+    virtual void getSurfaceProperties(const Vec3f &amp;, const Vec3f &amp;, const uint32_t &amp;, const Vec2f &amp;, Vec3f &amp;, Vec2f &amp;) const = 0; 
+    Matrix44f objectToWorld, worldToObject; 
+}; 
+</code></pre><p>在 <code>TriangleMesh</code> 的构造函数里，我们现在需要用世界到物体矩阵的转置来变换法线。我们先算出转置矩阵（第 27 行），再用它变换所有法线（第 33 行）：</p><pre><code>
+TriangleMesh( 
+    const Matrix44f &amp;o2w, 
+    const uint32_t nfaces, 
+    const std::unique_ptr&amp;ltuint32_t []&gt; &amp;faceIndex, 
+    const std::unique_ptr&amp;ltuint32_t []&gt; &amp;vertsIndex, 
+    const std::unique_ptr&amp;ltVec3f []&gt; &amp;verts, 
+    std::unique_ptr&amp;ltVec3f []&gt; &amp;normals, 
+    std::unique_ptr&amp;ltVec2f []&gt; &amp;st) : 
+    Object(o2w), 
+    numTris(0) 
+{ 
+    uint32_t k = 0, maxVertIndex = 0; 
+    // 算出这个网格需要创建多少个三角形
+    for (uint32_t i = 0; i &lt; nfaces; ++i) { 
+        numTris += faceIndex[i] - 2; 
+        for (uint32_t j = 0; j &lt; faceIndex[i]; ++j) 
+            if (vertsIndex[k + j] &gt; maxVertIndex) 
+                maxVertIndex = vertsIndex[k + j]; 
+        k += faceIndex[i]; 
+    } 
+    maxVertIndex += 1; 
+ 
+    // 为存储网格顶点位置分配内存
+    P = std::unique_ptr&amp;ltVec3f []&gt;(new Vec3f[maxVertIndex]); 
+    N = std::unique_ptr&amp;ltVec3f []&gt;(new Vec3f[maxVertIndex]); 
+    texCoordinates = std::unique_ptr&amp;ltVec2f []&gt;(new Vec2f[maxVertIndex]); 
+    Matrix44f transformNormals = worldToObject.transpose(); 
+    for (uint32_t i = 0; i &lt; maxVertIndex; ++i) { 
+        // 变换顶点
+        objectToWorld.multVecMatrix(verts[i], P[i]); 
+ 
+        // 变换法线
+        transformNormals.multDirMatrix(normals[i], N[i]); 
+        N[i].normalize(); 
+ 
+        texCoordinates[i] = st[i]; 
+    } 
+ 
+    // 为存储三角形索引分配内存
+    trisIndex = std::unique_ptr&amp;ltuint32_t []&gt;(new uint32_t [numTris * 3]); 
+    uint32_t l = 0; 
+    // 生成三角形索引数组并设置法线与 st 坐标
+    for (uint32_t i = 0, k = 0; i &lt; nfaces; ++i) {  //对每个面
+        for (uint32_t j = 0; j &lt; faceIndex[i] - 2; ++j) {  //对该面中的每个三角形
+            trisIndex[l] = vertsIndex[k]; 
+            trisIndex[l + 1] = vertsIndex[k + j + 1]; 
+            trisIndex[l + 2] = vertsIndex[k + j + 2]; 
+            l += 3; 
+        } 
+        k += faceIndex[i]; 
+    } 
+} 
+</code></pre><p>注意纹理坐标不需要变换。它们活在自己的二维空间里，不受物体变换的影响。当然也可以变换纹理坐标，但那种情况下一个 3x3 矩阵就够了（足以处理二维空间中的缩放、旋转和平移）。不过实践中很少这么做。纹理坐标一般在 3D 应用里调整好，变换直接烘进坐标本身。</p><p>把这些部分拼起来，渲染一个新物体（著名的 Utah Teapot，计算机图形学世界里的一件标志性物件），就能得到下面两张图：</p><figure><img src="https://scratchapixel.com/images/transformations/ray-tracing-transform-results.png?" alt=""></figure><p>左图使用面法线，右图使用顶点法线。注意左图中物体那种刻面感在右图里消失了。这正是顶点法线的用途，不过不必太在意，我们会在下一课学习平滑着色。虽然从这两张图上看不出茶壶被变换过，但你可以把程序中的矩阵改成单位矩阵再渲染一次。这样更容易看出差别，以及物体到世界矩阵的效果。</p><h2>世界到物体矩阵在光线追踪中的一种特殊用法</h2><figure><img src="https://scratchapixel.com/images/transformations/raysphereisect.png?" alt=""><figcaption><b>图 2：</b>光线-球求交技术只在球心位于原点时才有效。a) 中因为球被移离原点，光线-球求交测试会返回 false（光线会错过球，因为它会把球当成仍在原点来求交）。b) 中我们把球的世界到物体矩阵施加到光线的原点与方向上，这样变换后光线就如同球位于原点。之后就能安全地套用光线-球求交程序。</figcaption></figure><p>本课这一部分介绍世界到物体矩阵在光线追踪中一种有趣的用法。在 <a href="ray-sphere-intersection.html">极简光线追踪器：渲染简单形状（球、立方体、圆盘、平面等）</a> 那门课里，我们学过两种计算光线-球求交的技术：几何法和参数法。两种方法都可以指定所渲染球的球心和半径，但设想一种情况：我们只知道当球半径为 1、球心位于世界坐标系原点时如何做光线-球追踪。那还怎么改变球的大小、旋转和位置？这个问题的解法很简单。如果球的新缩放、位置和旋转由 4x4 变换矩阵定义，那么与其用这个矩阵变换球，我们改为把光线变换到球的物体空间，也就是用球的世界到物体矩阵（球物体到世界矩阵的逆）变换光线的位置和方向。我们不变换球，而是用球的矩阵逆转变换光线。想象你把球沿 Y 平移 2 个单位。那么我们就不去计算光线与平移后球的交点，而是让球留在原点，把光线的位置沿 Y 移动 -2（如图 2 所示）。这种技术在光线追踪里相当常见。有时把形状留在它的物体空间里计算交点更方便。于是与其用物体到世界矩阵变换形状、再用世界空间中的光线测试光线与形状的交点，我们改为把光线变换到形状的物体空间，在物体空间里做光线与几何体的测试。</p><pre><code>
+bool intersect(const Vec3f &amp;orig, const Vec3f &amp;dir, float &amp;t) const 
+{ 
+    Vec3f origObject, dirObject; 
+    worldToObject.multVecMatrix(orig, origObject); 
+    worldToObject.multDirMatrix(dir, dirObject); 
+    float t0, t1;  //如果光线相交，t 的解 
+    // 解析解
+    float a = dirObject.dotProduct(dirObject); 
+    float b = 2 * dirObject.dotProduct(origObject); 
+    float c = origObject.dotProduct(origObject) - 1;  //半径 = 1，半径^2 = 1 
+    if (!solveQuadratic(a, b, c, t0, t1)) return false; 
+    if (t0 &gt; t1) std::swap(t0, t1); 
+ 
+    if (t0 &lt; 0) { 
+        t0 = t1;  //如果 t0 为负，改用 t1 
+        if (t0 &lt; 0) return false;  //t0 和 t1 都为负 
+    } 
+ 
+    t = t0; 
+ 
+    return true; 
+} 
+</code></pre><p>这种技术的问题在于，\(t\) 交点距离已经不在世界空间中，而在物体空间中。用这种方法算出的值无法与比如 <code>TriangleMesh</code> 类 <code>intersect()</code> 方法返回的值相比较。要解决这个问题，需要先在物体空间中算出交点，把交点变换到世界空间，再用光线原点与交点的距离在世界空间中算出 \(t\)。如果光线与几何体的求交在物体空间中比在世界空间中高效得多，这些麻烦就都值得。我们的程序里不会实现这种方法。提一下就够了，不过你可以作为练习改写上面的代码试一试。</p><h2>源代码</h2><p>和往常一样，完整程序的源代码可以在本课最后一章找到。</p><h2>练习</h2><p>用不同的变换矩阵渲染茶壶几何体的多个副本。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/transforming-objects-using-matrices/using-4x4-matrices-transform-objects-3D.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/transforming-objects-using-matrices/using-4x4-matrices-transform-objects-3D.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

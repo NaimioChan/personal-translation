@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>点光源与聚光灯 - Scratchapixel 中文译本</title>
+<meta name="description" content="光照简介 · 点光源与聚光灯（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>点光源与聚光灯</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-to-lighting.html">三维渲染中的光照简介</a></li>
+<li><a style="font-weight:700" href="introduction-to-lighting-punctual-lights.html">点光源与聚光灯</a></li>
+<li><a href="introduction-to-lighting-distant-lights.html">平行光源</a></li>
+<li><a href="introduction-to-lighting-area-lights-theory.html">面光源：数学基础</a></li>
+<li><a href="introduction-to-lighting-triangular-light.html">三角形面光源</a></li>
+<li><a href="introduction-to-lighting-rectangular-light.html">矩形面光源</a></li>
+<li><a href="introduction-to-lighting-spherical-light-area-sampling.html">球形面光源：使用面积采样</a></li>
+<li><a href="introduction-to-lighting-spherical-light-cone-sampling.html">球形面光源：使用锥体采样</a></li>
+<li><a href="introduction-to-lighting-light-loop.html">直接光照：光源循环</a></li>
+</ol>
+</div>
+<h2>点光源与聚光灯</h2><p><b>阅读时间：27 分钟。</b></p><h2>球形光源</h2><p>我们从较简单的模型之一开始：点光源。顾名思义，点光源是用空间中的一个点表示的光源。这类光源向所有方向均匀发光，属于上一章提到的 delta 类别，也属于点状光源——可以把点状光源看作 delta 类别的一个子类。</p><p>在 CG 里处理球形光源非常直接：要在 C++ 中表示它，我们只需要写一个点光源类（如果愿意，可以从光照基类派生，这是常见做法），并在其中加一个变量来存光源位置（除了光照基类里已有的光源颜色与光源强度之外）。这个位置用一个 <code>Vec3</code> 表示。</p><pre><code>
+class Light {
+public:
+    virtual ~Light() = default;
+    Vec3&amp;ltfloat&gt; color_{1.0};
+    float intensity_{1.0};
+};
+
+class PointLight : public Light {
+public:
+    PointLight(Vec3&amp;ltfloat&gt; pos) : position_(pos) {}
+    Vec3&amp;ltfloat&gt; position_{0.0, 0.0, 0.0};
+};
+</code></pre><p>可以想见，当主光线与某个表面相交、我们要判断该点是否被这盏点光源照亮时，只需从交点 \(P\)（或者 \(x\)，看你读的是哪篇论文、哪本书）射出一条光线，并用点光源的位置来确定阴影光线的方向。从实现角度看，做法是把交点的一些信息传给点光源实例，让光源自己填好我们投射阴影光线所需的数据。我们把这个方法叫作 <code>Sample()</code>。</p><pre><code>
+class Light {
+public:
+    virtual ~Light() = default;
+    virtual Vec3&amp;ltfloat&gt; Sample(const DifferentialGeometry&amp; dg, Vec3&amp;ltfloat&gt;&amp; wi, float&amp; pdf, float&amp; t_max) const = 0;
+    Vec3&amp;ltfloat&gt; color_{1.0};
+    float intensity_{1.0};
+};
+</code></pre><p>此时我们还无法解释为什么用 <code>Sample()</code> 方法是个好办法。我们会在讲面光源的那一章里详细讨论。也不必太在意 <code>Sample()</code> 方法里的那些变量，稍后就会讲到。在这个版本的程序里，我们把交点处的几何信息存在一个叫 <code>DifferentialGeometry</code> 的结构体里。这个结构体长这样：</p><pre><code>
+struct Hit {
+    float u;
+    float v;
+    int id0{-1};
+    int id1{-1};
+    float t{std::numeric_limits&amp;ltfloat&gt;::max()};
+    operator bool() const { return id0 != -1; }
+};
+
+struct DifferentialGeometry : Hit {
+    Vec3&amp;ltfloat&gt; P;
+    Vec3&amp;ltfloat&gt; Ng;
+    Vec3&amp;ltfloat&gt; Ns;
+};
+</code></pre><p>如你所见，它保存了交点 <code>P</code>，以及几何法线与着色法线 <code>Ng</code> 和 <code>Ns</code>。几何法线就是三角形自身的法线，而着色法线是平滑着色用的法线，也就是按交点的重心坐标对三角形各顶点指定的法线做加权得到的法线。我们在之前的课程里学过这项技术。所以，一旦发现主光线有命中，我们就填好这个结构体，再把它传给光源的 <code>Sample</code> 方法：</p><pre><code>
+DifferentialGeometry dg;
+for (int i = 0; i &lt; static_cast&amp;ltint&gt;(prims.size()); ++i) {
+    const std::vector&amp;ltVec3&amp;ltfloat&gt;&gt;&amp; pos = prims[i]-&amp;gtposition_;
+    const std::vector&amp;ltTriangleMesh::Triangle&gt;&amp; tris = prims[i]-&amp;gttriangles_;
+    for (size_t j = 0; j &lt; tris.size(); ++j) {
+        Intersect(ray, dg, i, j, tris[j], pos.data());  
+    }           
+}
+if (dg) {
+    prims[dg.id0]-&amp;gtPostIntersect(ray, dg);
+    Vec3&amp;ltfloat&gt; wi;
+    float t_max, pdf;
+    Vec3&amp;ltfloat&gt; light_L = light.Sample(dg, wi, pdf, t_max);
+    // 后续处理在这里……
+}
+</code></pre><p>这段代码是外层循环的一部分，那个循环会遍历图像中的每个像素。它做的事是：把构成场景的每个物体与主光线做求交测试（我们遍历每个物体、以及每个物体的每个三角形）。如果命中（也就是 <code>dg</code> 返回真——你可以看上面 <code>Hit</code> 结构体的实现，知道这什么时候发生），我们就调用该图元的 <code>PostIntersect</code> 方法，它负责根据命中数据设置 <code>dg.P</code>、<code>dg.Ng</code> 和 <code>dg.Ns</code>（用相交到的图元与三角形 id，以及交点在三角形上的 <code>s</code>、<code>t</code> 重心坐标，来插值三角形顶点位置与法线）。这些设置好之后，我们就可以带着 <code>dg</code> 调用光源的 <code>Sample</code> 方法。接下来我们关心的，就是那个 <code>Sample</code> 方法里发生了什么。来看一看。</p><pre><code>
+class Point : public Light {
+public:
+	...
+	Vec3&amp;ltfloat&gt; Sample(const DifferentialGeometry&amp; dg, Vec3&amp;ltfloat&gt;&amp; wi, float&amp; pdf, float &amp;t_max) const override {
+		Vec3&amp;ltfloat&gt; d = position_ - dg.P;
+		float distance = d.Length();
+		wi = d / distance;
+		pdf = distance * distance;
+		t_max = distance;
+		return color_ * intensity_;
+	}
+	...
+};
+</code></pre><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-point-setup.png" alt=""><figcaption><b>图 1：</b>点光源向所有方向发出光。指向光源的方向 \(\omega_i\) 是归一化的。任何距离大于 <code>t_max</code> 的三角形交点都可以忽略。</figcaption></figure><p>从代码里可以看到，我们首先计算一个向量 <code>d</code>，它从交点 <code>dg.P</code> 指向光源位置 <code>position_</code>。我们把这两点之间的距离存进变量 <code>distance</code>，原因稍后解释。这个距离很重要。然后我们把向量 <code>wi</code> 设为 <code>d</code> 除以该距离，效果上就是把从交点指向光源位置的向量归一化。接着我们把 <code>pdf</code> 变量设为距离的平方，把 <code>t_max</code> 设为 <code>distance</code>。</p><p>我们为什么要做这些？<code>wi</code>、<code>pdf</code> 和 <code>t_max</code> 又有什么用？</p><ul><li><p><code>wi</code> 是上一章已经用过的变量名。大多数渲染应用、论文或书籍都用它来表示指向光源的方向。注意这不是从光源指向该点的方向，而是从该点指向光源的方向。一直都是如此。这可能显得反直觉，因为它与真实世界里光传播的方向相反，但我们这么做纯粹是为了方便，它让表面法线与向量 \(\omega_i\) 之间点积这类计算变得容易。如图 1 所示的 \(\omega_o\) 也是如此。由于 <code>wi</code> 是向量，它被归一化了——这里没什么特别的。</p></li><li><p><code>t_max</code>：我们把阴影光线的最大距离设为这个值。敏锐的读者已经注意到，与太阳光这类光源（下一章会讨论）不同，把阴影光线投到点光源之外没有任何意义。因此我们会把阴影光线的参数距离限制在 0（其实不完全是 0，后面再说）到 <code>t_max</code> 之间。这就保证了在测试场景中所有三角形求交时，交点落在光源之外的三角形会被忽略，如图 1 所示。</p></li><li><p><code>pdf</code>：这个处理起来要怪一点。<code>pdf</code> 这个名字取得不好，但在这里 <code>pdf</code> 变量只是充当一个占位，用来存交点与光源位置之间距离的平方。我们为什么关心距离的平方？嗯，这涉及一个极其重要的东西。为此，我们需要占用一点篇幅。</p></li></ul><p>我们需要距离的平方，是因为被光源照亮的某一点所接收到的能量，与点光源到该点的距离之间存在一种关系。观察点光源发出的一系列「光线」在空间中传播的过程，这一点就更容易理解。图 2 中我们只画出了其中几条光线。注意这些光线都包含在一个很小的方向锥体内，该锥体与一个以发光点为中心、半径为 \(d\) 的假想球面相交。锥体与该球面的交线围出一小块面积为 \(A\) 的球冠。现在想象另一个假想球面，半径是第一个的两倍，再看看这些光线中有多少会穿过一个比第一个更窄的锥体，使得它与更大球面的交线围出的球冠面积与第一个球冠相同，为 \(A\)。从图 2 和图 3 可以看出，考虑更大的球面时，包含在该锥体内的光线数量更少。我们可以直观地推断：假想球面越大，穿过固定面积球冠的光线就越少。实际发生的情况是：对于一块表面积 \(A\)，它与球面表面积之比，与假想球面的表面积成反比。如你所知，球面面积是 \(4\pi r^2\)，其中 \(r\) 表示球的半径。于是半径为 \(r = 1\) 的球，总表面积为 \(4\pi\)；半径为 \(r = 2\) 的球，表面积为 \(16\pi\)。因此两个球面之间的表面积之比是 \(1/4\)。对于半径为 \(r = 3\) 的球，第一个与第三个球面之间的比值是 \(1/9\)。于是我们可以看到这个比值是 \(1/r^2\)。因此，穿过一个以发光点为中心的球面、面积恒为 \(A\) 的表面积所对应的能量之比，与被照亮点到光源之间距离的平方成反比，正如我们在图 4 中所展示的。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-square-falloff.png" alt=""><figcaption><b>图 2：</b>单位表面积上的光能量（这里只画了几条光线来代表）随着以光源为中心的假想球面变大而减少。这张图直观地说明了为什么从点光源来的入射辐射亮度会随被照亮点到光源之间距离的平方而减少。</figcaption></figure><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-square-falloff3.png" alt=""><figcaption><b>图 3：</b>与图 2 相同，但以二维视图呈现。你可以清楚地看到，在球冠面积相等的情况下，穿过球冠的光线数量随着假想球面变大而减少。这是平方反比定律的另一种图示。</figcaption></figure><p>在计算机图形学中，这被称为<b>平方反比定律</b>，处理光照时我们几乎会一直用到它。当以光源为中心的假想球面半径翻倍时，表面积变为四倍，原因在于球面面积与半径平方之间的关系（\(4\pi r^2\)）。如果 \(r\) 翻倍，同样多的光所散布的表面积就大四倍，于是在两倍距离处光强只有原来的四分之一。</p><p>这也被称为<b>平方衰减</b>。注意，美术师（如果你就是一位）有时不喜欢、或者不理解为什么在点光源（事实上几乎所有光源，太阳除外）上使用平方衰减应当成为常态。不这么做，你就没有遵循物理定律；不这么做，你也做不出物理正确的光照。换句话说，如果你不用平方衰减，你的光照就是错的，而且很可能要为此苦苦挣扎才能得到好看的结果，尤其是当你想匹配实拍素材的光照时。当然，有些软件（大多数）允许你关掉它，或者直接控制衰减的指数。不过我们建议你坚持默认的、物理正确的行为与衰减值（也就是距离的 2 次方）。</p><p>在看光如何贡献到我们这一点照明的实际实现之前，有件重要的事要记住：虽然我们在这些插图里一直用光线来表示光，但辐射度量学实际处理的是立体角。考虑一个顶点位于光源原点的锥体；随着光源到锥体底面距离的增加，锥体的截面会变大。不过关键是要考虑到，这个锥体首先被看作无限小。我们真正考虑的是这个锥体在表面上的投影覆盖，但落在一块以点 \(P\)（或 \(x\)）为中心的小面积 \(dA\) 范围内。因此，可以由此建立对平方衰减的另一种直觉：虽然随着到光源的距离增加，表面上的投影覆盖会变大，但 \(P\) 周围的表面积 \(dA\) 与该投影覆盖之间的比值会减小（如图 4 所示）。这实际上意味着，随着光源与 \(P\) 之间距离增加，\(dA\) 内收集到的光变少。</p><p>我知道我在这里选的变量名可能有点让人迷惑，但重要的是不要把刚才提到的微分面积 \(dA\) 与我们之前一直用的球面面积 \(A\) 搞混。微分面积 \(dA\) 与被照亮的表面有关，具体说就是物体的表面。它是以被照亮点为中心的微分面积。在渲染中我们这么做，是因为和别的东西一样，真实世界不是由无限小的点构成的，而是连续的。因此，我们的公式必须作用在面上，而不是作用在没有物理实体的点上。尽管我们明白，在一块表面上，打到该表面的光强可能各处不同，所以我们要取一块超小的表面积 \(dA\)，把它看得足够小，以至于可以假定在这块面积上打到其表面的光照是恒定的。有人可能会说，这不过是另一种头脑中的构造，并不比使用无限小的点更站得住脚——这一点我能理解；但前者比后者有更多的物理／数学依据。不过，是的，\(dA\) 也是一个头脑中的构造，因为我们并没有真正规定这东西有多大，只是假定它小到足以让那些「脱离」它的数学「正确且可靠」。至于 \(A\)，它关系到球冠的表面积，这个球冠由方向锥体与以点光源为中心的假想球面相交而定义。注意 \(A\) 与 \(dA\) 是彼此相关的，因为在辐射度量学中，我们真正考虑的是这个球冠如何投影到 \(P\) 周围的物体表面上。Lambert 余弦定律正是在这里起作用，它规定从 \(A\) 投影到 \(dA\) 的光量（简言之，即 \(dA\) 中有多少能接收到来自 \(A\) 的光）正比于表面法线与光照方向（锥体朝向）之间夹角的余弦。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-square-falloff2.png" alt=""><figcaption><b>图 4：</b>理解平方衰减的另一种方式，是认识到：当用立体角来考虑时，锥体投影覆盖的大小会随着 \(P\) 与光源之间距离的增加而变大。这意味着 \(P\) 周围无限小的面积 \(dA\) 与表面上的锥体投影覆盖之间的比值，会随着该距离增加而减小。于是，随着距离增加，\(dA\) 所「收集」到的光变少，这就解释了衰减。</figcaption></figure><p>现在你明白为什么我们需要距离的平方了。如前所述，我们把这个值存在 <code>pdf</code> 成员变量里。这不是个好选择，但为什么会有个叫 <code>pdf</code> 的变量，等讲到面光源时会解释。眼下只要记住：在点光源的情况下，<code>pdf</code> 变量里存的是到光源距离的平方。我们用 <code>Sample()</code> 中拿到的数据来计算这盏光源对我们这一点的贡献。代码如下：</p><pre><code>
+if (dg) {
+    prims[dg.id0]-&amp;gtPostIntersect(ray, dg);
+    Vec3&amp;ltfloat&gt; wi;
+    float t_max, pdf;
+    Vec3&amp;ltfloat&gt; light_L = light.Sample(dg, wi, pdf, t_max);
+    bool in_shadow = Occluded({dg.P, wi, 0.01f, t_max - 0.01f}, prims);
+    if (in_shadow)
+        continue;
+    Vec3&amp;ltfloat&gt; L = light_L * std::max(0.f, dg.Ns.Dot(wi)) / (M_PI * pdf);
+    pbuf[0] = static_cast&amp;ltuint8_t&gt;(std::min(1.f, L.x) * 255);
+    pbuf[1] = static_cast&amp;ltuint8_t&gt;(std::min(1.f, L.y) * 255);
+    pbuf[2] = static_cast&amp;ltuint8_t&gt;(std::min(1.f, L.z) * 255);
+}
+</code></pre><p>调用 <code>Sample()</code> 之后，我们用光照向量投射阴影光线。这是通过调用 <code>Occluded</code> 完成的，它与 <code>Intersect()</code> 类似，但如前所述是为阴影光线优化过的。记住，一旦找到一个有效交点就可以从函数返回。有效交点是指：距 \(P\) 的距离小于 <code>t_max</code>——也就是从 \(P\) 到光源的距离——的交点。可以看 GitHub 上的代码，了解 <code>Intersect()</code> 与 <code>Occluded()</code> 在实现上的差别。然后，如果 \(P\) 处于阴影中，光就不会贡献到 \(P\) 的照明，我们跳过代码块余下的部分。如果该点不在阴影中，我们就把 <code>L</code>——即点 \(P\) 处的辐射亮度——设为光照强度乘以光源颜色（<code>light_L</code>，由 <code>Sample()</code> 返回），再乘以表面法线与光照方向的点积——也就是我们那位著名的 Lambert 余弦项——再除以 \(\pi\)（漫反射表面的归一化因子）与 <code>pdf</code> 参数（它保存了从 \(P\) 到光源距离的平方）。</p><p>我们可以用下面的公式把它形式化：</p><p>$$
+L = \color{red}{f_r(\omega_o, \omega_i)} \color{blue}{\times \frac{I}{d^2} \times (N \cdot \omega_i)}
+$$</p><p>其中：</p><ul><li><p>\(f_r(\omega_o, \omega_i)\)：严格来说这应该是我们的 BRDF（上一章已经讨论过）。对于纯漫反射表面，它应该是 \(\frac{\text{albedo}}{\pi}\)，如课程 <a href="https://example.com/lessons/3d-basic-rendering/brdf-linear-exposure/intro-brdf.html" target="_blank" rel="noreferrer noopener">「BRDF、线性与曝光的创造性探讨」</a> 中所解释的。通常，BRDF 模型会用到入射光方向与出射视线方向，但漫反射材质无论入射方向如何都向各个方向反射光，所以对于这类表面，\(\omega_i\) 与 \(\omega_o\) 可以忽略。</p></li><li><p>\(I\)：是光照强度，它把光源颜色与强度合在一起，与代码一致。</p></li><li><p>\(d\)：是从 \(P\) 到光源的距离。而且多亏平方反比定律，我们需要把这个距离取平方。</p></li><li><p>\(N\) 与 \(\omega_i\)：分别是表面法线与光照方向。公式中的最后一项（点积）表示 Lambert 余弦定律。</p></li><li><p>\(L\)：代表我们的出射辐射亮度。这就是与表面相互作用后，被反射或散射回观察者的光。它取决于表面材质的属性（由 BRDF 建模）、入射光（其强度与方向），以及表面的几何（法线与视线方向）。</p></li></ul><details open><p>有时你会看到 BSDF（双向散射分布函数）而不是 BRDF（双向反射分布函数）。BSDF 比 BRDF 更一般，但一般来说两者是一回事。BSDF 同时考虑表面反射与透射，而 BRDF 只考虑反射。可以把 BRDF 看作 BSDF 情形的一个子集。</p></details><p>在代码里算出 <code>L</code> 之后，你只需要把这个浮点值转换到 [0, 255] 范围内，再把结果存到当前像素位置对应的图像缓冲区里。就这样。注意在上面的代码里我们假定物体的反照率是白色，所以没有显式写出来。不过要留意代码里除以 \(\pi\) 那一步。既然物体反照率是白色，我们要做的就是把公式里蓝色的部分乘以 \(\frac{1}{\pi}\)。下图展示了程序的输出（左）与同一场景在 Maya 中用 Arnold 渲染的结果（右）的对比。如你所见（希望你能看出来），两张图完全吻合。数学从不说谎。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-pointlight-result.png" alt=""></figure><p>用来生成那张图像的完整程序代码可以在 GitHub 仓库里找到（用页首目录里的链接）。</p><p>下面的视频展示了球体逐渐靠近表面时阴影形状的变化。要理解为什么点光源靠近球体时阴影会变大，我们把球体从光源看过去的投影表示成了一个三角形。阴影大小随光源与几何体远近而变化，是一个重要的视觉线索，它与平行光不同，我们会在下一章解释。还要注意点光源越近，表面越亮。这是平方反比定律造成的：到光源的距离越小，在任何一个正在计算照明的点上，打到该表面的光就越多。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-point-animation.mp4"></video></p></div><p>敏锐的读者可能又会问：当那个距离小于 1 时会怎样？确实，把光照强度除以一个趋近于零的值，结果应该趋近于无穷大！这显然不符合物理。嗯，这就是我们为模型的简单付出的代价。如上一章所述，与任何真实世界的光源不同，点光源没有物理大小。缺少大小意味着：当到光源的距离大于 1 时模型工作良好，但当距离趋近 0 时，它在准确模拟光相互作用上就会失效。要更准确地建模，你需要换一个或者模拟球体物理大小的模型，或者直接使用几何光源（geometric light），也可以用面光源（它是几何光源的简化版）。我们会在面光源那一章讲到。注意有些应用——尤其是电子游戏引擎——用下面这种方式给距离平方设上限，来应对这个问题（不过它们并没有真正解决它）：</p><p>$$\dfrac{I}{\max(d^2, 0.01^2)}$$</p><p>你也可以随意照做。有些游戏引擎采用的另一种办法，是给点光源加一个影响半径。这类光源的问题在于，虽然它们远距离时的贡献可能非常小，却仍然要在光照循环里计算。如果你有 10 盏光源，其中只有 1 盏对场景有显著贡献，其余的都远到看不出视觉差别，那么其中 9 盏就带来了一笔我们乐于避免的计算开销。所以解决这个问题的一种办法，是加一个影响球，超出这个范围我们就认定该光源对点 \(P\) 的照明没有贡献。常用公式如下：</p><p>$$\dfrac{I}{\max(d^2, 0.01^2)} \left ( 1 - \dfrac{d^4}{r^4} \right)^2$$</p><p>其中 \(r\) 是点光源的影响半径。这里发生的事情是：当 \(d\) 接近 \(r\) 时，光照贡献会迅速降到 0。我们的代码里不会用这个方法，这里提一下只是为了完整。</p><h2>聚光灯</h2><p>一旦理解了如何实现点光源，实现聚光灯就变得很直接。确实，聚光灯本质上是点光源的一个子集。你可以把聚光灯想象成一个锥体，顶点位于点光源的位置，如图 5 所示。与点光源一样，聚光灯由位置、颜色与强度参数定义，这些是所有光源都共有的。此外我们还定义两个参数：一个指定内锥的开口，另一个指定外锥的开口，分别称为内锥角与外锥角（图 5）。两个锥体界定的区域可以控制光照衰减，强度在内锥与外锥之间递减。由于投影灯还可以绕其位置任意朝向，我们需要加一个方向向量。理想情况下，最好定义投影灯的默认方向（一般是 (0,0,-1)，类似相机的默认位置与朝向），再用一个 4x4 变换矩阵来控制聚光灯的朝向（以及位置）。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-spotlight-params.png" alt=""><figcaption><b>图 5：</b>xx</figcaption></figure><p>既然聚光灯是点光源的子集，这里同样需要应用平方反比定律（显然）。</p><p>模拟聚光灯背后的数学比点光源的稍复杂一些，但也不算太难。我们需要判断连接 \(P\) 与光源的光线是否落在衰减区域内。为此，我们计算聚光灯方向与 \(\omega_i\)（从 \(P\) 指向光源的归一化向量）之间的点积。注意光照方向与 \(\omega_i\) 指向相反，因为 \(\omega_i\) 是从 \(P\) 指向光源（如图 6 所示）。因此我们可以对光照方向取反，或者对点积的结果取反（我们选后者）。记住，两个向量的点积等于它们之间夹角的余弦：</p><ul><li><p>如果两个向量指向同一方向，点积为 1。向量之间的夹角为 0，\(\cos(0) = 1\)。</p></li><li><p>如果两个向量互相垂直，它们之间的夹角为 90 度，\(\cos(90) = 0\)。这也意味着聚光灯的外锥角与内锥角都不能大于 90 度。</p></li></ul><p>现在，要判断 \(P\) 是在内锥之内、外锥之外（此处收不到聚光灯的光），还是在两者之间（衰减区域），我们只需把这个点积与内锥角、外锥角的余弦作比较：</p><ul><li><p>如果光照方向与 \(\omega_i\) 的点积（或者更准确地说，如上面所说，是 \(-L \cdot \omega_i\)——别忘了对结果取反）大于内锥角的余弦，那么 \(P\) 就在内锥之内，获得完整照明，没有任何衰减。</p></li><li><p>如果点积小于外锥角的余弦，那么 \(P\) 就在外锥之外，收不到该光源的贡献。</p></li><li><p>对于落在两个余弦之间的任何点积值，\(P\) 处在衰减区域。这里我们要做的，就是把点积从 1 到 0 重新映射（内锥边缘处为 1，外锥边缘处为 0）。这是一个简单的线性重映射问题，我们用下式完成：</p></li></ul><p>$$\text{attenuation} = \frac{(-L \cdot \omega_i - \cos(\theta_o))}{(\cos(\theta_i) - \cos(\theta_o))}$$</p><p>其中：</p><ul><li><p>\(\theta_i\) 是内锥角。</p></li><li><p>\(\theta_o\) 是外锥角。</p></li><li><p>\(L\) 是光照方向。</p></li><li><p>\(\omega_i\) 是从 \(P\) 指向光源位置的归一化向量。</p></li></ul><p>记住 \(\cos(\theta_i)\) 大于 \(\cos(\theta_o)\)，因为 \(\theta_i \leq \theta_o\)。当你想对一个值做归一化（把一个值从 \([lo, hi]\) 范围重映射到 \([0, 1]\) 范围）时，公式是：</p><p>$$V_{\text{Normalized}} = \frac{V - lo}{hi - lo}$$</p><p>这个公式对值 \(V\) 做调整，使它在原范围的下界（\(lo\)）映射为 0，在上界（\(hi\)）映射为 1。别忘了把这个值钳制在 [0:1] 范围内。写成代码就是这样：</p><pre><code>
+float cos_inner_angle = std::cos(inner_angle); // 单位为弧度
+float cos_outer_angle = std::cos(outer_angle);
+float falloff = std::clamp((-light_dir.Dot(wi) - cos_inner_angle) / (cos_inner_angle - cos_outer_angle), 0.f, 1.f);
+</code></pre><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-spotlight-maths.png" alt=""><figcaption><b>图 6：</b>我们计算光照方向与 \(\omega_i\) 之间的夹角，再把这个值与 \(\theta_i\)、\(\theta_o\) 两个角作比较。注意图中我们用角度来比较，但实际上用两个向量的点积就够了，它等于夹角的余弦。</figcaption></figure><p>下面是 <code>SpotLight</code> 类中 <code>Sample()</code> 方法的完整代码：</p><pre><code>
+class SpotLight : public Light {
+public:
+	SpotLight(float angle_inner = 20.f, float angle_outer = 25.f) {
+		cos_angle_inner_ = std::cos(DegToRadians(angle_inner));
+		cos_angle_outer_ = std::cos(DegToRadians(angle_outer));
+	}
+	Vec3&amp;ltfloat&gt; Sample(const DifferentialGeometry&amp; dg, Vec3&amp;ltfloat&gt;&amp; wi, float&amp; pdf, float &amp;t_max) const {
+		Vec3&amp;ltfloat&gt; d = pos_ - dg.P;
+		float distance = d.Length();
+		wi = d / distance;
+		pdf = distance * distance;
+		t_max = distance;
+		float falloff = std::clamp((-wi.Dot(dir_) - cos_angle_outer_) / (cos_angle_inner_ - cos_angle_outer_), 0.f, 1.f); 
+		return color_ * intensity_ * falloff;
+	}
+	Vec3&amp;ltfloat&gt; pos_{0,0,0};
+	Vec3&amp;ltfloat&gt; dir_{0,0,-1};
+	float cos_angle_inner_;
+	float cos_angle_outer_;
+};
+</code></pre><p>出乎意料地简单，对吧？结果在这里，如预期的那样，与其他生产级渲染器的输出相似。注意你可能会在其他渲染引擎上看到差异，这可以归因于它们选择如何实现衰减。比如 Arnold 渲染器就是如此，它的结果与 Maya 原生渲染器不同。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-spotlight.png" alt=""></figure><p>注意在聚光灯的实现里，我们选择用一个矩阵把光源从默认方向 (0,0,-1) 旋转到期望方向：在我们的情形里是 (0,-1,0)，需要沿 x 轴旋转 -90 度。而位置我们是直接设置的。在生产级渲染器里，你应该用光源的变换矩阵同时设置光照方向与位置。我们在演示里没这么做，只是为了展示达成同一目标的几种不同方式。</p><pre><code>
+SpotLight light;
+Matrix44&amp;ltfloat&gt; m;
+m.SetAxisAngle(Vec3&amp;ltfloat&gt;(1,0,0), DegToRadians(-90));
+m.MultDirMatrix(light.dir_, light.dir_); // 设置聚光灯方向
+light.dir_.Normalize();
+std::cerr &lt;&lt; "Spotlight direction: " &lt;&lt; light.dir_ &lt;&lt; std::endl;
+light.pos_ = Vec3&amp;ltfloat&gt;(0,6,-22); // 设置聚光灯位置，也可以用矩阵来设
+</code></pre><p>注意有些引擎还喜欢对衰减再取平方，如下所示：</p><pre><code>
+Vec3&amp;ltfloat&gt; Sample(const DifferentialGeometry&amp; dg, Vec3&amp;ltfloat&gt;&amp; wi, float&amp; pdf, float &amp;t_max) const {
+	...
+	return color_ * intensity_ * falloff * falloff;
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-falloff-spotlight-graph.png" alt=""><figcaption><b>图 7：</b>对衰减值取平方有助于产生更细微、更渐进的衰减效果。</figcaption></figure><p>这种做法没有真正的物理依据，但能给出感觉更自然、因而更讨眼睛喜欢的衰减，因为它让从亮到暗的过渡更渐进、更细微。图 7 展示了这种差别。注意不要把这类衰减与平方反比定律所说的「衰减」搞混。说到这里顺便提一句：叠加聚光灯贡献的代码与点光源所用的代码没有区别。我们把光照强度（这里是颜色、强度与衰减的混合）乘以 \(\omega_i\) 与表面法线之间的点积（余弦），再除以 \(\frac{1}{\pi}\)（对应 BRDF——这里假定物体反照率 = 1，前面讲过，\(\pi\) 这个因子补偿了处理漫反射表面时所需的归一化），再除以从 \(P\) 到光源距离的平方（存在变量 <code>pdf</code> 里）。</p><pre><code>
+Vec3&amp;ltfloat&gt; L = light_L * std::max(0.f, dg.Ns.Dot(wi)) / (M_PI * pdf);
+</code></pre><h2>结论与要点</h2><p>我们关于点状光源实现的这一章到此结束。到目前为止并不算太难，但你在本章学到了一项光照中的关键内容——平方反比定律。下一章我们会学习如何实现另一种 delta 光源：平行光。走之前，我们向 Pixar 快速致敬一下：他们在 1986 年出品的革命性动画短片 <a href="https://en.wikipedia.org/wiki/Luxo_Jr." target="_blank" rel="noreferrer noopener">Luxo Jr.</a> 中很有创意地用了聚光灯。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/Luxo_Jr_in_Pixar_Fest_Hong_Kong_2021.jpg" alt=""></figure>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-punctual-lights.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-punctual-lights.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phong 模型以及光照模型与 BRDF 的概念 - Scratchapixel 中文译本</title>
+<meta name="description" content="着色器与 BRDF 简介 · Phong 模型以及光照模型与 BRDF 的概念（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Phong 模型以及光照模型与 BRDF 的概念</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+
+<h2>Phong 模型以及光照模型与 BRDF 的概念</h2><p><b>阅读时间：21 分钟。</b></p><p>本课虽然仍然适用，但在写下第一版十多年之后，我们结合现有内容的整体语境重新审视，意识到这一课尤其需要翻新。你仍然可以读它，但请注意，它会在未来几周 / 几个月内更新（2024 年 4 月）。</p><blockquote><p>我们并不指望能把物体显示得和现实中一模一样，带上纹理、柔和的阴影等等。我们只希望显示一张与真实物体足够接近、能提供一定程度真实感的图像。Bui Tuong Phong</p></blockquote><h2>Phong 模型</h2><p>在深入 BRDF 与光照模型的概念之前，我们先介绍一种用来模拟光泽表面外观的技术，比如塑料球。从这里出发，就更容易把这项技术推广开去——而这正是 BRDF 与光照模型（或反射模型）概念的全部内容。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-plasticball.png?" alt=""><figcaption><b>图 1：</b>镜面高光不过是球周围场景中最强光源的反射。这个球既有漫反射也有镜面反射（发亮）。</figcaption></figure><p>上一课我们学习了如何模拟镜面表面与漫反射表面的外观。那有光泽的表面呢？首先要说明，我们刚才举的塑料球例子，并不只是一个纯粹的光泽表面。像大多数材质一样，它可以被描述为同时具有<b>漫反射成分</b>和<b>光泽成分</b>（也就是图 1 中球上那些发亮的、镜面反射的部分）。材质表现出这种双重性质，原因各不相同。有些情况下，仅仅是因为材质本身就是不同材质的复合体：比如塑料球可以由薄片或小颗粒构成，它们起漫反射作用，却被一种起反射（而且往往也透射）作用的聚合物粘在一起；薄片或小颗粒漫射光线，聚合物则反射光线。另一些情况下，物体是由好几层材质叠起来的，许多水果的果皮就是如此。比如橙子有一层厚皮，更像漫反射表面，而皮外面又覆着一层薄薄的油膜，更像镜面反射（或反射）表面。总之，我们可以把许多材质的外观描述为具有一个漫反射成分和一个镜面（光泽）成分。我们可以把这个概念写成公式：</p><p>$$S_P= \text{diffuse()} * K_d + \text{specular()} * K_s.$$</p><p>这里的 \(S_P\) 表示「P 处的着色」。在这个公式里，\(\text{diffuse()}\) 正是我们上一课学会模拟的漫反射效果；\(\text{specular()}\) 是新的，用来模拟物体的光泽外观。两种效果的强度——换个说法，就是让两者相互制衡——可以通过 \(K_d\) 和 \(K_s\) 两个参数控制。在着色和计算机图形学的世界里，这些项被起了很多名字，围绕它们也写了大量文章。你可以把它们看成漫反射成分与镜面反射成分的强度或增益。调整它们，可以造出五花八门的效果。但这两个参数究竟该怎么设，我们稍后再看。眼下先专注于镜面反射函数本身。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-reflwater.jpg?" alt=""><figcaption><b>图 2：</b>这片水面的波纹打碎了背景场景的反射。</figcaption></figure><p>Bui Tuong Phong 是计算机图形学领域中一位很有前途的研究者，不幸于 1975 年去世，就在他 1973 年发表论文之后不久。他在论文中提出的一个想法是：许多材质确实可以用一个加权漫反射成分与一个加权镜面反射成分之和来计算。想了解是什么让某些表面呈现光泽的读者，可以去读<a href="what-is-shading-light-matter-interaction.html">上一课的第一章</a>。光泽高光不过是物体对光源的反射。这一现象类似完美镜面表面反射出光源的像或场景中物体的像，只不过表面不像镜面那样完美平滑，而是在（微观尺度上）略有破碎，导致光被反射到与镜面方向略有偏差的方向上（水面的波纹会产生类似效果，如图 2 所示）。其结果是，从物体表面反射出的光被模糊了。由于粗糙表面像一面破碎的镜子，图形学研究者喜欢把它定义为一组小镜子，他们称之为<b>微表面</b>。</p><details open><p>这里微表面的概念纯粹是一种思维上的模型，显然并不「反映」粗糙表面的实际样子。不过，把粗糙表面表示为一组微表面，能简化数学公式的求解，而这些公式随后可用来模拟粗糙表面的外观。这就是微表面着色模型的基础。下一节有一门课专门讲这个题目。</p></details><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-roughsurface.png?" alt=""><figcaption><b>图 3：</b>表面越粗糙，镜面反射就越大、越暗。你可以把它看成光在物体表面被「模糊」了。</figcaption></figure><p>此处有两点值得说明：</p><ul><li><p>光源的光泽反射，比同一个光源在镜面表面上的反射要暗（这里我们假定观察者沿着光线的反射方向去看光源的反射，如图 3 所示）。原因在于，构成我们这块光泽物体表面的<b>微表面</b>（这是 CG 里的叫法）或小镜子中，只有一部分会把光反射到观察方向上；而在镜面表面的情况下，所有光线都被反射到那个方向（图 3）。对粗糙表面来说，当观察者沿着表面理想反射方向看下去时，只有一部分光线被反射到眼睛里，因此亮度下降。</p></li><li><p>随着视线方向与理想反射方向之间夹角的增大，光泽反射的亮度会下降。这是因为夹角增大时，把光反射向眼睛的微表面数量减少，于是亮度降低。当我们从「表面若是完美镜面时能观察到光源反射的那个点」在物体表面上走开时，找到朝观察者方向反射光的微表面的概率会下降。这是微表面分布方式的一种统计性质。</p></li></ul><p>这最后一点观察的关键在于：当物体表面上某点与「表面若是完美镜面时该光源反射成像的位置」之间的距离增大时，镜面反射的亮度会下降。这一想法由下面这组图像说明。左边你可以看到一个小灯泡在完美镜面中的反射。往右走，表面粗糙度逐渐增加。注意反射的亮度如何下降，灯泡的反射如何摊到更大的面积上。还要注意：物体表面上的点离原本的反射光位置越远，高光的强度就越低。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-increaserough.png?" alt=""></figure><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-cosinespec.png?" alt=""><figcaption><b>图 4：</b>如果视线方向与镜面方向不完全对齐，我们就看不到光源的反射。不过我们可以计算视线方向与反射方向的点积，它告诉我们这两个向量偏离了多少。Phong 模型模拟镜面反射的原理就在于此。</figcaption></figure><p>Phong 观察到，可以这样来模拟这一效果：计算入射到着色点的光线的理想反射方向，再计算这条反射光线与实际视线方向的点积。如上一课所知，要看到镜面表面上某点的反射，视线方向必须与反射方向完全重合。如果这两个方向有偏差（哪怕很小），观察者就根本看不到那个点的反射。当两个向量相同时（视线方向与反射方向平行），它们的点积等于 1。随着视线方向与反射方向之间的夹角增大，两个向量的点积减小（最终降到 0）。</p><p>$$\text{Specular} \approx V \cdot R.$$</p><p>其中 \(V\) 是视线方向，而 \(R\) 等于：</p><p>$$R = 2(N \cdot L)N - L.$$</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-cospow.png?" alt=""><figcaption><b>图 5：</b>不同 \(n\) 取值下 \((V \cdot R)^n\) 的形状。</figcaption></figure><p>\(L\) 是在着色点 \(P\) 处的入射光方向。这个公式的曲线见图 5（红色曲线）。不过 Phong 注意到这条曲线的形状相当宽，本身会造出一大块镜面高光。为了解决这个问题、塑造镜面高光的形状，他把公式提升到某个值 \(n\) 的幂（这个值常被称为镜面指数）：</p><p>$$\text{Specular} \approx (V \cdot R)^n.$$</p><p>图 4 显示了不同 \(n\) 取值下这个公式的形状。值越大，曲线越窄，得到的镜面高光就越小越紧。如果你应用这个模型，渲染一系列 \(n\) 值递增的球，得到的结果是这样：</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-phong.png?" alt=""></figure><p>可以看到，其中一些球开始看起来像发亮的灰球了。不过有个问题。由于物体粗糙度增加时，微表面把光反射向观察者的概率下降，镜面高光的整体亮度也应当随 \(n\) 下降。换句话说，高光越大，就应该越暗。然而这次渲染并非如此。不幸的是，Phong 模型是<b>经验性的</b>，正如他在论文中指出的，\(n\) 和 \(K_s\) 这两个数并没有物理意义。要调整镜面高光的强度，你得去调 \(K_s\) 这个参数，直到得到想要的外观。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-phong2.png?" alt=""></figure><p>下面是用来计算上面那些图像的代码：</p><pre><code>
+Vec3f castRay(...)
+{
+    ...
+    if (trace(orig, dir, objects, isect)) {
+        ...
+        switch (isect.hitObject-&amp;gttype) {
+            case kPhong:
+            {
+                Vec3f diffuse = 0, specular = 0;
+                for (uint32_t i = 0; i &lt; lights.size(); ++i) {
+                    Vec3f lightDir, lightIntensity;
+                    IsectInfo isectShad;
+                    lights[i]-&amp;gtilluminate(hitPoint, lightDir, lightIntensity, isectShad.tNear);
+
+                    bool vis = !trace(hitPoint + hitNormal * options.bias, -lightDir, objects, isectShad, kShadowRay);
+                    
+                    // 计算漫反射成分
+                    diffuse += vis * isect.hitObject-&amp;gtalbedo * lightIntensity * std::max(0.f, hitNormal.dotProduct(-lightDir));
+                    
+                    // 计算镜面反射成分
+                    // 这条光线的理想反射方向会是哪个
+                    Vec3f R = reflect(lightDir, hitNormal);
+                    specular += vis * lightIntensity * std::pow(std::max(0.f, R.dotProduct(-dir)), isect.hitObject-&amp;gtn);
+                }
+                hitColor = diffuse * isect.hitObject-&amp;gtKd + specular * isect.hitObject-&amp;gtKs
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    else {
+        ...
+    }
+
+    return hitColor;
+}
+</code></pre><h2>着色/反射模型</h2><p>Phong 用来模拟发亮材质外观的模型，在 CG 中我们称之为<b>反射</b>模型或<b>着色</b>模型。材质之所以看起来是那样，往往是光与构成物体的材质的微观结构之间极其复杂的相互作用的结果。逐一模拟这些相互作用太复杂了，所以我们改用数学模型来近似。Phong 模型因为简单而非常流行，但它只是这类反射模型中的一个例子，此外还有各种各样的数学模型，仅举几例：<b>Blinn-Phong</b>、<b>Lafortune</b>、<b>Torrance-Sparrow</b>、<b>Cook-Torrance</b>、<b>Ward 各向异性</b>、<b>Oren-Nayar</b> 模型等等。</p><h2>BRDF 的概念与 Phong 模型的兴衰</h2><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-brdfdir.png?" alt=""><figcaption><b>图 6：</b>入射方向 \(I\) 与出射方向 \(V\)。</figcaption></figure><p>如上所述，Phong 用来模拟发亮材质外观的，本质上是一个函数。这个函数（包含镜面反射与漫反射两部分的计算）含有若干参数，比如 \(n\)，可以调整来改变材质外观；但更重要的是，它依赖两个变量：入射光方向（同时用于计算漫反射和镜面反射成分）和视线方向（只用于计算镜面反射成分）。我们基本上可以把这个函数写成：</p><p>$$f_R(\omega_o, \omega_i).$$</p><p>其中 \(\omega_o\) 和 \(\omega_i\) 分别是表面法线（\(N\)）与视线方向（\(V\)）之间、表面法线与光线方向（\(I\)）之间的夹角（图 6）。下标 \(o\) 表示出射。在计算机图形学中，这个函数有个好听的名字：<b><a href="https://en.wikipedia.org/wiki/Bidirectional_reflectance_distribution_function" target="_blank" rel="noreferrer noopener">双向反射分布函数</a></b>，简称 <b>BRDF</b>。BRDF 不过就是一个函数，对给定的入射光方向，返回沿视线方向反射的光量：</p><p>$$BRDF(\omega_o, \omega_i).$$</p><p>我们上面提到的任何一种着色模型，比如 Cook-Torrance 或 Oren-Nayar 模型，都是 BRDF 的例子。如果你愿意，也可以把 BRDF 看成一个描述给定物体如何散射或反射光的函数。如前所述，这个反射光量同时取决于入射光方向和视线方向。多年来人们提出了许多 BRDF：有些是为了模拟某一类特定材质。比如 Oren-Nayar 模型就非常适合模拟月球的外观，它反射光的方式并不完全像漫反射表面那样。有些模型是依据光学原理设计的，有些只是为了拟合某些物理测量数据。还有些模型（比如 Phong 反射模型）更偏经验性。有一门课专门讲 BRDF 这个概念，所以现在只是浅尝辄止，你也不必担心。</p><p>BRDF 有好的，也有坏的。坏的 BRDF 本质上就是违反了下面三条规则中一条或几条的那些：</p><ul><li><p>第一，BRDF 在全部有效入射与出射方向范围内都是<b>非负</b>函数。</p></li><li><p>第二，BRDF 是<b>互易的</b>。换句话说，\(BRDF(\omega_o, \omega_i) = BRDF(\omega_i, \omega_o)\)。如果把函数中的入射方向与出射方向对调，函数返回的结果相同。</p></li><li><p>最后，BRDF 是<b>能量守恒的</b>。这本质上是说，BRDF 不能造出比它接收到的更多的光（除非表面本身自发光，但那属于特殊情况）。总的来说，物体反射的光不可能多于入射到其表面的光量。BRDF 自然也应遵守同一条规则。</p></li></ul><p>好的 BRDF 就是遵守这三条规则的 BRDF。Phong 模型的问题在于它本质上不守恒能量。在本课里论证这一点会太长，不过如果你读了讲 BRDF 的那一课，就会明白原因。总的来说，有几个因素决定一个 BRDF 是否有用、是否好：它需要物理上准确，需要精确，还需要计算上高效（速度和内存消耗都要考虑）。Phong 模型物理上不正确，但计算高效、形式紧凑，所以流行了很多年。Phong 模型虽然仍被认为适合用来教人着色基础，但今天已经不再使用，已被更新、更符合物理的模型取代。</p><details open><p>Phong 模型在讲更高级的渲染技术时也非常有用。它数学上的简洁性使它成为讲授重要性采样等主题的理想候选。如果想深入了解这个话题，请看下一节讲重要性采样的课程。</p></details><details open><p>还要注意，当它与 delta 光源（而非面光源）配合使用时，镜面反射的结果看起来不错，但物理上并不准确（且不说模型本身不守恒能量）。镜面反射本质上是光源的一个模糊反射，这个反射的大小取决于光源的大小及其到物体的距离（物体离表面越近，反射越大）。由于 delta 光源按定义没有大小，镜面反射的大小不可能物理上准确。这个问题的解法是使用面光源。关于这个话题的更多信息，可以在下一节找到。</p></details><h2>你说的镜面反射瓣或漫反射瓣是什么意思？</h2><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-lobe1.png?" alt=""><figcaption><b>图 7：</b>漫反射瓣与镜面反射瓣。要模拟复杂材质的外观，你往往需要组合好几个瓣（比如一个漫反射瓣和 2 到 3 个镜面指数与权重各不相同的镜面反射瓣）。</figcaption></figure><p>我们用镜面反射瓣这个概念来收束本章——你也许听过或读到过它。当表面粗糙时，它把光反射到与完美反射方向略有偏差、但以该方向为中心的方向上。你可以画出或想象这个过程：以反射方向为中心画一个拉长的形状，如图 6 所示。这在某种程度上表示表面把光反射进去的那一组可能方向。这就是我们在 CG 中所说的镜面反射的瓣。图 7 中我们把这个瓣画成二维形状，但它应该是三维的。这个瓣的形状会随入射光方向而变。这是大多数材质都具有的性质：对每一个可能的入射光方向，它们都有独特的反射光方式。对真实材质来说，这个瓣或它的形状可以相当复杂。我们可以用一种叫作 <a href="https://en.wikipedia.org/wiki/Gonioreflectometer" target="_blank" rel="noreferrer noopener">测角反射计</a>的仪器把它测出来。这种仪器的功能是：对给定的入射光方向，测量某种材质在其表面上方每一个可能方向上反射了多少光。所得三维数据的形状取决于材质性质。材质越偏漫反射，结果越像一个半球；越偏镜面反射，就会出现一个沿反射方向拉长的长瓣。从真实材质获取的数据非常有用，既可以用来推导可用于模拟某种材质的数学模型，也可以用来验证某个 BRDF 模型的准确性。如果 BRDF 模型的行为与测量数据一致（以相同方式反射光），那么这个模型就是模拟该实测材质外观的好候选。注意，看实测材质的反射率函数时，你会发现它们往往不止一个瓣。在 CG 中，我们用不同参数和权重的几个瓣相组合来模拟这一效果。比如图 7 下方的图里，我们组合了一个漫反射瓣和一个镜面反射瓣，得到的材质应该像 Phong 模型那样既发亮又有漫反射。关于这个话题的更多信息可在下一节找到。</p><h2>那其他类型的材质呢</h2><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-bxdf.png?" alt=""><figcaption><b>图 8：</b>对 BRDF 而言，我们假定光线击中表面的点与同一条光线被物体反射的点是同一个点。对半透明物体，这两个点并不相同。一条光线可以在点 x 处击中表面，穿过构成物体的材质，然后在离 x 有一段距离的点 x' 处离开物体。</figcaption></figure><p>与看起来的印象相反，材质其实只有少数几种类型。如前所述，物体的外观有时很复杂，但只需组合不同的瓣就够了。要找出混合这些瓣的「配方」该是什么，这个过程通常很复杂，但造出这些瓣本身的公式，甚至反射定律或 Snell 定律，其实都相当简单。如前面几课所说，我们一般把材质分成两大类：电介质与导体。导体基本上就是金属：它们导电。相反，电介质是绝缘体，包括塑料、纯水、玻璃、木材、橡胶、蜡等等。导体（金、铝等）本质上是反射性的，其外观可以很容易地用反射定律模拟。但要记住，对电介质和导体应当使用不同的 Fresnel 公式。许多电介质的外观差异也相当大：水、木材、塑料和蜡外观各不相同。水和玻璃可以用反射、透射与 Fresnel 的组合来模拟。木材基本上可以用漫反射模拟。塑料可以用漫反射与镜面反射的组合来模拟（Phong 模型同时包含这两种成分，可以拿来模拟塑料）。模拟蜡则稍有些不同，因为蜡是<b>半透明</b>的。到目前为止研究的所有例子里，我们都认为光线击中表面的点，与同一束光被反射到环境中的那个点在物体上是同一个点。BRDF 正是基于这一假定设计的。但对半透明材质，当光线在点 x 处击中物体表面时，它一般会穿过构成物体的材质，最终在另一个点 x' 处离开物体。光线进入物体后，会被构成材质的结构散射一次或多次。它一般经历某种随机游走，直到最终在某个随机位置离开物体。BRDF 无法用来模拟这类物体。我们需要另一种模型，叫作 BSSRDF。这个复杂的缩写代表双向散射表面反射分布函数。这一现象也被称为<b>次表面散射</b>。想看关于 BSSRDF 与半透明材质外观模拟的更多内容，请查阅下一节。</p><h2>我该用物体颜色给镜面反射上色吗？</h2><p>这个问题 CG 美术经常问，但即便最有经验的人有时也说不清确切答案该是什么。这个问题的答案是……不。</p><p>前提是材质为电介质，换句话说，它不是导体/金属。镜面反射只是光源在物体表面上的一次反射。因此这束反射光的颜色应当与光源发出的光的颜色相同。如果光源发红光，镜面高光就该是红色。如果光源发白光，镜面高光就该是白色。永远、永远不要给镜面反射上色，尤其不要用物体的颜色。如果物体是黄色的，而被反射的光是白光，镜面反射也不会变黄，它就是白的。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-metals.png?" alt=""></figure><p>不过对金属而言，这条规则有个例外。有些金属本身有颜色（青铜、金、铜），并且是纯粹反射性的。随你怎么说都行：金属会用自己的颜色改变镜面反射的颜色。比如金是黄色的，铜是某种深橙红色，等等。如果你想模拟金的外观，就必须用金属的颜色（黄色）去乘反射光。但如果金属上覆了一层漆，那么你模拟的就不再是金属的外观，而是漆层的外观，漆层本身是电介质。因此在这种情况下，你不应该给镜面反射上色。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/phong-shader-BRDF/phong-illumination-models-brdf.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/phong-shader-BRDF/phong-illumination-models-brdf.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

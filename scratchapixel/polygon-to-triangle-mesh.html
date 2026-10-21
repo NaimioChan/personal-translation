@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>从多边形到三角网格 - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪多边形网格 · 从多边形到三角网格（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>从多边形到三角网格</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="polygon-to-triangle-mesh.html">从多边形到三角网格</a></li>
+<li><a href="ray-tracing-polygon-mesh-part-1.html">光线追踪多边形网格（第 1 部分）</a></li>
+<li><a href="ray-tracing-polygon-mesh-part-2.html">光线追踪多边形网格（第 2 部分）</a></li>
+</ol>
+</div>
+<h2>从多边形到三角网格</h2><p><b>阅读时间：12 分钟。</b></p><h2>简介</h2><p>上一门课我们学会了如何渲染三角形，这就引出了下一步：渲染更复杂的物体。通常，紧接在球体、三角形这类简单图元之后，我们能找到的最简单的物体形式就是多边形物体（也叫多边形网格）。</p><p>多边形网格在电影里用得不多（那里更偏好一种更精细的图元：细分曲面）。但在电子游戏以及一般意义上的实时应用中，它仍然很流行。这类物体由多边形构成，我们也把多边形叫面。多边形或面是一个平坦表面（它本该如此，但如果构成该面的顶点不共面，它就不平了），由一组顶点连接成封闭形状来定义——两个相连的顶点构成一条边。因此，构成一个面的顶点数必须大于或等于三。三个顶点定义一个三角形，四个定义一个四边形。我们还可以把多边形组合起来，造出复杂的多面体物体。</p><p>多边形网格原理上很简单，但自有其一套难题：如何把一个低模网格（多边形数量少的网格会显得有棱有角）做得平滑，或者如何高效地编码网格的顶点连接关系数据？这些技术会在进阶部分研究。这门入门课程的目标是学会在程序里定义一个多边形网格（第 2 章），并用光线追踪渲染这个网格（第 3 章）。</p><h2>网格的定义</h2><figure><img src="https://scratchapixel.com/images/ray-triangle-mesh/polygons3.png?" alt=""><figcaption><b>图 1：</b>一个简单的网格，2 个面、6 个顶点。</figcaption></figure><p>多边形网格由彼此相连、构成面的顶点组成。要定义一个网格，我们首先需要一张顶点列表。考虑两个共享一条边的四边形组成的例子（图 1）。这个例子里我们有 6 个顶点 v0、v1、v2、v3、v4 和 v5。我们需要的另一项信息是网格的面总数，例子中是 2。我们还需要一个整数数组，指明每个面由多少个顶点构成（面下标数组）。我们网格的第一个面和第二个面都有 4 个顶点，因此这个数组包含以下数据：[4 4]。该数组的长度等于网格中的面数（2）。最后，对每个面，我们需要知道顶点之间如何连接成面、它们在顶点数组列表中的下标，以及连接它们的顺序。顶点 v0、v1、v2 和 v3 构成第一个面，而按此顺序连接 v0、v3、v4 和 v5 则得到第二个面。我们可以把这些信息存在一个整数数组中，其长度等于各面顶点数之和。网格含 2 个面，每个面连接 4 个顶点，因此这个数组长度应为 8，数据如下：[0 1 2 3 0 3 4 5]。用伪代码写出来就是这样：</p><pre><code>
+// 网格顶点
+Vec3f P[6] = {Vec3f (-5, -5,  5), Vec3f ( 5, -5,  5), Vec3f ( 5, -5, -5), Vec3f (-5, -5, -5), Vec3f (-5,  5, -5), Vec3f (-5,  5, 5)}; 
+uint32_t npolys = 2;  //面数
+uint32 faceIndex[2] = {4, 4};  //面下标数组
+uint32 vertexIndex[8] = {0, 1, 2, 3, 0, 3, 4, 5};  //顶点下标数组
+</code></pre><details open><p>记住，如果当前手性是左手系，那么顶点按顺时针顺序给出的多边形（从相机的视角看）就是正面朝向的多边形（其法线向量指向相机）。如果当前手性是右手系，则顶点按逆时针顺序给出的多边形才是正面朝向的。</p></details><p>伪代码中的变量名遵循 RenderMan 接口规范为 RiPointsPolygons 方法定义的约定。RenderMan 接口「是建模程序与能够生成照片级质量图像的渲染程序之间的标准接口」，由 Pixar 提出并维护。这份文档在网上很容易找到，建议读一读，因为其中含有大量非常有趣、有用的信息（尽管 Pixar 已不再维护它）。</p><pre><code>
+class PolygonMesh : public Object 
+{ 
+public: 
+   PolygonMesh(uint32_t nfaces, int *fi, int *vi, Vec3f *p) : 
+        numFaces(nf), faceIndex(NULL), vertexIndex(NULL), P(NULL) 
+   { 
+       // 计算 vertArraySize 和 maxVertexIndex
+       uint32_t vertArraySize = 0; 
+       uint32_t maxVertexIndex = 0, index = 0; 
+       for (uint32_t i = 0; i &lt; numFaces; ++i) { 
+           vertArraySize += nv[i]; 
+           for (uint32_t j = 0; j &lt; fi[i]; ++j) 
+               if (vi[index + j] &gt; maxVertexIndex) 
+                   maxVertexIndex = vi[index + j]; 
+           index += fi[i]; 
+       } 
+       maxVertexIndex += 1; 
+       pts = std::unique_ptr&amp;ltVec3f []&gt;(new point[maxVertexIndex]); 
+       for (uint32_t i = 0; i &lt; maxVertexIndex; ++i) P[i] = p[i]; 
+       vertexIndex = std::unique_ptr&amp;ltuint32_t []&gt;(new int[maxVertexIndex]); 
+       for (uint32_t i = 0; i &lt; maxVertexIndex; ++i) vertexIndex [i] = vi[i]; 
+       faceIndex = std::unique_ptr&amp;ltuint32_t&gt;(new int[numFaces]); 
+       for (uint32_t i = 0; i &lt; numFaces; ++i) faceIndex[i] = fi[i]; 
+   }; 
+   ~PolygonMesh() { /* release memory */ ... } 
+   bool intersect(...) const { ... } 
+   void getSurfaceData(...) const { ... } 
+   uint32_t numFaces;  //面数
+   std::unique_ptr&amp;ltuint32_t []&gt; faceIndex;  //面下标
+   std::unique_ptr&amp;ltuint32_t []&gt; vertexIndex;  //顶点下标
+   std::unique_ptr&amp;ltVec3f []&gt; P; 
+}; 
+ 
+int main(...) 
+{ 
+   ... 
+   uint32_t numFaces = 2; 
+   uint32_t faceIndex[2] = {4, 4}; 
+   uint32_t vertexIndex[8] = {0, 1, 2, 3, 0, 3, 4, 5}; 
+   Vec3f P[6] = { 
+       Vec3f (-5, -5,  5), Vec3f ( 5, -5,  5), 
+       Vec3f ( 5, -5, -5), Vec3f (-5, -5, -5), 
+       Vec3f (-5,  5, -5), Vec3f (-5,  5,  5), 
+   }; 
+   PolygonMesh *mesh = new PolygonMesh(numFaces, faceIndex, vertexIndex, P); 
+   ... 
+}
+</code></pre><p>代码相当简单（这门课最后一章提供了这段代码的可运行 C++ 版本）。点列表、面、顶点下标数组以及面数都传给 <code>MeshPolygon</code> 构造函数类。不过我们需要弄清点数组里有多少个点。做法是在顶点下标数组里找出下标值最大的那个顶点（第 13–14 行）。C++ 中数组的第一个元素从 0 开始，因此点列表中的顶点总数就是最大下标值加一（第 17 行）。</p><p>正如你在上面代码里看到的，我们加了两个方法 <code>intersect()</code> 和 <code>getSurfaceData()</code>，但都留空了。下一章我们再来填。</p><h2>把多边形转换成三角形</h2><figure><img src="https://scratchapixel.com/images/ray-triangle-mesh/convexconcave.png?" alt=""><figcaption><b>图 2：</b>凸多边形（左）与凹多边形（右）的例子。</figcaption></figure><p>遗憾的是，直接对多边形网格做光线追踪并不容易。为求简单与通用，通常更好的做法是把多边形网格转换成三角网格，对每个三角形求交，而不是开发一套追踪多边形的算法。这在一定程度上解释了为什么我们在高效地追踪三角形上投入了那么多精力（上一门课已有描述）。拥有一个高效、高度优化的光线–图元求交例程，并把每种几何都转换成这种图元，要比每当系统新增一类几何就实现一套高效的光线–几何求交例程容易得多。此外，把多边形转换成三角形本身也很简单。不过我们的技术只适用于凸多边形。凹多边形需要另一种方法，本课程不看它。本课程要用的技术容易理解、也容易实现，但其他方法能产生更好的结果（关于网格化有大量研究）。如前所述，它只对凸多边形有效。如果你还不确定自己的网格里有没有凹多边形，最好先在有 Maya 这类程序里把它三角化，再导出给渲染器。</p><figure><img src="https://scratchapixel.com/images/ray-triangle-mesh/triangulate.gif?" alt=""><figcaption><b>图 3：</b>三角化一个凸面。</figcaption></figure><p>三角化一个凸多边形非常简单。我们取面中的第一个顶点，通过连接顶点 v[0]、v[n + 1] 和 v[n + 2] 来画三角形，其中 \(n\) 是当前已形成的三角形数量减一。当 \(n = 0\) 时，第一个三角形由顶点 v[0] v[1] 和 v[2] 构成；当 \(n = 1\) 时，第二个三角形由顶点 v[0]、v[2] 和 v[3] 构成；当 \(n = 2\) 时，第三个三角形由 v[0]、v[3]、v[4] 构成，依此类推。图 3 演示了这一过程。一个多边形生成的三角形数量总是等于该多边形的顶点数减二（自己造几个多边形验证一下这个结论）。</p><pre><code>
+numTrisInFace = numVertsInFace - 2;
+</code></pre><p>我们的程序需要在渲染之前先把原始网格三角化，所以不想保留原来的面下标数组与顶点下标数组。我们会根据传给网格构造函数类的数据生成新的数组。首先算出原始网格会生成多少个三角形（这很容易，因为已知每个含 \(N\) 个顶点的面会产生 \(N - 2\) 个三角形）。我们也知道三角化后网格的每个面都有三个顶点，因此三角化网格不需要存面下标数组。不过我们需要重新生成一个顶点下标数组，用来存网格中每个三角形连接到哪些顶点。这个数组的长度等于三角形数乘以 3。下面的伪代码应该能让这个过程更好理解：</p><pre><code>
+TriangleMesh( 
+    const uint32_t nfaces, 
+    const std::unique_ptr&amp;ltuint32_t []&gt; &amp;faceIndex, 
+    const std::unique_ptr&amp;ltuint32_t []&gt; &amp;vertsIndex, 
+    const std::unique_ptr&amp;ltVec3f []&gt; &amp;verts, 
+    const std::unique_ptr&amp;ltVec3f []&gt; &amp;normals = nullptr, 
+    const std::unique_ptr&amp;ltVec2f []&gt; &amp;st = nullptr) : 
+    numTris(0) 
+{ 
+    uint32_t k = 0, maxVertIndex = 0; 
+    // 找出需要为这个网格创建多少个三角形
+    for (uint32_t i = 0; i &lt; nfaces; ++i) { 
+        numTris += faceIndex[i] - 2; 
+        for (uint32_t j = 0; j &lt; faceIndex[i]; ++j) 
+            if (vertsIndex[k + j] &gt; maxVertIndex) 
+                maxVertIndex = vertsIndex[k + j]; 
+        k += faceIndex[i]; 
+    } 
+    maxVertIndex += 1; 
+ 
+    // 分配内存，存储网格顶点的位置
+    P = std::unique_ptr&amp;ltVec3f []&gt;(new Vec3f[maxVertIndex]); 
+    for (uint32_t i = 0; i &lt; maxVertIndex; ++i) { 
+        P[i] = verts[i]; 
+    } 
+ 
+    // 分配内存，存储三角形下标
+    trisIndex = std::unique_ptr&amp;ltuint32_t []&gt;(new uint32_t [numTris * 3]); 
+    uint32_t l = 0; 
+    // 生成三角形下标数组
+    for (uint32_t i = 0, k = 0; i &lt; nfaces; ++i) {  //每个面
+        for (uint32_t j = 0; j &lt; faceIndex[i] - 2; ++j) {  //该面中的每个三角形
+            trisIndex[l] = vertsIndex[k]; 
+            trisIndex[l + 1] = vertsIndex[k + j + 1]; 
+            trisIndex[l + 2] = vertsIndex[k + j + 2]; 
+            l += 3; 
+        } 
+        k += faceIndex[i]; 
+    } 
+    // 存储法线与 st 坐标
+    ... 
+}
+</code></pre><p>三角形顶点下标的计算很直接。我们创建一个数组，其长度等于三角形数乘以 3（因为每个三角形都需要三个指向点数组的下标——第 xx 行）。我们对每个面循环，再对该面中的每个三角形循环，从输入的顶点下标数组算出当前三角形的下标，存进三角形顶点下标数组（第 xx 行到第 xx 行）。到这一步，我们就有了一个可渲染的多边形网格，形式是三角化的多边形网格。</p><h2>法线</h2><figure><img src="https://scratchapixel.com/images/ray-triangle-mesh/facevertexnormals.png?" alt=""><figcaption><b>图 4：</b>面法线（左）与顶点法线（右）。面法线用于平面着色，顶点法线用于伪造平滑着色。</figcaption></figure><p>三角形的法线可以由向量 AB 与 AC 的叉积算出（图 4）。这个法线叫面法线，因为它对应一个垂直于三角形三个顶点所确定平面的向量。因此该法线向量也垂直于这个面（此情形下即三角形。记住多边形应当是共面的），故称面法线。不过我们还可以计算所谓顶点法线，顾名思义，它是在网格中每个顶点位置处定义的法线。这个法线对平滑着色很有用（如图 4 所示）。它通常由该顶点所连接的所有面法线求平均得到（把法线相加，再除以构成该面的顶点数）。顶点法线是着色所必需的，一般由建模程序算好，作为网格描述的一部分传给渲染器。若未定义，渲染器就得自己计算。顶点法线的计算将在以后的课程里讨论。现在我们假定它们总是在物体几何文件中定义好了。</p><h2>纹理坐标</h2><p>除非几何是在程序里即时生成的，否则 st 坐标一般都在建模程序中生成并导出到存该物体的文件里。与法线类似，我们期望纹理坐标已在物体几何文件中定义好。</p><h2>接下来讲什么？</h2><p>本章我们讲清了存储和计算多边形网格需要哪些信息。下一章将说明如何对这些网格做光线追踪，并给出一个实际的 C++ 例子。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-polygon-mesh/polygon-to-triangle-mesh.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-polygon-mesh/polygon-to-triangle-mesh.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

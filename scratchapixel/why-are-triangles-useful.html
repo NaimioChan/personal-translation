@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>三角形为什么有用？ - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪：渲染三角形 · 三角形为什么有用？（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>三角形为什么有用？</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="why-are-triangles-useful.html">三角形为什么有用？</a></li>
+<li><a href="geometry-of-a-triangle.html">三角形的几何</a></li>
+<li><a href="ray-triangle-intersection-geometric-solution.html">光线与三角形求交：几何解法</a></li>
+<li><a href="single-vs-double-sided-triangle-backface-culling.html">单面与双面三角形以及背面剔除</a></li>
+<li><a href="barycentric-coordinates.html">重心坐标</a></li>
+<li><a href="moller-trumbore-ray-triangle-intersection.html">Möller-Trumbore 算法</a></li>
+</ol>
+</div>
+<h2>三角形为什么有用？</h2><p><b>阅读时间：8 分钟。</b></p><p>理论上，求解光线与三角形的交点并不算太难。但光线与三角形求交的复杂性，来自必须考虑的大量不同情形。写一个既能处理所有这些情形、又足够健壮且快速的例程并不容易。正因如此，这个话题在图形学界被反复研究、反复争论。它通常也被认为是光线追踪器里最关键的例程之一（原因我很快就说）。</p><p>针对这个问题有不少可行的做法，在各种使用光线追踪的开源项目里都能见到，其中几种比其余的更流行。</p><p>其中之一就是所谓的 Möller-Trumbore 方法，名字来自 1997 年发表论文「_Fast Minimum Storage Ray-Triangle Intersection_」的两位作者。当时该方法被介绍为「针对没有预先算好平面方程的三角形的最快光线/三角形求交例程」（因为更早的算法都依赖预先算出三角形所在平面，本课程后面会讲）。</p><p>第二种常见方法是「_Watertight Ray/Triangle Intersection_」（2013），作者是 Sven Woop、Carsten Benthin 和 Ingo Wald（他目前在 Nvidia 工作，据我所知在那里带领「光线追踪」团队）。本课程不会讲「Watertight Ray/Triangle Intersection」这项技术，以后会单独开一门课。这项技术本身并不算特别复杂，尤其是它与 Möller-Trumbore 方法共享一些概念，但对于入门课程来说，没必要把一整套技术都铺开讲。</p><p>在正式进入主题之前，要注意还有计算光线与四边形交点的方法。三角形有一些很好的性质，本课程会讲到，但要表示一个四边形需要两个三角形。所以，如果你能算光线与四边形的交点，而且不比光线与三角形的方法慢多少，那就是很大的进步。近来，尤其是随着硬件加速光线追踪的进展，光线与四边形求交重新流行起来。这部分同样留到以后（或将来）的课程里讲。</p><p>所以本课程的结构如下：</p><ul><li><p>首先，我们回顾一下三角形为什么好。</p></li><li><p>然后，我们看它的一些数学性质，这些性质会用来解光线与三角形的问题。</p></li><li><p>接着，我们研究一种简单的几何方法来解这个问题。</p></li><li><p>之后，我们学习重心坐标。</p></li><li><p>最后，我们讲 Möller-Trumbore 算法。</p></li></ul><h2>几何基元</h2><p><b>几何基元</b>是渲染程序中表示三维物体的东西。比如要表示一个球体，我们可以用球心的位置和半径来定义它，如<a href="ray-sphere-intersection.html">上一课</a>所述。同样，复杂物体可以用更复杂的几何基元来建模，比如<b>多边形</b>、<b>NURBS 或 Bezier 曲面片</b>、<b>细分曲面</b>等。每一种都适合表示某类三维物体。例如 NURBS 适合表面光滑的物体，而多边形适合建筑这类几何形状。三角形并不是独立的几何类型，而是多边形基元类型的一个子集。后面有一课会讲到，多边形物体很容易转换成三角形。</p><h2>我们为什么这么喜欢三角形？</h2><figure><img src="https://scratchapixel.com/images/ray-triangle/triangle1.png" alt=""><figcaption><b>图 1：</b>三角形的几何。一个三角形由三个顶点定义，这三个顶点确定一个平面。法线垂直于这个平面。一条光线（黄色）与这个三角形相交。</figcaption></figure><p>计算光线与球体这类基元的交点很直接。但只用球体来建模大多数三维物体并不现实，这就需要用其他类型的基元来表示形状更任意的复杂物体。虽然渲染器里用多边形网格或 NURBS 曲面没有任何限制，但计算光线与这些基元的交点可能既困难又耗时。反过来，计算光线与三角形的交点相对简单，而且可以很好地优化。它也许不如光线与球体求交快，但比渲染光线与 NURBS 曲面的交点要高效。这个折中我们愿意接受。</p><p>与其去处理 NURBS 或 Bezier 曲面片这类复杂基元，我们可以把每个物体都转换成三角网格，再计算光线与网格中每个三角形的交点。这个做法把光线与物体的求交简化成一个单一、相当快的例程。把一个 Bezier 曲面片转换成三角网格，比算多次光线与 Bezier 曲面片的交点要简单得多。又或者你会问：几何体由球体构成时为什么不用光线与球体求交，碰到 NURBS 物体就转成三角网格、再用光线与三角形求交的例程？理论上这可行——我确实见过采用这种做法的渲染器，不过是相当久以前的事了——但实际上我们不这么做。这种做法会让代码库显著复杂化，要求我们为每种几何类型决定用哪种策略，并为每种类型实现一个可能相当专用的光线与几何体求交例程。</p><p>所以，如我所说，实践中每当我们实现一种新的几何基元类型时，与其为该几何类型专门写一个光线求交例程，我们会把开发精力放在给系统提供一个把该几何体转换成「通用」三角网格的例程上。三角形成为我们所有光线追踪求交代码所依托的基础基元。现代光线追踪器大多采用这个策略（早年情况略有不同）。</p><p>顺便说一句，三角形不只是光线追踪的基础基元，它在另一种渲染方法——光栅化，也就是 GPU 至今仍作为默认模式的方法——里也扮演着类似的角色。没错，你在电子游戏里看到的每一个用光栅化渲染出来的网格，实际上都被转换成了三角网格（线、点以及某些高级体积渲染方法之类的例外）。GPU 在光栅化中以三角形作为默认渲染基元，原因与我们在光线追踪中使用三角形的原因相当类似。主要原因是，渲染三角形——无论是通过光栅化还是光线追踪——都可以被 GPU 很好地硬件加速。</p><h2>什么是三角形？</h2><figure><img src="https://scratchapixel.com/images/ray-triangle/triangulated.png" alt=""><figcaption><b>图 2：</b>四边形不一定共面。它包含的四个顶点并不落在同一个平面上（如右图所示）。为解决这个问题，可以把四边形三角化，因为我们知道三角形必定共面（左图中，右边的四边形被转换成两个三角形）。</figcaption></figure><p>三角形由位于三维空间中的三个顶点（或点）定义（图 1）。一个点可以表示空间中的一个位置。有了两个点，我们可以定义一条直线。三个点则可以定义一个曲面——具体说，一个平面。由构造方式决定，三角形是共面的；它的三个顶点确定一个平面，三个顶点都落在这个平面内。顶点多于三个的多边形则不一定如此；由四个点定义的四边形，当这些点不在同一平面上时可能并不共面。不过四边形可以转换成两个共面的三角形，如图 2 所示。这项技术叫作<b>三角化</b>，可以用于任意顶点数的多边形，下一课讲多边形网格渲染时会进一步展开。目前我们只专注于渲染单个三角形。</p><h2>如何计算光线与三角形的交点？</h2><p>过去几十年里，为计算光线与三角形的交点发展出了大量算法，研究仍在继续，新论文也在不断发表。如引言所说，本课程会介绍其中两项技术。第一项技术用基础逻辑和初等线性代数就能实现，我们称之为*几何解法*（因为它完全依赖几何原理）。第二项技术被认为是光线与三角形求交最快的方法之一，由 Möller 与 Trumbore 于 1997 年在论文 *「Fast, Minimum Storage Ray-Triangle Intersection」* 中提出。这个方法不依赖预先计算三角形所在平面的方程，而以前的算法都需要这一步。这个方法对线性代数的理解要求更高，但我们会讲得清楚而完整。</p><p>我们可以把光线与三角形求交测试拆成两个主要步骤：</p><p>1. 光线是否与三角形所定义的平面相交？</p><p>2. 如果相交，交点是否落在三角形内部？</p><p>下面来看这两个问题该怎么解决。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/why-are-triangles-useful.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/why-are-triangles-useful.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

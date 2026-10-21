@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>控制 CG 光照：曝光、灰区与灰球 - Scratchapixel 中文译本</title>
+<meta name="description" content="BRDF、线性与曝光的一次创意探索 · 控制 CG 光照：曝光、灰区与灰球（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>控制 CG 光照：曝光、灰区与灰球</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="intro-brdf.html">写给美术的 BRDF 与辐射度量学入门</a></li>
+<li><a style="font-weight:700" href="0-18-stop-and-exposure-explained.html">控制 CG 光照：曝光、灰区与灰球</a></li>
+<li><a href="painting-textures.html">绘制纹理</a></li>
+</ol>
+</div>
+<h2>控制 CG 光照：曝光、灰区与灰球</h2><p><b>阅读时间：13 分钟。</b></p><p>本课最初写于 2000 年代初。虽然其中有些内容可能略有过时——毕竟 CGI 工作室的流程已经演变了很多——但我确实打算将来重访这一课。不过它包含有价值的信息，既有历史性的也有实用性的，对理解下一课「光照简介」会有帮助。因此，我决定在这次计划中的更新之前，仍然把它重新发布出来（2024 年 3 月）。</p><h2>关于反照率与 0.18 这个魔法数字</h2><p>为电影制作 CG 图像的难点，在于把这些图像与实拍素材整合起来。这些「电影」图像是用摄影师、胶片实验室、相机制造商和 DP（摄影指导）多年来发展出的光照技术制作出来的。这些技术的目的，是建立一套控制图像观感的流程，尤其是保证在不同光照条件下拍摄的图像之间保持一致。这往往要回答一个问题：「什么是一张曝光正确的图像？」曝光正确意味着：「我如何把场景的动态范围最优地映射到胶片的动态范围上？」拍出一张曝光正确的照片之所以难，是因为它要考虑许多变量，从胶片的感光度到光照条件，再到被拍摄物体的亮度。</p><p>这些技术基于 19 世纪末感光测定学的工作，后来（20 世纪早中期）由摄影师 <b>Ansel Adams</b> 在一门叫作<b>区域系统</b>的摄影技术中予以形式化（另有课程讲解）。这门技术的原理基于一个观察：现实世界中漫反射物体的平均反射率（也就是前面说的反照率）大致在 0.18 左右。Ansel Adams 利用了这个观察，并以某种方式把它与摄影胶片的光学性质联系起来。</p><p>白种人皮肤的平均反射率落在 0.18 到 0.25 之间，具体取决于肤色。在<a href="https://en.wikipedia.org/wiki/Albedo" target="_blank" rel="noreferrer noopener">维基百科讲反照率的页面</a>上，你可以找到一些常见材质的反照率简表。</p><p>摄影胶片，以及数码相机使用的 CCD（电荷耦合器件），只能记录一定范围内的光强值（不要把胶片的动态范围与胶片感光度混淆，后者会给问题再引入一个变量，这里不讨论）。理想情况下，摄影指导或摄影师希望构图中的主体曝光正确，也就是说，这个主体在胶片上记录的值最好落在这个范围的中间（我们称之为中间调）。高于此的是高光，低于此的是阴影。</p><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-mcbeth.png" alt=""><figcaption><b>图 5：</b>Macbeth 色卡也会在片场使用。每个色块对应某些常见表面（皮肤、植物、天空等）的平均反射率。左上角起第三个方块是中灰。请看讲 McBeth 色卡的那一课，它同时也是光谱渲染的入门。</figcaption></figure><p>在深入 Adams 发展的技术之前，我们需要引入<b>档</b>（stop）的概念。一般来说，档这个概念在摄影中用来量化光强的相对变化。如果你有一盏灯泡，再加一盏，我们说光强增加了一档。如果再加两盏，又增加一档，再加四盏，再增加一档，以此类推。光强加倍就是亮一档（+1 档），光强减半就是暗一档（-1 档）。注意，让光强增加一档所需的灯泡数量可以表示成 2 的幂（2 的 n 次方，n 是档数）。</p><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-lightstop.png" alt=""></figure><p>光圈、快门速度和胶片感光度都用档来表示，尽管它们采用不同的编号体系。改变镜头的光圈大小，会让通过镜头的光量增加或减少整整一档。摄影师用光圈设置来控制曝光。</p><p>现在假设我们给一张灰卡拍了一张曝光正确的照片，这张卡是纯灰色，恰好反射它接收到的光的 18%（18% 就是我们前面说的现实世界中漫反射物体的平均反射率）。解释这里「曝光正确」是什么意思可能要花很长时间，简而言之：每种胶片都由所谓的密度曲线（或特性曲线）定义。这条曲线（光密度对光亮度的图，即每秒光子数或相对曝光量）表明胶片的光密度随受光量变化的方式。这条曲线呈「S」形，因为胶片对光亮度的线性变化并不线性响应，这一点和人眼相似。</p><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-density.png" alt=""><figcaption><b>图 6：</b>摄影胶片典型的「S」形感光曲线。底片的密度（画面亮的地方在底片上反而暗，也就是密度大）随胶片受光量而变化。考虑到如果不给参照，「多少光」就没有意义，我们索性以档为单位、相对于 N（0）来度量光量。</figcaption></figure><p>这算不上大问题，因为曲线中段几乎是线性的。不再细说，简单讲：当照片主体在胶片上对应的光密度值落在曲线中段（直线部分）时，场景就算曝光正确。我们把这个最佳点（也就是让灰卡得到正确曝光的那组相机设置）称为曝光 0。从这里出发，我们可以拍一组相隔 1 档的照片。先改变光圈让画面暗 1 档，一直拍到画面完全变黑。对通用摄影胶片（比如 DP 们在数码相机普及前非常常用的柯达 5245），我们会发现，在到达那一点之前，曝光 0 以下大约还有 7 档的宽容度。然后我们可以重复这个过程，这次是亮 1 档，一直拍到画面完全变白。这种情况下，曝光 0 以上平均大约有 5 档。理想情况下，摄影师或 DP 希望画面主体落在这个范围的中间（S 形曲线的中部），下面留 5 到 6 档来捕捉阴影，上面留 4 到 5 档来捕捉高光（简而言之，这就是 Ansel Adams 那套技术的内容）。我们用灰卡来调整相机光圈，因为灰卡通常代表画面中物体反射率的平均值。如果胶片曝光正确（也就是相机光圈设置正确），那么底片上灰卡的像，其密度应当落在密度曲线中部。</p><details open><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-zone.png" alt=""></figure><p>在 Adams 的系统中，胶片的范围被分成 11 个区域。区域 5 对应中灰（18% 反射率）。区域 6 代表白种人皮肤。区域 0 是纯黑，区域 10 是纯白。关于区域系统以及 Macbeth 色卡在电影摄影中的用法，另有课程讨论。</p></details><p>我们所知道的 CG 的难点在于，用来生成图像的所有数值都是相对的。我们可以通过降低物体亮度、增强光照，或者提高物体亮度、减弱光照，渲染出两张看起来完全相同的图像。这里有两个问题。理论上，只要改变物体亮度与光强之间的比值，就有无穷多种组合能产生同一张 CG 图像，如我们前面所说。不过，用非常暗的物体配非常亮的光，大概不是正确的做法。第二个问题是，当有人要求你「把图像调亮一点或调暗一点」时，你究竟该对光照或相机设置改多少，这往往很难把握。谈论图像非常主观，而 DP 们用档而不是「更暗」「更亮」这类更主观的词来谈论图像亮度与光照（因为档是一个可测量、可控制的值，片场或胶片实验室里每个人都能以相似的方式理解它）。</p><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-greycard.png" alt=""><figcaption><b>图 7：</b>片场用来调整相机光圈的灰卡示例。我们也可以在后期制作中用灰卡把素材片校成中性。</figcaption></figure><p>在现实摄影与 CG 之间搭起这座桥的，是 80 年代初在 ILM 开发 CG 流程的一批人。其中有些人有传统胶片冲洗的背景，因此非常熟悉真实摄影与胶片中的概念，比如光密度、物体反射率和档。他们的想法是：CG 物体的漫反射颜色应当与现实世界物体的反射率一致。换句话说，灰卡在 CG 中应当用 0.18 的漫反射颜色来表示。现在记住，曝光正确的胶片的相对曝光是 0，而 DP 可以决定让画面亮或暗某个可测量的档数，办法是给场景加更多光（可以用测光表测出），或者改变相机设置。关于图像该暗多少、亮多少，所有指示都以相对于那个 0 曝光的欠档或过档来表示。CG 中的想法是：把数值 0.18 设为相对曝光 0，以此获得同样的效果。由于档服从 2 的幂，以「档」表示的像素亮度可以用 2 的幂的逆运算（即以 2 为底的对数）来算。因为 \(\log_2(1) = 0\)，要从 0.18 得到 0 曝光，我们需要用下面这个公式：</p><p>$$
+\log_2\left(\frac{\text{pixel brightness}}{0.18}\right) = \text{pixel exposure}
+$$</p><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-exposure.png" alt=""><figcaption><b>图 8：</b>曝光对像素亮度的图。当像素亮度为 0.18 时，曝光等于 0。</figcaption></figure><p>我们描述过的这些概念，正是「把 CG 物体的漫反射默认颜色设为 0.18」以及「以档为单位度量 CG 画面中像素亮度」这两个做法的由来。理想情况下，灯光颜色的 RGB 值不应高于 1，这样你就能在拾色器里方便地调整它的色相和饱和度。要调整灯光的整体强度，你不如使用曝光控制（如果你的工具有的话）。灯光的最终值等于灯光颜色乘以 \(2^\text{light exposure}\)。</p><p>设想漫反射默认颜色是 0.18，你用一盏强度为 1 的穹顶光照亮物体（灯光颜色为 1，灯光曝光为 0）。我们在第一章学过，物体亮度此时应当是 0.18。如果你想把物体亮度提高 1 档，就把灯光曝光设为 1，对应整体光强（\(Li\)）为 2（\(Li = 1 \times 2^1 = 2\)）。物体亮度现在是 0.36。如果你想把光提高 2 档，就把灯光曝光设为 2，最终光强会是 4（\(Li = 1 \times 2^2 = 4\)）。物体亮度现在是 0.72。我们把曝光提高了 2 档，但光量是曝光 0 时的 4 倍。注意这对负的灯光曝光值同样成立（暗 1 档意味着 \(Li = 1 \times 2^{-1} = 0.5\)，暗 2 档意味着 \(Li = 1 \times 2^{-2} = 0.25\)）。</p><h2>匹配灰球</h2><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-greyball.png" alt=""></figure><p>如果你在制作电影 CGI 的工作室里干过，大概对灰球的使用不陌生。它们在片场被用作光照参照。顾名思义，球面上涂的是做灰卡用的同一种漆。换句话说，它的反射率也是 18%。理想情况下，灰球应当是完美的漫反射物体，但通常并非如此。片场用的那些往往略微发亮（左图），不过这并非有意为之（人们并没花太多功夫把它们做得很哑光）。我们知道片场的相机光圈已经设好，使中灰（18% 反射率）落在摄影胶片或数字传感器（对数码相机而言）所能捕捉的亮度值范围的中间。如果相机设置正确，我们就可以把灰球当作光照参照。当然，球不像灰卡那样是平的，它捕捉来自各个方向（球面）的光照信息。后期制作中，我们会调整光照（新建灯光、移动已有灯光、调整它们的颜色和曝光等），直到 CG 灰球（一个绑定了漫反射颜色设为 0.18 的漫反射材质的球体）的渲染结果与实拍灰球一致。一旦光照与素材片的光照匹配（若 CG 与实拍灰球看起来一样，就是匹配了），理论上，用这套光照渲染的 3D 模型应当与实拍素材片中物体或角色的光照非常接近。再补充一点：在后期制作中，如果胶片不是用数码相机拍的（如今这已是常态），素材通常要先扫描。素材片会被导入与显示 CG 渲染结果相同的查看程序里。通常这些程序能以档为单位测量像素亮度值。要调整 3D 场景的光照，我们会在若干位置（通常是主光区和阴影区）测量灰球的曝光，再把这些值与我们在 CG 灰球相同位置读到的值作比较。我们可以调整光照直到这些值匹配。以档为单位工作，调整光强会容易得多。例如，如果发现 CG 灰球主光侧的曝光比实拍灰球主光侧暗 1 档，那么我们只需把场景的主光提高 1 档就能对上。</p><p>用灰球作光照参照、以及制作 HDR 光探针图像来匹配真实照片的光照，另有课程讲解。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/brdf-linear-exposure/0-18-stop-and-exposure-explained.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/brdf-linear-exposure/0-18-stop-and-exposure-explained.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

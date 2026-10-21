@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>正交投影矩阵 - Scratchapixel 中文译本</title>
+<meta name="description" content="透视与正交投影矩阵 · 正交投影矩阵（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>正交投影矩阵</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="projection-matrix-introduction.html">投影矩阵是什么，何处、为何要使用？</a></li>
+<li><a href="projection-matrices-what-you-need-to-know-first.html">投影矩阵：首先需要知道的事</a></li>
+<li><a href="building-basic-perspective-projection-matrix.html">构建基础的透视投影矩阵</a></li>
+<li><a href="opengl-perspective-projection-matrix.html">透视投影矩阵</a></li>
+<li><a href="perspective-matrix-in-practice.html">迷路了？用真实的制作案例回顾一遍</a></li>
+<li><a href="projection-matrix-GPU-rendering-pipeline-clipping.html">投影矩阵、GPU 渲染管线与裁剪</a></li>
+<li><a style="font-weight:700" href="orthographic-projection-matrix.html">正交投影矩阵</a></li>
+</ol>
+</div>
+<h2>正交投影矩阵</h2><p><b>阅读时间：11 分钟。</b></p><h2>我为什么要用正交投影？</h2><p><b>正交投影</b>（有时也称斜投影）相比其他投影类型更简单，因此是理解透视投影矩阵如何运作的绝佳题材。你可能会怀疑正交投影在现代应用里还有什么意义——毕竟电影和游戏普遍追求照片级真实感，而这通常靠透视投影实现。然而，正交投影或平行投影有其独特的用途和好处。例如《模拟人生》或《模拟城市》这类电子游戏就用这种投影方法做出了独特的视觉风格，在某些语境下比更常规的透视投影更受欢迎。此外，正交投影在渲染阴影贴图，或为实用目的生成 3D 模型的正交视图时很有用。比如建筑师可能需要从 CAD 软件里设计的房屋或建筑的 3D 模型生成蓝图。</p><p>本章我们将探讨如何构造一个矩阵，把点从相机空间投影到正交相机的图像平面上。</p><p>正交投影矩阵的目标，是把某个 3D 空间包围盒内的所有坐标重映射到<b>规范视图体（canonical viewing volume）</b>——这个概念在第 2 章介绍过。把这个原始盒子想象成包住场景中所有物体的包围盒。遍历场景中的每个物体，计算它们的包围盒，再调整全局包围盒的尺寸把所有包围体都包含进来，你就得到了场景的包围盒。然后正交矩阵要把这个盒子重映射到一个规范视图体，它由最小与最大范围 (-1, -1, -1) 和 (1, 1, 1) 定义（或者 (-1, -1, 0) 和 (1, 1, 1)，取决于所用约定）。本质上，被投影点的 x 与 y 坐标从原来的范围映射到 [-1,1]，z 坐标经调整落进 [-1,1]（或 [0,1]）。值得注意的是，两个包围盒——场景包围盒与规范视图体——都是 AABB（轴对齐包围盒），这大大简化了重映射过程。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/ortho-proj3.png?" alt=""><figcaption><b>图 1：</b>正交投影矩阵把场景包围体重映射到规范视图体。场景包围体内所有点的投影 XY 坐标都被「归一化」到 [-1,1] 范围内</figcaption></figure><p>算出场景包围盒之后，我们需要把这个包围盒的最小与最大范围投影到相机的图像平面上。对于正交投影（或平行投影），这件事很直接。用相机空间表示的任意点，其 x 与 y 坐标与投影到图像平面上的同一点的 x 与 y 坐标完全相同。可能还需要调整包围盒最小与最大范围在屏幕上的投影，以确保屏幕窗口是正方形，或保持与图像相同的宽高比（实现细节见下面的测试程序代码）。另外别忘了，画布或屏幕是以屏幕坐标系原点为中心的（图 2）。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/ortho-proj4.png?" alt=""><figcaption><b>图 2：</b>由场景包围盒确定屏幕坐标。</figcaption></figure><p>我们把这些屏幕坐标记作 l、r、t、b，分别代表左、右、上、下。</p><p>现在，我们需要把左右两个屏幕坐标（l、r）重映射到 -1 和 1，并对上下坐标（t、b）做同样的重映射。来看看这如何实现。假设 x 是 \([l,r]\) 范围内的任意点，我们可以写出：</p><p>$$l \leq x \leq r.$$</p><p>所有项都减去 l，得到：</p><p>$$0 \leq x - l \leq r - l.$$</p><p>为了让右边那项归一化为 1 而不是 \(r\)，我们把每一项都除以 \(r - l\)，得到：</p><p>$$0 \leq \frac{x - l}{r - l} \leq 1.$$</p><p>整个等式乘以 2（原因稍后就会清楚）：</p><p>$$0 \leq 2 \frac{x - l}{r - l} \leq 2.$$</p><p>所有项都减去 1，得到：</p><p>$$-1 \leq 2 \frac{x - l}{r - l} - 1 \leq 1.$$</p><p>现在中间那项落在 \([-1,1]\) 范围内，重映射就成功了。为了进一步推导这个式子：</p><p>$$-1 \leq \frac{2x - 2l - r + l}{r - l} \leq 1.$$</p><p>化简：</p><p>$$-1 \leq \frac{2x - l - r}{r - l} \leq 1.$$</p><p>整理：</p><p>$$-1 \leq \frac{2x}{r - l} - \frac{r + l}{r - l} \leq 1.$$</p><p>于是得到 x 的变换公式：</p><p>$$x' = \frac{2x}{r - l} - \frac{r + l}{r - l}.$$</p><p>把这个变换写成矩阵形式（你可能还记得第 3 章讲过）：</p><p>$$
+\begin{bmatrix}
+\frac{2}{r - l} & 0 & 0 & 0 \\
+0 & 1 & 0 & 0 \\
+0 & 0 & 1 & 0\\ 
+-\frac{r + l}{r - l} & 0 & 0 & 1
+\end{bmatrix}
+$$</p><p>y 坐标的处理过程相同。你只需把 \(r\) 与 \(l\) 换成 \(t\) 与 \(b\)（上、下）。矩阵变成：</p><p>$$
+\begin{bmatrix}
+\dfrac{2}{r - l} & 0 & 0 & 0 \\
+0 & \dfrac{2}{t - b} & 0 & 0 \\
+0 & 0 & 1 & 0\\ 
+-\dfrac{r + l}{r - l} & -\dfrac{t + b}{t - b} & 0 & 1
+\end{bmatrix}
+$$</p><p>最后，为了补全我们的正交投影矩阵，还需要把 z 坐标从 -1 重映射到 1。我们用同样的原理求 \(z\) 的公式。先从下面的条件出发：</p><p>$$n \leq -z \leq f.$$</p><p>别忘记，因为我们用的是右手坐标系，相机可见的所有点的 z 坐标都是负的，所以这里用的是 \(-z\) 而不是 \(z\)。把左边那项设为 0：</p><p>$$0 \leq -z - n \leq f - n.$$</p><p>然后每一项都除以 \(f-n\)，把右边那项归一化：</p><p>$$0 \leq \dfrac{-z - n}{f - n} \leq 1.$$</p><p>所有项乘以 2：</p><p>$$0 \leq 2 \dfrac{-z - n}{f - n} \leq 2.$$</p><p>减去 1：</p><p>$$-1 \leq 2 \dfrac{-z - n}{f - n} - 1 \leq 1.$$</p><p>可以把它改写成：</p><p>$$-1 \leq 2\dfrac{-z - n}{f - n} - \dfrac{f - n}{f - n} \leq 1.$$</p><p>展开各项，得到：</p><p>$$-1 \leq \dfrac{-2z - 2n - f + n}{f - n} \leq 1.$$</p><p>整理各项，得到：</p><p>$$z' = \dfrac{-2z}{f - n} - \dfrac{f + n}{f - n}.$$</p><p>把这两项加进矩阵：</p><p>$$
+\small \begin{bmatrix}
+\dfrac{2}{r - l} & 0 & 0 & 0 \\
+0 & \dfrac{2}{t - b} & 0 & 0 \\
+0 & 0 & {\color{\red}{ \dfrac{-2}{(f-n)}}} & 0\\ -\dfrac{r + l}{r - l} & -\dfrac{t + b}{t - b} & {\color{\red}{ -\dfrac{(f + n)}{(f-n)}}} & 1
+\end{bmatrix}
+$$</p><p>记住 OpenGL 用列主序约定来编码矩阵，而 Scratchapixel 用行主序记法。要从一种记法换到另一种，需要对矩阵求转置。下面是教科书里常见的最终 OpenGL 正交矩阵：</p><p>$$
+\begin{bmatrix}
+\dfrac{2}{r - l} & 0 & 0 & -\dfrac{r + l}{r - l} \\
+0 & \dfrac{2}{t - b} & 0 & -\dfrac{t + b}{t - b} \\
+0 & 0 & \dfrac{-2}{f - n} & -\dfrac{f + n}{f - n} \\ 
+0 & 0 & 0 & 1
+\end{bmatrix}
+$$</p><h2>测试程序</h2><p>照例，我们用一个简单程序来测试这个矩阵。我们会复用测试简单透视投影矩阵与 OpenGL 透视投影矩阵时的同一份代码。我们把 <code>glFrustum</code> 函数换成了 <code>glOrtho</code>，顾名思义，它用来设置 OpenGL 正交矩阵。屏幕坐标（函数的 l、r、t、b 参数）是这样算出来的（第 63-83 行）：遍历场景中所有顶点并相应地扩展最小与最大范围变量，从而算出场景的包围盒。包围盒的最小与最大范围随后从世界空间变换到相机空间。由相机空间中得到的这两个点，我们找出 x 和 y 两个方向上的最大尺寸。最后把屏幕坐标设为这两个值中的较大者。这样能确保屏幕坐标构成一个正方形（如果图像的宽高比不等于 1，你可能需要把左右坐标乘以该宽高比），并且屏幕或画布本身以屏幕空间坐标系原点为中心。</p><p>其余代码照旧。我们遍历场景中的顶点。顶点从世界空间变换到相机空间，然后用 OpenGL 正交投影矩阵投影到屏幕上。</p><pre><code>
+#include &amp;ltcstdio&gt;
+#include &amp;ltcstdlib&gt;
+#include &amp;ltfstream&gt;
+#include &amp;ltlimits&gt;
+#include "geometry.h"
+#include "vertexdata.h"
+
+// 设置 OpenGL 正交投影矩阵
+void glOrtho(
+    const float &amp;b, const float &amp;t, const float &amp;l, const float &amp;r,
+    const float &amp;n, const float &amp;f,
+    Matrix44f &amp;M)
+{
+    // 设置 OpenGL 正交投影矩阵
+    M[0][0] = 2 / (r - l);
+    M[0][1] = 0;
+    M[0][2] = 0;
+    M[0][3] = 0;
+
+    M[1][0] = 0;
+    M[1][1] = 2 / (t - b);
+    M[1][2] = 0;
+    M[1][3] = 0;
+
+    M[2][0] = 0;
+    M[2][1] = 0;
+    M[2][2] = -2 / (f - n);
+    M[2][3] = 0;
+
+    M[3][0] = -(r + l) / (r - l);
+    M[3][1] = -(t + b) / (t - b);
+    M[3][2] = -(f + n) / (f - n);
+    M[3][3] = 1;
+}
+
+void multPointMatrix(const Vec3f ∈, Vec3f &amp;out, const Matrix44f &amp;M)
+{
+    // 将点乘以投影矩阵
+    out.x = in.x * M[0][0] + in.y * M[1][0] + in.z * M[2][0] + M[3][0];
+    out.y = in.x * M[0][1] + in.y * M[1][1] + in.z * M[2][1] + M[3][1];
+    out.z = in.x * M[0][2] + in.y * M[1][2] + in.z * M[2][2] + M[3][2];
+    float w = in.x * M[0][3] + in.y * M[1][3] + in.z * M[2][3] + M[3][3];
+
+    // 若 w 不等于 1 则归一化（从齐次坐标转换为笛卡尔坐标）
+    if (w != 1) {
+        out.x /= w;
+        out.y /= w;
+        out.z /= w;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    uint32_t imageWidth = 512, imageHeight = 512;
+    Matrix44f M
+
+proj;
+    Matrix44f worldToCamera = {0.95424, 0.20371, -0.218924, 0, 0, 0.732087, 0.681211, 0, 0.299041, -0.650039, 0.698587, 0, -0.553677, -3.920548, -62.68137, 1};
+
+    float near = 0.1;
+    float far = 100;
+    float imageAspectRatio = imageWidth / (float)imageHeight; // 图像为正方形时该值为 1
+
+    // 计算场景包围盒
+    const float kInfinity = std::numeric_limits&amp;ltfloat&gt;::max();
+    Vec3f minWorld(kInfinity), maxWorld(-kInfinity);
+    for (uint32_t i = 0; i &lt; numVertices; ++i) {
+        if (vertices[i].x &lt; minWorld.x) minWorld.x = vertices[i].x;
+        if (vertices[i].y &lt; minWorld.y) minWorld.y = vertices[i].y;
+        if (vertices[i].z &lt; minWorld.z) minWorld.z = vertices[i].z;
+        if (vertices[i].x &gt; maxWorld.x) maxWorld.x = vertices[i].x;
+        if (vertices[i].y &gt; maxWorld.y) maxWorld.y = vertices[i].y;
+        if (vertices[i].z &gt; maxWorld.z) maxWorld.z = vertices[i].z;
+    }
+
+    Vec3f minCamera, maxCamera;
+    multPointMatrix(minWorld, minCamera, worldToCamera);
+    multPointMatrix(maxWorld, maxCamera, worldToCamera);
+
+    float maxx = std::max(fabs(minCamera.x), fabs(maxCamera.x));
+    float maxy = std::max(fabs(minCamera.y), fabs(maxCamera.y));
+    float max = std::max(maxx, maxy);
+    float r = max * imageAspectRatio, t = max;
+    float l = -r, b = -t;
+
+    glOrtho(b, t, l, r, near, far, Mproj);
+    unsigned char *buffer = new unsigned char[imageWidth * imageHeight];
+    memset(buffer, 0x0, imageWidth * imageHeight);
+    for (uint32_t i = 0; i &lt; numVertices; ++i) {
+        Vec3f vertCamera, projectedVert;
+        multPointMatrix(vertices[i], vertCamera, worldToCamera);
+        multPointMatrix(vertCamera, projectedVert, Mproj);
+        if (projectedVert.x &lt; -imageAspectRatio || projectedVert.x &gt; imageAspectRatio || projectedVert.y &lt; -1 || projectedVert.y &gt; 1) continue;
+        // 转换到栅格空间，并在图像中用简单的点标出顶点位置
+        uint32_t x = std::min(imageWidth - 1, (uint32_t)((projectedVert.x + 1) * 0.5 * imageWidth));
+        uint32_t y = std::min(imageHeight - 1, (uint32_t)((1 - (projectedVert.y + 1) * 0.5) * imageHeight));
+        buffer[y * imageWidth + x] = 255;
+    }
+    // 导出为图像
+    std::ofstream ofs;
+    ofs.open("./out.ppm");
+    ofs &lt;&lt; "P5\n" &lt;&lt; imageWidth &lt;&lt; " " &lt;&lt; imageHeight &lt;&lt; "\n255\n";
+    ofs.write((char *)buffer, imageWidth * imageHeight);
+    ofs.close();
+    delete[] buffer;
+
+    return 0;
+}
+</code></pre><p>照例，我们把程序的结果与用同一相机、同样渲染设置渲染同一几何体的参考图作比较。把程序的输出叠加到参考渲染图上，可以确认程序产出的结果与之吻合。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/ortho-render.png?" alt=""></figure>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/orthographic-projection-matrix.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/orthographic-projection-matrix.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

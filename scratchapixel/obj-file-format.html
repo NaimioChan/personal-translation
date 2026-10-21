@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>学习从 OBJ 格式文件中读取三维模型数据 - Scratchapixel 中文译本</title>
+<meta name="description" content="OBJ 文件格式 · 学习从 OBJ 格式文件中读取三维模型数据（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>学习从 OBJ 格式文件中读取三维模型数据</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+
+<h2>学习从 OBJ 格式文件中读取三维模型数据。</h2><p><b>阅读时间：29 分钟。</b></p><h2>前置要求</h2><p>如果你对网格一无所知，或者只是一知半解，我强烈建议先读一读 <a href="introduction-polygon-mesh-introduction.html">多边形网格入门</a> 这门课。它讲了定义多边形网格的数据有哪些用法、你会遇到哪几种多边形网格，在使用实时 GPU 3D API 以及更一般地任何需要处理网格数据的软件时都会碰上这些。</p><h2>什么是 OBJ 文件格式？</h2><p>在进入下一门课（主题是在 3D 场景中漫游）之前，先学会如何把有意义的几何体载入场景很重要。到目前为止，我们主要渲染的是几个三角形这样的简单形状，或者用我们自己特制的工具让几何体加载更省事，这都是为了保持示例代码简单。但这种方式有局限，因为我们不得不写自定义代码，把 Maya 或 Blender 这类软件里的模型导出成一种独有的自定义格式。这种做法可移植性很差。如果你想用同一份代码，却想拿自己的模型来测试，就需要一个更通用的方案。</p><p>这就是 3D 格式的用武之地。不过在深入之前，先降一降期待。要记住，由于当前计算机的限制，光线追踪很慢，而如果不做特殊优化，想要渲染时间还过得去，我们就只能渲染非常简单的模型。考虑到下一门课需要在交互式帧率下渲染场景，我们会受限于非常简单的模型，也许只有一百个三角形左右。这并不多。</p><p>但别灰心。首先，能做到这一点，在你精通 CG 编程的路上已经是重要的一步。其次，这意味着后续课程会聚焦于如何尽可能加速这个渲染过程。最终我们能渲染更复杂的场景，而能轻松载入任意模型会让体验更丰富、更有趣。</p><p>所以，在探索用光线追踪加速渲染的各种策略之前，我们先过这两门课：用业界标准文件格式载入模型，以及用 3D 相机漫游。说到 3D 文件格式，这些年来开发出的相当多，其中有一小撮变得非常流行，或者说成了业界标准。最有名的是 OBJ（也叫 Wavefront OBJ 文件格式）、glTF 和 FBX。这些格式之所以流行，是因为它们要么够老、够简单，且覆盖了渲染 3D 场景所需的大部分内容。OBJ 是最简单的文件格式，也是本课程的重点。它同时也是最古老的格式之一。在深入之前，重要的是理解它与其他两者的差别。OBJ 更简单，主要因为它不支持动画，对描述物体材质属性的支持也很有限。glTF 和 FBX 都支持动画（包括动画缓存）和材质（含纹理），因此在电子游戏内容创作者和开发者中很受欢迎。</p><p>尽管有这些局限，OBJ 由于简单，至今仍被广泛使用、广受欢迎。不过这种简单多少有点迷惑性。大多数人（本课程也是这种情况）只用、也只了解这个格式能力的一小部分。它主要被用来存储和解析网格几何体，也就是由多边形构成的物体。但 OBJ 格式其实相当复杂，可以支持各种各样的曲面，包括曲面片、Bezier、NURBS 曲线与曲面——这些在动画业界几乎已被遗忘，但在 CAD 行业仍被大量使用。它还支持倒角、细节层次、修剪等等特性。不过在本课程里，我们和大多数用户一样，只用 OBJ 格式读多边形模型。</p><p>值得一提的是，大多数 3D 应用，甚至那些支持某种形式 3D 渲染的 2D 软件，都因为 OBJ 的简单和流行而支持它。这包括 Maya、Blender 这类软件，也包括 Photoshop，以及 Roblox Studio 这类应用——后者可以让你把某个关卡导出为 OBJ（当然，不含任何动画）。</p><p>继续之前最后几点说明：</p><ul><li><p>是的，还有更多格式，但它们无疑更复杂。比如我们将来会讨论的 USD，那是 Pixar 开发的一种格式，有着成为通用场景描述格式的雄心。Alembic 是另一种有意思的格式，设计目的是让你以动画缓存的形式导出动画。比方说你那些会动的角色，每个顶点都被逐帧烘焙下来。这样就可以把套用了变形器的动画烘焙出来。FBX 也能让你把动画导出成缓存。</p></li><li><p>Maya 或 Blender 这类软件把场景数据存在自家专有的格式里。</p></li><li><p>写导入器和导出器往往是件苦差事。写一个好的就更难了。</p></li><li><p><b>OBJ 文件格式图的就是方便</b>。考虑到它的年头，以及规范（或者至少设计规范的那些人）都已不在——他们在圣巴巴拉安享退休生活——大多数用它工作的公司和开发者都倾向于按自己的方式去解读它，使它算不上一个可靠的交换格式。不过它的简单与实用在很大程度上弥补了这些问题。</p></li></ul><h2>一点历史</h2><p>简史如下：OBJ 格式由一家名为 Wavefront 的公司设计，该公司 1984 年创立于圣巴巴拉。Wavefront 收购了 Explore，那是法国公司 Thomson Digital Image（TDI）开发的一款软件，之后又在 1995 年与一家名为 Alias 的公司合并，后者开发过一款叫 PowerAnimator 的工具。Wavefront 的产品、Explore 以及 PowerAnimator 成了 Maya 的基础，而 Alias|Wavefront 后来被 Autodesk 收购。</p><h2>OBJ 文件格式</h2><p>回到我们的文件格式。这个格式有两处有意思的文档来源：一处在 <a href="https://en.wikipedia.org/wiki/Wavefront_.obj_file" target="_blank" rel="noreferrer noopener">维基百科</a>，另一处在 <a href="https://paulbourke.net/dataformats/obj/" target="_blank" rel="noreferrer noopener">Paul Bourke 的网站</a>。Paul Bourke 是 3D 计算机图形学的先驱。有意思的是，我从 Paul Bourke 的网站上得知 OBJ 格式也可以是二进制形式，这对我来说是闻所未闻。ASCII 版与二进制版本应当用不同的文件扩展名，ASCII 用 <code>.obj</code>，二进制用 <code>.mod</code>。由于我完全不记得见过 <code>.mod</code> 文件被使用（也可能只是我忘了），我们只讲 ASCII 版——说实话，现代 3D/2D 软件支持的就是这一版。</p><details open><p>还有一份在流传的文档，但它往往埋没在互联网档案馆里。<a href="https://www.scratchapixel.com/lessons/3d-basic-rendering/obj-file-format/obj_spec.pdf" target="_blank" rel="noreferrer noopener">为方便起见我把它复制到了这里</a>。这份文档最接近该格式的规范，不过它似乎与 Bourke 的页面并没有本质差别。</p></details><p>如前所述，文件扩展名是 <code>.obj</code>，格式为 ASCII，也就是说可以用普通文本编辑器读取和编辑。这种可及性正是人们喜欢它的原因之一。</p><p>现在我们看一个例子：</p><p>[示例省略]</p><p>你会看到一系列行，每行都以一个不同的字母开头：</p><ul><li><p><code>v</code> 表示一个顶点定义的开始，后面自然跟着 3 个 float。</p></li><li><p><code>vn</code> 表示一个法线定义的开始，后面同样跟着 3 个 float。</p></li><li><p><code>vt</code> 表示纹理坐标（s 坐标，即 UV 坐标），后面跟着 2 个 float。</p></li><li><p><code>f</code> 表示一个面的定义。</p></li></ul><p><code>v</code>、<code>vn</code>、<code>vt</code> 都很直接。注意只有 <code>v</code> 是严格必需、必须出现的。如果定义了法线，它们总是可以从顶点与面数据算出来。纹理坐标同样是可选的。</p><p><code>f</code> 稍复杂一些。在简单情形下，<code>f</code> 定义网格中的单个面或多边形，至少需要 3 个整数值。这些值可以是负数，但本课程只考虑正索引（负索引我们稍后解释）。如果 <code>f</code> 后面跟着 4 个整数，那么这个面由 4 个顶点定义。依此类推。这些整数是索引，指向面数据之前读取到的顶点数组。</p><p>当存在法线与纹理坐标数据时，我们需要在面定义中指明这些附加数组使用哪些索引，写法如下：</p><ul><li><p><code>f v1 v2 v3 …</code>：这个面只使用顶点数据。</p></li><li><p><code>f v1/vt1 v2/vt2 v3/vt3 …</code>：这个面为顶点数组和纹理坐标数组都给出了索引。</p></li><li><p><code>f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3…</code>：这个例子包含顶点、纹理坐标与法线索引。</p></li></ul><p>各自数组中的索引之间用 <code>/</code> 字符分隔。</p><p>还有一种用顶点与法线（但不含纹理坐标）的面写法：</p><ul><li><p><code>f v1//vn1 v2//vn2 v3//vn3…</code></p></li></ul><p>原则上这很直接。实践上解析可能有些小麻烦，但没有什么过不去的坎。</p><p>上手只需要知道一点：注释行以 <code>#</code> 开头，读 OBJ 文件时我们会忽略这些行。大多数软件还支持用外部 <code>.mtl</code> 文件定义基本材质属性，这个我们暂时也忽略。最后，我们还要考虑一个额外的标签 <code>g</code>，它用来定义分组。看一个例子：</p><pre><code>
+v 0.000000 2.000000 2.000000
+v 0.000000 0.000000 2.000000
+v 2.000000 0.000000 2.000000
+v 2.000000 2.000000 2.000000
+v 0.000000 2.000000 0.000000
+v 0.000000 0.000000 0.000000
+v 2.000000 0.000000 0.000000
+v 2.000000 2.000000 0.000000
+# 8 vertices
+
+g front_cube
+f 1 2 3 4
+g back_cube
+f 8 7 6 5
+g right_cube
+f 4 3 7 8
+g top_cube
+f 5 1 4 8
+g left_cube
+f 5 6 2 1
+g bottom_cube
+f 2 6 7 3
+# 6 elements
+</code></pre><p>在这个例子里，每个面被放进自己的组。你可能会以为这些定义的是物体的层次结构或者它们的名字，但千万别这么假定。事实上，正如我在代码那一节会更详细讲的，这个分组定义用来干什么、应该怎么用，即便（或者说恰恰是）读完文档之后也仍然不清楚。所以，如后文所述，我们只把 <code>g</code> 标签当作一个指示：是否应当把文件里定义的几何体拆成若干可能互相独立的部件或物体。仅此而已。</p><p>把多个物体导出到一个 OBJ 文件时，导出器常常把每个物体定义成一系列顶点（可能包含纹理坐标与法线），后面跟面索引，然后又是另一组顶点和面索引，如此反复。这基本上对应了 DCC 工具的大纲视图或场景图编辑器里见到的那种层次结构。</p><p>说到这个话题，值得一提的是 OBJ 格式与 FBX 或 Alembic 等其他格式不同，它不允许你定义可以作用在几何体上的变换。也就是说，在 Maya 或 Blender 这类软件里施加的任何变换，在导出网格时都被烘焙进顶点位置，那些变换在 OBJ 文件里就此丢失。</p><pre><code>
+g group1
+v …
+v …
+…
+f …
+f …
+
+g group2
+v …
+v …
+…
+f …
+f …
+</code></pre><p>你通常见到的 3D 场景导出成 OBJ 文件就是这个样子。这个「风味」的格式将是我们导入器的重点。在深入代码之前，有几件关于这个格式的重要事情你需要知道。看看下面这些例子：</p><pre><code>
+g group1
+v … 
+v … 
+v …
+
+f 1 2 3
+
+g group2
+v … 
+v … 
+v …
+
+f 4 5 6
+f 1 5 6
+</code></pre><pre><code>
+v … 
+v … 
+v …
+v … 
+v … 
+v …
+
+g group1
+f 1 2 3
+
+g group2
+f 4 5 6
+f 1 5 6
+</code></pre><p>它们本质上定义的是同一批几何体；不过在第一种情况下，我们先声明一些顶点，然后一些面，然后又一些顶点，再然后更多面。在第二个例子里，所有顶点集中声明，后面才是面定义。需要知道的有用之处是：</p><ul><li><p>OBJ 使用从 1 开始计数的索引。顶点列表里的第一个索引是 1，不是 0。由于 C/C++ 的数组索引从 0 开始，我们需要把从文件里读到的所有索引值都减 1。</p></li><li><p>任何面定义都可以引用任何顶点，只要该顶点在面定义之前已经被定义过。所以索引值实际指的是顶点从文件开头读入时的位置。看第一个例子，第二个组包含两个面，其中第一个引用的是组定义之前就定义好的顶点（索引是 4、5、6，而不是有人可能以为的 1、2、3），第二个（<code>f 1 5 6</code>）引用的则是文件的第一个顶点。</p></li><li><p>负索引就是在这里派上用场的（不过如前所述，我们不会用到它们）。使用负索引时，索引值对应的是从文件中面定义所在位置往回数的顶点。下面这个例子可以说明：</p></li></ul><pre><code>
+g group1
+v … 
+v … 
+v …
+
+f 1 2 3
+
+g group1
+v … 
+v … 
+v …
+
+f -3 -2 -1
+f -6 -2 -1
+</code></pre><p>换句话说，你按倒序引用顶点，其中 -1 表示在做出该面定义时从文件里读到的最后一个顶点。开始写代码吧。</p><h2>代码讨论</h2><p>关于代码，说实话我们不打算深究太多细节。首先，写解析器与其说关乎算法，不如说更关乎编程本身。Scratchapixel 的目标并不是单纯教编程。此外，我鼓励你去网上和 GitHub 搜一搜，OBJ 读取器的实现多得是。理解这个格式、再看看不同的实现，会很有启发。解析文件格式可能很复杂。常见策略是使用词法/语法分析库，你可以用它们定义自己格式的规则，库接着生成按这些规则读取文件内容的代码，包括处理语法错误。但这未必能简化过程，因为这些工具要跑起来，可能和你自己手写解析器一样费劲。</p><p>本课程不会讲词法分析器（lexer）与语法分析器（parser）是什么，也不会细讲前面提到的 Flex 和 Bison 这类库。这些留给你自己去探索。值得一提的是，解析器对 ASCII 格式更有意义。二进制格式不需要解析，不过你仍然需要理解文件的数据组织方式。OBJ 格式基于 ASCII，简单到可能根本不需要、甚至不适合用解析器。它的结构允许相当灵活的数据组织方式，这会让自动解析变得麻烦。例如我们已经展示过，同一份文件里的数据可以有不同组织方式，这就给「严格解析规则」的定义带来了困难。</p><p>无论如何，由于格式简单，我们会自己写读数据的逻辑。这个实现关注：</p><ul><li><p>简单与简短：我们的目标是做一个尽可能简短的示例，大量使用 C++ 标准库函数。几乎可以肯定，我们的实现既不健壮，也不是你能想出的最快实现，但它的好处是极其紧凑、简单，这符合 Scratchapixel 的教学理念：不用任何库，一个自包含的应用，命令行就能编译。</p></li><li><p>只实现必要的特性：我们要读文件里定义的各种物体，以及它们的顶点、法线和纹理坐标（如果存在）。本课程的版本里，我们会忽略材质和物体的层次结构，因为我们的目标是渲染，而物体层次在渲染里没那么要紧。如果 OBJ 格式包含变换（例如通过矩阵），层次就会很重要。但就目前而言，我们不需要处理层级变换。</p></li></ul><p>下面是要用的代码。先看一看，我来解释一些值得注意的地方：</p><pre><code>
+struct FaceVertex {
+	int vertex_index{-1};
+	int st_coord_index{-1};
+	int normal_index{-1};
+};
+
+void ParseFaceVertex(const std::string&amp; tuple, FaceVertex&amp; face_vertex) {
+	std::istringstream stream(tuple);
+	std::string part;
+
+	std::getline(stream, part, '/');
+    assert(!part.empty());
+	face_vertex.vertex_index = std::stoi(part) - 1;
+
+    if (std::getline(stream, part, '/') &amp;&amp; !part.empty()) {
+        face_vertex.st_coord_index = std::stoi(part) - 1;
+    }
+
+    if (std::getline(stream, part, '/') &amp;&amp; !part.empty()) {
+        face_vertex.normal_index = std::stoi(part) - 1;
+    }
+}
+
+void ProcessFace(const std::vector&amp;ltstd::string&gt;&amp; tuples, 
+				 std::vector&amp;ltFaceVertex&gt;&amp; face_vertices) {
+	assert(tuples.size() == 3);
+	for (const auto&amp; tuple : tuples) {
+		FaceVertex face_vertex;
+		ParseFaceVertex(tuple, face_vertex);
+		face_vertices.push_back(face_vertex);
+	}
+}
+
+std::vector&amp;ltVec3f&gt; vertices, normals;
+std::vector&amp;ltVec2f&gt; tex_coordinates;
+
+struct FaceGroup {
+	std::vector&amp;ltFaceVertex&gt; face_vertices;
+	std::string name;
+};
+
+/**
+ * 需要跨插入与删除维护稳定指针或引用时，
+ * 不要用 std::vector 存放元素。
+ * 它会随容器增长重新分配底层存储，
+ * 可能让已有的指针和引用失效。
+ * 要在增长后仍然保住指针与引用，
+ * 改用 std::deque 或 std::list，
+ * 它们增删元素都能提供稳定引用。
+ */
+std::deque&amp;ltFaceGroup&gt; face_groups;
+
+void ParseObj(const char* file) {
+	std::ifstream ifs(file);
+	std::string line;
+	face_groups.emplace_back();
+	FaceGroup* cur_face_group = &amp;face_groups.back();
+	while (std::getline(ifs, line)) {
+		std::istringstream stream(line);
+		std::string type;
+		stream &gt;&gt; type;
+		if (type == "v") {
+			Vec3f v;
+			stream &gt;&gt; v.x &gt;&gt; v.y &gt;&gt; v.z;
+			vertices.push_back(v);
+			if (cur_face_group-&amp;gtface_vertices.size() != 0) [[unlikely]] {
+				face_groups.emplace_back();
+				cur_face_group = &amp;face_groups.back();
+			}
+		}
+		else if (type == "vt") {
+			Vec2f st;
+			stream &gt;&gt; st.x &gt;&gt; st.y;
+			tex_coordinates.push_back(st);
+		}
+		else if (type == "vn") {
+			Vec3f n;
+			stream &gt;&gt; n.x &gt;&gt; n.y &gt;&gt; n.z;
+			normals.push_back(n);
+		}
+		else if (type  == "f") {
+			std::vector&amp;ltstd::string&gt; face;
+			std::string tuple;
+			while (stream &gt;&gt; tuple)
+				face.push_back(tuple);
+			ProcessFace(face, cur_face_group-&amp;gtface_vertices);
+		}
+		else if (type == "g") {
+			if (cur_face_group-&amp;gtface_vertices.size() != 0) {
+				face_groups.emplace_back();
+				cur_face_group = &amp;face_groups.back();
+			}
+			stream &gt;&gt; cur_face_group-&amp;gtname
+		}
+	}
+	std::cerr &lt;&lt; face_groups.size() &lt;&lt; std::endl;
+	for (const auto&amp; group : face_groups) {
+		std::cerr &lt;&lt; group.name &lt;&lt; " " &lt;&lt; group.face_vertices.size() / 3 &lt;&lt; std::endl;
+	}
+	ifs.close();
+}
+
+void DoSomeWork() {
+	...
+	for (const auto&amp; group : face_groups) {
+		for (size_t n = 0; n &lt; group.face_vertices.size() ; n += 3) {
+			const Vec3f&amp; v0 = vertices[group.face_vertices[n].vertex_index];
+			const Vec3f&amp; v1 = vertices[group.face_vertices[n + 1].vertex_index];
+			const Vec3f&amp; v2 = vertices[group.face_vertices[n + 2].vertex_index];
+		}
+	}
+	...
+}
+
+int main() {
+	ParseObj("./zombie.obj");
+	DoSomeWork();
+	return 0;
+}
+</code></pre><p>注意，代码既展示了如何用 <code>ParseObj</code> 从 OBJ 文件读数据，也展示了之后在 <code>DoSomeWork()</code> 函数里如何使用读到的数据（这里是遍历文件中的所有物体，再对每个物体遍历每个三角形）。</p><p>啊对，一件非常重要的事。在这个示例以及后续课程里，我们假定导出到 OBJ 文件的所有几何体都已三角化。上面的示例代码不支持顶点数任意的多边形（顶点多于 3 个）。由于我们想快速推进第 2 部分的内容，等有必要时我们会回过头修订本课程，把这一点加进去。</p><p>但代码的关键在于：我们确实把所有顶点、法线、纹理坐标分别存进了各自的数组。所以即便场景里有两个或更多物体，它们引用的也是同一个顶点数组。</p><p>我们的代码能用，是因为我们假定导出时格式就是规整的。代码本身并不适合生产使用，因为它不检查诸如一条顶点声明是否确实有且只有 3 个 float 这类事情。任何声明都可能跨不止一行，这一点我们也不检查。再说一次，本例中我们假定读入的数据格式是正确的。</p><p>现在逐行读文件，把字符串转成 <code>std::istringstream</code>。这不算超快（但除非你处理非常大的 3D 场景文件，读取时间不该是你太担心的事），好处是让读取 token（无论字符串还是数字）这类事变得极简单。例如我们可以写：</p><pre><code>
+std::istringstream stream(line);
+std::string type;
+float x, y, z;
+stream &gt;&gt; type &gt;&gt; x &gt;&gt; y &gt;&gt; z; // 读取 v 0.134 0.125 -0.436
+</code></pre><p>这太酷了。不用自己提取 token、检查它是不是合法 float、把字符串转成 float 等等。当然，如果你喜欢折腾这类东西，尽管那样去实现。你会在 GitHub 上看到有些 OBJ 实现甚至自己写字符串转 float 的函数，确保完全符合 IEEE-754 标准。祝你好运。</p><p>用这个流程，我们就能判断一行是以 <code>v</code>、<code>vn</code>、<code>vt</code>、<code>f</code> 还是 <code>g</code> 开头，这些就是我们目前唯一处理的标签（其余一律忽略）。这也超简单。</p><p>唯一稍微费点力气的是读面数据那部分。因为我们需要考虑面定义除了顶点本身之外，是否还包含法线和/或纹理坐标的数据。遇到 <code>f</code> 标签时，我们把标签之后每一个以空格分隔的字符串都读出来存进一个 vector。我们把这些字符串叫 tuple，因为它们实际上可以表示一个（只有顶点）、两个（顶点与法线或纹理坐标）或三个索引（顶点、纹理坐标与法线）。然后我们把这串「tuple」传给 <code>ParseFaceVertex()</code> 方法，它会遍历每个 tuple，并根据 tuple 里含有 0 个、1 个还是 2 个正斜杠（<code>/</code>）来相应地提取数据。这里同样，这不是生产级代码，否则我们会加上大量防护，确保数据格式正确且一致。例如，如果我们发现某个 tuple 有 2 个斜杠，而当前解析的物体其他所有 tuple 都只有 1 个，那大概就该报错。同样，在没有相应数据的情况下却去使用法线或纹理坐标，也应该被标记出来。</p><p>我们把顶点的索引、以及可能的法线与纹理坐标索引存进一个叫 <code>FaceVertex</code> 的结构。物体中每个顶点对应一个 <code>FaceVertex</code> 实例，我们把它们全存进当前物体的 <code>face_vertices</code> 列表。由于目前只处理三角化网格，我们知道每条面声明应当有且只有 3 个这样的 tuple。重建三角形也很简单。首先，每个 <code>face_vertices</code> 列表的长度都应是 3 的倍数，这很容易检查。然后你遍历 <code>face_vertices</code> 列表，列表中每连续 3 个元素构成一个三角形的索引。</p><p>最后，由于我们想把各物体分开，我们会把 <code>face_vertices</code> 存进一个叫 <code>FaceGroup</code> 的结构，并维护一个这样的列表（<code>face_groups</code>）。 </p><p>当然，这是修订后的文本，内联代码格式正确使用了 <code>\x00</code>：</p><p>现在，<code>g</code> 标签的用法并不十分清楚，尽管有 Paul Bourke 和维基百科的资料，但关于它最初确切意图的规范似乎已经丢失。<code>g</code> 标签本身后面可以跟一个或多个字符串。每个字符串定义一个组的名字，后续几何体就属于这个组。例如 <code>g cube front</code> 表示 <code>g</code> 标签之后定义的所有面同时属于 <code>cube</code> 组和 <code>front</code> 组。有意思的是，从 Maya 导出一个立方体——它的每个面都是独立的四边形，组织如下：</p><pre><code>
+cube
+ |-polySurface1
+ |-polySurface2
+ |-polySurface3
+ |-polySurface4
+ |-polySurface5
+ |-polySurface6
+</code></pre><p>得到的是：</p><pre><code>
+g cube polySurface1
+...
+g polySurface2 cube
+...
+g polySurface3 cube
+...
+g polySurface4 cube
+...
+g polySurface5 cube
+..
+g polySurface6 cube
+</code></pre><p>如你所见，第一行的组顺序与接下来几行使用的顺序不同。除非这里面有我们不知道的逻辑，否则这意味着我们不能靠组的顺序来辨别物体的树结构（也不能靠它们的名字）。所以，虽然有人或许能设计出一条规则，通过考察所有物体共有的组等等来重建某种层次，但即便如此，也无法保证能重建出文件创建时原场景中的物体树结构。就目前而言，我们只能确定：这些只是后续几何体所属的组的名字。但 Maya 为什么把名字混着写，是个谜……（Blender 也好不到哪去）。</p><p>此外，注意一个 <code>g</code> 声明之后可能跟着多组顶点-面定义。按 Bourke 的文档，<code>g</code> 声明之后定义的所有物体都应属于同一批组。然而，仅从我们还能找到的文档里，并不能清楚看出这个 <code>g</code> 究竟该怎么用。如果你恰好知道，或者你是从 Wavefront 退休的，请告诉我。</p><p>总而言之，我们会立自己的规矩（大家都是这么干的），并且假定 <code>g</code> 用来划分文件中存储的不同物体。因此我们会把 <code>g</code> 标签视为一个新物体的开始。此外，如果两条连续的面声明之间隔了一段顶点声明，那么每一组面数据就定义一个独立的物体。虽然存在一个 <code>o</code> 标签用来存物体名，但 Maya 似乎不导出它，而是用 <code>g</code> 标签把物体名连同它们所属的所有组一起导出。唉！这就是我们前面说过的：用 Lex/Bison 这类自动解析器来干这活未必行得通，也是为什么大家基本上都对 OBJ 文件格式的运作方式、以及如何解读文件内的数据自行发挥。换句话说，每个人都有自己的解读。</p><p>回到眼前的问题：每当我们遇到一个 <code>g</code> 标签，就往名为 <code>face_groups</code> 的 <code>FaceGroup</code> 列表里加一个新组，之后任何顶点声明都会被加进那个组的 <code>face_vertices</code> 列表（处理最初那个组时要特别小心，严格说它应该叫 <code>default</code>）。看代码你就能看到，<code>FaceGroup</code> 是一个包含 <code>FaceVertex</code> 列表和一个名字（<code>std::string</code>）的结构。</p><p>另外，我们还要考虑新物体开始处没有用 <code>g</code> 标签声明的情况——导出器可能干脆不写。所以，如果当前面组里已经有面，而我们又开始读到一个顶点，那就可以合理推断我们大概正在读一个新物体的数据。这时我们创建一个新组，把它追加到 <code>face_groups</code>，然后继续读文件，把之后的所有数据（顶点、法线、纹理坐标、面数据）都追加到这个新组里。 </p><p>注意，由于导出器可能不把 <code>g</code> 标志写进文件，我们在开始读顶点数据时手上就得有一个 <code>FaceGroup</code> 实例。这就是为什么要在开始读文件内容之前先创建一个。</p><p>大概就这些。从编程角度看有一件重要的事：我们把指向新组的指针保存在 <code>cur_face_group</code> 变量里。这就是为什么 <code>face_groups</code> 被定义为 <code>std::deque</code> 而不是 <code>std::vector</code>。在 C++ 中，随着列表增长或收缩（由于内部重新分配），vector 中元素的地址并不能保证保持不变。因此，要想获得指向 <code>face_groups</code> 各元素的稳定指针，我们就得用 <code>std::deque</code>（<code>std::list</code> 也可以），它没有这个致命问题。</p><h2>后续开发</h2><ul><li><p>加入对顶点数任意的多边形的支持。</p></li><li><p>加入对材质的支持。</p></li></ul><h2>测试代码</h2><p>因为用 Vulkan 这类实时 3D API 写代码来渲染我们文件里的内容太复杂（一个最基本的 Vulkan 视图就要上千行代码），所以我们还是用光线追踪来渲染几何体——如你所知，它实现起来超简单，但很慢。由于这不是一门光线追踪课，而且示例中用于渲染几何体的所有代码都在第 1 部分的各门课里讲过，我们就不在这里花时间了。作为复习，也为了展示我们如何用顶点数组与法线数组让光线与构成物体的三角形求交、并对命中点着色，我们把代码贴在这里：</p><pre><code>
+void DoSomeWork() {
+	auto start = std::chrono::high_resolution_clock::now();
+	const Vec3&amp;ltfloat&gt; ray_orig(0,0,12);
+	float aspect_ratio = image_width / static_cast&amp;ltfloat&gt;(image_height);
+	float scale = std::tan(DegreesToRadians(0.5f * angle));
+	auto buf = std::make_unique&amp;ltuint8_t[]&gt;(image_width * image_height);
+	uint8_t* pbuf = buf.get();
+	std::memset(pbuf, 0x0, image_width * image_height);
+	for (uint32_t j = 0; j &lt; image_height; ++j) {
+		float y = (1 - 2 * (j + 0.5f) / static_cast&amp;ltfloat&gt;(image_height)) * scale * 1 / aspect_ratio;
+		for (uint32_t i = 0; i &lt; image_width; ++i, ++pbuf) {
+			float x = (2 * (i + 0.5f) / static_cast&amp;ltfloat&gt;(image_width) - 1) * scale;
+			Vec3f ray_dir(x, y, -1);
+			ray_dir.normalize();
+			float t = super_far;
+			for (const auto&amp; group : face_groups) {
+				for (size_t n = 0; n &lt; group.face_vertices.size() ; n += 3) {
+					const Vec3f&amp; v0 = vertices[group.face_vertices[n].vertex_index];
+					const Vec3f&amp; v1 = vertices[group.face_vertices[n + 1].vertex_index];
+					const Vec3f&amp; v2 = vertices[group.face_vertices[n + 2].vertex_index];
+					Hit hit;
+					intersect(ray_orig, ray_dir, v0, v1, v2, hit);
+					if (hit.t &lt; t) {
+						t = hit.t;
+						const Vec3f&amp; n0 = normals[group.face_vertices[n].normal_index];
+						const Vec3f&amp; n1 = normals[group.face_vertices[n + 1].normal_index];
+						const Vec3f&amp; n2 = normals[group.face_vertices[n + 2].normal_index];
+						Vec3f nor = n1 * hit.u + n2 * hit.v + n0 * (1 - (hit.u + hit.v));
+						nor.normalize();
+						*pbuf = static_cast&amp;ltuint8_t&gt;(255 * std::max(0.f, nor.z));
+					}
+				}
+			}
+		}
+		fprintf(stderr, "\r%03u", static_cast&amp;ltuint32_t&gt;(j / static_cast&amp;ltfloat&gt;(image_height) * 100));
+	}
+	auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast&amp;ltstd::chrono::milliseconds&gt;(stop - start);
+    std::cout &lt;&lt; "Render time: " &lt;&lt; duration.count() / 1000.0 &lt;&lt; " seconds." &lt;&lt; std::endl;
+	std::ofstream ofs("./result.ppm", std::ios::binary);
+	ofs &lt;&lt; "P6\n" &lt;&lt; image_width &lt;&lt; " " &lt;&lt; image_height &lt;&lt; "\n255\n";
+	for (uint32_t i = 0; i &lt; image_width * image_height; ++i)
+		ofs &lt;&lt; buf[i] &lt;&lt; buf[i] &lt;&lt; buf[i];
+	ofs.close();
+}
+</code></pre><p>我们遍历三角形的方式很简单。先遍历所有组，然后遍历当前组的 <code>face_vertices</code> 列表来逐个构建三角形，再把三角形与当前光线做求交测试。用 <code>FaceVertex</code> 里的顶点索引和法线索引去访问构成当前三角形的顶点与法线，应该相当直接。本示例没有用到纹理坐标。如果你想去探索，这留作练习；不过后面会有讲纹理的课，那时才会用到。所以，如果你不确定该怎样自己改造程序来（至少）把它们可视化出来，请去看讲纹理的那门课。</p><p>另外几点说明：</p><ul><li><p>我们用命中点的 U、V 重心坐标来对用于着色的法线做插值。</p></li><li><p>着色时，我们只取法线与一个沿相机方向的光源之间的点积。在这个示例代码里，相机朝 z 轴负方向看。这样做是为了不必为了把相机朝向某个特定方向而去处理矩阵。</p></li></ul><p>结果如下，左边是我们的渲染，右边是同一模型在 Maya 里的渲染。如你所见，两者一模一样。好耶，我们的导入器管用。这个模型是 Roblox Studio 提供的素材（承蒙他们好意）。Roblox Studio 是个相当好玩的工具，可以创建你自己的 3D 场景并导出为 OBJ。你可以在本站的 GitHub 仓库里，和源代码文件一起找到这个 OBJ 文件。</p><figure><img src="https://scratchapixel.com/images/obj-file-format/obj-results.png" alt=""></figure><p>注意，这个模型虽然只有大约 3700 个三角形，在 3.6GHz 单核处理器上渲染却已经要 12 秒。哎哟！这可太久了，对下一门课（讲 3D 导航控制）来说肯定远远不够。为了能在场景中漫游，至少得达到交互式帧率，理想情况下不低于 30 fps。所以显然，我们得换一个「小」得多的模型才行。当然，它慢是因为我们没用生产环境里惯用的任何优化，比如加速结构、多线程、SIMD 指令——这些都会在后续课程里讲。所以，耐心点。注意图中有足足 60% 以上的像素是黑的，可对每一个这样的像素，我们依然拿模型的 3700 个三角形去做求交测试。哪怕只是加一个光线-包围盒测试这样简单的东西，也已经能显著缩短渲染时间。</p><details open><p>冷知识：12 秒其实不算离谱。图像尺寸 640x480 像素、每个像素测 3700 个三角形，假定光线求交测试平均需要 50 次浮点运算（要知道有些光线在函数里会比其他光线走得更远），再加上着色计算等其他运算，用 3.6GHz 单处理器，我们得到：640x480x3700x50 / 3.6x10^9 = 15.8 秒。所以我们的平均浮点运算次数大概略少一些，但数量级是对的。</p></details><p>不过无论如何，我们的目标是写一个简单的 OBJ 加载器，好让后续课程能有一致、简便的方式载入各种模型做测试。这部分完成了，可以从待办清单上划掉。继续前进。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/obj-file-format/obj-file-format.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/obj-file-format/obj-file-format.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

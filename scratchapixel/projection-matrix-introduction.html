@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>投影矩阵是什么，何处、为何要使用？ - Scratchapixel 中文译本</title>
+<meta name="description" content="透视与正交投影矩阵 · 投影矩阵是什么，何处、为何要使用？（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>投影矩阵是什么，何处、为何要使用？</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="projection-matrix-introduction.html">投影矩阵是什么，何处、为何要使用？</a></li>
+<li><a href="projection-matrices-what-you-need-to-know-first.html">投影矩阵：首先需要知道的事</a></li>
+<li><a href="building-basic-perspective-projection-matrix.html">构建基础的透视投影矩阵</a></li>
+<li><a href="opengl-perspective-projection-matrix.html">透视投影矩阵</a></li>
+<li><a href="perspective-matrix-in-practice.html">迷路了？用真实的制作案例回顾一遍</a></li>
+<li><a href="projection-matrix-GPU-rendering-pipeline-clipping.html">投影矩阵、GPU 渲染管线与裁剪</a></li>
+<li><a href="orthographic-projection-matrix.html">正交投影矩阵</a></li>
+</ol>
+</div>
+<h2>投影矩阵是什么，何处、为何要使用？</h2><p><b>阅读时间：14 分钟。</b></p><h2>开始之前提个醒</h2><p>要理解本课程的内容，需要先掌握几个关键领域：矩阵、在不同空间之间变换点的过程、理解透视投影（包括计算三维点在画布上的坐标），以及光栅化算法的基本原理。如果这些话题中有你不熟悉的，或者需要复习，我们强烈建议回头看看前面的课程，以及专门讲<a href="points-vectors-and-normals.html">几何</a>的那门课。有了这份基础，你才有必要的工具去真正参与接下来的内容并从中获益。</p><h2>探索投影矩阵</h2><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspprojmatrix1.png?" alt=""><figcaption><b>图 1：</b>当一个点乘以透视投影矩阵，它就被投影到画布上，得到一个新的点位置。</figcaption></figure><p>投影矩阵是专门的 4x4 矩阵，用来把相机空间中的三维点变换成它在画布上的投影。本质上，把一个三维点乘以投影矩阵，就确定了它在画布上、位于 NDC（归一化设备坐标）空间中的二维坐标。回想前面讲过的，NDC 空间中的点落在 [-1, 1] 范围内，这与 Direct3D 或 OpenGL 这类图形 API 的惯例一致。</p><details open><p>投影矩阵遵循两种 NDC 空间惯例：坐标落在 [-1, 1] 内（OpenGL、Direct3D 等大多数实时图形 API 通用），或落在 [0, 1] 内（RenderMan 的规定）。这里我们关注实时 3D API 中通行的 [-1, 1] 范围。</p></details><p>简单说，把一个三维点乘以投影矩阵这件事，做到的是以前需要一连串操作才能完成的工作，包括透视除法，以及从屏幕空间到 NDC 空间的重映射。这套复杂的流程：</p><pre><code>
+// 转到屏幕空间
+Vec2f P_screen; 
+P_screen.x = near * P_camera.x / -P_camera.z; 
+P_screen.y = near * P_camera.y / -P_camera.z; 
+ 
+// 把点从屏幕空间转到 NDC 空间（范围 [-1, 1]）
+Vec3f P_ndc; 
+P_ndc.x = 2 * P_screen.x / (r - l) - (r + l) / (r - l); 
+P_ndc.y = 2 * P_screen.y / (t - b) - (t + b) / (t - b); 
+</code></pre><p>现在可以精简为一次点与矩阵的乘法，只要给定一个投影矩阵 \(M_{proj}\)：</p><pre><code>
+Vec3f P_ndc; 
+M_proj.multVecMatrix(P_camera, P_ndc); 
+</code></pre><p>这种做法把原先分开的几个变量——\(near\)、\(t\)、\(b\)、\(l\) 与 \(r\)，分别代表近裁剪面与屏幕的边界——收进一次简洁的矩阵运算。本课程的目标是把 \(M_{proj}\) 讲明白，说清它是怎么构造的，以及它如何涵盖：</p><ul><li><p>透视除法，</p></li><li><p>从屏幕空间到 NDC 空间的重映射。</p></li></ul><p>我们会深入讲这个矩阵如何纳入各个变换步骤，包括近裁剪面与屏幕尺寸。</p><p>务必记住，投影矩阵是用来变换顶点或三维点的，不是变换向量。它的主要用途是把三维物体的顶点按透视规则投影到屏幕上，生成这些物体的图像。如几何那门课所讨论的，点也可以看作一个矩阵——按 Scratchapixel 采用的行主序，它是一个 [1x3] 的行向量矩阵。要做矩阵乘法，左矩阵的列数必须等于右矩阵的行数。这个要求意味着，把一个三维点（[1x3]）直接乘以 4x4 矩阵是行不通的。</p><p>变通的办法是把点当作 [1x4] 向量，这样就能与 4x4 矩阵相乘。结果又是一个 [1x4] 矩阵，也就是带<b>齐次坐标</b>的四维点。只有当第四个分量为 1 时，这些坐标才能直接当作三维点使用，此时前三个分量表示一个标准的三维笛卡尔点。从齐次坐标到笛卡尔坐标的转换，尤其是在涉及<b>投影矩阵</b>时，将在下一章讨论。一般只有在处理投影矩阵时才会考虑齐次坐标，需要显式处理第四个坐标；而在标准的变换矩阵里，这个坐标是隐式管理的。</p><details open><p>通常所说的「常规」4x4 变换矩阵属于数学中的仿射变换，而投影矩阵属于射影变换。两类都需要用齐次坐标来乘点，这个话题下一章与几何那门课里会展开。</p></details><p>这一区别意味着，四维点（进而齐次坐标）主要出现在涉及投影矩阵的渲染语境中。其他时候不需要显式处理这些坐标。不过投影矩阵还带来一层复杂性，因为在用投影矩阵变换点的过程中会发生裁剪——渲染中关键的一步。这个中间过程我们会在后面几章讨论，文献里常常把它与投影矩阵混为一谈而不作清楚解释，反而加深了困惑。本课程希望把投影矩阵的功能与用法讲清楚，把它与纠缠在一起的裁剪过程分开。</p><h2>理解它的应用与意义</h2><p>投影矩阵在本站以及各类专业论坛上被广泛讨论，但对很多人来说仍是一团迷雾。讨论得多，说明它重要，尽管人们常发现它讲得不够。考虑到这些矩阵的关键作用，这种文档匮乏令人费解。OpenGL、Direct3D、WebGL、Vulkan、Metal 与 WebGPU 这些实时图形 API 的功能都离不开它，而这些 API 在电子游戏与一般桌面图形应用中用得极广。这些 API 是你写的软件与图形处理器（GPU）之间的桥梁。值得注意的是，如前所述，GPU 天生就是用来执行光栅化算法的。历史上，在所谓的固定功能管线中，GPU 会用投影矩阵把点从相机空间映射到归一化设备坐标（NDC）。然而 GPU 本身没有能力构造这个矩阵，担子就落在开发者身上。</p><pre><code>
+// 这段代码已过时，不应使用。OpenGL 与 DirectX 以前
+// 是实时图形的首选。
+glMatrixMode(GL_PROJECTION); 
+glLoadIdentity(); 
+glFrustum(l, r, b, t, n, f);  // 用屏幕尺寸与裁剪距离定义这个矩阵
+glMatrixMode(GL_MODELVIEW); 
+glLoadIdentity(); 
+glTranslate(0, 0, 10); 
+// 为简洁起见省略其余代码
+</code></pre><p>不过这段代码如今已经废弃，放在这里只是为了提供背景、了解图形编程的演进。现代做法已经不再这样直接使用 OpenGL，因为这些特性已被弃用，OpenGL 的普及度也下降了。相比之下，当代的「可编程」渲染管线——见于 DirectX、Vulkan、Metal 以及较新版本的 OpenGL——对投影矩阵的用法不同。它们不再把点从相机空间直接映射到 NDC，而是先把点变换到一个中间空间「裁剪空间」。裁剪空间的细节可能很复杂，只要理解它涉及用<b>齐次坐标</b>表示的点就够了，也就是前面说过的四维点。</p><p>在可编程管线的当代 GPU 渲染流程中，通过投影矩阵乘法来变换顶点是在<b>顶点着色器</b>里进行的。本质上，顶点着色器是一小段程序，负责把三维物体的顶点从相机空间转换到裁剪空间。它接收一个顶点和一个投影矩阵（二者都与该着色器关联），然后计算顶点与投影矩阵的乘积。这个乘积被赋给一个预定义的全局变量——在 OpenGL 中就是 <code>gl_Position</code>，表示变换后顶点在裁剪空间中的位置。要注意，<code>gl_Position</code> 与输入的顶点都定义为 <code>vec4</code>，也就是被当作带齐次坐标的点。下面是一个简化的顶点着色器示例：</p><pre><code>
+uniform mat4 projMatrix; // 投影矩阵
+in vec3 position; // 顶点位置
+ 
+void main() 
+{ 
+    gl_Position = projMatrix * vec4(position, 1.0); // 变换到裁剪空间
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/perspective-matrix/rendering-pipeline-vertex.png?" alt=""><figcaption><b>图 2：</b>顶点着色器把顶点处理到裁剪空间。</figcaption></figure><p>GPU 执行这个顶点着色器，是处理场景中每个顶点的关键一步。使用 OpenGL 或 Direct3D 这类图形 API 时，顶点信息以及这些顶点如何相互连接构成网格的几何，都存放在 GPU 的内存中。GPU 随后把这些顶点数据从它初始所在的空间变换到裁剪空间。这些顶点在被顶点着色器处理时所处的初始空间，取决于你如何准备它们：</p><ul><li><p>你可以在把顶点上传到 GPU 内存之前，先把它们从世界空间预先变换到相机空间。这样，顶点在顶点着色器处理时就已经在相机空间中了。</p></li><li><p>另一种做法是把世界空间中的顶点上传到 GPU 内存。这种情况下，除了投影矩阵（通常记作 P 或 Proj），着色器还需要世界到相机的变换矩阵（常标作 M 或 MV，MV 表示「模型-视图」矩阵，即物体到世界与世界到相机两种变换的组合）。物体空间指物体在任何变换之前的原始位置，而世界空间则是施加物体到世界矩阵之后的坐标系。在这种情形下要正确变换顶点，必须先把它从世界空间转到相机空间，再施加投影矩阵。如果顶点进入顶点着色器时已在世界空间中，那就只需要视图部分（世界到相机矩阵）。这个过程用伪代码表示大致如下：</p></li></ul><pre><code>
+uniform mat4 P;  // 投影矩阵
+uniform mat4 MV; // 模型-视图矩阵（物体到世界 * 世界到相机）
+ 
+in vec3 position; // 顶点位置
+ 
+void main() 
+{ 
+    gl_Position = P * MV * vec4(position, 1.0); // 变换到裁剪空间
+}
+</code></pre><p>附注：你注意到一个有趣的细节了吗？在上面这类 GLSL 着色器里，点写在矩阵的右边。这种排布在几何课里学过，叫作右乘（post-multiplication）。它暗示了本课程以及其他实时图形 API（如 OpenGL，以及如今的 Vulkan）所采用的惯例：矩阵按列主序组织。挺有洞见的观察！</p><p>很多开发者偏爱后一种做法，这背后有实际理由。虽然可以把世界到相机矩阵与投影矩阵合并成一个矩阵，但一般建议把它们作为两个独立的矩阵传给顶点着色器，原因超出本文讨论的范围。</p><pre><code>
+uniform mat4 PMV;  // 投影与模型-视图的合并矩阵
+
+in vec3 position;
+
+void main() 
+{ 
+    gl_Position = PMV * vec4(position, 1.0); // 变换顶点位置
+}
+
+int main(...) 
+{ 
+    ...
+    // 假设使用行向量矩阵
+    Matrix44f projectionMatrix(...); 
+    Matrix44f modelViewMatrix(...); 
+    Matrix44f PM = modelViewMatrix * projectionMatrix; 
+    // OpenGL 期望列向量矩阵，因此需要对矩阵转置
+    PM.transpose(); 
+    // 取得着色器变量 'PM' 的位置
+    GLint loc = glGetUniformLocation(p, "PM"); 
+    // 用我们的合并矩阵更新该着色器变量
+    glUniformMatrix4fv(loc, 1, false, &amp;PM.m[0][0]); 
+    ...
+    render();
+    ...
+    return 0; 
+}
+</code></pre><p>如果你不熟悉图形 API 的用法，或者经验更多在 Direct3D 而不在 OpenGL，也不必发愁。两者的基本原理是一致的，很容易找到对应关系。这段代码的要点是配置投影矩阵与模型-视图矩阵（把物体到世界与世界到相机两种变换合起来），再把这些矩阵合并。这样能简化流程，只需往顶点着色器传一个矩阵。在 OpenGL 中，要取得着色器变量的位置，需要用 <code>glGetUniformLocation()</code> 函数。</p><details open><p><code>glGetUniformLocation()</code> 具体如何工作，对并非所有读者都重要，简要说：它按名字查找着色器程序中的变量并返回其位置。这个位置随后与 <code>glUniform()</code> 系列调用配合，用来设置着色器变量。在 OpenGL 或 Direct3D 的语境下，一个「程序」由顶点着色器与片元着色器共同组成，二者合起来决定模型顶点到裁剪空间的变换（顶点着色器的职责）以及物体外观的渲染（片元着色器的任务）。</p></details><p>用 <code>glGetUniformLocation()</code> 找到着色器变量后，我们用 <code>glUniformMatrix4fv()</code> 设置它的值。渲染时，顶点着色器处理每个顶点，把它们从物体空间转到裁剪空间。这个变换是把顶点位置（初始在物体空间中）乘以 PM 矩阵。PM 矩阵是投影矩阵与模型-视图矩阵的合成，把两者的效果整合在一起。这一步在 GPU 渲染流程中对准确渲染物体至关重要。</p><p>虽然这段讨论不算对 GPU 渲染管线的深入介绍，但目标是让你对概念有足够的理解。要注意，到 2024 年为止，重点应当放在使用可编程管线上——而这仍然要求程序员自己构造投影矩阵。这个要求凸显了投影矩阵的重要性，也解释了它在图形学讨论中为何如此热门。不过在现代渲染管线中，使用投影矩阵并不是严格必需的。真正必须做的事是把顶点变换到裁剪空间，这既可以用矩阵实现，也可以用等效的代码实现。例如：</p><pre><code>
+uniform float near, b, t, l, r; // 近裁剪面与屏幕坐标
+
+in vec3 position;
+
+void main() 
+{
+    // 与使用投影矩阵等效的操作
+    gl_Position.x = ...; // 自定义变换代码
+    gl_Position.y = ...; // 自定义变换代码
+    gl_Position.z = ...; // 自定义变换代码
+    gl_Position.w = ...; // 自定义变换代码
+}
+</code></pre><p>可编程管线的这种灵活性，允许采用其他变换顶点的方法，对过程有更强的掌控。虽然大多数场景大概还是会用标准的投影技术，但对选择用自定义代码直接操作顶点位置的人来说，理解如何构造投影矩阵仍然必不可少。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/rendering-pipeline-vertex2.png?" alt=""><figcaption><b>图 3：</b>示意投影矩阵与顶点数据如何从 CPU 传到 GPU 管线。</figcaption></figure><p>本节的要点：</p><ul><li><p>GPU 渲染管线从根本上依赖光栅化算法，其中投影矩阵负责把顶点从相机空间转到裁剪空间。考虑到 GPU 的普及程度，以及投影矩阵在图像生成中的核心地位，它们自然成为这一领域的关注焦点。</p></li><li><p>在可编程管线中，顶点着色器负责把顶点移入裁剪空间，投影矩阵通常是着色器的一个变量。这个矩阵在着色器执行之前于 CPU 上定义。理解如何构造这个矩阵、掌握裁剪空间的概念，是有效进行图形编程的关键。</p></li></ul><h2>正交投影矩阵与透视投影矩阵</h2><figure><img src="https://scratchapixel.com/images/perspective-matrix/sim-city.jpg?" alt=""><figcaption><b>图 4：</b>用正交投影渲染的 Sim City</figcaption></figure><p>收尾之前，你也许会好奇本章标题「透视与正交投影矩阵」以及这两类投影矩阵有何不同。从根本上说，二者都是把三维点投影到二维平面上。我们已经深入讲过透视投影：视场角收窄（理论上趋近于零）时，视锥体金字塔的侧面就变得平行。这种情况下，物体在渲染图像中无论离相机多远都保持一致的尺寸，这个特性叫作<b>正交投影</b>。尽管正交投影看上去不如透视投影自然，但在某些场合很有用。一个显著的例子是游戏 Sim City，它用正交投影获得独特的视觉风格。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/projectionsexample.png?" alt=""><figcaption><b>图 5：</b>正交投影与透视投影的例子</figcaption></figure><h2>光线追踪中的投影矩阵</h2><p>要再次强调，在光线追踪中，把点投影到屏幕上这个概念并不适用。它采用的是从图像平面发出光线、检测光线与场景物体交点的做法，根本不需要投影矩阵。</p><h2>往前看</h2><p>从构造一个简单投影矩阵的基础讲起，是理解这里讨论的更大概念的有效途径。熟悉齐次坐标，就为理解裁剪这类与投影矩阵紧密相关的概念铺好了路。第三章要探讨的第一个透视投影矩阵，可能不如 OpenGL 或 Direct3D 里用的那些复杂，但它足以阐明投影矩阵的基本机理——具体说，就是它们在把顶点从任意给定空间变换到裁剪空间中的作用。接下来两章，我们的重心会回到投影矩阵的基础层面：把点从相机空间转到 NDC 空间的功能。关于把点变换到裁剪空间的讨论留到第四章，那里我们会剖析 OpenGL 矩阵的细节。眼下只要理解投影矩阵有助于把顶点从相机空间转到 NDC 空间就足够了，同时记住这个定义是暂定的。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/projection-matrix-introduction.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/projection-matrix-introduction.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

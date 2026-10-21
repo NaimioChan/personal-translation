@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>矩形面光源 - Scratchapixel 中文译本</title>
+<meta name="description" content="光照简介 · 矩形面光源（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>矩形面光源</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-to-lighting.html">三维渲染中的光照简介</a></li>
+<li><a href="introduction-to-lighting-punctual-lights.html">点光源与聚光灯</a></li>
+<li><a href="introduction-to-lighting-distant-lights.html">平行光源</a></li>
+<li><a href="introduction-to-lighting-area-lights-theory.html">面光源：数学基础</a></li>
+<li><a href="introduction-to-lighting-triangular-light.html">三角形面光源</a></li>
+<li><a style="font-weight:700" href="introduction-to-lighting-rectangular-light.html">矩形面光源</a></li>
+<li><a href="introduction-to-lighting-spherical-light-area-sampling.html">球形面光源：使用面积采样</a></li>
+<li><a href="introduction-to-lighting-spherical-light-cone-sampling.html">球形面光源：使用锥体采样</a></li>
+<li><a href="introduction-to-lighting-light-loop.html">直接光照：光源循环</a></li>
+</ol>
+</div>
+<h2>矩形面光源</h2><p><b>阅读时间：6 分钟。</b></p><h2>前言</h2><p>因为面光源可能具有的每种形状都有各自特定的实现考虑，我们决定每种面光源形状单独用一页来讲。更具体地说，我们会依次考虑三角形、平面、圆盘，最后是球形面光源。这段前言在每一页上都会重复，以确保如果你是从外部链接落到其中某一页的，你会知道最好先从<a href="">三角形面光源</a>那一页读起。在那里我们会讨论一些在其他光源类型中还会复用的概念，并对我们用来实现这些光源的代码做总体说明。</p><p>另请注意，我们强烈建议你阅读<a href="">分布式光线追踪</a>和<a href="">随机采样与采样策略</a>这两门课程，它们是本课的推论。</p><h2>四边形面光源</h2><p>幸好，关于矩形或四边形面光源的这一章会短得多。首先，因为其中有大量代码与三角形面光源共通，而我们在上一章已经讲过了；其次，因为从采样单位正方形开始、把这个样本变换到一个正方形（无论更大还是更小）、一个矩形还是一个平行四边形（被斜切的矩形），这条采样流程本身就很直接。这里不需要做任何形式的特殊映射。</p><p>注意，仅用我们现在已有的代码就已经能创建四边形面光源了，因为一个四边形可以由两个三角形拼成。这个选项意味着我们不需要任何专门的代码来处理四边形光源，这是好事（代码少是好事）。</p><pre><code>
+std::shared_ptr&amp;ltTriangleLight&gt; light0 = std::make_shared&amp;ltTriangleLight&gt;(
+    Vec3f(-1, -1, 0), 
+    Vec3f(1, -1, 0), 
+    Vec3f(-1, 1, 0), 
+    Vec3f(5.f));
+
+std::shared_ptr&amp;ltTriangleLight&gt; light1 = std::make_shared&amp;ltTriangleLight&gt;(
+    Vec3f(1, -1, 0), 
+    Vec3f(1, 1, 0), 
+    Vec3f(-1, 1, 0), 
+    Vec3f(5.f));
+
+Matrix44&amp;ltfloat&gt; xfm_light(0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, -1, 0, -4, 1);
+prims.push_back(std::make_unique&amp;ltPrimitive&gt;(light0, xfm_light));
+prims.push_back(std::make_unique&amp;ltPrimitive&gt;(light1, xfm_light));
+</code></pre><p>这种做法显然有个问题：现在你的场景里有两盏灯而不是一盏，而如果直接用四边形光源，你就只会有一盏。如果你要着手实现一个四边形面光源，就需要像三角形面光源那样，让 <code>QuadLight</code> 类从 <code>AreaLight</code> 基类派生。对于 <code>QuadLight</code> 类，严格来说只需要三个顶点——从这三个顶点我们就能算出平行四边形的边，如图 1 所示。</p><pre><code>
+QuadLight::QuadLight(const Vec3f&amp; v0, const Vec3f&amp; v1, const Vec3f&amp; v2, const Vec3f&amp; Le)
+    : v0_(v0)
+    , v1_(v1)
+    , v2_(v2)
+    , e1_(v1 - v0)
+    , e2_(v2 - v0)
+    , Ng_(e1_.Cross(e2_))
+    , Le_(Le) {
+    // 用两个三角形拼出一个 TriangleMesh
+    ...
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-quad-light.png" alt=""><figcaption><b>图 1：</b>一个四边形光源可以简单地由三个顶点定义，从中我们能算出边 \(e1\) 和 \(e2\)。由此，计算光源表面上三维采样点的位置就很直接了。用这两条边构成一个坐标系的基，采样点位置由 \(v0 + e1 \times \varepsilon_1 + e2 \times \varepsilon_2\) 给出。</figcaption></figure><p>注意，与三角形面光源一样，我们不会把这两条边叉积得到的法线归一化，因为法线的长度承载着光源的面积。同样，与三角形光源一样，我们会在 <code>Sample</code> 方法里利用法线的这个性质来计算样本的 PDF（提醒一下，即面积分之一），而不必显式地算出这个面积。还要注意，在 <code>QuadLight</code> 构造函数里，你需要构建一个 <code>TriangleMesh</code> 而不是 <code>TriangleLight</code>，用来表示组成四边形的两个三角形。这个方法我们留给你自己实现，因为这样做没有教学价值，而且会让我们的示例代码膨胀。</p><p>对面光源采样很简单。我们只是把平行四边形的边作为坐标系的基，把单位正方形上的样本换算成矩形面光源上的新位置。代码如下：</p><pre><code>
+Vec3f QuadLight::Sample(const DifferentialGeometry&amp; dg, Sample3f&amp; wi, float &amp;tmax, const Vec2f&amp; sample) const override {
+    Vec3f d = (v0_ + e1_ * sample.x + e2_ * sample.y) - dg.P;
+    tmax = d.Length();
+    float d_dot_Ng = d.Dot(Ng_);
+    if (d_dot_Ng &gt;= 0) return 0;
+    wi = Sample3f(d / tmax, (2.f * tmax * tmax * tmax) / std::abs(d_dot_Ng));
+    return Le_;
+}
+</code></pre><p>简单得令人意外。其余部分与三角形光源完全一样。PDF 变量实际存的就是 PDF 的值，即面积分之一，这个技巧我们在上一章解释过了。所以这里不再重复。我们还有 \( r^2 \) 这个因子，用来体现平方反比定律以及光源采样方向与光源法线之间夹角的余弦。</p><p>照例，最后用程序的输出来收尾（代码可以通过本页顶部目录里给出的 GitHub 链接找到）：</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-quad-light-results.png" alt=""></figure><p>注意，生产级渲染器生成的那张图噪声看起来更少，尤其是左边四边形和右边三角形下方的地板表面。这是因为像本例中的 Arnold 这类渲染器，在 Monte Carlo 积分之外还用了各种技术，比如用闭式解（不需要 Monte Carlo 方法，因而无噪声）和锥体采样（看下一章了解这项技术）来求面光源的贡献。</p><p>用闭式解求面光源的问题，会放到以后的一门课里讲。这个话题在数学上本身就相当复杂。</p><p>还有一点关于选项 1 里两个三角形面光源的辐射出射度取值，即 5。如果你想在商业渲染器里复现这个例子，需要把光源强度设为 20。这是因为辐射出射度表示单位表面积上的功率。本例中的三角形表面积为 2 个单位（看看构建三角形所用的顶点数值）。有两盏这样的灯，最终的光功率确实是 20。辐射出射度 5 乘以两个三角形的表面积（每个 2 单位），得到总强度值 20（5 乘以 2×2 的面积）。</p><p>如约，短多了。如你所见，大部分工作在上一章就做完了。不过别太高兴，因为实现下一类面光源（包括圆盘和球形面光源）将是另一头猛兽。在下一章里，我们确实会学到锥体采样与面积采样的对比，而迄今为止三角形和矩形面光源用的都是面积采样。下一章见。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-rectangular-light.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-rectangular-light.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>三维密度场的体积渲染 - Scratchapixel 中文译本</title>
+<meta name="description" content="体积渲染 · 三维密度场的体积渲染（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>三维密度场的体积渲染</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="intro-volume-rendering.html">体积渲染简介</a></li>
+<li><a href="ray-marching-algorithm.html">光线步进算法</a></li>
+<li><a href="ray-marching-get-it-right.html">光线步进：把它做对！</a></li>
+<li><a style="font-weight:700" href="volume-rendering-3D-density-field.html">三维密度场的体积渲染</a></li>
+<li><a href="volume-rendering-voxel-grids.html">基于三维体素网格的体积渲染</a></li>
+<li><a href="volume-rendering-summary-equations.html">从辐射传输方程到体积渲染方程</a></li>
+<li><a href="volume-rendering-stochastic-monte-carlo.html">下一步？蒙特卡罗的随机方法</a></li>
+</ol>
+</div>
+<h2>三维密度场的体积渲染</h2><p><b>阅读时间：26 分钟。</b></p><p>到目前为止，我们只学了如何渲染均匀的体积物体。也就是散射系数与吸收系数在空间中处处不变的物体。这没问题，但有点无聊，自然界里的东西也不长这样。如果你看蒸汽火车冒出的烟云，这些体积是非均匀的。有些部分比其他部分更不透明。那么我们怎么渲染非均匀的体积物体呢？</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-heterogeneous.png?" alt=""></figure><p>在现实世界里，我们会说吸收系数或散射系数随空间变化。吸收系数越高，体积越不透明。而散射与吸收可以彼此独立地随空间变化。不过我们一般选择更实用的做法：对一个给定的体积物体，散射系数与吸收系数都取常数值，改用密度参数来调制体积在空间中的外观。想象密度参数（编程里不过是个 float 或 double 这样的实数）随空间变化。那我们就可以这么做：</p><p>$$ \sigma_s' = \sigma_s * density(p)\\ \sigma_t = (\sigma_s + \sigma_a) * density(p)$$</p><p>其中 \(\sigma_s'\) 就是被随空间变化的密度参数调制后的散射系数。Beer 定律中使用的消光系数 \(\sigma_t\)（即吸收系数与散射系数之和），同样也被随空间变化的密度参数调制。而 \(density(p)\) 是一种函数，返回空间点 p 处的密度。这样做，我们就能渲染出上图那样火山烟羽的体积物体图像。</p><p>现在的问题是，这个密度场怎么生成？可以用两种技术：</p><p>1. 过程式：你可以用 <b>3D 纹理</b>，比如 Perlin 噪声函数，以过程式的方式生成随空间变化的密度场。</p><p>2. 模拟：你可以用流体模拟程序，模拟流体（比如烟）的运动，同样能生成随空间变化的密度场。</p><p>本章我们用第一种做法。下一章我们学习如何渲染流体模拟的结果。</p><h2>用噪声函数生成密度场</h2><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-noisedensity.png" alt=""><figcaption><b>图 1：</b>我们可以用 Perlin 噪声以过程式方式生成密度场。噪声函数以一个点为参数，返回该点在 [-1,1] 范围内的噪声值。</figcaption></figure><p>本课中我们将用 Perlin 噪声函数以过程式方式生成 3D 密度场。如果你不熟悉过程式噪声生成这个概念，我们建议你读下面两门课：<a href="procedural-patterns-noise-part-1-introduction.html">值噪声与过程式图案（第 1 部分）</a>以及<a href="perlin-noise.html">Perlin 噪声（第 2 部分）</a>。</p><p>什么是过程式噪声函数（这里指 Perlin 噪声函数）？它是一个函数（取「函数」在编程上的意义），通过 3D 空间以过程式方式生成噪声图案。我们可以用这个图案生成数值随空间变化的密度场。噪声函数以一个点为参数，返回该点处 3D 噪声纹理的值（一个 float 或 double 之类的实数）。该值被限定在 [-1,1] 范围内。密度可以是 0（没有体积）也可以是正值，所以我们需要对噪声函数的取值做截断或重映射，才能得到正的密度值。下面这段代码把取值从 [-1,1] 重映射到 [0,1]：</p><pre><code>
+float density = (noise(pSample) + 1) * 0.5;
+</code></pre><p>其中 <code>pSample</code> 是我们步进穿过体积时、沿相机光线的采样点位置。</p><p>噪声函数方面，我们将使用 Ken Perlin 本人提供的改进版 Perlin 噪声实现（<a href="https://rosettacode.org/wiki/Perlin_noise#C" target="_blank" rel="noreferrer noopener">链接</a>）。同样，如果你感兴趣，可以在专门讲 <a href="perlin-noise.html">Perlin 噪声（第 2 部分）</a>的那门课里学到这段代码如何以及为何能工作。但在本课中，我们假定你熟悉这个函数。如果不熟，也不必太担心。你只需知道：把你想求值的 3D 空间点的位置传给这个函数，它就会为该点返回一个 [-1,1] 范围内的值。下面把代码列出来供参考（完整实现见源代码部分提供的文件）：</p><pre><code>
+int p[512]; // 排列表（见源代码）
+ 
+double fade(double t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+double lerp(double t, double a, double b) { return a + t * (b - a); }
+double grad(int hash, double x, double y, double z)
+{
+    int h = hash &amp; 15;
+    double u = h&amp;lt8 ? x : y,
+           v = h&amp;lt4 ? y : h==12||h==14 ? x : z;
+    return ((h&amp;1) == 0 ? u : -u) + ((h&amp;2) == 0 ? v : -v);
+}
+ 
+double noise(double x, double y, double z)
+{
+    int X = (int)floor(x) &amp; 255,
+        Y = (int)floor(y) &amp; 255,
+        Z = (int)floor(z) &amp; 255;
+    x -= floor(x);
+    y -= floor(y);
+    z -= floor(z);
+    double u = fade(x),
+           v = fade(y),
+           w = fade(z);
+    int A = p[X  ]+Y, AA = p[A]+Z, AB = p[A+1]+Z,
+        B = p[X+1]+Y, BA = p[B]+Z, BB = p[B+1]+Z;
+ 
+    return lerp(w, lerp(v, lerp(u, grad(p[AA  ], x  , y  , z   ),
+                                   grad(p[BA  ], x-1, y  , z   )),
+                           lerp(u, grad(p[AB  ], x  , y-1, z   ),
+                                   grad(p[BB  ], x-1, y-1, z   ))),
+                   lerp(v, lerp(u, grad(p[AA+1], x  , y  , z-1 ),
+                                   grad(p[BA+1], x-1, y  , z-1 )),
+                           lerp(u, grad(p[AB+1], x  , y-1, z-1 ),
+                                   grad(p[BB+1], x-1, y-1, z-1 ))));
+}
+</code></pre><p>最后，这是我们在光线步进程序里使用它的方式：</p><pre><code>
+Color integrate(const Ray&amp; ray, ...)
+{
+    float sigma_a = 0.1;
+    float sigma_s = 0.1;
+    float sigma_t = sigma_a + sigma_s;
+    ...
+    float transmission = 1; // 初始完全透射
+    for (size_t n = 0; n &lt; numSteps; ++n) {
+        float t = tMin + stepSize * (n + 0.5);
+        Point p = ray.orig + ray.dir * t;
+        // 密度不再是常量，它在空间中变化。
+        &amp;ltspan style="color: red; font-weight: bold; background-color: rgba(255,0,0,0.1); border: 1px none rgba(255,0,0,0.3);"&amp;gtfloat density = (1 + noise(p)) / 2;&lt;/span&gt;
+        float sampleAtt = exp(-density * sigma_t * stepSize);
+        // 透射率被采样点的不透明度衰减
+        transmission *= samplAtt;
+        ...
+    }
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-noisedensity-fig1.png" alt=""><figcaption><b>图 2：</b>密度沿光线变化。</figcaption></figure><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-noisedensity-example.png" alt=""><figcaption><b>图 3：</b>密度场由噪声函数生成的非均匀体积的渲染结果。</figcaption></figure><p>如你所见，与上一章我们用来渲染均匀体积物体的程序相比，这个改动相当小。我们把 density 变量的声明移进了光线步进循环里，它不再是常数值，而是随空间变化的参数。图 2 从视觉上展示了发生的事。我们沿光线步进时对密度场采样，这里同样是用一个噪声函数来生成该密度场。对沿光线的每个采样点，我们以采样位置作为函数输入参数对噪声函数求值，并把结果用作该点的密度值。图 3 是应用到体积球体上的结果。</p><p>为了确保你理解这里在发生什么，我们把噪声函数在某个距离上的取值画了出来，并画出用同一噪声函数作密度时、同一距离上的透射值。结果如下图。我们还画了若该体积密度恒定（绿色）与密度随空间变化时，Beer-Lambert 定律会呈现的样子。如你所见，绿线（恒定密度）完全平滑，而红线（非均匀）不平滑。注意在噪声函数取值接近 0 的地方透射率大致保持不变，而在噪声函数取值较高（体积更稠密）的地方透射率急剧下降。这一切都在意料之中，但愿看到它有所帮助。</p><pre><code>
+float stepSize = 1. / 51.2;
+float sigma_t = 0.9;
+float t = 0;
+float Thomogeneous = 1;
+float Theterogeneous = 1;
+for (int x = 0; x &lt; 512; x++, t += stepSize) {
+    float noiseVal = powf((1 + noise(t, 0.625, 0)) / 2.f, 2);
+    float samplAttHeterogeneous = exp(-noiseVal * stepSize * sigma_t);
+    Theterogeneous *= samplAttHeterogeneous;
+    float sampleAttHomogeneous = exp(-0.5 * stepSize * sigma_t);
+    Thomogeneous *= sampleAttHomogeneous;
+    fprintf(stderr, "%f %f %f\n", t, Theterogeneous, Thomogeneous);
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-noisefunc-transmission.png?" alt=""></figure><p>但有个问题。这段代码能算体积的透射值，可我们一直用来计算内散射贡献的代码（还记得 Li 项吗？）却照原样不行。下面我们解释为什么，以及要做哪些改动才能让它适用于非均匀参与介质。</p><h2>非均匀参与介质的内散射</h2><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-noisedensity-fig2.png" alt=""><figcaption><b>图 4：</b>光线穿过非均匀参与介质。</figcaption></figure><p>但愿看了图 4，你就能体会到问题在哪。对均匀体积物体，处理光线时我们要做的只是求出采样点沿光照方向到物体边界的距离。然后用这个距离（记作 Dl）和体积的消光系数（<code>sigma_t = sigma_a + sigma_s</code>）套 Beer 定律，算出光穿过体积到达采样点之后还剩多少（有多少被透射）。简单：</p><pre><code>
+Color lighRayContrib = exp(-Dl * sigma_t * density) * lightColor;
+</code></pre><p>非均匀体积的问题在于，这个做法不再成立，因为密度沿光线也在变化，这在图 4 里看得出来。注意：我们并不是在解第 2 章用正向光线步进解过的那个问题。我们迄今用光线步进，是为了估计沿相机光线的内散射项，仅此而已。但光线步进技术在这里又会派上用场：既用来估计内散射项，也用来估计相机光线与光线穿过非均匀参与介质时的透射率。问题不同（估计内散射 vs 估计光线的透射率），技术相同（本例中是正向光线步进，它是随机采样方法的一种形式）。我们需要把光线切成一系列线段，估计每一段的透射率，假定在该线段长度内（即步长所定义的小体积元素内）体积元素的密度是均匀的，然后随着沿光线推进，把总透射值乘以该采样点的透射率。写成伪代码，可以这样实现：</p><pre><code>
+// 计算非均匀介质中的光线透射率
+float transmission = 1;
+float stepSize = Dl / numSteps;
+for (n = 0; n &lt; numSteps; ++n) {
+    float t = stepSize * (n + 0.5);
+    float sampleAtt = exp(-density(evalDensity(t) * stepSize * sigma_t);
+    transmission *= samplAtt;
+}
+</code></pre><p>把这段代码与我们在前几章用来沿光线从 t0 步进到 t1、计算相机光线透射值的代码对比一下。</p><pre><code>
+float sigma_t = sigma_a + sigma_s;
+float density = 0.1; // 密度为常量，用来缩放 sigma_t
+float transparency = 1; // 透明度初始化为 1 
+ 
+for (int n = 0; n &lt; ns; ++n) { 
+    float t = isect.t1 - step_size * (n + 0.5); 
+    vec3 sample_pos= ray_orig + t * ray_dir; // 采样位置（步长中点） 
+ 
+&amp;ltspan style="display: block; color: red; font-weight: bold; background-color: rgba(255,0,0,0.1); border: 1px none rgba(255,0,0,0.3);"&gt;    // 用比尔定律计算采样点的透明度
+    float sample_transparency = exp(-step_size * sigma_t * density); 
+ 
+    // 用采样点的透明度衰减全局透明度
+    transparency *= sample_transparency; 
+&lt;/span&gt;
+    // 内散射。 
+    if (hitObject-&amp;gtintersect(sample_pos, light_dir, isect_vol) &amp;&amp; isect_vol.inside) { 
+        ...
+        result += ... 
+    } 
+ 
+    // 最后用采样点的透明度衰减结果
+    result *= sample_transparency; 
+}
+</code></pre><p>这两段代码做的事是一样的。有一个小小的数学技巧我们可以利用，只是到如今才讲（因为现在正是讲它的好时机）。就是这个：</p><p>$$e^a * e^b = e^{a + b}.$$</p><p>如果你看代码，可以看到透射值本质上是一串相互相乘的指数。若把光线步进循环（第 2 段代码）展开，会得到类似这样的东西：</p><pre><code>
+// dx = stepSize，noise(x) 的取值在 [0,1] 范围内
+float t0 = dx * (0.5); // n = 0
+float t1 = dx * (1 + 0.5); // n = 1
+float t2 = dx * (2 + 0.5); // n = 2
+...
+float transmission = exp(-dx * sigma_t * noise(t0)) *  
+                     exp(-dx * sigma_t * noise(t1)) * 
+                     exp(-dx * sigma_t * noise(t2)) * 
+                     ...;
+</code></pre><p>若用我们刚学到的指数性质重写这段代码，就得到：</p><pre><code>
+float tau = noise(t0) + noise(t1) + noise(t2) + ...;
+float transmission = exp(-tau * sigma_t * dx);
+</code></pre><p>换句话说，沿光线步进时（跟处理相机光线时一模一样），我们只需把沿光线各采样点处的密度值累加起来，再用这个和去调用一次指数函数，就得到光线的衰减/透射值（这确实省了点时间）。这个概念如下图所示。</p><details open><p>技术上讲，相机光线的透射值也可以这么算，但注意下面给出的代码里，我们在沿相机光线推进时用透射值去衰减 Li 项。随着穿过体积推进，我们需要光线透射的中间值，这就是为什么我们不像计算光线透射那样、只把密度累加进一个变量、最后再算最终的透射值。</p><pre><code>
+float transmission = 1; // 设置相机光线的透射率（完全透射）
+vec3 result = 0; // 相机光线的辐射亮度（从体积传播到眼睛的光能量）
+for (n = 0; n &lt; numSteps; ++n) {
+    float t = t0 + stepSize * (n + 0.5);
+    vec3 samplePos = ray.orig + t * ray.dir;
+    float sampleDensity = evalDensity(samplePos);
+    // 需要这个中间结果来衰减 Li 项（见下文）
+    transmission *= exp(-sampleDensity * sigma_t * stepSize);
+    // 内散射（Li(x)）
+    if (density &gt; 0 &amp;&amp; hit_object-&amp;gtintersect(...) {
+        float tau = 0;
+        for (nl = 0;  nl &lt; numStepsLight; ++nl) {
+            float tLight = stepSize * (nl + 0.5);
+            vec samplePosLight = samplePos + tLight * lightDirection;
+            tau += evalDensity(samplePosLight);
+        }
+        // 最后计算光照光线的透射率
+        float lightRayAtt = exp(-tau * sigma_t * stepSize);
+        result += lightColor * lightRayAtt * sigma_s * ... * transmission;
+    }
+}
+</code></pre></details><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-noisedensity-fig3.png" alt=""></figure><p>「tau」这个名字不是随便取的。文献里你常会看到它被用来表示一个叫<b>光学深度</b>的量。这个量常用两个希腊字母表示：tau（\(\tau\)）或 rho（\(\rho\)）。本章我们不给光学深度下正式定义，因为此刻那样可能会让人困惑。但我们在<a href="volume-rendering-summary-equations.html">体积渲染：总结、公式/理论</a>那一章里给了。</p><p>就这样！现在你已有渲染非均匀体积物体准确图像所需的一切。最后这张图展示了给定噪声剖面时透射曲线的样子。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-noisedensity-fig4.png" alt=""></figure><h2>实用（且可运行）的实现</h2><p>我们来对程序做必要的调整，演示这在实践中如何运作。记住算法现在是这样工作的：</p><p>1. 沿相机光线做光线步进。在相机光线上的每个采样点处，估计采样位置的密度，以计算采样点透射率并估计内散射贡献。</p><p>2. 沿光线做光线步进：以前我们只沿相机光线步进，现在还得沿光线步进。对均匀体积物体，我们只需沿相机光线步进以估计内散射项。而对非均匀体积，我们要沿相机光线步进来估计内散射项（这点不变），但现在还要沿光线求密度项。而且我们需要沿光线步进，以便也沿这些光线对密度函数求值。</p><p>换句话说，现在相机光线与光线都得步进，并在这些光线的每个采样点处对一个密度函数求值。目前是 Perlin 噪声函数。这是大量的运算，你会看到把球体作为非均匀介质来渲染会明显比均匀版本慢。</p><pre><code>
+// [comment]
+// 该函数现在由 integrate 函数调用，用来求
+// 采样位置 p 处非均匀体积球体的密度。它返回该 3D 位置处 Perlin 噪声
+// 函数的值，并重映射到 [0,1] 范围。
+// [/comment]
+float eval_density(const vec3&amp; p)
+{ 
+    float freq = 1;
+    return (1 + noise(p.x * freq, p.y * freq, p.z * freq)) * 0.5;
+}
+
+vec3 integrate(
+    const vec3&amp; ray_orig, 
+    const vec3&amp; ray_dir, 
+    const std::vector&lt;std::unique_ptr&lt;Sphere&gt;&gt;&amp; spheres)
+{
+    ...
+
+    const float step_size = 0.1;
+    float sigma_a = 0.5; // 吸收系数
+    float sigma_s = 0.5; // 散射系数
+    float sigma_t = sigma_a + sigma_s; // 消光系数
+    float g = 0; // Henyey-Greenstein 非对称因子
+    uint8_t d = 2; // 俄罗斯轮盘赌的「概率」
+
+    int ns = std::ceil((isect.t1 - isect.t0) / step_size);
+    float stride = (isect.t1 - isect.t0) / ns;
+
+    vec3 light_dir{ -0.315798, 0.719361, 0.618702 };
+    vec3 light_color{ 20, 20, 20 };
+
+    float transparency = 1; // 透射率初始化为 1（完全透明）
+    vec3 result{ 0 }; // 体积球体颜色初始化为 0
+
+    // 主光线步进循环（正向，从 t0 步进到 t1）
+    for (int n = 0; n &lt; ns; ++n) {
+        // 抖动采样位置
+        float t = isect.t0 + stride * (n + distribution(generator));
+        vec3 sample_pos = ray_orig + t * ray_dir;
+
+        // [comment]
+        // 求采样位置的密度（随空间变化的密度）
+        // [/comment] float eval_density(const vec3&amp; p)
+        &amp;ltspan style="color: red; font-weight: bold; background-color: rgba(255,0,0,0.1); border: 1px none rgba(255,0,0,0.3);"&amp;gtfloat density = eval_density(sample_pos);&lt;/span&gt;
+        float sample_attenuation = exp(-step_size * density * sigma_t);
+        transparency *= sample_attenuation;
+
+        // 内散射。
+        IsectData isect_light_ray;
+        if (density &gt; 0 &amp;&amp; 
+            hit_sphere-&amp;gtintersect(sample_pos, light_dir, isect_light_ray) &amp;&amp; 
+            isect_light_ray.inside) {
+            size_t num_steps_light = std::ceil(isect_light_ray.t1 / step_size);
+            float stide_light = isect_light_ray.t1 / num_steps_light;
+            float tau = 0;
+            // [comment]
+            // 沿光线做光线步进。把密度值累加进 tau 变量。
+            // [/comment] float eval_density(const vec3&amp; p)
+            for (size_t nl = 0; nl &lt; num_steps_light; ++nl) {
+                float t_light = stide_light * (nl + 0.5);
+                vec3 light_sample_pos = sample_pos + light_dir * t_light;
+                &amp;ltspan style="color: red; font-weight: bold; background-color: rgba(255,0,0,0.1); border: 1px none rgba(255,0,0,0.3);"&amp;gttau += eval_density(light_sample_pos);&lt;/span&gt;
+            }
+            float light_ray_att = exp(-tau * stide_light * sigma_t);
+            result += light_color *       // 光的颜色
+                      light_ray_att *     // 光线的透射值
+                      phaseHG(-ray_orig, light_dir, g) * // 相位函数
+                      sigma_s *           // 散射系数
+                      transparency *      // 光线当前的透射值
+                      stride *            // 黎曼和里的 dx
+                      density;            // 采样位置处的体积密度
+        }
+
+        // 俄罗斯轮盘赌
+        if (transparency &lt; 1e-3) {
+            if (distribution(generator) &gt; 1.f / d)
+                break;
+            else
+                transparency *= d;
+        }
+    }
+
+    // 组合背景色与体积球体的颜色
+    return background_color * transparency + result;
+}
+</code></pre><p>在这个实现里，相机光线与光线用的步长相同。这不必要。为了提速，你可以用更大的步长来估计光线的透射值。另外，既然我们用了过程式纹理，可能会遇到一些滤波问题。如果你对噪声函数采样的频率太低，可能会漏掉过程式纹理的一些细节，最终出现走样问题。这同样是滤波问题，我们这里不深入，但要知道步长、噪声频率与图像分辨率在某种意义上是相互关联的（从采样的角度看）。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-heterogeneous-render.png" alt=""></figure><p>你可能会惊讶程序输出（右图）看起来还不太像云。不过，正如噪声图案图像（左图）所示，构成噪声图案的「块」默认相当平滑，所以体积看起来也平滑。把过程式噪声做成云的样子这门手艺，需要用各种方式调整噪声函数的结果，才能得到视觉上更有意思的效果（我们后面会展示）。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-noisevariation.png" alt=""></figure><p>这里有几个你马上就能试的简单变化：去掉噪声函数里的负值（左图），以及取噪声函数的绝对值（右图）。falloff 参数在后面解释。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-moviecontact.png" alt=""></figure><p>虽然不起眼，但这正是 1997 年电影《超时空接触》片头那段壮观体积效果所用的技术。那些图像用 Pixar 的渲染器渲染，由 Sony Picture Imageworks 制作。那个片头在当时是一项巨大的技术工程。如前所述，他们用的技术与本课提供的一样。区别在于他们用了一些几何体（而不是基础球体）来定义体积物体的形状，并用一些分形图案给星云加上云状的质感。前一种技术我们会在本课最后一章（生产中的体积渲染）提到。至于云状质感，现在看看我们能做些什么……</p><h2>摆弄密度函数（做出更有意思的外观与动画）</h2><p>写一个光线步进器是一回事，做出云状的过程式纹理是另一回事。前者是一门科学，后者更关乎艺术：用一系列数学工具去塑造过程式纹理，花大量时间调参数，直到最终得到你满意的结果。我们这里的目标不是做出令人惊叹的图像，而是给你一些工具或砖块：第一帮你理解事情如何运作，第二让你最终能自己重新组合成更复杂的系统，做出「哇」的图像——如果你想的话。不过这交给你了……但如果你做出了什么酷东西，跟我们分享！</p><p>下面介绍几个技巧，可以用来做出更有意思的云状「球体」。这只是其中一小部分工具的挑选。</p><h3> Smoothstep</h3><p>smoothstep 函数你应该不陌生，我们已经在好几处用过它，包括噪声函数里。它在两个值之间制造「平滑」过渡。下面是该函数的一种实现：</p><pre><code>
+float smoothstep(float lo, float hi, float x)
+{
+    float t = std::clamp((x - lo) / (hi - lo), 0.f, 1.f);
+    return t * t * (3.0 - (2.0 * t));
+}
+</code></pre><p>我们可以用这个函数在球体边界附近制造衰减。为此，我们对 <code>eval_density</code> 函数做些改动，把球心与半径作为参数传进去。这样就能算出采样位置到球心的归一化距离，并用这个值来调整球体的密度，大致如此：</p><pre><code>
+float eval_density(const vec3&amp; sample_pos, const vec3&amp; sphere_center, const float&amp; sphere_radius)
+{
+    vec3 vp = sample_pos - sphere_center;
+    float dist = std::min(1.f, vp.length() / sphere_radius);
+    float falloff = smoothstep(0.8, 1, dist); // 距离从 0.1 到 1 时，从 0 平滑过渡到 1
+    return (1 - falloff);
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-smoothstep.png?" alt=""></figure><p>这个技巧同样有助于在体积到达球体边界之前把它淡出。我们用 smoothstep 函数控制衰减从离边缘或侧面多远的地方开始（以及最终结束，但对衰减效果来说，结束值应保持在 1）。</p><h3> fBm</h3><p>fBm（在旧日好时光里也叫 plasma 或「混沌」纹理）代表分形布朗运动（Fractal Brownian Motion）。在计算机图形学领域，它的含义与数学里不同。我们考虑的是它对我们图形工程师和艺术家意味着什么。它是一种分形图案，由若干层过程式噪声相加而成，各层的频率与振幅不同。你可以在过程式生成部分的课程里找到关于这种图案的一些信息。</p><p>一个典型 fBm 过程式纹理的代码可以这样构造：</p><pre><code>
+float eval_density(const vec3&amp; p, ...)
+    vec3 vp = p - sphere_center;
+    ...
+    // 构建 fBm 分形图案
+    float frequency = 1;
+    vp *= frequency; // 必要时缩放初始点值
+    size_t numOctaves = 5; // 层数
+    float lacunarity = 2.f; // 相邻频率之间的间隔
+    float H = 0.4; // 分形增量参数
+    float value = 0; // fBm 的结果（用作我们的密度）
+    for (size_t i = 0; i &lt; numOctaves; ++i) {
+        value += noise(vp) * powf(lacunarity, -H * i);
+        vp *= lacunarity;
+    }
+
+    // 把负值截掉
+    return std::max(0.f, value) * (1 - falloff);
+}
+</code></pre><p>构建一个 fBm 图案只需两行代码（对各层循环）。在这个基础版本上可以做出很多变化，比如取噪声函数的绝对值（这种图案叫 turbulence）等等。想进一步了解这个话题（以及如何正确地对这种图案做滤波），同样请参看过程式生成部分。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-fBm.png?" alt=""></figure><h3> Bias</h3><p>Bias 会移动中心值（0.5）所在的位置，而保持 0 和 1 不变。</p><pre><code>
+float eval_density(...) 
+{
+    float bias = 0.2;
+    float exponent = (bias - 1.0) / (-bias - 1.0)
+    // 假定 exponent &gt; 0
+    return powf(noisePattern, exponent);
+}
+</code></pre><h3> 用图元的局部坐标系旋转噪声图案</h3><p>还有一种技术在旧日好时光里用得很多（在流体模拟因算力提升而变得主流之前），用来让体积图元（球体、立方体等）内部的噪声图案动起来。我们传给密度函数的采样位置是在世界空间里定义的，但我们可以把这个点定义在一个附着于球体的参考系里。换句话说，把采样点从世界空间变换到物体空间。要在球体参考系里定义采样点，我们只需：</p><pre><code>
+vec3 sample_object_space = sample_pos - center;
+</code></pre><p>更通用的做法是用矩阵变换球体图元，然后用物体到世界矩阵的逆矩阵把采样点从世界空间变换到球体局部参考系。不过为了简单，我们的示例程序没有使用矩阵。但你可以用 Scratchapixel 上提供的信息自己轻松做到这一点。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-objectspacenoise.png" alt=""></figure><p>这个技巧之所以有用，原因如下：如果我们移动球体，在球体局部参考系里定义的点的坐标不会变。这就可以用来确保噪声图案无论球体如何变换都粘在球体上。有点像你用手指搓动的玻璃弹珠里的纹理。我们为说明这个想法所选的例子（虽然跟我们刚才讲的稍有不同，但概念与结果一样）：我们会在物体空间里绕图元球体的 y 轴旋转这个点（更好的做法是用物体到世界矩阵旋转球体，再用世界到物体矩阵把采样点从世界空间变换到物体空间，但我们这里太懒了，于是改为在物体空间里旋转这个点）。结果是，我们能看到分形图案也跟着旋转，又有点像我们在看一颗转动的玻璃弹珠。用这种方法还可以施加更复杂的变形（线性或非线性）。</p><pre><code>
+float eval_density(const vec3&amp; p, const vec3&amp; center, const float&amp; radius)
+{ 
+    // 把点从世界空间变换到物体空间
+    vec3 vp = p - center;
+    vec3 vp_xform;
+
+    // 在物体空间中旋转采样点（frame 是从 1 到 120 的全局变量）
+    float theta = (frame - 1) / 120.f * 2 * M_PI;
+    vp_xform.x =  cos(theta) * vp.x + sin(theta) * vp.z;
+    vp_xform.y = vp.y;
+    vp_xform.z = -sin(theta) * vp.x + cos(theta) * vp.z;
+
+    float dist = std::min(1.f, vp.length() / radius);
+    float falloff = smoothstep(0.8, 1, dist);
+    float freq = 0.5;
+    size_t octaves = 5;
+    float lacunarity = 2;
+    float H = 0.4;
+    vp_xform *= freq;
+    float fbmResult = 0;
+    float offset = 0.75;
+    for (size_t k = 0; k &lt; octaves; k++) {
+        fbmResult += noise(vp_xform.x , vp_xform.y, vp_xform.z) * pow(lacunarity, -H * k);
+        vp_xform *= lacunarity;
+    }
+
+    return std::max(0.f, fbmResult) * (1 - falloff);
+}
+</code></pre><p>注意现在我们能清楚地看到分形图案的 3D 结构了。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/volume-rendering-developers/voldev-rotation.mp4"></video></p></div><h3> 以及更多……</h3><p>「过程式」技巧的清单可以一直列下去：置换（用噪声函数置换体积的边缘）、不同类型的噪声（billow、时空噪声这种带动画的噪声类型等等）。我们会在将来修订本课时扩充这份清单。</p><h2>到目前为止我们学了什么？</h2><p>本课所学技术的总结见最后一章。</p><p>不过你现在已经能用光线步进渲染单次散射的非均匀体积物体了。这已经是很大的成就。另外，到现在应该也清楚：用光线步进时，我们把体积物体拆成由步长定义的小体积元素。这个技术之所以成立，是因为我们假定这些微小的体积元素或采样点小到自身可视为均匀。简言之，你把非均匀物体拆成一块块可以看作「均匀」的「砖」。不过这些砖彼此可以不同。有点像你用乐高积木搭一个物体。</p><h2>源代码</h2><p>完整实现该技术的可运行程序的源代码见本课的源代码部分。你可以摆弄 <code>eval_density()</code> 函数来做出不同外观。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/volume-rendering-3D-density-field.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/volume-rendering-3D-density-field.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

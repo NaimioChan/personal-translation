@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>实现光线追踪算法 - Scratchapixel 中文译本</title>
+<meta name="description" content="3D 计算机图形学入门：以光线追踪为例 · 实现光线追踪算法（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>实现光线追踪算法</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="how-does-it-work.html">它如何工作</a></li>
+<li><a href="raytracing-algorithm-in-a-nutshell.html">光线追踪算法简述</a></li>
+<li><a style="font-weight:700" href="implementing-the-raytracing-algorithm.html">实现光线追踪算法</a></li>
+<li><a href="adding-reflection-and-refraction.html">添加反射与折射</a></li>
+<li><a href="ray-tracing-practical-example.html">编写一个基础光线追踪器</a></li>
+</ol>
+</div>
+<h2>实现光线追踪算法</h2><p><b>阅读时间：5 分钟。</b></p><p>有了光与物质相互作用、相机和数字图像这几方面的理解，我们就可以着手搭建自己的第一个光线追踪器了。本章将深入光线追踪算法的核心，为后面的探索打好基础。不过要注意：本章做出来的东西还不是一个完整、可运行的程序。眼下，请你先相信这个学习过程，我们没有给出明确代码的那些函数，都会随着进度推进被详细讲解。</p><p>记住，这门课的标题是「光线追踪简述」。在后续课程中，我们会把这里介绍的每项技术讲得更细，逐步提升我们对光与影的模拟理解与能力。不过，到本课结束时，你已经写出一个能编译、能出图的光线追踪器。这不仅是学习路上的一个重要里程碑，也证明了光线追踪在生成图像上的力量与优雅。开始吧。</p><p>想想光的自然传播：无数条光线从各个光源发出，蜿蜒前进，直到汇聚到眼睛表面。光线追踪本质上就是把这一自然现象反过来模拟一遍，因此它几乎是现实的完美模拟器。</p><p>光线追踪算法的核心是逐像素渲染图像。对每个像素，它向场景发射一条主光线，方向由从眼睛穿过该像素中心的一条线决定。然后追踪这条主光线的路径，判断它是否与场景中的物体相交。若出现多个交点，算法选取离眼睛最近的那个交点做进一步处理。随后从这一最近交点向光源方向投射一条次级光线，即阴影光线（图 1）。</p><figure><img src="https://scratchapixel.com/images/introduction-to-ray-tracing/lightingnoshadow.gif" alt=""><figcaption><b>图 1：</b>一条主光线穿过像素中心投射出去，以检测与物体的相交。一旦找到交点，就发出一条阴影光线来判断该点的受光状态。</figcaption></figure><p>如果阴影光线不受阻挡地到达光源，该交点就被判定为被照亮。反之，如果它在途中与别的物体相交，就说明有一点阴影落在了最初那个点上（图 2）。</p><figure><img src="https://scratchapixel.com/images/introduction-to-ray-tracing/lightingshadow.gif" alt=""><figcaption><b>图 2：</b>较小的球在较大的球上投下阴影，因为阴影光线在到达光源之前先遇到了较小的球。</figcaption></figure><p>对所有像素重复这一过程，就得到我们三维场景的二维描绘（图 3）。</p><figure><img src="https://scratchapixel.com/images/introduction-to-ray-tracing/pixelrender.gif" alt=""><figcaption><b>图 3：</b>渲染一帧，就是为帧缓冲中的每个像素发出一条主光线。</figcaption></figure><p>下面是实现这一算法的伪代码：</p><pre><code>
+for (int j = 0; j &lt; imageHeight; ++j) { 
+    for (int i = 0; i &lt; imageWidth; ++i) { 
+        // 确定主光线的方向
+        Ray primRay; 
+        computePrimRay(i, j, &amp;primRay); 
+        // 开始在场景中搜索交点
+        Point pHit; 
+        Normal nHit; 
+        float minDist = INFINITY; 
+        Object *object = NULL; 
+        for (int k = 0; k &lt; objects.size(); ++k) { 
+            if (Intersect(objects[k], primRay, &amp;pHit, &amp;nHit)) { 
+                float distance = Distance(eyePosition, pHit); 
+                if (distance &lt; minDist) { 
+                    object = &amp;objects[k]; 
+                    minDist = distance;  // 更新最小距离
+                } 
+            } 
+        } 
+        if (object != NULL) { 
+            // 对交点进行光照计算
+            Ray shadowRay; 
+            shadowRay.direction = lightPosition - pHit; 
+            bool isInShadow = false; 
+            for (int k = 0; k &lt; objects.size(); ++k) { 
+                if (Intersect(objects[k], shadowRay)) { 
+                    isInShadow = true; 
+                    break; 
+                } 
+            } 
+        } 
+        if (!isInShadow) 
+            pixels[i][j] = object-&amp;gtcolor * light.brightness; 
+        else 
+            pixels[i][j] = 0; 
+    } 
+} 
+</code></pre><p>光线追踪的优雅之处在于它简单，且与物理世界直接对应，一个基础的光线追踪器 200 行代码就能写出来。这种简单与扫描线渲染之类更复杂的算法形成鲜明对比，使得光线追踪实现起来相对轻松。</p><p>Arthur Appel 在 1969 年的论文《Some Techniques for Shading Machine Renderings of Solids》中首次提出了光线追踪。既然它有这么多优势，人们也许要问：为什么光线追踪没有完全取代其他渲染技术？主要障碍，无论在过去还是某种程度上在现在，都是它的计算速度。正如 Appel 所说：</p><blockquote><p>这种方法非常耗时，要想得到有用的结果，通常需要的计算时间是线框绘制的几千倍。其中大约一半时间花在确定投影与场景之间的点对点对应关系上。</p></blockquote><p>所以，光线追踪的问题症结就在于它慢——计算机图形学里的关键人物 James Kajiya 也说过类似的话：「光线追踪不慢，是计算机慢」。难点在于计算光线与几何体的相交需要大量运算。多年来，这种计算需求一直是光线追踪的主要短板。不过，随着计算能力不断提升，这一局限正被逐步缓解。虽然与 z 缓冲算法之类的方法相比光线追踪仍然更慢，但现代计算机已经能在几分钟内渲染出过去要花几小时的帧。实时与交互式光线追踪的开发，如今是一个活跃的研究方向。</p><p>总结一下，光线追踪的渲染过程可以分成可见性判定与着色两部分，两者都需要计算量很大的光线与几何体求交测试。这种方法在渲染速度与精度之间提供了一种折中。自 Appel 的开创性工作以来，人们做了大量研究来加速光线与物体的求交计算。有了这些进展和计算能力的提升，光线追踪已成为离线渲染软件中的标准做法。光栅化算法在电子游戏引擎里依然占主导，但 2017—2018 年 GPU 加速光线追踪与 RTX 技术的出现，是迈向实时光线追踪的重要里程碑。现在有些电子游戏已经提供了开启光线追踪的选项，尽管只用于增强反射与阴影这类有限的效果，这也预示了游戏图形的新时代。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-ray-tracing/implementing-the-raytracing-algorithm.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-ray-tracing/implementing-the-raytracing-algorithm.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

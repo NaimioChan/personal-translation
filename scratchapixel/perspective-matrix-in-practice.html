@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>迷路了？用真实的制作案例回顾一遍 - Scratchapixel 中文译本</title>
+<meta name="description" content="透视与正交投影矩阵 · 迷路了？用真实的制作案例回顾一遍（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>迷路了？用真实的制作案例回顾一遍</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="projection-matrix-introduction.html">投影矩阵是什么，何处、为何要使用？</a></li>
+<li><a href="projection-matrices-what-you-need-to-know-first.html">投影矩阵：首先需要知道的事</a></li>
+<li><a href="building-basic-perspective-projection-matrix.html">构建基础的透视投影矩阵</a></li>
+<li><a href="opengl-perspective-projection-matrix.html">透视投影矩阵</a></li>
+<li><a style="font-weight:700" href="perspective-matrix-in-practice.html">迷路了？用真实的制作案例回顾一遍</a></li>
+<li><a href="projection-matrix-GPU-rendering-pipeline-clipping.html">投影矩阵、GPU 渲染管线与裁剪</a></li>
+<li><a href="orthographic-projection-matrix.html">正交投影矩阵</a></li>
+</ol>
+</div>
+<h2>迷路了？用真实的制作案例回顾一遍</h2><p><b>阅读时间：39 分钟。</b></p><p>写完这一章之后——距离本课最初版本发布已过去十多年——我意识到本章用到的一些概念要到下一章才讲，尤其是与 GPU 相关的那些。我本可以把这一章挪到下一章之后，但我决定保持这个顺序，因为它紧跟着专门讲透视投影如何构造的那一章。我只是加了这条提示，建议你先读这一章，再读下一章，等下一章读完后再回头读这一章。我知道这感觉有点怪，但我在学习与教学上的经验是：这件事很大程度上靠重复，靠从不同视角反复看同一个问题。</p><h2>为什么要有这一章？</h2><p>最近（2024 年），我意识到网站上关于相机的信息散落在不同的课程里。比如讲针孔相机的那一课讨论了如何用真实世界的数据（胶片宽、高和焦距）构造一台 3D 相机。而讲透视投影的那一课也涉及相机相关的话题，但两者之间的联系并没有清晰建立起来。没有一个地方把这些要素有效地串起来，很难看出它们全是如何关联的。这就是本章的目标，它是在本课第一版之后好几年才加进来的。</p><p>要构造一个能与 Maya、Blender 这类制作工具对得上的透视投影矩阵，麻烦之处在于它们会考虑若干参数。这些参数之间如何相互作用很容易忘，也确实很容易搞混。所以我后来决定加上这一章，希望能弥合这两课之间的空缺，并清楚展示如何按这些不同参数来构造透视矩阵。</p><p>具体来说，这些输入参数可以是：</p><ul><li><p>你是否用物理相机模型来推断相机的视场或视角。</p></li><li><p>你是否用视场角来计算屏幕坐标。</p></li><li><p>你是否真的算出屏幕坐标来构造透视投影矩阵。</p></li><li><p>你用的是垂直还是水平视场角。</p></li><li><p>最后，你的胶片宽高比是否与设备（或屏幕）宽高比不同。如果你想仿效 Maya 这类 DCC 工具提供的各种<b>适配模式</b>（比如 fill、overscan、vertical、horizontal），这件事可能挺棘手。</p></li></ul><p>再说一遍，这不算什么高深的事，但我和许多其他工程师一样，曾花了无数小时琢磨为什么我的结果和其他工具对不上。原因就在于，如果你不是爱因斯坦或韦纳·冯·布劳恩（既然刚提到火箭），这些参数之间的相互作用确实不好把握。</p><p>这一章也是你复习前面所学概念的好机会，而且正如我刚提到的，可以把它与你讲<a href="how-pinhole-camera-works-part-1.html">针孔相机模型</a>那一课学到的东西联系起来。</p><p>这项工作还有一个有意思的方面：随着内容展开，我会向你展示，根据你得到的结果，你能推断出 Maya 或 Blender 这类工具里显示的某些值是什么意思。这能帮你弄清它们实际在使用哪种约定。不错吧！</p><h2>计算视场角或视角</h2><p>如果你从物理相机模型出发，你会拿到胶片宽度和高度。在真实世界里，这就是数字传感器的尺寸；如果你还在用胶片，那就是实体胶片的尺寸。我们拿摄影里一个基础画幅来举例，即 \(36 \text{mm} \times 24 \text{mm}\) 画幅。模型还应当提供焦距。我们就用 \(38.601 \text{mm}\) 的焦距。这就是所需的三个值。从这些值出发，用简单的三角学，我们就能算出垂直或水平视场角：</p><p>$$
+\begin{array}{l}
+\tan\left(\frac{fov_x}{2}\right) = \frac{\frac{\text{film width}}{2}}{\text{focal length}} \\
+\tan\left(\frac{fov_y}{2}\right) = \frac{\frac{\text{film height}}{2}}{\text{focal length}} \\
+\end{array}
+$$</p><p>思路是取比如说宽度的一半，除以焦距。这类似于用直角三角形对边与邻边之比来求其角度的正切。这些在讲针孔相机的那一课里都有解释。</p><p>好，很好——这里没什么花哨的东西。你只需要确保焦距和胶片尺寸用的是同一单位。这里我们用毫米。算一下：</p><p>$$
+\begin{array}{l}
+\tan\left(\frac{fov_x}{2}\right) = \frac{\frac{36}{2}}{38.601} = 0.4662 \\
+\tan\left(\frac{fov_y}{2}\right) = \frac{\frac{24}{2}}{38.601} = 0.3108 \\
+\end{array}
+$$</p><p>由此得到：</p><p>$$
+\begin{array}{l}
+fov_x  = 2 \times \text{atan}\left(\frac{36}{2 \times 38.601}\right) = 50.00^\circ \\
+fov_y  = 2 \times \text{atan}\left(\frac{24}{2 \times 38.601}\right) = 34.52^\circ \\
+\end{array}
+$$</p><p>这些数值不是我随便挑的。我特意想让水平视场角等于 50 度。为什么？因为如果你打开 Maya 这类软件，把胶片宽、高和焦距输进物理相机模型，你会看到它替你算出一个叫「视角」的参数。用这组数字，结果会是 50 度，由此你可以推断参数列表里显示的视角是水平视场角，而不是垂直的。这一点知道很重要——相信我。</p><p>很好，于是我们有了视角。注意并非所有工具都提供使用物理相机模型的能力。有时你能控制场景可见范围的唯一手段就是视角。不过，如果你确实有物理相机模型，现在你知道如何从中算出视角了。</p><p>还有，记住视角对构造透视投影矩阵并不是绝对必需的，后面我们会看到。你可以用两组参数中的任意一组来构造矩阵：视角，或者物理相机模型参数（胶片宽、高和焦距）。由你选择。从物理相机模型参数可以算出视角，但仅凭视角，你推不出物理相机模型参数（比如反算宽度、高度或焦距）。</p><p>现在，进入屏幕坐标。</p><h2>计算屏幕坐标</h2><p>屏幕坐标就是我们上一章用来构造透视投影矩阵的右、左、上、下四个坐标。还记得吗？</p><p>$$
+\left[\begin{array}{cccc}
+\frac{2n}{r-l} & 0 & 0 & 0 \\
+0 & \frac{2n}{t-b} & 0 & 0 \\
+\frac{r + l}{r-l} & \frac{t + b}{t-b} & -\frac{f+n}{f-n} & {\color{red}{-1}}\\
+0 & 0 & -\frac{2fn}{f-n} & 0\\
+\end{array}\right]
+$$</p><p>这些是相机（视图）空间中视锥体的边界。它们界定了视锥体在近裁剪面处的范围。我把 \(\frac{2n}{r-l}\) 和 \(\frac{2n}{t-b}\) 这两个符号改记为 \(\textcolor{red}{C}\) 和 \(\textcolor{red}{D}\)。</p><p>$$
+\left[\begin{array}{cccc}
+\textcolor{red}{C} & 0 & 0 & 0 \\
+0 & \textcolor{red}{D} & 0 & 0 \\
+\frac{r + l}{r-l} & \frac{t + b}{t-b} & -\frac{f+n}{f-n} & -1 \\
+0 & 0 & -\frac{2fn}{f-n} & 0 \\
+\end{array}\right]
+$$</p><p>这些坐标很容易算，因为它们是用相似三角形的性质推出来的。本质上，胶片宽度（除以 2，因为屏幕坐标是对称的）与焦距之比，等于右屏幕坐标（假定为正）与近裁剪面距离之比。</p><p>$$
+\frac{\text{film width} / 2}{\text{focal length}} = \frac{\text{right}}{Z_{\text{near}}}
+$$</p><p>由此可以轻易导出（公式 1）：</p><p>$$
+\text{right} = \frac{\text{film width} / 2}{\text{focal length}} \times Z_{\text{near}}
+$$</p><p>同样，我们可以算出 top（另一个正坐标）：</p><p>$$
+\text{top} = \frac{\text{film height} / 2}{\text{focal length}} \times Z_{\text{near}}
+$$</p><p>left 和 bottom 坐标就是 right 和 top 坐标的相反数：</p><p>$$
+\begin{array}{l}
+\text{left} = -\text{right}\\
+\text{bottom} = -\text{top}
+\end{array}
+$$</p><p>简单！如果你从物理相机参数——宽、高和焦距——出发，这个方法就行得通。但如果你没有这些，只有水平视场角（我们眼下先讲水平的情形，垂直的情形随后再看），那就得换个办法。</p><p>给定视角，我们知道：</p><p>$$
+\tan(\theta) = \frac{\text{film width} / 2}{\text{focal length}}
+$$</p><p>其中 \(\theta\) 是视角的一半。我们可以把公式 1 里的 \(\frac{\text{film width} / 2}{\text{focal length}}\) 替换成 \(\tan(\theta)\)。得到：</p><p>$$
+\text{right} = \tan(\text{angle of view}/2) \times Z_{\text{near}}
+$$</p><p>又很简单。接下来 top 坐标的计算就稍微绕一些。既然我们知道屏幕的宽度（本质上就是 \(\text{right} - \text{left}\)），就可以用这个宽度除以图像宽高比得出总高度。这里的图像宽高比是图像宽度（以像素计）除以图像高度。假设我们的图像是 \(960 \times 540\) 像素（宽高比约为 \(1.777\)）。由于 top 坐标只是屏幕高度的一半，我们还需要把这个数除以二。</p><p>$$
+\begin{array}{l}
+\text{left} = -\text{right}\\
+\text{top} = \frac{\text{right} - \text{left}}{\text{aspect}} / 2\\
+\text{bottom} = -\text{top}
+\end{array}
+$$</p><p>这里的 \(\text{aspect}\) 是图像宽度（以像素计）除以图像高度（960/540）。这通常称为<b>设备宽高比</b>。</p><p>算一下（两种方法给出的数字相同，\(Z_{\text{near}} = 0.1\)）：</p><p>$$
+\begin{array}{l}
+\text{aspect} = \frac{960}{540} = 1.777 \\
+\text{right} = \tan(50^\circ/2) \times 0.1 \approx 0.04662 \\
+\text{left} = -\text{right} \approx -0.04662 \\
+\text{top} = \frac{\text{right} - \text{left}}{\text{aspect}} / 2 \approx 0.02622 \\
+\text{bottom} = -\text{top} \approx -0.02622
+\end{array}
+$$</p><p>好！那么现在有什么？两套计算屏幕坐标的方法。注意一个重要的事：要算出视场角（视角），我们的出发点是胶片尺寸（毫米）和焦距（毫米）。这个胶片有自己的宽高比，在我们的例子里是 \(36/24 = 1.5\)。这个宽高比与图像输出分辨率的宽高比不同，后者是 1.777。所以，当你把屏幕宽度（\(\text{right} - \text{left}\)）除以 1.777（设备宽高比）时，你实际上是在把胶片框<b>适配</b>进分辨率框，如下图所示。这就是 <b>fill</b> 适配模式的一个例子。</p><p>接下来我会从像素在管线中一路走过的角度来解释这件事，这也是复习画布、近裁剪面、视锥体、裁剪空间、齐次坐标等概念的好机会。简而言之，整个家当都覆盖一遍。</p><h2>一个顶点沿管线的旅程</h2><ul><li><p>从前，在计算机图形学世界的最初起点上，只有一个基本的画布，屏幕坐标是 \(\{-1, -1, 1, 1\}\)，分别位于距眼睛或相机原点 1 个单位处。这是我们的出发点。你可以看到屏幕是正方形，一切都离你 1 个单位远，而要判断一个点通过这套基本设定是否可见，我们只需把它的 x 和 y 坐标分别除以它的 z 坐标。</p><p>为什么这样行得通？因为把一个点的 z 坐标除以它自己，得到 1。所以，把点的 x 和 y 坐标除以 z 这个过程，实际上就是把点投影到一块距眼睛 1 个单位的画布上。换句话说，可以把它看成把近裁剪面设为 1。所以，如果一个点在投影之后（坐标除以 z 坐标之后）x 和 y 落在 \([-1, 1]\) 范围内，这个点在画布上就是可见的，如下图所示。</p></li></ul><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspective-matrix-basic-setup.png?" alt=""><figcaption><b>图 1：</b>一个基本设定：画布或屏幕位于距眼睛 1 个单位处，屏幕坐标右上角为 (1,1)、左下角为 (-1,-1)。</figcaption></figure><p>关于这个过程要注意一件重要的事：屏幕上可见的所有点，其坐标都落在 \([-1, 1]\) 范围内，如前所述。我们可以把它理解为点的坐标被归一化了，换个说法，就是落在某种归一化设备坐标（NDC）空间里。虽然这并不完全准确，但它有助于理解接下来的内容，所以记住这一点。</p><ul><li><p>然后就有了这样的想法：在不移动的情况下看到场景的更多部分，或者更细致地聚焦于场景的某一部分——也就是我们所说的拉远或拉近。理解这个过程的一种方式，是把画布的屏幕坐标按比例放大或缩小，实际上就是放大或缩小我们看场景所透过的那扇窗，如下图所示。</p></li></ul><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspective-matrix-zoom-in-out.png?" alt=""><figcaption><b>图 2：</b>通过改变屏幕坐标、把它们变大或变小，我们可以产生类似拉远或拉近的效果，而这实际上等同于改变视角。</figcaption></figure><p>那我们如何做到？要么换一张更小或更大的胶片——我这里指的是实体胶片，就把它想成一张对光敏感的纸。如果你把胶片宽度除以焦距，而胶片宽度变小，那么 right 坐标（以及 left 坐标的绝对值）就会减小，实际上产生拉近的效果。同样，如果宽度增大，right/left 坐标增大，于是我们得到拉远的效果。</p><p>或者，用视角。回想当 \( \theta = 45^\circ \) 时 \( \tan(\theta) = 1 \)。于是，视角为 \(90^\circ\) 时我们得到 \([-1, 1]\) 的屏幕坐标。对于小于 \(90^\circ\) 的视角，right/left（或 left 的绝对值）坐标减小，产生拉近效果。对于大于 \(90^\circ\) 的视角，right/left 坐标增大，产生拉远效果。</p><p>好，好。</p><p>我在这里想让你明白的是：你能看到场景的多少，只取决于屏幕的 right/left 和 top/bottom 坐标——别的什么都不管。而这实际上由视角（或胶片宽度）控制。在本文中我们用的是水平视角（如前所述），或者胶片宽度。使用胶片高度或垂直视场角的情形我们稍后再谈。</p><p>现在你可能会问，那透视投影矩阵里的 \(\textcolor{red}{C}\) 和 \(\textcolor{red}{D}\) 两个系数又有什么用？嗯，图形管线的关键就在这儿。GPU 和图形管线的目标，是确定屏幕上什么可见、什么不可见。换句话说，它需要知道该裁剪、剔除什么，该保留什么。</p><p>好，在继续之前，回想我们前面说过：把点投影到我们的单位画布上（也就是屏幕坐标落在 \([-1,1]\) 范围内的那块画布）时，这有点像是在处理 NDC（归一化设备坐标）空间。现在注意，如果我们的屏幕坐标落在 \([-2,2]\) 或 \([-0.5,0.5]\) 范围内，这与 NDC 空间毫无关系。回忆一下，NDC 空间中的点，其坐标被归一化到 \([-1,1]\) 范围内。</p><p>到目前为止，我们的顶点已经从世界空间到了 \(\rightarrow\) 相机空间。然后，我们知道如何通过把 \(P.x\) 和 \(P.y\) 分别除以 \(P.z\)，把它们投影到屏幕上。只要在屏幕坐标范围内，我们就保留这个点，但这并不是我们要做的。我们要做的是：只保留 x 与 y 坐标落在 \([-1,1]\) 范围内的点，其余的丢弃或剔除。图形管线中的这个过程，对应的是从相机空间到 \(\rightarrow\) NDC（归一化设备坐标）空间。我们怎么做？</p><p>嗯，这就是 \(\textcolor{red}{C}\) 和 \(\textcolor{red}{D}\) 登场的地方。假设我们的屏幕坐标在左下角和右上角分别是 \((-2,-2)\) 和 \((2,2)\)。回忆一下：</p><p>$$
+\begin{array}{l}
+C = \frac{2n}{r-l} = \frac{2}{2 - (-2)} = \frac{1}{2}\\
+D = \frac{2n}{t-b} = \frac{2}{2 - (-2)} = \frac{1}{2}\\
+\end{array}
+$$</p><p>眼下我们先假定 \(n\)（近裁剪面）等于 \(1\)。那么当我们把透视投影矩阵施加到一个顶点上时，在这个特定情形下，该点的 \(P.x\) 和 \(P.y\) 坐标实际上被乘以了 \(\frac{1}{2}\)。这意味着什么？这意味着在透视除法之后（即点被它的 z 坐标除过之后），一个原本正好落在画布右上角的点——比如说屏幕坐标为 \((2,2)\) 的那个点——现在等于 \((1,1)\)。</p><p>这正是我们想要的，因为现在位于屏幕边缘（本例中是正落在角上）的那个点，恰好处在 NDC 范围的极限上，而 NDC 范围是从 \((-1,-1)\) 到 \((1,1)\)。所以，\(\textcolor{red}{C}\) 和 \(\textcolor{red}{D}\) 的作用，就是帮助把被变换的点重映射到 NDC 空间，而这件事在我们走到透视除法时就发生了。</p><p>如果你还跟得上，恭喜！</p><p>我们仍然先忽略近裁剪面。于是我们现在明白了，透视投影矩阵里的 \(\textcolor{red}{C}\) 和 \(\textcolor{red}{D}\) 两项用于把顶点变换到 NDC 空间。不过这事情在 GPU 图形管线里怎么完成，比看上去还要复杂一些。</p><p>有一个东西叫<b>裁剪空间</b>。当你把透视投影矩阵施加到一个顶点上，这个顶点在这一阶段之后立刻落在裁剪空间里。欢迎来到裁剪空间，顶点！裁剪空间是顶点经过投影之后、透视除法之前所处的空间。接下来就有意思了。回忆一下，当你把被透视矩阵变换后的顶点除以该点（在相机空间中）的 z 坐标时，点就落到了 NDC 空间（在这里我们丢弃任何 x 或 y 坐标小于 -1 或大于 1 的点）。所以我们有：</p><p>$$
+\begin{aligned}
+P_{NDC}.x &= \frac{P_{clip}.x}{P_{clip}.w}\\
+P_{NDC}.y &= \frac{P_{clip}.y}{P_{clip}.w}
+\end{aligned}
+$$</p><p>回忆一下，透视投影矩阵里有那个小小的 \(-1\)，我在下面这个等式里把它标成了绿色：</p><p>$$
+\left[\begin{array}{cccc}
+\textcolor{red}{C} & 0 & 0 & 0 \\
+0 & \textcolor{red}{D} & 0 & 0 \\
+0 & 0 & -\frac{f+n}{f-n} & \textcolor{green}{-1} \\
+0 & 0 & -\frac{2fn}{f-n} & 0 \\
+\end{array}\right]
+$$</p><p>还有，回忆一下，把点乘以透视矩阵时，我们需要假定该点有 4 个坐标 \(\{x, y, z, w\}\)，其中对于笛卡尔坐标点，\(w = 1\)。于是我们有：</p><p>$$
+\begin{bmatrix}
+x & y & z & \textcolor{green}{w = 1}
+\end{bmatrix}
+\left[\begin{array}{cccc}
+\textcolor{red}{C} & 0 & 0 & 0 \\
+0 & \textcolor{red}{D} & 0 & 0 \\
+0 & 0 & -\frac{f+n}{f-n} & \textcolor{green}{-1} \\
+0 & 0 & -\frac{2fn}{f-n} & 0 \\
+\end{array}\right]
+$$</p><p>展开之后，得到：</p><p>$$
+\begin{aligned}
+x_{clip} &= x \cdot \textcolor{red}{C} + y \cdot 0 + z \cdot 0 + w \cdot 0 \\
+y_{clip} &= x \cdot 0 + y \cdot \textcolor{red}{D} + z \cdot 0 + w \cdot 0 \\
+z_{clip} &= x \cdot 0 + y \cdot 0 + z \cdot \left(-\frac{f+n}{f-n}\right) + w \cdot \left(-\frac{2fn}{f-n}\right) \\
+\textcolor{green}{w_{clip}} &= x \cdot 0 + y \cdot 0 + z \cdot \textcolor{green}{-1} + w \cdot 0 = -z
+\end{aligned}
+$$</p><p>我在这里想让你看到的是：变换后点的 \(w\) 坐标装着 \(-z\) 的值。之所以有负号，是因为在相机空间里，位于相机前方的点其 z 坐标全都是负的。所以在这里取负，就把 z 坐标变成了正值。在管线的这个位置，顶点可以说处于<b>裁剪空间</b>，而在那个空间里，顶点是用齐次坐标表示的。归纳一下：我们从世界空间 → 相机空间 → 裁剪空间。接着，我们需要从裁剪空间 → NDC 空间。当我们把点从齐次坐标有效地转回带笛卡尔坐标的点时，就完成了这一步，其中涉及把它的坐标用 \(w\) 归一化，而如你所知，它装着 \(-z\)。所以这实际上就像一次透视除法：</p><p>$$
+\begin{aligned}
+x_{NDC} &= \frac{x_{clip}}{w_{clip}} = \frac{x_{clip}}{-z}\\
+y_{NDC} &= \frac{y_{clip}}{w_{clip}} = \frac{y_{clip}}{-z}\\
+z_{NDC} &= \frac{z_{clip}}{w_{clip}} = \frac{z_{clip}}{-z}
+\end{aligned}
+$$</p><p>归纳一下：世界空间 → 相机空间 → 裁剪空间 → NDC 空间。好。我们快到了。注意在 NDC 空间里，坐标小于 -1 或大于 1 的点都不可见。所以：</p><p>$$
+\begin{aligned}
+-1 &\leq x_{NDC} \leq 1\\
+-1 &\leq y_{NDC} \leq 1\\
+-1 &\leq z_{NDC} \leq 1
+\end{aligned}
+$$</p><p>由于 NDC 空间里的 \(x\)、\(y\) 和 \(z\) 是用点的齐次坐标除以 \(w\) 坐标得到的，我们有：</p><p>$$
+\begin{aligned}
+-1 &\leq \frac{x_{clip}}{w_{clip}} \leq 1\\
+-1 &\leq \frac{y_{clip}}{w_{clip}} \leq 1\\
+-1 &\leq \frac{z_{clip}}{w_{clip}} \leq 1
+\end{aligned}
+$$</p><p>于是我们可以写成：</p><p>$$
+\begin{aligned}
+-w_{clip} &\leq x_{clip} \leq w_{clip}\\
+-w_{clip} &\leq y_{clip} \leq w_{clip}\\
+-w_{clip} &\leq z_{clip} \leq w_{clip}
+\end{aligned}
+$$</p><p>而这正是 GPU 在点处于裁剪空间时所做的。这就是我们说的是裁剪的原因。任何点的 \(x\)、\(y\)、\(z\) 坐标小于 \(-w_{clip}\) 或大于 \(w_{clip}\) 的，都不可见，因而被剔除（如果我们说的是一个顶点跑出裁剪体的三角形，那就是被裁剪）。我们说 \(w_{clip}\) 定义了裁剪体的边界，边界之外顶点不可见，边界之内顶点可见。如果两个相连构成一条边的顶点横跨该体积，那么这条边就被裁剪。</p><details open><p>你完全可以把裁剪体想象成一个立方体，其最小与最大范围分别是 \((-w_{clip}, -w_{clip}, -w_{clip})\) 和 \((w_{clip}, w_{clip}, w_{clip})\)。我第一次接触这个概念时，觉得相当古怪抽象，但数学不会骗人。同样，在 NDC 空间里，点也处在一个由 \((-1, -1, -1)\) 和 \((1, 1, 1)\) 定义的体积内。</p></details><p>只有在顶点通过了裁剪阶段之后，坐标才进行从齐次坐标到笛卡尔坐标的转换，其间如上所述发生透视除法——把点的坐标除以该点的深度或 z 坐标。</p><details open><p>注意，理论上在 GPU 上运行时，到我们进入 NDC 阶段（透视除法之后）时，应该已经没有顶点需要剔除或裁剪了，因为所有不可见的几何体都已在裁剪阶段被硬件有效地剔除或裁剪掉了。不过我本人没设计过 GPU，不能打包票，但理论上应该是这样。</p></details><p>如果你读到这里（而且读懂了），那你可以拍拍自己的后背，犒劳自己一样一直想要的东西 🎉，因为我们刚刚做的，是概括了 40 年的计算机图形学发展——至少就 GPU 从 1980 年代到今天如何处理这些事情而言。</p><ul><li><p>这个过程的最后一步，是把顶点从 NDC（归一化设备坐标）空间转换到栅格空间或窗口空间。这个叫法——管它叫栅格空间还是窗口空间——不仅在不同 API 之间会变，甚至在同一 API 的历史上也会变，这挺让人困惑。不过大体上叫其中一个。要注意，片元着色器里的片元就是在这个空间里定义的。从 NDC 空间转到栅格空间很直接：把 NDC 坐标乘以二分之一，加上二分之一，再把结果对 x 坐标乘以图像宽度（像素）、对 y 坐标乘以图像高度。这样你就得到了顶点以像素为单位的位置，带小数精度。</p></li></ul><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspective-matrix-vertex-pipeline.png?" alt=""></figure><p>如上图所示，图像很少是正方形的，通常都是矩形的。到目前为止我们只考虑了正方形的画布。现在来看看矩形画布的情形会怎样。</p><h2>但画布很少是正方形的：再说 C 与 D</h2><p>顺便，在继续之前，因为这些对当前这个话题和后面几个话题都有用，我们再做点术语定义的工作。</p><ul><li><p><b>分辨率框（Resolution Gate）</b>：这就是那个「框」或「窗」，随你怎么叫，你可以把它看成一张纸，由图像的宽度和高度（以像素计）定义。当我们提到分辨率框时，真正相关的其实并不是宽和高各有多少像素这个尺寸，而更多是它们所定义的宽高比。不过说到分辨率框，就把它理解为图像宽度和高度（以像素表示）所定义的「图像形状」。也就是图像分辨率。</p></li><li><p><b>胶片框（Film Gate）</b>：这是分辨率框的对应物，但作用于相机的实体胶片或数字传感器。它用 mm 或英寸这类物理单位来定义。同样，我们这里最关心的是胶片（胶片摄影用赛璐珞片，数码相机用传感器尺寸）宽度与高度之比。也就是胶片框宽高比。</p></li></ul><p>定义清楚之后，我们来看看图像不是正方形时会发生什么。</p><p>现在，记住当画布是正方形时，top 与 right（以及 bottom 与 left 的绝对值）的屏幕坐标是相同的。如果我们假定屏幕坐标为 \((-1, -1)\) 和 \((1, 1)\)（对于 20/20 的胶片宽高和 10 的焦距、假设近裁剪面为 1，这是可能的），那么注意 \(C\) 和 \(D\) 两项都会是 1：</p><p>$$
+C = \frac{2 \times n}{(1 - (-1))} = 1, \quad \text{with } n = 1
+$$</p><p>所以在这种情况下，\(C\) 和 \(D\) 不影响顶点的 \(P.x\) 和 \(P.y\) 坐标。</p><p>记住，如果画布是正方形，那么在重映射到 NDC（归一化设备坐标）空间时，由顶点构成的图像不应该被拉伸。然而，如果图像沿宽度方向的分辨率与沿高度方向的不一样，那么当我们从 NDC 空间转到 \(\rightarrow\) 栅格空间时（这涉及把归一化坐标分别乘以图像宽度和高度），原本正方形的图像会变成一个矩形，从而显得被拉伸（如果图像宽度大于高度，就沿宽度方向拉伸），如下图所示。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspective-matrix-ndc-raster-stretch.png" alt=""><figcaption><b>图 3：</b>如果分辨率框的宽高比大于 1，而图像是在一个正方形框内渲染的，图像就会沿宽度方向显得被拉伸。</figcaption></figure><p>这就是为什么 top/bottom 和 left/right 屏幕坐标需要反映分辨率框的宽高比。回忆一下：</p><p>$$
+\text{right} = {\dfrac{\text{film width} \times 0.5}{\text{focal length}}} \times z_{\text{near}}
+$$
+$$
+\text{top} = \dfrac{(\text{right} - \text{left})}{\text{aspect}} / 2
+$$</p><p>其中</p><p>$$
+\text{aspect} = \frac{\text{resolution width}}{\text{resolution height}} = \frac{960}{540} = 1.7778
+$$</p><p>所以，当屏幕坐标对称时，我们可以说：</p><p>$$
+\text{top} = \frac{\text{right}}{1.7778}=0.5624
+$$</p><p>然后，我们可以这样计算 \(C\) 和 \(D\)：</p><p>$$
+C = \frac{2 \times n}{\text{right} - \text{left}} = \frac{2 \times 1}{2} = 1
+$$
+$$
+D = \frac{2 \times n}{0.56 - (-0.56)} = \frac{2 \times 1}{2 \times 0.5624} = 1.7778
+$$</p><p>换句话说，注意 \(D\) 会把顶点的 y 坐标缩放 1.7778 倍，实际上造出一张——如果在这个阶段可见的话（其实不可见，因为我们只有在图像转换到栅格/窗口空间之后才看到它）——在水平方向按分辨率框宽高比同样比例被挤压的图像。当我们从 NDC 空间转到栅格空间时，图像经历一次水平拉伸（因为分辨率宽度大于分辨率高度，比例为 1.7778）。这次拉伸抵消了最初的挤压（挤压是沿图像宽度方向的，来自把顶点 y 坐标缩放 1.7778 倍），结果图像重新获得了正确的比例。</p><p>证明完毕。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspective-matrix-ndc-raster-unstretch.png" alt=""><figcaption><b>图 4：</b>通过把顶点的 y 坐标按分辨率框宽高比缩放，图像在 NDC 空间里显得被挤压，但在从 NDC 转到栅格空间的过程中重新获得了正确的比例。</figcaption></figure><p>我刚写的东西里有那么一点让人困惑，但为了下面这一番解释，我故意保持原样：别在这里弄错——在管线的这个位置，我们处理的还不是像素，仍然是顶点。当我说「结果图像重新获得了正确的比例」时，我的意思是，这在渲染过程结束后的最终图像里会成立。然而，从 NDC（归一化设备坐标）到栅格空间的转换是作用在顶点上，<b>不是</b>像素上。在 GPU 管线的这个阶段，光栅化过程还没有开始。只有光栅化过程开始时——如下图所示——三角形才被转换成片元，片元最终变成像素。所以要记住，到目前为止我们讨论的所有变换都是施加在顶点上的。换句话说，我们挤压、缩放、平移、拉伸顶点，使它们装进各种所需尺寸的盒子或体积，并兼顾最终图像即分辨率框的宽高比。我们可以把顶点管线示意图更新成下面这样：</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspective-matrix-vertex-pipeline-squeeze.png?" alt=""></figure><h2>近裁剪面</h2><p>到目前为止，在我们所有的例子里，我们都选了 \( z_{\text{near}} = 1 \)，主要是因为它简化了屏幕坐标的计算。这意味着在所有这些情形下，画布实际上都摆在距眼睛 1 个单位处。当然，没有什么阻止我们把这画布沿视线挪到别的位置，如下图所示，图中画了三个不同的位置：一个在 \( z_{\text{near}} = 1 \)，一个到眼睛的距离小于 1，还有一个大于 1。结果图像当然总是一样的；唯一的差别是，那些可能位于近裁剪面前方的物体会被裁剪或剔除。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspective-matrix-znear.png" alt=""><figcaption><b>图 5：</b>画布位于三个不同的近裁剪面处——0.1、1 和 2。屏幕坐标需要相应调整以匹配各自的近裁剪面。</figcaption></figure><p>现在，在屏幕坐标的计算中（以及后来的 \( C \) 和 \( D \) 两项中），\( z_{\text{near}} \) 这一项所做的，只是根据它相对眼睛的实际位置把屏幕坐标按比例放大或缩小。这不过是相似三角形规则的又一次应用：两个相似三角形对边之比等于它们邻边之比。至于 \( C \) 和 \( D \)，分母里出现 \( n \)，是因为我们在分子里用的是 \( z_{\text{near}} \) 这一项来算屏幕坐标。</p><p>比如，设 \( z_{\text{near}} \) 为 0.1：</p><p>$$
+\text{right} = \dfrac{2 \times 0.1}{(1 - -1)} = 0.1
+$$
+$$
+\text{top} = \dfrac{\text{right}}{\text{aspect}} = \dfrac{0.1}{1.7778} \approx 0.05625
+$$</p><p>然后，在计算 \( C \) 和 \( D \) 时：</p><p>$$
+C = \dfrac{2 \times 0.1}{0.2} = 1
+$$
+$$
+D = \dfrac{2 \times 0.1}{0.1125} \approx 1.7778
+$$</p><p>我们可以这样推广：</p><p>$$
+C = \dfrac{2n}{\text{right} - \text{left}} = \dfrac{2n}{2 \times \dfrac{\text{film width} / 2}{\text{focal length}} \times n} = \dfrac{1}{\dfrac{\text{film width}/2}{\text{focal length}}}
+$$</p><p>如你所见，计算 \(C\) 的等式分子（上方）里的 \(2n\)，与来自左右屏幕坐标计算、位于分母（下方）的 \(2n\) 抵消了。真正同时影响 \(C\) 和 \(D\) 的因素只有视角和分辨率框宽高比。举个例子，假设视角为 80 度、近裁剪面为 0.1。那么：</p><p>$$
+\begin{array}{l}
+\text{right} = \tan(40^\circ) \times 0.1 = 0.083 \\
+\text{left} = -\text{right} \\
+\text{top} = \dfrac{\text{right}}{\text{aspect}} = \dfrac{0.083}{1.7779} = 0.0467 \\
+C = \dfrac{2n}{\text{right} - \text{left}} = \dfrac{2 \times n}{2 \times \tan(40^\circ) \times n} = \dfrac{1}{\tan(40^\circ)} \\
+D = \dfrac{\dfrac{2n}{\text{right} - \text{left}}}{\text{aspect}} = \dfrac{\dfrac{1}{\tan(40^\circ)}}{\text{aspect}}
+\end{array}
+$$</p><h2>适配模式</h2><p>关于构造透视投影矩阵，我们还没讲的最后一块内容，是通常根本不会被讨论的东西。因为它在很大程度上只对在电影制作中使用计算机图形学的人有意义，与只关心可视化或电子游戏的人无关。这就是 Maya 这类 3D DCC 工具里称为适配模式（fit mode）的那个功能。</p><p>之所以会这样，是因为水平视角决定场景可见多少，而这由左右屏幕坐标决定。然而 top 坐标是通过把 right 坐标除以图像宽高比得出的。比例越大，top 坐标越小，垂直方向可见的场景就越少。</p><p>如果胶片框与分辨率框的宽高比相同，两个框在垂直方向显示的场景量就一样。但如果分辨率宽高比与胶片框的不同，你透过分辨率框在垂直方向看到的场景会比透过胶片框看到的少（假设分辨率比例更大，就像我们例子里 1.7778 对 1.5 那样）。举例来说，如果 right 坐标是 1，用分辨率框宽高比算出的 top 坐标就是 \( \frac{1}{1.7778} \approx 0.5624 \)，小于用胶片框宽高比算出的 top 坐标 \( \frac{1}{1.5} \approx 0.6667 \)。水平方向视野保持不变，这就是为什么这种适配模式被称为 fill 模式。垂直方向上，图像被裁掉了。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspective-matrix-fit-mode-fill.png" alt=""><figcaption><b>图 6：</b>默认情况下，当上下屏幕坐标按分辨率框宽高比缩放时，我们就得到所谓的 fill 模式。注意，与透过胶片框（蓝色）看到的场景相比，透过分辨率框（红色）看到时图像的上下被裁掉了。</figcaption></figure><p>注意，这就是我们用标准版本的透视投影矩阵构造函数默认得到的结果：</p><pre><code>
+/* 
+ * fw：胶片宽度（mm）
+ * fh：胶片高度（mm）
+ * fl：焦距（mm）
+ * n：近裁剪平面
+ * f：远裁剪平面
+ * aspect：分辨率宽高比（像素宽 / 像素高）
+ */
+void mat4x4_perspective(mat4x4 m, float fw, float fh, float fl, float n, float f, float aspect) {
+    // fill fit mode
+    float r = (fw * 0.5) / fl * n;
+    float l = -r;
+    float t = ((r - l) / aspect) / 2;
+    float b = -t;
+
+    m[0][0] = 2 * n / (r - l);
+    m[0][1] = 0;
+    m[0][2] = 0;
+    m[0][3] = 0;
+    
+    m[1][0] = 0;
+    m[1][1] = 2 * n / (t - b);
+    m[1][2] = 0;
+    m[1][3] = 0;
+    
+    m[2][0] = 0;
+    m[2][1] = 0;
+    m[2][2] = -((f + n) / (f - n));
+    m[2][3] = -1.f;
+    
+    m[3][0] = 0;
+    m[3][1] = 0;
+    m[3][2] = -((2.f * f * n) / (f - n));
+    m[3][3] = 0;
+}
+</code></pre><p>某些情况下，你可能更希望让分辨率框在垂直方向上去适配胶片框。这是可行的，但需要调整分辨率框的左右坐标，同时保留胶片框的上下屏幕坐标。注意，只有在你同时掌握分辨率宽高比（我们通常都有，因为总知道输出图像的分辨率）和胶片框宽高比的信息时，这样做才可行。如果你没有后者，就无法实现这种模式——与 fill 模式相对，它叫 overscan 模式。如下图所示，同一场景用 overscan 模式渲染，我们在左右两侧能看到更多场景，而垂直方向看到的场景量相同。要实现这个模式，你至少需要在分辨率框比例之外还知道胶片框宽高比，并把由水平视角算出的左右坐标乘以我们例子中的比例 \(1.7778 / 1.5\)。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspective-matrix-fit-mode-overscan.png" alt=""><figcaption><b>图 7：</b>上下与左右屏幕坐标按分辨率框宽高比与胶片框宽高比之比进行了缩放（这里假定前者大于后者）。与透过胶片框（蓝色）看到的相比，透过分辨率框（红色）我们在左右两侧看到了更多场景。</figcaption></figure><p>当然，要完整实现它，你还需要考虑胶片框比例是大于还是小于分辨率框宽高比，但这我们留给你当练习。</p><pre><code>
+/* 
+ * fw：胶片宽度（mm）
+ * fh：胶片高度（mm）
+ * fl：焦距（mm）
+ * n：近裁剪平面
+ * f：远裁剪平面
+ * aspect：分辨率宽高比（像素宽 / 像素高）
+ */
+void mat4x4_perspective(mat4x4 m, float fw, float fh, float fl, float n, float f, float resolution_aspect_ratio) {
+    // overscan fit mode
+    float film_aspect_ratio = fw / fh; /* fw &gt; fh */
+    float xscale = resolution_aspect_ratio / film_aspect_ratio; /* resolution_aspect_ratio &gt; film_aspect_ratio */
+    float r = (fw * 0.5) / fl * n * xscale;
+    float l = -r;
+    float t = ((r - l) / resolution_aspect_ratio) / 2;
+    float b = -t;
+
+    m[0][0] = 2 * n / (r - l);
+    m[0][1] = 0;
+    m[0][2] = 0;
+    m[0][3] = 0;
+    
+    m[1][0] = 0;
+    m[1][1] = 2 * n / (t - b);
+    m[1][2] = 0;
+    m[1][3] = 0;
+    
+    m[2][0] = 0;
+    m[2][1] = 0;
+    m[2][2] = -((f + n) / (f - n));
+    m[2][3] = -1.f;
+    
+    m[3][0] = 0;
+    m[3][1] = 0;
+    m[3][2] = -((2.f * f * n) / (f - n));
+    m[3][3] = 0;
+}
+</code></pre><p>希望这已经把关于可能影响透视投影矩阵的各种参数与设置（比如适配模式）该考虑的都覆盖到了。收尾之前我们还要看最后两个话题：如果你更想用垂直视场角（某些 API 如 OpenGL 按惯例倾向用这个）该怎么办，以及一些更快算出屏幕坐标和透视矩阵系数 \(C\)、\(D\) 的方法。</p><h2>要点</h2><p>本章需要你记住的内容：</p><ul><li><p>视角影响 right 与 top 坐标的取值（top 还取决于分辨率框宽高比）。</p></li><li><p>\(C\) 取决于视角，而 \(D\) 同时取决于视角与分辨率框宽高比。\(D\) 沿 y 轴（垂直方向，假定图像宽度大于高度）挤压顶点，因为顶点在从 NDC 转到栅格空间时会经历同一比例的水平缩放（沿 x 轴）。</p></li><li><p>此外，投影矩阵把 \(z\) 从 \([near, far]\) 范围重映射到 \([-1, 1]\) 范围。</p></li></ul><p>最后，如果你能拿到胶片框宽高比，可能要考虑适配模式；该比例可以用胶片宽度（mm）除以高度（mm）算出。</p><p>这就是把几百页关于透视投影矩阵的材料浓缩成的 20 行。而这也就是关于透视投影矩阵你需要记住的全部。</p><h2>垂直视场角 vs 水平视场角</h2><p>和计算机图形学的惯例一样，大多数系统都用自己一套有别于他人的约定。视角指的是水平视角还是垂直视角，也不例外。比如 Maya 把视角当作水平的，而 OpenGL 规范则期望视角是垂直的。这我们无能为力。我能帮你的只是强调一点：如果你能拿到物理胶片的宽度、高度和焦距，而你的工具又额外显示了一个视角值，你就可以自己用物理胶片属性算出视角，再拿你的值与工具的值对比。这样你就能相当有把握地猜出你的工具用的是垂直视角还是水平视角。</p><p>如果你用垂直视角，那么上下屏幕坐标就由这个角度算出。我们可以简单地用 top 坐标乘以分辨率框宽高比得到 right 坐标。同样，稍微算一下就会发现：</p><p>$$
+\begin{array}{l}
+\text{top} = \dfrac{\text{film height} /2}{\text{focal length }} \times n \\
+\text{bottom} = -\text{top} \\
+\text{right} = \text{top} \times \text{aspect} \\
+\text{left} = -\text{right} \\
+D = \dfrac{2n}{\text{top} - \text{bottom}} = \dfrac{1}{\dfrac{\text{film height} /2}{\text{focal length }}} \\
+C = \dfrac{2n}{\text{right} - \text{left}} = \dfrac{1}{\dfrac{\text{film height} /2}{\text{focal length}} \times \text{aspect}} \\
+\end{array}
+$$</p><h2>优化</h2><p>写这一章的动机是<a href="https://github.com/KhronosGroup/Vulkan-Tools/blob/main/cube/linmath.h" target="_blank" rel="noreferrer noopener">这段代码</a>（我知道，为了几行代码写了这么多字）：</p><pre><code>
+LINMATH_H_FUNC void mat4x4_perspective(mat4x4 m, float y_fov, float aspect, float n, float f)
+{
+	/* NOTE: Degrees are an unhandy unit to work with.
+	 * linmath.h 里一切都用弧度！ */
+	float const a = 1.f / tanf(y_fov / 2.f);
+
+	m[0][0] = a / aspect;
+	m[0][1] = 0.f;
+	m[0][2] = 0.f;
+	m[0][3] = 0.f;
+
+	m[1][0] = 0.f;
+	m[1][1] = a;
+	m[1][2] = 0.f;
+	m[1][3] = 0.f;
+
+	m[2][0] = 0.f;
+	m[2][1] = 0.f;
+	m[2][2] = -((f + n) / (f - n));
+	m[2][3] = -1.f;
+
+	m[3][0] = 0.f;
+	m[3][1] = 0.f;
+	m[3][2] = -((2.f * f * n) / (f - n));
+	m[3][3] = 0.f;
+}
+</code></pre><p>当时和我一起工作的一个实习生怎么也搞不明白。虽然我一般会把他们引到 Scratchapixel 上已有的页面，但我发现网站上没有任何一页清楚地解释透视投影矩阵里每个非零系数的作用，也没有解释——正如序言里说的——构成相机模型（尤其是物理相机模型）的各种参数与那个矩阵之间的关系。所以我决定加上这一章来填补这个空缺。希望它能成功消解你可能对那个神秘矩阵及其如何嵌入 GPU 顶点管线抱有的许多疑惑。不过还有最后一件事——<code>tan</code> 函数的用法——需要解释。它其实只是下面这个的简写：</p><p>$$
+\tan\left(\dfrac{x_{\text{fov}}}{2}\right) = \dfrac{\text{film width} / 2}{\text{focal length}}
+$$
+$$
+\tan\left(\dfrac{y_{\text{fov}}}{2}\right) = \dfrac{\text{film height} / 2}{\text{focal length}}
+$$</p><p>其中 \(x_{\text{fov}}\) 和 \(y_{\text{fov}}\) 分别表示水平与垂直视场角。胶片宽度的一半除以焦距，不过是基本三角学的一次应用：直角三角形角度的正切等于对边与邻边（焦距）之比。现在，当我们计算 \(C\)，得到：</p><p>$$
+\begin{aligned}
+C &= \dfrac{2n}{\text{right} - \text{left}} \\
+  &= \dfrac{2n}{2n \times \dfrac{\text{film width} / 2}{\text{focal length}}} \\
+  &= \dfrac{1}{\dfrac{\text{film width} / 2}{\text{focal length}}} \\
+  &= \dfrac{1}{\tan\left(\dfrac{x_{\text{fov}}}{2}\right)} \\
+\end{aligned}
+$$</p><p>当然，上面的代码用的是垂直视角，而等式假定的是水平视角。</p><h2>收尾</h2><p>下次你遇到这样的代码：</p><pre><code>
+template &amp;ltclass T&gt;
+inline void
+Frustum&amp;ltT&gt;::set (T nearPlane, T farPlane, T fovx, T fovy, T aspect)
+    IMATH_NOEXCEPT
+{
+    const T two = static_cast&amp;ltT&gt; (2);
+
+    if (fovx != T (0))
+    {
+        _right  = nearPlane * std::tan (fovx / two);
+        _left   = -_right;
+        _top    = ((_right - _left) / aspect) / two;
+        _bottom = -_top;
+    }
+    else
+    {
+        _top    = nearPlane * std::tan (fovy / two);
+        _bottom = -_top;
+        _right  = (_top - _bottom) * aspect / two;
+        _left   = -_right;
+    }
+    _nearPlane    = nearPlane;
+    _farPlane     = farPlane;
+    _orthographic = false;
+}
+</code></pre><p>或者</p><pre><code>
+template &amp;ltclass T&gt;
+IMATH_CONSTEXPR14 inline Matrix44&amp;ltT&gt;
+Frustum&amp;ltT&gt;::projectionMatrix () const IMATH_NOEXCEPT
+{
+    T rightPlusLeft  = _right + _left;
+    T rightMinusLeft = _right - _left;
+
+    T topPlusBottom  = _top + _bottom;
+    T topMinusBottom = _top - _bottom;
+
+    T farPlusNear  = _farPlane + _nearPlane;
+    T farMinusNear = _farPlane - _nearPlane;
+
+    if (_orthographic)
+    {
+        T tx = -rightPlusLeft / rightMinusLeft;
+        T ty = -topPlusBottom / topMinusBottom;
+        T tz = -farPlusNear / farMinusNear;
+
+        T A = T (2) / rightMinusLeft;
+        T B = T (2) / topMinusBottom;
+        T C = T (-2) / farMinusNear;
+
+        return Matrix44&amp;ltT&gt; (
+            A, 0, 0, 0, 0, B, 0, 0, 0, 0, C, 0, tx, ty, tz, 1.f);
+    }
+    else
+    {
+        T A = rightPlusLeft / rightMinusLeft;
+        T B = topPlusBottom / topMinusBottom;
+        T C = -farPlusNear / farMinusNear;
+
+        T farTimesNear = T (-2) * _farPlane * _nearPlane;
+
+        T D = farTimesNear / farMinusNear;
+
+        T twoTimesNear = T (2) * _nearPlane;
+
+        T E = twoTimesNear / rightMinusLeft;
+        T F = twoTimesNear / topMinusBottom;
+
+        return Matrix44&amp;ltT&gt; (E, 0, 0, 0, 0, F, 0, 0, A, B, C, -1, 0, 0, D, 0);
+    }
+}
+</code></pre><p>它来自 <a href="https://github.com/AcademySoftwareFoundation/Imath" target="_blank" rel="noreferrer noopener">Imath 库</a>——一个最初由 ILM（工业光魔）开发、在为电影和视效编写 3D 软件的开发者社区中相当流行的库——这段代码对你就不再有什么秘密了。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/perspective-matrix-in-practice.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/perspective-matrix-in-practice.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>下一步？蒙特卡罗的随机方法 - Scratchapixel 中文译本</title>
+<meta name="description" content="体积渲染 · 下一步？蒙特卡罗的随机方法（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>下一步？蒙特卡罗的随机方法</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="intro-volume-rendering.html">体积渲染简介</a></li>
+<li><a href="ray-marching-algorithm.html">光线步进算法</a></li>
+<li><a href="ray-marching-get-it-right.html">光线步进：把它做对！</a></li>
+<li><a href="volume-rendering-3D-density-field.html">三维密度场的体积渲染</a></li>
+<li><a href="volume-rendering-voxel-grids.html">基于三维体素网格的体积渲染</a></li>
+<li><a href="volume-rendering-summary-equations.html">从辐射传输方程到体积渲染方程</a></li>
+<li><a style="font-weight:700" href="volume-rendering-stochastic-monte-carlo.html">下一步？蒙特卡罗的随机方法</a></li>
+</ol>
+</div>
+<h2>下一步？蒙特卡罗的随机方法</h2><p><b>阅读时间：8 分钟。</b></p><h2>接下来我们要学什么</h2><p>本课程的内容大部分都用于研究光线步进算法，但你应该知道，虽然直到相对不久之前（至少到 2010 年代中期）这个算法几乎被独家用于体积渲染，如今的现代渲染引擎在渲染体积时普遍改用基于<b>随机蒙特卡罗</b>的方法。那么，既然这个算法已被认为过时，我们为什么还要花这么多时间学它？一是历史原因，二是通过光线步进算法入门体积渲染（以及体积渲染方程）要比通过随机方法容易得多，后者明显更复杂（对于一个刚接触 CGI 编程、数学底子不多甚至没有的人来说尤其如此）。</p><p>光线步进算法为什么被取代了？原因基本上有两个：</p><p>1. 因为它对光在真实世界中与体积相互作用的方式模拟得很差。这一点我们稍后会多讲一些。二是随机方法在模拟真实情况上做得好得多。</p><p>2. 那么当初我们本可以直接用随机方法（这个方法从 1960 年代起就广为人知），但你看，这个方法的问题在于它需要的计算量比光线步进方法多无数倍，你得等上近乎无限长的时间才能用它出一张图（至少感觉上是这样）。光线步进计算量也大，但没随机方法那么大，这就是为什么直到不久之前它一直是体积渲染的首选方案（即便如此，我们也要等到 1990 年代末才开始看到光线步进用于制作，等到 2000 年代末才开始看到它被普遍使用）。所幸随着算力持续增长，我们现在能在合理时间内用随机方法得出结果，而既然它做出来的结果更好，光线步进方法就逐渐被淘汰，让位给基于随机的方法。<i>Quod erat demonstrandum</i>。</p><p>现在我们来看看光线步进为什么做得比较差。</p><p>要回答这个问题，我们需要理解光如何在介质中传播。一个光子进入体积后会发生这些事：它沿直线走一段距离，直到最终与介质发生相互作用（例如撞上构成体积的某个粒子）。如我们所知，之后它可能被散射（此时会改变方向），也可能被吸收。如果被散射，它会继续在体积中传播，但方向是随机的，至少很可能与它撞击体积粒子之前的方向不同。这个「行进—相互作用」的循环会一直持续，直到粒子被吸收或最终离开体积。下图说明了这一想法，你可以看到三个从顶部进入体积立方体的光子的命运。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-multiple-scattering1.png?" alt=""></figure><p>其中两个（红色）最终被吸收，只有一个（绿色）逃出了体积（方向与它进入立方体时的方向不同）。</p><p>光子走的可以描述为一种<b>随机游走</b>。不出所料，它确实就叫这个名字。随机游走。我们还能看到，粒子在与介质发生多次相互作用之后才被吸收或逃出体积。它被散射了多次。而光线步进正是在这里做得差：它只考虑光子与体积的一次相互作用。</p><h2>单次散射与多次散射。低反照率与高反照率的体积物体。</h2><p>这称为单次散射。我们只考虑与介质发生一次相互作用后被重新导向观察者的那部分光。有些体积有很强的单次散射项（比如蒸汽火车或火山冒出的黑烟），但许多其他类型的体积，尤其是云，表现出很强的<b>多次散射</b>行为。光子在逃出（或被吸收）之前会与物体发生很多很多次相互作用。这正是云看起来那么亮或者说那么白的原因，而蒸汽火车或火山冒出的烟则是黑的。我们说白云的<b>反照率</b>高，而黑烟羽的<b>反照率</b>低。下图展示了低反照率与高反照率体积的差别（左边的烟含有大量粒子，而云由水滴构成，这基本上解释了两者的视觉差异）。当然，黑烟之所以黑，也是因为它吸收了大量光。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-smokevscloud.png?" alt=""></figure><p>总之，光线步进算法对低反照率物体（如烟）能给出可接受的近似，这类物体的外观是单次散射项占主导的结果（下图中那条橙色光线）；而对高反照率物体，它只能很糟糕地模拟其外观，因为这类物体的外观是多次散射压过单次散射的结果（逃出体积的光子大多数是与体积相互作用了多次，而不像单次散射所假设的那样只作用了一次）。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-ray-marching-cloud1.png?" alt=""></figure><p>顺便说一句，既然我们在比较烟和云，也要注意烟通常是各向同性的，而云表现出很强的（前向）散射行为。</p><p>某种意义上，你可以把光线步进比作直接光照。直接光照总比完全不光照要好（显然），但当然比不上用直接光照加间接光照渲染的场景。用光线步进，我们完全丢掉了间接光照那部分。如下面的例子所示，间接光照对生成照片级真实的图像至关重要。因此光线步进算法抓不住这个效应，是个大问题。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-indirectlighting.png?" alt=""></figure><p>这有一个具体的实践后果：比如要模拟云的外观，你就得往体积里灌进多得多的光（也就是在场景里额外造一些光源），靠作弊，而不是让计算机去做物理上准确、因而正确的事。但接下来的问题是：替代方案是什么，怎么才能做那件正确的事？</p><h2>基于随机的方法或追踪方法</h2><p>嗯，正确的事就是让计算机去模拟光子与介质相互作用的方式。换句话说，模拟光子的随机游走行为。这类方法旨在<b>追踪</b>光子在体积中行进的路径。这就是为什么它们被称为<b>追踪方法</b>。这并非一种「新」方法，它在 1960 年代就被开发出来，用于模拟中子这类粒子穿过板状物质的辐射。这个方法虽然通用且非常强大，计算代价也非常高。</p><p>如果你想自己深入了解这个话题，可以在网上搜 Monte Carlo particle transport（MCPT）或蒙特卡罗光/光子输运。这里我们不细讲这项技术。首先，我们已经在本页 <a href="monte-carlo-simulation.html">蒙特卡罗模拟</a> 里给出了这个方法的一个实际实现，作为蒙特卡罗模拟的示例。我们还希望不久后（2022 年）专门写一门课来讲它。请关注「高级 3D 渲染」栏目（那门课应该叫「体积路径追踪」）。</p><p>现在只需说：思路是模拟光子在体积中的路径。目标仍然是求解 <a href="volume-rendering-summary-equations.html">体积渲染方程</a>：</p><p>$$L(s) = \int_{s'=0}^s T(s')\big[\sigma_s L_s(s') \big]ds' + T(s)L(0)$$</p><p>用蒙特卡罗方法求解（想更多了解这个话题，见 <a href="quick-introduction-to-monte-carlo-methods.html">蒙特卡罗方法的数学基础</a> 与 <a href="monte-carlo-methods.html">蒙特卡罗方法实践</a>）。与光线追踪一样，我们<b>不会</b>通过模拟并追踪光子向前（从光源到观察者或传感器）的路径来做，而是<b>反向</b>从观察者追到光源。粒子在介质中的路径可以用光子走过的一系列步来描述，路径中每一步由一个长度和一个方向确定。我们会随机采样光子的方向与长度来体现这一行为，所用的基本上就是我们对介质本身的了解，尤其是它的散射系数、吸收系数以及相位函数。</p><p>前面提到过，用于蒙特卡罗模拟或积分的随机方法计算代价很高。你可能听说过的 <b>delta tracking</b> 之类的技术可以用来改进这一过程（代价是代码变得更复杂）。delta tracking 也会在专门讲体积路径追踪的课程里研究。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/volume-rendering-stochastic-monte-carlo.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/volume-rendering-stochastic-monte-carlo.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

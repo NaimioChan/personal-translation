@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>构建基础的透视投影矩阵 - Scratchapixel 中文译本</title>
+<meta name="description" content="透视与正交投影矩阵 · 构建基础的透视投影矩阵（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>构建基础的透视投影矩阵</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="projection-matrix-introduction.html">投影矩阵是什么，何处、为何要使用？</a></li>
+<li><a href="projection-matrices-what-you-need-to-know-first.html">投影矩阵：首先需要知道的事</a></li>
+<li><a style="font-weight:700" href="building-basic-perspective-projection-matrix.html">构建基础的透视投影矩阵</a></li>
+<li><a href="opengl-perspective-projection-matrix.html">透视投影矩阵</a></li>
+<li><a href="perspective-matrix-in-practice.html">迷路了？用真实的制作案例回顾一遍</a></li>
+<li><a href="projection-matrix-GPU-rendering-pipeline-clipping.html">投影矩阵、GPU 渲染管线与裁剪</a></li>
+<li><a href="orthographic-projection-matrix.html">正交投影矩阵</a></li>
+</ol>
+</div>
+<h2>构建基础的透视投影矩阵</h2><p><b>阅读时间：21 分钟。</b></p><h2>理解透视投影矩阵</h2><p><b>一点提醒</b>。本节介绍的矩阵与 OpenGL、Direct3D、Vulkan、Metal 或 WebGL 等 API 中使用的投影矩阵并不相同，但它确实能取得同样的结果。在<a href="how-pinhole-camera-works-part-1.html">三维观察：针孔相机模型</a>这一课中，我们学会了根据一个基于物理的相机模型的规格，利用相机的近裁剪面与视场角，求出屏幕坐标（left、right、top 与 bottom）。这些坐标随后被用来判断投影后的点是否落在可见的图像帧内。在<a href="projection-stage.html">光栅化：实践实现</a>这一课中，我们探讨了把投影后点的坐标重映射到 NDC（归一化设备坐标）空间，利用屏幕坐标把它们统一到 [-1,1] 区间内，从而避免直接与投影点坐标做比较。</p><p>这里的做法略有不同。我们先直接假定左右两侧的屏幕坐标都是 (-1,1)，上下也是如此（即假定屏幕是正方形），这样正好与坐标比较所需的目标区间一致。我们不再用视场角去缩放投影后的点坐标以映射到 NDC 空间，而是直接调整投影点坐标来体现相机的视场角。两种做法最终结果相同。</p><p>回顾我们的几何课，点与矩阵相乘的公式如下：</p><p>$$
+\begin{equation}
+\begin{bmatrix} x & y & z & w
+\end{bmatrix} * 
+\begin{bmatrix}
+m_{00} & m_{01} & m_{02} & m_{03}\\ 
+m_{10} & m_{11} & m_{12} & m_{13}\\
+m_{20} & m_{21} & m_{22} & m_{23}\\
+m_{30} & m_{31} & m_{32} & m_{33}
+\end{bmatrix}
+\end{equation}
+$$</p><p>由此得到变换后的坐标：</p><p>$$
+\begin{array}{l}
+x' = x * m_{00} + y * m_{10} + z * m_{20} + w * m_{30}\\
+y' = x * m_{01} + y * m_{11} + z * m_{21} + w * m_{31}\\
+z' = x * m_{02} + y * m_{12} + z * m_{22} + w * m_{32}\\
+w' = x * m_{03} + y * m_{13} + z * m_{23} + w * m_{33}
+\end{array}
+$$</p><p>回想一下，点 P 在图像平面上的投影记作 P'，是把 P 的 x、y 坐标除以 P 的 z 坐标的<b>相反数</b>得到的：</p><p>$$
+\begin{array}{l}
+P'_x=\dfrac{P_x}{-P_z} \\
+P'_y=\dfrac{P_y}{-P_z} \\
+\end{array}
+$$</p><p>那么，怎样才能通过一次点-矩阵乘法算出 P'？</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/camera.png?" alt=""><figcaption><b>图 1：</b>默认情况下，相机沿世界坐标系的负 z 轴方向摆放，这是许多三维软件通行的约定。</figcaption></figure><p>首先，上面公式中的坐标 \(x'\)、\(y'\) 与 \(z'\)（属于点 \(P'\)）需要分别设为 \(x\)、\(y\) 与 \(-z\)，其中 \(x\)、\(y\) 与 \(z\) 是我们要投影的点 \(P\) 的坐标。把 \(z'\) 设为 \(-z\) 而不是只写 \(z\) 很关键，因为从世界空间变换到相机空间时，所有在相机坐标系中定义、位于相机前方的点，其 \(z\) 值都是负的。这是因为相机通常朝向负 \(z\) 轴（图 1）。因此我们把 \(z\) 赋给 \(z'\)，但把符号取反，使 \(z'\) 变为正值：</p><p>$$
+\begin{array}{l}
+x' = x,\\
+y' = y,\\
+z' = -z \:\:\: \text{such that} \:\:\: z' > 0.\\
+\end{array}
+$$</p><p>假设在点-矩阵乘法过程中，我们可以把 \(x'\)、\(y'\) 与 \(z'\) 除以 \(-z\)，得到：</p><p>$$
+\begin{array}{l}
+x' = \dfrac {x}{-z},\\
+y' = \dfrac {y}{-z},\\
+z' = \dfrac {-z}{-z} = 1.\\
+\end{array}
+$$</p><p>这些公式算出了点 \(P'\) 的投影坐标（暂时不管 \(z'\)）。接下来的问题是：能否通过点-矩阵乘法得到这个结果，对应的矩阵又长什么样？先令坐标 \(x'\)、\(y'\) 与 \(z'\) 分别为 \(x\)、\(y\) 与 \(-z\)，用一个稍加改动的单位矩阵就能做到：</p><p>$$
+\begin{equation}
+\begin{bmatrix} x & y & z & (w=1)
+\end{bmatrix} * 
+\begin{bmatrix}
+1 & 0 & 0 & 0\\ 
+0 & 1 & 0 & 0\\ 
+0 & 0 & -1 & 0\\ 
+0 & 0 & 0 & 1\\ 
+\end{bmatrix}
+\end{equation}
+$$
+$$
+\begin{array}{l}
+x' = x \cdot 1 + y \cdot 0 + z \cdot 0 + w \cdot 0 = x,\\
+y' = x \cdot 0 + y \cdot 1 + z \cdot 0 + w \cdot 0 = y,\\
+z' = x \cdot 0 + y \cdot 0 + z \cdot -1 + w \cdot 0 = -z,\\
+w' = x \cdot 0 + y \cdot 0 + z \cdot 0 + (w=1) \cdot 1 = 1.\\
+\end{array}
+$$</p><p>乘法中的点使用齐次坐标，其第四个坐标 \(w\) 设为 1。要转回笛卡尔坐标，需要把 \(x'\)、\(y'\) 与 \(z'\) 除以 \(w'\)：</p><blockquote><p>……齐次坐标下的点 \([x, y, z, w]\) 对应三维笛卡尔点 \([x/w, y/w, z/w]\)。</p></blockquote><p>如果 \(w'\) 等于 \(-z\)，那么把 \(x'\)、\(y'\) 与 \(z'\) 除以 \(-z\) 就能得到想要的结果：</p><p>关键在于利用点-矩阵乘法过程中齐次坐标转笛卡尔坐标这一步来完成透视除法（把 \(x\) 与 \(y\) 除以 \(z\)，算出投影坐标 \(x'\) 与 \(y'\)）。这要求把 \(-z\) 设为 \(w'\)。</p><p>能否调整透视投影矩阵，让点-矩阵乘法把 \(w'\) 设为 \(-z\)？观察 \(w'\) 的公式可以看出：</p><p>$$
+\begin{array}{l}
+w' = x \cdot m_{03} + y \cdot m_{13} + z \cdot m_{23} + w \cdot m_{33}
+\end{array}
+$$</p><p>点的 \(P\) \(w\) 坐标等于 1，于是式子化简为：</p><p>$$
+\begin{array}{l}
+w' = x \cdot m_{03} + y \cdot m_{13} + \color{red}{z \cdot m_{23}} + 1 \cdot m_{33}
+\end{array}
+$$</p><p>目标是让 \(w'\) 等于 \(-z\)，把矩阵系数 \(m_{23}\) 设为 \(-1\)、其余设为 0 即可做到：</p><p>$$w' = x \cdot 0 + y \cdot 0 + \color{red}{z \cdot -1} + 1 \cdot 0 = -z$$</p><p>因此，要让 \(w'\) 等于 \(-z\)，矩阵系数 \(m_{03}\)、\(m_{13}\)、\(\color{red}{m_{23}}\) 与 \(m_{33}\) 必须分别为 0、0、-1 和 0。更新后的透视投影矩阵如下：</p><p>$$
+\left[ \begin{array}{rrrr}x & y & z & 1\end{array} \right] * 
+\left[ \begin{array}{rrrr}
+1 & 0 & 0 & 0\\ 
+0 & 1 & 0 & 0\\
+0 & 0 & -1 & \color{red}{-1}\\
+0 & 0 & 0 & 0
+\end{array} \right]
+$$</p><details open><p>这里的要点在于区分我们这个专用投影矩阵与标准仿射变换矩阵。通常，仿射变换矩阵第四列的系数设为 \(\{0, 0, 0, 1\}\)，如下所示：</p><p>$$
+\begin{bmatrix}
+\color{green}{m_{00}} & \color{green}{m_{01}} & \color{green}{m_{02}} & \color{blue}{0}\\
+\color{green}{m_{10}} & \color{green}{m_{11}} & \color{green}{m_{12}} & \color{blue}{0}\\
+\color{green}{m_{20}} & \color{green}{m_{21}} & \color{green}{m_{22}} & \color{blue}{0}\\
+\color{red}{T_x} & \color{red}{T_y} & \color{red}{T_z} & \color{blue}{1}\\
+\end{bmatrix}
+$$</p><p>然而在我们调整过的投影矩阵里，这些系数改为 \(\{0, 0, -1, 0\}\)：</p><p>$$
+\left[
+\begin{array}{ccc|r}
+\textcolor{green}{m_{00}} & \textcolor{green}{m_{01}} & \textcolor{green}{m_{02}} & \textcolor{blue}{0} \\
+\textcolor{green}{m_{10}} & \textcolor{green}{m_{11}} & \textcolor{green}{m_{12}} & \textcolor{blue}{0} \\
+\textcolor{green}{m_{20}} & \textcolor{green}{m_{21}} & \textcolor{green}{m_{22}} & \textcolor{blue}{-1} \\
+\textcolor{red}{T_x} & \textcolor{red}{T_y} & \textcolor{red}{T_z} & \textcolor{blue}{0} \\
+\end{array}
+\right]
+$$</p><p>这一改动使 \(w'\) 被设为 \(-z\)。如果 \(-z\) 不等于 1，就需要对变换后点的坐标做归一化。这个过程实质上就是点与投影矩阵相乘时发生的透视除法，也说明了理解这一点有多关键。</p></details><p>在点-矩阵乘法中使用这个专用投影矩阵时，\(x'\)、\(y'\)、\(z'\) 与 \(w'\) 的表达式为：</p><p>$$
+\begin{array}{ll}
+x' = x \cdot 1 + y \cdot 0 + z \cdot 0 + 1 \cdot 0 & = & x,\\
+y' = x \cdot 0 + y \cdot 1 + z \cdot 0 + 1 \cdot 0 & = & y,\\
+z' = x \cdot 0 + y \cdot 0 + z \cdot -1 + 1 \cdot 0 & = & -z,\\
+w' = x \cdot 0 + y \cdot 0 + z \cdot -1 + 1 \cdot 0 & = & -z.
+\end{array}
+$$</p><p>随后把所有坐标除以 \(w'\)，就把点的齐次坐标转回了笛卡尔坐标：</p><p>$$
+\begin{array}{ll}
+x' = \dfrac{x}{w'=-z},\\
+y' = \dfrac{y}{w'=-z},\\
+z' = \dfrac{-z}{w'=-z} = 1.
+\end{array}
+$$</p><p>这个过程确实达成了目标，与透视投影的原理相符。接下来的步骤是进一步调整投影矩阵，以容纳真实相机模型的其他方面，具体是：</p><p>1. <b>把 \(z'\) 重映射到 \([0,1]\) 区间内</b>：这一调整对三维场景的深度计算至关重要，能保证物体按其与相机的距离被正确地渲染。它利用相机的近裁剪面（\(z_{near}\)）与远裁剪面（\(z_{far}\)），在这一区间内对 \(z'\) 值做线性插值。这个变换一般通过额外的矩阵运算对 \(z'\) 值做缩放与平移来实现。</p><p>2. <b>纳入相机的视场角</b>：视场角（FOV）参数影响相机能看到多少场景，模拟的是针孔相机模型的效果。这一点通过调整投影矩阵来改变投影点的缩放比例，从而影响感知到的 FOV。矩阵的调整一般涉及由 FOV 导出的缩放系数，确保场景的空间尺寸被正确地投射到二维视图空间上。</p><h2>重映射 z 坐标</h2><p>把 z 坐标归一化到 0 与 1 之间，是透视投影过程中的关键一步，因为它保证物体按其与相机的距离被正确渲染。这一缩放使用相机的近、远裁剪面。目标是调整 z 坐标，使得点位于近裁剪面上时，变换后的 z 坐标（\(z'\)）等于 0；位于远裁剪面上时，\(z'\) 等于 1。这通过在透视投影矩阵中设定特定系数来实现：</p><p>$$z' = x \cdot m_{20} + y \cdot m_{21} + z \cdot \color{green}{m_{22}} + 1 \cdot \color{red}{m_{23}}$$</p><p>为了满足 \(z'\) 在近裁剪面为 0、在远裁剪面为 1 这两个条件，\(m_{22}\) 与 \(m_{23}\) 的系数分别设定为：</p><p>$$-\dfrac{f}{(f-n)},$$</p><p>以及</p><p>$$-\dfrac{f \cdot n}{(f-n)}$$</p><p>其中 \(n\) 是到近裁剪面的距离，\(f\) 是到远裁剪面的距离。这些调整保证 \(z'\) 在指定区间内被正确归一化。</p><p>在近、远裁剪面上求 \(z'\) 的值，令 \(m_{20}\) 与 \(m_{21}\) 为 0，结果验证了这些系数的有效性：</p><ul><li><p>在近裁剪面（\(z = n\)）：</p></li></ul><p>$$
+\dfrac{-\dfrac{(z' = z = -n) \cdot f - f \cdot n}{(f-n)}}{(w' = -z = n)} = 0
+$$</p><ul><li><p>在远裁剪面（\(z = f\)）：</p></li></ul><p>$$
+\dfrac{-\dfrac{(z' = z = -f) \cdot f - f \cdot n}{(f-n)}}{(w' = -z = f)} = 1
+$$</p><p>这说明所选的系数正确地把近、远裁剪面处的 \(z\) 值分别映射为 \(z'\) 的 0 与 1。</p><p>纳入 \(z'\) 归一化这些调整之后，得到的透视投影矩阵为：</p><p>$$
+\left[\begin{array}{cccc}
+1 & 0 & 0 & 0 \\
+0 & 1 & 0 & 0 \\
+0 & 0 & -\dfrac{f}{(f-n)} & -1\\
+0 & 0 & -\dfrac{f \cdot n}{(f-n)} & 0\\
+\end{array}\right]
+$$</p><p>现在这个矩阵不仅把点从三维空间投影到二维空间，还把它们的 z 坐标重映射到 [0,1] 的归一化区间，保证深度值在渲染时被正确解读。</p><details open><p>关于深度精度以及近、远裁剪面的影响，需要注意深度精度在这一区间内并不是线性的。越靠近近裁剪面精度越高，随距离增加而下降。这种非线性分布会导致 z-fighting，尤其在 [near:far] 区间过大时。因此，把这个区间尽量收窄，对缓解深度缓冲的精度问题很关键。</p></details><h2>把视场角纳入考虑</h2><details open><p>为简化演示，本章假定屏幕是正方形，且屏幕到眼睛的距离等于 1。更通用的做法会在下一章给出。</p></details><p>要让一个基础的透视投影矩阵工作起来，需要考虑相机的<b>视场角</b>，即 FOV（<b>field-of-view</b>）。在真实相机上改变变焦镜头的焦距，会改变我们看到的场景范围。我们希望 CG 相机也有类似的行为。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/focal.png?" alt=""><figcaption><b>图 2：</b>改变焦距可以让我们拍到场景中更多或更少的部分。如这幅图所示，它通常改变的是屏幕窗口。</figcaption></figure><p>投影窗口在每一维上的大小都是 [-1:1]，也就是说，如果投影点的 x、y 坐标落在这个区间内，它就是可见的。区间外的点不可见，不会被绘制。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/camsetup1.png?" alt=""><figcaption><b>图 3：</b>视场角（FOV）控制能看到场景的多大范围。</figcaption></figure><p>注意，在我们的系统里，屏幕窗口的最大值与最小值保持不变，始终是 [-1:1] 区间（假定屏幕为正方形）。当点的坐标落在 [-1,1] 区间内时，我们说它们定义在 NDC 空间中。</p><p>还记得第 1 章说过，透视投影矩阵的目标是把点投影到屏幕上，并把它们的坐标重映射到 [-1,1] 区间（也就是 NDC 空间）。</p><p>屏幕窗口到眼睛位置的距离保持不变（等于 1）。可是当 FOV 改变时，屏幕窗口理应相应变大或变小（见图 2 与图 5）。这个矛盾怎么调和？由于我们希望屏幕窗口尺寸保持固定，于是改为调整投影后的坐标，把它们放大或缩小，再与屏幕窗口的固定边界作比较。来看几个例子。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/focal2.png?" alt=""><figcaption><b>图 4：</b>要在保持屏幕窗口尺寸不变（仍在 [-1:1] 区间）的前提下体现视场角的效果，需要根据 FOV 的取值把点放大或缩小。</figcaption></figure><p>设想一个点，其投影后的 x-y 坐标为 (1.2, 1.3)。这些坐标超出了 [-1:1] 区间，该点因而不可见。如果把坐标乘以 0.7 缩小，新的缩放后坐标变成 (0.84, 0.91)，两个坐标都落在 [-1:1] 区间内，点就可见了。这个操作相当于拉远，也就是把变焦镜头的焦距调小或把 FOV 调大。反之，要取得相反的效果，就乘一个大于 1 的值。例如一个投影坐标为 (-0.5, 0.3) 的点乘以 2.1，得到新坐标 (-1.05, 0.63)。y 坐标仍在 [-1:1] 区间内，但 x 坐标已经小于 -1，点因而不可见。这个效果相当于拉近。</p><p>为了缩放投影后的坐标，我们使用相机的视场角。FOV 直观上控制着能看到场景的多大范围。更多信息见<a href="how-pinhole-camera-works-part-1.html">三维观察：针孔相机模型</a>这一课。</p><details open><p>FOV 可以是水平角，也可以是垂直角。如果屏幕是正方形，选哪个都一样，因为所有角都相同。但如果画幅的宽高比不是 1，FOV 的选择就变得重要了（参见基础部分讲相机的课程）。在 OpenGL（更准确地说 GLUT）中，FOV 指垂直角。本课中，FOV 指<b>水平角</b>（Maya 也是如此）。</p></details><figure><img src="https://scratchapixel.com/images/perspective-matrix/fov.gif?" alt=""><figcaption><b>图 5：</b>拉近或拉远通常会改变屏幕窗口的大小。注意它如何随视场角的增大或减小而变大或变小。</figcaption></figure><p>计算中并不直接使用视场角（FOV）的值，而是使用该角的正切。在计算机图形学文献中，FOV 既可以定义为一个完整的角，也可以定义为观察锥所张角的一半。把 FOV 理解为可见场景的张角范围、而不是它的一半，会更直观（见图 3 与图 5）。不过为了得出缩放投影坐标所需的数值，FOV 角需要取半。这就是 FOV 有时被写成半角的原因。</p><p>把角除以二的理由在于聚焦观察锥内的直角三角形。三角形的斜边与邻边之间的夹角，也就是 FOV 半角，决定了三角形对边的长度。改变这个角，就能缩放图像窗口的边界。利用该角的正切，就能缩放投影后的坐标。值得注意的是，当 FOV 半角为 45 度（总 FOV 为 90 度）时，角的正切等于 1，坐标乘以它保持不变。对于小于 90 度的 FOV，半角的正切小于 1；对于大于 90 度的 FOV，则大于 1。</p><p>然而我们需要的是相反的效果。拉近对应 FOV 减小，需要把投影点坐标乘以一个大于 1 的值。反之，拉远使 FOV 增大，需要乘以一个小于 1 的值。因此这里用的是正切的倒数，即 1 除以 FOV 半角的正切。</p><p>计算投影点坐标缩放系数的最终公式如下：</p><p>$$S = \dfrac{1}{\tan(\dfrac{fov}{2}*\dfrac{\pi}{180})}$$</p><p>有了这个缩放系数，我们这版基础透视投影矩阵的完整形式就是：</p><p>$$
+\left[\begin{array}{cccc}
+S & 0 & 0 & 0 \\
+0 & S & 0 & 0 \\
+0 & 0 & -\dfrac{f}{(f-n)} & -1\\
+0 & 0 & -\dfrac{f \cdot n}{(f-n)} & 0\\
+\end{array}\right]
+$$</p><p>这个矩阵通过缩放投影点的 x、y 坐标来体现 FOV，从而把视场角有效地纳入透视投影过程。</p><h2>这个矩阵还有别的构建方式吗？</h2><p>既有也没有。有些渲染器可能会用不同方式实现透视投影矩阵。例如 OpenGL 用名为 <code>glFrustum</code> 的函数来创建透视投影矩阵。这个函数接受 left、right、bottom、top 坐标，以及近、远裁剪面作为参数。与我们的做法不同，OpenGL 把点投影到近裁剪面上，而不是投影到距相机位置一个单位的平面上。矩阵的配置看起来也可能略有不同。</p><p>注意向量与矩阵所用约定很重要。投影后的点既可以表示为行向量，也可以表示为列向量。此外，还要确认渲染器用的是左手还是右手坐标系，因为这可能改变矩阵系数的符号。</p><p>尽管有这些差异，透视投影矩阵的基本概念在所有渲染器中是一致的。它们无一例外都把点的 x、y 坐标除以其 z 坐标。归根结底，无论采用哪种约定、用哪个矩阵，所有矩阵的设计目标都是把同样的点投影到同样的像素坐标上。</p><p>下一章我们会更详细地探讨 OpenGL 矩阵的构建。</p><h2>测试程序</h2><p>为了验证我们这版基础透视投影矩阵，我们写了一个简单程序，用本章打造的投影矩阵把一个多边形物体（Newell 的茶壶）的顶点投影到图像平面上。程序很直白。它用一个函数，根据相机的近、远裁剪面以及以度为单位给出的相机视场角来构建透视投影矩阵。茶壶的顶点存在一个数组里。每个点都先经世界空间或物体空间到相机空间的变换，再通过简单的点-矩阵乘法投影到图像平面上。函数 <code>multPointMatrix</code> 完成点与矩阵的相乘，其要点在于构造第四个分量 \(w\)，并在 \(w\) 不等于 1 时把结果点的坐标除以 \(w\)——<b>这一步就是透视除法，即 \(z\) 除法</b>。只有投影后的 \(x\) 与 \(y\) 坐标落在 \([-1:1]\) 区间内，点才被认为可见，与图像的宽高比无关。区间外的点被视为超出了相机的屏幕边界。可见的点随后按从 \([-1:1]\) 到 \([0:1]\) 的重映射转到光栅空间，也就是像素坐标，再按图像尺寸缩放，并四舍五入到最近的整数以对齐像素坐标。</p><pre><code>
+#include &amp;ltcstdio&gt; 
+#include &amp;ltcstdlib&gt; 
+#include &amp;ltfstream&gt; 
+#include "geometry.h" 
+#include "vertexdata.h" 
+ 
+void setProjectionMatrix(const float &amp;angleOfView, const float &amp;near, const float &amp;far, Matrix44f &amp;M) 
+{ 
+    // 设置基础投影矩阵
+    float scale = 1 / tan(angleOfView * 0.5 * M_PI / 180); 
+    M[0][0] = scale;  // 缩放投影点的 x 坐标 
+    M[1][1] = scale;  // 缩放投影点的 y 坐标 
+    M[2][2] = -far / (far - near);  // 用于把 z 重映射到 [0,1] 
+    M[3][2] = -far * near / (far - near);  // 用于把 z 重映射到 [0,1] 
+    M[2][3] = -1;  // 设置 w = -z 
+    M[3][3] = 0; 
+} 
+ 
+void multPointMatrix(const Vec3f ∈, Vec3f &amp;out, const Matrix44f &amp;M) 
+{ 
+    //out = in * M;
+    out.x   = in.x * M[0][0] + in.y * M[1][0] + in.z * M[2][0] + M[3][0]; 
+    out.y   = in.x * M[0][1] + in.y * M[1][1] + in.z * M[2][1] + M[3][1]; 
+    out.z   = in.x * M[0][2] + in.y * M[1][2] + in.z * M[2][2] + M[3][2]; 
+    float w = in.x * M[0][3] + in.y * M[1][3] + in.z * M[2][3] + M[3][3]; 
+ 
+    // 若 w 不等于 1 则归一化（从齐次坐标转换为笛卡尔坐标）
+    if (w != 1) { 
+        out.x /= w; 
+        out.y /= w; 
+        out.z /= w; 
+    } 
+} 
+ 
+int main(int argc, char **argv) 
+{ 
+    uint32_t imageWidth = 512, imageHeight = 512; 
+    Matrix44f Mproj; 
+    Matrix44f worldToCamera; 
+    worldToCamera[3][1] = -10; 
+    worldToCamera[3][2] = -20; 
+    float angleOfView = 90; 
+    float near = 0.1; 
+    float far = 100; 
+    setProjectionMatrix(angleOfView, near, far, Mproj); 
+    unsigned char *buffer = new unsigned char[imageWidth * imageHeight]; 
+    memset(buffer, 0x0, imageWidth * imageHeight); 
+    for (uint32_t i = 0; i &lt; numVertices; ++i) { 
+        Vec3f vertCamera, projectedVert; 
+        multPointMatrix(vertices[i], vertCamera, worldToCamera); 
+        multPointMatrix(vertCamera, projectedVert, Mproj); 
+        if (projectedVert.x &lt; -1 || projectedVert.x &gt; 1 || projectedVert.y &lt; -1 || projectedVert.y &gt; 1) continue; 
+        // 转换到光栅空间，用一个小点标出顶点在图像中的位置
+        uint32_t x = std::min(imageWidth - 1, (uint32_t)((projectedVert.x + 1) * 0.5 * imageWidth)); 
+        uint32_t y = std::min(imageHeight - 1, (uint32_t)((1 - (projectedVert.y + 1) * 0.5) * imageHeight)); 
+        buffer[y * imageWidth + x] = 255; 
+    } 
+    // 保存到文件
+    std::ofstream ofs; 
+    ofs.open("./out.ppm"); 
+    ofs &lt;&lt; "P5\n" &lt;&lt; imageWidth &lt;&lt; " " &lt;&lt; imageHeight &lt;&lt; "\n255\n"; 
+    ofs.write((char*)buffer, imageWidth * imageHeight); 
+    ofs.close(); 
+    delete [] buffer; 
+ 
+    return 0; 
+} 
+</code></pre><p>用完全相同的相机设置，在一个商业渲染器中渲染茶壶，再与程序的测试结果比较，得到的图像如预期一样吻合。茶壶几何体与程序文件详见本课末尾的源代码章节。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/teapot-projmat.png?" alt=""></figure><h2>下一步</h2><p>下一章我们会深入探讨 OpenGL 中所用的透视投影矩阵的构建。基本原理保持一致，但 OpenGL 走的是另一条路：把点投影到近裁剪面上，并把投影后点的坐标重映射到归一化设备坐标（NDC）空间。这次重映射利用由相机近裁剪面与视场角导出的屏幕坐标，最终得到一种不同的矩阵配置。</p><p>在探讨完 OpenGL 中的透视投影矩阵之后，我们将转向讨论<b>正交投影</b>矩阵。与透视投影不同，正交投影矩阵把物体投影到观察平面上，不带有透视投影固有的深度畸变，从而给出三维场景的另一种视图。这让它特别适合技术与工程制图这类需要保持物体真实尺寸与比例的场合。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/building-basic-perspective-projection-matrix.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/building-basic-perspective-projection-matrix.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

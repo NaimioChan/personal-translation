@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>计算导数 - Scratchapixel 中文译本</title>
+<meta name="description" content="Perlin 噪声 · 计算导数（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>计算导数</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="perlin-noise.html">Perlin 噪声</a></li>
+<li><a href="perlin-noise-terrain-mesh.html">用 Perlin 噪声创建地形网格</a></li>
+<li><a style="font-weight:700" href="perlin-noise-computing-derivatives.html">计算导数</a></li>
+<li><a href="improved-perlin-noise.html">改进的 Perlin 噪声</a></li>
+</ol>
+</div>
+<h2>计算导数</h2><p><b>阅读时间：20 分钟。</b></p><p>网上和书里讲 Perlin 噪声方法的文献极少讲得直观；要找到关于如何计算 Perlin 噪声导数（尤其是解析方式）的资料就更难了。不过，对还不知道这些导数是什么、有什么用的人，我们先简单介绍一下。</p><h2>（偏）导数速览</h2><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-derivative1.png?" alt=""><figcaption><b>图 1：</b>用离散方法计算噪声函数沿水平轴与垂直轴的变化量。</figcaption></figure><p>函数的导数在计算机图形学里经常用到。不过在举例之前，我们先回顾一下它是什么。如果你生成一张 2D 噪声的图像，并在其上叠加某种规则网格，那么我们可能想知道在每个网格点处，噪声函数沿 x 和 y 方向变化了多少（图 1）。这个想法听起来熟悉吗？回想上一章，我们用 2D 噪声函数的结果去置换网格。不过还是回到我们这里想做的事：我们怎么知道这个 2D 噪声函数沿 x 轴或 y 轴的<b>变化率</b>？一个直接的办法是取你想算这个变化量那一点处的噪声值（把这个点叫作 \(Gn_x\)）、从 \(Gn_x\) 往右挪一步那一点处的噪声值（把第二个点叫作 \(Gn_{x+1}\)），然后用第二个值减去第一个值。例子：如果在网格位置 \(Gn_{11}\) 处噪声等于 0.1，而在网格位置 \(Gn_{12}\) 处噪声值等于 0.7，那么我们可以认为噪声（沿 x 轴）从 \(Gn_{11}\) 变化到 \(Gn_{12}\)，变化量为 0.6（图 1）。写成公式就是：</p><p>$$\Delta_x Gn_{11} = Gn_{12} - Gn_{11}.$$</p><details open><p>要计算沿 y 轴的变化率，做法相同，只是往下一步。我们的式子会写成 \(\Delta_y Gn_{11} = Gn_{21} - Gn_{11}\)。</p></details><p>从技术上说，最好把这个差值归一化，这样无论网格上两点相隔多远，我们都能得到一致的结果（归一化之后，用不同网格间距做的测量就能互相比较）。要归一化这个结果，需要把差值除以 \(G_{11}\) 与 \(G_{12}\) 之间的距离。所以比如网格上两点间距为 2，我们就得写成：</p><p>$$\Delta_x Gn_{11} = {\dfrac{Gn_{12} - Gn_{11}}{2}}.$$</p><p>在数学里，这种技术叫作<b>前向差分</b>。之所以说前向，是因为我们取下一个已算出的点，再从它里面减去当前点处的值。</p><details open><p>后向差分则用前一个点而不是后一个点。你也可以用<a href="https://en.wikipedia.org/wiki/Finite_difference" target="_blank" rel="noreferrer noopener">中心差分</a>，同时取前一个点和后一个点。</p></details><p>在数学上，我们可以用下面的式子把这个概念形式化：</p><p>$$f'(x) = \lim_{h \to 0}{\dfrac{f(x+h) - f(x)}{h}}.$$</p><details open><p>记号 \(f'(x)\) 表示这是函数 \(f(x)\) 的导数。</p></details><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-derivative2.png?" alt=""><figcaption><b>图 2：</b>间距越小，变化率的计算越准确。</figcaption></figure><p>这意味着我们可以用刚介绍的前向差分技术来计算函数 \(f(x)\) 的导数，但这个导数的值会随着两点间距变小而越来越准确（理论上 \(h\) 趋近于 0）。间距大时，你在给定点 \(x\) 处得到的是一个相当粗糙的导数值，但随着间距变小，这个近似会改善。就我们的噪声图像而言，网格间距相当大，所以如果网格间距更小，你得到的每个网格点上噪声函数变化量的近似会好得多（图 2）。</p><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-differential1.png?" alt=""><figcaption><b>图 3：</b>用中心差分计算 P 处的切线时，\(h\) 取值越小效果越好。</figcaption></figure><p>用 1D 例子来理解这个概念更容易。图 3 画出了一维函数的轮廓。假设我们现在想知道这个函数在 P 附近变化了多少。按照前向差分的原理，我们可以沿 x 轴取一个更靠后的点，比如 \(x_1\)，算出该点处的函数值，再用 \(f(x_1)\) 减去 \(f(x)\)。注意，当我们从 \(f(x)\) 到\(f(x_1)\) 画一条线时，那条线在 \(x\) 处与函数相切。这是因为一维函数的导数给出<b>在计算函数导数那一点处与函数相切的直线的斜率</b>。既然我们知道了如何从几何上解释函数的导数，你就容易看出：如果我们取一个比 \(x_1\) 更远的点，比如 \(x_2\)，那么 \(x\) 与 \(x_2\) 之间的直线在 \(x\) 处就不如 \(x\)-\(x_1\) 那条线「那么切」。总之，如果你用前向差分来计算函数的导数，那么 \(x\) 与 \(x+h\) 之间的距离越小越好。</p><p>到目前为止我们学到了什么？</p><ul><li><p>我们学到，一维函数 \(f(x)\) 的导数 \(f'(x)\) 可以解释为在 \(x\) 处与函数 \(f(x)\) 相切的直线的斜率</p><details open><p>除了斜率，导数 \(f'(x)\) 也可以看作函数 \(f(x)\) 在 \(x\) 处的瞬时变化率。</p></details></li><li><p>我们还学到，可以用一种叫作前向差分的技巧（一般方法叫有限差分）来算出该斜率的一个「近似值」，而且这个近似会随着前向差分公式中的 \(h\) 变小而变好。</p></li></ul><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-differential2.png?" alt=""><figcaption><b>图 4：</b>函数导数或斜率的直观表示。</figcaption></figure><p>有一件事需要理解清楚，才能明白我们后面在本章里会怎样使用导数（实际上是偏导数）。到目前为止，我们解释了函数的导数可以解释为函数 \(f(x)\) 在任意 \(x\) 值处的斜率。我们在 \(x\) 处（即我们计算函数 \(f(x)\) 导数的位置）画切线的方式，就是在函数上我们求导的那一点处直接画出直线 \(y = mx\)。这里的 \(m\) 值当然就是我们算出的函数导数的斜率。为什么这很重要？它之所以关键，是因为注意当 \(x=1\) 时，有 \(y=m\)。利用这一观察，我们可以说，在求导数那一点处与曲线相切的 2D 向量等于 <code>Vec2f(1, m)</code>。你同意吗？当然，你之后需要把这个向量归一化，但要注意这个向量如何相切于我们求函数导数的那一点（这正是我们想让你记住的）。你必须理解这个想法（图 4 有示意）。</p><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-normal-const.png?" alt=""><figcaption><b>图 5：</b>通过切线与副切线的叉积计算法线。</figcaption></figure><p>你可以把 3D Perlin 噪声函数看成在求导那一点处相互垂直的两个 2D 函数。于是，如果你愿意，会有一个 1D 函数用来求 2D 函数在 xy 平面内的导数，还有一个 1D 函数用来求 2D 噪声函数在 yz 平面内的导数，如图 5 所示。现在，如果我们用刚学到的技巧去算这两个函数各自的切线，注意得到的两条切线彼此垂直。但更有意思的是，把这两个向量做叉积，你会得到一个垂直于「最初计算 2D 噪声函数导数那一点处的切平面」的向量（同样如图 5 所示）。这个向量就是<b>我们函数在 P 处的法线</b>。希望到这里你已经懂了。这些导数将帮我们计算被 3D 或 2D 噪声函数置换过的网格的法线。</p><p>这是一个重要的结果，因为我们将用这种方式计算被 3D 噪声函数置换过的网格的法线。我们会在给定点（比如 P）处求函数沿 x 轴的导数，然后算出沿 x 轴与 P 相切的向量（把这个向量叫作 \(T_x\)）。接着在 P 处求噪声函数沿 z 轴的导数，据此算出沿 z 轴与 P 相切的向量（把这个向量叫作 \(T_z\)）。最后，用这两个向量做叉积来算出 P 处的法线：$N_P = T_z \times T_x.$</p><p>这既简单又优雅。现在说一点说明和一个问题。</p><p>说明：注意我们在这里并没有计算噪声函数的导数。我们是取巧地先算函数沿 x 轴的导数，再算沿 z 轴的另一个导数。这样做有意思的地方在于，只有一个量在变化。比如计算 3D 噪声函数沿 x 轴的导数时，我们得到的值当然不会因噪声沿 z 轴的变化而改变（因为我们是在 xy 平面内求噪声函数的值——也就是说 z 方向上没有变化）。在数学里，当你有一个多变量函数，却只对其中一个变量求导、其余变量保持不变时，我们说这是在计算函数的<b>偏导数</b>。举个例子，如果你有函数：</p><p>$$f(x,y) = x^2 + xy + y^2$$</p><p>那么如果你想在保持 \(y\) 不变的情况下求该函数的导数，会得到：</p><p>$${\dfrac{f(x,y)}{\partial x}} = 2x + y,$$</p><p>你可以把它读作函数 \(f(x,y)\) 对 \(x\) 的偏导数。换句话说，我们忽略所有不含 \(x\) 的项，比如我们例子里的 \(y^2\)（也包括任何常数项），然后对每个含 \(x\) 的项求 \(x\) 的导数。例如，如果某一项里有 \(x^2y\)，那我们在偏导数里把它换成 \(2xy\)。如果有 \(xy\)，就把偏导数里那一项换成 \(y\)。简单吧？</p><p>问题：那么我们怎么计算这些偏导数呢？</p><figure><img src="https://scratchapixel.com/images/noise-part-2/perlin-noise-geom-deriv.png?" alt=""><figcaption><b>图 6：</b>Perslin 噪声的几何导数。</figcaption></figure><p>一种方法是使用前向差分技术（这也是我们在本章开头先学它的原因）。拿我们置换过的网格为例，我们可以在顶点 \(V_{x,z}\) 处沿 x 轴计算导数，办法是用顶点 \(V_{x,z}\) 处的噪声值减去顶点 \(V_{x+1,z}\) 处的噪声值（图 6）。换句话说，我们可以写成：</p><p>$$\partial Nx = N_{Vx+1,z} - N_{Vx,z}.$$</p><p>其中 \(\partial Nx\) 是噪声函数沿 x 轴的偏导数。这里它是一个实数，不是向量。类似地，我们可以计算噪声函数沿 z 轴的偏导数：</p><p>$$\partial Nz = N_{Vx,z+1} - N_{Vx,z} .$$</p><p>如何把这个实数值（也就是一个 float）变成向量（在求沿 x 轴和 z 轴导数的那个点处与噪声函数相切的向量）？这很简单。记住，当我们沿 x 轴求偏导数时，我们是在 xy 平面内工作。因此，沿 x 轴与噪声函数相切的向量的 z 坐标必然是 0：</p><p>$$T_x = \{?, ?, 0\}.$$</p><p>要算出另外两个坐标，你需要再看一遍图 4，那里我们解释过：要算某个平面内与函数相切的向量，你需要把 x 坐标设为 1、把向量的 y 坐标设为函数的偏导数值（如果你想算 yz 平面内切向量，那就要把切线的 z 坐标设为 1、把向量的 y 坐标设为函数对 z 的偏导数，再把切向量的 x 坐标设为 0）。最后我们得到：</p><p>$$
+\begin{array}{l}
+T_x = \{1, Nx, 0\}\\
+T_z = \{0, Nz, 1\}.
+\end{array}
+$$</p><p>最后，要算顶点的法线，你现在只需对这两个向量做叉积（即使两个输入向量没有归一化，叉积的结果也是正确的：得到的向量会垂直于这两个输入向量，尽管它本身可能没有归一化）：</p><p>$$Normal_{Vx,z} = T_z \times T_x.$$</p><p>这个技巧效果很好，但是：</p><ul><li><p>首先，当我们想计算网格边缘处顶点的导数时会怎样？答案是：算不了。</p></li><li><p>我们还解释过（图 3）：用前向差分求导数时，两个采样之间的间隔越小，结果越准确。换句话说，顶点之间的间隔越大，偏导数的计算就越不准确。本章后面我们会展示用前向差分算出的偏导数与我们接下来要研究的解析解之间的差异。</p></li></ul><h2>Perlin 噪声函数的解析偏导数</h2><p>所以有更好的办法来计算这些偏导数。这种技术只依赖数学，给出「准确」的解（数学意义上的准确）。快速回顾一下：下面这个式子</p><p>$$f(x,y) = x^2 + xy + y^2$$</p><p>对 x 的偏导数是：</p><p>$${\dfrac{f(x,y)}{\partial x}} = 2x + y.$$</p><p>我们把噪声函数重写一遍。先把所有点积用字母替换（如下所示）：</p><pre><code>
+a = dot(c000, p000)
+b = dot(c100, p100)
+c = dot(c010, p010)
+d = dot(c110, p110) 
+e = dot(c001, p001)
+f = dot(c101, p101) 
+g = dot(c011, p011)
+h = dot(c111, p111)
+</code></pre><p>为了练习，我们重申一下参数 \(u\)、\(v\) 和 \(w\) 是这样算出来的（我们用 smoothstep 函数）：</p><pre><code>
+u = tx * tx * (3 - 2 * tx)
+v = ty * ty * (3 - 2 * ty)
+w = tz * tz * (3 - 2 * tz)
+</code></pre><p>现在我们把这个 Perlin 噪声函数里各个插值写进一行（见第一章）：</p><pre><code>
+lerp(
+   lerp(
+       lerp(a, b, u),
+       lerp(c, d, u),
+       v)
+   lerp(
+       lerp(e, f, u),
+       lerp(g, h, u),
+       v),
+   w)
+</code></pre><p>现在把对 <code>lerp(a, b, t)</code> 函数的调用换成它实际的代码（<code>a(1-t)+bt</code>）并展开：</p><pre><code>
+((a(1 - u) + bu)(1 - v) + (c(1 - u) + du)v)(1 - w) +
+((e(1 - u) + fu)(1 - v) + (g(1 - u) + hu)v)w
+
+((a - au + bu)(1 - v) + (c - cu + du)v)(1 - w) +
+((e - eu + fu)(1 - v) + (g - gu + hu)v)w
+
+(a - au + bu - av + auv - buv + cv - cuv + duv)(1 - w) +
+(e - eu + fu - ev + euv - fuv + gv - guv + huv)w
+
+a - au + bu - av + auv - buv + cv - cuv + duv -
+aw + auw - buw + avw - auvw + buvw - cvw + cuvw - duvw +
+ew - euw + fuw - evw + euvw - fuvw + gvw - guvw + huvw
+</code></pre><p>最后，把各项按下面这样重新归并：</p><pre><code>
+a + u(b - a) + v(c - a) + w(e - a) +
+uv(a + d - b - c) + uw(a + f - b - e) + vw(a + g - c - e) +
+uvw(b + c + e + h - a - d - f - g)
+</code></pre><p>如你所见（也在意料之中），这是三个变量 \(u\)、\(v\) 和 \(w\) 的函数。假设我们套用学过的技巧，求函数对其中一个变量的偏导数。那样的话，我们需要去掉所有不含该变量的项，再把剩下各项中的该变量替换成它的导数。比如，如果我们想求噪声函数对 \(u\) 的偏导数，会得到：</p><pre><code>
+u'(b - a) +
+u'v(a + d - b - c) + u'w(a + f - b - e) +
+u'vw(b + c + e + h - a - d - f - g)
+
+u'((b - a) + v(a + d - b - c) + w(a + f - b - e) + vw(b + c + e + h - a - d - f - g))
+</code></pre><p>类似地，对 \(v\) 和 \(w\) 的偏导数是：</p><pre><code>
+// 对 v 的偏导数
+v'(c - a) +
+uv'(a + d - b - c) + v'w(a + g - c - e) +
+uv'w(b + c + e + h - a - d - f - g)
+
+v'((c - a) + u(a + d - b - c) + w(a + g - c - e) + uw(b + c + e + h - a - d - f - g))
+
+// 对 w 的偏导数
+w'(e - a) +
+uw'(a + f - b - e) + vw'(a + g - c - e) +
+uvw'(b + c + e + h - a - d - f - g)
+
+w'((e - a)  + u(a + f - b - e) + v(a + g - c - e) + uv(b + c + e + h - a - d - f - g))
+</code></pre><p>剩下的问题是 \(u'\)、\(v'\) 和 \(w'\) 的导数是什么？很简单，\(u\)、\(v\) 和 \(w\) 是这样算出来的：</p><p>$$
+\begin{array}{l}
+u = 3tx^2 - 2tx^3\\
+v = 3ty^2 - 2ty^3\\
+w = 3tz^2 - 2tz^3\\
+\end{array}
+$$</p><p>于是这些函数的导数就是：</p><p>$$
+\begin{array}{l}
+u' = 6tx - 6tx^2\\
+v' = 6ty - 6ty^2\\
+w' = 6tz - 6tz^2\\
+\end{array}
+$$</p><p>Et voila！你现在要做的就是用上面说的方法算出这些导数，再构造在函数求值那一点处与之相切的向量。下面是我们的 <code>eval</code> 函数的一个修改版，它在给定位置求 3D 噪声函数的值及其偏导数：</p><pre><code>
+float eval(const Vec3f &amp;p, Vec3f&amp; derivs) const 
+{ 
+    int xi = static_cast&amp;ltint&gt;(std::floor(p.x)) &amp; tableSizeMask; 
+    int yi = static_cast&amp;ltint&gt;(std::floor(p.y)) &amp; tableSizeMask; 
+    int zi = static_cast&amp;ltint&gt;(std::floor(p.z)) &amp; tableSizeMask; 
+ 
+    float tx = p.x - xi; 
+    float ty = p.y - yi; 
+    float tz = p.z - zi; 
+ 
+    float u = smoothstep(tx); 
+    float v = smoothstep(ty); 
+    float w = smoothstep(tz); 
+ 
+    float du = smoothstepDeriv(tx); 
+    float dv = smoothstepDeriv(ty); 
+    float dw = smoothstepDeriv(tz); 
+ 
+    // 单元角上的梯度
+    const Vec3f &amp;c000 = gradients[hash(xi, yi, zi)]; 
+    const Vec3f &amp;c100 = gradients[hash(xi + 1, yi, zi)]; 
+    const Vec3f &amp;c010 = gradients[hash(xi, yi + 1, zi)]; 
+    const Vec3f &amp;c110 = gradients[hash(xi + 1, yi + 1, zi)]; 
+ 
+    const Vec3f &amp;c001 = gradients[hash(xi, yi, zi + 1)]; 
+    const Vec3f &amp;c101 = gradients[hash(xi + 1, yi, zi + 1)]; 
+    const Vec3f &amp;c011 = gradients[hash(xi, yi + 1, zi + 1)]; 
+    const Vec3f &amp;c111 = gradients[hash(xi + 1, yi + 1, zi + 1)]; 
+ 
+    // 生成从网格点指向 p 的向量
+    float x0 = tx, x1 = tx - 1; 
+    float y0 = ty, y1 = ty - 1; 
+    float z0 = tz, z1 = tz - 1; 
+ 
+    Vec3f p000 = Vec3f(x0, y0, z0); 
+    Vec3f p100 = Vec3f(x1, y0, z0); 
+    Vec3f p010 = Vec3f(x0, y1, z0); 
+    Vec3f p110 = Vec3f(x1, y1, z0); 
+ 
+    Vec3f p001 = Vec3f(x0, y0, z1); 
+    Vec3f p101 = Vec3f(x1, y0, z1); 
+    Vec3f p011 = Vec3f(x0, y1, z1); 
+    Vec3f p111 = Vec3f(x1, y1, z1); 
+ 
+    float a = dot(c000, p000); 
+    float b = dot(c100, p100); 
+    float c = dot(c010, p010); 
+    float d = dot(c110, p110); 
+    float e = dot(c001, p001); 
+    float f = dot(c101, p101); 
+    float g = dot(c011, p011); 
+    float h = dot(c111, p111); 
+ 
+    float k0 = (b - a); 
+    float k1 = (c - a); 
+    float k2 = (e - a); 
+    float k3 = (a + d - b - c); 
+    float k4 = (a + f - b - e); 
+    float k5 = (a + g - c - e); 
+    float k6 = (b + c + e + h - a - d - f - g); 
+ 
+    derivs.x = du *(k0 + v * k3 + w * k4 + v * w * k6); 
+    derivs.y = dv *(k1 + u * k3 + w * k5 + u * w * k6); 
+    derivs.z = dw *(k2 + u * k4 + v * k5 + u * v * k6); 
+ 
+    return a + u * k0 + v * k1 + w * k2 + u * v * k3 + u * w * k4 + v * w * k5 + u * v * w * k6; 
+}
+</code></pre><h2>解析解与前向差分的对比</h2><p>现在我们可以对比两个版本的置换网格，一个用几何解法计算网格的顶点法线，另一个用解析解法。计算这两种解法的代码如下：</p><pre><code>
+int main(int argc, char **argv) 
+{ 
+    PerlinNoise noise; 
+ 
+    PolyMesh *poly = createPolyMesh(3, 3, 30, 30); 
+ 
+    // 置换顶点，并用噪声函数的偏导数计算解析法线
+    Vec3f derivs; 
+    for (uint32_t i = 0; i &lt; poly-&amp;gtnumVertices ++i) { 
+        Vec3f p((poly-&amp;gtvertices[i].x + 0.5), 0, (poly-&amp;gtvertices[i].z + 0.5)); 
+        // 置换当前顶点
+        poly-&amp;gtvertices[i].y = noise.eval(p, derivs); 
+#if ANALYTICAL_NORMALS 
+        Vec3f tangent(1, derivs.x, 0);  //切线 
+        Vec3f bitangent(0, derivs.z, 1);  //副切线 
+        // 等价于 bitangent.cross(tangent)
+        poly-&amp;gtnormals[i] = Vec3f(-derivs.x, 1, -derivs.z); 
+        poly-&amp;gtnormals[i].normalize(); 
+#endif 
+    } 
+ 
+#if !ANALYTICAL_NORMALS 
+    // 如果需要，计算面法线
+    for (uint32_t k = 0, off = 0; k &lt; poly-&amp;gtnumFaces ++k) { 
+        uint32_t nverts = poly-&amp;gtfaceArray[k]; 
+        const Vec3f &amp;va = poly-&amp;gtvertices[poly-&amp;gtverticesArray[off]]; 
+        const Vec3f &amp;vb = poly-&amp;gtvertices[poly-&amp;gtverticesArray[off + 1]]; 
+        const Vec3f &amp;vc = poly-&amp;gtvertices[poly-&amp;gtverticesArray[off + nverts - 1]]; 
+ 
+        Vec3f tangent = vb - va; 
+        Vec3f bitangent = vc - va; 
+ 
+        poly-&amp;gtnormals[poly-&amp;gtverticesArray[off]] = bitangent.cross(tangent); 
+        poly-&amp;gtnormals[poly-&amp;gtverticesArray[off]].normalize(); 
+ 
+        off += nverts; 
+    } 
+#endif 
+ 
+    poly-&amp;gtexportToObj(); 
+    delete poly; 
+ 
+    return 0; 
+} 
+</code></pre><p>下面是这两个网格及其对应的顶点法线的图（法线显示在右侧）：</p><figure><img src="https://scratchapixel.com/images/noise-part-2/geom-vs-analytic-normals.png?" alt=""></figure><p>注意，用前向差分方法（几何解法）算出法线的网格，在边缘处没有定义顶点法线。还要注意两个网格的顶点法线方向差别很大（尽管它们的形状相同）。这导致两个网格的着色明显不同（记住法线是要用于着色的）。</p><details open><p>注意，你可以把这段代码：</p><pre><code>
+poly-&amp;gtnormals[i] = bitangent.cross(tangent);
+</code></pre><p>换成：</p><pre><code>
+poly-&amp;gtnormals[i] = Vec3f(-derivs.x, 1, -derivs.z);
+</code></pre><p>为什么？因为我们知道：</p><p>$$
+\begin{array}{l}
+Tx=\{1,Nx,0\}\\
+Tz=\{0,Nz,1\}.
+\end{array}
+$$</p><p>如果你把这两个向量代入叉积公式：</p><p>$$
+\begin{array}{l}
+x = va.y * vb.z - va.z * vb.y\\
+y = va.z * vb.y - va.x * vb.z\\
+z = va.x * vb.x - va.y * vb.x,
+\end{array}
+$$</p><p>你会看到最终得到：</p><p>$$N = Tz \times Tx = \{-Nx, 1, -Nz\}$$</p></details>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/procedural-generation-virtual-worlds/perlin-noise-part-2/perlin-noise-computing-derivatives.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/procedural-generation-virtual-worlds/perlin-noise-part-2/perlin-noise-computing-derivatives.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

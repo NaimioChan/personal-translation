@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>实现虚拟针孔相机 - Scratchapixel 中文译本</title>
+<meta name="description" content="针孔相机模型 · 实现虚拟针孔相机（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>实现虚拟针孔相机</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="how-pinhole-camera-works-part-1.html">针孔相机如何工作（第 1 部分）</a></li>
+<li><a href="how-pinhole-camera-works-part-2.html">针孔相机如何工作（第 2 部分）</a></li>
+<li><a href="virtual-pinhole-camera-model.html">虚拟针孔相机模型</a></li>
+<li><a style="font-weight:700" href="implementing-virtual-pinhole-camera.html">实现虚拟针孔相机</a></li>
+</ol>
+</div>
+<h2>实现虚拟针孔相机</h2><p><b>阅读时间：21 分钟。</b></p><h2>实现虚拟针孔相机模型</h2><p>过去三章我们探讨了关于针孔相机模型的一切。这个模型在计算机图形学（CG）里最容易模拟，也是电子游戏与 3D 应用最常用的一种。如第一章简略提过的那样，针孔相机按其设计只能生成清晰的图像（没有任何景深）。这个模型虽然简单、易实现，却常因无法模拟景深、镜头光晕这类视觉效果而受批评。有人把这些效果看作视觉瑕疵，但它们对照片与电影的审美体验贡献很大。模拟这些效果相对简单（因为本质上依赖的都是众所周知的基础光学原理），但非常消耗资源，尤其是与用基本针孔相机模型渲染一张图像相比。我们会在另一课介绍一种模拟景深的方法，它虽然也耗资源，但比沿着光线追踪穿过相机镜头各种光学元件来模拟景深要省得多。</p><p>本章我们会把前几章学到的针孔相机模型知识都用上，写一个程序来实现这个模型。目标是证明这个模型确实管用，并打消那种认为 Maya 这类软件生成图像的过程神秘莫测、近乎魔法的念头。做法是生成一系列图像：在 Maya 中和在我们的程序里分别改动不同的相机参数，再比较结果，以此说明只要相机设置一致，两个应用生成的图像也应当一致。我们开始吧。</p><h2>实现理想针孔相机模型</h2><p>在本章余下的部分，讨论针孔相机时我们会用到「焦距」和「胶片尺寸」这两个术语。要注意把它们与「近裁剪面」和「画布尺寸」区分开——后两者只适用于虚拟相机模型。不过它们之间是有关系的。我们来重新梳理、说清这层关系。</p><figure><img src="https://scratchapixel.com/images/cameras/clippingplanescanvas.png?" alt=""><figcaption><b>图 1：</b>从数学上讲，画布可以放在视线上的任何位置。它的边界由图像平面与视锥体的交线确定。</figcaption></figure><p>要让针孔相机与虚拟相机生成同一张图像，它们必须共用同一个视锥体。视锥体由两个参数决定：汇聚点（相机或眼睛的原点——这两种说法指同一个点）与视场角。前几章我们还学到，视场角由胶片尺寸与焦距决定，这两个参数是针孔相机特有的。</p><h3> 画布/屏幕该放在哪里？</h3><p>在计算机图形学（CG）中，视锥体一旦确定，接下来要决定虚拟图像平面放在哪里。从数学上讲，画布可以放在视线上的任何位置，只要我们用来投影图像的那个表面包含在视锥体内即可，如图 1 所示。它可以位于金字塔顶点（显然不能在顶点本身）与底面（由远裁剪面确定）之间的任意处，如果愿意，甚至可以放到更远。</p><details open><p><b>不要把眼睛（投影中心）到画布的距离与焦距混为一谈</b>。它们并不相同。<b>画布的位置并不决定视锥体有多宽或多窄</b>（近裁剪面也不决定）；视锥体的形状完全由焦距与胶片尺寸决定。这两个参数的组合决定了视场角，也就决定了图像平面处的放大倍率。至于近裁剪面，它只是一个任意选定的平面，与远裁剪面一起用来沿相机局部 z 轴「裁剪」几何体，并把各点的 z 坐标重映射到 [0,1] 区间。重映射的理由与方法在讲 REYES 算法（一种流行的光栅化算法）的那一课中有解释，而透视投影矩阵是下一课的内容。</p></details><p>把眼睛到图像平面的距离取为 1 很方便，因为这样能简化计算画布上投影点坐标的公式。但图这个方便，就意味着错过了到画布距离任意的那种通用情形（也稍复杂一些）。既然 Scratchapixel 的目标是弄清事物如何运作，而不是图省事，我们就走通用情形。现在我们已经决定把画布放在近裁剪面处。这个决定不必过度解读，纯粹出于教学上的考虑。把图像平面放在近裁剪面处，可以让我们探讨把点投影到距眼睛任意距离的画布上的公式。这个选择也恰好与透视投影矩阵的运作方式吻合——它隐含地把图像平面放在近裁剪面处，从而为下一课要探讨的内容铺好路。但务必记住：<b>画布的位置并不影响输出图像</b>。即使图像平面位于眼睛与近裁剪面之间，处在这两点之间的物体依然可以被投影到图像平面上，透视矩阵的公式也依然有效。</p><h3> 我们的程序要做什么</h3><p>本课我们要写一个程序，通过把三维物体的顶点投影到图像平面上，生成该物体的线框图像。这个程序与上一课写的非常相似；不过现在要把代码扩展一下，把焦距与胶片尺寸的概念纳入进来。一般而言，胶片画幅是矩形的，不是正方形，也就是说我们的程序也会生成矩形形状的图像。回想第二章讲过的：分辨率栅口宽高比，也叫设备宽高比（图像宽度除以高度），不一定与胶片栅口宽高比（胶片宽度除以高度）一致。本章最后一部分，我们还会再写一些代码来处理这种情况。</p><p>下面是我们的针孔相机模型需要的参数清单：</p><h3> 内参</h3><ul><li><p><b>焦距</b>（类型：float）</p><ul><li><p>定义针孔相机中眼睛（相机位置）到图像平面的距离。这个参数对计算视场角很关键（第二章）。注意不要把焦距（用来确定视场角）与虚拟相机图像平面的距离混为一谈，后者位于近裁剪面处。在 Maya 中，这个值以毫米（mm）表示。</p></li></ul></li><li><p><b>相机孔径</b>（类型：2 个 float）</p><ul><li><p>确定真实相机所用胶片的物理尺寸。这个值对确定视场角必不可少，同时也定义了胶片栅口宽高比（第二章）。常见胶片画幅的物理尺寸（一般以英寸计）可在这篇<a href="https://en.wikipedia.org/wiki/List_of_film_formats" target="_blank" rel="noreferrer noopener">维基百科条目</a>中找到（在 Maya 中，这个参数可以用英寸或 mm 指定）。</p></li></ul></li><li><p><b>裁剪面</b>（类型：2 个 float）</p><ul><li><p>近裁剪面与远裁剪面是想象出来的平面，沿相机视线方向位于距相机特定距离处。只有处在相机两个裁剪面之间的物体才会被渲染进相机的视野。我们的针孔相机模型把画布放在近裁剪面处（第三章）。务必要把近裁剪面与焦距区分开（见上面的说明）。</p></li></ul></li><li><p><b>图像尺寸</b>（类型：2 个整数）</p><ul><li><p>指定输出图像的像素尺寸。图像尺寸同时决定分辨率栅口宽高比（第二章）。</p></li></ul></li><li><p><b>适配分辨率栅口</b>（类型：枚举）</p><ul><li><p>Maya 中用来在分辨率宽高比与胶片栅口宽高比不一致时确定策略的高级选项（第二章）。</p></li></ul></li></ul><h3> 外参</h3><ul><li><p><b>相机到世界</b>（类型：4x4 矩阵）</p><ul><li><p>通过相机到世界的变换定义相机的位置与朝向（第三章）。</p></li></ul></li></ul><p>我们还需要下面这些参数，它们可以由上面列出的参数算出来：</p><ul><li><p><b>视场角</b>（类型：float）</p><ul><li><p>由焦距与胶片尺寸参数算出，表示相机所捕捉场景的视觉范围。</p></li></ul></li><li><p><b>画布/屏幕窗口</b>（类型：4 个 float）</p><ul><li><p>表示「画布」（在 RenderMan 规范中称为「屏幕窗口」）在图像平面上的坐标，由画布尺寸与胶片栅口宽高比算出。</p></li></ul></li><li><p><b>胶片栅口宽高比</b>（类型：float）</p><ul><li><p>即胶片宽度与胶片高度之比，决定相机所捕捉图像的形状。</p></li></ul></li><li><p><b>分辨率栅口宽高比</b>（类型：float）</p><ul><li><p>图像宽度与高度之比（以像素计），影响最终图像如何显示或投射。</p></li></ul></li></ul><figure><img src="https://scratchapixel.com/images/cameras/canvascoordinates.png?" alt=""><figcaption><b>图 2：</b>左下角与右上角坐标界定了画布的边界。任何投影点的 x、y 坐标落在这些边界之内，就对相机可见。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/canvascoordinates2.png?" alt=""><figcaption><b>图 3：</b>画布尺寸取决于近裁剪面与水平视场角。由画布尺寸很容易推得画布的左下角与右上角坐标。</figcaption></figure><p>记住，把一个三维点投影到图像平面上后，我们要把投影点的 x、y 坐标与画布坐标作比较，来判断该点在相机视野中是否可见。当然，只有落在画布范围之内的点才可能可见。我们已经知道如何用透视除法计算投影点的坐标。但我们还需要知道画布的左下角与右上角坐标（图 2）。那么，这些坐标怎么求？</p><p>几乎在所有情况下，我们都希望画布以画布坐标系的原点为中心（图 2、图 3 和图 4）。不过这也并非总是必要或总是如此。比如立体相机配置可能需要把画布略微左移或右移出坐标系原点。因此，本课中我们始终假定画布以图像平面坐标系原点为中心。</p><figure><img src="https://scratchapixel.com/images/cameras/canvascoordinates3.png?" alt=""><figcaption><b>图 4：</b>知道画布尺寸后，计算画布的左下角与右上角坐标就很简单。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/angleofview1.png?" alt=""><figcaption><b>图 5：</b>垂直视场角与水平视场角。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/canvascoordinates4.png?" alt=""><figcaption><b>图 6：</b>胶片孔径宽度与焦距用来计算相机的视场角。</figcaption></figure><p>计算画布或屏幕窗口的坐标很直接。由于画布以屏幕坐标系原点为中心，这些坐标值等于画布尺寸的一半。若坐标位于屏幕坐标系 y 轴之下或 x 轴之左，则取负值（图 4）。画布尺寸取决于视场角与近裁剪面（因为我们决定把图像平面放在近裁剪面处）。视场角则由胶片尺寸与焦距决定。我们逐个来算这些变量。</p><p>不过要注意，如前面多次提过的，胶片画幅更常是矩形而非正方形。因此视锥体在水平与垂直方向上的角度范围并不相同。于是我们需要用水平视场角算左右坐标，用垂直视场角算上下坐标。</p><h3> 计算画布坐标：绕远路的方法</h3><p>从水平视场角开始。前几章我们给出了利用三角恒等式计算视场角的公式。如果从顶部观察相机设置，你会注意到可以勾画出一个直角三角形（图 6）。这个三角形的邻边与对边都是已知的：分别对应焦距与胶片水平孔径的一半。不过要在三角恒等式里使用它们，必须用同一单位表示。通常胶片栅口尺寸以英寸定义，而焦距以毫米定义。一般把英寸换算成毫米，你也可以反过来把毫米换算成英寸；结果相同。一英寸等于 25.4 毫米。要求水平视场角，我们用一个三角恒等式：一个角的正切等于对边长度与邻边长度之比（公式 1）：</p><p>$$
+\begin{align*}
+\tan\left(\dfrac{\theta_H}{2}\right) &= \dfrac{A}{B} \\
+&= \color{red}{\dfrac{ \left( \text{Film Aperture Width} \times 25.4 \right) / 2 }{ \text{Focal Length} }}.
+\end{align*}
+$$</p><p>其中 \(\theta_H\) 是水平视场角。既然有了 \(\theta_H\)，就可以计算画布尺寸了。我们知道它取决于视场角与近裁剪面（因为画布放在近裁剪面处）。我们用同一个三角恒等式（图 6）来计算画布尺寸（公式 2）：</p><p>$$
+\begin{array}{l}
+\tan(\dfrac{\theta_H}{2}) = \dfrac{A}{B} =
+\dfrac{\dfrac{\text{Canvas Width} } { 2 } } { Z_{near} }, \\
+\dfrac{\text{Canvas Width} } { 2 } = \tan(\dfrac{\theta_H}{2}) \times Z_{near},\\
+\text{Canvas Width}= 2 \times \color{red}{\tan(\dfrac{\theta_H}{2})} \times Z_{near}.
+\end{array}
+$$</p><p>如果想避免计算三角函数 <code>tan()</code>，可以把公式 1 右边的函数替换掉：</p><p>$$
+\begin{array}{l}
+\text{Canvas Width}= 2 \times \color{red}{\dfrac {\dfrac { (\text{Film Aperture Width} \times 25.4) } { 2 } } { \text{Focal Length} }} \times Z_{near}.
+\end{array}
+$$</p><p>要算 right 坐标，只需把整个式子除以 2：</p><p>$$
+\begin{array}{l}
+\text{right} = \color{red}{\dfrac {\dfrac { (\text{Film Aperture Width} \times 25.4) } { 2 } } { \text{Focal Length} }} \times Z_{near}.
+\end{array}
+$$</p><p>计算 left 坐标很直接。例如，下面这段代码计算 left 与 right 坐标：</p><pre><code>
+float focalLength = 35; // 35mm Full Aperture
+float filmApertureWidth = 0.980;
+float filmApertureHeight = 0.735;
+static const float inchToMm = 25.4;
+float nearClippingPlane = 0.1;
+float farClippingPlane = 1000;
+
+int main(int argc, char **argv)
+{
+#if 0
+    // 第一种方法：先计算水平视场角
+    float angleOfViewHorizontal = 2 * atan((filmApertureWidth * inchToMm / 2) / focalLength);
+    float right = tan(angleOfViewHorizontal / 2) * nearClippingPlane;
+#else
+    // 第二种方法：直接计算 right 坐标
+    float right = ((filmApertureWidth * inchToMm / 2) / focalLength) * nearClippingPlane;
+#endif
+
+    float left = -right;
+
+    printf("Screen window left/right coordinates: %f %f\n", left, right);
+
+    ...
+}
+</code></pre><p>可以用同样的方法计算上下坐标，这次需要算出垂直视场角（\(\theta_V\)）：</p><p>$$
+\tan({\theta_V \over 2}) = {A \over B} = \color{red}{\dfrac {\dfrac { (\text{Film Aperture Height} \times 25.4) } { 2 } } { \text{Focal Length} }}.
+$$</p><p>由此可以导出 top 坐标的公式：</p><p>$$
+\text{top} = \color{red}{\dfrac {\dfrac { (\text{Film Aperture Height} \times 25.4) } { 2 } } { \text{Focal Length} }} \times Z_{near}.
+$$</p><p>下面是计算全部四个坐标的代码：</p><pre><code>
+int main(int argc, char **argv)
+{
+#if 0
+    // 第一种方法：先计算水平与垂直视场角
+    float angleOfViewHorizontal = 2 * atan((filmApertureWidth * inchToMm / 2) / focalLength);
+    float right = tan(angleOfViewHorizontal / 2) * nearClippingPlane;
+    float angleOfViewVertical = 2 * atan((filmApertureHeight * inchToMm / 2) / focalLength);
+    float top = tan(angleOfViewVertical / 2) * nearClippingPlane;
+#else
+    // 第二种方法：直接计算 right 与 top 坐标
+    float right = ((filmApertureWidth * inchToMm / 2) / focalLength) * nearClippingPlane;
+    float top = ((filmApertureHeight * inchToMm / 2) / focalLength) * nearClippingPlane;
+#endif
+
+    float left = -right;
+    float bottom = -top;
+
+    printf("Screen window bottom-left, top-right coordinates %f %f %f %f\n", bottom, left, top, right);
+    ...
+}
+</code></pre><h3> 计算画布坐标：快捷方法</h3><p>我们写的代码完全能用。不过还有一种稍快些的计算画布坐标的方法，生产中常被采用。这个方法是先算出垂直视场角得到上下坐标，再把这些坐标乘以胶片宽高比。已知：</p><p>$$
+\text{top} = \color{red}{\dfrac {\dfrac { (\text{Film Aperture Height} \times 25.4) } { 2 } } { \text{Focal Length} }} \times Z_{near}
+$$</p><p>这个公式计算的是相机视野在近裁剪面处的 <code>top</code> 边界，依据是胶片孔径高度、焦距，以及到近裁剪面的距离（\(Z_{near}\)）。\(25.4\) 这个因子把英寸换算成毫米，前提是胶片孔径尺寸以英寸给出。</p><p>要用宽高比（即胶片孔径宽度 / 胶片孔径高度）求 <code>right</code> 边界，可以把 <code>top</code> 的计算式代入 <code>right</code> 的式子：</p><p>$$
+\text{right} = \text{top} \times \dfrac{\text{Film Aperture Width}}{\text{Film Aperture Height}}
+$$</p><p>代入 <code>top</code> 的给定公式：</p><p>$$
+\text{right} = \left( \color{red}{\dfrac {\dfrac { (\text{Film Aperture Height} \times 25.4) } { 2 } } { \text{Focal Length} }} \times Z_{near} \right) \times \dfrac{\text{Film Aperture Width}}{\text{Film Aperture Height}}
+$$</p><p>经过这次代入，<code>right</code> 的计算式变成：</p><p>$$
+\text{right} = \dfrac {\dfrac { (\text{Film Aperture Height} \times 25.4) } { 2 } } { \text{Focal Length} } \times Z_{near} \times \dfrac{\text{Film Aperture Width}}{\text{Film Aperture Height}}
+$$</p><p>进一步化简：</p><p>$$
+\text{right} = \dfrac {\dfrac { (\text{Film Aperture Width} \times 25.4) } { 2 } } { \text{Focal Length} } \times Z_{near}
+$$</p><p>下面的代码演示如何实现这个解法：</p><pre><code>
+int main(int argc, char **argv)
+{
+    float top = ((filmApertureHeight * inchToMm / 2) / focalLength) * nearClippingPlane;
+    float bottom = -top;
+    float filmAspectRatio = filmApertureWidth / filmApertureHeight;
+    float right = top * filmAspectRatio;
+    float left = -right;
+
+    printf("Screen window bottom-left, top-right coordinates %f %f %f %f\n", bottom, left, top, right);
+    ...
+}
+</code></pre><h3> 管用吗？检查代码</h3><figure><img src="https://scratchapixel.com/images/cameras/similartriangles1.png?" alt=""><figcaption><b>图 7：</b>P' 是 P 在画布上的投影。</figcaption></figure><p>在测试代码之前，我们需要对把点投影到图像平面上的函数做点小改动。记住，计算投影点坐标用的是相似三角形的性质。例如，若 \(A\)、\(B\)、\(A'\) 与 \(B'\) 是两个相似三角形的对边与邻边，则可以写成：</p><p>$$
+\begin{array}{l}
+\dfrac{A}{B} = \dfrac{A'}{B'} = \dfrac{P.y}{P.z} = \dfrac{P'.y}{Z_{near}}\\
+P'.y = \dfrac{P.y}{P.z} * Z_{near} 
+\end{array}
+$$</p><p>上一课我们把画布放在距眼睛 1 个单位处，令近裁剪面等于 1。这一简化让公式退化为用点的 z 坐标去除它的 x、y 坐标（换句话说，我们忽略了 \(Z_{near}\)）。我们还会在计算投影点坐标的这个函数里测试点是否可见，做法是把投影点坐标与画布坐标作比较。在程序里，如果三角形的任一顶点落在画布边界之外，我们就用红色绘制这个三角形（图像中出现红色三角形，说明它至少有一个顶点在画布之外）。下面是更新后的函数，用于把点投影到画布上并计算三维点的光栅坐标：</p><pre><code>
+bool computePixelCoordinates(
+    const Vec3f &amp;pWorld,
+    const Matrix44f &amp;worldToCamera,
+    const float &amp;b,
+    const float &amp;l,
+    const float &amp;t,
+    const float &amp;r,
+    const float &amp;near,
+    const uint32_t &amp;imageWidth,
+    const uint32_t &amp;imageHeight,
+    Vec2i &amp;pRaster)
+{
+    Vec3f pCamera;
+    worldToCamera.multVecMatrix(pWorld, pCamera);
+    Vec2f pScreen;
+    pScreen.x = pCamera.x / -pCamera.z * near;
+    pScreen.y = pCamera.y / -pCamera.z * near;
+
+    Vec2f pNDC;
+    pNDC.x = (pScreen.x + r) / (2 * r);
+    pNDC.y = (pScreen.y + t) / (2 * t);
+    pRaster.x = static_cast&amp;ltint&gt;(pNDC.x * imageWidth);
+    pRaster.y = static_cast&amp;ltint&gt;((1 - pNDC.y) * imageHeight);
+
+    bool visible = true;
+    if (pScreen.x &lt; l || pScreen.x &gt; r || pScreen.y &lt; b || pScreen.y &gt; t)
+        visible = false;
+
+    return visible;
+}
+</code></pre><p>下面是我们对该函数所做改动的摘要：</p><ul><li><p>第 16、17 行：透视除法的结果乘以近裁剪面。</p></li><li><p>第 20、21 行：要把点从屏幕空间重映射到 NDC（归一化设备坐标）空间，我们把点在屏幕空间中的 x、y 坐标分别除以画布宽度与高度。</p></li><li><p>第 26、27 行：把点在屏幕空间中的坐标与画布左下角、右上角坐标作比较。如果点落在这些边界之外，就把 <code>visible</code> 变量置为 false。</p></li></ul><p>程序其余部分（可在源代码一节找到）与上一个类似。我们遍历三维模型的所有三角形，把三角形顶点的坐标转换为光栅坐标，并把结果存进一个 SVG 文件。我们在 Maya 中和用我们的程序分别渲染几张图像，再核对结果。</p><figure><img src="https://scratchapixel.com/images/cameras/cameraresults.png?" alt=""></figure><p>如你所见，结果吻合。就模型在图像中的尺寸与位置而言，Maya 与我们的程序产出一致。当三角形与画布边界重叠时，它们按预期被渲染成红色。</p><h3> 当分辨率栅口与胶片栅口的宽高比不一致时</h3><p>当胶片栅口与分辨率栅口（也叫设备宽高比）的宽高比不同时，就必须做一个决定：是把分辨率栅口装入胶片栅口，还是让胶片栅口去适配分辨率栅口。下面我们探讨应对这种情形的各种做法：</p><details open><p>在接下来的文字里，我们说胶片栅口与分辨率栅口「吻合」，指的仅仅是它们的相对大小对得上。尽管两者度量单位不同（胶片栅口用英寸，分辨率栅口用像素），这种比较仍然可行，因为我们比的是它们的宽高比。举例来说，如果用一个矩形表示胶片栅口，我们就按上下文把分辨率栅口画成它的边与胶片栅口矩形的上下边对齐、或与左右边对齐（如图 8 所示）。</p></details><figure><img src="https://scratchapixel.com/images/cameras/fitgateresolution3.png?" alt=""><figcaption><b>图 8：</b>当胶片栅口宽高比与分辨率栅口宽高比不一致时，有四种可选方案。</figcaption></figure><ul><li><p><b>填充模式</b>：即把分辨率栅口装入胶片栅口（蓝框在红框之内）。有两种情形要考虑：</p><ul><li><p>图 8a：如果胶片宽高比大于设备宽高比，我们必须缩小画布的 left 与 right 坐标，使其与分辨率栅口的对应坐标一致。做法是把 left 与 right 坐标乘以设备宽高比除以胶片宽高比。</p></li><li><p>图 8c：如果胶片宽高比小于设备宽高比，我们必须缩小画布的 top 与 bottom 坐标，使其与分辨率栅口的对应坐标一致。做法是把 top 与 bottom 坐标乘以胶片宽高比除以设备宽高比。</p></li></ul></li><li><p><b>过扫描模式</b>：这种方法把胶片栅口装入分辨率栅口（红框在蓝框之内），有两种情形要处理：</p><ul><li><p>图 8b：如果胶片宽高比大于设备宽高比，我们需要放大画布的 top 与 bottom 坐标，使其与分辨率栅口的对应坐标对齐。这需要把 top 与 bottom 坐标乘以胶片宽高比除以设备宽高比。</p></li><li><p>图 8d：如果胶片宽高比小于设备宽高比，我们需要放大画布的 left 与 right 坐标，使其与分辨率栅口的对应坐标对齐。做法是把 left 与 right 坐标乘以设备宽高比除以胶片宽高比。</p></li></ul></li></ul><p>下面是用代码实现这四种情形的方式：</p><pre><code>
+float xscale = 1;
+float yscale = 1;
+
+switch (fitFilm) {
+    default:
+    case kFill:
+        if (filmAspectRatio &gt; deviceAspectRatio) {
+            // 情形 8a
+            xscale = deviceAspectRatio / filmAspectRatio;
+        } else {
+            // 情形 8c
+            yscale = filmAspectRatio / deviceAspectRatio;
+        }
+        break;
+    case kOverscan:
+        if (filmAspectRatio &gt; deviceAspectRatio) {
+            // 情形 8b
+            yscale = filmAspectRatio / deviceAspectRatio;
+        } else {
+            // 情形 8d
+            xscale = deviceAspectRatio / filmAspectRatio;
+        }
+        break;
+}
+
+right *= xscale;
+top *= yscale;
+left = -right;
+bottom = -top;
+</code></pre><p>完整程序的源代码见下一章。</p><h2>小结</h2><p>本课中，你对在 CG 中模拟针孔相机有了完整认识。通过这次探讨，我们还深入看了如何把点投影到图像平面上，以及如何把点的坐标与画布坐标作比较，从而判定它们对相机是否可见。本课的这些认识为后续话题打下基础：讨论透视投影矩阵、理解 REYES 算法（一种重要的光栅化技术），以及弄清光线追踪中图像是如何形成的。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/3d-viewing-pinhole-camera/implementing-virtual-pinhole-camera.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/3d-viewing-pinhole-camera/implementing-virtual-pinhole-camera.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

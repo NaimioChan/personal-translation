@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用鼠标和键盘在三维场景中导航 - Scratchapixel 中文译本</title>
+<meta name="description" content="相机导航控制 · 用鼠标和键盘在三维场景中导航（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>用鼠标和键盘在三维场景中导航</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+
+<h2>用鼠标和键盘在三维场景中导航</h2><p><b>阅读时间：34 分钟。</b></p><p>本课中，我们将探讨如何用鼠标和键盘在三维场景中导航，正如下方视频所示，那是 Maya 三维工具的屏幕录制。如果你对「导航」这个词感到陌生，想想玩电子游戏的体验。比如在第三人称射击游戏里，你在游戏环境中移动，通常用摇杆，或用鼠标和键盘上的 W、A、S、D 键。本质上，这种交互就相当于在三维场景中移动。</p><p>不必纠结这项技能为什么有价值。我们身处的语境是三维而非二维，所以想移动一个三维物体、想在一个三维场景（比如游戏关卡）里穿行，理由本身就不言自明。</p><p>但具体怎么做？这就是本课的重点。</p><p>正如前言所说，如果你习惯打游戏，大概熟悉用 W、A、S、D 键加鼠标（或者摇杆）在场景中导航。本课中，我们沿用 Maya 带火的快捷键，这套操作 CG 行业很多美术都熟悉。你可能也知道，Maya、Blender 这些不同的三维软件各有自己的一套快捷键，用惯了一套再换另一套会很别扭。本课我们用与 Maya 相同的快捷键。不过，自定义一套自己的键位（包括加上 W、A、S、D 和鼠标操作）会是个有趣的练习。明白了背后的原理，这件事就变得很简单。我们开始吧。</p><h2>本课要做出什么？</h2><p>讲清如何实现三维相机控制系统并不复杂。难点在于：要在三维场景中演示相机控制的实际效果，我们既需要一个窗口，也需要一种渲染三维场景的方式，最好是实时的。在三维场景中导航，要求我们能尽可能频繁地渲染场景，最好高于每秒 30 帧，这被视为真正实时体验的下限。好吧，这件事并不容易，因为理想方案是用 Vulkan、DirectX 或 Metal 这样的实时图形 3D API。问题是，用 Vulkan 渲染一个三角形，你得下载一些库（但愿是预编译好的）、链接它们，更烦的是还要写大约 2000 行代码。这不太理想。</p><p>所以我们换个做法：复用上一课的代码，那一课我们学了如何创建一个窗口来显示图像，并用鼠标在图像上绘制。我们将用光线追踪渲染三维场景。不再显示那只可爱柯基的静态图像，而是显示我们光线追踪三维场景的内容。既然拼图的所有碎片都在手上，这就容易了。前面说过，我们知道如何在窗口里显示图像，也知道写一个朴素的光线追踪器同样简单。这些我们在第 1 节讲过。好！实现三维相机控制系统所需的一切都齐了。唯一的「小嗝」是光线追踪很慢（慢得可怕），不做任何优化、哪怕最基础的优化，我们也只能渲染寥寥几个三角形，才勉强守住 30 fps。不过这没关系。一个立方体就够了，它足以演示三维导航。</p><p>本课我们将写一个程序，其运行效果见下方视频中的屏幕录制。和往常一样，全部魔法都在一个文件里，一条命令行就能编译——不需要库、不需要 CMake，也不需要这类玄乎的东西。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/3d-nav-controls/3d-nav-screenrecording1.mp4"></video></p></div><h2>先统一术语</h2><p>一般来说，在动画行业（在电子游戏行业或许稍弱一些），本课关注的这类相机模型被称为<b>自由相机模型</b>。它与运动沿预先录制路径进行的相机相对。自由移动时，你至少会想启用三种运动：</p><ul><li><p><b>平移（Track）</b>：指相对于场景向侧向移动（左右或上下）。</p></li><li><p><b>推拉（Dolly）</b>：指靠近或远离物体的能力。不要与缩放混淆，这是两回事。推拉像身体真的靠近或远离物体；缩放是站在原地，改变相机的变焦，使物体在画面中显得更大或更小。这是通过改变相机镜头的焦距实现的。</p></li><li><p><b>翻滚（Tumble，旋转）</b>：这就像在一个以你所观察的物体为中心的虚拟球面上行走。</p></li></ul><p>在描述旋转的过程中，我们顺势引出两个概念：</p><ul><li><p>拍照时，你通常会对准某个点。在 CG 里，我们常把它称为<b>目标点（target）</b>。</p></li><li><p>当我们说你在一个以那个「目标点」为中心的虚拟球面上行走时（确实如此），你便推断出这个虚拟球可大可小。球越大，你离物体越远；球越小，你离物体越近。我们把它称为<b>目标距离（target distance）</b>，即相机与目标点之间的距离。</p></li></ul><p>好，我们已经引入了关键的术语与概念：推拉（dolly）、平移（track，也叫 pan）、翻滚（tumble，旋转）、目标点（target）与目标距离（target distance）。</p><p>我们在下方的视频里演示了这些概念。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/3d-nav-controls/3d-nav-screenrecording2.mp4"></video></p></div><h2>在三维环境中实现相机控制。</h2><p>下面是详细说明。</p><h3> 第 1 步：识别相机运动的触发条件</h3><p>这一步的目的是确定哪些按键与鼠标组合应当触发哪一类相机运动。</p><p>最初，当我们按下 ALT 键和/或移动鼠标时，会调用一个函数，在我们的代码里是 <code>OnMousePressed()</code>。这个函数接收一个参数，指明按下了哪些键和哪个鼠标键。如果键与鼠标的组合应当触发我们讨论过的某种相机运动（平移、推拉、翻滚），我们就把自由相机的运动类型（<code>CameraMoveType</code>）设为对应的类型（可以是 <code>TUMBLE</code>、<code>TRACK</code> 或 <code>DOLLY</code>）：</p><pre><code>
+struct FreeCameraModel {
+    enum class CameraMoveType : uint8_t {
+        NONE,
+        TUMBLE,
+        TRACK,
+        DOLLY,
+    };
+    FreeCameraModel() = default;
+    CameraMoveType move_type{CameraMoveType::NONE};
+    gfx::Point mouse_pos;
+    float theta{0};
+    float phi{0};
+    Vec3&amp;ltfloat&gt; look_at{0};
+    float distance_to_target{10};
+    Quat&amp;ltfloat&gt; camera_rotation;
+};
+
+FreeCameraModel freecam_model;
+Matrix44&amp;ltfloat&gt; rotation_mat;
+constexpr float kRotateAmplitude = 0.01;
+constexpr float kPanAmplitude = 0.01;
+constexpr float kScrollAmplitude = 0.1;
+
+Matrix44&amp;ltfloat&gt; cam_to_world;
+
+enum EventType {
+    ET_UNKNOWN = 0,
+    ET_MOUSE_PRESSED,
+    ET_MOUSE_RELEASED,
+};
+
+enum EventFlags {
+    EF_NONE                 = 0,
+    EF_SHIFT_DOWN           = 1 &lt;&lt; 0,
+    EF_CONTROL_DOWN         = 1 &lt;&lt; 1,
+    EF_ALT_DOWN             = 1 &lt;&lt; 2,
+    EF_LEFT_BUTTON_DOWN     = 1 &lt;&lt; 3,
+    EF_MIDDLE_BUTTON_DOWN   = 1 &lt;&lt; 4,
+    EF_RIGHT_BUTTON_DOWN    = 1 &lt;&lt; 5
+};
+
+void OnMousePressed(int flags, gfx::Point location) {
+    freecam_model.mouse_pos = location;
+    if (flags &amp; EF_ALT_DOWN) {
+        freecam_model.move_type =
+            (flags &amp; EF_LEFT_BUTTON_DOWN) ? FreeCameraModel::CameraMoveType::TUMBLE :
+            (flags &amp; EF_MIDDLE_BUTTON_DOWN) ? FreeCameraModel::CameraMoveType::TRACK :
+            (flags &amp; EF_RIGHT_BUTTON_DOWN) ? FreeCameraModel::CameraMoveType::DOLLY :
+            (assert(false), FreeCameraModel::CameraMoveType::NONE);
+    }
+}
+</code></pre><p>调用 <code>OnMousePressed</code> 函数的上下文稍后再讲，现在先看它做了什么。它检查鼠标是否被按下、ALT 键是否也处于按下状态。然后看按下的是哪个鼠标键：左键、中键还是右键。如果是左键，就把相机的运动类型设为 <code>TUMBLE</code>；中键和右键则分别设为 <code>TRACK</code> 和 <code>DOLLY</code>。DOLLY 类型有点特殊，因为稍后我们会看到，鼠标滚轮也能用它。这就是流程的第一步。根据键与鼠标的组合是否匹配，我们设置一个标志（<code>CameraMoveType move_type</code>），指明要对相机执行哪种运动（即前述三种之一）。</p><p>注意，这个函数被调用时我们还会记录鼠标位置（<code>freecam_model.mouse_pos = location;</code>）。这在第 2 步会派上用场。</p><h3> 第 2 步：用鼠标的差分位置施加预期效果</h3><p><b>差分位置</b>指鼠标位置从前一时刻到下一时刻的变化量。这个差值在图形学应用里对计算相机旋转、平移或缩放这类运动至关重要。本质上，正是用鼠标的位移来决定相机应如何随用户输入移动或旋转。值得一提的是，这项技术也用来移动或旋转三维物体，不过那是另一课的话题。</p><p>鼠标移动时，我们会调用另一个函数 <code>OnMouseMoved(const gfx::Point&amp; location)</code>。注意 <code>location</code> 参数就是 <code>OnMouseMoved</code> 被调用那一刻的鼠标位置。鼠标坐标是 <code>int</code>，所以它们有自己的 <code>gfx::Point</code> 类。还记得吗，用户按下 ALT + 比如左键时（激活 <code>TUMBLE</code> 运动类型），我们记录了鼠标位置。然后在 <code>OnMouseMoved</code> 里，我们先计算先前记录的鼠标位置与新位置（通过 <code>location</code> 参数传给 <code>OnMouseMoved</code>）之间的差值（即 delta），如下：</p><pre><code>
+void OnMouseMoved(const gfx::Point&amp; location) {
+    gfx::Point delta = location - freecam_model.mouse_pos;
+    freecam_model.mouse_pos = location;
+    ...
+}
+</code></pre><p>算完 delta 之后，我们用最新的鼠标位置更新 <code>freecam_model.mouse_pos</code>。下次 <code>OnMouseMoved</code> 被调用时（只要用户持续移动鼠标，或者在按住 ALT 和左键的同时停顿后又开始移动，就会调用），这个值用来计算新的 delta。</p><p>这些 delta 将用来计算要施加到相机上的变换量，以实现翻滚、平移和推拉效果。如果用户向左移动鼠标，新的鼠标 x 位置会小于先前记录的位置，用新位置减去旧位置就得到负的 x delta。我们可以把这个值加到相机目标点沿 x 轴的平移上，实际上就是把相机向左移（而透过相机看到的几何体则向右移）。在翻滚模式下，我们用这些 delta 增减相机的旋转参数，即用球坐标表示的 \(\theta\) 和 \(\phi\)。所以像 <code>theta += delta.x</code> 这样的操作会改变相机绕 y 轴的旋转：值为负时 \(\theta\) 减小，相机绕 y 轴顺时针旋转；值为正时 \(\theta\) 增大，相机逆时针旋转。\(\phi\) 也一样（用 <code>delta.y</code>），它控制相机的仰角。</p><p>下面详细说明这些 delta 如何应用到每种运动类型。我们先逐个考虑每种运动，再看如何把它们组合成最终模型。开始之前请记住，我们的默认相机初始化在世界原点、朝正 z 轴方向看，如图 1 所示。</p><figure><img src="https://scratchapixel.com/images/3d-nav-controls/3d-nav-default-cam.png" alt=""><figcaption><b>图 2：</b>我们的默认相机朝正 z 轴方向看。</figcaption></figure><p>注意，我们希望相机在场景中随鼠标移动的速度可以因人而异。你希望相机运动快如闪电还是慢如巨兽，都可以按场景尺度调整这些值。本质上，我们要的是对相机运动速度有一定控制。因此，代码/模型里每种运动都有各自的幅度参数：平移、推拉和旋转分别对应 <code>kPanAmplitude</code>、<code>kScrollAmplitude</code> 和 <code>kRotateAmplitude</code>（按理说它们的命名应当与相机运动类型对应——这里姑且算是对开发者疲劳的一点致意）。</p><h3> 翻滚（旋转）</h3><p>从翻滚开始有点不寻常，但我们要计算最终相机位置，第一步就得知道相机的旋转，所以必须先做它，才能继续另外两种运动。好，要建立自由相机模型，我们需要 4x4 矩阵和四元数。矩阵方面，Scratchapixel 有很多课程专门讲，从 <a href="points-vectors-and-normals.html">几何课程</a> 开始，所以我们假定这块已经覆盖。四元数则不同，我们还没写那门课，对很多人来说，四元数可能完全是个谜。别慌！我们包了。</p><ul><li><p>首先，本课附带的示例代码里已经包含了完成演示所需的矩阵、向量和四元数的全部方法实现。所以你不必去应付花哨又陌生的库。</p></li><li><p>其次，与四元数相关的代码不超过 100 行。所以不算多。</p></li><li><p>第三，就本课而言，关于四元数你只需要知道：它是表示绕给定轴旋转的一种数学方式。创建一个四元数，只需给出你想绕之旋转的轴，以及你希望物体被这个四元数旋转的角度。就这么简单。</p></li></ul><p>为什么用四元数？我们本可以做一个只依赖矩阵的方案。但矩阵有一个叫万向锁的问题，在三维导航的语境下，它会表现为相机旋转的突然跳变。这种跳变只在特定情况下出现，而本课不是讲万向锁和矩阵局限的，所以不再展开。要知道的是，四元数没有这个万向锁问题，因此是比矩阵更稳定、更鲁棒的旋转编码数学方法。这就是我们要用它的原因。再说一次，别紧张；用法其实非常简单，至于它为什么有效、如何工作，暂时你就先吞下红色药丸吧。</p><p>好，如前所述，旋转可以用球坐标来编码（几何课程里也解释过）。用球坐标，我们可以用两个角（以弧度表示：\(\theta\) 和 \(\phi\)）来表示旋转。</p><ul><li><p><b>\(\theta\)（theta）</b>：控制仰角，即绕 x 轴的旋转。</p></li><li><p><b>\(\phi\)（phi）</b>：控制绕 y 轴的旋转，你也可以把它称为被旋转物体的方位角。把它想象成一颗绕地球赤道旋转的卫星。</p></li></ul><figure><img src="https://scratchapixel.com/images/3d-nav-controls/3d-nav-tumble.png" alt=""><figcaption><b>图 2：</b>我们分别把鼠标 x、y 位置的 delta 应用到 theta 和 phi 角上，使相机绕目标点旋转。</figcaption></figure><p>由于我们的 delta 包含两个值，一个对应鼠标沿屏幕 x 轴的移动，一个对应沿 y 轴的移动，我们就用前面算出的 delta 来分别增减 \(\theta\) 和 \(\phi\) 角，具体取决于 delta 的正负。初始时两个角都设为 0，代码流程如下：</p><pre><code>
+void OnMouseMoved(const gfx::Point&amp; location) {
+    gfx::Point delta = location - freecam_model.mouse_pos;
+    freecam_model.mouse_pos = location;
+    if (freecam_model.move_type == FreeCameraModel::CameraMoveType::NONE)
+        return;
+    switch (freecam_model.move_type) {
+        case FreeCameraModel::CameraMoveType::TUMBLE: {
+                freecam_model.theta -= delta.x * kRotateAmplitude;
+                freecam_model.phi -= delta.y * kRotateAmplitude;
+                UpdateCameraRotation();
+            } 
+            break;
+        case FreeCameraModel::CameraMoveType::DOLLY:
+            // ...
+            break;
+        case FreeCameraModel::CameraMoveType::TRACK:
+                // ...
+            break;
+        default:
+            break;
+    }
+    SetCameraMatrices();
+}
+</code></pre><p>在我们的情形里，我们从 \(\theta\) 角中减去 delta，因为我们处理的是右手坐标系，鼠标向上移动时 delta 为负，而我们希望仰角增大，于是 \(\phi\) 增大。更新完球坐标角度之后，我们调用函数 <code>UpdateCameraRotation</code>，其代码如下：</p><pre><code>
+void UpdateCameraRotation() {
+    Quat&amp;ltfloat&gt; q1; q1.SetAxisAngle(Vec3&amp;ltfloat&gt;(1,0,0), freecam_model.phi);
+    Quat&amp;ltfloat&gt; q2; q2.SetAxisAngle(Vec3&amp;ltfloat&gt;(0,1,0), freecam_model.theta);
+    freecam_model.camera_rotation = q2 * q1;
+    rotation_mat = freecam_model.camera_rotation.ToMatrix44();
+}
+</code></pre><p>我们创建两个四元数，一个让相机绕 x 轴旋转 \(\phi\)，另一个绕 y 轴旋转 \(\theta\)。把两个四元数相乘，得到另一个同时编码这两次旋转的四元数。我们只需调用 <code>ToMatrix44()</code> 方法把它转成矩阵。现在，我们有了一个编码相机旋转的矩阵 <code>rotation_mat</code>。在应用推拉和平移变换时，就会用到这个旋转矩阵。</p><p>稍后我们在更详细地探讨推拉运动时，会讲到 <code>SetCameraMatrices()</code> 函数。</p><h3> 推拉</h3><p>旋转很酷，但要有效地观察物体，我们得和它拉开距离。默认情况下相机位于世界原点，也就是落在立方体内部。为了获得更好的视角，我们必须让相机沿它朝向的方向离开原点。事实上，我们是沿相机当前观察方向的<b>反方向</b>移动它。相机的旋转在这个过程中至关重要。我们先用相机的旋转矩阵旋转向量 (0,0,1)——这个向量指向相机初始朝向的反方向。这样就使该向量对齐到相机观察方向的正反方向。接着，我们从目标点位置出发，沿这个向量移动到期望的距离。小菜一碟，华生。</p><figure><img src="https://scratchapixel.com/images/3d-nav-controls/3d-nav-dolly.png" alt=""><figcaption><b>图 3：</b>推拉是让相机沿其指向的反方向离开目标点、到达给定距离。</figcaption></figure><p>在 Maya 里，靠近或远离目标点是通过滚动中键滚轮实现的。也可以同时按住 Alt 和右键（MMB）并左右或上下移动鼠标。滚轮每转一格，目标距离就增减一个小量。向前还是向后滚，决定增量是正还是负，从而增大或减小到目标点的距离。这个动作让相机靠近或远离目标点——目前目标点位于我们三维立方体的中心（世界原点）。注意，如果用 Alt+右键而不是滚轮做推拉，被调用的是 <code>OnMouseMove</code> 函数而不是 <code>OnMouseWheel</code> 函数。不过要注意，<code>OnMouseMove</code> 函数内部实际调用的仍是 <code>OnMouseWheel</code> 函数。我们把由滚轮旋转得到的滚轮 delta 换成由鼠标移动算出的 delta（最终的 delta 值由 <code>delta.x</code> 与 <code>delta.y</code> 相加得到）。</p><pre><code>
+void OnMouseWheel(int scroll_amount) {
+    freecam_model.distance_to_target -= scroll_amount * kScrollAmplitude;
+    SetCameraMatrices();
+}
+
+void OnMouseMoved(const gfx::Point&amp; location) {
+    gfx::Point delta = location - freecam_model.mouse_pos;
+    freecam_model.mouse_pos = location;
+    if (freecam_model.move_type == FreeCameraModel::CameraMoveType::NONE)
+        return;
+    switch (freecam_model.move_type) {
+        case FreeCameraModel::CameraMoveType::TUMBLE: {
+				...
+			} 
+			break;
+        case FreeCameraModel::CameraMoveType::DOLLY:
+            OnMouseWheel(delta.x + delta.y);
+            return;
+        case FreeCameraModel::CameraMoveType::TRACK: {
+				...
+			}
+            break;
+        default:
+            break;
+	}
+	SetCameraMatrices();
+}
+</code></pre><p>现在，<code>SetCameraMatrices()</code> 就登场了。</p><pre><code>
+void SetCameraMatrices() {
+    Vec3&amp;ltfloat&gt; camera_orient;
+    rotation_mat.MultDirMatrix(Vec3&amp;ltfloat&gt;(0,0,1), camera_orient);
+    Vec3&amp;ltfloat&gt; camera_position = freecam_model.look_at +
+        freecam_model.distance_to_target * camera_orient;
+    cam_to_world = rotation_mat;
+    cam_to_world[3][0] = camera_position.x;
+    cam_to_world[3][1] = camera_position.y;
+    cam_to_world[3][2] = camera_position.z;
+}
+</code></pre><p>这个函数更新全局的 <code>cam_to_world</code> 矩阵，用目标点、旋转、到目标点的距离等参数编码相机的位置与旋转。首先，我们把向量 (0,0,1) 与 <code>rotation_mat</code> 4x4 矩阵相乘。然后，我们算出最终相机位置为目标点位置加上该定向向量乘以到目标点的距离（写成「到目标点的距离」也许更准确，不过意思应该清楚）。接着，我们把 <code>rotation_mat</code> 赋给 <code>cam_to_world</code> 矩阵，以确立相机的旋转。随后，我们用相机位置的 x、y、z 坐标分别设置 <code>cam_to_world</code> 矩阵最后一行的前三个系数。在行主序矩阵中，这三个系数决定了矩阵作用于任意点所需的平移。现在我们就有了一个完整的 <code>cam_to_world</code> 矩阵，无论用光线追踪，还是把这个矩阵及其逆矩阵传给 GPU 渲染管线的顶点着色器，都可以用它变换相机光线的起点（<code>cam_to_world</code> 矩阵的平移部分）和光线方向（通过 <code>cam_to_world</code> 矩阵的旋转部分）。对 Vulkan、Metal、DirectX、WebGL 以及 OpenGL（如果还在用）这类 API 而言，顶点正是在顶点着色器里从世界空间变换到相机空间的，这就需要用 <code>cam_to_world</code> 的逆矩阵。</p><h3> 平移</h3><p>在 Maya 里，平移可以通过同时按下 <code>alt</code> 和鼠标右键（<code>RMB</code>）实现。鼠标左移，相机左移；鼠标右移，相机右移。鼠标上移，相机上升；下移，相机下降。本质上，相机模仿了鼠标在屏幕上的运动。</p><figure><img src="https://scratchapixel.com/images/3d-nav-controls/3d-nav-track.png" alt=""><figcaption><b>图 4：</b>我们把鼠标 x、y 位置的 delta 应用到目标点的 x、y 平移上，并确保相机随之移动。</figcaption></figure><p>要理解平移，可以想象一个面——比如一张纸——放在场景的 xy 平面里，把立方体分成前后两半。换句话说，<b>这个平面垂直于相机的视向（见图 4），目标点就落在这个平面上</b>。平移可以想象成目标点与相机被一根杆连在一起，整个组合是刚性的。于是，移动目标点会让相机随之移动，反之亦然（但实践中我们移动的是目标点）。</p><pre><code>
+float kTrackAmplitude = 0.1;
+Vec3&amp;ltfloat&gt; target(0);
+
+void OnMouseMoved(const gfx::Point&amp; location) {
+    gfx::Point delta = location - freecam_model.mouse_pos;
+    freecam_model.mouse_pos = location;
+    ...
+	switch (freecam_model.move_type) {
+        case FreeCameraModel::CameraMoveType::TUMBLE: {
+				...
+			} 
+			break;
+        case FreeCameraModel::CameraMoveType::DOLLY:
+            ...
+			break;
+        case FreeCameraModel::CameraMoveType::TRACK: {
+				Vec3&amp;ltfloat&gt; target_offset;
+				rotation_mat.MultDirMatrix(
+					Vec3&amp;ltfloat&gt;(-kPanAmplitude * delta.x, kPanAmplitude * delta.y, 0),
+					target_offset);
+				freecam_model.look_at += target_offset;
+			}
+            break;
+        default:
+            break;
+	}
+	SetCameraMatrices();
+}
+</code></pre><p>从代码上看，我们做的是在 xy 平面上取一个点，代表目标点随鼠标位置 delta 的位移。然后旋转这个点以计入相机的旋转。可以把它想象成旋转该点所在的平面，而平面始终垂直于相机方向。接着，我们把这个小偏移加到当前目标点位置上。这等价于在垂直于相机指向的平面内移动目标点。在平移的情形下，位移是根据鼠标移动的 delta 计算的，就像位移是从原点发生的一样。随后，这个位移向量按当前相机朝向旋转。这种做法保证了位移反映的是你在相机视野中移动目标点的方式，<b>与目标点的初始位置无关</b>。代码的结构允许把初始目标点位置设为任意值，运算结果依然准确。</p><p>注意，翻滚和平移两种运动都需要调用 <code>SetCameraMatrices()</code> 来更新全局的 <code>cam_to_world</code> 矩阵。而推拉运动的更新在 <code>OnMouseWheel</code> 函数内部完成。</p><h2>最终代码清单</h2><p>记住，Scratchapixel 的所有代码示例都在 <a href="https://github.com/scratchapixel/scratchapixel-code" target="_blank" rel="noreferrer noopener">GitHub</a> 上。</p><p>就这样，像素朋友们。你刚刚学会了如何实现一个三维相机，并用鼠标和键盘控制它的运动。我们用的是与 Maya 相同的快捷键。玩游戏的各位和 Blender 用户不妨实现自己的一套控制方式，做到得心应手。下面是程序的完整源码，不超过 600 行。相当了不起，是的——考虑到它在不使用任何外部库的情况下，还包含了向量、矩阵和四元数所需的代码以及光线追踪的代码。</p><p>顺便一提，向量、四元数和矩阵类的代码大部分都受 <a href="https://github.com/AcademySoftwareFoundation/Imath" target="_blank" rel="noreferrer noopener">Imath</a> 库启发，那个库是开源的，最初由特效公司 <a href="https://en.wikipedia.org/wiki/Industrial_Light_%26_Magic" target="_blank" rel="noreferrer noopener">ILM.</a> 设计。欢迎下载这个库——它难得地并不难编译——如果你愿意，可以把它替换掉我们的代码作为练习。</p><p>另外注意，代码中我们用随各种相机运动类型更新过的 <code>cam_to_world</code> 矩阵来变换主光线方向，从而有效地营造出我们在场景中穿行的错觉。这里我们只渲染一个简单的立方体，因为在我们的 3.6GHz 处理器（单核）上，用光线追踪渲染超过 12 个三角形而不做任何优化，帧率就会掉到 30 fps 以下，不过欢迎你拿自己的几何体做实验。</p><p>至于与 Windows 相关的代码，我们大部分已在「创建自己的窗口来显示图像并在其上绘制」那门课里讲过。原理在这里相同，只是我们针对手头的具体问题做了调整。这涉及跟踪按下的键，以及左、中、右键的按下与释放，进而触发对 <code>OnMousePressed</code>、<code>OnMouseMoved</code> 和 <code>OnMouseWheel</code> 函数的调用。这一过程相当直接，更多涉及 Windows API 而不是三维相机控制本身的实现。</p><p>编译：</p><pre><code>
+clang++ -std=c++23 -Wall -Wextra -luser32 -lgdi32 -o 3d-nav-controls.exe 3d-nav-controls.cc -O3
+</code></pre><p>在这种情况下，使用 <code>-O3</code> 优化选项至关重要。光线追踪可能很慢，所以你要确保代码跑得尽可能快。使用这个优化选项能让代码在编译器能力范围内得到最充分的优化，使生成的代码尽可能高效运行。</p><p>最后一点：实现三维相机控制有多种方式，这一种相当常见，效果也很好。如果你想提不同的方法或思路，或者指出本课的某些错误，欢迎在 Discord 上联系我们。</p><p>照例，如果本课对你有帮助，如果你学到或用到了其中的内容，若条件允许，请向 Scratchapixel 捐赠，让我们能继续为更多人带来内容，也让我们的付出得到回报——把专业级的内容免费带给社区（想想你通过传统途径到学校或买书获取这些知识要花多少钱。我们付钱，因为它代表着个人的时间与知识）。如果你连几块钱都拿不出来（比如刚起步，或生活中正遇到困难），我们理解。在 Discord 上说声谢谢就够了。所以，告诉我们你近况如何，也给我们看看你用这些内容做出的好东西。</p><pre><code>
+// (c) scratchapixel - 2024
+// Distributed under the terms of the CC BY-NC-ND 4.0 License.
+// https://creativecommons.org/licenses/by-nc-nd/4.0/
+// clang++ -std=c++23 -Wall -Wextra -std=c++23 -luser32 -lgdi32 -o 3d-nav-controls.exe 3d-nav-controls.cc -O3
+
+#define _USE_MATH_DEFINES
+#include &amp;ltcmath&gt;
+#include &amp;ltcstdint&gt;
+#include &amp;ltcassert&gt;
+#include &amp;ltiostream&gt;
+
+namespace gfx {
+
+struct Point {
+    int x, y;
+    constexpr Point() : x(0), y(0) {}
+    constexpr Point(int x, int y) : x(x), y(y) {}
+    constexpr Point operator-(const Point&amp; pt) const { 
+        return Point(x - pt.x, y - pt.y);
+    }
+};
+
+}
+
+template&amp;lttypename T&gt;
+class Vec3 {
+public:
+    Vec3() : x(T(0)), y(T(0)), z(T(0)) {}
+	Vec3(T xx) : x(T(xx)), y(T(xx)), z(T(xx)) {}
+	Vec3(T xx, T yy, T zz) : x(T(xx)), y(T(yy)), z(T(zz)) {}
+	
+    constexpr Vec3&amp;ltT&gt; Normalized() const {
+        T l = std::sqrt(x * x + y * y + z * z);
+        if (l == 0) [[unlikely]] return Vec3(T(0));
+        return Vec3(x / l, y / l, z / l);
+    }
+	constexpr Vec3&amp;ltT&gt;&amp; Normalize() {
+        T l = std::sqrt(x * x + y * y + z * z);
+        if (l != 0) [[likely]] {
+			x /= l;
+			y /= l;
+			z /= l;
+		}
+		return *this;
+    }
+    constexpr T Dot(const Vec3&amp;ltT&gt;&amp; v) const {
+        return x * v.x + y * v.y + z * v.z;
+    }
+    constexpr T operator^ (const Vec3&amp;ltT&gt;&amp; v) const {
+        return Dot(v);
+    }
+    constexpr Vec3&amp;ltT&gt; Cross(const Vec3&amp;ltT&gt;&amp; v) const {
+        return Vec3(
+            y * v.z - z * v.y,
+            z * v.x - x * v.z, 
+            x * v.y - y * v.x);
+    }
+    constexpr Vec3&amp;ltT&gt; operator%(const Vec3&amp;ltT&gt;&amp; v) const {
+        return Cross(v);
+    }
+	constexpr Vec3&amp;ltT&gt; operator*(T r) const {
+		return Vec3&amp;ltT&gt;(x * r, y * r, z * r);
+	}
+    friend constexpr Vec3&amp;ltT&gt; operator*(T r, const Vec3&amp;ltT&gt;&amp; v) {
+        return Vec3&amp;ltT&gt;(v.x * r, v.y * r, v.z * r);
+    }
+	constexpr Vec3&amp;ltT&gt; operator-(const Vec3&amp;ltT&gt;&amp; v) const {
+        return Vec3&amp;ltT&gt;(x - v.x, y - v.y, z - v.z);
+    }
+    constexpr Vec3&amp;ltT&gt; operator+(const Vec3&amp;ltT&gt;&amp; v) const {
+        return Vec3&amp;ltT&gt;(x + v.x, y + v.y, z + v.z);
+    }
+	constexpr Vec3&amp;ltT&gt;&amp; operator+=(const Vec3&amp;ltT&gt;&amp; v) {
+        x += v.x, y += v.y, z += v.z;
+		return *this;
+    }
+	friend std::ostream&amp; operator&lt;&lt;(std::ostream&amp; os, const Vec3&amp;ltT&gt;&amp; v) {
+		return os &lt;&lt; v.x &lt;&lt; " " &lt;&lt; v.y &lt;&lt; " " &lt;&lt; v.z;
+	}
+    T x, y, z;
+};
+
+template&amp;lttypename T&gt;
+class Matrix44 {
+public:
+	Matrix44() {
+		x[0][0] = 1; x[0][1] = 0; x[0][2] = 0; x[0][3] = 0;
+		x[1][0] = 0; x[1][1] = 1; x[1][2] = 0; x[1][3] = 0;
+		x[2][0] = 0; x[2][1] = 0; x[2][2] = 1; x[2][3] = 0;
+		x[3][0] = 0; x[3][1] = 0; x[3][2] = 0; x[3][3] = 1;
+	}
+	constexpr Matrix44 (
+		T a, T b, T c, T d,
+		T e, T f, T g, T h,
+		T i, T j, T k, T l,
+		T m, T n, T o, T p) {
+		x[0][0] = a; x[0][1] = b; x[0][2] = c; x[0][3] = d;
+		x[1][0] = e; x[1][1] = f; x[1][2] = g; x[1][3] = h;
+		x[2][0] = i; x[2][1] = j; x[2][2] = k; x[2][3] = l;
+		x[3][0] = m; x[3][1] = n; x[3][2] = o; x[3][3] = p;
+	}
+    constexpr T* operator[](size_t i) {
+        return x[i];
+    }
+    constexpr const T* operator[](size_t i) const {
+        return x[i];
+    }
+	constexpr void MultVecMatrix(const Vec3&amp;ltT&gt;&amp; src, Vec3&amp;ltT&gt;&amp; dst) const {
+		T a, b, c, w;
+
+		a = src.x * x[0][0] + src.y * x[1][0] + src.z * x[2][0] + x[3][0];
+		b = src.x * x[0][1] + src.y * x[1][1] + src.z * x[2][1] + x[3][1];
+		c = src.x * x[0][2] + src.y * x[1][2] + src.z * x[2][2] + x[3][2];
+		w = src.x * x[0][3] + src.y * x[1][3] + src.z * x[2][3] + x[3][3];
+
+		dst.x = a / w;
+		dst.y = b / w;
+		dst.z = c / w;
+	}
+	constexpr void MultDirMatrix(const Vec3&amp;ltT&gt;&amp; src, Vec3&amp;ltT&gt;&amp; dst) const {
+        T a, b, c;
+
+		a = src.x * x[0][0] + src.y * x[1][0] + src.z * x[2][0];
+        b = src.x * x[0][1] + src.y * x[1][1] + src.z * x[2][1];
+        c = src.x * x[0][2] + src.y * x[1][2] + src.z * x[2][2];
+
+		dst.x = a, dst.y = b, dst.z = c;
+    }
+    T x[4][4];
+};
+
+template&amp;lttypename T&gt;
+class Quat {
+public:
+	Quat() = default;
+	constexpr Quat(T s, T i, T j, T k) 
+		: r(s), v(i, j, k) {
+	}
+	constexpr Quat(T s, Vec3&amp;ltT&gt; d) 
+		: r(s), v(d) {
+	}
+    constexpr Quat&amp;ltT&gt;&amp; SetAxisAngle(const Vec3&amp;ltT&gt;&amp; axis, T radians) {
+        v = axis.Normalized() * std::sin(radians / 2);
+        r = std::cos(radians / 2);
+        return *this;
+    }
+    constexpr Matrix44&amp;ltT&gt; ToMatrix44() const {
+        return Matrix44&amp;ltT&gt;(
+            1 - 2 * (v.y * v.y + v.z * v.z),
+            2 * (v.x * v.y + v.z * r),
+            2 * (v.z * v.x - v.y * r),
+            0,
+            2 * (v.x * v.y - v.z * r),
+            1 - 2 * (v.z * v.z + v.x * v.x),
+            2 * (v.y * v.z + v.x * r),
+            0,
+            2 * (v.z * v.x + v.y * r),
+            2 * (v.y * v.z - v.x * r),
+            1 - 2 * (v.y * v.y + v.x * v.x),
+            0,
+            0,
+            0,
+            0,
+            1);
+    }
+	T r{1}; // 实部
+    Vec3&amp;ltT&gt; v{0,0,0}; // 虚部向量
+};
+
+// 四元数乘法
+template&amp;lttypename T&gt;
+constexpr inline Quat&amp;ltT&gt; operator* (const Quat&amp;ltT&gt;&amp; q1, const Quat&amp;ltT&gt;&amp; q2) {
+    return Quat&amp;ltT&gt;(
+        q1.r * q2.r - (q1.v ^ q2.v), q1.r * q2.v + q1.v * q2.r + q1.v % q2.v);
+}
+
+struct FreeCameraModel {
+    enum class CameraMoveType : uint8_t {
+        NONE,
+        TUMBLE,
+        TRACK,
+        DOLLY,
+    };
+	FreeCameraModel() = default;
+    CameraMoveType move_type{CameraMoveType::NONE};
+    gfx::Point mouse_pos;
+    float theta{0};
+    float phi{0};
+    Vec3&amp;ltfloat&gt; look_at{0};
+    float distance_to_target{10};
+    Quat&amp;ltfloat&gt; camera_rotation;
+};
+
+FreeCameraModel freecam_model;
+Matrix44&amp;ltfloat&gt; rotation_mat;
+constexpr float kRotateAmplitude = 0.01;
+constexpr float kPanAmplitude = 0.01;
+constexpr float kScrollAmplitude = 0.1;
+
+Matrix44&amp;ltfloat&gt; cam_to_world;
+
+const Vec3&amp;ltfloat&gt; points[8] = {
+	{-0.5, -0.5,  0.5},
+	{ 0.5, -0.5,  0.5},
+	{-0.5,  0.5,  0.5},
+	{ 0.5,  0.5,  0.5},
+	{-0.5,  0.5, -0.5},
+	{ 0.5,  0.5, -0.5},
+	{-0.5, -0.5, -0.5},
+	{ 0.5, -0.5, -0.5},
+};
+
+const uint32_t tri_vertex_indices[36] = {
+	0, 1, 2, 2, 1, 3, 2, 3, 4, 
+	4, 3, 5, 4, 5, 6, 6, 5, 7, 
+	6, 7, 0, 0, 7, 1, 1, 7, 3, 
+	3, 7, 5, 6, 0, 4, 4, 0, 2
+};
+
+enum EventType {
+	ET_UNKNOWN = 0,
+	ET_MOUSE_PRESSED,
+	ET_MOUSE_RELEASED,
+};
+
+enum EventFlags {
+	EF_NONE					= 0,
+	EF_SHIFT_DOWN			= 1 &lt;&lt; 0,
+	EF_CONTROL_DOWN			= 1 &lt;&lt; 1,
+	EF_ALT_DOWN				= 1 &lt;&lt; 2,
+	EF_LEFT_BUTTON_DOWN		= 1 &lt;&lt; 3,
+	EF_MIDDLE_BUTTON_DOWN	= 1 &lt;&lt; 4,
+	EF_RIGHT_BUTTON_DOWN	= 1 &lt;&lt; 5
+};
+
+void OnMousePressed(int flags, gfx::Point location) {
+	freecam_model.mouse_pos = location;
+	if (flags &amp; EF_ALT_DOWN) {
+		freecam_model.move_type =
+			(flags &amp; EF_LEFT_BUTTON_DOWN) ? FreeCameraModel::CameraMoveType::TUMBLE :
+			(flags &amp; EF_MIDDLE_BUTTON_DOWN) ? FreeCameraModel::CameraMoveType::TRACK :
+			(flags &amp; EF_RIGHT_BUTTON_DOWN) ? FreeCameraModel::CameraMoveType::DOLLY :
+			(assert(false), FreeCameraModel::CameraMoveType::NONE);
+	}
+}
+
+void OnMouseReleased() {
+	freecam_model.move_type = FreeCameraModel::CameraMoveType::NONE;
+}
+
+void UpdateCameraRotation() {
+    Quat&amp;ltfloat&gt; q1; q1.SetAxisAngle(Vec3&amp;ltfloat&gt;(1,0,0), freecam_model.phi);
+    Quat&amp;ltfloat&gt; q2; q2.SetAxisAngle(Vec3&amp;ltfloat&gt;(0,1,0), freecam_model.theta);
+    freecam_model.camera_rotation = q2 * q1;
+    rotation_mat = freecam_model.camera_rotation.ToMatrix44();
+}
+
+void SetCameraMatrices() {
+    Vec3&amp;ltfloat&gt; camera_orient;
+    rotation_mat.MultDirMatrix(Vec3&amp;ltfloat&gt;(0,0,1), camera_orient);
+    Vec3&amp;ltfloat&gt; camera_position = freecam_model.look_at +
+        freecam_model.distance_to_target * camera_orient;
+    cam_to_world = rotation_mat;
+    cam_to_world[3][0] = camera_position.x;
+    cam_to_world[3][1] = camera_position.y;
+    cam_to_world[3][2] = camera_position.z;
+}
+
+void OnMouseWheel(int scroll_amount) {
+    freecam_model.distance_to_target -= scroll_amount * kScrollAmplitude;
+    SetCameraMatrices();
+}
+
+void OnMouseMoved(const gfx::Point&amp; location) {
+    gfx::Point delta = location - freecam_model.mouse_pos;
+    freecam_model.mouse_pos = location;
+    if (freecam_model.move_type == FreeCameraModel::CameraMoveType::NONE)
+        return;
+    switch (freecam_model.move_type) {
+        case FreeCameraModel::CameraMoveType::TUMBLE: {
+            freecam_model.theta -= delta.x * kRotateAmplitude;
+            freecam_model.phi -= delta.y * kRotateAmplitude;
+            UpdateCameraRotation();
+		} break;
+        case FreeCameraModel::CameraMoveType::DOLLY:
+            OnMouseWheel(delta.x + delta.y);
+            return;
+        case FreeCameraModel::CameraMoveType::TRACK: {
+				Vec3&amp;ltfloat&gt; target_offset;
+				rotation_mat.MultDirMatrix(
+					Vec3&amp;ltfloat&gt;(-kPanAmplitude * delta.x, kPanAmplitude * delta.y, 0),
+					target_offset);
+				freecam_model.look_at += target_offset;
+			}
+            break;
+        default:
+            break;
+	}
+	SetCameraMatrices();
+}
+
+// 渲染
+
+#include &amp;ltchrono&gt;
+#include &amp;ltfstream&gt;
+
+constexpr uint32_t width = 640;
+constexpr uint32_t height = 480;
+
+constexpr float super_far = 1.e6;
+
+float angle = 50.f;
+
+#define UNICODE
+#define NOMINMAX
+#include &amp;ltwindows.h&gt;
+#include &amp;ltwindowsx.h&gt; // GET_X_LPARAM
+
+const wchar_t* CLASSNAME = L"myapp_window";
+HWND hwnd;
+HDC hdcBuffer;
+void* pvBits; // 指向位图像素位的指针
+HBITMAP hbmBuffer;
+
+template&amp;lttypename T&gt;
+T DegreesToRadians(const T&amp; degrees) {
+	return M_PI * degrees / T(180);
+}
+
+struct Hit {
+	float t{super_far};
+	float u, v;
+	Vec3&amp;ltfloat&gt; Ng;
+};
+
+inline float Xorf(const float x, const float y) {
+    std::uint32_t ix, iy;
+
+    std::memcpy(&amp;ix, &amp;x, sizeof(float));
+    std::memcpy(&amp;iy, &amp;y, sizeof(float));
+
+    std::uint32_t resultInt = ix ^ iy;
+
+    float result;
+    std::memcpy(&amp;result, &amp;resultInt, sizeof(float));
+
+    return result;
+}
+
+void Intersect(const Vec3&amp;ltfloat&gt;&amp; ray_orig, 
+			   const Vec3&amp;ltfloat&gt;&amp; ray_dir,
+			   const Vec3&amp;ltfloat&gt;&amp; p0, 
+			   const Vec3&amp;ltfloat&gt;&amp; p1, 
+			   const Vec3&amp;ltfloat&gt;&amp; p2, 
+			   Hit&amp; hit) {
+	const float ray_near = 0.1;
+	const Vec3&amp;ltfloat&gt; e1 = p0 - p1;
+	const Vec3&amp;ltfloat&gt; e2 = p2 - p0;
+	const Vec3&amp;ltfloat&gt; Ng = e1.Cross(e2);
+	
+	const Vec3&amp;ltfloat&gt; C = p0 - ray_orig;
+	const Vec3&amp;ltfloat&gt; R = ray_dir.Cross(C);
+	const float det = Ng.Dot(ray_dir);
+	const float abs_det = std::abs(det);
+	const float sign_det = std::copysign(0.f, det);
+	if (det == 0) [[unlikely]] return;
+
+	const float U = Xorf(R.Dot(e2), sign_det);
+	if (U &lt; 0) [[likely]] return;
+	
+	const float V = Xorf(R.Dot(e1), sign_det);
+	if (V &lt; 0) [[likely]] return;
+
+	const float W = abs_det - U - V;
+	if (W &lt; 0) [[likely]] return;
+
+	const float T = Xorf(Ng.Dot(C), sign_det); 
+	if (T &lt; abs_det * ray_near || abs_det * hit.t &lt; T) [[unlikely]] return;
+
+	const float rcp_abs_det = 1.f / abs_det;
+	hit.u = U * rcp_abs_det;
+	hit.v = V * rcp_abs_det;
+	hit.t = T * rcp_abs_det;
+	hit.Ng = Ng.Normalized();
+}
+
+float fps;
+
+void Render() {
+	auto start = std::chrono::steady_clock::now();
+	float aspect_ratio = width / static_cast&amp;ltfloat&gt;(height);
+	float scale = std::tan(DegreesToRadians(0.5f * angle));
+	Vec3&amp;ltfloat&gt; ray_orig;
+	cam_to_world.MultVecMatrix(Vec3&amp;ltfloat&gt;(0,0,0), ray_orig);
+	char* pixel = (char*)pvBits;
+	memset(pixel, 0x0, width * height * 3);
+	for (uint32_t j = 0; j &lt; height; ++j) {
+		float y = (1 - 2 * (j + 0.5f) / static_cast&amp;ltfloat&gt;(height)) * scale * 1 / aspect_ratio;
+		for (uint32_t i = 0; i &lt; width; ++i) {
+			float x = (2 * (i + 0.5f) / static_cast&amp;ltfloat&gt;(width) - 1) * scale;
+			Vec3&amp;ltfloat&gt; ray_dir(x, y, -1);
+			ray_dir.Normalize();
+			cam_to_world.MultDirMatrix(ray_dir, ray_dir);
+			float t = super_far;
+			for (size_t n = 0, ni = 0; n &lt; 12; n++, ni += 3) {
+				Hit hit;
+				const Vec3&amp;ltfloat&gt;&amp; v0 = points[tri_vertex_indices[ni]];
+				const Vec3&amp;ltfloat&gt;&amp; v1 = points[tri_vertex_indices[ni + 1]];
+				const Vec3&amp;ltfloat&gt;&amp; v2 = points[tri_vertex_indices[ni + 2]];
+				Intersect(ray_orig, ray_dir, v0, v1, v2, hit);
+				if (hit.t &lt; t) {
+					t = hit.t;
+					char color = static_cast&amp;ltchar&gt;(255 * std::max(0.f, ray_dir.Dot(hit.Ng)));
+					pixel[(i + j * width) * 3] = 
+					pixel[(i + j * width) * 3 + 1 ] =
+					pixel[(i + j * width) * 3 + 2 ] = color;
+				}
+			}
+		}
+	}
+	auto end = std::chrono::steady_clock::now();
+	fps = 1000.f / std::chrono::duration_cast&amp;ltstd::chrono::milliseconds&gt;(end - start).count();
+	InvalidateRect(hwnd, NULL, TRUE);
+	UpdateWindow(hwnd);
+}
+
+// Windows 相关代码
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	switch(msg) {
+		case WM_CLOSE:
+			DeleteObject(hbmBuffer);
+			DestroyWindow(hWnd);
+			break;
+		case WM_CREATE:
+			//Render();
+			break;
+		case WM_DESTROY:
+			PostQuitMessage(0);
+			break;
+		case WM_LBUTTONUP:
+		case WM_MBUTTONUP:
+		case WM_RBUTTONUP:
+			OnMouseReleased();
+			break;
+		case WM_LBUTTONDOWN:
+		case WM_MBUTTONDOWN:
+		case WM_RBUTTONDOWN: {
+				gfx::Point location(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+
+				unsigned int flags = 0;
+				if (GetKeyState(VK_SHIFT) &amp; 0x8000) flags |= EF_SHIFT_DOWN;
+				if (GetKeyState(VK_CONTROL) &amp; 0x8000) flags |= EF_CONTROL_DOWN;
+				if (GetKeyState(VK_MENU) &amp; 0x8000) flags |= EF_ALT_DOWN; // VK_MENU 就是 Alt 键
+				if (wParam &amp; MK_LBUTTON) flags |= EF_LEFT_BUTTON_DOWN;
+				if (wParam &amp; MK_MBUTTON) flags |= EF_MIDDLE_BUTTON_DOWN;
+				if (wParam &amp; MK_RBUTTON) flags |= EF_RIGHT_BUTTON_DOWN;
+
+				OnMousePressed(flags, location);
+				Render();
+			}
+			break;
+		case WM_MOUSEMOVE: {
+				int xpos = GET_X_LPARAM(lParam);
+				int ypos = GET_Y_LPARAM(lParam);
+				OnMouseMoved(gfx::Point(xpos, ypos));
+				Render();
+			}
+			break;
+		case WM_MOUSEWHEEL: {
+				int delta = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+				OnMouseWheel(delta);
+				Render();
+			} 
+			break;
+		case WM_ERASEBKGND:
+			return 1; // 表示背景擦除已处理
+		case WM_PAINT: {
+				PAINTSTRUCT ps;
+				HDC hdcWindow = BeginPaint(hwnd, &amp;ps);
+				BitBlt(hdcWindow, 0, 0, width, height, hdcBuffer, 0, 0, SRCCOPY);
+				std::wstring text = L"fps: " + std::to_wstring(fps);
+				SetTextColor(hdcWindow, RGB(255, 255, 255)); // 白色文字
+				SetBkMode(hdcWindow, TRANSPARENT);
+				TextOut(hdcWindow, 10, 10, text.c_str(), text.length());
+			} break;
+		default:
+			return DefWindowProc(hWnd, msg, wParam, lParam);
+	}
+	return 0;
+}
+
+void CreateAndRegisterWindow(HINSTANCE hInstance) {
+	WNDCLASSEX wc = {};
+	wc.cbSize = sizeof(WNDCLASSEX);
+	wc.lpfnWndProc = WndProc;
+	wc.hInstance = hInstance;
+	wc.lpszClassName = CLASSNAME;
+	wc.hCursor = LoadCursor(nullptr, IDC_ARROW); // 设置默认的箭头光标
+	wc.hIcon = LoadIcon(hInstance, IDI_APPLICATION); // 加载默认的应用程序图标
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+	wc.lpszMenuName = nullptr;
+	wc.hIconSm = LoadIcon(hInstance, IDI_APPLICATION); // 加载应用程序的小图标
+
+	if (!RegisterClassEx(&amp;wc)) {
+		MessageBox(nullptr, L"Window Registration Failed", L"Error",
+			MB_ICONEXCLAMATION | MB_OK);
+	}
+
+	hwnd = CreateWindowEx(
+		WS_EX_CLIENTEDGE,
+		CLASSNAME,
+		L"3D Navigation Controls",
+		WS_OVERLAPPEDWINDOW &amp; ~WS_THICKFRAME &amp; ~WS_MAXIMIZEBOX, // 不可调整大小
+		CW_USEDEFAULT, CW_USEDEFAULT, width, height,
+		nullptr, nullptr, hInstance, nullptr);
+
+	if (hwnd == nullptr) {
+		MessageBox(nullptr, L"Window Creation Failed", L"Error",
+			MB_ICONEXCLAMATION | MB_OK);
+	}
+
+	HDC hdcScreen = GetDC(hwnd); // 获取屏幕/设备上下文
+	hdcBuffer = CreateCompatibleDC(hdcScreen); // 创建用于离屏绘制的兼容设备上下文
+
+	BITMAPINFO bmi;
+	ZeroMemory(&amp;bmi, sizeof(bmi)); // 确保结构体初始为空
+	bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bmi.bmiHeader.biWidth = width; // 指定位图的宽度
+	bmi.bmiHeader.biHeight = -height; // 负高度表示自顶向下的 DIB
+	bmi.bmiHeader.biPlanes = 1;
+	bmi.bmiHeader.biBitCount = 24; // 每像素 24 位（RGB）
+	bmi.bmiHeader.biCompression = BI_RGB; // 不压缩
+
+	hbmBuffer = CreateDIBSection(hdcBuffer, &amp;bmi, DIB_RGB_COLORS, &amp;pvBits, NULL, 0);
+	SelectObject(hdcBuffer, hbmBuffer);
+	ReleaseDC(hwnd, hdcScreen);
+
+	ShowWindow(hwnd, SW_SHOWDEFAULT); // 也可以用 WS_VISIBLE，但这个选项控制更细
+	Render();
+}
+
+int main() {
+	HINSTANCE hInstance = GetModuleHandle(NULL);
+
+	freecam_model.look_at = Vec3&amp;ltfloat&gt;(0); //points[0];
+
+	UpdateCameraRotation();
+	SetCameraMatrices();
+
+	CreateAndRegisterWindow(hInstance);
+
+	MSG msg;
+	while (1) {
+		while(PeekMessage(&amp;msg, nullptr, 0, 0, PM_REMOVE) != 0) {
+			TranslateMessage(&amp;msg);
+			DispatchMessage(&amp;msg);
+			if (msg.message == WM_QUIT) {
+				break;
+			}
+		}
+		if (msg.message == WM_QUIT)
+			break;
+	}
+    return 0;
+}
+</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/cam-nav-controls/3d-nav-cam-nav-controls.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/cam-nav-controls/3d-nav-cam-nav-controls.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>蒙特卡罗积分 - Scratchapixel 中文译本</title>
+<meta name="description" content="蒙特卡罗方法实践 · 蒙特卡罗积分（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>蒙特卡罗积分</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="monte-carlo-methods.html">蒙特卡罗方法</a></li>
+<li><a href="monte-carlo-simulation.html">蒙特卡罗模拟</a></li>
+<li><a style="font-weight:700" href="monte-carlo-integration.html">蒙特卡罗积分</a></li>
+<li><a href="monte-carlo-rendering-practical-example.html">渲染中的蒙特卡罗（一个实际例子）</a></li>
+<li><a href="generating-random-numbers.html">生成随机数</a></li>
+<li><a href="variance-reduction-methods.html">方差缩减方法：重要性采样快速入门</a></li>
+<li><a href="introduction-quasi-monte-carlo.html">方差缩减方法：准蒙特卡罗快速入门</a></li>
+</ol>
+</div>
+<h2>蒙特卡罗积分</h2><p><b>阅读时间：14 分钟。</b></p><p>如果你理解并掌握了第 16 课里介绍的概率与统计中最重要的那些概念，就会发现理解<b>蒙特卡罗积分</b>简单得难以置信。这个方法在渲染（尤其是光线追踪）与着色中用得很多。本章我们讲理论，下一章我们实际研究一个例子。要理解 MC 积分在渲染中是怎么用的，你首先得了解渲染方程（这是下一门课的主题）。之后，我们会在再下一门课（光传输入门）里说明这个方法是怎么用的。</p><h2>蒙特卡罗估计量：求积分</h2><p>在开始读本章之前，你必须理解<b>无意识统计学家定律</b>，我们在第 16 课<a href="[sitetree_link id=493]">这一章</a>里解释过。它说的是，随机变量的函数 f(X) 的期望值可以定义为：</p><p>$$E[f(X)] = \int f(X) P_X(X) \;dX.$$</p><p>其中 \(P_X\) 是随机变量 X 的概率分布。希望这一点你已经理解得很透。如果不透，<b>我们强烈建议</b>你仔细读一读专门讲这个概念的那一章。你需要对这个想法完全笃定，才能理解蒙特卡罗积分。</p><p>到这里，你也应该熟悉<b>方差</b>和<b>标准差</b>的概念了，这里不再多讲（如果你不熟，可以在<a href="[sitetree_link id=358]">第 16 课</a>里找到解释）。不过快速回顾一下：方差可以有两种等价的定义方式（第二种用起来稍方便些）：</p><p>$$
+\begin{array}{l}
+Var(X)& = & E[(X-E[X])^2],\\
+      & = & E[X^2] - E[X]^2.
+\end{array}
+$$</p><p>下面我们会用到这些公式，所以理解它们同样重要（它们在<a href="quick-introduction-to-monte-carlo-methods.html">蒙特卡罗方法的数学基础</a>那门课里有解释）。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/MCIntegration01.png?" alt=""><figcaption><b>图 1：</b>在 [a,b] 上的积分可以看作曲线下的面积。</figcaption></figure><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/MCIntegration02.png?" alt=""><figcaption><b>图 2：</b>可以在 x 处求曲线的值，再把结果乘以 (b - a)。这就定义出一个矩形，它可以看作对积分的一个非常粗糙的近似。</figcaption></figure><p>基础蒙特卡罗估计的原理是这样的：设想我们要对一维函数 f(x) 从 \(a\) 到 \(b\) 积分，例如：</p><p>$$F = \int_a^b f(x)\;dx.$$</p><p>你可能还记得，函数 f(x) 的积分可以解释为计算函数曲线下方的面积。这个想法在图 1 中有图示。现在设想我们只是随便取一个随机值，比如 [a,b] 范围内的 x，在 x 处计算函数 f(x)，再把结果乘以 (b-a)。图 2 显示了结果的样子：又是一个矩形（f(x) 是这个矩形的高，(b-a) 是它的宽），某种意义上你也可以把它看作曲线下面积的一个非常粗糙的近似。当然，我们可能估得大致对，也可能不对。如果在 x1 处求函数值（图 3），我们会相当严重地低估这块面积。如果在 x2 处求值，我们就高估了面积。但当我们不断在 a 与 b 之间的<b>随机点</b>上求函数值，把这些矩形的面积加起来再取平均，得到的数会越来越接近积分的真实结果。这一点并不奇怪，因为偏大的矩形补偿了偏小的矩形。而且实际上，我们很快就会证明：随着计算中使用的样本数增加，把它们加起来并对面积取平均，会收敛到积分的「面积」。这个想法在下一张图里图示出来。函数在四个不同的位置被求值。把随机选取的这四个 x 处的函数值乘以 (b-a)，相加，再取平均（和除以 4）。这个结果就可以看作真实积分的一个近似。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/MCIntegration03.png?" alt=""></figure><p>当然，和蒙特卡罗方法一贯的情况一样，随着所用的矩形或样本数量增加，这个近似会收敛到积分结果。</p><p>我们可以用下面的公式把这个想法形式化：</p><p>$$\langle F^N\rangle = (b-a) \dfrac{1}{N } \sum_{i=0}^{N-1} f(X_i).$$</p><p>这里的 N 是这个近似中使用的样本数。在数学（以及统计）记号中，\(\langle S \rangle\) 表示 S 中所有元素的平均值（\(\langle F^N \rangle \) 是用 N 个样本对 F 的一个近似。它等价于我们在第 16 课里用过的样本均值记号 \(\bar X_n\)，两者是一回事）。这条方程称为<b>基础蒙特卡罗估计量</b>。区间 [a,b] 里的随机点很容易得到：把在 [0,1] 区间上产生均匀分布随机数的生成器的结果乘以 (b-a) 即可：</p><p>\(X_i = a + \xi (b - a)\)，其中 \(\xi\) 在 0 与 1 之间均匀分布。</p><p>得到的 \(X_i\) 的 PDF 是 \({1}/{(b - a)} \)。因为随机数是等概率产生的（每个数与其他数被产生的概率相同），我们只要用 1 除以结果的总数，就像掷骰子的情形一样。不过在这个例子里，函数是连续的（而不是离散的），所以我们用 1 除以区间 [a,b]。</p><p>这里有一点很重要，要注意：</p><p>$$Pr(\lim_{ N \to \infty} \langle F^N \rangle = F ) = 1.$$</p><p>我们在<a href="quick-introduction-to-monte-carlo-methods.html">蒙特卡罗方法的数学基础</a>那门课里讲过大数定律，它告诉我们：当 N 趋于无穷时，我们的蒙特卡罗近似（在概率意义下）收敛到正确答案（概率为 1）。</p><p>还要注意，\(\langle F^N \rangle\) 是一个随机变量，因为它由一串随机数相加而成。现在我们可以证明 \(\langle F^N \rangle \) 的期望值等于 F：</p><p>$$
+\begin{array}{l}
+E[\langle F^N \rangle] & = & E \left[ (b-a) \dfrac{1}{N } \sum_{i=0}^{N-1} f(x_i)\right],\\
+& = & (b-a)\dfrac{1}{N } E[f(x)],\\
+& = &(b-a)\dfrac{1}{N} \sum_{i=0}^{N-1} \int_a^b f(x)pdf(x)\:dx\\
+& = & \dfrac{1}{N} \sum_{i=0}^{N-1} \int_a^b f(x)\:dx,\\
+&=& \int_a^b f(x)\:dx,\\
+&=&F\\
+\end{array}
+$$</p><p>记住 pdf 等于 1/(b-a)，因此它把积分号右边（第 3 行）的 (b-a) 这一项消掉了。</p><h2>推广到任意 PDF</h2><p>现在，如前所述，我们用于蒙特卡罗估计量的公式是基础版本。为什么？因为它只在随机变量 X 的 PDF 是均匀分布时才成立。不过，我们可以把蒙特卡罗积分推广到具有任意 PDF 的随机变量。更通用的公式于是是：</p><p>$$\langle F^N \rangle = \dfrac{1}{N} \sum_{i=0}^{N-1} \dfrac{f(X_i)}{pdf(X_i)}.$$</p><p>这是蒙特卡罗估计量更一般的形式，也是你应该记住的那个（如果前两章里只有一条方程值得记住，那就是它）。</p><p>说清楚一点：<b>分母里的 pdf 就是随机变量 X 的 pdf。</b></p><p>与基础蒙特卡罗估计量一样，为了确认这个公式成立，我们需要检验这个估计量具有正确的期望值。来检验一下：</p><p>$$
+\begin{array}{l}
+E[\langle F^N \rangle ] & = & E \left[ \dfrac{1}{N } \sum_{i=0}^{N-1} \dfrac{f(X_i)}{pdf X_i)} \right],\\ 
+& = & \dfrac{1}{N} \sum_{i=0}^{N-1} E\left[ \dfrac{f(X_i)}{pdf(X_i) }\right],\\ 
+& = & \dfrac{1}{N} \sum_{i=0}^{N-1} \int_\Omega \dfrac{f(x)}{pdf(x)} pdf(x)\;dx, \\
+& = & \dfrac{1}{N} \sum_{i=0}^{N-1} \int_\omega f(x) \; dx, \\ 
+& = & F.
+\end{array}
+$$</p><p>这里的窍门在于替换（第 2 行）：</p><p>$$E \left[ f(X_i) \right],$$</p><p>替换为（第 3 行）：</p><p>$$E[f(x)] = \int_{\Omega} f(x) pdf(x) \;dx.$$</p><p>在第三行上（别忘了把 f(x) 除以 pdf(x)）。花点时间把这些方程弄懂。正如我们刚说的，这是我们到目前为止学过的所有内容中最重要的结果，也是接下来几门课里我们要研究的几乎每一个算法的支柱。<b>如果你不理解这个算法，你就不会理解蒙特卡罗光线追踪</b>。加上渲染方程，这大概是第二重要的方程。现在你会问：<b>我究竟为什么会想从均匀分布以外的任何分布里抽样？</b>这会是个很好的问题。一个勉强的答案是「因为也许你只能用某个给定的随机生成器来产生样本，而这个生成器的 PDF 不是均匀的」。那么至少在这种情况下，我们刚刚证明了：只要你没忘记把 \(f(X_i)\) 除以 \(pdf(X_i)\)，你仍然可以使用蒙特卡罗积分。但你也会看到，当我们下一章研究<b>方差缩减</b>时，这个结果会变得很有用。所以继续读下去，你很快就会明白这个结果为什么重要！</p><details open><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/samplespdf.png?" alt=""></figure><p>我们来直觉地理解一下，为什么（对非常数 PDF）必须把 f(x) 除以 pdf(x)。你知道，pdf 给出的是随机变量 X 取某个值 \(x_i\) 的概率。当你从任意 PDF 抽样时，样本不是均匀分布的：PDF 高的地方会生成更多样本，反过来，PDF 低的地方生成的样本更少（见旁边的图）。而在蒙特卡罗积分中，样本需要均匀分布。如果你在函数的某些区域生成了高密度的样本（因为该区域 PDF 高），蒙特卡罗积分的结果就会有偏。</p><p>而把 f(x) 除以 pdf(x) 会抵消这个效应。确实，当 pdf 高时（这也正是生成更多样本的地方），把 f(x) 除以 pdf(x) 会降低这些样本在求和中的「权重」。所以本质上，我们是通过调低它们的贡献来补偿样本浓度过高。另一方面，当 pdf 低时，生成的样本更少（样本密度低于 pdf 高的区域）。但如果我们把 f(x) 除以一个小的值（比如 1 除以 0.1），这些样本的贡献就被放大了。我们通过给它们更大的权重来补偿样本密度偏低。</p><p>本质上，这就是把 f(x) 除以 pdf(x) 所做的事。它给样本的贡献加权，以补偿从任意 PDF 生成的样本不会均匀分布这一事实（当然，这假定 PDF 不是常数）：它调低在高密度区域（PDF 高）生成的样本，调高在低密度区域（PDF 低）生成的样本。</p><p>我们在下一章讲方差缩减与重要性采样时会深入探讨这个概念。</p></details><h2>蒙特卡罗积分的性质</h2><p>可以看到，蒙特卡罗估计不过是样本均值，只不过我们把总体换成了一个实值任意函数。因此，蒙特卡罗估计与样本均值具有相同的性质：</p><ul><li><p>当样本量趋于无穷时，蒙特卡罗估计收敛到函数 f(x) 的期望值。你可以想见，这是一条非常重要的性质。它说的是，与样本均值一样，N 越大，我们就越可能在概率意义下收敛到正确答案（F）。</p><p>\(\text{Pr} \left\{ \lim_{N\to\infty} \langle F^N \rangle = F \right\} = 1\)。</p></li><li><p>蒙特卡罗估计量是无偏且一致的。</p></li><li><p>它的收敛速度与函数的方差 \(\sigma^2\) 成正比。估计量本身的方差就是那个现在大家熟悉的公式：\(\sigma^2 / n\)。<b>在实践中，这意味着要把估计的误差减半，需要四倍的样本。</b></p></li><li><p>中心极限定理（CLT）确立了估计量的渐近分布性质。换句话说，\(\bar X_n\) 服从正态分布。</p></li></ul><p>还可以补充几点。随机变量 \(X_i\) 当然是随机的，这也就意味着样本均值 \(\bar X_n\)/\(\langle F^N \rangle\) 是随机的。此外，你每跑一次估计（或模拟），都会得到不同的 \(\bar X_n\)/\(\langle F^N \rangle\) 值。</p><h2>蒙特卡罗积分相对确定性方法的优势</h2><p>蒙特卡罗估计量背后的想法很简单，大概已经被人们知道很久了，但它真正起飞是在 1940 年代末计算技术出现之后。对函数求值非常多次并对结果取平均，这项任务计算机能比我们人类快无数倍地完成。能够高效地跑这些模拟（这在计算机时代之前我们从未有机会做到），帮助解决了众多科学领域（数学、物理、生物学、化学等）中大量重要而复杂的问题。它也可以应用到其他领域，比如金融（做预测），当然还有计算机图形学。这一点我们稍后再谈。</p><p>不过你可能会问，我们究竟为什么会对这门技术感兴趣。确实，在《着色的数学》那一章里，我们学过用一种叫作求积法则的技术计算积分（例如见黎曼和那一节）。这门技术也相当简单。那你为什么还会对另一种方法感兴趣？情况是这样的：求积法则求解积分确实简单，但随着积分维度的增加，它们用起来越来越贵。事实上，它们受制于维数灾难：随着积分维度增加，收敛速度呈指数级变差（d 维积分需要 \(N^d \) 个样本）。</p><details open><p>一个多重积分的例子：\(\int \cdots \int_D f(x_1, x_2, \cdots, x_n) dx_1 \cdots dx_n\)。</p></details><p>另一方面，蒙特卡罗积分的原理可以很容易地推广到更高的维度，而且这个方法的收敛速度与维数无关。你会在后面几门课里看到，在渲染中我们有时必须求解含多个变量的函数的积分（或多重积分），这种情况下 MC 积分更合适。当然，在样本数固定时，近似的质量会随维数增加而下降，但你仍然能保证以固定的代价（样本数 N）得到一个解。</p><p>蒙特卡罗估计的关键要素之一，是能够使用、从而生成随机数序列，用它们在所需区间 [a,b] 上以「随机」的 x 值对函数 f(x) 求值。所以，和其他所有方法一样，随机数的生成很关键。本章我们只考虑这些数以均匀分布生成的情形，但在某些情况下，用非常特定的 PDF 生成随机数是有利的。原因我们会在本章后面以及讲重要性采样的课程里解释。不过这里的要点是：如果你想用蒙特卡罗方法，掌握生成随机数的技艺非常重要。本课有一章专门讲这个题目。</p><h2>改进蒙特卡罗积分：方差缩减</h2><p>本章我们只介绍了基础的蒙特卡罗估计量。这种朴素方法在简单情形下效果不错，但我们感兴趣的是用它来解决通常更复杂的实际问题。正如前面解释过的，蒙特卡罗积分的问题在于它的收敛速度，虽然是个常数，却相当低（\(O\sqrt{N}\)）。因此，大量研究投入到开发降低误差（或方差）的技术上。我们常说<b>方差缩减</b>。比如重要性采样——这个术语你可能已经听过——就是这类策略的一个例子。</p><h2>小结</h2><p>让我们总结一下关于蒙特卡罗积分方法所学的内容。</p><p>优点：</p><ul><li><p>简单（能很好地适应多重积分）。</p></li><li><p>无偏且一致。</p></li><li><p>天然的并行性：可以让计算机的每个处理器承担做一次随机试验的任务（至少是成批地处理试验），从而并行地求解一个积分。</p></li></ul><p>缺点：</p><ul><li><p>收敛速度慢。</p></li><li><p>难以评估函数 f(x) 的方差，也难以知道近似的误差有多大。</p></li></ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/monte-carlo-integration.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/monte-carlo-integration.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

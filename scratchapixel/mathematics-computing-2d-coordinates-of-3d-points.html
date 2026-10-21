@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>计算 3D 点二维坐标的数学 - Scratchapixel 中文译本</title>
+<meta name="description" content="计算 3D 点的像素坐标 · 计算 3D 点二维坐标的数学（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>计算 3D 点二维坐标的数学</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="computing-pixel-coordinates-of-3d-point-perspective-projection.html">透视投影</a></li>
+<li><a style="font-weight:700" href="mathematics-computing-2d-coordinates-of-3d-points.html">计算 3D 点二维坐标的数学</a></li>
+</ol>
+</div>
+<h2>计算 3D 点二维坐标的数学</h2><p><b>阅读时间：39 分钟。</b></p><h3> 求一个 3D 点的二维像素坐标：从头到尾讲清楚</h3><p>当场景中定义了一个点或顶点，并且它对相机可见时，它在图像中会表现为一个点——更准确地说，如果图像是数字的，就是一个像素。我们已经讨论过透视投影过程，它用来把一个点在 3D 空间中的位置转换成图像表面上的位置。但这个位置还没有用像素坐标表示。那么我们如何确定投影点在图像中最终的二维像素坐标？本章我们将梳理把一个点从最初的世界位置转换到最终光栅位置（即它在图像中以像素坐标表示的位置）的整个过程。</p><details open><p>本课描述的技术只适用于光栅化算法，也就是 GPU 用来生成 3D 场景图像的渲染技术。如果你想了解光线追踪里是怎么做的，请看课程 <a href="definition-ray.html">光线追踪：生成相机光线</a>。</p></details><h3> 世界坐标系与世界空间</h3><p>一个点最初在场景中被定义时，它的坐标是在<b>世界空间</b>中给出的：这个点的坐标是相对一个全局的、也就是世界的笛卡尔坐标系来描述的。这个坐标系有一个原点，称为<b>世界原点</b>，在这个空间中定义的任何点的坐标都相对这个原点来描述——也就是坐标为 [0,0,0] 的那个点。点在世界空间中表达（图 1）。</p><h3> 4x4 矩阵可视作一个笛卡尔坐标系</h3><p>3D 中的物体可以用三种算子变换：平移、旋转和缩放。如果你还记得我们在专讲<a href="points-vectors-and-normals.html">几何</a>的那门课里的讨论，线性变换——这三种算子的任意组合——可以用一个 4x4 矩阵表示。如果你不确定为什么、以及这是怎么做到的，不妨回头看看几何那门课，尤其是《矩阵如何工作》的<a href="how-does-matrix-work-part-1.html">第 1 部分</a>和<a href="how-does-matrix-work-part-2.html">第 2 部分</a>。在这些矩阵里，对角线上的前三个系数编码缩放（系数 c00、c11 和 c22），最后一行的前三个值编码平移（系数 c30、c31 和 c32——假设采用行主序约定），左上角的 3x3 内矩阵编码旋转（用红、绿、蓝标出的那些系数）。</p><p>$$
+\begin{bmatrix}
+\color{red}{c_{00}}& \color{red}{c_{01}}&\color{red}{c_{02}}&\color{black}{c_{03}}\\
+\color{green}{c_{10}}& \color{green}{c_{11}}&\color{green}{c_{12}}&\color{black}{c_{13}}\\
+\color{blue}{c_{20}}& \color{blue}{c_{21}}&\color{blue}{c_{22}}&\color{black}{c_{23}}\\
+\color{purple}{c_{30}}& \color{purple}{c_{31}}&\color{purple}{c_{32}}&\color{black}{c_{33}}\\
+\end{bmatrix}
+\begin{array}{l}
+\rightarrow \quad \color{red} {x-axis}\\
+\rightarrow \quad \color{green} {y-axis}\\
+\rightarrow \quad \color{blue} {z-axis}\\
+\rightarrow \quad \color{purple} {translation}\\
+\end{array}
+$$</p><p>观察一个矩阵的系数时，很难准确判断缩放或旋转的数值是多少，因为旋转与缩放混在了矩阵对角线的前三个系数里。现在我们只关注旋转和平移。</p><p>如图所示，我们有九个系数表示一个旋转。但我们怎么理解这九个系数到底代表什么？到目前为止，我们的讨论都围绕矩阵展开，现在把注意力转到坐标系上。我们把矩阵与坐标系这两个概念联系起来，以加深理解。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/coordsys.png?" alt=""><figcaption><b>图 1：</b>坐标系：平移与各轴的坐标都是相对世界坐标系定义的（这里使用的是右手坐标系）。</figcaption></figure><p>到目前为止我们讨论过的唯一笛卡尔坐标系是<b>世界坐标系</b>。这个坐标系是一种约定，用来在我们 3D 虚拟空间中定义坐标 [0,0,0] 以及三条彼此正交的单位轴，如图 1 所示。它充当 3D 场景的<a href="https://en.wikipedia.org/wiki/Prime_meridian" target="_blank" rel="noreferrer noopener">本初子午线</a>——场景中任何其他点或任意坐标系都相对世界坐标系来定义。这个坐标系确立之后，我们就可以创建其他笛卡尔坐标系。与点一样，这些坐标系由空间中的一个位置（一个平移值）和三条彼此正交的单位轴或向量刻画，后者是笛卡尔坐标系的定义性特征。<b>这个位置以及这三条单位向量的值都相对世界坐标系定义</b>，如图 1 所示。</p><p>在图 1 中，紫色坐标表示位置，而 x、y、z 三条轴的坐标分别是红、绿、蓝。这些颜色代表一个任意坐标系的各条轴，全部相对世界坐标系定义。要紧的是，构成这个任意坐标系的各条轴都是单位向量。</p><p>我们 4x4 矩阵左上角的 3x3 部分，装的就是这个任意坐标系各条轴的坐标。既然有三条轴，每条轴三个坐标，于是得到九个系数。如果这个 4x4 矩阵采用行主序约定存储系数（Scratchapixel 正是如此），那么：</p><ul><li><p><span>矩阵第一行的前三个系数（c00、c01、c02）对应 x 轴的坐标。</span></p></li><li><p><span>矩阵第二行的前三个系数（c10、c11、c12）对应 y 轴的坐标。</span></p></li><li><p><span>矩阵第三行的前三个系数（c20、c21、c22）对应 z 轴的坐标。</span></p></li><li><p><span>矩阵第四行的前三个系数（c30、c31、c32）对应该坐标系位置的平移值。</span></p></li></ul><p>看这个例子，它是图 1 中那个坐标系的变换矩阵：</p><p>$$
+\begin{bmatrix}
+\color{red}{+0.718762}&\color{red}{+0.615033}&\color{red}{-0.324214}&0\\
+\color{green}{-0.393732}&\color{green}{+0.744416}&\color{green}{+0.539277}&0\\
+\color{blue}{+0.573024}&\color{blue}{-0.259959}&\color{blue}{+0.777216}&0\\
+\color{purple}{+0.526967}&\color{purple}{+1.254234}&\color{purple}{-2.532150}&1\\
+\end{bmatrix}
+\begin{array}{l}
+\rightarrow \quad \color{red} {x-axis}\\
+\rightarrow \quad \color{green} {y-axis}\\
+\rightarrow \quad \color{blue} {z-axis}\\
+\rightarrow \quad \color{purple} {translation}\\
+\end{array}
+$$</p><p>总之，<b>一个 4x4 矩阵代表一个坐标系</b>，反过来，一个 4x4 矩阵可以表示任何笛卡尔坐标系。要始终把一个 4x4 矩阵看作一个坐标系，反之亦然。我们常把它称为相对「全局」坐标系的「局部」坐标系，在我们的讨论里，「全局」就是世界坐标系。</p><h3> 局部坐标系与全局坐标系</h3><figure><img src="https://scratchapixel.com/images/perspective-matrix/localcoordsys.png?" alt=""><figcaption><b>图 2：</b>全局坐标系，比如经纬度坐标，可以用来定位一栋房子。另一种办法是用门牌号系统找到这栋房子，其中第一栋房子定义了某个局部坐标系的原点。注意这个局部坐标系也可以相对全局坐标系来描述（也就是用经度/纬度坐标表示）。</figcaption></figure><p>我们已经弄清 4x4 矩阵可以被怎样解读，也引入了局部坐标系的概念，接下来深入看看局部坐标系是做什么用的。默认情况下，一个 3D 点的坐标是相对世界坐标系定义的。世界坐标系只是无穷多个可能坐标系中的一个。但我们需要一个标准系统，默认地拿它来衡量一切，于是有了「世界坐标系」（它是个约定，就像格林尼治子午线，那里经度被定义为 0）。有一个参考点很有用，但并不总是追踪空间中位置的最好办法。比如你在一条街上找一栋房子，知道这栋房子的经纬度坐标可以让你用 GPS 找到它。但如果你已经在那条街上，用门牌号找这栋房子就比用 GPS 更简单、更快。门牌号是一个相对参考点——街上第一栋房子——定义的坐标。在这个语境里，门牌号充当<b>局部坐标系</b>，而经纬度坐标系充当<b>全局坐标系</b>。虽然门牌号也可以相对全局坐标系来定义，但它们主要以相对一个局部参考——街上第一栋房子——的坐标来表示。当你就处在这些东西被定义的那个参照系之内时（比如你就在那条街上），局部坐标系对找东西特别有用。还要注意，局部坐标系可以相对全局坐标系来描述（例如我们可以用经度/纬度坐标确定它的原点）。</p><p>这条原理在计算机图形学（CG）里同样适用。我们总是可以相对世界坐标系确定东西的位置，但为了简化计算，把东西相对一个局部坐标系来定义往往更方便（下面我们会用例子说明）。这就是「局部」坐标系的主要用途。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/coordsys1.png?" alt=""><figcaption><b>图 3：</b>一个顶点的坐标分别相对物体的局部坐标系和世界坐标系定义。</figcaption></figure><p>当你在场景中移动一个 3D 物体，比如一个立方体（无论物体的形状或复杂度如何，这条都成立），施加到这个物体上的变换（平移、缩放和旋转）可以用我们所说的 4x4 变换矩阵表示。这个矩阵本质上就是一个 4x4 矩阵，但由于它用来改变物体在空间中的位置、缩放和旋转，我们称它为变换矩阵。这个 4x4 变换矩阵可以看作该对象的局部参照系或局部坐标系。从根本上说，你变换的不是物体本身，而是那个物体的局部坐标系。既然构成物体的顶点是相对这个局部坐标系定义的，移动坐标系就随之移动了物体的顶点（如图 3 所示）。<b>关键在于理解：我们并没有显式地变换坐标系，而是平移、缩放、旋转物体。一个 4x4 矩阵表示这些变换，而这个矩阵可以被<i>看作</i>一个坐标系。</b></p><h3> 把点从一个坐标系变换到另一个坐标系</h3><p>一栋房子的坐标，无论用它的地址表示还是用经纬度表示，都会不一样，尽管它是同一个物理位置。这些差异来自坐标所关联的参照系，也就是房子位置被定义时所在的那个参照系。看图 3 中被高亮的顶点。在局部坐标系里，这个顶点的坐标是\([-0.5, 0.5, -0.5]\)。但在「世界空间」中（坐标相对世界坐标系定义时），坐标变为\([-0.31, 1.44, -2.49]\)。<b>不同的坐标，同一个点</b>。</p><p>如前所述，当点相对局部坐标系而不是世界坐标系定义时，对它们进行运算往往更方便。例如图 3 中的立方体，在局部空间表示它的各个角比在世界空间表示更简单。但我们怎么把一个点或顶点从一个坐标系转换到另一个坐标系？这类变换在计算机图形学（CG）中很常见，而且很直接。假设我们已知把坐标系\(A\)变换成坐标系\(B\)的 4x4 矩阵\(M\)。那么，如果我们用<b>\(M\)的逆</b>去变换一个最初相对\(B\)定义的点（为什么用\(M\)的逆而不是\(M\)本身，下面会解释），就得到这个点\(P\)相对\(A\)的坐标。</p><p>我们用图 3 来看一个例子。把立方体所附着的那个局部坐标系变换出去的矩阵\(M\)是：</p><p>$$
+\begin{bmatrix}
+\color{red}{+0.718762}&\color{red}{+0.615033}&\color{red}{-0.324214}&0\\
+\color{green}{-0.393732}&\color{green}{+0.744416}&\color{green}{+0.539277}&0\\
+\color{blue}{+0.573024}&\color{blue}{-0.259959}&\color{blue}{+0.777216}&0\\
+\color{purple}{+0.526967}&\color{purple}{+1.254234}&\color{purple}{-2.532150}&1\\
+\end{bmatrix}
+$$</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/coordsys2.png?" alt=""><figcaption><b>图 4：</b>要把在局部坐标系中定义的点变换到世界空间，我们用\(M\)乘这个点的局部坐标（图 4a 中两个坐标系是重合的；为了能看见它们，稍作了偏移）。</figcaption></figure><p>默认情况下，局部坐标系与世界坐标系重合；立方体的顶点就是相对这个局部坐标系定义的。图 4a 示意了这一点。然后我们把矩阵\( M \)施加到局部坐标系上，它根据矩阵的取值改变坐标系的位置、缩放和旋转。图 4b 示意了这一点。在施加变换之前，图 3 和图 4 中被高亮的顶点（紫点）在两个坐标系中的坐标是一样的，因为参照系重合。变换之后，这些点的世界坐标与局部坐标就不同了，如图 4a 和 4b 所示。要计算那个顶点的世界坐标，我们需要用<b>局部到世界矩阵</b>乘这个点原来的坐标；我们称之为<b>局部到世界</b>，是因为它相对世界坐标系来定义这个坐标系。这个过程是合乎逻辑的：如果你变换了局部坐标系，又想让立方体跟着这个坐标系一起动，那就把施加到局部坐标系上的同一个变换施加到立方体的顶点上。做法就是用局部到世界矩阵（这里为简便记为\( M \)）乘立方体的顶点：</p><p>$$P_{world} = P_{local} \times M$$</p><p>要从世界坐标转回局部坐标，就用\( M \)的逆来变换世界坐标：</p><p>$$P_{local} = P_{world} \times M^{-1}$$</p><p>用数学记号写出来就是：</p><p>$$
+\begin{array}{l}
+P_{world} = P_{local} \times M_{local-to-world}\\
+P_{local} = P_{world} \times M_{world-to-local}
+\end{array}
+$$</p><p>我们来验证一下。被高亮顶点在局部空间的坐标是\([-0.5, 0.5, 0.5]\)，在世界空间是\([-0.31, 1.44, -2.49]\)。我们还已知矩阵\( M \)（局部到世界）。如果把这个世界矩阵施加到点的局部坐标上，应该得到点的世界坐标：</p><p>$$
+\begin{array}{l}
+P_{world} = P_{local} \times M\\
+P_{world}.x = P_{local}.x \times M_{00} + P_{local}.y \times M_{10} + P_{local}.z \times M_{20} + M_{30}\\
+P_{world}.y = P_{local}.x \times M_{01} + P_{local}.y \times M_{11} + P_{local}.z \times M_{21} + M_{31}\\
+P_{world}.z = P_{local}.x \times M_{02} + P_{local}.y \times M_{12} + P_{local}.z \times M_{22} + M_{32}\\
+\end{array}
+$$</p><p>用几何那门课的代码实现并检查结果：</p><pre><code>
+Matrix44f m(0.718762, 0.615033, -0.324214, 0, -0.393732, 0.744416, 0.539277, 0, 0.573024, -0.259959, 0.777216, 0, 0.526967, 1.254234, -2.53215, 1); 
+Vec3f Plocal(-0.5, 0.5, -0.5), Pworld;
+m.multVecMatrix(Plocal, Pworld);
+std::cerr &lt;&lt; Pworld &lt;&lt; std::endl;
+</code></pre><p>输出为：<code>(-0.315792, 1.4489, -2.48901)</code>。</p><p>现在把这个点的世界坐标变回局部坐标。我们的 Matrix 类实现里有一个方法可以求当前矩阵的逆。用它算出世界到局部的变换矩阵，再把这个矩阵施加到点的世界坐标上：</p><pre><code>
+Matrix44f m(0.718762, 0.615033, -0.324214, 0, -0.393732, 0.744416, 0.539277, 0, 0.573024, -0.259959, 0.777216, 0, 0.526967, 1.254234, -2.53215, 1);
+m.invert();
+Vec3f Pworld(-0.315792, 1.4489, -2.48901), Plocal;
+m.multVecMatrix(Pworld, Plocal);
+std::cerr &lt;&lt; Plocal &lt;&lt; std::endl;
+</code></pre><p>输出为：<code>(-0.500004, 0.499998, -0.499997)</code>。</p><p>坐标并不精确等于\([-0.5, 0.5, -0.5]\)，这既有浮点精度的问题，也因为我们截断了输入点的世界坐标；不过四舍五入到一位小数，就得到\([-0.5, 0.5, -0.5]\)，这是正确的结果。</p><p>读到本章这里，你应该已经理解世界/全局坐标系与局部坐标系的区别，以及如何把点或向量从一个系统变换到另一个系统（反过来也一样）。</p><h3> 相机坐标系与相机空间</h3><figure><img src="https://scratchapixel.com/images/perspective-matrix/camera.png?" alt=""><figcaption><b>图 5：</b>创建相机时，默认情况下它沿世界坐标系的负 z 轴对齐。这是大多数 3D 应用采用的约定。</figcaption></figure><figure><img src="https://scratchapixel.com/images/perspective-matrix/camera2.png?" alt=""><figcaption><b>图 6：</b>用相机到世界的变换矩阵来变换相机坐标系。</figcaption></figure><p>计算机图形学（CG）中的相机与自然世界中的相机一样，其行为与任何 3D 物体没有区别。拍照时你必须移动、旋转相机来调整视点。从根本上说，当你变换一台相机时（平移和旋转它——注意缩放相机没什么意义），你是在<b>变换一个局部坐标系，这个坐标系隐含地表示了施加到该相机上的变换</b>。在 CG 中，这个空间参照系称为<b>相机坐标系</b>（其他资料里有时叫眼睛坐标系）。这个坐标系的重要意义稍后会解释。</p><p>相机本质上就是一个坐标系。因此我们前面讲的把点从一个坐标系变换到另一个坐标系的技术，在这里同样可以用来把点从世界坐标系变换到相机坐标系（反过来也行）。我们说我们把点从<b>世界空间变换到相机空间</b>（如果反着施加变换，就是从相机空间到世界空间）。</p><p>不过，相机总是沿世界坐标系的负 z 轴对齐。在图 5 中你可以看到，相机的 z 轴指向与世界坐标系 z 轴相反的方向（当 x 轴指向右、z 轴向内延伸进入屏幕而不是向外时）。</p><details open><p>相机被安排在沿世界坐标系的负 z 轴方向，是为了当一个点从世界空间转换到相机空间时（之后还要从相机空间转换到屏幕空间），如果这个点在世界坐标系 y 轴的左边，它也会映射到相机坐标系 y 轴的左边。我们需要相机坐标系的 x 轴在世界坐标系 x 轴指向右时也指向右；要得到这种配置，唯一的办法是让相机朝负 z 轴方向看。</p></details><p>由于这种朝向，从一个系统过渡到另一个系统时，点的 z 坐标符号会反转。在研究透视投影矩阵时，这一点很重要。</p><p>总结一下：如果我们想把一个 3D 点的坐标从世界空间（也就是 3D 场景中定义点所在的空间）转换到某个局部坐标系的空间，就需要用局部到世界矩阵的逆乘这个点的世界坐标。</p><h3> 把点转换到相机空间的重要性</h3><p>这一节要读的东西不少，但值得。我们接下来要说明，要把一个点「投影」到画布上（也就是我们用来绘制 3D 场景图像的那个二维表面），必须先把点从世界空间转换或变换到相机空间。原因如下。</p><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/box-setup4.png?" alt=""><figcaption><b>图 7：</b>点 P 在画布上的投影 P' 的坐标，可以用简单的几何算出。三角形 ABC 与 AB'C' 是相似的（侧视图）。</figcaption></figure><p>回到我们的目标：我们要算出 P'，也就是 3D 场景中某个点 P 在画布表面上的坐标。这个表面也就是场景图像将被绘制的表面，也叫投影平面，在计算机图形学中称为<b>图像平面</b>。如果你从 P 向眼睛（相机坐标系的原点）连一条线，P' 就是这条线与画布的交点（如图 7 所示）。当点 P 的坐标是相对相机坐标系定义的时候，计算 P' 的位置就变得很简单。看图 7——它展示了我们这套装置的侧视图——你会注意到我们可以画出两个三角形\(\triangle ABC\)和\(\triangle AB'C'\)，其中：</p><ul><li><p><b>A</b> 表示眼睛。</p></li><li><p><b>B</b> 是从眼睛沿相机坐标系 z 轴到点 P 的距离。</p></li><li><p><b>C</b> 是从眼睛沿相机坐标系 y 轴到 P 的距离。</p></li><li><p><b>B'</b> 是从眼睛到画布的距离（为简化计算，我们假定这个距离为 1）。</p></li><li><p><b>C'</b> 是从眼睛沿相机坐标系 y 轴到 P' 的距离。</p></li></ul><p>三角形\(\triangle ABC\)和\(\triangle AB'C'\)是相似三角形（相似三角形形状相同但大小不同）。相似三角形有一条关键性质：对应边之间的比值相同。具体来说：</p><p>$${ BC \over AB } = { B'C' \over AB' }.$$</p><p>既然画布距离原点 1 个单位，我们可以令 AB' 等于 1。我们还知道 B 和 C 的位置，它们分别是点 P 的 z 坐标（深度）和 y 坐标（高度）（假定 P 的坐标是在相机坐标系中定义的）。把这些值代入方程就得到：</p><p>$${ P.y \over P.z } = { P'.y \over 1 }.$$</p><p>其中 y' 是 P' 的 y 坐标。因此：</p><p>$$P'.y = { P.y \over P.z }.$$</p><p>这个方程表示计算机图形学中最简单、最基本的关系之一，称为<b>z 除法或透视除法</b>。同样的原理适用于 x 坐标。投影点的 x 坐标（x'）等于该角的 x 坐标除以它的 z 坐标：</p><p>$$P'.x = { P.x \over P.z }.$$</p><p>我们在前面的课程里讨论过这个方法，但这里有必要指出：<b>要用这些方程计算 P'，P 的坐标必须相对相机坐标系定义。然而，3D 场景中的点最初是相对世界坐标系定义的。因此，在把点投影到画布上之前，我们要施加的第一个、也是最关键的运算，就是把它们从世界空间转换到相机空间</b>。</p><p>怎么做？假设我们已知相机到世界矩阵（类似于我们前面研究过的局部到相机矩阵）。那么，把任何点（其坐标在世界空间中定义）变换到相机空间，只需用相机到世界矩阵的逆（世界到相机矩阵）乘这个点：</p><p>$$P_{camera} = P_{world} \times M_{world-to-camera}.$$</p><p>点现在在相机空间里了，我们可以用前面给出的方程把它「投影」到画布上：</p><p>$$
+\begin{array}{l}
+P'.x = \dfrac{P_{camera}.x}{P_{camera}.z}\\
+P'.y = \dfrac{P_{camera}.y}{P_{camera}.z}
+\end{array}
+$$</p><p>记住，相机通常沿世界坐标系的负 z 轴对齐。过去有读者对课程这一部分感到困惑，因为原来的写法让人以为，为了让相机沿负 z 轴朝向，我们在相机到世界矩阵之外又用了一个会把相机 z 轴翻转过来的变换矩阵。虽然那样做在技术上也是一种可行方案，但通常不是这么干的。我们并没有显式地翻转相机的 z 轴。如果你看看 Maya 这类 3D 软件中相机的矩阵是怎么回事，就能观察到这一点。创建相机时，它默认沿负 z 轴朝向。但如果你查询相机的矩阵，会看到得到的是单位矩阵。大多数（如果不是全部）3D 软件的做法，是假定施加到相机上的矩阵就是右手坐标系的标准矩阵（至少 Maya 这类软件如此，我们的代码也是如此，因为我们遵循同样的约定）。所用的矩阵与变换物体所用的矩阵是同一类。它们没什么特殊或反常之处。它们就是一模一样的。</p><p>看一个例子。设想有一个坐标是 (0,0,0) 的点。现在设想我们把默认相机（无旋转）移到位置 (1,0,2)。如果你把这个相机矩阵（<code>[(1 0 0 0) (0 1 0 0) (0 0 1 0) (1 0 2 1)</code>）施加到我们的点上，相对相机的新位置将是 (-1,0,-2)。可以看到，这个点的 z 坐标是负的。当我们对这个点做 z 除法时，投影出的 x 坐标\(P'.x\)将是\(\frac{1}{-12}\)。它沿 x 轴的位置为负，说明这个点原本在画面垂直中线的右侧，现在到了左侧。投影点的坐标被镜像了。</p><p>xx 需要一张图</p><p>无论相机空间中的点在相机「前面」还是「后面」，透视除法运算的方式都一样（无论你为相机默认朝向采用哪种约定）。当然，实践中我们会丢弃位于相机后面的点。但由于我们希望相机默认沿负 z 轴方向看，并且希望 x 坐标为正的点被投影到穿过图像中心的那条垂线的右侧，我们就需要反转点 z 坐标的符号。这样做之后，投影点相对穿过图像中心的垂直线与水平线的位置就得到了保持（无论点的 y 坐标是正还是负）。</p><p>$$
+\begin{array}{l}
+P'.x = \dfrac{P_{camera}.x}{-P_{camera}.z}\\
+P'.y = \dfrac{P_{camera}.y}{-P_{camera}.z}
+\end{array}
+$$</p><p>如你所见，我们并没有显式地用一个矩阵去翻转 z 坐标。我们只是在做透视除法的时候把点的 z 坐标取反。让人困惑的地方在于，3D 软件里相机是沿负 z 轴朝向的。它就是那样画出来的。你可能会以为，他们做了一个沿正轴朝向的相机几何体，再用一个矩阵把相机的朝向翻到 z 轴上（或者更糟，绕 y 轴旋转 180 度）。别被你在视口里看到的东西骗了。相机在视口里就是那样画出来的，好让用户清楚图像会怎么生成。但并没有施加任何矩阵去让它那样朝向。它只是被「画」成那样。这个错觉之所以奏效（透过相机视图看的时候图像能正确生成），是因为在透视除法时 z 坐标被取了反。</p><p>总结一下：场景中的点在世界坐标空间中定义。但要把它们投影到画布表面上，我们首先需要把 3D 点坐标从世界空间转换到相机空间（如上所述，这里不做任何 z 坐标翻转）。这个转换通过用相机到世界矩阵的逆乘点的世界坐标来完成。下面是执行这个转换的代码：</p><pre><code>
+Matrix44f cameraToWorld(0.718762, 0.615033, -0.324214, 0, -0.393732, 0.744416, 0.539277, 0, 0.573024, -0.259959, 0.777216, 0, 0.526967, 1.254234, -2.53215, 1);
+Matrix44f worldToCamera = cameraToWorld.inverse();
+Vec3f Pworld(-0.315792, 1.4489, -2.48901), Pcamera;
+worldToCamera.multVecMatrix(Pworld, Pcamera);
+std::cerr &lt;&lt; Pcamera &lt;&lt; std::endl;
+</code></pre><p>点现在在相机空间里，我们可以用透视投影方程准确算出它在画布上的二维坐标，具体做法是把点的坐标除以点 z 坐标的<b>倒数</b>。</p><details open><p>关于 GPU 再补一句，万一你想知道我们做这一套只是为了这门课，还是你玩喜欢的电子游戏时真的就是这样。事实是，GPU 正是这样渲染你的游戏的。我们需要把所谓的世界到相机矩阵和另一种叫作透视矩阵的矩阵传给顶点着色器。而 z 除法由 GPU 在硬件上完成，使得这个操作——每帧可能在几十万甚至上百万个顶点上发生——快得惊人。</p><p>GPU 处理这件事的方式用了一个技巧，透视投影矩阵正是利用了它。它假定点不是用笛卡尔坐标定义的，而是用齐次坐标，也就是有四个分量（x、y、z 和 w）而不是三个分量的点。透视矩阵的设计使得当你用透视矩阵乘相机空间中的点时，它会把点的 z 坐标存进齐次坐标点的第四个分量（w）里。</p><p>不过渲染引擎是对齐次坐标下的点进行运算的，所以我们需要把它们转换回笛卡尔坐标。做法是用透视变换后点的齐次 x、y、z 坐标除以 w 坐标。由于 w 里装的是点的 z 坐标，GPU 在这一步实际上就完成了透视除法。这个过程在课程 <a href="projection-matrix-introduction.html">透视与正交投影矩阵</a> 里有详细讲解。</p><p>总之，本课讨论的内容，正是你玩电子游戏时 GPU 上生成图像的方式。GPU 每秒要做数百万次透视除法。这里面没有魔法——只是我们在这里列出的同一套数学。</p></details><h3> 从屏幕空间到光栅空间</h3><figure><img src="https://scratchapixel.com/images/perspective-matrix/screen.png?" alt=""><figcaption><b>图 8：</b>屏幕坐标系是一个二维笛卡尔坐标系。它标出画布的中心。图像平面是无限的，而画布划定了场景图像将被绘制的那个表面。画布尺寸可以不同；在这个例子里，它在两个维度上都是两个单位长。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/frustum.png?" alt=""><figcaption><b>图 9：</b>在这个例子里，画布沿 x 轴为 2 个单位，沿 y 轴为 2 个单位。改变画布的尺寸，你就能看到场景更多或更少的部分。</figcaption></figure><p>我们现在知道怎么计算点在画布上的投影了。这包括把点从世界空间变换到相机空间，然后把点的 x、y 坐标分别除以各自的 z 坐标。回想一下，画布位于 CG 中所谓的<b>图像平面</b>上。这些变换之后，你就得到落在图像平面上的点 P'，它是 P 在该平面上的投影。<b>可是 P' 的坐标是在哪个空间里定义的？</b>注意，由于点 P' 落在平面上，我们不再关心 P' 的 z 坐标。换句话说，我们不需要把 P' 声明为 3D 点；一个 2D 点就够了（不过为了解决可见性问题，光栅化算法会用到投影点的 z 坐标，这个细节我们暂时忽略）。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/canvassize.png?" alt=""><figcaption><b>图 10：</b>改变画布的尺寸/大小会影响相机拍摄到的场景范围。在这个例子里，较小的画布只显示了三角形的一部分，较大的画布显示了整个三角形。画布尺寸与视场角是相关的。</figcaption></figure><p>既然 P' 现在是 2D 点，它就是相对一个 CG 中称为<b>图像坐标系或屏幕坐标系</b>的二维坐标系定义的。这个坐标系以画布为中心；投影到图像平面上的任何点的坐标都参照这个系统。x 坐标为正的 3D 点被投影到图像坐标系 y 轴的右侧。y 坐标为正的 3D 点被投影到图像坐标系 x 轴的上方（图 8）。虽然图像平面在技术上是无限的，但图像的大小是有限的；它们有确定的宽和高。于是我们定义一个以图像坐标系为中心的「有界区域」，场景图像将画在这个区域上（图 8）。这个区域就是画布可绘制、可涂画的表面。这个区域的尺寸可以不同，改变它的大小会改变相机捕捉到的场景范围（图 10）。我们会在后续课程里探讨画布尺寸的影响。在图 9 与图 11（上图）中，画布在垂直和水平方向上都是 2 个单位。</p><p>任何投影点的 x 或 y 坐标的绝对值分别超过画布宽度或高度的一半，它在图像中就不可见（该投影点被裁剪掉）。</p><p>$$
+\text {visible} =
+\begin{cases}
+yes & |P'.x| \le {W \over 2} \text{ and } |P'.y| \le {H \over 2}\\
+no & \text{otherwise}
+\end{cases}
+$$</p><p>这里 |a| 表示 a 的<a href="https://www.khanacademy.org/math/cc-sixth-grade-math/cc-6th-negative-number-topic/cc-6th-absolute-value/a/intro-to-absolute-value" target="_blank" rel="noreferrer noopener">绝对值</a>。变量 W 和 H 表示画布的宽和高。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/canvascoordsys.png?" alt=""><figcaption><b>图 11：</b>要把 P' 从屏幕空间转换到光栅空间，我们先从屏幕空间（上图）过渡到 NDC（Normalized Device Coordinates，归一化设备坐标）空间（中图），再从 NDC 空间过渡到光栅空间（下图）。注意 NDC 坐标系的 y 轴向上，而光栅坐标系的 y 轴向下。因此从 NDC 转换到光栅空间时，需要把 P' 的 y 坐标取反。</figcaption></figure><p>如果 P 的坐标是实数（编程中的 float 或 double），P' 的坐标也是实数。如果 P' 的坐标在画布边界内，那么 P' 可见。否则该点不可见，我们可以忽略它。如果 P' 可见，它应该在图像中表现为一个点。数字图像中的一个点就是一个像素。注意像素也是二维点，但它们的坐标是整数，而这些坐标所指的坐标系位于图像的左上角。它的 x 轴指向右（当世界坐标系的 x 轴指向右时），y 轴指向下（图 11）。计算机图形学中这个坐标系称为<b>光栅坐标系</b>。这个坐标系中一个像素在 x 和 y 方向上都是一个单位长。我们需要把 P' 的坐标——它是相对图像坐标系或屏幕坐标系定义的——转换成像素坐标（即 P' 在图像中以像素坐标表示的位置）。这又是一次坐标系变换；我们说需要从<b>屏幕空间到光栅空间</b>。怎么做？</p><p>首先要做的是把 P' 的坐标重映射到 [0,1] 区间。这在数学上很直接。既然我们知道画布的尺寸，只需要套用下面的公式：</p><p>$$
+\begin{array}{l}
+P'_{normalized}.x = \dfrac{P'.x + \text{width} / 2}{\text{width}}\\
+P'_{normalized}.y = \dfrac{P'.y + \text{height} / 2}{\text{height}}
+\end{array}
+$$</p><p>由于投影点 P' 的坐标现在落在 [0,1] 区间内，我们说坐标被归一化了。因此我们也把归一化之后点所在的坐标系称为<b>NDC 坐标系</b>或<b>NDC 空间</b>。NDC 是 <b>Normalized Device Coordinates</b>（归一化设备坐标）的缩写。NDC 坐标系的原点位于画布左下角。注意此时坐标仍是实数，只是现在落在 [0,1] 区间内。</p><p>最后一步很简单。我们需要把投影点在 NDC 空间中的 x、y 坐标分别乘以图像的实际像素宽度和像素高度。这只是把 [0,1] 区间分别重映射到 x 坐标的 [0, 像素宽度] 和 y 坐标的 [0, 像素高度]。由于像素坐标必须是整数，我们需要把结果向更小的整数取整（为此我们用数学上的向下取整函数，它把实数取整到最近的更小整数）。这最后一步之后，P' 的坐标就在<b>光栅空间</b>中定义了：</p><p>$$
+\begin{array}{l}
+P'_{raster}.x = \lfloor{ P'_{normalized}.x \times \text{ Pixel Width} }\rfloor\\
+P'_{raster}.y = \lfloor{ P'_{normalized}.y \times \text{Pixel Height} }\rfloor
+\end{array}
+$$</p><p>在数学中，\(\lfloor{a}\rfloor\) 表示<a href="https://en.wikipedia.org/wiki/Floor_and_ceiling_functions" target="_blank" rel="noreferrer noopener">向下取整函数</a>。像素宽度和像素高度是图像以像素计的实际尺寸。不过有个小细节要处理。NDC 坐标系中的 y 轴向上，而光栅坐标系中 y 轴向下。因此要从一个坐标系到另一个，P' 的 y 坐标也需要取反。我们只要对上面的方程稍作修改就能处理这一点：</p><p>$$
+\begin{array}{l}
+P'_{raster}.x = \lfloor{ P'_{normalized}.x \times \text{ Pixel Width} }\rfloor\\
+P'_{raster}.y = \lfloor{ (1 - P'_{normalized}.y) \times \text{Pixel Height} }\rfloor
+\end{array}
+$$</p><p>在 OpenGL 中，从 NDC 空间到光栅空间的转换称为视口变换。本课中的画布在 CG 中一般称为<b>视口</b>。不过「视口」这个词对不同的人含义不同。对一些人来说，它指 NDC 空间的那个「归一化窗口」；对另一些人来说，它指屏幕上最终图像所显示的那个像素窗口。</p><p>完成！你已经把一个在世界空间中定义的点 P 转换成了图像中的可见点，并用一系列转换运算算出了它的像素坐标：</p><ul><li><p>世界空间到相机空间。</p></li><li><p>相机空间到屏幕空间。</p></li><li><p>屏幕空间到 NDC 空间。</p></li><li><p>NDC 空间到光栅空间。</p></li></ul><h2>小结</h2><p>本章梳理了 3D 图形渲染中的基本过程，重点是点在各个坐标系之间的变换。下面是我们所学内容的总结：</p><ul><li><p><b>3D 场景中的点</b>最初是相对<b>世界坐标系</b>定义的。</p></li><li><p>一个<b>4x4 矩阵</b>可以看作一个「局部」坐标系。</p></li><li><p>我们讨论了如何<b>把点从世界坐标系转换到任何局部坐标系</b>：</p><ul><li><p>如果已知局部到世界矩阵，我们可以用它的逆（世界到局部矩阵）来变换点的世界坐标。</p></li></ul></li><li><p><b>4x4 矩阵在相机变换中同样关键</b>，它让点可以从世界空间转换到相机空间。</p></li><li><p><b>计算点从相机空间到画布上的坐标</b>可以用透视投影完成（相机空间到图像空间）。这个方法只需把点的 x、y 坐标除以其 z 坐标。在把点投影到画布上之前，必须先把点从世界空间转换到相机空间。结果是一个在图像空间中定义的二维点（z 坐标无关）。</p></li><li><p>然后我们把图像空间中的二维点转换到<b>归一化设备坐标（NDC）空间</b>。在 NDC 空间中（图像空间到 NDC 空间），点的坐标被重映射到 [0,1] 区间。</p></li><li><p>最后，我们把 NDC 空间中的二维点变换到<b>光栅空间</b>。这需要用图像宽度和高度（以像素计）乘 NDC 点的 x、y 坐标。由于像素坐标必须是整数，从 NDC 空间转换到光栅空间时要向下取整。在 NDC 坐标系中，y 轴位于图像左下角并指向上；在光栅空间中，y 轴位于图像左上角并指向下。因此从 NDC 转换到光栅空间时，y 坐标需要取反。</p></li><li><p><b>世界空间</b></p><ul><li><p>3D 场景中点的原始定义所在的空间。世界空间中点的坐标是相对世界笛卡尔坐标系定义的。</p></li></ul></li><li><p><b>相机空间</b></p><ul><li><p>点相对相机坐标系定义时所在的空间。要把点从世界空间转换到相机空间，我们需要用相机到世界矩阵的逆乘世界空间中的点。默认情况下，相机位于原点，沿世界坐标系的负 z 轴朝向。点进入相机空间后，就可以用透视投影把它们投影到画布上。</p></li></ul></li><li><p><b>屏幕空间</b></p><ul><li><p>在这个空间里，点是二维的；它们落在图像平面上。由于该平面是无限的，画布定义了这个平面上能绘制场景的区域。画布尺寸是任意的，它定义了我们看到场景的「多少」。图像坐标系或屏幕坐标系标出画布（以及图像平面）的中心。如果图像平面上的点落在画布边界之外，它就不可见。否则该点在屏幕上可见。</p></li></ul></li><li><p><b>NDC 空间</b></p><ul><li><p>落在图像平面上且位于画布边界内的二维点，随后被转换到归一化设备坐标（NDC）空间。原理是把点的坐标归一化，也就是重映射到 [0,1] 区间。注意 NDC 坐标仍是实数。</p></li></ul></li><li><p><b>光栅空间</b></p><ul><li><p>最后，NDC 空间中的二维点被转换为二维像素坐标。做法是用图像宽度和高度（以像素计）乘归一化点的 x、y 坐标。从 NDC 到光栅空间还需要把点的 y 坐标取反。最终坐标需要向更小的整数取整，因为像素坐标是整数。</p></li></ul></li></ul><h2>代码</h2><p>这个函数把一个点从 3D 世界坐标转换为 2D 像素坐标，如果该点在画布上不可见则返回 <code>false</code>。这个实现相当朴素；写它的时候效率并不是首要考虑。我们把它组织成这样，是为了保证每一步都可见，并且都装在同一个函数里。</p><pre><code>
+bool computePixelCoordinates(
+    const Vec3f &amp;pWorld, 
+    const Matrix44f &amp;cameraToWorld,
+    const float &amp;canvasWidth,
+    const float &amp;canvasHeight,
+    const int &amp;imageWidth,
+    const int &amp;imageHeight,
+    Vec2i &amp;pRaster)
+{
+    // 首先，把 3D 点从世界空间变换到相机空间。
+    // 在这个函数里计算 cameraToWorld 矩阵的逆效率不高；
+    // 它应该只在函数外计算一次，
+    // 改为传入 worldToCamera 矩阵。
+    Vec3f pCamera;
+    Matrix44f worldToCamera = cameraToWorld.inverse();
+    worldToCamera.multVecMatrix(pWorld, pCamera);
+
+    // 用透视投影求点在画布上的坐标。
+    Vec2f pScreen;
+    pScreen.x = pCamera.x / -pCamera.z;
+    pScreen.y = pCamera.y / -pCamera.z;
+
+    // 若 x 或 y 坐标的绝对值分别超过画布的宽 
+    // 或高，则该点不可见。
+    if (std::abs(pScreen.x) &gt; canvasWidth || std::abs(pScreen.y) &gt; canvasHeight)
+        return false;
+
+    // 把坐标归一化到 [0,1] 区间。
+    Vec2f pNDC;
+    pNDC.x = (pScreen.x + canvasWidth / 2) / canvasWidth;
+    pNDC.y = (pScreen.y + canvasHeight / 2) / canvasHeight;
+
+    // 转换为像素坐标，并把 y 坐标取反。
+    pRaster.x = std::floor(pNDC.x * imageWidth);
+    pRaster.y = std::floor((1 - pNDC.y) * imageHeight);
+
+    return true;
+}
+
+int main(...)
+{
+    ...
+    Matrix44f cameraToWorld(...);
+    Vec3f pWorld(...);
+    float canvasWidth = 2, canvasHeight = 2;
+    uint32_t imageWidth = 512, imageHeight = 512;
+
+    // 若该点可见，求 pWorld 在图像中的二维像素坐标。
+    Vec2i pRaster;
+    if (computePixelCoordinates(pWorld, cameraToWorld, canvasWidth, canvasHeight, imageWidth, imageHeight, pRaster)) {
+        std::cerr &lt;&lt; "Pixel coordinates: " &lt;&lt; pRaster &lt;&lt; std::endl;
+    }
+    else {
+        std::cerr &lt;&lt; pWorld &lt;&lt; " is not visible" &lt;&lt; std::endl;
+    }
+    ...
+
+    return 0;
+}
+</code></pre><p>我们会在示例程序里使用类似的函数（见源代码一章）。为了演示这个技术，我们在 Maya 里做了一个简单的物体（一棵顶上带星星的树），并用指定的相机在 Maya 里渲染了这棵树的图像（见下图）。为简化练习，我们把几何体做了三角化。然后我们把该几何体的描述和 Maya 相机的 4x4 变换矩阵（相机到世界矩阵）存进程序里。</p><p>要生成那个物体的图像，我们需要：</p><ul><li><p>遍历构成几何体的每个三角形。</p></li><li><p>从顶点列表里取出构成当前三角形的顶点。</p></li><li><p>把这些顶点的世界坐标转换为二维像素坐标。</p></li><li><p>画出连接所得二维点的线，从而按相机所见的视图渲染该三角形（从第一个点连到第二个点，从第二个点连到第三个点，再从第三个点连回第一个点）。</p></li></ul><p>然后我们把得到的线段存进 SVG 文件。SVG 格式是为用简单几何形状（直线、矩形、圆等）创建图像而设计的，这些形状用 XML 描述。下面是我们在 SVG 中定义一条线的例子：</p><pre><code>
+&amp;ltline x1="0" y1="0" x2="200" y2="200" style="stroke:rgb(255,0,0);stroke-width:2" /&gt;
+</code></pre><p>大多数互联网浏览器都能读取 SVG 文件并作为图像显示。把程序的结果存成 SVG 很方便。我们不必自己去渲染这些形状，而是把它们的描述存进 SVG 文件，让其他应用替我们渲染出最终图像。</p><p>这个程序的完整源代码见源代码一章。最后，下面是我们的程序结果（左）与在 Maya 里用同一相机渲染同一几何体的结果（右）对比。如预期，视觉结果完全一致（你可以用任何互联网浏览器打开程序生成的 SVG 文件）。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/projexample.png?" alt=""></figure><p>如果你想在 Maya 里重现这个结果，需要导入几何体（我们会在下一章以 OBJ 文件形式提供），创建一个相机，把它的视角设为 90 度（为什么这样，我们下节课解释），并让胶片窗口变成正方形（把垂直和水平胶片窗口参数设为 1）。把渲染分辨率设为 512x512，从 Maya 渲染。然后，你应该用例如下面这条 MEL 命令导出相机的变换矩阵：</p><pre><code>
+getAttr camera1.worldMatrix;
+</code></pre><p>用这条命令的结果（矩阵的 16 个系数）在我们的程序里设置相机到世界矩阵。编译源代码并运行程序。导出到 SVG 文件的结果应该与 Maya 的渲染一致。</p><h2>还有什么？</h2><p>本章信息量很大。大多数讲透视过程的资料都强调透视变换，却常常略过世界到相机变换、或者屏幕坐标到光栅坐标转换这类关键步骤。我们的目标是让你在本课结束时能做出一个实际结果，一个能与 Maya 这类专业 3D 应用的渲染相媲美的结果。我们想给你一个从头到尾的完整概览。不过，处理相机比这里描述的稍复杂一些。比如，如果你以前用过 3D 软件，你可能知道相机变换并不是影响相机视野的唯一可调参数。你还可以改焦距。我们还没有解释改变焦距会如何影响转换过程。此外，与相机关联的近裁剪面和远裁剪面会影响透视投影过程，尤其会同时影响透视投影矩阵和正交投影矩阵。本课中我们假定画布位于距相机坐标系一个单位的位置。但事实并不总是如此，这个距离可以通过近裁剪面来调整。当相机坐标系原点与画布之间的距离不等于一个单位时，我们怎么计算像素坐标？这些悬而未决的问题将在下一课讲 3D 观察时处理。</p><h2>练习</h2><ul><li><p>修改程序里画布的尺寸（<code>canvasWidth</code> 和 <code>canvasHeight</code> 参数）。让这两个参数保持相等的值。值变小时会发生什么？值变大时又会发生什么？</p></li></ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/computing-pixel-coordinates-of-3d-point/mathematics-computing-2d-coordinates-of-3d-points.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/computing-pixel-coordinates-of-3d-point/mathematics-computing-2d-coordinates-of-3d-points.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

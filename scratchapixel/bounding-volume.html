@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>包围体 - Scratchapixel 中文译本</title>
+<meta name="description" content="加速结构简介 · 包围体（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>包围体</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-acceleration-structure-introduction.html">简介</a></li>
+<li><a style="font-weight:700" href="bounding-volume.html">包围体</a></li>
+<li><a href="bounding-volume-hierarchy-BVH-part1.html">包围体层次结构：BVH（第 1 部分）</a></li>
+<li><a href="bounding-volume-hierarchy-BVH-part2.html">包围体层次结构：BVH（第 2 部分）</a></li>
+<li><a href="grid.html">网格</a></li>
+<li><a href="what-else.html">还有什么？</a></li>
+</ol>
+</div>
+<h2>包围体</h2><p><b>阅读时间：8 分钟。</b></p><h2>包围盒</h2><p>最简单的加速光线追踪的方法未必能算作一种加速结构，但这无疑是缩短渲染时间最简单的办法。茶壶的每个网格都可能有一百多个三角形：分成 8 份时，一个网格含 128 个三角形，于是投射到场景中的每条光线都要做差不多这么多次求交测试。我们换一种做法：对一个包住该网格所有顶点的盒子做光线追踪。这样的盒子叫作<b>包围体</b>：它是能包住该网格的最紧的体（这里是盒子，但也可以是球体）。图 1 展示了构成本模型茶壶的 32 块 Bézier 曲面片各自的包围盒。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/teapotbbox.gif?" alt=""><figcaption><b>图 1：</b>构成 Newell 茶壶的各块 Bézier 曲面片的包围盒。</figcaption></figure><figure><img src="https://scratchapixel.com/images/acceleration-structure/bboxisect.png?" alt=""><figcaption><b>图 2：</b>对包住茶壶模型中某块曲面片的包围盒做光线求交测试。光线未击中的包围体所包住的几何体可以安全地剔除。</figcaption></figure><p>我们可以先测试光线是否与这个盒子相交，如果不相交，我们就确定它不可能与这个包围体所包的几何体相交（图 2）。如果这个包围盒里的三角形可以跳过，我们就省下了 128 次光线与三角形求交测试。考虑到场景里许多包围盒很可能都通不过这个测试，总体算下来能省下大量对光线与三角形求交例程的调用。但如果光线与包围盒相交，盒内的所有三角形就都得与这条光线做求交测试。图 2 中可以看到一条光线与构成茶壶模型的各块 Bézier 曲面片的包围盒相交。只有带颜色的盒子被光线击中，也只有这些盒子里装的网格才会与光线做求交测试。未被击中的盒子所装的曲面片可以安全剔除。</p><p>下面的伪代码说明了这个过程：</p><pre><code>
+for (each object in scene) { 
+    if (intersect(ray, object-&amp;gtboundingBox) == true) { 
+        for (each triangle in object) { 
+            if (intersect(ray, triangle) == true) { 
+                // 光线与该三角形相交 
+                ... 
+            } 
+        } 
+    } 
+} 
+</code></pre><figure><img src="https://scratchapixel.com/images/acceleration-structure/bbox.png?" alt=""><figcaption><b>图 3：</b>Ape 模型的包围盒（由 Kenichi Nishida 提供）</figcaption></figure><p>为一个物体计算包围盒非常简单。我们可以遍历构成网格的所有顶点，找出点各坐标（xyz 位置）的最小值和最大值。这些值构成我们所说的物体最小与最大范围，定义出包围盒的两个角（见图 3）。物体的包围盒通常在物体构建时算好（比如在多边形网格类的构造函数里），并存在物体类的成员变量中（每种图元类型可能需要不同的方法来计算这个包围盒，比如二次球体的包围体可以由它的半径算出）。下面这段光线追踪器的代码展示了我们如何计算一个多边形物体的包围盒（第 13 行）。bbox 变量是基类 Object 的成员变量（代码在本课程最后一章）。</p><pre><code>
+class PolygonMesh : public Object 
+{ 
+public: 
+    PolygonMesh( 
+        const Matrix44f &amp;o2w, 
+        const uint32_t &amp;np, const uint32_t *nv, const uint32_t *v, 
+        const Vec3f *pts, const Vec3f *nors = NULL) : 
+        Object(o2w), ntris(0), tris(NULL), P(NULL), N(NULL) 
+    { 
+        ... 
+        for (uint32_t i = 0; i &lt; maxVertIndex + 1; ++i) { 
+            objectToWorld.multVecMatrix(pts[i], P[i]); 
+            bbox.extendBy(P[i]); 
+        } 
+        ... 
+    } 
+}; 
+ 
+template&amp;lttypename T, uint32_t D&gt; 
+class Box 
+{ 
+public: 
+    ... 
+    void extendBy(const Vec&amp;ltT, D&gt;&amp; pt) 
+    { 
+        for (size_t i = 0; i &lt; D; ++i) { 
+            if (pt[i] &lt; bounds[0][i]) bounds[0][i] = pt[i]; 
+            if (pt[i] &gt; bounds[1][i]) bounds[1][i] = pt[i]; 
+        } 
+    } 
+    ... 
+}; 
+</code></pre><p>其余代码非常简单。我们会用第 7 课（与简单形状求交）里学过的光线与盒子求交例程：</p><pre><code>
+uint64_t numRayBoxTests = 0;
+
+
+template&amp;lttypename T, uint32_t D&gt;
+bool Box&amp;ltT, D&gt;::intersect(const Ray&amp;ltT&gt;&amp; r) const
+{
+    __sync_fetch_and_add(&amp;numRayBoxTests, 1);
+    ...
+    return true;
+}
+</code></pre><p>和光线与三角形求交方法一样，我们统计光线与盒子求交方法被调用的次数。box.cpp 文件里声明了一个全局变量 <code>numRayBoxTests</code>，每次调用盒子求交方法就用原子加法把它加一。最终值在渲染结束时随其他统计信息一起打印。</p><p>我们还建了一个 <code>AccelerationStructure</code> 基类，行为与物体非常相似。它有一个 <code>intersect</code> 方法，遍历场景中所有物体（第 5 行）。我们先测试光线与当前物体包围盒的交（第 7 行）。若测试成功，再让光线与盒内所装的物体求交（第 9 行）。其余代码与第 11 课里 trace 函数的实现非常相似。每命中一个三角形，我们都要更新到交点的最近距离（第 10–11 行），并保存被击中物体的指针（第 12 行）：</p><pre><code>
+const Object* AccelerationStructure::intersect(const Ray&amp;ltfloat&gt;&amp; ray, IsectData&amp; isectData) const 
+{
+    float tClosest = ray.tmax;
+    Object *hitObject = NULL;
+    for (size_t i = 0; i &lt; rc-&amp;gtobjects.size(); ++i) {
+        Ray&amp;ltfloat&gt; r(ray);
+        if (rc-&amp;gtobjects[i]-&amp;gtbbox.intersect(r)) {
+            IsectData isectDataCurrent;
+            if (rc-&amp;gtobjects[i]-&amp;gtintersect(ray, isectDataCurrent)) {
+                if (isectDataCurrent.t &lt; tClosest &amp;&amp; isectDataCurrent.t &gt; ray.tmin) { 
+                    isectData = isectDataCurrent; 
+                    hitObject = rc-&amp;gtobjects[i];
+                    tClosest = isectDataCurrent.t;
+                }
+            }
+        }
+    }
+ 
+    return (tClosest &lt; ray.tmax) ? hitObject : NULL;
+}
+</code></pre><p>最后要更新 trace 函数。不再遍历场景中所有物体，我们只需调用 <code>AccelerationStructure</code> 类的 <code>intersect</code> 方法。如果该方法返回一个指向场景中某物体的有效指针，说明发生了相交，我们就可以用被击中物体的颜色设置该像素的颜色：</p><pre><code>
+template&amp;lttypename T&gt;
+void trace(const Ray&amp;ltT&gt; ray, const RenderContext *rc, Spectrum &amp;s)
+{
+    IsectData isectData;
+    const Object *hitObject = NULL;
+    if ((hitObject = rc-&amp;gtaccelStruct-&amp;gtintersect(ray, isectData)) != NULL)
+        s.xyz = hitObject-&amp;gtcolor
+    else
+        s.xyz = rc-&amp;gtbackgroundColor
+}
+</code></pre><p>如果渲染上一章用过的场景，现在得到的统计如下：</p><pre><code>
+Render time                                 : 3.96 (sec)
+Total number of triangles                   : 16384
+Total number of primary rays                : 307200
+Total number of ray-triangles tests         : 129335296
+Total number of ray-triangles intersections : 111889
+Total number of ray-box tests               : 9830400
+</code></pre><p>渲染时间缩短了大约 34 倍。从逻辑上说，有无这个基础加速结构时光线与三角形测试次数之比也差不多：38。两个数字并不完全一致，因为现在多花了一些时间计算光线与盒子求交（983 万次）。不过这套方案带来的收益远远超过这些测试所需的额外工作。</p><p>本章介绍的技术在茶壶这个例子上效果很好，因为模型包含许多分辨率（按多边形数量算）相当低的网格。而 Ape 模型非常复杂，由单独一整块构成。如果渲染这个物体，我们只有在主光线没击中它的包围盒时才能省时间（典型一帧中，这类像素大概不到总像素数的三分之一）。对剩下的光线，我们仍然要对构成模型的那十万个三角形做求交测试。在那个特定例子里，包围盒方法相比暴力做法只能带来很小的收益。它实现简单又快，但显然并不适用于所有情况，因此算不上一种很好的加速方法。</p><details open><p>用包围体加速光线追踪的想法相当古老。要确切找出是谁、在何时提出这个想法很难。1980 年一篇题为《A 3-Dimensional Representation for Fast Rendering of Complex Scenes》的论文中，作者 Ruben 和 Whitted 已经谈到可以用这类包围体的层次结构来做「快速」渲染（见本课程末尾的参考文献小节）。</p></details><h2>下一步是什么？</h2><p>下一章我们会介绍 Kajiya 和 Kay 在 1986 年提出的一种加速光线追踪的技术。这个方法基于如今所说的<b>包围体层次结构</b>（或 <b>BVH</b>）。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/bounding-volume.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/bounding-volume.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光线追踪渲染技术概览 - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪渲染技术概览 · 光线追踪渲染技术概览（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光线追踪渲染技术概览</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="ray-tracing-rendering-technique-overview.html">光线追踪渲染技术概览</a></li>
+<li><a href="light-transport-ray-tracing-whitted.html">光传输算法与光线追踪：Whitted 光线追踪</a></li>
+</ol>
+</div>
+<h2>光线追踪渲染技术概览</h2><p><b>阅读时间：27 分钟。</b></p><blockquote><p>讨论光线追踪有一个麻烦：光线追踪这个词被赋予了太多含义。</p></blockquote><p>光线追踪是一种计算两点之间可见性的技术。光传输算法则是为了模拟光在空间中传播（并与物体相互作用）的方式而设计的，简而言之，它们用来计算场景中某一点的颜色。不要把光线追踪与光传输算法混为一谈，它们是两回事。光线追踪本身不是光传输算法，它只是一种计算两点间可见性的技术。</p><blockquote><p>给定欧氏空间中的一组障碍物，若连接空间中两点的线段不与任何障碍物相交，则称这两点互相可见。（维基百科上 [visibility](http://en.wikipedia.org/wiki/Visibility_(geometry)) 的定义）</p></blockquote><h2>光线追踪渲染技术概览</h2><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-setup.png?" alt=""><figcaption><b>图 1：</b>把一幅光栅图像在相机图像平面前方「滑动」。</figcaption></figure><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-setup2.png?" alt=""><figcaption><b>图 2：</b>光线可能打到场景几何体，也可能打空。</figcaption></figure><p>在本节的第一门课里，我们已经快速介绍过渲染的一般概念，特别是如何用光线追踪生成 3D 场景的图像。在其他几门课里我们也提到过光线追踪技术，比如 <a href="computer-discrete-raster.html">渲染 3D 场景的图像</a> 和 <a href="overview-rasterization-algorithm.html">光栅化：实践实现</a>，但那些课程的目的更多是突显光栅化与光线追踪这两种技术之间的差异，而它们是渲染 3D 物体图像的两种主要常见框架（或渲染技术）。</p><p>要不要再把光线追踪渲染技术介绍一遍？你对这个概念应该已经不陌生了，但本课是这一系列的第一课，后面我们要专门研究光线追踪特有的技术，所以再回顾一遍这个方法讲的是什么、如何工作、技术的基本原理，以及光栅化与光线追踪之间的主要差异，看来是个好主意。</p><p>光线追踪的一切都围绕光线，而光线正是本课的主要话题之一。我们会弄清光线是什么，以及在编程中如何定义它们。到现在我们已经知道，<b>光栅图像</b>由像素构成。生成 3D 场景图像的一种办法，是把这个光栅图像沿虚拟相机的图像平面「滑动」（图 1），并向图像中的每个像素射出光线，找出每个像素覆盖的是场景的哪一部分。具体做法很简单：从眼睛（相机位置）发出经过每个像素中心的光线，再看这些光线与场景中的哪个（或哪些）物体相交。如果一个像素「看到」了东西，那它看到的必然是沿该光线方向正对着它的那个物体。如前所述，光线方向可以这样构造：从相机原点向像素中心连一条线，再把它延伸进场景（图 2）。</p><p>现在我们知道了每个像素「看到」什么，接下来只需对图像中的每个像素重复这一过程。把像素的颜色设为穿过该像素中心的光线所相交物体的颜色，我们就能得到场景从某个特定视点看去的图像。注意，这个方法要对图像中的所有像素循环，并为每个像素向场景投射一条光线。第二步，也就是求交环节，则要对场景中的所有物体循环，检测光线是否与其中任何一个相交。下面是这种技术的一个伪代码实现：</p><pre><code>
+// 遍历所有像素
+Vec3f *framebuffer = new Vec3f[imageWidth * imageHeight]; 
+for (int j = 0; j &lt; imageHeight; ++j) { 
+    for (int i = 0; i &lt; imageWidth; ++i) { 
+        for (int k = 0; k &lt; numObjectsInScene; ++k) { 
+            Ray ray = buildCameraRay(i, j); 
+            if (intersect(ray, objects[k]) { 
+                // 这里做复杂的着色，但目前先用最简单的（就是常量颜色）
+                framebuffer[j * imageWidth + i] = objects[k].color; 
+            } 
+            else { 
+                // 或者什么都不做，保持黑色
+                framebuffer[j * imageWidth + i] = backgroundColor; 
+            } 
+        } 
+    } 
+} 
+</code></pre><p>注意有些光线可能根本没打到任何几何体。例如看图 2，其中一条光线就没有与球相交。遇到这种情况，我们一般把该像素的颜色留成黑色，或者设成我们想要的任何背景色（第 10 行）。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-look.png?" alt=""><figcaption><b>图 3：</b>想还原现实是很难的。</figcaption></figure><p>还要注意，在上面的代码里我们把像素颜色设成了交点处物体的颜色。可现实世界中的物体看上去并不是平的。它们有复杂的外观（这在绘画里就很难令人信服地再现——因为物体的外观通常视觉上非常复杂）。它们的明暗会随接收到的光照量变化，有的发亮，有的发哑，等等。照片级真实感渲染的目标，不只是准确描绘从某个给定视点看到的几何形状（并解决可见性问题），还要令人信服地模拟物体的外观。因此这个过程多半比返回一个常量颜色要复杂得多（而我们上面代码做的正是后者）。在计算机图形学中，定义物体表面<b>任意给定点</b>上实际颜色（这个颜色既取决于我们刚说的外部参数，比如物体接收到多少光照，也取决于内部参数，比如物体有多亮或多哑）这项工作，叫作<b>着色</b>。要再学好几门课我们才能真正开始研究着色，但在这个阶段你必须知道它的存在。</p><p>光线追踪被称为<b>以图像为中心</b>的算法。外层循环遍历图像中的所有像素，内层循环遍历场景中的物体。相比之下，光栅化算法是以物体为中心的：它要对场景中的所有几何图元循环（外层循环），把这些图元投影到屏幕上，然后再遍历图像中的所有像素，找出哪些像素与屏幕投影后的几何体重叠（内层循环）。两种算法的内、外层循环正好对调。下面是光栅化循环的一个简短伪代码实现（你可以在 <a href="overview-rasterization-algorithm.html">光栅化：实践实现</a> 这门课里找到该算法的完整描述）。</p><pre><code>
+// 遍历所有像素
+Vec3f *framebuffer = new Vec3f[imageWidth * imageHeight]; 
+for (int k = 0; k &lt; numObjectsInScene; ++k) { 
+    // 用透视投影把物体投影到场景中
+    ... 
+    for (int j = 0; j &lt; imageHeight; ++j) { 
+        for (int i = 0; i &lt; imageWidth; ++i) { 
+            if (pixelCoversGeometry(i, j, objects[k]) { 
+                framebuffer[j * imageWidth + i] = objects[k].color; 
+            } 
+        } 
+    } 
+} 
+</code></pre><p>前面几门课里已经多次提到，光栅化和光线追踪都能用来解决可见性问题。但要记住渲染过程分两步：包括可见性和着色。光栅化擅长解决可见性（而且比光线追踪快得多），但在着色方面不如光线追踪。而光线追踪两者都能胜任。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-ray-tracing-points.png?" alt=""><figcaption><b>图 4：</b>用光线追踪计算两点间的可见性很容易。</figcaption></figure><p>接下来要讲的内容对渲染来说相当核心，请花点时间仔细读。你经常会读到光线追踪在着色方面比光栅化更好这种说法，但大多数教材都没有解释为什么。（几乎）渲染中的一切，都是在计算空间中某一点与给定方向上第一个可见表面之间的可见性，或者两点之间的可见性。前者用来解决可见性问题，后者用来解决阴影之类的问题。光栅化（配合深度缓冲算法）非常擅长找出第一个可见表面，但在解决两点间的可见性上效率很低。而光线追踪能高效处理这两种情况。找出第一个可见表面对解决可见性问题很有用，因此光线追踪和光栅化在这方面都做得不错。可着色需要解决表面之间的可见性。它用来计算阴影、使用面光源时的软阴影，以及更一般地计算反射、折射、间接反射、间接漫反射这类全局光照效果。在渲染过程的这一部分，光线追踪就比光栅化更高效。但要记住，任何能计算两点间可见性的技术都可以用于着色和解决可见性问题，不一定非得是光线追踪或光栅化；只是光线追踪算是偷懒的做法，不过它也有代价，我们在本章结尾会看到。下一章讲光传输算法时，我们会再回到这个重要概念。</p><p>这样看，光线追踪似乎是比光栅化好得多的方法，但光线追踪的主要问题在于它要计算光线与几何体的交点，这是代价高昂（也就是慢）的操作。在实时图形应用中，速度比照片级真实感更重要，所以 GPU 采用光栅化。当照片级真实感比速度更重要时，光线追踪是更好的选择，只不过用它做到交互帧率就很难，更别说实时帧率了。</p><blockquote><p>光线追踪并不太慢，是计算机太慢。（Kajiya，1986）</p></blockquote><p>总结一下，用光线追踪计算 3D 物体的照片级真实感图像，本质上可以拆成三步：</p><ul><li><p>投射光线：为图像中的每个像素投射一条光线</p></li><li><p>光线与几何体求交：检测光线是否与场景中任何一个物体相交（这需要对每条投射的光线遍历所有物体）。</p></li><li><p>着色：弄清物体在光线与它的交点处「看起来什么样」（如果确实发生了相交）。</p></li></ul><p>下面我们逐步过一遍这三步。</p><h2>向场景中投射光线</h2><p>在光线追踪中生成图像，第一件事就是为图像中的每个像素投射一条光线。这些光线称为<b>相机光线</b>或<b>主光线</b>（因为它们就是我们射入场景的第一批光线）。本课后面会看到，从主光线还能衍生出更多光线，这些光线称为<b>次级光线</b>，用来判断场景中某点是否处于阴影中，或计算反射、折射等着色效果。一条主光线射入场景后，下一步就是找出它是否与场景中的任何物体相交。</p><p>当主光线被用来解决可见性问题时，我们可以用<b>光线投射（ray-casting）</b>这个词。</p><p>生成主光线或相机光线是下一门课的话题（<a href="definition-ray.html">光线追踪：生成相机光线</a>）。</p><h2>测试光线与几何体的相交</h2><p>检测一条光线是否与场景中任何物体相交，需要对场景中的所有物体循环，把当前物体与这条光线做检测。</p><pre><code>
+Ray ray = buildCameraRay(i, j); 
+for (int k = 0; k &lt; numObjects; ++k) { 
+    if (intersect(ray, objects[k]) { 
+        // 这条光线与 objects[k] 相交
+    } 
+} 
+</code></pre><p>3D 几何体可以用许多不同的方式定义。球、圆盘、平面这类简单形状可以用数学方式或参数方式定义。更复杂物体的形状只能用多边形网格、细分曲面或 NURBS 曲面（或等价的东西）来描述。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-triangulation.png?" alt=""><figcaption><b>图 5：</b>三角网格比其他类型的几何体更容易做光线追踪。</figcaption></figure><p>第一类物体（用数学方式表示的物体）通常可以用几何方法或解析方法做光线求交。比如光线与球的求交，两种方法都能解。这是 <a href="parametric-and-implicit-surfaces.html">光线追踪：渲染简单形状</a> 这门课的话题。</p><p>第二类物体的主要问题在于，光线与几何体求交的方法必须针对每一种支持的表面类型单独实现。例如 NURBS 曲面可以直接做光线追踪，但做法与检测光线和多边形网格相交的做法差别很大。因此，如果你想支持所有几何类型（细分曲面、NURBS、多边形网格），就得为每种支持的几何类型写一个求交例程。这会给程序代码平添相当程度的复杂性。另一种方案（也是几乎所有专业软件选择的路线）是把每种几何类型都转换成同一种内部表示，几乎 99% 的情况下就是三角化多边形网格。光线追踪喜欢三角形！</p><p>为什么是三角形？如前所述，首先，把不同的几何类型转换成同一种内部几何表示（这个过程也叫网格化，即 tessellation）是更好的做法，而把几乎任何类型的表面转换成多边形网格通常都很容易。在此基础上，再把多边形网格转成三角网格也相当直接（唯一的难点是凹多边形）。此外三角形的优势还在于，它在光线追踪和光栅化里都能当作基本的几何图元使用。两种算法都偏爱三角形，是因为它们具有其他形状没有的有趣几何性质。它们共面，而顶点数超过三个的面则不一定共面。用我们在<a href="rasterization-stage.html">讲光栅化的那门课</a>里描述的边函数方法计算其重心坐标也很直接。重心坐标在着色中扮演重要角色。</p><p>正因为如此，大量研究投入到寻找检测光线与三角形相交的最佳方法上。这个问题可以用几何方法求解，但那不一定是最快的方法。随着时间推移，人们也发展出了用代数解的其他方法。一个好的光线-三角形求交例程既要快，又要数值稳定。这个话题将在 <a href="why-are-triangles-useful.html">光线追踪：渲染三角形</a> 这门课里研究。</p><p>因此，多边形网格或其他类型的表面都会被转换成三角形。这一步既可以在把几何体载入程序内存之前完成（在建模工具里、导出网格给渲染器之前），也可以在渲染时载入几何体的过程中完成。这一系列课程里我们用后一种做法。不过要注意，现在每条相机光线不仅要与场景中的每个物体检测，还要与构成场景中每个多边形物体的每个三角形检测。换句话说，循环现在变成了这样：</p><pre><code>
+for (int j = 0; j &lt; imageHeight; ++j) { 
+    for (int i = 0; i &lt; imageWidth; ++i) { 
+        for (int k = 0; k &lt; numObjects; ++k) { 
+            for (int n = 0; n &lt; objects[k].numTriangles; ++n) { 
+                Ray ray = buildCameraRay(i, j); 
+                if (intersect(ray, objects[k].triangles[n])) { 
+                    framebuffer[j * imageWidth + i] = shade(ray, objects[k], n); 
+                } 
+            } 
+        } 
+    } 
+} 
+</code></pre><p>这在实践中意味着，用光线追踪渲染一个场景所需的时间与场景包含的三角形数量成正比。光栅化则不一定如此。当然，三角形越多，光栅化器渲染一帧就越久，但其中许多三角形在渲染开始之前就可以被丢弃（例如开启了背面剔除时，背对相机的三角形）。在光线追踪里这做不到，原因我们会在本章讲着色的部分解释。所有三角形都必须存在内存里，而且每次向场景投射光线时，每一个都要被检测。光线追踪的高计算代价（以及渲染时间随场景三角形数量线性增长这一点），是这个算法的重大祸根之一。</p><h3>trace 函数</h3><p>在光线追踪中，内层循环（遍历所有物体、以及每个物体包含的所有三角形）通常被移到一个函数里，这个函数一般叫 <code>trace()</code>。如果与某个物体/三角形相交，函数返回 true，否则返回 false。</p><pre><code>
+bool trace( 
+    const Vec3f&amp; rayOrigin, const Vec3f &amp;rayDirection, 
+    const Object* objects, const uint32_t &amp;numObjects, 
+    uint32_t &amp;objectIndex, 
+    uint32_t &amp;triangleIndex 
+) 
+{ 
+    bool intersect = false; 
+    for (uint32_t k = 0; k &lt; numObjects; ++k) { 
+        for (uint32_t n = 0; n &lt; objects[k].numTriangles; ++n)) { 
+            if (rayTriangleIntersect(rayOrigin, rayDirection, objects[k].triangles[n]) { 
+                intersect |= true; 
+                objectIndex = k; 
+                triangleIndex = n; 
+            } 
+        } 
+    } 
+ 
+    return intersect; 
+} 
+ 
+int main(...) 
+{ 
+    ... 
+    uint32_t objectIndeix, triangleIndex; 
+    for (int j = 0; j &lt; imageHeight; ++j) { 
+        for (int i = 0; i &lt; imageWidth; ++i) { 
+            if (trace(rayOrigin, rayDirection,   objects, numObjects, objectIndex, triangleIndex)) { 
+                framebuffer[j * imageWidth + i] = shade(rayOrigin, rayDirection, objects[objectIndex], triangleIndex); 
+            } 
+        } 
+    } 
+    ... 
+   return 0; 
+} 
+</code></pre><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-multi-triangles.png?" alt=""><figcaption><b>图 6：</b>一条光线可能与多个物体相交。</figcaption></figure><p>不过，正如你在图 6 中看到的，一条光线可能与多个三角形相交。在光栅化里，我们用深度缓冲解决这个问题。在光线追踪里，我们的做法是在 <code>trace()</code> 函数里建一个变量，在遍历各物体的三角形时记录光线原点与交点之间的最近距离。每当找到一个交点，就把到该三角形的距离 \(t\) 与这个变量（我们叫它 \(t_{nearest}\)）比较，它初始被设为无穷大（一个非常大的数）。如果 \(t\) 小于 \(t_{nearest}\)，就把 \(t_{nearest}\) 设为 \(t\)。最后，当所有物体的所有三角形都检测完毕，\(t_{nearest}\) 就保存着光线所相交的最近三角形的距离（如果有的话）；我们在着色阶段还需要再次访问这个三角形，所以也会存下它的一些信息，比如它所属的物体，以及它在该物体三角形列表中的索引。</p><details open><p>我们会在下一门课里更详细地讨论光线，这里先说：一条光线由它的原点和它（归一化后）的方向定义。那么距离 \(t\) 就定义了光线上某一点到光线原点的距离。光线上这个点的 3D 位置可以用下面的代码求出：</p><pre><code>
+Vec3f P = rayOrigin + t * rayDirection;
+</code></pre></details><pre><code>
+ bool trace( 
+    const Vec3f&amp; rayOrigin, const Vec3f &amp;rayDirection, 
+    const Object* objects, const uint32_t &amp;numObjects, 
+    uint32_t &amp;objectIndex, 
+    uint32_t &amp;triangleIndex, 
+    float &amp;tNearest 
+) 
+{ 
+    tNearest = INFINITY;  // 初始化为无穷大 
+    bool intersect = false; 
+    for (uint32_t k = 0; k &lt; numObjects; ++k) { 
+        for (uint32_t n = 0; n &lt; objects[k].numTriangles; ++n) { 
+            float t; 
+            if (rayTriangleIntersect(rayOrigin, rayDirection, objects[k].triangles[n], t) &amp;&amp; t &lt; tNearest) { 
+                objectIndex = k; 
+                triangleIndex = n; 
+                tNearest = t;  // 用目前找到的最近交点距离更新 tNearest 
+                intersect |= true; 
+            } 
+        } 
+    } 
+ 
+    return intersect; 
+} 
+</code></pre><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-geometry-data.png?" alt=""><figcaption><b>图 7：</b>法线、纹理坐标这类几何信息在着色中会被用到。</figcaption></figure><p>在着色阶段，我们需要访问交点处表面拓扑的一些信息，比如交点本身的位置（一般记作 <b>P</b>），还有交点处表面的法线（表面朝向，一般记作 <b>N</b>）以及它的纹理坐标（<b>st</b> 或 <b>uv</b> 坐标）。可能还需要其他量，比如交点处的表面导数，但那属于进阶话题。求交点处表面的法线往往很简单。对三角形来说，只需计算相交三角形两条边的叉积。对球来说，如果知道球心的位置（我们叫它 C），只需计算向量 ||P-C||。关于这个话题的更多信息可以在后面几门课里找到。</p><h2>着色</h2><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-glass-ball.png?" alt=""><figcaption><b>图 8：</b>扭曲效果是由折射现象造成的。</figcaption></figure><p>尽管与光栅化等其他方法相比，光线追踪的计算代价很高，但它也有一些优势，使它比其他渲染技术诱人得多。在着色方面尤其如此。</p><p>一旦找到光线相交的物体，接下来就要弄清该物体在交点处的颜色是什么。物体表面各处的颜色或强度通常差别很大。这既是因为光照在变化，也是因为物体表面的纹理在变化。物体表面任意一点的颜色，「不过」是物体把照到它表面上的光返回或反射向观察者的方式所产生的结果。交点处的颜色取决于：</p><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-gathering-light.png?" alt=""><figcaption><b>图 9：</b>在落到 P 点表面上的所有光中，有多少被反射向观察者？</figcaption></figure><ul><li><p>有多少光（在现实世界中，光颜色与光强度的概念是一回事）落到物体表面上（既包括交点处，也包括交点之外——如果表面是透明或半透明的，但那是进阶话题）。</p></li><li><p>这些光的方向。</p></li><li><p>表面自身的性质，尤其是它的颜色。</p></li><li><p>观察者的位置。大多数表面并不会向各个方向均匀反射光，因此反射光的量很可能随相机或观察者的位置而变化。</p></li></ul><p>等到讲着色的课程时，我们会详细回顾这个过程。现在你只需注意：除了物体的性质（比如它的颜色），着色还非常依赖于「收集」落到物体表面上的光的信息。在自然界中，这个过程可以描述为：光源发出的「光线」（或者间接地，由场景中其他表面把光源的光线反射到别的表面上，这一过程称为间接光照）落到物体表面，再被反射进场景。其中一些反射光线会打到更多表面，又被依次反射。另一些光线可能到达观察者的眼睛或相机。在现实世界中，光从光源传播到眼睛（图 8）。而在光线追踪中，我们一般选择反过来追踪光线的路径，从眼睛追到表面，再从表面追到光源，这个过程我们称为<b>反向追踪</b>，因为它沿着光的自然传播方向倒退（图 9）。</p><blockquote><p>「在光线追踪的一种显而易见的路子里，从光源发出的光线被沿着它们的路径追踪，直到打中观察者。由于只有少数光线能到达观察者，这种做法很浪费。在 Appel 提出的第二种路子中，光线沿相反方向追踪——从观察者追向场景中的物体。」《An Improved Illumination Model for Shaded Display》，Turner Whitted，1980。</p></blockquote><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-shader-brdf.png?" alt=""><figcaption><b>图 10：</b>光照模型的职能是：根据表面性质（如颜色）与光强，以及入射光方向 \(\omega_i\)，定义在 \(\omega_o\) 方向上反射了多少光。</figcaption></figure><p>本章和本课不会解释着色如何工作，但我们会在下一章提供一些关于光传输算法的信息。光传输算法的职能是模拟光（以能量的形式）在场景中分布的方式。给定材质如何把这些光反射到环境中，是由一个数学模型——在计算机图形学里叫<b>光照模型</b>——来定义的（如果你以前听过 BRDF 这个词，BRDF 的作用大致就是这个）。<a href="http://en.wikipedia.org/wiki/Phong_reflection_model" target="_blank" rel="noreferrer noopener">Phong 模型</a>（很有名）就是光照模型的一个例子。光照模型一般实现在我们所说的着色器里。着色器一般实现为某种函数，输入是入射光方向 \(\omega_i\)（希腊字母 omega）和强度、观察该材质的方向 \(\omega_o\)，然后根据材质属性与所用的光照模型，返回沿 \(\omega_o\) 方向反射出去的入射光量。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-light-path.png?" alt=""><figcaption><b>图 11：</b>主光线与次级光线（反射光线与阴影光线）。</figcaption></figure><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-shadow2.png?" alt=""><figcaption><b>图 12：</b>阴影光线。</figcaption></figure><p>再说一次，现在不必太在意着色、光传输算法、着色器、BRDF 和光照模型。这些概念都会在讲着色的课程里详细解释。就本课而言，重要的是注意：着色涉及模拟光能如何在场景中分布。看这个问题最自然的方式之一，就是从光线的角度出发。例如，我们可能想沿着这样一条光线的路径：它由光源发出，被一个漫反射物体反射向一面镜子，最后被这面镜子反射向眼睛。由于在 CG 中我们更愿意用反向追踪，我们就会反着走这条光线的路径：从眼睛向镜子追踪一条光线，然后投射一条反射光线（反射光线的方向可以用著名的反射定律很容易地算出来，我们会在讲着色的课程里学习）。这条光线会与那个漫反射物体相交。最后我们再从漫反射物体向光源投射一条光线。主光线之后投射的所有光线（从镜面到漫反射物体的光线，以及从漫反射物体到光源的光线）都称为<b>次级光线</b>。次级光线往往有自己的名字：例如从镜子投射出的那条叫<b>反射光线</b>，朝光源投射的那条叫<b>阴影光线</b>。这条光线的主要目的是判断漫反射物体上的那个点是否处于该光源的阴影中（如果阴影光线在去往光源的途中与某个物体相交，那么这个点就在阴影里）。</p><p>注意这些次级光线每一条都涉及计算两点之间的可见性。例如，当我们从镜子向场景投射一条反射光线时，我们想算出这条反射光线最终会相交的第一个可见表面（在我们的例子里就是那个漫反射物体）。当我们投射阴影光线时，我们想弄清这条光线在到达光源之前是否与另一个物体相交。而<b>计算两点间可见性最简单的办法，你大概也猜到了，当然就是用光线追踪</b>。</p><details open><p>光线追踪一直被认为是生成 3D 物体照片级真实感图像的最佳方案，但要记住，直到不久之前（大约到 1990 年代末、2000 年代初），这项技术本身还被视为代价太高，除了用于某些研究项目之外别无他用。还要记住，计算机资源在增长，但所渲染场景的复杂度也在增长。因此这些场景实际渲染所需的时间多年来并没有太大变化。这个效应被称为 <a href="light-simulator.html">Blinn 定律</a>。</p></details><p>总之可以说，<b>任何需要大量计算可见性的光传输算法（比如向场景投射反射光线或阴影光线时），用光线追踪来做很可能更高效</b>。证毕。（_quod erat demonstrandum_，意为「需要证明的都已经证完」）。</p><h2>光线追踪：挑战</h2><p>光线追踪原理非常简单，实现起来也「容易」。过程中最复杂的部分是写代码或例程来计算光线与物体的交点。这个问题通常用几何解或解析解解决，两者都需要大量数学。但除了数学之外，主要问题在于这些求交检测往往也是一个代价高昂的过程。尽管有这个主要缺点，这项技术在简洁性上很优雅，并且能在同一个统一的框架里同时解决可见性和着色。</p><p>当我们说光线追踪容易实现时，或许应当说明：开发一个生产级的光线追踪器是一件非常复杂的事。写一个基本的原型很简单，但要让这项技术足够健壮、能用于大型生产，就是很有挑战性的问题。生产级的光线追踪需要支持置换、运动模糊、可编程着色等诸多特性。其中很多特性在光线追踪里很难高效地跑起来。光线追踪带来了一整套光栅化算法没有的问题，这些问题很难高效解决。光线追踪的主要问题之一，是渲染图像时必须把场景的全部几何体都保存在内存里。光栅化就不一定：一旦我们知道某个物体在屏幕其他地方都不会可见，就可以把它扔掉（从内存里删掉）。如果开了背面剔除，背对相机的三角形也能扔掉。而在光线追踪里，即使某个物体在场景中不可见，它也可能在相机可见的其他物体上投下阴影，因此必须一直留在内存里，直到图像最后一个像素处理完。生产场景动辄包含数百万个三角形，保存这些数据所需的内存量可能成为问题。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-mem-consuming.png?" alt=""><figcaption><b>图 13：</b>光线追踪非常消耗内存。</figcaption></figure><p>本课提到的光线求交环节，是光线追踪渲染过程中代价最高的部分。只把光线-几何体求交例程写快通常还不够。光线追踪器会使用我们所说的<b>加速结构</b>来加速这个过程。加速结构是空间结构，用来在空间中把几何体「排序」，避免每条投射的光线都要检测场景中的所有物体。加速结构不会在这篇渲染入门里讲，但你会在光线追踪进阶部分找到相关的课程。它们很有效，能把光线追踪加速很多倍，但它们也占用大量内存，而这些内存还要叠加在已经用于保存几何体的内存之上。</p><p>最后，你还需要保存与物体运动相关的信息。这又进一步增加了保存场景数据所需的内存量。总而言之，面对同一个场景，光线追踪器一般比光栅化器占用多得多的内存。光线追踪有助于生成更真实的图像，代价是比基于光栅化算法的程序更慢、更耗内存。这个算法在概念上很简单，但要在非常大、非常复杂、着色也很复杂的场景上可靠高效地跑起来，却非常难。</p><h2>在 GPU 上做光线追踪？</h2><p>光线追踪算法最早在 1990 年代中期被成功移植到 GPU 上。这个方向已经做过相当多的研究，但光线追踪算法至今还没有被大多数消费级显卡原生支持（用于加速光线追踪的硬件其实早就存在了）。未来几年 GPU 很可能会原生支持光线追踪。但如上所述，它还需要克服内存管理等问题——你知道的，在光线追踪里这些问题比光栅化更难对付。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-overview/ray-tracing-rendering-technique-overview.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-overview/ray-tracing-rendering-technique-overview.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

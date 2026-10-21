@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>包围体层次结构：BVH（第 1 部分） - Scratchapixel 中文译本</title>
+<meta name="description" content="加速结构简介 · 包围体层次结构：BVH（第 1 部分）（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>包围体层次结构：BVH（第 1 部分）</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-acceleration-structure-introduction.html">简介</a></li>
+<li><a href="bounding-volume.html">包围体</a></li>
+<li><a style="font-weight:700" href="bounding-volume-hierarchy-BVH-part1.html">包围体层次结构：BVH（第 1 部分）</a></li>
+<li><a href="bounding-volume-hierarchy-BVH-part2.html">包围体层次结构：BVH（第 2 部分）</a></li>
+<li><a href="grid.html">网格</a></li>
+<li><a href="what-else.html">还有什么？</a></li>
+</ol>
+</div>
+<h2>包围体层次结构：BVH（第 1 部分）</h2><p><b>阅读时间：15 分钟。</b></p><h2>简介</h2><p>本章我们将介绍并使用研究者 Kay 和 Kajiya 在 1986 年提出的一项技术。此后出现的其他加速结构已被证明比他们的技术更好，但他们的方案有助于奠定多数加速结构赖以建立的那些原理。它是一个很好的起点，而且和 Utah Teapot 一样，能给我们机会引出一些在许多其他图形学算法里也会出现的新颖有趣的技术（比如八叉树结构）。我们强烈建议你读一读他们的论文（见本课程末尾的参考文献小节）。</p><h2>范围</h2><figure><img src="https://scratchapixel.com/images/acceleration-structure/bboxtight.png?" alt=""><figcaption><b>图 1：</b>当代表物体的包围体与物体贴合得过于松时，许多与这个范围相交的光线其实并不与形状相交，白费了（上图）。使用更复杂的包围体（下图）结果更好，但光线追踪它的代价更高。</figcaption></figure><p>上一章我们直观地展示了可以用简单技术加速光线追踪，比如对包围体做光线追踪。正如 Kay 和 Kajiya 在论文中指出的，这些技术只有在追踪这些包围体（他们称之为<b>范围</b>）比追踪物体本身快得多时才有效。他们还指出，如果范围与物体贴合得松，那么与该包围体相交的许多光线很可能其实打不中里面的物体。反过来，如果范围精确描述了物体，那么与该范围相交的所有光线也都会与物体相交。显然，符合这一条件的包围体就是物体本身。因此包围体的好选择，是在紧致程度（范围与物体贴合的紧密程度）与速度（复杂的包围体比简单形状更难做光线追踪）之间取得良好折中的形状。图 1 说明了这一点：包住茶壶的盒子比下图里更紧地包住茶壶的包围体更快被光线追踪，但与这个盒子相交却打不中茶壶几何体的光线，也比贴合得更紧的情况更多。球体和盒子这类形状在多数情况下结果相当不错，但为了用好「在简单与快速之间找好折中」这个想法，Kay 和 Kajiya 提议把这些简单形状再精化一步。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/bboxplane.gif?" alt=""><figcaption><b>图 2：</b>物体的包围盒可以看作与 x 轴、y 轴平行的若干平面的交集。</figcaption></figure><p>包围盒可以看作彼此相交的平面。为了便于演示，我们只考虑二维的情况。设想我们需要计算茶壶的包围盒。从技术上说，这可以看作两个与 y 轴平行的平面与两个与 x 轴平行的平面的交集（图 2）。现在我们需要找到计算这些平面的方法？该怎么做？我们在第 7 课里为了计算光线与盒子的交点已经介绍过平面方程，第 9 课里为了计算光线与三角形的交点也用过。回顾一下，平面方程（这次是三维的）可以定义为：</p><p>$$Ax + By + Cz - d = 0$$</p><p>其中 A、B、C 三项定义平面的法线（一个垂直于该平面的向量），\(d\) 是沿这个向量从世界原点到该平面的距离。x、y、z 三项定义平面上某一点的三维笛卡尔坐标。这个公式说的是：平面上任何一点，其坐标乘以平面法线的坐标再减去 \(d\)，等于零。这个公式也可以用来把茶壶的顶点<b>投影</b>到平面上，并求出 \(d\) 的值。给定点 \(P_{(x, y, z)}\) 和法线为 \(N_{(x, y, z)}\) 的平面，我们可以解出 \(d \)：</p><p>$$
+\begin{array}{l}
+Ax + By + Cz - d = 0\\N_x P_x + N_y P_y + N_z P_z - d = 0\\d = N_x P_x + N_y P_y + N_z P_z
+\end{array}
+$$</p><p>我们可以把这个公式改写成更传统的点与矩阵相乘的形式（公式 1）：</p><p>$$d = [P_x P_y P_z]\left[ \begin{array}{c} N_x \\ N_y \\ N_z \end{array} \right] $$</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/projectpt.png?" alt=""><figcaption><b>图 3：</b>把点投影到法线为 (1,0,0) 的平面上。</figcaption></figure><p>如果我们把顶点 \(P_{(x, y, z)}\) 投影到法线为 \(N_{(1, 0, 0)}\)、与 y 轴平行的平面上，\(d\) 给出的是沿 x 轴从原点到那个包含 \(P_{(x, y, z)}\)、与 y 轴平行的平面的距离。如果对模型的所有顶点重复这一过程，可以证明 \(d\) 值最小的点和 \(d\) 值最大的点，分别对应物体 x 坐标的最小与最大范围。\(d\)、\(d^{near}\)、\(d^{far}\) 这三个值描述了约束住物体的两个平面（如图 3 所示）。我们可以用下面的伪代码实现这个过程：</p><pre><code>
+// 平面法线
+vector N(1, 0, 0);
+float Dnear = INFINITY;
+float Dfar = -INFINITY;
+for (each point in model) {
+    // 投影点
+    float D = N.x * P.x + N.y * P.y + N.z * P.z;
+    Dnear = min(D, Dnear);
+    Dfar = max(D, Dfar); 
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/acceleration-structure/slab.gif?" alt=""><figcaption><b>图 4：</b>分别与 xz、yz、xy 平面平行的三个平板，它们的交集定义一个轴对齐包围盒（AABB）。</figcaption></figure><p>在论文中，Kay 和 Kajiya 把两个平面之间的这片空间区域称为<b>平板</b>，定义平板朝向的法向量称为<b>平面组法线</b>。正如他们观察到的：</p><blockquote><p>**平面组法线**的不同选择会给出物体不同的包围平板。一组包围**平板**的交集给出一个包围体。要在 3 空间中构造封闭的包围体，至少要涉及三个包围平板，而且它们的选择必须使定义它们的法向量张成 3 空间。</p></blockquote><p>这个原理最简单的例子是轴对齐包围盒（AABB），它由分别与 xz、yz、xy 平面平行的三个平板定义（图 4）。不过 Kay 和 Kajiya 提议不用三个，而用七个平板来得到更紧的包围体。这些平板的平面组法线是预先选定的，与被包围的物体无关。为了更好地想象它是怎么工作的，我们再回到二维的情况。设想用于包围物体的平面组法线是：</p><p>$$
+\left(
+\begin{array}{c}
+1\\0
+\end{array}\right),\;
+\left(\begin{array}{c}
+0\\1
+\end{array}\right),\;
+\left(\begin{array}{c}
+\dfrac{\sqrt{2}}{2}\\\dfrac{\sqrt{2}}{2}
+\end{array}\right),\; \text{ and }
+\left(\begin{array}{c}
+\dfrac{\sqrt{2}}{2}\\-\dfrac{\sqrt{2}}{2}
+\end{array}
+\right)
+$$</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/slab2D.png?" alt=""><figcaption><b>图 5：</b>用四个平面组法线包围一个物体。</figcaption></figure><p>图 5 展示了被这些预先选定的平面组法线包围的物体（这是 Kay 和 Kajiya 论文中图 3 的复现）。</p><p>如你所见，得到的包围盒比简单的包围盒更贴合物体。对三维情况，他们用了七个平面组法线：</p><p>$$
+\begin{array}{l} 
+{\left(\begin{array}{c}
+1\\0\\0
+\end{array}\right),\;
+\left(\begin{array}{c}
+0\\1\\0
+\end{array}\right),\;
+\left(\begin{array}{c}0\\0\\1
+\end{array}\right), } 
+{
+\left(\begin{array}{c}
+\dfrac{\sqrt{3}}{3}\\ \dfrac{\sqrt{3}}{3}\\ \dfrac{\sqrt{3}}{3}
+\end{array}\right),\; 
+
+\left(\begin{array}{c}
+-\dfrac{\sqrt{3}}{3}\\ \dfrac{\sqrt{3}}{3}\\ \dfrac{\sqrt{3}}{3}
+\end{array}\right),\;
+
+\left(\begin{array}{c}
+-\dfrac{\sqrt{3}}{3}\\ -\dfrac{\sqrt{3}}{3}\\ \dfrac{\sqrt{3}}{3}
+\end{array}\right), 
+
+\text{ and } 
+
+\left(\begin{array}{c}
+\dfrac{\sqrt{3}}{3}\\-\dfrac{\sqrt{3}}{3}\\ \dfrac{\sqrt{3}}{3}
+\end{array}\right)
+
+}
+\end{array}
+$$</p><p>前三个平面组法线定义一个轴对齐包围盒，后四个平面组法线定义一个八面体。要构造物体的包围体，我们只需把模型的顶点投影到七个平面组法线上，为每个平板求出 \(d\) 的最小值和最大值。</p><details open><p>论文中 Kay 和 Kajiya 给出了计算隐式曲面和复合物体包围体的解法，但本版课程中我们不涉及。</p></details><h2>光线与体求交</h2><p>接下来要写一些代码来对这些体做光线追踪。原理与光线与盒子求交非常相似。一个平板由两个彼此平行的平面定义，如果光线不平行于这些平面，它就会与两者都相交，得到两个值 \(t_{min}\) 和 \(t_{far}\)。要计算相交距离 \(t\)，我们只需把光线方程 \(O + Rt = 0\) 代入平面方程 \(Ax + By + Cz - d = N_i \cdot P_{x,y,z} - d = 0\)，得到（公式 2）：</p><p>$$
+\left\{ 
+\begin{array}{l}
+N_i \cdot (O + Rt) - d= 0\\
+t = { \dfrac{ d - N_i \cdot O }{N_i \cdot R} }
+\end{array}
+\right.
+$$</p><p>其中 \(N_i\) 是七个平面组法线之一，\(O\) 和 \(R\) 分别是光线的起点和方向，\(d\) 是沿法线 \(N_i\) 从世界原点到包含交点 \(P_{x,y,z}\) 的那个平面的距离。\(N_i \cdot O\) 和 \(N_i \cdot R\) 这两项可以复用，用来计算光线与两个平面之间的相交距离 \(t\)。把被测平板预先算好的 \(d\) 值（\(d_{near}\) 和 \(d_{far}\)）代入，就为每个平面得到一个 \(t\) 值。</p><pre><code>
+// 计算给定光线与平板的交点
+float NdotO = N . O;
+float NdotR = N . R;
+float tNear = (dNear - NdotO) / NdotR;
+float tFar = (dFar - NdotO) / NdotR;
+</code></pre><figure><img src="https://scratchapixel.com/images/acceleration-structure/reverset.png?" alt=""><figcaption><b>图 6：</b>当 R 与 N 的乘积小于零时，近值与远值的角色需要互换。</figcaption></figure><p>和追踪盒子一样，当分母 \(N_i \cdot R\) 接近零时必须小心处理。此外，当分母小于零时我们还需要交换 \(d_{near}\) 与 \(d_{far}\)（见图 6）。与光线和盒子求交一样（算法细节见第 7 课），这个测试对包住物体的每个平板都做一遍。在所有算出的 \(t_{near}\) 值中我们保留最大的那个，在所有算出的 \(t_{far}\) 值中保留最小的那个。如果最终的 \(t_{far}\) 值大于 \(t_{near}\) 值，就说明与该体相交。如果光线与该体相交，\(t\) 值就指出这些交点在光线上的位置。得到的区间（由 \(t_{near}\) 和 \(t_{far}\) 定义）可用于估计物体在光线上的位置。下面我们试着把学到的付诸实践。</p><h2>源代码</h2><p>下面的 C++ 代码实现了本章描述的方法。<code>BVH</code> 类派生自基类 <code>AccelerationStructure</code>。我们在这个类里建了一个叫 <code>Extents</code> 的结构，用来存放全部七个预定义平面组法线对应的 \(d_{near}\) 和 \(d_{far}\) 值（第 7–11 行）。</p><pre><code>
+class BVH : public AccelerationStructure
+{
+    static const uint8_t kNumPlaneSetNormals = 7;
+    static const Vec3f planeSetNormals[kNumPlaneSetNormals];
+    struct Extents
+    {
+        Extents()
+        {
+            for (uint8_t i = 0; i &lt; kNumPlaneSetNormals; ++i)
+                d[i][0] = kInfinity, d[i][1] = -kInfinity;
+        }
+        bool intersect(const Ray&amp;ltfloat&gt; &amp;ray, float &amp;tNear, float &amp;tFar, uint8_t &amp;planeIndex);
+        float d[kNumPlaneSetNormals][2];
+    };
+    Extents *extents;
+public:
+    BVH(const RenderContext *rcx);
+    const Object* intersect(const Ray&amp;ltfloat&gt; &amp;ray, IsectData &amp;isectData) const;
+    ~BVH();
+};
+</code></pre><p>在这个类的构造函数里，我们分配一个 extents 数组，存放场景中所有物体的包围体数据（第 3 行）。然后遍历所有物体，调用 Object 类的 <code>computeBounds</code> 方法，为包住物体的每个平板算出 <code>dNear</code> 和 <code>dFar</code> 值（第 4–8 行）。下面这段代码里我们只给出 <code>PolygonMesh</code> 类的这个函数。我们遍历网格的所有顶点，把它们投影到当前平面上（第 27–31 行）。类构造函数里的工作到此结束。</p><pre><code>
+BVH::BVH(const RenderContext *rcx) : AccelerationStructure(rcx), extents(NULL) 
+{ 
+    extents = new Extents[rcx-&amp;gtobjects.size()]; 
+    for (uint32_t i = 0; i &lt; rcx-&amp;gtobjects.size(); ++i) { 
+        for (uint8_t j = 0; j &lt; kNumPlaneSetNormals; ++j) { 
+            rcx-&amp;gtobjects[i]-&amp;gtcomputeBounds(planeSetNormals[j], extents[i].d[j][0], extents[i].d[j][1]); 
+        } 
+    } 
+} 
+
+const Vec3f BVH::planeSetNormals[BVH::kNumPlaneSetNormals] = { 
+    Vec3f(1, 0, 0), 
+    Vec3f(0, 1, 0), 
+    Vec3f(0, 0, 1), 
+    Vec3f( sqrtf(3) / 3.f,  sqrtf(3) / 3.f, sqrtf(3) / 3.f), 
+    Vec3f(-sqrtf(3) / 3.f,  sqrtf(3) / 3.f, sqrtf(3) / 3.f), 
+    Vec3f(-sqrtf(3) / 3.f, -sqrtf(3) / 3.f, sqrtf(3) / 3.f), 
+    Vec3f( sqrtf(3) / 3.f, -sqrtf(3) / 3.f, sqrtf(3) / 3.f) }; 
+} 
+
+class PolygonMesh : public Object 
+{ 
+    ... 
+    void computeBounds(const Vec3f &amp;planeNormal, float &amp;dnear, float &amp;dfar) const 
+	{ 
+        float d; 
+        for (uint32_t i = 0; i &lt; maxVertIndex; ++i) { 
+            d = dot(planeNormal, P[i]); 
+            if (d &lt; dnear) dnear = d; 
+            if (d &gt; dfar) dfar = d; 
+        } 
+    } 
+    ... 
+}; 
+</code></pre><p>渲染函数被调用后，我们不再与场景中每个物体求交，而是调用 <code>BVH</code> 类的求交方法。首先让光线与场景中所有物体的所有包围体做测试。为此我们用当前被测物体的体数据调用 <code>Extent</code> 结构的 intersect 方法（第 24 行）。这个方法只是计算当前光线与包住物体的七个平板各自的交点，并跟踪 <code>dNear</code> 值中最大的和算出的 <code>dFar</code> 值中最小的。如果 <code>dFar</code> 大于 <code>dFar</code>，说明与该包围体相交，函数返回 true。在下面这版代码里，如果光线与该体相交，我们就把 <code>IsectData</code> 结构中的成员变量 N 设为被相交平面的法线。这个向量 N 与光线方向的点积结果用来设置当前像素的颜色。得到的图像见图 7，它有助于直观看清被相交、环绕在物体周围的这些包围体。</p><pre><code>
+inline bool BVH::Extents::intersect(
+	const Ray&amp;ltfloat&gt; &amp;ray,
+    float *precomputedNumerator, float
+	*precomputeDenominator,
+	float &amp;tNear, float &amp;tFar, uint8_t
+	&amp;planeIndex)
+{
+	for (uint8_t i = 0; i &lt; kNumPlaneSetNormals; ++i) {
+        float tn = (d[i][0] - precomputedNumerator[i]) / precomputeDenominator[i];
+        float tf = (d[i][1] - precomputedNumerator[i]) / precomputeDenominator[i];
+        if (precomputeDenominator[i] &lt; 0) std::swap(tn, tf);
+        if (tn &gt; tNear) tNear = tn, planeIndex = i;
+        if (tf &lt; tFar) tFar = tf;
+        if (tNear &gt; tFar) return false;
+    }
+ 
+    return true;
+}
+
+const Object* BVH::intersect(const Ray&amp;ltfloat&gt; &amp;ray, IsectData &amp;isectData) const
+{
+	float tClosest = ray.tmax;
+    Object *hitObject = NULL;
+    float precomputedNumerator[BVH::kNumPlaneSetNormals], precomputeDenominator[BVH::kNumPlaneSetNormals];
+    for (uint8_t i = 0; i &lt; kNumPlaneSetNormals; ++i) {
+        precomputedNumerator[i] = dot(planeSetNormals[i], ray.orig);
+        precomputeDenominator[i] = dot(planeSetNormals[i], ray.dir);;
+    }
+    for (uint32_t i = 0; i &lt; rc-&amp;gtobjects.size(); ++i) {
+        __sync_fetch_and_add(&amp;numRayVolumeTests, 1);
+        float tNear = -kInfinity, tFar = kInfinity;
+        uint8_t planeIndex;
+        if (extents[i].intersect(ray, precomputedNumerator, precomputeDenominator, tNear, tFar, planeIndex)) {
+            if (tNear &lt; tClosest)
+                tClosest = tNear, isectData.N = planeSetNormals[planeIndex], hitObject = rc-&amp;gtobjects[i];
+        }
+    }
+ 
+    return hitObject;
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/acceleration-structure/teapotbvh.png?" alt=""><figcaption><b>图 7：</b>这张图展示了包住构成茶壶的 32 块 Bézier 曲面片、被光线相交的那些包围体。</figcaption></figure><p>而在下面这版、也是最终的 intersect 方法里，如果包围体被相交，我们就再测试光线与该体所包的物体（如果有多个，比如一组三角形网格，就与它们全部）之间是否有交点。测试成功时，如果相交距离是我们目前找到的最小值，就更新 <code>tClosest</code>，并保存被击中物体的指针。</p><pre><code>
+int main(int argc, char **argv)
+{
+    clock_t timeStart = clock();
+    ...
+    rc-&amp;gtaccelStruct = new BVH(rc);//AccelerationStructure(rc);
+    render(rc, filename);
+    ...
+    printf("Render time                                 : %04.2f (sec)\n", (float)(timeEnd - timeStart) / CLOCKS_PER_SEC);
+    printf("Total number of triangles                   : %d\n", totalNumTris);
+    printf("Total number of primary rays                : %llu\n", numPrimaryRays);
+    printf("Total number of ray-triangles tests         : %llu\n", lrt::numRayTrianglesTests);
+    printf("Total number of ray-triangles intersections : %llu\n", lrt::numRayTrianglesIsect);
+    printf("Total number of ray-volume tests            : %llu\n", lrt::numRayBoxTests);
+    return 0;
+}
+</code></pre><p>最后，如果我们用新的加速结构编译并运行程序，得到如下统计：</p><pre><code>
+Render time                                 : 2.92 (sec)
+Total number of triangles                   : 16384
+Total number of primary rays                : 307200
+Total number of ray-triangles tests         : 80998400
+Total number of ray-triangles intersections : 111889
+Total number of ray-volume tests            : 9830400
+</code></pre><p>这项技术比上一章的方法快 1.34 倍。看起来也许不多，但简单场景上省下的几秒，到了复杂场景就可能变成几小时。</p><h2>下一步是什么？</h2><p>尽管我们改进了第 2 章的结果，这项技术仍然有个缺点：渲染时间与场景中物体的数量成正比。为了进一步提升这个方法的性能，Kay 和 Kajiya 建议使用体的层次结构。再引用一次论文作者的话：</p><blockquote><p>对每个这样的节点我们计算一个包围体。那么如果一条光线在某层次结构的某个节点处未击中该包围体，我们就可以把这个节点的整棵子树排除在考虑之外。使用层次结构会使计算一幅图像的开销随场景中物体数量呈对数增长。</p></blockquote><p>我们将在下一章实现这个想法。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/bounding-volume-hierarchy-BVH-part1.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/bounding-volume-hierarchy-BVH-part1.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

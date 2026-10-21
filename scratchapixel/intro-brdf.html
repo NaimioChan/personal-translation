@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>写给美术的 BRDF 与辐射度量学入门 - Scratchapixel 中文译本</title>
+<meta name="description" content="BRDF、线性与曝光的一次创意探索 · 写给美术的 BRDF 与辐射度量学入门（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>写给美术的 BRDF 与辐射度量学入门</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="intro-brdf.html">写给美术的 BRDF 与辐射度量学入门</a></li>
+<li><a href="0-18-stop-and-exposure-explained.html">控制 CG 光照：曝光、灰区与灰球</a></li>
+<li><a href="painting-textures.html">绘制纹理</a></li>
+</ol>
+</div>
+<h2>写给美术的 BRDF 与辐射度量学入门</h2><p><b>阅读时间：16 分钟。</b></p><p>本课最初写于 2000 年代初。虽然其中有些内容可能略有过时——毕竟 CGI 工作室的流程已经演变了很多——但我确实打算将来重访这一课。不过它包含有价值的信息，既有历史性的也有实用性的，对理解下一课「光照简介」会有帮助。因此，我决定在这次计划中的更新之前，仍然把它重新发布出来（2024 年 3 月）。</p><p>一段引言：本课最初写于 2000 年代初，目的是为我当时合作的 CG 美术提供资料。很多人被 BRDF 的概念卡住，也不理解某些要求背后的道理，比如为什么最好把光强保持为 1、而用曝光来控制光的亮度。这种做法在 ILM、Weta 这类先驱工作室的流程中用了很久，却花了很长时间才被引入 Arnold 这类商业渲染方案。CG 美术觉得这个特性难以适应，也难改掉原有习惯。问题接踵而来：为什么纹理里要画线性 RGB 值？我们不断使用的那个拗口的「BRDF」到底是什么意思？反射率和反照率是什么？为什么漫反射表面要把反照率除以 \(\pi\)？</p><p>本课的目的就是为这些概念祛魅，尤其是为这些美术。它尝试把概念和公式拆解到即便数学底子很薄的人也能看懂。正如前言所说，这些内容写得相当早，原则上虽然准确，但可能并不反映工作室当前的做法。例如铬球或灰球的使用已经有了相当大的改进。我打算将来重访这部分，但在此之前，我们得先把新内容推进下去。我希望非技术背景的 CG 美术仍能从它现在的样子里获益。</p><h2>什么是 BRDF？</h2><p>CG 光照流程的许多方面对使用者来说都是神秘的，比如物体的亮度与光的强度之间是什么关系。本章解释这一关系，并介绍 BRDF 的概念——你可能经常听到它，却并不真正明白它指什么、怎么起作用。总的来说，本课应当为几个类似的、（看起来）颇为神秘的话题揭去面纱。</p><h2>辐射度量学：定义光与物质之间的关系</h2><p>我们用来模拟现实世界中光与物体如何相互作用的技术，基于辐射度量学中定义的一系列量：这门学科研究电磁辐射的测量，其中也包括可见光。</p><p>要理解这些技术从何而来、如何运作，我们先看这些辐射度量学术语，并解释它们与物理世界的关系。由此，我们再引入 BRDF 与反照率的概念，并给出漫反射表面的一个 BRDF 示例。</p><h2>辐射度量学术语：辐射通量、辐照度与辐射亮度</h2><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-bounce.png" alt=""></figure><p>光可以看作在空间中传播、携带能量的一群粒子（光子）。我们把光子的方向建模为一条直线。当我们说某物体发出的光的多少时，这个说法其实与物体发出的光子数量有关。在 CG 中我们最关心的是到达物体表面和离开物体表面的光量。</p><p>第一个重要概念是光功率，叫作<b>辐射通量</b>，单位是瓦（W）。辐射通量是单位时间内穿过某个表面的光能量（光子数）。直观地看，材质的性质——比如颜色和亮度——与反射通量（从表面反射出去的光量）同入射通量（到达表面的光量）之比有某种关系：黑色表面应当不反射任何通量（不反射光），而纯反射体应当把入射通量全部反射。在现实世界中，大多数物体的行为介于两者之间。</p><p>$$\text{material brightness} = \frac{\text{light reflected}}{\text{light received}}$$</p><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-clock.png" alt=""><figcaption><b>图 1：</b>辐射通量度量单位时间内穿过某个表面的光能量。</figcaption></figure><p>在现实世界中，物体的外观往往在其表面上各处不同。我们把这种外观描述为空间可变的。大理石就是这类材质的一个典型例子。要定义一块大理石板反射的通量，需要对通量有一种更精细的理解，把「局部性」的概念纳入进来。我们不再把某个表面接收或反射的通量作为一个整体来考虑，而是考察表面上某个特定点（记这个点为 \(x\)）处接收和反射的通量。不过，点在现实世界中无法物理地定义，所以我们改而考虑某个点周围一块极小的面积——小到可以保证这块面积的表面颜色是均匀的。这块极小的表面叫作<b>微分面积</b>（图 2）。</p><p>当相对于这块微分面积来描述时，我们就把通量看成一个密度。到达表面的通量密度叫作<b>辐照度</b>，而从某点发出的通量密度可以称为<b>辐射出射度</b>或<b>辐射度</b>，不过后者包含的是发射（我们目前忽略）与反射通量密度之和。辐照度的单位是瓦每平方米（\(W/m^2\)）。虽然一个带纹理的物体（比如大理石）可能在其表面上各处接收到均匀的辐照度，但反射出的辐照度可以在空间上变化。</p><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-da2.png" alt=""><figcaption><b>图 2：</b>要测量某点处的通量，我们需要考虑该点周围一块极小的区域，叫作微分面积。由于这块区域极小，其面积上没有通量的变化。</figcaption></figure><p>此外，大多数物体还具有随视角变化的性质。对表面上的某个给定点，反射光会随观察角度变化。辐照度的定义没有考虑任何随视角变化的行为，因此需要一个新的量，叫作<b>辐射亮度</b>，单位是瓦每平方米每单位立体角（\(W/m^2\cdot sr^{-1}\)）。辐射亮度量化的是空间中某个特定方向上、到达（或发出自）某给定点的光。某点处反射到给定方向的辐射亮度之比，使我们能够描述几乎任何材质。</p><p>某个方向上的辐射亮度，可以想象成穿过一个半径极小圆柱的光子通量。要注意，人眼本身也是一个表面；因此在计算机图形学中，我们用辐射亮度来描述物体反射的光如何与负责成像的那个表面相互作用。</p><p>辐射通量、辐照度和辐射亮度让我们几乎能描述一切光照现象。以辐射亮度为基础量，辐照度和辐射通量都可以由它导出。</p><h2>辐射度量学公式简介</h2><p><b>辐射通量</b>记作 \(\phi\)，单位为 <b>W</b>。</p><p><b>辐照度</b>记作 <b>E</b>，单位为 \(W \cdot m^{-2}\)。</p><p><b>辐射亮度</b>记作 <b>L</b>，单位为 \(W \cdot m^{-2} \cdot sr^{-1}\)。</p><details open><p>辐射度量学与<b>光度学</b>有相似之处，但光度学测量的是人眼感知到的光的亮度，而辐射度量学处理的是绝对的功率值。光度学局限于可见光谱的光，而辐射度量学涵盖整个光谱。</p></details><p>如前所述，点和方向都是理论上并不真实存在的概念。表面上的一个点通常指该点周围一块极小的面积。同样，一个方向一般描述的是该方向周围一个极小的角度，叫作微分立体角。某点的辐照度描述穿过该点周围一块极小表面元件的通量。辐射亮度度量的是穿过 \(x\) 周围一小块表面面积、进入一个以给定方向为中心的小圆柱（因透视关系在图 3 中画成圆锥）的通量。这个「小圆柱」的概念与「\(x\) 周围小块面积」的概念相对应。我们通常称之为<b>微分立体角</b>，并用希腊字母 omega（\(\omega\)）表示它：\(d\omega\) 或 \(d\Omega\)。</p><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-solidangle.png" alt=""><figcaption><b>图 3：</b>辐射亮度（L）度量的是每立体角（这里的 \(d\omega\) 表示微分立体角）、每沿辐射方向（在我们这里就是眼睛方向）投影到表面上的面积（\(dA \cos \theta\)）的出射辐射通量。</figcaption></figure><p>辐照度量化某给定点处的入射光，而辐射亮度量化某给定点处来自某个特定方向的入射光。这意味着，\(x\) 处的总辐照度可以由辐射亮度算出：把以 \(x\) 处法线为中心的半球内所有方向的辐射亮度累加起来。如果我们只考虑一个入射方向上的辐射亮度（而不是整个半球），就可以算出对应的那一部分辐照度，称为微分辐照度（记作 \(dE\)）。</p><p>这些图说明：对给定的辐射亮度（穿过小圆柱的光子通量），穿过表面小元件的光子量（即我们的微分辐照度）取决于圆柱的入射角。当圆柱垂直于表面时，穿过圆柱的所有光子都击中该表面元件。随着圆柱转动，表面与圆柱的交集变大，于是穿过我们原本那块表面元件的光子变少。最后，当圆柱平行于表面时，没有光子击中该表面元件。</p><figure><img src="https://scratchapixel.com/images/brdf-linear-exposure/lp-da.png" alt=""><figcaption><b>图 4：</b>当光束与平面成一定角度时，光束覆盖的表面变大。这意味着入射角增大时，微分面积（图中蓝色方块）接收到的光子越来越少（同样数量的光子摊到了更大的区域上）。光强可以乘以光线与表面法线所夹角度的余弦。这一关系称为 Lambert 余弦定律。</figcaption></figure><p>这一关系叫作 <b>Lambert 余弦定律</b>。为了计入表面法线与光线之间夹角增大时到达表面元件的光子数减少，我们把光能量乘以这个夹角的余弦。</p><p>$$dE = \cos(\theta) L d\omega$$</p><p>其中 \(\theta\) 是入射角，\(L\) 表示沿某个方向入射的辐射亮度，\(d\omega\) 表示以这个方向为中心的小圆柱，用微分立体角表达。</p><p>要计算总辐照度，我们用一种叫作积分的数学技巧，把半球内所有方向上的各部分辐照度加起来。数学上可以这样表示：</p><p>$$E = \int\limits_\Omega dE = \int \limits_\Omega \cos(\theta) L d\omega$$</p><h2>表面的性质</h2><p>有了目前引入的这些量，我们现在可以把表面的性质定义为入射通量与反射通量之间的比值。</p><p>如果这个比值等于 0，意味着表面不反射任何光，看起来全黑。比值为 1 表示纯反射表面，即所有入射辐照度都被反射。这个比值不能超过 1，因为那意味着表面在发光（这里暂不考虑自发光表面）。表面反射的光可能少于它接收的光，因为部分入射光被材质吸收了。这个比值本质上量化了入射光中有多少被物体吸收。</p><p>现在我们把这一比值对一束（单一方向）到达表面上 \(x\) 点的光写成数学形式。记住，当只考虑一个方向而不是半球内所有方向时，我们关注的是微分量。对一束光而言，这个比值因此在方向为 \(\omega_i\) 的微分量（入射光）与观察者方向（方向为 \(\omega_o\)）上的微分出射辐射亮度之间。这个比值叫作<b>反射率</b>（记作 \(f_r\)），表示为：</p><p>$$
+f_r = \frac{dL(\omega_o)}{dE(\omega_i)} = \frac{dL(\omega_o)}{\cos(\theta_i) L(\omega_i) d\omega_i}
+$$</p><p>由于 \(f_r\) 同时依赖入射方向和出射方向，它本质上是四维的（方向通常用球坐标表示）。反射率也被称为 <b>BRDF</b>（双向反射分布函数），它是无量纲的，但以 \(sr^{-1}\)（每球面度）来表示。</p><p>要计算某点从某个特定方向（\(\omega_o\)）观察到的最终颜色，我们必须把所有微分辐射亮度累加起来，算出总的反射辐射亮度：</p><p>$$
+\begin{aligned}
+dL(\omega_o) &= f_r dE(\omega_i) \\
+L &= \int \limits_\Omega f_r dE(\omega_i) = \int \limits_\Omega f_r \cos(\theta_i) L(\omega_i) d\omega_i
+\end{aligned}
+$$</p><h2>漫反射表面的 BRDF</h2><p>为简化问题，我们只考虑纯漫反射材质。「纯漫反射」是指材质在半球内所有方向上均匀地反射光，且其反射率为常数。因为是常数，我们可以把 \(f_r\) 提到积分号外面。前面的公式便可以简化为：</p><p>$$
+L(\omega_o) = \int \limits_\Omega f_r \cos(\theta_i)L(\omega_i)d\omega_i = f_r \int \limits_\Omega \cos(\theta_i)L(\omega_i)d\omega_i = f_rE
+$$</p><p>记住，\(E\) 是总辐照度。假设入射辐射亮度（辐照度）在整个半球上是常数，即 \(L(\omega_i) = 1\)。那么任意方向上的反射辐射亮度可以表示为：</p><p>$$
+L(\omega_o) = f_r \int \limits_\Omega \cos(\theta_i)d\omega_i = f_r\pi
+$$</p><p>在那种特定情况下，这个积分的结果是 \(\pi\)。想了解我们如何得到这个结果的读者，可以在下面这段注记里找到数学推导（这段注记本身也走了一些捷径。完整的入门请看基础部分讲 BRDF 的课程）。</p><p>$$
+\begin{equation}
+\begin{array}{ll}
+\displaystyle\int_{\Omega^+} \cos(\theta) d\omega & \quad (1) \\
+\displaystyle\int_{\theta=0}^{\frac{\pi}{2}} \int_{\phi=0}^{2\pi} \cos(\theta) \sin(\theta) d\phi d\theta & \quad (2) \\
+\displaystyle 2\pi \int_{\theta=0}^{\frac{\pi}{2}} \cos(\theta) \sin(\theta) d\theta & \quad (3) \\
+\displaystyle\int_{\theta=0}^{\frac{\pi}{2}} \cos(\theta) \sin(\theta) d\theta = \left[-\frac{1}{2}\cos^2(\theta)\right]_{\theta=0}^{\frac{\pi}{2}} & \quad (4) \\
+\displaystyle\int_{a}^{b} f(x) dx = F(b) - F(a) & \quad (5) \\
+\displaystyle\frac{1}{2} \left[ \cos^2\left(\frac{\pi}{2}\right) - \cos^2(0) \right] = 0 - \frac{1}{2} - \frac{1}{2} = -\frac{1}{2} & \quad (6) \\
+\displaystyle\int_{\Omega} \cos(\theta) d\omega = 2\pi \frac{1}{2} = \pi & \quad (7)
+\end{array}
+\end{equation}
+$$</p><p>公式 1 表示我们目前是如何定义函数 \(\cos(\theta)\) 的积分的。这个公式可以改写成更经典的形式（2）：对立体角 \(d\omega\) 的积分可以改写成两个积分，\(d\omega\) 换成 \(\sin(\theta)d\theta d\Phi\)，\(\theta\) 在 \([0, \pi/2]\) 范围内，\(\Phi\) 在 \([0, 2\pi]\) 范围内。\(\Phi\) 的积分得到 \(2\pi\)。剩下的那个积分包含原函数 \(\cos(\theta)\)，可以用微积分里所谓的定积分来改写。简言之，如果 \(F(x)\) 是 \(f(x)\) 的原函数（或者说 \(f(x)\) 是 \(F(x)\) 的导数），那么就可以写成：\(f(x)\) 在 \([a, b]\) 范围内的积分等于 \(F(b) - F(a)\)（公式 5）。公式 4 给出了 \(\cos(\theta)\sin(\theta)\) 的原函数。接着我们用这个原函数（\(-\frac{1}{2}\cos^2(x)\)）套用公式 5，求出值 \(\frac{1}{2}\)（\(a=0\) 和 \(b=\pi/2\)）。最后我们把 \(2\pi\) 乘以 \(\frac{1}{2}\)，得到 \(\pi\)。</p><details open><p>万一你没弄明白原函数是怎么求出来的，这里给出步骤。我们从原函数出发，证明它的导数确实是 \(\cos(\theta) \sin(\theta)\)：</p><p>1. <b>从以下式子出发</b>：\(\frac{1}{2}\left(-\frac{d}{dx}(\cos^2x)\right)\)</p><p>2. <b>设</b>：定义 \(u = \cos x\)。于是我们考虑：\(-\frac{1}{2}\frac{d}{dx}(u^2)\)</p><p>3. <b>应用链式法则</b>：为求 \(\frac{d}{dx}(u^2)\) 的导数，我们使用链式法则。这条法则规定：对复合函数求导时，先把内层函数当作变量、对外层函数求导，然后再乘以（对 \(x\) 的）内层函数的导数。</p><ul><li><p><b>内层函数：</b>位于另一个函数内部的函数。在这个例子里，\(u = \cos x\) 是内层函数，因为它是外层函数的自变量。</p></li><li><p><b>外层函数：</b>把内层函数当作自变量的函数。这里 \(u^2\) 是外层函数，因为它是 \(u\) 的函数。</p></li></ul><p>链式法则说的是：如果你有一个复合函数 \(f(g(x))\)，那么这个复合函数对 \(x\) 的导数是：</p><p>$$\frac{d}{dx} f(g(x)) = f'(g(x)) \cdot g'(x)$$</p><p>在我们的例子里，复合函数是 \((\cos x)^2\)，它可以写成 \(u^2\)，其中 \(u = \cos x\)。</p><p>4. <b>链式法则的实际操作</b>：</p><ul><li><p><b>对外层函数求导：</b>外层函数是 \(u^2\)。\(u^2\) 对 \(u\) 的导数是 \(2u\)。</p></li><li><p><b>对内层函数求导：</b>内层函数是 \(u = \cos x\)。\(\cos x\) 对 \(x\) 的导数是 \(-\sin x\)。</p></li></ul><p>5. <b>合并结果</b>：</p><ul><li><p>于是：</p></li></ul><p>$$\frac{d}{dx}(u^2) = \frac{d}{dx}((\cos x)^2) = 2u \cdot \frac{du}{dx}$$</p><ul><li><p>代入 \(u = \cos x\) 和 \(\frac{du}{dx} = -\sin x\)：</p></li></ul><p>$$\frac{d}{dx}((\cos x)^2) = 2(\cos x) \cdot (-\sin x) = -2 \cos x \sin x$$</p><p>6. <b>最后一步</b>：</p><ul><li><p>把它代回原来的表达式，我们得到：\(\frac{1}{2}\left(-2\cos x (-\sin x)\right) = \cos x \sin x\)。</p></li></ul></details><p>因此，如果我们考虑的是 BRDF 为常数 \(f_r\) 的漫反射材质、用恒为 1 的辐射亮度照射，那么所有方向上的反射辐射亮度都是 \(\pi f_r\)。在入射光量为 1、\(f_r\) 也为 1 的情况下，反射光量为 \(\pi\)，这意味着表面在造能量。为了得到物理上说得通（能量守恒）的结果，这种情况下的反射光不应大于 1。因此，漫反射表面的 BRDF \(f_r\) 需要是：</p><p>$$\text{BRDF diffuse} = \frac{k}{\pi}$$</p><p>这个 \(k\) 项，取值在 \(0\) 到 \(1\) 之间，通常称为<b>反照率</b>。</p><p>从光照角度看，这意味着如果 \(k\) 为 \(1\)，物体被一束垂直于表面的远处光照亮（因而没有 Lambert 定律引起的衰减），反射值应当是 \(\frac{1}{\pi}\)。</p><p>反过来，如果你用辐射亮度恒为 \(1\) 的穹顶光照亮同一个物体，我们就必须对微分入射辐照度做积分，算出整个半球上的总入射辐照度。这需要求解前面引入的那个公式：</p><p>$$E = \int \limits_\Omega dE = \int \limits_\Omega \cos(\theta)Ld\omega$$</p><p>这个公式与我们刚解过的那个相似。假设 \(L = 1\)，积分后可得 \(E = \pi\)。因此，当你把 \(\pi\) 乘以反照率常数为 \(k\)（等于 \(1\)）的漫反射 BRDF 时，就得到 \(1\)。当 \(k\) 等于 \(1\)、表面被辐射亮度恒为 \(1\) 的穹顶光照亮时，表面的亮度就是 \(1\)。在计算机图形学与渲染中，我们称这种配置为<b>炉子测试</b>。 </p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/brdf-linear-exposure/intro-brdf.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/brdf-linear-exposure/intro-brdf.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

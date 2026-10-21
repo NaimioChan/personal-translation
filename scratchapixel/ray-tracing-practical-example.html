@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>编写一个基础光线追踪器 - Scratchapixel 中文译本</title>
+<meta name="description" content="3D 计算机图形学入门：以光线追踪为例 · 编写一个基础光线追踪器（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>编写一个基础光线追踪器</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="how-does-it-work.html">它如何工作</a></li>
+<li><a href="raytracing-algorithm-in-a-nutshell.html">光线追踪算法简述</a></li>
+<li><a href="implementing-the-raytracing-algorithm.html">实现光线追踪算法</a></li>
+<li><a href="adding-reflection-and-refraction.html">添加反射与折射</a></li>
+<li><a style="font-weight:700" href="ray-tracing-practical-example.html">编写一个基础光线追踪器</a></li>
+</ol>
+</div>
+<h2>编写一个基础光线追踪器</h2><p><b>阅读时间：6 分钟。</b></p><p>不少读者来信说，很想看一个光线追踪的实际例子，问：「既然你说它这么简单，为什么不给我们看个真的？」于是我们暂时偏离原来那套一步步搭建渲染器的讲法，先拼一个基础的光线追踪器出来。这个小程序大约 300 行，只花了几个小时就写好了。它算不上我们的得意之作（希望如此）——毕竟赶得急——但我们的用意是表明：把底层概念真正吃透之后，写这样一个程序是很容易的。感兴趣的话，源码可以自取。</p><p>这个速成项目没有配上细致的注释，也肯定还有优化的余地。在这个光线追踪器版本里，我们把光源做成了一个可见的球体，这样它的反射就能在反射球体的表面上被观察到。至于透明玻璃球难以看清的问题——它们外观通透，不好分辨——我们的做法是给它们染上一点红色。这一决定参照了现实中透明玻璃的行为：它未必总那么容易被察觉，很大程度上取决于周围环境。不过要注意，这个初版生成的图像并不完美；比如那颗透明红球投下的阴影看起来实得不太真实。后续课程会深入到这些细节的改进，让视觉表现更准确。此外，我们还试着实现了一些功能，比如简化的 Fresnel 效果（用的是一种叫朝向比的方法）和折射，这些内容计划在后面详细展开。其中若有哪块看起来不清楚，放心，到时候都会讲明白。眼下，你手上有一个小而能跑的程序可以折腾。</p><p>要开始用这个程序，先把源码下载到本地。你需要一个 C++ 编译器，比如 clang++，来编译代码。这个程序编译起来很直接，不需要任何特殊的库。开一个终端窗口（Windows 上用 GitBash，Linux 或 macOS 上用标准终端），进到源文件所在的目录，运行下面这条命令（假设你用的是 gcc）：</p><pre><code>
+c++ -O3 -o raytracer raytracer.cpp
+</code></pre><p>如果你用的是 <code>clang</code>，则改用下面这条命令：</p><pre><code>
+clang++ -O3 -o raytracer raytracer.cpp
+</code></pre><p>要生成图像，在终端里输入 ./raytracer 运行程序。稍等片刻，程序会在你的电脑上生成一个名为 untitled.ppm 的文件。这个文件可以用 Photoshop、Preview（Mac 用户）或 Gimp 打开查看。另外，如何打开和查看 PPM 图像，我们会在后面的一课里讲到。</p><p>下面是用伪代码给出的传统递归光线追踪算法的一个示例实现：</p><pre><code>
+#define MAX_RAY_DEPTH 3 
+ 
+color Trace(const Ray &amp;ray, int depth) 
+{ 
+    Object *object = NULL; 
+    float minDistance = INFINITY;
+    Point pHit; 
+    Normal nHit; 
+    for (int k = 0; k &lt; objects.size(); ++k) { 
+        if (Intersect(objects[k], ray, &amp;pHit, &amp;nHit)) { 
+            float distance = Distance(ray.origin, pHit); 
+            if (distance &lt; minDistance) { 
+                object = objects[k];
+                minDistance = distance;
+            } 
+        } 
+    } 
+    if (object == NULL) 
+        return backgroundColor; // 返回背景色而不是 0
+    // 若物体材质是玻璃且深度小于 MAX_RAY_DEPTH，则把光线分裂
+    if (object-&amp;gtisGlass &amp;&amp; depth &lt; MAX_RAY_DEPTH) { 
+        Ray reflectionRay, refractionRay;
+        color reflectionColor, refractionColor; 
+        float Kr, Kt; 
+ 
+        // 计算反射光线
+        reflectionRay = computeReflectionRay(ray.direction, nHit, ray.origin, pHit); 
+        reflectionColor = Trace(reflectionRay, depth + 1); 
+ 
+        // 计算折射光线
+        refractionRay = computeRefractionRay(object-&amp;gtindexOfRefraction, ray.direction, nHit, ray.origin, pHit); 
+        refractionColor = Trace(refractionRay, depth + 1); 
+ 
+        // 计算 Fresnel 效果
+        fresnel(object-&amp;gtindexOfRefraction, nHit, ray.direction, &amp;Kr, &amp;Kt); 
+ 
+        // 按 Fresnel 效果合成反射色与折射色
+        return reflectionColor * Kr + refractionColor * (1 - Kr); 
+    } else if (!object-&amp;gtisGlass) { // 检查物体是否非玻璃（漫反射/不透明）
+        // 仅在物体不在阴影中时计算光照
+        Ray shadowRay; 
+        shadowRay.origin = pHit + nHit * bias; // 加一点偏移量以避免自相交
+        shadowRay.direction = Normalize(lightPosition - pHit); 
+        bool isInShadow = false; 
+        for (int k = 0; k &lt; objects.size(); ++k) { 
+            if (Intersect(objects[k], shadowRay)) { 
+                isInShadow = true; 
+                break; 
+            } 
+        } 
+        if (!isInShadow) {
+            return object-&amp;gtcolor * light.brightness; // 该点被照亮
+        }
+    } 
+    return backgroundColor; // 若无相互作用则返回背景色
+} 
+ 
+// 逐像素的渲染循环
+for (int j = 0; j &lt; imageHeight; ++j) { 
+    for (int i = 0; i &lt; imageWidth; ++i) { 
+        Ray primRay; 
+        computePrimRay(i, j, &amp;primRay); // 假设 computePrimRay 已正确设置光线的原点与方向
+        pixels[i][j] = Trace(primRay, 0); 
+    } 
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/introduction-to-ray-tracing/raytrace1.png" alt=""><figcaption><b>图 1：</b>我们的光线追踪算法的结果。</figcaption></figure><h2>极简光线追踪器</h2><figure><img src="https://scratchapixel.com/images/introduction-to-ray-tracing/aek.png" alt=""><figcaption><b>图 2：</b>Paul Heckbert 的光线追踪算法的结果。</figcaption></figure><p>把光线追踪器压缩到能写在一张名片上，这个想法由研究者 Paul Heckbert 首创，堪称极简编程力量的明证。Heckbert 发起的这个新奇挑战，目标是用尽可能精简的 C/C++ 代码实现一个光线追踪器，相关内容详细写在他为《Graphics Gems IV》撰写的那一篇里。这一倡议在程序员中掀起了一股热潮，激励了许多人去做这项紧凑的编码练习。</p><p>其中一个有名的例子是 Andrew Kensler 写出的版本。他的成果在视觉上相当抓人，从他程序生成的图像就能看出来。尤其令人印象深刻的是他做出的景深效果：物体随着向远处退去而变得模糊。用一段极其简短的代码生成一幅复杂度相当可观的图像，确实了不起。</p><pre><code>
+// minray &gt; minray.ppm
+#include &amp;ltstdlib.h&gt;
+#include &amp;ltstdio.h&gt;
+#include &amp;ltmath.h&gt;
+typedef int i;typedef float f;struct v{f x,y,z;v operator+(v r){return v(x+r.x,y+r.y,z+r.z);}v operator*(f r){return v(x*r,y*r,z*r);}f operator%(v r){return x*r.x+y*r.y+z*r.z;}v(){}v operator^(v r){return v(y*r.z-z*r.y,z*r.x-x*r.z,x*r.y-y*r.x);}v(f a,f b,f c){x=a;y=b;z=c;}v operator!(){return*this*(1/sqrt(*this%*this));}};i G[]={247570,280596,280600,249748,18578,18577,231184,16,16};f R(){return(f)rand()/RAND_MAX;}i T(v o,v d,f&amp;t,v&amp;n){t=1e9;i m=0;f p=-o.z/d.z;if(.01&amp;ltp)t=p,n=v(0,0,1),m=1;for(i k=19;k--;)for(i j=9;j--;)if(G[j]&amp;1&lt;&amp;ltk){v p=o+v(-k,0,-j-4);f b=p%d,c=p%p-1,q=b*b-c;if(q&amp;gt0){f s=-b-sqrt(q);if(s&amp;ltt&amp;&amp;s&amp;gt.01)t=s,n=!(p+d*t),m=2;}}return m;}v S(v o,v d){f t;v n;i m=T(o,d,t,n);if(!m)return v(.7,.6,1)*pow(1-d.z,4);v h=o+d*t,l=!(v(9+R(),9+R(),16)+h*-1),r=d+n*(n%d*-2);f b=l%n;if(b&amp;lt0||T(h,l,t,n))b=0;f p=pow(l%r*(b&amp;gt0),99);if(m&amp;1){h=h*.2;return((i)(ceil(h.x)+ceil(h.y))&amp;1?v(3,1,1):v(3,3,3))*(b*.2+.1);}return v(p,p,p)+S(h,r)*.5;}i main(){printf("P6 512 512 255 ");v g=!v(-6,-16,0),a=!(v(0,0,1)^g)*.002,b=!(g^a)*.002,c=(a+b)*-256+g;for(i y=512;y--;)for(i x=512;x--;){v p(13,13,13);for(i r=64;r--;){v t=a*(R()-.5)*99+b*(R()-.5)*99;p=S(v(17,16,8)+t,!(t*-1+(a*(R()+x)+b*(y+R())+c)*16))*3.5+p;}printf("%c%c%c",(i)p.x,(i)p.y,(i)p.z);}}
+</code></pre><p>要运行这个程序，先把代码复制粘贴到一个新的文本文档里。把这个文件重命名为 <code>minray.cpp</code> 或你喜欢的任何名字。接着用命令 <code>c++ -O3 -o minray minray.cpp</code> 编译；如果你选择用 clang 编译器，就用 <code>clang++ -O3 -o minray minray.cpp</code>。编译好之后，用命令行 <code>minray &gt; minray.ppm</code> 运行程序。这种做法的效果是把最终的图像数据直接输出到标准输出（你正在用的终端），再用 <code>&gt;</code> 操作符重定向到一个文件，存成 PPM 文件。这个格式 Photoshop 能兼容，查看起来很方便。</p><p>这里展示这个程序，是为了表明光线追踪算法能压缩到多么紧凑的程度。代码中用到的几项技术，会在本系列后续课程里详细讲解和展开。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-ray-tracing/ray-tracing-practical-example.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-ray-tracing/ray-tracing-practical-example.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

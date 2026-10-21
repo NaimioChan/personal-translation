@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方差缩减方法：重要性采样快速入门 - Scratchapixel 中文译本</title>
+<meta name="description" content="蒙特卡罗方法实践 · 方差缩减方法：重要性采样快速入门（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>方差缩减方法：重要性采样快速入门</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="monte-carlo-methods.html">蒙特卡罗方法</a></li>
+<li><a href="monte-carlo-simulation.html">蒙特卡罗模拟</a></li>
+<li><a href="monte-carlo-integration.html">蒙特卡罗积分</a></li>
+<li><a href="monte-carlo-rendering-practical-example.html">渲染中的蒙特卡罗（一个实际例子）</a></li>
+<li><a href="generating-random-numbers.html">生成随机数</a></li>
+<li><a style="font-weight:700" href="variance-reduction-methods.html">方差缩减方法：重要性采样快速入门</a></li>
+<li><a href="introduction-quasi-monte-carlo.html">方差缩减方法：准蒙特卡罗快速入门</a></li>
+</ol>
+</div>
+<h2>方差缩减方法：重要性采样快速入门</h2><p><b>阅读时间：21 分钟。</b></p><h2>方差缩减的技艺：用更少换更好</h2><p>方差缩减技术和准蒙特卡罗方法（下一章会谈）都是复杂的话题。为什么现在就要学？光这两个题目，人们就写过整本整本的书。它们为什么这么重要？你可能已经意识到，蒙特卡罗是个相当简单的方法。但它主要的问题是方差（在渲染里，这就变成了噪声）。要摆脱它，我们能做的只是增加样本数 N，更糟的是，每次想把噪声减半，需要的不是两倍、而是四倍样本（要让误差线性下降，样本数就得指数增长）。因此，大量研究投入到寻找除了蛮力（增大 N）之外能否用其他手段降低这种噪声上。而数学又一次能帮忙回答这个问题。这催生了蒙特卡罗研究中一整个分支，专门研究所谓的方差缩减方法。除了增大 N，我们还能怎么降低方差？重要性采样与准蒙特卡罗正是这样两个解法。当然，你能想象人们为什么对此如此兴奋。这是蒙特卡罗渲染的圣杯：用更少换更好的承诺。重要性采样与准蒙特卡罗值得单独开一门课（你会在本节后面找到）。等光传输与 BRDF 这些题目复习完之后，讲这些技术也会更容易（接下来三门课）。不过我们现在先简要谈谈它们，让你对它们是什么、如何工作、为什么工作有个感觉（如果你对数学细节不感兴趣，只想要一个直观理解，这篇引言大概正合你意，也够用了）。</p><h2>重要性采样快速入门</h2><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/importancesampling01.png?" alt=""><figcaption><b>图 1：</b>样本可能漏掉那些对积分结果贡献很大的函数部分。如果能用一个与函数形状相同的 PDF（函数高的地方 PDF 也高）来分布这些样本，那就好了。</figcaption></figure><p>在《着色的数学》那门课里我们已经解释过，要为点 P 着色，我们需要收集到达 P 的光。在 3D 中，光可以来自以 P 点法线为轴的半球内的所有方向，从数学上说，我们可以把它定义成对半球的一个积分（半球就是积分域）：</p><p>$$L = \int_\Omega L(\omega)\:d\omega.$$</p><p>文献中通常用符号 \(\Omega\) 表示方向半球（\(d\omega\) 是微分立体角，\(\omega\) 是一个方向），\(L(\omega)\) 是方向的<b>函数</b>（它返回来自 \(\omega\) 的光量）。技术上我们应该在这个表达式里加一个 \(\cos(\theta)\)，但这对本次演示不重要。重要的是要意识到，求出有多少光到达 P，需要对 P 上方整个方向半球做积分。不幸的是，对任意几何形状，这个积分没有闭式解。不过我们可以用蒙特卡罗积分来近似这个积分的结果。思路是对半球「采样」，也就是在 P 上方的半球上生成一组 N 个随机方向。积分的近似就是对来自这 N 个随机选取方向的光量取平均：</p><p>$$L \approx { 2 \pi \over N } \sum_{i=0}^{N-1} L_i(\omega_i),$$</p><p>其中 \(\omega_i\) 是包含在 P 上方半球内的一个随机方向（在进阶部分的采样课程里，你可以学到如何在半球上生成样本）。这门技术的图示见图 1（上）。不过在二维里，半球变成半个圆盘。现在，与我们到目前为止研究的大多数蒙特卡罗积分情形一样，样本是均匀分布的。换句话说，半球中每个方向被选中的概率相等。如果考虑二维情形，方向就化简为一个从 0 到 \(\pi\) 的角（\(\theta\)）。积分域由区间 [0,\(\pi\)] 定义，因此 PDF（我们知道是 1/(b-a)）就是 1/\(\pi\)，且处处均匀，即分布函数是常数（图 1 下，红线代表这个 PDF）。</p><p>现在我们来看看问题出在哪。如图 1 上方所示，我们想求出有多少光到达 P，P 位于一个盒子的地板上。为了让演示更容易，我们设想这个盒子的墙壁非常暗，因此它们对 P 的照明贡献极小。不过，这个房间的天花板上有两盏灯。自然，照亮地板的大部分光都来自这两个光源。但如图中所示，在我们的蒙特卡罗积分用来近似到达 P 的光的六个样本中，除一个之外全都错过了这两盏灯。由于其中一个光源的贡献缺失，我们可以认为，用这组样本对到达 P 的光量所做的近似会<b>偏低</b>。换句话说，可以预期近似（蒙特卡罗积分）与 f(x) 的期望值之间的差距会相当大（方差会很大）。</p><p>当函数相当规则时，样本的位置对结果影响不大。当函数非常不规则时，样本位置的微小变化就可能引起蒙特卡罗积分结果的大幅变化。一般来说，<b>不规则的函数难以采样，会造成估计量的高方差</b>（图 2）。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/highvariance01.png?" alt=""><figcaption><b>图 2：</b>当函数相当规则时（左上），样本位置对结果影响不大。当函数非常不规则时，样本位置的微小变化就可能引起蒙特卡罗积分结果的大幅变化。</figcaption></figure><p>技术上，你可以把到达 P 的光量看作定义在区间 [0,\(\pi\)] 上的函数。这就像把表针从圆盘一侧转到另一侧，测量有多少光从表针所指的方向打到 P。在图 1 下方，你能看到这个函数的样子（黄色曲线）。它是一条很好的、连续光滑的曲线，有两个明显的峰，每个峰对应一盏灯。如果我们在该函数有效的整个域上对它积分，很明显这两个峰对积分结果的贡献会比曲线其他任何部分都重要。可以说，这些峰就是<b>函数最重要的地方</b>。如前所说，在函数重要的地方生成样本是有道理的，但正如我们刚刚解释的，并不能保证一定如此，尤其当样本是均匀分布的时候。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/importancesampling02.png?" alt=""><figcaption><b>图 3：</b>均匀分布没问题，但我们可能漏掉函数的重要部分。在这个例子里（左），其中一个峰没有被采样到。强行让样本落在函数最重要的区域也不是好办法。蒙特卡罗积分依赖样本「随机」分布。强行把它们限制在函数的特定区域会引入偏差（在这个例子里，右图可以看到，所选的样本会导致高估积分结果）。</figcaption></figure><p>现在你可能会想，这不成问题。为什么就不在函数重要的地方生成样本呢（图 3）？这种做法至少有两个问题。第一，记住蒙特卡罗积分是一个随机过程。换句话说，它之所以成立，就是因为样本是随机选取的。如果你开始来决定把样本放在哪里（而不是随机分布它们），蒙特卡罗积分的理论就崩了（你这个「伪」蒙特卡罗积分的结果没有任何数学意义）。把样本集中到函数重要的地方、忽略曲线其他部分，多半还是会高估结果，这也不好。但第二个问题更关键：知道函数在哪里重要，意味着我们首先得知道这个函数是什么，而这在大多数情况下显然正是我们没有的信息。比如在求有多少光打到 P 那个例子里，我们根本不知道光来自哪里、量有多大。如果我们有这些信息，大概一开始就不会用蒙特卡罗积分了。我们之所以用这个方法，恰恰因为事先并不知道那个函数是什么，所以只能随机地采样它，指望这些样本的平均能给出积分的一个有效近似。</p><p>这是蒙特卡罗积分中一个非常重要的点。在大多数情形下，<b>我们对被积的函数（被积函数）没有任何先验知识</b>，而在渲染中这往往尤其成立。</p><details open><p>再举一个例子：在《着色的数学与辐射度量学》那门课的最后几章里，我们解释过像素的强度是对入射辐射亮度在该像素面积上积分的结果。我们还解释过如何用蒙特卡罗积分来近似这个积分的结果。在这个特定情形里，构成场景并向像素反射光的那些表面，就构成了被积的函数。这个例子里同样，我们并不知道那个函数是什么，而这显然正是我们一开始要用光线追踪的原因。我们在像素面积上随机分布地投射光线来对该函数采样，再对这些光线的结果取平均，得到积分的一个近似。</p></details><p>不幸的是，方差缩减技术需要对被积函数有一些先验知识。在一些重要情形下（比如本章描述的这两个：在像素面积上对入射辐射亮度积分，以及求到达 P 的入射光），我们并不知道那个函数是什么。那怎么办？唉，这个问题没有神奇的解法。如果你对被积函数没有任何先验知识，那就别想方差缩减了。但让我们看看，当我们在积分之前对 f(x) 有所了解时能做些什么（本章后面会给一个与渲染相关的例子）。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/constantsampling01.png?" alt=""><figcaption><b>图 4：</b>样本的位置不改变蒙特卡罗积分的结果。</figcaption></figure><p>设想被积函数是个常数函数（图 4）。于是你用均匀分布，对常数函数采样，得到一个结果，一切都很完美。因为函数是常数，每次跑这个近似你都得到同样的结果。换句话说，方差就是零。蒙特卡罗积分的终极目标是用最少的样本得到尽可能小的方差。所以显然，当方差为 0 时，你不可能做得更好了。于是你可能会想「要是所有需要积分的函数都是常数该多好」。不过现实中我们知道从来不是这样：需要积分的函数从来不是常数（那也太容易了）。有些甚至会有非常高而窄的峰。但我们能不能把一个非常数函数变成常数函数？</p><p>这个想法虽然挺怪，但答案显然是能。你只需要把函数除以它自己。如果函数 f(x) 在 x=0 时等于 2，那么 f(0)/2 = 1。如果函数 f(x) 在 x = 2 时 f(x) = 0.5，那么 f(2)/0.5 = 1。如果你对每个 x 值都这样做，最后就得到常数函数 f(x)/f(x) = 1。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/importancesampling03.png?" alt=""><figcaption><b>图 5：</b>如果把函数 f(x) 除以它自己（左，红色），或除以另一个与 f(x) 成比例的函数 f'(x)（右，红色），我们就得到一个常数函数（蓝色）。</figcaption></figure><p>正如我们在图 5（右）中展示的，把 f(x) 除以另一个与 f(x) 恰好成比例的函数，同样会得到常数函数。如果 \(f'(x)\) 是 \(f(x)\) 的一个副本，只是被常数因子 \(c\) 放大或缩小，我们有：</p><p>$$f(x) = c f'(x),$$</p><p>因此：</p><p>$$\dfrac{f(x)}{f'(x) } = \dfrac{1}{c}.$$</p><p>现在你会想，这很好很简单，但有什么用呢，因为我们关心的函数是 f(x)，不是常数函数？没错，但再看看通用蒙特卡罗估计量的公式：</p><p>$$\langle F^N \rangle = \dfrac{1}{N} \sum_{i=0}^{N-1} {\dfrac{\color{orange}{f(x)}}{\color{red}{pdf(x)}}}.$$</p><p>我们保持了同样的配色（红色代表 f(x)，黄色代表 f'(x)），这样你能更容易看出我们要往哪里去。在蒙特卡罗估计量里，被积函数 f(x) 被除以另一个函数 pdf(x)。利用我们刚学到的东西，如果 pdf(x) 是一个与 f(x) 恰好成比例的函数，那么蒙特卡罗积分的方差也会恰好为 0！</p><p>既然把蒙特卡罗积分应用于常数函数没有方差（无论样本怎么分布），我们就可以利用通用蒙特卡罗估计量（其中被积函数 f(x) 被除以 pdf(x)）来制造同样的效果。确实，如果 pdf(x)（分母里那个）的形状与被积函数恰好成比例（理想情况），或尽可能相似，那么方差要么为 0（理想情况），要么可能会大幅降低：</p><p>$${\dfrac{\color{black}{f(x) }}{\color{red}{pdf(x)}}} = {\dfrac{\color{black}{ f(x) }}{\color{red}{c \:f(x)}}} = \dfrac{1}{c}.$$</p><p>在实践中这意味着，要降低方差，我们的任务是找到一个形状尽可能贴合被积函数的 pdf。当 PDF 与函数形状完全吻合时，你就能成为一个完美的估计量。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/importancesampling.png?" alt=""><figcaption><b>图 6：</b>要让重要性采样奏效，你需要一个尽可能接近函数（蓝色）的 PDF（红色）。</figcaption></figure><p>这并不总是可行，因为如前所述，我们并不总知道 f(x) 长什么样。不过当我们知道时，就可以通过选择一个形状与 f(x) 相似的 pdf 来实现方差缩减（这在着色中通常是能做到的）。这个想法在图 6 中图示，其中被积函数用蓝色画，pdf 用红色画。如果我们对函数的形状一无所知，最好的选择大概还是老老实实用均匀分布。当然，它不会像 pdf 与被积函数形状相似时（图 6 中）那么好，但肯定仍比选一个形状与函数不同的 pdf（如图 6 下方所示）要好。总结一下：如果你不知道 f(x) 长什么样，或者不知道如何构造一个贴合 f(x) 形状的 pdf，那就用均匀分布。但无论如何都要避免使用一个与 f(x) 差别很大的 pdf，因为那样不但不会降低方差，反而会做完全相反的事——很可能大幅增加方差。记住，噪声正是我们想要摆脱的东西，别再往里加了！</p><p>怎么选 pdf？这部分会在《重要性采样》那门课里详述。</p><p>在举一个简单例子之前（应用于渲染的实际例子会在讲重要性采样的课程里给出），先解释一下<b>重要性采样</b>这个名称从何而来。在讲蒙特卡罗模拟的那一章里，我们引入了蒙特卡罗估计量的一般公式，其中被积函数被除以 pdf。如果 PDF 是非均匀的，样本密度可能在积分域上变化（PDF 高的地方生成更多样本，低的地方更少）。一个重要的观察是：如果 PDF 的形状与被积函数 f(x) 大致相同，那么用这个 PDF 就会在函数同样重要的区域生成更多样本。</p><p>通过选择一个形状与 f(x) 相似的 PDF，我们会在函数可能也重要的地方生成更多样本。只要我们事先对 f(x) 有所了解，就会试着选一个形状与被积函数完全或近似相同的 pdf(x)。用这个 PDF 来生成样本（即从这个 pdf 对随机变量 X 采样）会在 f(x) 重要的地方生成更多样本，从而<b>降低漏掉函数重要特征的风险</b>，进而降低方差。这就是<b>重要性采样</b>这个名称的由来。<b>我们在函数 f(x) 重要的地方分布更多样本，同时仍然在函数不太重要的地方分布样本（只是更少）</b></p><p>所以本质上，这像是把两个世界的好处合在一起<b>：</b>我们仍然有一个随机过程，样本是随机选取的，只是它们按给定的 PDF 分布，因此 pdf 高的地方可能生成更多样本，等等。而通过明智地选择这个 PDF，我们可以降低漏掉函数重要特征的「机会」（这些特征之所以重要，是因为它们对积分结果贡献最大），从而降低方差。</p><p>回想我们最初的例子，问题在于六个样本里只有一个采到了两个峰之一。因为其中一个峰的贡献被忽略了，误差很大。而用重要性采样，假定我们能造出一个形状与那条黄色曲线相似的 PDF，那么我们就有更大机会在两个峰附近看到更多样本，从而有可能降低方差（近似值与 f(x) 期望值之间的误差）。</p><p>在讲蒙特卡罗积分的那一章里，我们证明了 MC 通用估计量公式的期望值确实等于 f(x) 的期望值。不过，记住我们也给过这个过程的直观解释。因为从任意 PDF 对随机变量采样会在某些区域生成更多样本、在另一些区域生成更少，把 f(x) 除以 pdf，就降低了高密度区域所生成样本的贡献或权重，并提高了低密度区域所生成样本的贡献。</p><p>所以再说一遍，通过在函数重要的地方生成样本，我们降低了方差；不过我们也已经证明了这个公式在数学上是成立的，并且能得到正确解（即随着样本数增加，蒙特卡罗积分最终会收敛到 f(x) 的期望值）。</p><p>还有一点要注意。尽管在函数重要的区域会生成更多样本，这个过程仍然是随机的。不仅样本将在哪里生成事先无法确定，而且也不是因为我们可以预期 PDF 高的地方会生成更多样本（因为样本是随机抽取的，我们无法确定，但统计上更有可能在这些区域看到它们），就意味着 PDF 低的地方完全不会有样本生成。</p><p>还是那句话，关键在于<b>以最高效的方式分配我们那点样本额度的技艺</b>：把相当一部分样本用在函数高或重要的地方（它对积分贡献最大），同时留一些样本去采函数其他各处。蒙特卡罗积分的技艺，就是找到这个问题的优解：在样本数 N 固定的前提下，我应该把样本投在哪里，才能得到最小的误差？</p><details open><p>我们的目标是计算积分的一个近似：\(I = \int_a^b f(x) \; dx\)。函数 \(p(x)\) 是定义在区间 [a,b] 上的概率分布函数，而 \(\xi\) 是定义在区间 [a,b] 上、密度为 \(p(x)\) 的随机变量。</p><p>让我们写出：\(\eta = \dfrac{f(\xi)}{p(\xi)}\)，</p><p>其中 \(\eta\) 也是一个随机变量。既然我们知道随机变量函数的期望值是 \(E[f(x)] = \int_a^b f(x) p(x)\;dx\)，我们可以写出：</p><p>$$E[\eta] = E\left[\dfrac{f(\xi)}{p(\xi)}\right] = \int_a^b \dfrac{f(x)}{p(x)} p(x) \;dx = \int_a^b f(x) \; dx = I.$$</p></details><h2>例子</h2><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/importancesamplingexample.png?" alt=""><figcaption><b>图 7：</b>我们测试重要性采样的装置。可以看到，第二个 pdf p'(x) 的形状更接近被积函数的形状。</figcaption></figure><p>最后来看一个简单例子。我们用蒙特卡罗积分来近似下面这个积分：</p><p>$$F = \int_0^{\pi \over 2} \sin(x) \; dx.$$</p><p>这个函数的好处在于，我们可以用第二微积分基本定理解析地算出积分结果（见《光与辐射度量学入门》那门课里讲<a href="mathematics-of-shading.html">着色的数学</a>的那一章）。\(\sin(x)\) 的原函数是 \(-\cos(x)\)。于是我们可以写出：</p><p>$$F = \left[ -\cos(x) \right]_0^{\pi \over 2} = -\cos(\dfrac{\pi}{2}) - - \cos(0) = 1.$$</p><p>这个积分的结果是 1。现在我们试着用蒙特卡罗积分来近似这个积分。我们会用两个不同的 pdf：一个均匀概率分布（\(p(x) = 2 / \pi x\)）和一个 pdf（\(p'(x) = 8x/\pi^2\)），后者如图 7 所示，形状比均匀 PDF 更贴合被积函数的形状。理论告诉我们，从这个 PDF 抽样本应当比从均匀 PDF 抽样本方差更小。那就来验证一下！对均匀分布，我们用下面的估计量：</p><p>$$\langle F^N \rangle = \dfrac{(\pi / 2)}{N} \sum_{i=0}^{N-1} sin(X_i),$$</p><p>其中各个 \(X_i\) 都从均匀分布的 PDF 抽取。至于第二个 PDF，我们用逆采样法找出用来抽样本的公式。回想一下，我们首先需要计算 CDF，然后求反。</p><p>$$CDF(x < \mu) = \int_0^\mu {\dfrac{8x} {\pi^2}} = \left[ {\dfrac{4x^2}{\pi^2}} \right]_0^\mu = {\dfrac{4\mu^2}{\pi^2}} - 0.$$</p><p>现在，对这个函数求反：</p><p>$$ \begin{array}{l} \xi &=& \dfrac{4x^2}{\pi^2},\\ x^2 & = &\dfrac{\pi^2}{4} \xi,\\ x &=& \dfrac{\pi}{2}\sqrt{\xi}. \end{array} $$</p><p>现在把这些公式实现在程序里，比较结果：</p><pre><code>
+#include &amp;ltcstdio&gt; 
+#include &amp;ltcstdlib&gt; 
+#include &amp;ltcmath&gt; 
+int main(int argc, char **argv) 
+{ 
+    srand48(13); 
+    int N = 16; 
+    for (int n = 0; n &lt; 10; ++n) { 
+        float sumUniform = 0, sumImportance = 0; 
+        for (int i = 0; i &lt; N; ++i) { 
+            float r = drand48(); 
+            sumUniform += sin(r * M_PI * 0.5); 
+            float xi = sqrtf(r) * M_PI * 0.5;  //这是我们的 X_i
+            sumImportance += sin(xi) / ((8 * xi) / (M_PI * M_PI)); 
+        } 
+        sumUniform *= (M_PI * 0.5) / N; 
+        sumImportance *= 1.f / N; 
+        printf("%f %f\n", sumUniform, sumImportance); 
+    } 
+    return 0; 
+} 
+</code></pre><p>如果你运行这个程序，应该会得到下面的结果（N = 16）：</p><table><tr><th>#</th><th>均匀</th><th>重要性</th><th>均匀误差 %</th><th>重要性误差 %</th></tr><tr><td>0
+</td><td>1.125890
+</td><td>0.969068
+</td><td>12%
+</td><td>-3%
+</td></tr><tr><td>1
+</td><td>1.277833
+</td><td>0.925675
+</td><td>27%
+</td><td>-7%
+</td></tr><tr><td>2
+</td><td>1.054394
+</td><td>0.980940
+</td><td>5%
+</td><td>-1%
+</td></tr><tr><td>3
+</td><td>1.022417
+</td><td>0.989288
+</td><td>2%
+</td><td>-1%
+</td></tr><tr><td>4
+</td><td>1.231261
+</td><td>0.936890
+</td><td>23%
+</td><td>-6%
+</td></tr><tr><td>5
+</td><td>0.830151
+</td><td>1.041751
+</td><td>-16%
+</td><td>4%
+</td></tr><tr><td>6
+</td><td>1.062268
+</td><td>0.989363
+</td><td>6%
+</td><td>-1%
+</td></tr><tr><td>7
+</td><td>0.849265
+</td><td>1.043809
+</td><td>-15%
+</td><td>4%
+</td></tr><tr><td>8
+</td><td>0.921527
+</td><td>1.020279
+</td><td>-7%
+</td><td>2%
+</td></tr><tr><td>9
+</td><td>1.002310
+</td><td>0.994284
+</td><td>0%
+</td><td>0%
+</td></tr></table><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/importancesampling04.png?" alt=""></figure><p>你可以在最后两列中看到——方差以百分比表示（即蒙特卡罗积分结果与 f(x) 实际期望值之差，我们知道后者是 1）——均匀采样下的误差平均而言大于重要性采样（最右一列）。顺带说一句，注意最后一次运行（最后一行）给出的结果非常接近正确解（两种方法都是）。这正好印证了我们在本课第一章里解释过的：因为我们使用随机样本，一个 MC 方法也完全可能（在某些时候）纯靠运气随机落到精确值上。</p><p>我们关于重要性采样的这段「简短」介绍到此结束。这个例子非常简单；它的目的只是说明它管用。在《重要性采样》那门课里，你会看到更复杂的例子，它们也更直接地应用于渲染。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/variance-reduction-methods.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/variance-reduction-methods.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

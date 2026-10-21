@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>三角形的几何 - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪：渲染三角形 · 三角形的几何（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>三角形的几何</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="why-are-triangles-useful.html">三角形为什么有用？</a></li>
+<li><a style="font-weight:700" href="geometry-of-a-triangle.html">三角形的几何</a></li>
+<li><a href="ray-triangle-intersection-geometric-solution.html">光线与三角形求交：几何解法</a></li>
+<li><a href="single-vs-double-sided-triangle-backface-culling.html">单面与双面三角形以及背面剔除</a></li>
+<li><a href="barycentric-coordinates.html">重心坐标</a></li>
+<li><a href="moller-trumbore-ray-triangle-intersection.html">Möller-Trumbore 算法</a></li>
+</ol>
+</div>
+<h2>三角形的几何</h2><p><b>阅读时间：9 分钟。</b></p><h2>基础数学工具</h2><p>在探讨求解光线与三角形求交测试的技术之前，有必要先熟悉一些基础数学工具。如前所述，三角形的顶点定义一个平面。每个平面都由一条法线刻画，法线是垂直于该平面的向量。已知三角形顶点 \(A\)、\(B\) 和 \(C\) 的坐标，我们可以算出向量 \(AB\) 和 \(AC\)，它们分别表示从 \(A\) 到 \(B\) 的边、以及从 \(A\) 到 \(C\) 的边。做法是用 \(A\) 减去 \(B\)、用 \(A\) 减去 \(C\)。</p><p><b>这里要注意：</b>记住 Scratchapixel 的所有课程都使用右手坐标系（上方向为 y 轴）。因此，当你从正面看一个三角形时，三角形的顶点会按 \(v0\)、\(v1\)、\(v2\) 的逆时针顺序标注。</p><p>同样，把第一个顶点定为 \(A\) 或 <code>v0</code>——后续的 \(AB\) 或 \(AC\) 之类的向量都从它算起——是合乎逻辑的。不过，选 \(A\) 而不是 \(B\) 或 \(C\) 纯属任意。如果你决定从顶点 \(B\) 或 \(C\) 开始（如下图所示），我们接下来给出的全部数学推导照样成立，尽管这看起来不像是你通常会做的事。</p><p>等到讲重心坐标那一课时你会看到，把起点选在 \(A\) 以外的点可能更方便。如果这么做，唯一的要求是保证沿逆时针方向「绕」三角形走一圈。例如你选 \(C\) 作起点，那么下一个顶点应当是 \(A\)，再下一个是 \(B\)。</p><p>目前，为本章及下一章的需要，我们假定 \(A\) 或 <code>v0</code> 是第一个顶点，后续向量都从它定义。但要记住，这并不是数学成立的必要条件。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-starting-vertex.png" alt=""></figure><p>上图中，我们把计算法向量的三种可能方式都画了出来，每次都把<b>洋红色向量</b>作为叉积的第一个向量，自然把<b>青色向量</b>作为第二个。这说明并不一定总要把顶点 \( A \)（或 \( v_0 \)）当作第一个顶点来计算后续所有变量。你可以选 \( B \) 或 \( C \) 作起点，只要始终按<b>逆时针</b>方向考虑顶点即可（数学上可能的说法叫循环置换）。</p><p>要确定平面的法线——它同时也是三角形的法线，因为三角形就在这个平面内——我们计算向量 \(AB\) 与 \(AC\) 的叉积。由于这两个向量位于同一平面内（它们连接三角形的顶点），叉积得到的向量 \(N\) 就是我们要找的法线（见图 1）。这些运算可概括为下面的伪代码：</p><pre><code>
+Vec3f v0(-1, -1, 0), v1(1, -1, 0), v2(0, 1, 0);
+Vec3f e0 = v1 - v0; // 边 0
+Vec3f e1 = v2 - v0; // 边 1
+Vec3f N = cross(e0, e1); // 三角形的法线
+normalize(N);
+</code></pre><p>这些运算的数学表示如下：</p><p>$$
+\begin{array}{l}
+AB  = B - A = (1 - (-1), -1 - (-1), 0 - 0) = (2, 0, 0) \\
+AC  = C - A = (0 - (-1), 1 - (-1), 0 - 0) = (1, 2, 0) \\
+N  = AB \times AC \\
+N_x = AB_y \cdot AC_z - AB_z \cdot AC_y = 0 \cdot 0 - 0 \cdot 2 = 0 \\
+N_y = AB_z \cdot AC_x - AB_x \cdot AC_z = 0 \cdot 1 - 2 \cdot 0 = 0 \\
+N_z = AB_x \cdot AC_y - AB_y \cdot AC_x = 2 \cdot 2 - 0 \cdot 1 = 4 \\
+\end{array}
+$$</p><p>把 \(N\) 归一化后，我们得到向量 \((0, 0, 1)\)，它与 \(z\) 轴的正方向平行。这个结果是意料之中的，因为顶点 \(A/v0\)、\(B/v1\) 和 \(C/v2\) 都位于 \(XY\) 平面内。</p><h2>坐标系的手性</h2><p>三角形顶点的定义顺序会显著影响表面法线的朝向。按逆时针（CCW）顺序定义顶点 \(v_0\)、\(v_1\) 和 \(v_2\)，得到的法线记作 \(N\)。反之，如果顶点按顺时针（CW）顺序定义，两条边（\(v0v1 = v_1 - v_0\) 与 \(v0v2 = v_2 - v_0\)）叉积得到的法线就指向相反方向，得到 \(-N\)。同样，如果你算的是 \(v0v2 \times v0v1\) 而不是 \(v0v1 \times v0v2\)，也会得到 \(-N\)。因此，处理逆时针排列的顶点时务必使用 \(v0v1 \times v0v2\)，这也是右手坐标系下的预期做法。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-triangle2.png" alt=""><figcaption><b>图 1：</b>向量 \(v0v1\) 与 \(v0v2\) 可分别由 \(v_1 - v_0\) 与 \(v_2 - v_0\) 算出。三角形的法线记作 \(N\)，是 \(v0v1\) 与 \(v0v2\) 的叉积。顶点的定义顺序决定法线的方向。这个例子里，顶点按逆时针排列。</figcaption></figure><p>在 Maya 里创建三角形时（它使用右手坐标系），按逆时针（CCW）顺序生成三角形顶点意味着：如果你在 XY 平面上创建一个三角形，并把由 \(v0v1\) 与 \(v0v2\) 定义的向量做叉积，得到的向量（三角形的法线）会与世界坐标系的正 z 轴同向（图 2）。但如果顶点按顺时针顺序创建，\(N\) 就会沿负 z 轴方向。按顺时针顺序创建顶点并由叉积 \(v0v1 \times v0v2\) 算出 \(N\)，等价于在顶点按逆时针顺序创建时计算叉积 \(v0v2 \times v0v1\)。（我知道上面刚说过这一点，但我还是保留这次重复，以防这次的解释比上一次更容易理解。）</p><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-trir-cw-vs-ccw.png" alt=""><figcaption><b>图 2：</b>按 CCW 或 CW 创建顶点会改变法线的方向。</figcaption></figure><p>设想在<b>左手坐标系</b>里创建这个三角形（不同于上面那些例子以及 Scratchapixel 所有课程所假定的右手坐标系），顶点坐标与右手坐标系例子里的完全相同（\(v_0 = (0,0,0)\)、\(v_1=(1,0,0)\) 和 \(v_2=(0,1,0)\)）。按同样的步骤，我们创建向量 \(v0v1\)（\(v_1-v_0\)）与 \(v0v2\)（\(v_2-v_0\)），并算出 \(N\)（由 \(v0v1 \times v0v2\) 得到）。结果是 \((0,0,1)\)，与右手坐标系例子完全相同，因为顶点坐标一样。因此向量 \(v0v1\) 与 \(v0v2\)、以及叉积 \(v0v1 \times v0v2\) 都保持不变。按约定，左手坐标系里的 z 轴指向屏幕外（此时 x 轴指向右，y 轴指向上），这与我们对坐标系手性的说明一致。叉积是反交换运算，这在我们讲<a href="math-operations-on-points-and-vectors.html">几何</a>的课程里讨论过。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/trilhrh1.png?" alt=""><figcaption><b>图 3：</b>在左手或右手坐标系中创建的三角形，从同一个相机视角（沿负 z 轴看）渲染出来并不一样。</figcaption></figure><p>下一步是从一个朝向负 z 轴的相机去渲染这些三角形。结果如图 4 所示：尽管两个三角形的顶点坐标相同，两张图看起来却不一样。这个差异是个问题，因为改变坐标系的手性不该改变三角形在相机里的样子。理想情况下，无论用哪种手性，三角形看起来都应当相同。虽然这个问题与光线与三角形求交测试没有直接关系，但仍然值得注意。我们可以通过沿负 z 轴翻转相机（包括它的位置与方向）来修正，如图 4 所示。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/mirrorcamera.png?" alt=""><figcaption><b>图 4：</b>要得到一致的三角形图像，需要把相机沿 z 轴镜像，并翻转三角形的法线。</figcaption></figure><p>不过这一调整会改变相机与三角形法线相对其镜像前原始朝向的方向。在图 3 中，相机与三角形法线方向相反。调整之后，它们方向相同。这两个向量——三角形的法线与相机方向——对着色很重要，所以它们的相对朝向应当保持不变。</p><p>所以，翻转三角形问题的解决办法是把相机镜像、并把三角形的法线反向。但这要求我们跟踪哪些几何体是在与渲染程序手性不同的坐标系中建模的，也就是说，需要在着色阶段为那些几何体反转法线。这个做法并不理想。</p><p>举例来说，如果一个三角形的顶点在左手坐标系中定义为 \(v_0\)、\(v_1\) 和 \(v_2\)，那么转换到右手坐标系时，应当把 x 坐标取负，并把顺序反转为 \(v_2\)、\(v_1\) 和 \(v_0\)。</p><p>只有在一种坐标系中创建几何体、却在另一种坐标系中渲染时（比如在 Maya 中创建几何体——它使用右手系——然后在 RenderMan 中渲染——它使用左手系），这种调整才是必要的。做过这些改动之后，就无需再修改相机设置，也无需在着色时把法线取负。模型在视觉上会保持一致，法线如预期那样朝外，无论渲染应用使用哪种手性的坐标系。</p><p>顶点定义的具体顺序与方向称为<b>绕序</b>。</p><p>有了这些工具，我们完全可以用简单的几何来解决光线与三角形求交测试了。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/geometry-of-a-triangle.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/geometry-of-a-triangle.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

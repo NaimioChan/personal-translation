@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>从辐射传输方程到体积渲染方程 - Scratchapixel 中文译本</title>
+<meta name="description" content="体积渲染 · 从辐射传输方程到体积渲染方程（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>从辐射传输方程到体积渲染方程</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="intro-volume-rendering.html">体积渲染简介</a></li>
+<li><a href="ray-marching-algorithm.html">光线步进算法</a></li>
+<li><a href="ray-marching-get-it-right.html">光线步进：把它做对！</a></li>
+<li><a href="volume-rendering-3D-density-field.html">三维密度场的体积渲染</a></li>
+<li><a href="volume-rendering-voxel-grids.html">基于三维体素网格的体积渲染</a></li>
+<li><a style="font-weight:700" href="volume-rendering-summary-equations.html">从辐射传输方程到体积渲染方程</a></li>
+<li><a href="volume-rendering-stochastic-monte-carlo.html">下一步？蒙特卡罗的随机方法</a></li>
+</ol>
+</div>
+<h2>从辐射传输方程到体积渲染方程</h2><p><b>阅读时间：37 分钟。</b></p><p>本章我们要学的是支配体积渲染的那些方程。如果你对理论毫无兴趣，可以跳过本章（只读本课程前四章，那几章讲的都是实践）。</p><h2>光如何与参与介质相互作用、又如何在这些体积中传播？</h2><p>在渲染这件事上，尤其是渲染参与介质（medium 的复数）时，大多数书和论文都遵循同一套约定，所以熟悉这套约定是有必要的。体积往往被表示成一段很小的<b>微分</b>圆柱。观察者从一端朝这段圆柱里看，我们从另一端打出一束准直光束，如下图。我们要找的是这束光穿过体积之后的光强（有多少光到达眼睛）。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-cylinder1.png" alt=""></figure><ul><li><p>这个光量的专业术语是<b>辐射亮度</b>，我们用字母 <b>\(L\)</b> 表示。\(L_i\) 是入射辐射亮度：打在圆柱上的那束光的强度。\(L_o\) 是出射辐射亮度：从另一端离开体积的光量。</p></li><li><p>视线方向记为 \(\omega\)（希腊字母 omega）。在我们的代码里，它就是相机光线的方向。</p></li></ul><p>这就是我们的基本设置。穿过圆柱的这束很窄的（准直的）光可以与介质发生四种不同的相互作用（当然，前提是这段小圆柱不是空的，而是装了一些粒子）：</p><ul><li><p><b>吸收</b>：一部分光被吸收。我们的光束会损失强度。辐射亮度下降。</p></li><li><p><b>外散射</b>：组成这束窄光的光子沿 -\(\omega\) 方向前进，直奔眼睛而去；但它们未必都能到达眼睛，因为有些会在路上被散射到另一个（随机的）方向。被外散射的光子不再属于这束光，所以在这里它同样损失强度。辐射亮度下降。</p></li><li><p><b>内散射</b>：散射也可能让一些落在体积上的光被重新导向，正好沿着我们光束的路径前进。于是光束获得强度。辐射亮度上升。</p></li><li><p><b>发射</b>：气体达到一定温度时会发光。此时电子获得能量，再以光子的形式释放出来。这些光子的方向是随机的，但终究会有一些沿着光束的路径前进。因此，由于发射，我们光束的强度也会上升。</p></li></ul><p>要特别注意：外散射和吸收都会造成光能损失，而内散射和发射会让我们这束窄准直光在朝眼睛前进的过程中获得能量。同样关键的是要理解，内散射与外散射是同一个现象的两面：光子与构成介质的粒子「碰撞」。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-cylinder2.png" alt=""></figure><p>辐射亮度 \(dL\) 沿 \(ds\) 的变化，等于在方向 \(\omega\) 上、沿该方向位于 \(x\) 处的入射辐射亮度 \(L_i\) 与出射辐射亮度 \(L_o\) 之差。这个辐射亮度的变化也等于吸收、散射（内散射与外散射）与发射三者效果的净和：</p><p>$$dL(x,\omega) = \text{emission} + \text{in-scattering} - \text{out-scattering} - \text{absorption}$$</p><p>这还不是一个「正式」的方程，但本章稍后我们会看到，它如何最终导出所谓的辐射传输方程（RTE）与体积渲染方程（VRE）。不过在走到那一步之前，我们需要先了解吸收系数与散射系数、Beer 定律以及相位函数。</p><h2>吸收、散射与消光/衰减系数</h2><p>吸收系数（以及散射系数）最好放在用到它们的方程语境里介绍，但把方程与这些系数的定义混在一起容易让人糊涂，所以我们现在先把它们讲清楚。</p><h3> 吸收系数</h3><p><b>吸收系数</b>（或称吸收截面）\(\sigma_a\) 表示<b>光在介质中每行进单位距离被吸收的概率密度</b>。吸收系数的单位是距离的倒数（即 mm\(^{-1}\)、cm\(^{-1}\) 或 m\(^{-1}\)）。概率密度可以理解为某个随机事件（例如一次吸收事件）在给定位置发生的可能性。假设你选了一套单位制，其中 1 个单位等于 1 米，然后有一个吸收系数为 0.5 的体积。那么一个光子在其中行进 1 米后被吸收的概率就是 0.5。打出 1000 个光子，数一数有多少从另一端离开体积：平均会剩下 500 个。换句话说，由于吸收，你的光强在穿过这个体积时损失了一半。</p><p>被吸收的光所占的比例与入射光强无关。进入体积的光子数与离开体积的光子数之比（平均而言）保持不变，与进入体积的光子数无关。入射辐射亮度与吸收效应无关。此外，\(\sigma_a\) 与 \(ds\) 之间也是线性关系。无论是把吸收系数加倍，还是把光在体积中行进的距离加倍，吸收的增加幅度都一样。</p><details open><p>由于吸收系数的单位是距离的倒数，它的倒数就是一个距离。这个距离称为<b>平均自由程</b>。你可以把它看成光子在体积中行进、直到与介质发生相互作用（导致一次散射或吸收事件）之前平均走过的距离。平均自由程在模拟多重散射时很关键（这个话题我们另开一门课讲）。</p><p>$$\text{mean free path} = \frac{1}{\sigma}$$</p><p>注意平均自由程与吸收系数之间也是线性关系。如果把吸收系数加倍，光子在体积中与介质相互作用之前能走的距离就减半。</p></details><h3> 散射系数</h3><p><b>散射系数</b> \(\sigma_s\) 与吸收系数类似，但它表示的是光子在介质中每行进单位距离被散射的概率。内散射与外散射对辐射亮度变化的作用不同，所以我们要把它们区分开。内散射为沿 \(\omega\) 方向向量朝眼睛前进的光束补充光。外散射则让光束朝眼睛前进时损失能量。不过两者都属于同一个散射现象。因此，一个光子被向内或向外散射的概率是同一个，由单个系数定义：散射系数，记作 \(\sigma_s\)（希腊字母 sigma）。</p><details open><p>有些文献用希腊字母「mu」来定义散射系数与吸收系数：\(\mu\)。这似乎是物理学以及研究中子这类粒子如何在物质中运动的领域的惯例。在计算机图形学里，被公认的惯例则是字母 sigma。</p></details><h3> 消光系数</h3><p>前面提到过，从外散射与吸收对辐射亮度变化所起作用的角度看，两者无法区分。当光束沿 -\(\omega\) 方向向量前进时，它们都造成辐射亮度损失。观察者看到的只是光强下降。这种能量衰减究竟来自光子被吸收还是被散射/反射，并不会改变观察者的体验与观察结果。</p><details open><p>当然，你可以装一个探测器，测量沿 -\(\omega\) 之外其他方向离开的光子，从而分辨哪些是吸收造成的、哪些是外散射造成的。等我们稍后引入<b>相位函数</b>这一概念时，这就派得上用场、也有了意义。</p></details><p>正因如此，在计算光穿过介质时的辐射亮度损失时，我们把散射系数与吸收系数合并成一个系数，称为<b>消光系数</b>或<b>衰减系数</b>。它写作：</p><p>$$\sigma_t = \sigma_a + \sigma_s$$</p><p>下标 \(t\) 表示<b>总</b>衰减。你也会看到它写成 \(\sigma_e\)。</p><h2>Beer-Lambert 定律的推导</h2><p>本课程从第一章就引入了 Beer-Lambert 定律。之所以值得从它开始，是因为只有当你需要计算比如某条光线的<b>透射率</b>（而非辐射亮度）时，你才需要 Beer-Lambert 定律。透射率关乎有多少光穿过某个体积物体，你也可以把它改述为这个物体「有多不透明」。而辐射亮度可以看作定义这个体积物体有多亮的量。稍后我们会更正式地引入透射率这一概念。</p><p>为了弄清 Beer-Lambert 定律从何而来，我们先来看一束光从 \(x\) 出发、沿 \(\omega\) 方向行进距离 \(s\) 时辐射亮度的导数。严格说应是 -\(\omega\)，但为了简洁，我们写 \(\omega\)，并默认 \(\omega\) 是观察者看向的方向，而光束朝相反方向行进。你可以把这个辐射亮度的导数写成：</p><p>$$dL = -\sigma_a L(x, \omega) ds.$$</p><p>前面提到过，外散射与吸收都会造成辐射亮度损失，但为了简单，我们先只假定辐射亮度的损失来自吸收。稍后我们会引入散射项，把这个推理扩展并推广。</p><p>它表达的是<b>因吸收而损失辐射亮度的速率</b>（在方向 \(\omega\) 上、位于 \(x\) 处）。你可以把它想成河床的坡度：沿河每一处，地面可能陡一些也可能缓一些——而这个坡度告诉你高程下降得有多快。同样，导数 \(dL\) 告诉你随着光向前传播，辐射亮度下降得有多快。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-river.png" alt=""></figure><p>这个方程告诉我们什么？它说：辐射亮度沿光路下降的速率，与该点处的辐射亮度本身成正比。这个比例常数 \(\sigma_a(x)\) 就是吸收系数，它可以各处不同。也就是说，辐射亮度被吸收得有多快，取决于介质的局部性质。</p><p>可以这样来想象：一条河向大海流去，任一位置上地形的陡峭程度决定了此处水位下降得多快。同样，吸收系数就像辐射亮度的一种「坡度」——某处的吸收系数越大，该处辐射亮度损失得就越快。正如坡度沿河道各处变化，吸收系数也沿光路各处变化，一步步塑造出辐射亮度下降的方式。</p><p>有一点必须讲清楚，才能真正理解这里在做什么。\(L(x, \omega)\) 告诉我们的是：在方向向量 \(\omega\) 上、位于 \(x\) 处的光束，其辐射亮度是多少。正因如此，人们往往忽略了一个事实：<b>\(L(x, \omega)\) 是一个函数</b>。这个函数<b>就是</b> Beer-Lambert 定律本身，就是我们要找的那个函数。如果把这条函数画出来，会看到它随着光在介质中行进的距离增加而下降（随着 \(x\) 离光束进入介质的位置越来越远）。下图给出了这条函数（在给定吸收系数下）关于 \(x\) 的曲线。蓝线表示变化率，即函数 \(L(x, \omega)\) 在某个特定位置上的斜率：</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-transmittance-theory.png" alt=""></figure><p>所以我们的任务是：利用方程 \(dL = -\sigma_a L(x, \omega)\) 求出 \(L(x, \omega)\)。为了解决这个问题，我们先把这条方程改写成 \(s\) 的函数，而不是 \(x\) 的函数，其中 \(s\) 表示光束从入射点 \( x \) 起在介质中行进的距离。把 \(x \) 换成 \( x_s = x + s \omega\)，方程就变成 \( s \) 的函数：</p><p>$$\frac{dL(s)}{ds} = -\sigma_a L(s)$$</p><p>这里的导数（方程左边）用的是 Leibniz 记法。分母那一项非常重要。左边这一部分应当读作「函数 \(L(s)\) 关于 \(s\) 的导数」。用日常语言说就是「随着 \(s\) 变化，\(L(s)\) 以什么速率变化」。</p><details open><p>想更多了解导数，请参阅课程 <a href="mathematics-of-shading.html">着色的数学</a>。</p></details><p>要求 \(L(s)\)，你可以写：</p><p>$$L(s) = \frac{dL(s)}{-\sigma_a ds}$$</p><p>但这并不能让我们多知道一点 \(L(s)\) 是什么，因为如你所见，\(L(s)\) 在方程两边都出现了：一边是 \(L(s)\) 项（函数本身），另一边是 \(dL(s)\) 项（函数的导数）。那这个问题怎么解？</p><p>在数学中，这是一类很有名的方程，叫作<b>常微分方程</b>，简称 <b>ODE</b>（这里属于一阶，因为在这个具体情形里只涉及一阶导数）。我们现在不会专门开一门课讲 ODE 是什么、怎么解。互联网上有大量文献深入讨论这个话题。本课程语境下我们需要知道的是：这是一类同时出现函数及其导数的方程。例如，函数 \(y = f(x)\) 关于 \(x\) 的导数可以写成：</p><p>$$\frac{dy}{dx} = y$$</p><details open><p>或者：</p><p>$$
+y' + p(x)y = 0 \\
+y' = -p(x)y
+$$</p><p>这是数学上所谓一阶<b>齐次</b>线性微分方程的更一般形式。注意，这里的「齐次」与均匀介质毫无关系。还有另一类一阶微分方程，比如 \(y' + p(x)y = q(x)\)，称为非齐次。</p></details><p>导数与函数本身出现在同一个方程里。这是一个 ODE，如你所见，函数 \(y\) 的导数 \(dy\) 等于函数 \(y\) 本身。有意思吧？注意这并不是 ODE 的一般定义。导数不必等于函数本身才算 ODE，只要它是 \(x\) 的函数，随便什么函数都可以。但在我们这个具体情形里，也就是辐射亮度方程这个情形，恰好导数等于函数本身（这对 ODE 来说也完全没问题）。</p><p>解 ODE 的办法，是把所有 \(y\) 移到方程一边（比如说左边），把其余一切（尤其是所有 \(x\) 项，也包括常数等）移到另一边。把 \(c\) 当作方程中的常数，我们得到：</p><p>$$\frac{dy}{dx} = c y \\ \frac{dy}{y} = c dx$$</p><p>记住 \(dy\) 是一个导数，所以要找到原函数，也就是 \(y\)，下一步就是把方程两边积分。</p><p>$$\int \frac{dy}{y} = \int c dx$$</p><p>你可能会觉得奇怪：我们居然对一个导数 \(dy\) 「除以」函数 \(y\) 求积分。从数学上讲这毫无意义，所以千万别这么干。正确的看法是：你对 1 除以 \(y\) 关于 \(y\) 求积分。我们记作：</p><p>$$\int \frac{1}{y} dy = \int c dx$$</p><details open><p>我们总是对某个函数关于某个变量求积分。例如，如果想表达对函数 \(f(x)\) 关于 \(x\) 求积分，应当使用如下记号：\(\int f(x) dx\)。积分算子左边有一个符号 \(\int\)，右边有一个符号 \(dx\)。如果你对导数还不熟，我们建议你读一读课程 <a href="mathematics-of-shading.html">着色的数学</a>。互联网上也有很多学导数的好地方。</p></details><p>\(\ln(y)\) 的导数是 1 除以 \(y\)。所以 1 除以 \(y\) 关于 \(y\) 的积分，就是函数 \(y\) 的自然对数，即 \(\ln(y)\)：</p><p>$$\int \frac{1}{y} dy = \ln(y)$$</p><details open><p>关于 \(\log()\) 函数的导数，你也能找到大量参考资料，所以这里不再细讲这部分。</p></details><p>于是得到：</p><p>$$\ln(y) = c \int dx$$</p><p>我们可以把常数 \(c\) 移到积分号外，而 \(dx\) 的积分就是 \(x\) 本身。因此现在有：</p><p>$$\ln(y) = c x$$</p><p>最后，为了消掉左边的 \(\ln\)，我们可以写：</p><p>$$e^{\ln(y)} = e^{cx}$$</p><p>而如你所知：</p><p>$$e^{\ln(y)} = y$$</p><p>我们得到最终结果：</p><p>$$y = e^{cx}$$</p><p>数学真是美。我们在这里学到的是：当我们有一个形如 \(\frac{dy}{dx} = cy\) 的方程时，它的解给出 \(y = e^{cx}\)。这对我们是好事，因为这条方程可以直接翻译成代码。看看它如何用到我们的辐射亮度方程上：</p><p>$$
+\begin{array}{l}
+\frac{dL(s)}{ds} &=& -\sigma_a L(s)\\
+\frac{dL(s)}{L(s)} &=& -\sigma_a ds\\
+\frac{1}{L(s)} dL(s) &=& -\sigma_a ds\\
+\int \frac{1}{L(s)} dL(s) &=& \int -\sigma_a ds\\
+\int \frac{1}{L(s)} dL(s) &=& -\sigma_a \int ds\\
+\ln(L(s)) &=& -\sigma_a s + \color{red}{C}\\
+e^{\ln(L(s))} &=& e^{-\sigma_a s}\\
+L(s) &=& e^{-\sigma_a s}
+\end{array}
+$$</p><details open><p>计算中我们略去了常数 \(\color{red}{C}\)，但完整的解请看下面 VRE 方程的完整推导。形如 \(y' = -p(x)y\) 的一阶齐次线性微分方程，其通解是：</p><p>$$
+\begin{array}{l}
+\int \frac{1}{y} y' &=& \int -p(x) dx \\
+\ln|y| &=& P(x) + C\\
+|y| &=& e^{P(x)} e^{C}\\
+|y| &=& \pm e^C e^{P(x)}\\
+|y| &=& A e^{P(x)}
+\end{array}
+$$</p><p>其中 \(P(x)\) 是 \(p(x)\) 的原函数。</p></details><p>结果就是 Beer-Lambert 定律的方程。<b>这个方程在介质均匀时成立</b>。对于非均匀介质，请看下面完整的透射率方程。希望你已看出，\(dL(s)\) 对应 \(dy\)，\(ds\) 对应 \(dx\)，\(L(s)\) 对应 \(y\)，\(-\sigma_a\) 对应 \(c\)。前面说过，到目前为止我们只考虑了吸收。但我们可以用消光系数 \(\sigma_t\) 替换 \(\sigma_a\)，从而把外散射造成的衰减也纳入 Beer 定律：</p><p>$$
+\begin{array}{l}
+L(s) = e^{-(\sigma_a + \sigma_s) s}\\
+L(s) = e^{-\sigma_t s}
+\end{array}
+$$</p><p>其中 \(\sigma_t = \sigma_a + \sigma_s\)。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-transmittance-wedge.png" alt=""></figure><p>上图展示了消光系数对体积不透明度的影响，以及随着系数值增大，光是如何被吸收掉的。</p><h3> Beer 定律、透射率与光学深度</h3><p>这就引出了透射率的概念。你可以把透射率看作体积不透明度的一种度量，换种说法，就是有多少光能穿过这个体积的度量。更正式地说，透射率是穿过体积的光所占的比例：</p><p>$$T = \frac{L_o}{L_i}$$</p><p>其中，如前所述，\(L_i\) 是入射辐射亮度，\(L_o\) 是出射辐射亮度。它也可以指穿过体积、往来于两点之间的那部分光。\(T\) 可以用 Beer 定律计算：</p><p>$$T = e^{-\sigma_t s}$$</p><p>其中 \(s\) 是体积中这两点之间的距离。你常会看到这个方程写成：</p><p>$$T = e^{-\tau}$$</p><p>其中 \(\tau\)（希腊字母 tau）称为<b>光学深度</b>或光学厚度。透射率有两类：只考虑吸收的透射率称为内透射率，而同时考虑吸收、外散射等的透射率称为总透射率。</p><p>对于非均匀体积，也就是消光系数（密度的概念我们先搁置）随空间变化的体积，我们需要沿光线对消光系数积分，可以写成：</p><p>$$\tau = \int_{s=0}^d \sigma_t(x_s) ds$$</p><p>其中 \(d\) 是光线在体积中行进的距离。Beer 定律最终、最一般的形式可以写成：</p><p>$$T(d) = \exp \left(-\int_{s=0}^d \sigma_t(x_s) ds \right)$$</p><p>如果你读过前面几章，可能记得我们在 <a href="volume-rendering-3D-density-field.html">三维密度场的体积渲染</a> 那一章里遇到过「tau」这个量。在那一章里，我们用它来累加光线穿过非均匀介质时的消光系数值。</p><h2>内散射与相位函数</h2><p>最后，要把定义光能如何在介质中传播的全局方程拼齐，还差最后一块：相位函数。我们已经在 <a href="ray-marching-get-it-right.html">光线步进：把它做对！</a> 那一章介绍过相位函数的概念。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-phasefunction-theory2.png" alt=""><figcaption><b>图 1：</b>入射光中只有一部分被散射向眼睛。具体多少取决于光方向与视线方向之间的夹角。</figcaption></figure><p>当光束中的光子与构成介质的粒子相互作用时，它们可能被散射而不是被吸收。散射方向是随机的。我们知道它们的入射方向，却无法预知它们会被散射到哪个方向。当准直光束中的光子被散射时，光束损失能量。但是，如果有另一个光源从 \(-\omega\) 某个方向照到我们的圆柱上，那个光源穿过圆柱的一些光子就可能被散射到 \(-\omega\) 方向上。正因如此，沿 \(-\omega\) 方向前进的这束光会获得能量。这就是我们所说的内散射。问题在于，要知道我们的光束因内散射获得多少能量，就必须知道以某个斜角穿过圆柱的光束中有多大比例的能量会被散射到 \(-\omega\) 方向。这个比例由我们所说的<b>相位函数</b>给出。</p><p>相位函数给出的是：沿 \(\omega'\) 方向（注意这里带撇号）入射的光，有多大比例被散射到 \(-\omega\) 方向。请记住这个过程是三维的，所以光是向整个球面方向散射的。散射光的分布当然取决于介质的性质，以及光方向向量 \(\omega'\) 与视线方向向量 \(\omega\) 之间的夹角 \(\theta\)（希腊字母 theta）（这些是文献中使用的约定）。</p><p>注意这里对记法要格外小心。谈到相位函数时，约定如下：\(\omega\) 向量从 \(x\) 指向眼睛，\(\omega'\) 向量从 \(x\) 指向光源（如图 1 所示）。经验法则：计算两个向量之间的夹角时，我们总假定 \(\omega\) 指向眼睛、\(\omega'\) 指向光源。在你的代码里，如果用光线与相机方向向量来计算夹角 theta，要格外留意——它们可能指向与预期约定相反的方向。</p><p>概括一下：相位函数描述的是介质中任一点 \(x\) 处光散射的角分布。</p><p>相位函数（记作 \(f_p(x, \omega, \omega')\)）是：</p><ul><li><p>互易：\(f_p(x, \omega', \omega) = f_p(x, \omega, \omega')\)。交换两个向量，结果不变。正因如此，相位函数常被直接写成 \(f_p(x, \theta)\)，其中 \(\theta\) 是两向量之间的夹角。</p></li><li><p>归一化到 1：它们在方向球面上的积分（常记作 \(\mathbb{S}^2\)）必须等于 1，否则它们会给一次散射事件凭空加上或减去辐射亮度：$$\int_{\mathbb{S}^2} f_p(x, \omega, \omega') d\theta = 1.$$</p></li></ul><p>参与介质可以表现出两种散射行为：</p><ul><li><p><b>各向同性</b>：方向球面上所有方向被选中的可能性相同。</p></li><li><p><b>各向异性</b>：方向球面上某些方向比其他方向更容易被选中，偏向后方或前方，如下图。举例来说，云就表现出很强的前向散射行为。</p></li></ul><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-phasefunction-theory.png" alt=""></figure><p>这是各向同性介质的相位函数：</p><p>$$f_p(x, \omega, \omega') = \frac{1}{4 \pi}.$$</p><p>在 <a href="ray-marching-get-it-right.html">光线步进：把它做对！</a> 那一章，我们已经介绍了 Henyey-Greenstein 相位函数（HG 相位函数），它是常用各向异性相位函数之一。这个函数只依赖于夹角 \(\theta\)，定义为：</p><p>$$f_p(x, \theta) = \frac{1}{4 \pi} \frac{1 - g^2}{(1 + g^2 - 2g \cos \theta)^{\frac{3}{2}}}.$$</p><details open><p>关于这个方程已归一化的证明，见 <a href="ray-marching-get-it-right.html">光线步进：把它做对！</a>。</p></details><p>它最初是为模拟星系际尘埃对光的散射而设计的（Henyey, L.C., and J.L. Greenstein. 1941. Diffuse radiation in the galaxy. Astrophysical Journal 93, 70-83），但由于形式简单，它也被用于模拟许多其他散射材质。就制作实践而言，这个函数虽然简单，通常已经够用（而且，要模拟多重散射，相位函数需要求逆，用这个方程很容易做到）。</p><p>其中 \(-1 \lt g \lt 1\)，\(g\) 称为不对称参数。当 \(g\) 小于 0 时，光优先向后方散射（后向散射）；当 \(g = 0\) 时，介质是各向同性的（光向所有方向均匀散射）；当 \(g \gt 0\) 时，光优先向前方散射（前向散射）。上图中我们给出了 \(g = -0.2\) 与 \(g = 0.2\) 的例子。\(g\) 越大，被散射回光源方向或散射向相机/眼睛方向的光就越多。云的 \(g \approx 0.8\) 值很大，表现出很强的前向散射效应（J. E. Hansen. 1969. Exact and Approximate Solutions for Multiple Scattering by Cloudy and Hazy Planetary Atmospheres）。这就是云在逆光时边缘出现亮边效应的原因。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-fringe.png" alt=""></figure><p>也可以使用别的相位函数，比如 Schlick、Mie 或 Rayleigh 相位函数。想更多了解这些模型，请留意我们将来关于参与介质多重散射的课程。</p><h2>辐射传输方程与体积渲染方程</h2><p>现在所有拼图都齐了，可以拼出我们的最终方程。第一个要看的方程叫 <a href="https://en.wikipedia.org/wiki/Radiative_transfer" target="_blank" rel="noreferrer noopener"><b>辐射传输方程</b></a>，简称 <b>RTE</b>。它由一位名叫 <a href="https://en.wikipedia.org/wiki/Subrahmanyan_Chandrasekhar" target="_blank" rel="noreferrer noopener">Subrahmanyan Chandrasekhar</a> 的人以现代形式给出，写在他 1950 年出版的一本名为《Radiative Transfer》的书里，那本书后来成了经典（至少是这个主题上的标准参考）。这里我们不会花太多时间讲它，因为那本书本身，嗯……怎么说呢，从下面这一小段就能看出它相当艰深。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-rtebook.png" alt=""></figure><p>在将来修订本课程或另开一门课时，我们或许会深入讲辐射传输方程（如果你有兴趣，可以去查有限元方法或辐射度方法，以及这篇论文《Modeling the Interaction of Light Between Diffuse Surfaces》和/或这本书《Radiosity and Realistic Image Synthesis》——Cohen，1993）。现在，我们只从书中摘一小段，我们认为它对目前所学的一切是一个不错的总结（或引子）：</p><blockquote><p>在本章中，我们将定义辐射传输这门学科所处理的基本量，并推导出基本方程——传输方程——它支配着在吸收、发射和散射辐射的介质中的辐射场。</p></blockquote><p>好，话说够了。RTE 考虑了我们在能量流动方向 \(\omega\) 上列出的所有引起辐射亮度变化的因素：吸收、内散射、外散射，以及本课程中略去的发射。记住，这条方程定义的是沿方向 \(\omega\) 的辐射亮度变化（一个导数）：</p><p>$$
+\frac{L(x+s \omega, \omega)}{ds} = \color{blue}{-\sigma_t L(x,\omega)} + \color{orange}{\sigma_s \int_{\mathbb{S}^2} f_p(x, \omega, \omega')L(x,\omega')d\omega'}
+$$</p><p>标量 \(s\) 指的是本章开头引入的沿方向 \(\omega\) 的位置变化。</p><p><span>蓝色</span>项对应吸收与外散射造成的损失。<span>橙色</span>项是内散射项，有时也叫源项。注意积分号前的 \(\sigma_s\) 项。这在概念上类似于本章前面为吸收与外散射造成的能量损失所引入的方程：</p><p>$$
+\begin{array}{l}
+dL &= -\sigma_a L(x, \omega) \\
+dL &= -\sigma_s L(x, \omega)
+\end{array}
+$$</p><p>内散射的量与光被散射的概率成正比。这个概率由散射系数 \(\sigma_s\) 给出。内散射项其余部分的含义前面已经讲过。对方向球面 \(\mathbb{S}^2\) 求积分意味着：对内散射项，我们要把来自每个方向（\(\omega'\)）的光都算进来，并按相位函数 \(f_p(x, \omega, \omega')\) 加权。</p><p>为简洁起见，我们记：</p><p>$$L_s(x, \omega) = \int_{\mathbb{S}^2} f_p(x, \omega, \omega')L(x, \omega')d\omega'$$</p><p>这一点我们已经强调过很多次，但 RTE 是一个<a href="https://en.wikipedia.org/wiki/Integro-differential_equation" target="_blank" rel="noreferrer noopener">积分-微分方程</a>。它表达的是一个方向导数：在 \(x\) 处、沿方向 \(\omega\) 的辐射亮度 \(L\) 的导数。在文献中，你还会看到这条方程写成下面这种形式：</p><p>$$(\omega \cdot \nabla_x)L(x, \omega) = \color{blue}{-\sigma_t L(x, \omega)} + \color{orange}{\sigma_s L_s(x, \omega)}$$</p><p>其中 \(\nabla_x\)（数学中称为 <a href="https://en.wikipedia.org/wiki/Del" target="_blank" rel="noreferrer noopener">Del 或 nabla 算子</a>）可以理解为函数的梯度（也就是导数在多元情形下的推广）。我们加了下标 \(x\)，表示这个梯度是对三维空间中位置 x 的三个坐标求的。不加下标时，\(\nabla_x\) 也可能是在对方向 \(\omega\) 的变化求梯度。<b>当你沿方向 \(\omega\) 移动时，辐射亮度在局部发生变化（减小或增大），其速率与吸收项和散射项成正比</b>。与我们接下来要引入的体积渲染方程不同，这个积分-微分方程告诉我们的是：当我们沿光流方向「走一步」时，辐射亮度以什么速率变化。</p><p>不过这个微分方程对我们用处不大，因为作为计算机图形学开发者，我们需要的是能量度某个体积物体，比如说，边界上的辐射亮度的方法。那个辐射亮度是光沿光线或视线方向穿过物体之后的结果：被吸收和/或外散射削减，又被内散射增强，如下面这张现在已很眼熟的图所示。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-VRE.png" alt=""></figure><p>前面已多次提到，辐射传输方程是一个一阶微分方程，其标准形式可以定义/写成：</p><p>$$y' + p(x)y = \color{red}{q(x)}$$</p><p>在数学中，这个方程称为<b>一阶 <span>非齐次</span>线性微分方程</b>。我们需要解一个同时含有函数 \(y\) 及其导数 \(y'\) 的方程。现在我们把辐射亮度函数重新定义为距离 \(s\) 的函数，该距离是从 \(s\) 到光束沿向量方向 \(\omega\) 上任一点的距离：</p><p>$$
+\begin{array}{l}
+y \rightarrow L(s) \\
+y'(x) \rightarrow \frac{dL(s)}{ds} \\
+\end{array}
+$$</p><p>并且：</p><p>$$
+\begin{array}{l}
+p(x) \rightarrow \sigma_t \\
+q(x) \rightarrow \sigma_s L_s(s)
+\end{array}
+$$</p><p>于是我们可以写：</p><p>$$
+\begin{array}{l}
+y' + \color{blue}{p(x)} y = \color{red}{q(x)} \\
+L'(s) + \color{blue}{\sigma_t} L(s) = \color{red}{\sigma_s L_s(s)}
+\end{array}
+$$</p><p>记住我们说过 \(L_s\) 项有时被称为源项。这是因为你可以把它看成光沿光线在沿途各处「冒出来」、被加到光束辐射亮度上。它是辐射亮度的一个「源」。</p><p>这个标准形式的 ODE 有已知解（如果你有兴趣，推导见下），即：</p><p>$$y(x) = \int_{t=0}^x \color{red}{q(t)} e^{-\int_t^x \color{blue}{p} dt'} dt + C_1 e^{-\int_{t=0}^x \color{blue}{p} dt}$$</p><details open><p><b>推导</b> </p><p>推导一阶非齐次微分方程的解有好几种方法。我们采用<b>积分因子</b>法。它的出发点是把 ODE \(y' + p(x)y = q(x)\) 乘以一个函数 \(I(x)\)。这样做之后，我们得到：</p><p>$$\color{red}{I(x)y' + I(x)p(x)y} = I(x)q(x)$$</p><p>我们把这个方程称为<b>修改后</b>的 ODE。要理解它为什么有用，你需要知道两个函数之积的导数等于：</p><p>$$\frac{d}{dx} [f(x) g(x)] = f'(x) g(x) + f(x) g'(x)$$</p><p>这在数学上称为乘积法则。知道这一点之后，我们可以注意到：如果取 \(I'(x) = I(x)p(x)\)，那么我们 ODE 的左边乘以 \(I(x)\) 之后，看起来就像是可以用乘积法则算出来的一个导数。</p><p>$$
+\begin{array}{l}
+\color{red}{I(x)y' + I(x)p(x)y} \\
+I'(x) \rightarrow I(x)p(x) \\
+\frac{d}{dx} [I(x)y] = \color{red}{I(x)y' + I'(x)y}
+\end{array}
+$$</p><p>然后注意 \(I'(x) = I(x)p(x)\) 本身就是一个一阶<b>齐次</b>微分方程，本章前面已经给出这类方程的通解。通解是：</p><p>$$I(x) = e^{Q(x)}$$</p><p>其中 \(Q(x) = \int p(x) dx\)。注意 \(Q(x) = -P(x)\)，以及 \(P'(x) = -p(x)\)（细节见上面齐次 ODE 的推导）。现在我们把<b>修改后</b>的 ODE 中的 \(I(x)\) 项用齐次 ODE 的通解代入，重写这个方程：</p><p>$$
+\begin{array}{l}
+I(x) y' + I(x) p(x) y &= I(x) q(x) \\
+I(x) \rightarrow e^{-P(x)} \\
+\color{blue}{e^{-P(x)} y' + e^{-P(x)} p(x) y} &= e^{-P(x)} q(x)
+\end{array}
+$$</p><p>最后，我们知道：</p><p>$$
+\begin{array}{l}
+I(x) y' + I'(x) y &= \frac{d}{dx} [I(x) y] \\
+I(x) &= e^{-P(x)} \\
+I'(x) &= I(x) p(x) \\
+\color{blue}{e^{-P(x)} y' + e^{-P(x)} p(x) y} &= \color{red}{\frac{d}{dx} [e^{-P(x)} y]}
+\end{array}
+$$</p><p>因此，把上一方程左边的项用右边的项替换，我们得到：</p><p>$$\color{red}{\frac{d}{dx} [e^{-P(x)} y]} = e^{-P(x)} q(x)$$</p><p>剩下就是两边积分：</p><p>$$
+\begin{array}{l}
+e^{-P(x)} y &= \int e^{-P(x)} q(x) dx \\
+y &= \frac{1}{e^{-P(x)}} \int e^{-P(x)} q(x) dx \\
+y &= e^{P(x)} \int e^{-P(x)} q(x) dx
+\end{array}
+$$</p><p>写成一般形式（计入积分常数，上面的积分中我们略去了它），解为：</p><p>$$y(x) = e^{-\int p(x) dx} \left( \int e^{\int p(x') dx'} q(x) dx + C \right)$$</p><p>要得到 VRE，你只需把 \(p\) 和 \(q\) 两项分别替换为 \(\sigma_t\) 和 \(\sigma_s L_s(x)\)。</p></details><p>如果把 \(q\) 与 \(p\) 两项替换成 RTE 方程中对应的量，我们得到（请读下面的第二条注）：</p><p>$$
+\begin{equation}
+\begin{split}
+L(x, \omega) =& \int_{s'=0}^s \exp\left(-\int_{s'}^{s} \textcolor{blue}{\sigma_t(x_{s''})} \, ds''\right) \left[\textcolor{red}{\sigma_s(x_{s'}) L_s(x_{s'})}\right] ds' + \\
+&L(0) \exp\left(-\int_{s'=0}^{s} \textcolor{blue}{\sigma_t(x_{s'})} ds'\right) 
+\end{split}
+\end{equation}
+$$</p><ul><li><p>沿光线的三维位置 \( x \) 用标量 \( s' \) 与 \( s'' \) 重新参数化，这两个标量度量的是沿光线、从入射点 \( x \) 起算的距离。形式上，我们把 \( x \) 换成 \( x_s = x + s \omega \)。</p></li><li><p><b>外层积分</b>（变量为 \( s' \)）从体积中的入射点 \( x \) 一直到体积的出射点 \( x_s \)（也就是我们想要求出该处光线值的那一点），因此实际上覆盖了 \( s \) 这段距离，表示沿路径累积散射进光线方向的光。</p></li><li><p><b>内层积分</b>（变量为 \( s'' \)）从当前散射点 \( x_{s'} \) 一直到光线的终点 \( x_s \)，实际上覆盖距离 \( s' \)，表示光从散射点 \( x_{s'} \) 到终点 \( x_s \) 的衰减。</p></li><li><p>\( L(0) \exp\left(-\int_{s'=0}^{s} \textcolor{blue}{\sigma_t(x_{s'})} ds'\right) \) 项对应初始辐射亮度 \( L(0) \) 在整段路径长度 \( s \) 上的衰减。</p></li></ul><p>如你所料，这就是<b>体积渲染方程</b>。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/vol-rendering-visualize-terms.png" alt=""></figure><details open><p>你也许会问：在展开推导（见上面的框）中给出的方程各项时，为什么前面那个指数项出现在方程的第二部分，却从第一部分消失了？这是个好问题。因为我们可以写：</p><p>$$\int_0^s \sigma_t(x) \, dx =  \int_0^t \sigma_t(x) \, dx + \int_t^s \sigma_t(x) \, dx.$$</p><p>换句话说，从 \(0\) 到 \(s\) 的积分可以拆成从 \(0\) 到 \(t\) 的积分，加上从 \(t\) 到 \(s\) 的积分。因此：</p><p>$$ \int_0^t \sigma_t(x) \, dx = \int_0^s \sigma_t(x) \, dx - \int_t^s \sigma_t(x) \, dx.$$</p><p>两边取指数，我们得到：</p><p>$$e^{\int_0^t \sigma_t(x) \, dx} = e^{\int_0^s \sigma_t(x) \, dx - \int_t^s \sigma_t(x) \, dx}.$$</p><p>指数里原来的积分可以拆成两个积分。指数中的减号体现了积分上限的不同。把它用到我们的方程上：</p><p>$$L(x, \omega) = e^{-\int_0^s \sigma_t(x) \, dx} \left( \int_0^s e^{\int_0^s \sigma_t(x) \, dx - \int_t^s \sigma_t(x) \, dx} \sigma_s(t) L_s(t) \, dt + C \right).$$</p><p>化简后为：</p><p>$$L(x, \omega) = e^{-\int_0^s \sigma_t(x) \, dx} \left( e^{\int_0^s \sigma_t(x) \, dx} \int_0^s e^{-\int_t^s \sigma_t(x) \, dx} \sigma_s(t) L_s(t) \, dt + C \right).$$</p><p>外层两个指数项 \(e^{-\int_0^s \sigma_t(x) \, dx}\) 与 \(e^{\int_0^s \sigma_t(x) \, dx}\) 相互抵消：</p><p>$$L(x, \omega) = \int_0^s e^{-\int_t^s \sigma_t(x) \, dx} \sigma_s(t) L_s(t) \, dt + C e^{-\int_0^s \sigma_t(x) \, dx}.$$</p><p>这里 \(C\) 是代表初始条件 \(L(0)\) 的常数：</p><p>$$L(x, \omega) = \int_0^s e^{-\int_t^s \sigma_t(x) \, dx} \sigma_s(t) L_s(t) \, dt + L(0) e^{-\int_0^s \sigma_t(x) \, dx}.$$</p><p>现在 VRE 的最终形式为：</p><p>$$
+\begin{align*}
+L(x, \omega) =& \int_{s'=0}^s \exp\left(-\int_{s'}^{s} \sigma_t(x_{s''}) \, ds''\right) \left[\sigma_s(x_{s'}) L_s(x_{s'})\right] ds' + \\
+& L(0) \exp\left(-\int_{s'=0}^{s} \sigma_t(x_{s'}) \, ds'\right).
+\end{align*}
+$$</p></details><details open><p>不过要注意，我们并不确切知道「体积渲染方程」这个说法最早出自谁手，这个词出现得相当晚，在 2000 年代初。它可见于 Pixar Research 2017 年发布的《Volume Rendering for Production》一文，但此前已有人使用。如果你知道相关信息，请告诉我们。</p></details><p>右边的 \(L_0\) 项对应来自某物体的辐射亮度，从观察者角度看，那个物体可能在体积物体后面。如果体积物体放在一个实体物体前面，那么这个物体沿 \(\omega\) 向量「反射」的辐射亮度 \(L_0\) 会被体积在整段距离 \(s\) 上的透射率衰减，如上图所示。</p><p>还要注意，如果考虑发射，我们会在内散射项旁边加一个发射项 \(L_e\)，像这样（注意发射源旁边的 \(\sigma_a\) 项）：</p><p>$$
+\begin{equation}
+\begin{split}
+ L(x, \omega) =& \int_{s'=0}^s \exp\left(-\int_{s'}^{s} \textcolor{blue}{\sigma_t(x_{s''})} \, ds''\right) \left[\textcolor{red}{\sigma_s(x_{s'})} L_s(x_{s'}) + \textcolor{red}{\sigma_a(x_{s'})} L_e(x_{s'})\right] ds' + \\
+& L(0) \exp\left(-\int_{s'=0}^{s} \textcolor{blue}{\sigma_t(x_{s'})} ds'\right) 
+\end{split}
+\end{equation}
+$$</p><p>体积渲染方程对我们这些做图形学的人更有用，因为它把 RTE 变成了一个积分，这个积分虽然没有闭式解，但至少可以用黎曼和之类的技术来求解（前几章我们做的本质上就是这件事）。</p><p>其中：</p><p>$$T(s) = \exp\left(-\int_{s'=0}^{s}\sigma_t(x_{s'}) ds'\right)$$</p><p>如你现在所知，它给出介质在距离 \(s\) 上的透射率，于是我们可以把 VRE 写成：</p><p>$$L(x, \omega) = \int_{s'=0}^s T(s')\left[\sigma_s(x_{s'}) L_s(x_{s'}, \omega)\right] ds' + T(s)L(0)$$</p><ul><li><p>外层积分（变量为 \( s' \)）从体积的入射点一直到出射点 \( x_{s'} = x_s \)，表示沿路径累积散射进光线方向的光。</p></li><li><p>内层积分 \(T(s)\) 对应光从散射点到出射点的衰减。</p></li><li><p>\( s \) 是光在体积中行进的总距离。</p></li></ul><p>一般来说，讲到这里人们就会说这个方程可以凭直觉理解了。我们来看看。思路是这样的：你可以把计算 \(x_s\) 处辐射亮度的过程理解为沿光线收集辐射亮度的过程，其中光线上任一点（比如说 \(x_{s'}\) 沿 \(\omega\) 方向朝 \(x_{s}\) 前进）的辐射亮度，会被从该点到 \(x_{s}\) 的透射率所削减（而 \(s'\) 是从 \(x_{s'}\) 到 \(x_{s}\) 的距离）。</p><p>如果你读到了这里，恭喜。你已经啃完了计算机图形学文献中最复杂的方程之一。要注意，虽然一些较早的论文提供了一些线索，说明如何从 RTE 走到 VRE，但据我们所知，Scratchapixel 是第一个也是唯一一个给出完整推导的来源（特别感谢 SP 提供的线索）。</p><details open><p><b>一点历史</b> </p><p>如果要为这篇体积渲染入门挑一篇必提的论文，那就是 James T. Kajiya 1984 年发表的 <a href="https://www.researchgate.net/publication/234800181_Ray_Tracing_Volume_Densities" target="_blank" rel="noreferrer noopener">Ray-Tracing Volume Density</a>。这说明渲染体积物体绝不是近些年才有的事，只是当年的硬件连对实体表面做光线追踪都不够快，对体积物体做光线步进就更不用说了。直到 1990 年代末到 2000 年代初，随着《超时空接触》这样的影片，我们才开始在制作中看到体积渲染的身影（因为对大片预算的制作来说，成本终于到了可以承受的地步）。下图是他论文中的一张截图，Kajiya 在那里展示了史上第一次对体积物体做光线步进的结果。  </p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-kajiya.png" alt=""></figure><p>这篇论文大概是整个计算机图形学研究史上最重要的十篇论文之一。如果你不同意，请告诉我们。</p></details><p>现在的大问题是：这个积分怎么算（不，答案不是 42）？本课程里我们已经用光线步进方法展示了一种解法，但还有其他方法。光线步进曾经是标准做法，如今已被认为相当过时（不过我们认为它仍是学体积渲染的好起点）。今天的主流是追踪算法和随机采样方法。本课程最后一章会简要谈及这个话题。</p><h2>从方程到代码</h2><p>我们知道这些方程可能让人吃不消，也知道有些读者只关心它们怎么落到代码里。本课程前四章会带你走完这段路，所以这里不再重复这一练习。如果你还没读，建议先去看本课程前几章。不过这里给几点提示，帮你把方程的各个部分与各章对上号。</p><ul><li><p>\(L(0)T(s)\) 项说的就是本课程第一章所学的内容。\(L(0)\) 简单对应被实体物体（比如下图中的红墙）反射后穿过体积的光。那份光（物体的颜色）只是被 \(T(s)\) 衰减，其中 \(s\) 是光在体积中行进的距离，而 \(T\) 就是 Beer 定律。如果物体是均匀的，它就简单地是 \(T(s) = \exp(-s * \sigma_t)\)。这部分见<a href="intro-volume-rendering.html">第 1 章</a>。如果体积是非均匀的，你就需要按 <a href="volume-rendering-3D-density-field.html">第 3 章</a> 所述计算体积光学厚度。方程是 \(T(s) = \exp(- \int_{t=0}^s \sigma_t(x_t) dt)\)。如果只考虑这一项，体积球会像下图那样保持全黑。这一项只负责来自背景、穿过体积的光。</p></li></ul><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-L0term.png" alt=""></figure><ul><li><p>方程右边的第一项，也就是 \(\int_{t=0}^s T(t)\left[\sigma_s(x_t) L_s(x_t, \omega)\right] dt\) 这一部分，简单对应单次散射项。要看它如何落到代码，请读<a href="intro-volume-rendering.html">第 1 章</a>到<a href="volume-rendering-3D-density-field.html">第 3 章</a>。这一项负责球体的照明。</p></li></ul><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-single-scatter-term.png" alt=""></figure>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/volume-rendering-summary-equations.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/volume-rendering-summary-equations.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

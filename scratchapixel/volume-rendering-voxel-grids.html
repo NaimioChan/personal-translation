@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>基于三维体素网格的体积渲染 - Scratchapixel 中文译本</title>
+<meta name="description" content="体积渲染 · 基于三维体素网格的体积渲染（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>基于三维体素网格的体积渲染</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="intro-volume-rendering.html">体积渲染简介</a></li>
+<li><a href="ray-marching-algorithm.html">光线步进算法</a></li>
+<li><a href="ray-marching-get-it-right.html">光线步进：把它做对！</a></li>
+<li><a href="volume-rendering-3D-density-field.html">三维密度场的体积渲染</a></li>
+<li><a style="font-weight:700" href="volume-rendering-voxel-grids.html">基于三维体素网格的体积渲染</a></li>
+<li><a href="volume-rendering-summary-equations.html">从辐射传输方程到体积渲染方程</a></li>
+<li><a href="volume-rendering-stochastic-monte-carlo.html">下一步？蒙特卡罗的随机方法</a></li>
+</ol>
+</div>
+<h2>基于三维体素网格的体积渲染</h2><p><b>阅读时间：33 分钟。</b></p><p>学完本章，你就能做出这样一组连续图像：</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/volume-rendering-developers/voldev-smoke.mp4"></video></p></div><p>如上一章所述，生成密度场有两种技术：过程式生成，或用流体模拟软件。本章我们看后一种。注意在本课中，我们不会学习流体模拟如何工作。我们学的是如何渲染流体模拟产出的数据。流体模拟我们以后再讲，说好了。</p><h2>第 1 步：用 3D 网格存储密度值</h2><p>模拟流体（烟、水等）的技术有很多，但一般来说，在过程中的某个环节，模拟结果会被存进一个 <b>3D 网格</b>。为简便起见，本课假定这些网格在三个维度上分辨率相同（例如 x、y、z 方向分别是 32x32x32），且该分辨率是 2 的幂（8、16、32、64、128 等）。这只是本课的设定。实践中不必如此。另外，本课我们不对网格做变换。所以假定网格是一个轴对齐的盒子：我们可以把网格当作<b>轴对齐包围盒（AABB）</b>，这会简化我们的光线-盒求交测试。要让方案更通用（即支持非轴对齐的网格）也很容易：用网格的世界到物体变换矩阵把相机光线变换到网格的物体空间即可，详见<a href="using-4x4-matrices-transform-objects-3D.html">这一课</a>。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-grid.png" alt=""><figcaption><b>图 1：</b>一个存储密度值的 8x8x8 网格。</figcaption></figure><p>网格很适合模拟流体的运动，因为网格的<b>体素</b>（即构成网格的小体积元素，也可以叫单元）会被赋予某个初始密度（想象它们装满了烟），随着时间推进，这份密度会在相邻单元之间分配。它们在体素之间如何移动由<b>Navier-Stokes 方程</b>决定。但这个话题同样留给另一门课。本课你只需知道：流体模拟的结果存放在由体素构成的 3D 网格里，体素存储密度值（0 或大于 0 的值）。<b>网格中的每个体素存储一个唯一的密度值</b>（「填满」该体素体积的密度）。3D 网格之于流体模拟，正如位图之于图像。密度场是被量化了的。用任何编程语言定义一个存储密度值的 3D 网格都相当简单，不过其中有些细微之处，我们会在本章末尾讨论。</p><p>除了<b>网格分辨率</b>（任一维度上的体素数量，如 32x32x32），我们还需要在世界空间中定义<b>网格的尺寸</b>。也就是场景中该物体的大小。这可以用不同方式来做，但为了方便，我们通过定义网格在世界空间中的最小与最大边界（范围）来实现，比如：(-2,-2,2) 与 (2,2,2)。注意，因为我们的网格是个立方体，目前这些值不必关于世界原点对称，但网格在世界空间中的尺寸在三个维度上必须相同：例如 (0.2,0.2,0.2)、(10.2,10.2,10.2) 可以，(-1.2,2.2,3.2)、(8.2,4.2,7.2) 就不行。这样定义网格的世界空间尺寸很方便，因为最小与最大范围可以直接喂给光线-盒求交例程（我们在<a href="ray-box-intersection.html">一个最小光线追踪器：渲染简单形状（球、立方体、圆盘、平面等）</a>那门课里学过）。所以我们已经知道如何为任何与立方体相交的光线计算 t0 与 t1 的值（跟我们对球体图元做的方式类似）。</p><p>你可以修改前几章的代码，改为渲染立方体而不是球体。我们也不妨用矩阵从一个更有意思的视角渲染场景。你应该能得到类似这样的东西：</p><pre><code>
+struct Grid {
+    float *density;
+    size_t dimension = 128;
+    Point bounds[2] = { (-30,-30,-30), (30, 30, 30) };
+};
+
+bool rayBoxIntersect(const Ray&amp; ray, const Point bounds[2], float&amp; t0, float&amp; t1)
+{
+    ...
+    return true;
+}
+
+void integrate(const Ray&amp; ray, const Grid&amp; grid, Color&amp; radiance, Color&amp; transmission)
+{
+    Vector lightDir(-0.315798, 0.719361, 0.618702);
+    Color lightColor(20);
+
+    float t0, t1;
+    if (rayBoxIntersect(ray, grid-&amp;gtbounds, t0, t1) {
+        // 从 t0 步进到 t1
+
+        radiance = ...;
+        transmission = ...;
+    }
+}
+
+Matrix cameraToWorld{ 0.844328, 0, -0.535827, 0, -0.170907, 0.947768, -0.269306, 0, 0.50784, 0.318959, 0.800227, 0, 83.292171, 45.137326, 126.430772, 1 };
+
+int main()
+{
+    Grid grid;
+    // 分配内存以读取缓存文件中的数据
+    size_t numVoxels = grid.resolution * grid.resolution * grid.resolution;
+    // 想用 unique_ptr 的话随意（示例程序就用了）
+    grid.density = new float[numVoxels];
+    std::ifstream cacheFile;
+    cacheFile("./cache.0100.bin", std::ios::binary);
+    // 把密度值读入内存
+    cacheFile.read((char*)grid.density, sizeof(float) * numVoxels);
+
+    Point origin(0);
+    for (each pixel in the frame) {
+        Vector rayDir = ...;
+        Ray ray;
+        ray.orig = origin * cameraToWorld;
+        ray.dir = rayDir * cameraToWorld;
+        
+        Color radiance = 0, transmission = 1;
+        integrate(ray, grid, radiance, transmission);
+        
+        pixelColor = radiance;
+        pixelOpacity = 1 - transmission;
+    }
+
+    // 释放内存
+    delete [] grid.density;
+}
+</code></pre><p>暂时不必太在意缓存文件的内容。我们后面会看。但从上面的代码你应该看出，我们做的只是创建一块连续内存来存储与网格体素数量一样多的 float 值。然后把这些值从磁盘搬到内存（第 36 行）。没什么花哨的。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-cube.png?" alt=""></figure><p>这是你应该得到的图像。既然我们知道会用 3D 网格存储密度场的值、这个网格有分辨率也有尺寸，也知道怎么算光线与盒子（即网格）相交的点，那接下来就看沿光线步进时如何读取网格的密度值。</p><h2>第 2 步：在网格中做光线步进</h2><p>如<a href="grid.html">这一课</a>所述，把网格当作加速结构用相当麻烦。我们得找出光线相交的每一个网格单元，看这些相交单元中包含的几何体（三角形）是否也与光线相交。这虽然不算特别复杂，但也绝不算轻松（特别是如果你想做得快）。所以你可能会担心我们又要走一遍这套流程。好消息：完全不必。用光线步进，这件事很简单，因为我们只关心沿光线的采样点，如下图所示。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-tracegrid.png?" alt=""></figure><p>既然知道这些点的位置，剩下的就是弄清这些点落在网格中哪个体素里（这是下一项的主题），并读取那些体素中存储的密度值。不涉及网格遍历。超级简单。现在来看如何从采样点得到体素坐标，并用这些坐标从内存中读值。</p><h2>第 3 步：沿光线步进时读取密度值</h2><p>相对我们迄今用的代码，唯一要改的是 <code>evalDensity</code> 函数。我们不再对由过程式噪声函数定义的密度场在空间中任意点求值，而是改为读取该位置上网格的内容。这是个非常小的改动。其他一切照旧。通常我们知道采样点总在网格边界内（因为它应当位于光线与盒子相交的两点之间）。所以这不该有问题，但为了让代码更健壮，你大概还是想用网格边界检查采样点坐标，以防崩溃。</p><p>从网格读取密度值可以有不同的叫法。我们一般称之为<b>查找</b>（lookup）。在 OpenVDB 这个专为高效存储与读取体积数据而设计的库里，这叫 <b>probing</b>（不过这个名字不太常见）。那么，我们怎么读数据？</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-grid-coordinates.png?" alt=""></figure><p>我们要做的是找到采样点与它落入的网格体素之间的对应关系。原始采样点定义在世界空间。所以我们需要把这个采样点转成网格的离散坐标。为此需要：</p><ul><li><p>把点从<b>世界空间</b>变换到<b>物体空间</b>。在我们的情形里，只需从采样位置中减去网格的最小范围。此时采样点就是相对于网格「左下角」定义的了。</p></li><li><p>然后我们把物体空间中的点除以<b>网格尺寸</b>（本例中为 10）。此时点的坐标被归一化了。我们可以称之为归一化坐标（点的坐标落在 [0,1] 范围内。</p></li><li><p>最后，我们把归一化坐标乘以网格分辨率。我们把这个空间叫<b>体素空间</b>。此时坐标仍是浮点数。要算出网格坐标、并据这些坐标从内存中读值，我们需要把这些浮点数舍入到最近的整数。为防止崩溃，我们要确保采样点在体素空间中的坐标不大于网格分辨率减 1（若任一归一化坐标恰好为 1 就可能发生）。现在就可以读取该位置处的密度值了。</p></li></ul><p>如果你看上面那个（2D）例子，可以看到该点在体素空间的坐标是 (3.36, 3.28)。由此可知，求该体素在内存中的索引，只需把 y 坐标的整数部分乘以 8（网格分辨率）再加 3（x 坐标的整数部分）。</p><p>代码如下：</p><pre><code>
+float evalDensity(const Grid* grid, const Point&amp; p)
+{
+    Vector gridSize = grid.bounds[1] - grid.bounds[0];
+    Vector pLocal = (p - grid.bounds[0]) / gridSize;
+    Vector pVoxel = pLocal * grid.baseResolution;
+
+    int xi = static_cast&lt;int&gt;(std::floor(pVoxel.x));
+    int yi = static_cast&lt;int&gt;(std::floor(pVoxel.y));
+    int zi = static_cast&lt;int&gt;(std::floor(pVoxel.z));
+
+    // 最近邻
+    return grid-&amp;gtdensity[(zi * grid-&amp;gtresolution + yi) * grid-&amp;gtresolution + xi]; 
+}
+</code></pre><p>这里我们又一次（就像 Perlin 噪声函数也有把点从世界空间转到格点空间的类似需求那样）使用了 floor 函数，因为如果归一化后点的坐标小于 0（稍后我们会看到为什么可能发生），我们希望函数返回 0 而不是 -1（简单的 <code>static_cast</code> 最终会得到 -1）。</p><p>我们把这种方法叫<b>最近邻查找</b>插值，因为你本质上做的是取回采样点落入的那个体素的坐标（所以它并不是插值）。还存在其他方法，但它们都从计算该体素的坐标开始。这些其他方法涉及对相邻体素的值做插值，我们接下来就研究。不过在进入这个话题之前，我们现在已有渲染流体模拟第一张图像所需的一切（源代码部分提供了若干流体缓存供你连同示例程序一起下载）。看看它长什么样。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-fluidsim-nearest.png?" alt=""></figure><p>如你所知，我们的目标是提供不依赖外部库的示例。因此我们不使用 OpenVDB（或它的前身 Field3D）这类行业格式来存储网格数据。我们改用类似下面这种方式，以最基本的形式把流体模拟数据转储到二进制文件：</p><pre><code>
+// 我们的二进制缓存格式
+for (size_t z = 0; z &lt; grid.res; ++z) {
+    for (size_t y = 0; y &lt; grid.res; ++y) {
+        for (size_t x = 0; x &lt; grid.res; ++x) {
+            float density = grid.density[x][y][z];
+            cacheFile.write((char*)&amp;density, sizeof(float));
+        }
+    }
+}
+</code></pre><p>注意 OpenVDB 也遵循同样的原理，不过它支持压缩，以及多分辨率、稀疏体积这类东西（本章末尾会涉及）。我们的做法好在直白，而这正是我们在教学时想要的。所以上面代码里你要注意的是：我们沿 z 轴从后往前存储一片片体素。记住（对右手坐标系而言）网格的最小范围位于网格的背面、左下角（下图中洋红色的体素）。在体素空间里，网格的第一个体素坐标是 (0,0,0)，而本例中最后一个体素（网格正面、沿 z 轴正方向、右上角）坐标是 (8,8,8)（下图中黄色的体素。本例中网格分辨率为 8）。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-grid-coordinates2.png?" alt=""></figure><p>所以如果我们像转储数据到文件时那样（以及从文件读回内存时那样）把体素铺进一个简单的 float 数组，这个数组里第一个体素索引为 0，最后一个体素索引为 511（这是<a href="https://en.wikipedia.org/wiki/Zero-based_numbering" target="_blank" rel="noreferrer noopener">从 0 开始编号的数组</a>，所以是 8*8*8 减 1）。由体素空间坐标求体素索引，只需：</p><pre><code>
+size_t index = (zi * gridResolution + yi) * gridResolution + xi;
+</code></pre><p>这是得到结果最基本的方式。不过我们还可以用所谓的三线性插值来提升图像质量。来看看它怎么工作。</p><p># 第 4 步：用三线性插值改进结果</p><p>基本想法是这样的：一个体素只代表一个密度值，而采样点可以落在这个体素体积内的任何地方。因此可以合理地认为，该位置处的密度值应当是采样点所在体素的密度与紧邻体素密度值的某种混合，如下图所示。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-8voxelsinterpo.png?" alt=""></figure><p>做三线性插值，我们只是把 8 个体素的值混合起来。怎么混？就是算出采样点到这 8 个体素各自的距离，再用这些距离给这 8 个体素各自的贡献加权。</p><p>这个过程是<a href="interpolation-introduction.html">线性插值</a>，只不过是在 3D 中。我们用来插值两个值的公式是 \(a * (1 - weight) + b * weight\)，其中 \(weight\) 从 0 变到 1。在 2D 中，这个过程叫<a href="bilinear-filtering.html">双线性插值</a>，需要 4 个像素。在 3D 中，我们称之为三线性插值，需要 8 个体素。注意用于在 a 与 b 之间插值的公式叫<b>插值式</b>（interpolant）。就线性插值而言，插值式是一个一阶多项式。</p><p>我们假定某个体素中存储的密度，就是采样点恰好位于该体素正中时应取的值。由于三线性插值方案的性质，要得到这个结果，我们需要把采样位置在体素空间中偏移 -0.5。我们先看代码，再解释它如何工作。</p><pre><code>
+float evalDensity(const Grid* grid, const Point&amp; p)
+{
+    Vector gridSize = grid.bounds[1] - grid.bounds[0];
+    Vector pLocal = (p - grid.bounds[0]) / gridSize;
+    Vector pVoxel = pLocal * grid.baseResolution;
+    &amp;ltspan style="color: red; font-weight: 700;"&amp;gtVector pLattice(pVoxel.x - 0.5, pVoxel.y - 0.5, pVoxel.z - 0.5);&lt;/span&gt;
+    int xi = static_cast&lt;int&gt;(std::floor(pLattice.x));
+    int yi = static_cast&lt;int&gt;(std::floor(pLattice.y));
+    int zi = static_cast&lt;int&gt;(std::floor(pLattice.z));
+
+    float weight[3];
+    float value = 0;
+
+    // 三线性插值
+    for (int i = 0; i &lt; 2; ++i) {
+        weight[0] = 1 - std::abs(pLattice.x - (xi + i));
+        for (int j = 0; j &lt; 2; ++j) {
+            weight[1] = 1 - std::abs(pLattice.y - (yi + j));
+            for (int k = 0; k &lt; 2; ++k) {
+                weight[2] = 1 - std::abs(pLattice.z - (zi + k));
+                value += weight[0] * weight[1] * weight[2] * grid(xi + i, yi + j, zi + k);
+            }
+        }
+    }
+
+    return value;
+}
+</code></pre><p>现在来看看这如何（以及为何）有效。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-trilinearinterpo.png?" alt=""></figure><p>上图展示了两种技术。左上角是最近邻插值方法的例子。这里没什么花哨的。我们有 4 个体素（2D 情形，3D 中为 8 个），采样点（蓝点）落入其中一个。于是采样点取该体素中存储的密度值。</p><p>到了三线性插值，事情稍微复杂一点。你大概会同意：如果采样点正好落在四个体素的正中间，我们大概应当返回这四个体素中存储的密度值的平均。也就是说，在这个特定例子里，把各体素密度值之和除以 4。</p><pre><code>
+result = (0.9 + 0.14 + 0.08 + 0.63) / 4
+</code></pre><p>如果点正好在四个体素交叉处，这样是可以的，但那是个例外情况。所以我们需要一个通用的解。</p><p>首先（为什么需要这样做，我们稍后解释），我们需要把采样点偏移半个体素空间：(-0.5, -0.5, -0.5)。沿用采样点正好落在四个体素正中间这个例子，施加偏移后采样点现在位于左下方那个体素的正中间。接下来我们计算从这个点到各体素边界的距离。在我们的图示（2D 情形）中，这由距离 dx0（采样点 x 坐标到 x0、即体素左下 x 坐标的距离）、dy0（采样点 y 坐标到 y0、即体素左下 y 坐标的距离）、dx1（采样点 x 坐标到 x1、即体素右上 x 坐标的距离）与 dy1（采样点 y 坐标到 y1、即体素右上 y 坐标的距离）表示。这些在术语上叫<b>曼哈顿距离</b>。</p><p>曼哈顿距离：两点之间沿直角轴向测量的距离。在平面上，若 p1 在 (x1, y1)、p2 在 (x2, y2)，则为 |x1 - x2| + |y1 - y2|。</p><p>实践中，我们后面会看到，只需要 dx0、dy0 与 dz0。再说一遍三线性插值的大致思路（想要更完整的解释，请看<a href="trilinear-interpolation.html">专讲插值的那门课</a>）。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-linearinterpovoxels.png?" alt=""></figure><p>我们有一块 2x2x2 的体素。把它们叫作 v000、v100（向右移 1 个体素）、v010（向上移 1 个）、v110（右 1、上 1）、v001（向前移 1 个体素）、v101（到这里你该明白了）、v011 与 v111。思路是用 x0 作权重，对 v000-v100、v010-v110、v001-v1001、v011-v111 做线性插值。这样得到 4 个值，再用 y0 作权重对它们（还是两两）做线性插值。剩下 2 个值，最后用 z0 作权重做线性插值。注意前 4 次线性插值先用 x0、y0 还是 z0 都没关系，只要后续每次结果都用另一个维度做线性插值即可。记住我们的线性插值式是 \(a * (1 - w) + b * w\)，其中 \(w\) 是权重。写成代码，大概是这样：</p><pre><code>
+float result = 
+    (1 - z0) * (  // 蓝色
+                (1 - y0) * (v000 * (1 - x0) + v100 * x0) + // 绿色与红色
+                     y0  * (v010 * (1 - x0) + v110 * x0)   // 绿色与红色
+                ) + 
+          z0 * ( // 蓝色
+                (1 - y0) * (v001 * (1 - x0) + v101 * x0) + // 绿色与红色
+                     y0  * (v011 * (1 - x0) + v111 * x0)); // 绿色与红色
+</code></pre><p>但愿这个排布能帮你看清三层嵌套的插值。共 4 次（红色）+ 2 次（绿色）+ 1 次（蓝色）插值。现在若把 (1-x0)、(1-y0)、(1-z0)、x0、y0、z0 分别换成 wx0、wy0、wz0、wx1、wy1、wz1，再把上一段代码（第 2 段）的项展开重排，就得到：</p><pre><code>
+float result = 
+    v000 * wx0 * wy0 * wz0 +
+    v100 * wx1 * wy0 * wz0 +
+    v010 * wx0 * wy1 * wz0 +
+    v110 * wx1 * wy1 * wz0 +
+    v001 * wx0 * wy0 * wz1 +
+    v101 * wx1 * wy0 * wz1 +
+    v011 * wx0 * wy1 * wz1 +
+    v111 * wx1 * wy1 * wz1;
+</code></pre><p>这就是我们第 1 段代码里的写法（只不过在第 1 段里权重是在嵌套循环中现算的）。如果用上图的 2D 例子做这个算术，其中 dx0 = dy0 = 0.5，我们得到：</p><pre><code>
+result = 
+    0.9 * (1-dx0) * (1-dy0) + 0.14 * dx0 * (1-dy0) *  + 0.08 * (1-dx0) * dy0 + 0.63 * dx0 * dy0 = 
+    0.9 * 0.25 + 0.14 * 0.25 + 0.08 * 0.25 + 0.63 * 0.25
+</code></pre><p>正是我们要找的结果。很好，三线性插值（2D 情形下是双线性）能工作。你现在也明白为什么要在体素空间中把采样点偏移 -0.5 了。这是数学上成立所必需的。要确信这一点，想想采样点正好位于体素正中（施加偏移之前）时会怎样。施加偏移后，该点会落在体素的左下角（2D 中）。这意味着 dx0 = dy0（= dz0）= 0，而其他所有距离都是 1。于是你得到：</p><pre><code>
+float result = grid.density(voxelX, voxelY, voxelZ) * (1-0) * (1-0) * (1-0) +
+               0 + // 0 * (1-0) * (1-0)
+               0 + // (1-0) * 0 * (1-0)
+               0 + // 0 * 0 * (1-0)
+               0 + // (1-0) * (1-0) * 0
+               0 + // 0 * (1-0) * 0
+               0 + // (1-0) * 0 * 0
+               0;  // 0 * 0 * 0
+</code></pre><p>换句话说，该采样点返回的值就是该体素中存储的值（在我们的例子里，若假定偏移前的采样点位于左下方体素的正中，那就是 0.9），这正是你所期望的。</p><p>三线性插值就这么多。现在看看结果与最近邻方法相比有多大差别。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-compnearest-trilinear.png" alt=""></figure><p>如你所见，用三线性插值渲染的缓存图像（右图）更柔和。不过这提升是有代价的，因为用这种方法时渲染时间显著增加（与最近邻方法相比）。三线性插值的耗时约为最近邻查找的 5 倍（假定没做优化）。</p><h2>现在你可以（再次）读别人的代码了：OpenVDB</h2><p>来看看 <a href="https://github.com/AcademySoftwareFoundation/openvdb/blob/6cf972a061db7018e636c0c83b81707c8b7d5b89/openvdb/openvdb/tools/Interpolation.h" target="_blank" rel="noreferrer noopener">OpenVDB 是怎么做三线性插值的</a>：</p><pre><code>
+template&amp;ltclass ValueT, class TreeT, size_t N&gt; 
+inline bool 
+BoxSampler::probeValues(ValueT (&amp;data)[N][N][N], const TreeT&amp; inTree, Coord ijk) 
+{ 
+    bool hasActiveValues = false; 
+    hasActiveValues |= inTree.probeValue(ijk, data[0][0][0]);  //i, j, k 
+ 
+    ijk[2] += 1; 
+    hasActiveValues |= inTree.probeValue(ijk, data[0][0][1]);  //i, j, k + 1 
+ 
+    ijk[1] += 1; 
+    hasActiveValues |= inTree.probeValue(ijk, data[0][1][1]);  //i, j+1, k + 1 
+ 
+    ijk[2] -= 1; 
+    hasActiveValues |= inTree.probeValue(ijk, data[0][1][0]);  //i, j+1, k 
+ 
+    ijk[0] += 1; 
+    ijk[1] -= 1; 
+    hasActiveValues |= inTree.probeValue(ijk, data[1][0][0]);  //i+1, j, k 
+ 
+    ijk[2] += 1; 
+    hasActiveValues |= inTree.probeValue(ijk, data[1][0][1]);  //i+1, j, k + 1 
+ 
+    ijk[1] += 1; 
+    hasActiveValues |= inTree.probeValue(ijk, data[1][1][1]);  //i+1, j+1, k + 1 
+ 
+    ijk[2] -= 1; 
+    hasActiveValues |= inTree.probeValue(ijk, data[1][1][0]);  //i+1, j+1, k 
+ 
+    return hasActiveValues; 
+} 
+ 
+template&amp;ltclass ValueT, size_t N&gt; 
+inline ValueT 
+BoxSampler::trilinearInterpolation(ValueT (&amp;data)[N][N][N], const Vec3R&amp; uvw) 
+{ 
+    auto _interpolate = [](const ValueT&amp; a, const ValueT&amp; b, double weight) 
+    { 
+        const auto temp = (b - a) * weight; 
+        return static_cast&amp;ltValueT&gt;(a + ValueT(temp)); 
+    }; 
+ 
+    // 三线性插值：
+    // 周围 8 个格点值用来构造结果。 \n
+    // result(x,y,z) =
+    //     v000 (1-x)(1-y)(1-z) + v001 (1-x)(1-y)z + v010 (1-x)y(1-z) + v011 (1-x)yz
+    //   + v100 x(1-y)(1-z)     + v101 x(1-y)z     + v110 xy(1-z)     + v111 xyz
+ 
+    return  _interpolate( 
+                _interpolate( 
+                    _interpolate(data[0][0][0], data[0][0][1], uvw[2]), 
+                    _interpolate(data[0][1][0], data[0][1][1], uvw[2]), 
+                    uvw[1]), 
+                _interpolate( 
+                    _interpolate(data[1][0][0], data[1][0][1], uvw[2]), 
+                    _interpolate(data[1][1][0], data[1][1][1], uvw[2]), 
+                    uvw[1]), 
+                uvw[0]); 
+} 
+ 
+template&amp;ltclass TreeT&gt; 
+inline bool 
+BoxSampler::sample(const TreeT&amp; inTree, const Vec3R&amp; inCoord, 
+                   typename TreeT::ValueType&amp; result) 
+{ 
+    ... 
+    const Vec3i inIdx = local_util::floorVec3(inCoord); 
+    const Vec3R uvw = inCoord - inIdx; 
+ 
+    // 取回围绕分数源坐标的那
+    // 8 个体素的值。
+    ValueT data[2][2][2]; 
+ 
+    const bool hasActiveValues = BoxSampler::probeValues(data, inTree, Coord(inIdx)); 
+ 
+    result = BoxSampler::trilinearInterpolation(data, uvw); 
+ 
+    ... 
+} 
+</code></pre><p><code>sample()</code> 方法先取回存在 8 个体素里的值。这在 <code>probeValues</code> 方法里完成。然后按上面描述的方式对体素做插值（在 <code>trilinearInterpolation</code> 方法里）。<code>_interpolate</code> 函数不过就是线性插值，在代码里更常叫 <code>lerp</code>。</p><h2>进一步了解体积缓存</h2><p>我们这里只列出一系列我们认为值得提一下作参考的话题。为了让本课保持合理长度，暂不深入细节。这些话题大多会在本课将来的修订中展开，或者放到单独的课程里研究。</p><h3> 其他插值方案：三次插值与滤波核</h3><p>如前所述，线性插值式是一阶多项式。要用更高阶的多项式来获得更平滑的结果是可能的。例如你可以用三次插值。在 2D 中，做双三次插值需要采样 4x4 个像素。在 3D 中，我们需要 \(2^4=64\) 个体素。可以想见，结果会更平滑，但渲染时间会增加。</p><p>你也可以用滤波核，类似图像滤波里用的那些（比如三角核、Mitchell 核或高斯核）。与图像一样，滤波范围越大，处理时间越长。</p><p>这两种技术都会在本课将来的修订里完整解释。</p><h3> 与密度一起存储更多数据</h3><p>生产环境用的体积缓存格式一般设计成让你能在缓存里随密度一起存任意通道，比如温度（用来渲染火焰）、速度（用来渲染 3D 运动模糊）等。</p><h3> 滤波与砖块图</h3><p>如果你为生产用途渲染体积缓存，大概该关心滤波与 LOD。渲染体积缓存时你遇到的问题与渲染纹理时相同。纹理有固定分辨率（像素数量如 512、1024 等等），如果你从很远的地方渲染一个贴了某纹理的物体，就假定该物体在图像中只有几个像素宽；那么随着物体或相机移动，每次渲染新的一帧时，从纹理中取到的都是不同的像素或纹素。结果是纹理在帧与帧之间看起来会抖动（说得客气一点，更常见的情况是它只看起来像一种噪声）。为减轻这个问题，我们制作纹理的缩小版本，与原纹理数据一起存储；我们把原纹理这些低分辨率版本叫 <b>mipmap</b>。物体很远（在图像中很小）时使用较低分辨率的纹理，可以去掉噪声（术语上叫走样）。我们还没讲过 mipmap 这个话题，但很快会讲。</p><p>同时，如果你已经熟悉 mipmap 的概念——它们是什么、用来干什么、怎么创建——那你应该知道，我们在滤波 2D 纹理时遇到的问题，在 3D 缓存（或就此而言 3D 纹理）上同样存在。因此我们可以把 mipmap 方法改造到 3D 缓存上。为此，你需要创建原始网格数据的缩小版本，并根据缓存在图像中有多小来选用合适的层级（缩小版本）。这个过程与 mipmap 非常相似，你也可以把这些缩小版本叫 mipmap，但在 3D 里我们改称<b>砖块图</b>（brick map）。它们看起来像 Minecraft 里的方块。</p><details open><p>我们相信 <b>brick map</b> 这个词是 <a href="https://renderman.pixar.com/resources/RenderMan_20/brickmapgprim.html" target="_blank" rel="noreferrer noopener">Pixar Renderman</a> 团队造出来的，但对其出处我们不太确定……如果有人知道，请写信告诉我们。不过一般来说，让一个缓存存储其数据的多个分辨率，这个想法并不特别新，也不少见。大概所有生产渲染器与 OpenVDB 这类格式都支持。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-brickmaps.png" alt=""></figure></details><p>构建这些砖块图与构建纹理的 mipmap 层级非常相似，只不过我们取 8 个体素的平均（而不是取 4 个像素或纹素的平均）。这就是为什么处理分辨率恰好是 2 的幂的网格很方便，因为这种情况下缩小层级变得很简单。</p><p>下面是一些代码，展示如何从我们原始的流体模拟缓存创建这些层级（它们在层级 0 的基准分辨率是 128）。这目前只是个快速示例，等我们有空再正经讨论这个话题：</p><pre><code>
+size_t baseResolution = 128;
+size_t numLevels = log2(baseResolution); /* float to size_t implicit cast */
+std::unique_ptr&lt;Grid []&gt; gridLod = std::make_unique&lt;Grid []&gt;(numLevels - 2); // 忽略分辨率 2 和 4
+
+// 载入层级 0 的数据
+gridLod[0].baseResolution = baseResolution;
+std::ifstream ifs;
+char filename[256];
+sprintf_s(filename, "./grid.%d.bin", frame);
+ifs.open(filename, std::ios::binary);
+gridLod[0].densityData = std::make_unique&lt;float[]&gt;(baseResolution * baseResolution * baseResolution);
+ifs.read((char*)gridLod[0].densityData.get(), sizeof(float) * baseResolution * baseResolution * baseResolution);
+ifs.close();
+
+for (size_t n = 1; n &lt; numLevels - 2; ++n) {
+    baseResolution /= 2;
+    gridLod[n].baseResolution = baseResolution;
+    gridLod[n].densityData = std::make_unique&lt;float[]&gt;(baseResolution * baseResolution * baseResolution);
+    for (size_t x = 0; x &lt; baseResolution; ++x) {
+        for (size_t y = 0; y &lt; baseResolution; ++y) {
+            for (size_t z = 0; z &lt; baseResolution; ++z) {
+                gridLod[n](x, y, z) = 
+                    0.125 * (gridLod[n - 1](x * 2,     y * 2,     z * 2) + 
+                             gridLod[n - 1](x * 2 + 1, y * 2,     z * 2) +
+                             gridLod[n - 1](x * 2,     y * 2 + 1, z * 2) +
+                             gridLod[n - 1](x * 2 + 1, y * 2 + 1, z * 2) +
+                             gridLod[n - 1](x * 2,     y * 2,     z * 2 + 1) + 
+                             gridLod[n - 1](x * 2 + 1, y * 2,     z * 2 + 1) +
+                             gridLod[n - 1](x * 2,     y * 2 + 1, z * 2 + 1) +
+                             gridLod[n - 1](x * 2 + 1, y * 2 + 1, z * 2 + 1));
+			}
+		}
+	}
+}
+...
+// 例如渲染缓存的层级 3（分辨率：16）
+trace(ray, L, transmittance, rc, gridLod[3]);
+...
+</code></pre><p>如何选取合适的层级我们暂时不解释，等本课将来修订时再说。同时，至少你已知道存在这个问题以及可能的解法。</p><p>下图是我们的缓存以不同层级渲染的结果（层级 0 是原始缓存分辨率，本例中为 128）：</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-brickmaps1.png" alt=""></figure><h3> 运动模糊</h3><p>3D 运动模糊怎么办？要渲染这个效果，我们需要在体素里存流体的运动。这通常表示为一个叫运动矢量的方向。这个矢量的方向表示流体穿过网格时大致朝哪个方向运动；其长度表示流体运动得多快。用这些信息，就可以在渲染时模拟 3D 运动模糊。</p><p>这个话题会在以后的课程里研究。</p><h3> 平流</h3><p>平流（advection）与体积渲染并不直接相关（它更多与流体模拟有关），我们把它列在这里是作个备忘（以便将来能的话写一门关于它的课）。它可以在渲染时做，为已有的流体模拟增添细节。</p><h3> 稀疏体积：那是什么？</h3><p>很多时候，网格里只有一部分体素存储着大于 0 的密度值。这就留下大量「空」体素；存储它们可能造成可观的浪费。同样地，你可能有一组 8 个体素存储着相同的密度值，比如 0.138。这同样是浪费空间。稀疏体积就是为解决这个问题而设计的。</p><p>大致思路是这样：我们创建一个相当于一块 2x2x2 体素大小的体素。所以这个更大的体素是原体素的两倍大。接下来：如果 2x2x2 这块体素里所有体素密度值都相同（可以是 0，也可以是任何大于 0 的值，比如 0.139），我们就删掉这组 2x2x2 体素，把这个单一的值存进更大的体素（沿用我们的例子就叫 0.139）；否则，更大的体素指向原来那块 2x2x2 体素。</p><p>这个过程是递归的。我们从最高分辨率的网格（最高层级）开始，然后自下而上构建较低的层级。指向更多体素块的体素是<b>内部节点</b>，而存储值的体素是<b>叶节点</b>。下图展示了一个稀疏 2D 体积的例子。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-sparse1.png" alt=""></figure><p>当一块体素没有被合并时，我们存 1 个（更大的体素）+ 8 个（那块 2x2x2 体素）；而当一块被合并时，我们只存 1 个体素。在大多数流体模拟里，原始体素中有很大比例要么是空的，要么共享相近的密度值。云就常常如此。云的核心一般相当均匀。密度基本只在云的边缘变化。所以用稀疏表示来编码这些体积，是缩减缓存磁盘与内存占用大小的好办法。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-sparse.png" alt=""></figure><p>注意使用 2x2x2 的体素块并不是必须的。包括 OpenVDB 在内的许多系统，为层级最上面几层选择八叉树结构，但随后把接下来的层级存进 32x32x32 的体素块里（举例）。这样组织数据可能提升缓存一致性与数据访问效率（相比使用更小的块尺寸）。</p><p>最后，稀疏体积在渲染中也很有用。空的大的体素可以跳过。密度均匀的大的体素可以当作均匀体积来渲染。加起来，这些可以带来可观的时间节省。</p><p>稀疏体积这个话题（与 LOD 和砖块图有相似之处）既重要又足够大，值得单独开一门课。同时，如果你对这个话题感兴趣，也可以搜一搜<b><a href="http://gigavoxels.inrialpes.fr/" target="_blank" rel="noreferrer noopener">Gigavoxels</a></b>（一种由砖块构成的八叉树）。</p><h3> 外存渲染</h3><p>我们在稀疏体积之后紧接着提外存渲染，是有原因的。稀疏体积与砖块八叉树常常被设计（除了上面提到的那些优化之外）用来让渲染非常大的体积缓存成为可能——那些缓存若按网格形式通常会因内存限制而无法渲染。</p><p>当你无法把整个文件载入内存时（你不想让模拟的规模受此限制），你要做的就是只从缓存中载入你需要的砖块（例如那些对相机可见的），用一种缓冲机制。当然，这只有当你的体积缓存被组织成可按需即时载入的砖块集合时才可能。这个话题会在以后的课程里完整讲述。</p><h3> 注意遍历网格数据的方式</h3><p>如果你需要遍历体素，最好这样写：</p><pre><code>
+for (size_t x = 0; x &lt; resolution; ++x) {
+    for (size_t y = 0; y &lt; resolution; ++y) {
+        for (size_t z = 0; z &lt; resolution; ++z) {
+            ...
+        }
+    }
+}
+</code></pre><p>而不是这样：</p><pre><code>
+for (size_t z = 0; z &lt; resolution; ++z) {
+    for (size_t y = 0; y &lt; resolution; ++y) {
+        for (size_t x = 0; x &lt; resolution; ++x) {
+            ...
+        }
+    }
+}
+</code></pre><p>这是因为数据在内存中的排布方式。先遍历 x、最后遍历 z，我们是在顺序地遍历内存中存储的值。先遍历 z、最后遍历 x，我们就会在内存各处跳转。这很可能产生大量缓存未命中，从而降低性能。当然，这取决于格式。我们转储缓存时是先遍历 x、再 y、再 z，但其他格式可能采用不同的约定。所以要留意代码里的这一点，它可能是寻找优化机会的地方。</p><h3> 烘焙光照</h3><p>你可以把光照烘焙进网格的体素里，渲染时从体素读取这些数据，从而跳过在相机光线的每个光线步进步骤上求 Li 项这一步。这会加快渲染。当然，你仍然需要在预处理（烘焙）阶段为网格里每个体素渲染这个 Li 项，那仍要花不少时间。此外，只要光照或模拟发生变化，你就得重新烘焙。我们提这个技术主要是作参考、出于历史缘由。</p><h3> 深度阴影贴图</h3><p>阴影贴图即将成为历史遗迹，不过同样为了完整与历史缘由，我们觉得提一下深度阴影贴图（deep shadow maps）很好，它在某种意义上与把光照烘焙进网格体素的想法有相似之处。这里的思路是为场景中每个光源计算一张阴影贴图。但不是像普通阴影贴图那样、为每个给定像素存储从光源到场景中最近物体的深度，深度阴影贴图改为存储体积密度随距离的函数。换句话说，深度阴影贴图中的每个像素存储一条曲线，表示我们穿过体积时透射率如何变化。这个技术由 Pixar 的 Tom Lokovic 与 Eric Veach 于 2000 年提出（想了解更多可以看他们的<a href="https://graphics.pixar.com/library/DeepShadows/paper.pdf" target="_blank" rel="noreferrer noopener">论文</a>）。该技术存在若干变体。</p><h2>源代码</h2><p>一如既往，本章的源代码可以在本课的源代码部分找到。我们还提供了约 100 个缓存文件（下载 cachefiles.zip 并解压到本地磁盘、与程序源代码放在一起），你可以用它们渲染本章开头展示的那段动画。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/volume-rendering-voxel-grids.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/volume-rendering-voxel-grids.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

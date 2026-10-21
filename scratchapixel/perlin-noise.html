@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Perlin 噪声 - Scratchapixel 中文译本</title>
+<meta name="description" content="Perlin 噪声 · Perlin 噪声（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Perlin 噪声</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="perlin-noise.html">Perlin 噪声</a></li>
+<li><a href="perlin-noise-terrain-mesh.html">用 Perlin 噪声创建地形网格</a></li>
+<li><a href="perlin-noise-computing-derivatives.html">计算导数</a></li>
+<li><a href="improved-perlin-noise.html">改进的 Perlin 噪声</a></li>
+</ol>
+</div>
+<h2>Perlin 噪声</h2><p><b>阅读时间：21 分钟。</b></p><p>这是过程式噪声图案生成系列课程的第二部分。如果你对这个主题还不熟，建议先读 <a href="procedural-patterns-noise-part-1-introduction.html">值噪声与过程式图案：第 1 部分</a> 这门课。</p><h2>Perlin 噪声</h2><p>1985 年，Ken Perlin 写了一篇 Siggraph 论文，题为「An Image Synthesizer」，其中提出了一种噪声函数，与我们上一课（噪声第 1 部分）研究过的那个相似，但稍好一些。此后多年里，这个噪声函数被不断改进和扩展，主要是 Ken Perlin 和其他人的工作。本课我们会研究其中一些改进。这个噪声函数如今被称为<b>Perlin 噪声</b>。</p><p>Perlin 噪声与我们上一课研究的那类噪声非常相似。与值噪声一样，它依赖一套网格系统。在网格系统各单元的角上，我们定义随机值，再对这些值插值，算出空间中某一点位置处的噪声值。上一课我们研究了 1D 与 2D 值噪声的创建。本课我们将实现 Perlin 噪声函数的 3D 版本。要点是：值噪声与 Perlin 噪声都是<b>基于网格的噪声函数</b>。</p><p>那么，如果原理相同，区别在哪里？区别在于我们如何计算网格角上的「随机值」。在值噪声中，我们在网格单元的角上赋随机数，再根据点落在单元内的位置对这些值插值。上一课已经把这个过程讲清楚了。而在 Perlin 噪声中，Ken Perlin 建议把单元角上的随机值换成<b>梯度</b>。他所说的梯度就是随机的 3D 归一化向量（对噪声函数的 3D 版本而言）。生成起来并不复杂。我们不再在噪声函数的构造函数类里生成随机数，而是把随机浮点数的生成换成随机 3D 向量的生成。创建 3D 随机向量很容易：生成三个 [0,1] 范围内的随机浮点数，把这些随机数重映射到 [-1,1] 范围，再对得到的向量坐标做归一化。</p><pre><code>
+unsigned seed = 2016; 
+std::mt19937 generator(seed); 
+std::uniform_real_distribution&amp;ltfloat&gt; distribution; 
+auto dice = std::bind(distribution, generator); 
+float gradientLen2; 
+for (unsigned i = 0; i &lt; tableSize; ++i) { 
+    gradients[i] = Vec3f(2 * dice() - 1, 2 * dice() - 1, 2 * dice() - 1); 
+    gradientLen2 = gradients[i].length2(); 
+    gradients[i] /= sqrtf(gradientLen2);  //归一化梯度 
+    permutationTable[i] = i; 
+}
+</code></pre><p>不过这种做法有个小问题。生成均匀分布的随机归一化方向，等同于在单位球面上以均匀分布生成随机位置。上述做法的问题在于：它生成的是随机归一化方向，但这些方向在球面上并不是均匀分布的。并非所有方向被抽到的概率相同：我们的噪声将不均匀，而我们不想要这样。不过这一点先放着，后面我们会修正这个问题。</p><p>现在我们不再是在单元角上放一个用于插值的随机数，而是有了梯度或向量。既然噪声函数返回一个实数，那我们要怎么从一个 3D 向量再变回实数（也就是代码里说的 float 或 double）？Ken Perlin 建议计算从单元每个角的位置到点 P 的方向，我们正是想在 P 的位置上求噪声函数的值。这样就得到 3D 情况下的 8 个向量，2D 情况下是 4 个（一个立方体有 8 个角或顶点）。然后他对单元角上的梯度与从该角指向 P 的向量做点积。两个向量的点积给出一个实数，于是就是这样：我们成功地把梯度或方向又变成了某种随机数。与 2D 情况一样，为了算出点 P 在我们「虚构」的 3D 网格局部坐标中的坐标，我们会把点坐标从浮点数转成整数，再对这些整数坐标取模 N，N 是我们随机方向数组的大小（与讲值噪声的那一课一样，我们取 N = 256）。上一课已经解释了所有这些技巧（包括当该表的大小是 2 的幂时，如何用位运算符 <code>&amp;</code> 替代 C++ 的取模运算符 <code>%</code>）。正如上一课也说过的，我们不想生成 256x256x256 个方向的网格。所以我们只用一个包含 256 个随机方向的 1D 数组，并用置换表的技巧，通过<b>哈希函数</b>把点的整数坐标转换成该置换表的下标，「随机挑出」表里存着的某个方向。同样，这些技巧全都在上一课解释过了。</p><p>现在我们知道了如何把单元角上的 8 个方向转换成 8 个带符号的随机值（它们是随机的，因为单元角上的方向是随机选的），剩下的就只是用三线性插值对这些值做线性插值（3D 情况用三线性插值，2D 情况用双线性插值）。双线性插值与三线性插值在<a href="interpolation-introduction.html">插值</a>那一课里有讲解。</p><pre><code>
+class PerlinNoise 
+{ 
+    static const unsigned tableSize = 256; 
+    static const unsigned tableSizeMask = tableSize - 1; 
+    Vec3f gradients[tableSize]; 
+    unsigned permutationTable[tableSize * 2]; 
+ 
+    PerlinNoise() 
+    { 
+        unsigned seed = 2016; 
+        std::mt19937 generator(seed); 
+        std::uniform_real_distribution&amp;ltfloat&gt; distribution; 
+        auto dice = std::bind(distribution, generator); 
+        float gradientLen2; 
+        for (unsigned i = 0; i &lt; tableSize; ++i) { 
+            do { 
+                gradients[i] = Vec3f(2 * dice() - 1, 2 * dice() - 1, 2 * dice() - 1); 
+                gradientLen2 = gradients[i].length2(); 
+            } while (gradientLen2 &gt; 1); 
+            gradients[i] /= sqrtf(gradientLen2);  //归一化梯度 
+            permutationTable[i] = i; 
+        } 
+ 
+        std::uniform_int_distribution&amp;ltunsigned&gt; distributionInt; 
+        auto diceInt = std::bind(distributionInt, generator); 
+        // 创建置换表
+        for (unsigned i = 0; i &lt; tableSize; ++i) 
+            std::swap(permutationTable[i], permutationTable[diceInt() &amp; tableSizeMask]); 
+        // 把置换表扩展到下标范围 [256:512]
+        for (unsigned i = 0; i &lt; tableSize; ++i) { 
+            permutationTable[tableSize + i] = permutationTable[i]; 
+        } 
+    } 
+    virtual ~PerlinNoise() {} 
+ 
+    /* inline */ 
+    int hash(const int &amp;x, const int &amp;y, const int &amp;z) const 
+    { return permutationTable[permutationTable[permutationTable[x] + y] + z]; } 
+ 
+public: 
+    float eval(const Vec3f &amp;p) const 
+    { 
+        int xi0 = ((int)std::floor(p.x)) &amp; tableSizeMask; 
+        int yi0 = ((int)std::floor(p.y)) &amp; tableSizeMask; 
+        int zi0 = ((int)std::floor(p.z)) &amp; tableSizeMask; 
+ 
+        int xi1 = (xi0 + 1) &amp; tableSizeMask; 
+        int yi1 = (yi0 + 1) &amp; tableSizeMask; 
+        int zi1 = (zi0 + 1) &amp; tableSizeMask; 
+ 
+        float tx = p.x - ((int)std::floor(p.x)); 
+        float ty = p.y - ((int)std::floor(p.y)); 
+        float tz = p.z - ((int)std::floor(p.z)); 
+ 
+        float u = smoothstep(tx); 
+        float v = smoothstep(ty); 
+        float w = smoothstep(tz); 
+ 
+        // 单元角上的梯度
+        const Vec3f &amp;c000 = gradients[hash(xi0, yi0, zi0)]; 
+        const Vec3f &amp;c100 = gradients[hash(xi1, yi0, zi0)]; 
+        const Vec3f &amp;c010 = gradients[hash(xi0, yi1, zi0)]; 
+        const Vec3f &amp;c110 = gradients[hash(xi1, yi1, zi0)]; 
+ 
+        const Vec3f &amp;c001 = gradients[hash(xi0, yi0, zi1)]; 
+        const Vec3f &amp;c101 = gradients[hash(xi1, yi0, zi1)]; 
+        const Vec3f &amp;c011 = gradients[hash(xi0, yi1, zi1)]; 
+        const Vec3f &amp;c111 = gradients[hash(xi1, yi1, zi1)]; 
+ 
+        // 生成从网格点指向 p 的向量
+        float x0 = tx, x1 = tx - 1; 
+        float y0 = ty, y1 = ty - 1; 
+        float z0 = tz, z1 = tz - 1; 
+ 
+        Vec3f p000 = Vec3f(x0, y0, z0); 
+        Vec3f p100 = Vec3f(x1, y0, z0); 
+        Vec3f p010 = Vec3f(x0, y1, z0); 
+        Vec3f p110 = Vec3f(x1, y1, z0); 
+ 
+        Vec3f p001 = Vec3f(x0, y0, z1); 
+        Vec3f p101 = Vec3f(x1, y0, z1); 
+        Vec3f p011 = Vec3f(x0, y1, z1); 
+        Vec3f p111 = Vec3f(x1, y1, z1); 
+ 
+        // 线性插值
+        float a = lerp(dot(c000, p000), dot(c100, p100), u); 
+        float b = lerp(dot(c010, p010), dot(c110, p110), u); 
+        float c = lerp(dot(c001, p001), dot(c101, p101), u); 
+        float d = lerp(dot(c011, p011), dot(c111, p111), u); 
+ 
+        float e = lerp(a, b, v); 
+        float f = lerp(c, d, v); 
+ 
+        return lerp(e, f, w);  //g 
+    } 
+};
+</code></pre><details open><p>注意在这个实现里，<code>gradients</code> 数组的大小是 <code>tableSize</code>。Perlin 的实现不是这样，它的大小是 <code>tableSize * 2</code>。这是因为在他最初的实现中，他用的哈希函数是：</p><pre><code>
+return permutationTable[permutationTable[x] + y] + z;
+</code></pre><p>它返回 0 到 <code>tableSize * 2</code> 之间的值。任何对 <code>permutation[]</code> 的查询都会返回 0 到 <code>tableSize</code> 范围内的值。由于我们往它上面加 <code>z</code>，而 z 本身也在 0 到 <code>tableSize</code> 范围内，得到的数就确实落在 0 到 <code>tableSize * 2</code> 范围内；由于我们把这个数用作 <code>gradients</code> 数组的下标，<code>gradients</code> 的大小就得是 <code>tableSize * 2</code>。不过在我们的实现中，用的是这个哈希函数：</p><pre><code>
+return permutationTable[permutationTable[permutationTable[x] + y] + z];
+</code></pre><p>它返回 0 到 <code>tableSize</code> 范围内的值。这是个细节，但值得一提。</p></details><p>像往常一样，为了平滑地插值单元角上的值，我们使用 smoothstep 函数（把 tx、ty、tz 分别重映射成 u、v、w——第 55 到 57 行）。</p><p>可以看到，这与值噪声函数非常相似。我们只是把单元角上的随机值换成了随机方向与从单元角指向 P 的方向之间的点积（第 86 到 89 行）。</p><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-overview.png?" alt=""></figure><p>把代码写对并不容易。有几个坑要当心。上面那张图（希望）能帮你弄清发生了什么（不过它只画了 2D 情况）。注意网格单元角上的「梯度向量」，以及我们如何计算从单元角指向求噪声值那一点的向量。还要注意：</p><ul><li><p>你需要用 <code>(int)(floor(P.x)) &amp; 255</code> 来计算网格单元 x 坐标的左下角（y 坐标就把 P.x 换成 P.y）。问题在于，为什么要用 <code>floor</code> 函数（这是 stl C++ 库里的函数）？当点的任一坐标值为负时，它就有用。<code>int(P.x)</code> 的问题是：比如坐标值是 1.1 或 1.999 时它返回 1（这没问题），但值是 -1.2 或 -1.999 时它返回 -1，而在这种情形下我们要的是 -2。要记住，点所在网格单元的最小坐标应始终位于单元的左下角，无论该单元在世界笛卡尔坐标系统轴的正侧还是负侧，如上图所示。用 <code>floor(P.x)</code> 函数能保证无论坐标符号如何都得到正确结果。比如 <code>(int)(floor(-1.2))</code> 就返回 -2，正是我们要的。</p></li><li><p>算出网格单元的左下角坐标后，我们还需要算出它的右上角坐标。做法很简单，在左下角坐标上加 1，但这个值可能超出网格大小（256）；因此还得对这个值取模，确保网格坐标始终留在 [0,255] 范围内。</p><pre><code>
+X0 = (int)(std::floor(P.x)) &amp; 255;
+Y0 = (int)(std::floor(P.y)) &amp; 255;
+X1 = (X0 + 1) &amp; 255;
+Y1 = (Y0 + 1) &amp; 255;
+</code></pre></li><li><p>同样要记住，梯度数组的大小是有限的（256 个值）。我们说过，理解这个过程的一种方式是想象一个 3D 网格，其顶点被赋予随机梯度。但噪声函数对 x、y、z 的取值是无限的（网格的尺寸有限，但用于计算噪声函数的点坐标不受限）。所以你也可以把噪声函数看成这个 3D 网格在每个方向上的重复，如图 2 所示。实际含义是：当一个点位于该网格的右上角处（比如点的任一坐标落在 ]0,-1]、]-255, -256]、[255, 256[ 这类区间时就会如此），我们就会在网格坐标 (255, 255) 处存的梯度与网格坐标 (0,0) 处存的梯度之间插值。举例：</p><pre><code>
+X0 = (int)(-1) &amp; 255; // = 255（3D 网格的右角，即最后一个单元）
+X1 = (X0 + 1) &amp; 255; // 0（3D 网格的左角，即第一个单元）
+</code></pre></li><li><p>点积返回 [-1,1] 范围内的值（假设涉及的向量都是归一化的）。所以 Perlin 噪声函数也会返回负值和正值。当单元角上的方向与从该角指向 P 的向量方向相反时，我们就得到负值（如图 1 所示）。</p></li><li><p>最后，当 P 恰好落在单元角上时，从该角指向 P 的向量 V 自然是 (0,0,0)。于是该角上的梯度与 V 的点积在这种情况下必然是 0。这在下面的图中可以看到，那里我们把网格叠加在噪声函数的结果上。由于 Perlin 噪声函数返回 [-1,1] 范围内的值，我们得把它们重映射到 [0,1] 范围才能存成图像，这意味着每个单元角上的噪声重映射后是 0.5（但重映射前它是 0——图 3）。</p></li></ul><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-overview2.png?" alt=""><figcaption><b>图 2：</b>把噪声函数看成一个 256x256 的网格（针对这两种情况），它在每个方向上重复（在笛卡尔坐标系的每个象限中）。这只是为了可视化。实践中我们从不重复网格，而是对点的坐标取表大小（此处为 256）的模。</figcaption></figure><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-lattice-value.png?" alt=""><figcaption><b>图 3：</b>在单元角上，噪声函数总是 0（在这个例子里我们把噪声函数的值从 [-1,1] 重映射到了 [0,1]，所以单元角上的噪声值在这种情况下总是 0.5）。之所以如此，是因为从单元角指向 P 的向量长度为 0，因而梯度与这个向量的点积也是 0。</figcaption></figure><h2>梯度的均匀分布</h2><p>如今，生成均匀分布的随机方向（每个方向被生成的概率相同）看起来简单，但要做对比看上去难。「朴素」的做法——我们刚用的那个——能生成随机方向，但这些方向不是均匀分布的。它们是在立方体的体积内生成随机方向，而不是在球体的体积内。因此它们在球面上不是均匀分布的。另一种朴素做法是随机生成球坐标 \(\phi\) 和 \(\theta\)，再把这些球坐标转换成笛卡尔坐标：</p><pre><code>
+float phi = 2 * drand48() * M_PI; 
+float theta = drand48() * M_PI; 
+float x = cos(phi) * sin(theta); 
+float y = sin(phi) * sin(theta); 
+float z = cos(theta); 
+</code></pre><p>尽管听起来很优雅，这也不行。当你生成随机球坐标时，这些坐标会很好地分布在它们所定义的空间或域内。也就是 \([0,2\pi]\) 对应 \(\phi\)，\([0,\pi]\) 对应 \(\theta\)。但当你把这个漂亮的矩形裹到球面上时，会看到矩形在球的两极被挤压。换句话说，原本均匀分布在矩形表面上的点，现在聚到了两极附近（下图）。极点处的点密度比球面上任何其他地方都大，可见这种分布并不均匀。</p><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-point-distr.png?" alt=""></figure><p>记住我们在这里要解决的是生成均匀分布的随机单位方向，这在某种程度上与我们在路径追踪那一课研究过的是同一个问题——那里我们学习了如何在半球上生成随机采样。那一课讲了很多细节，这里就不再重复这个过程。记住，要对一个函数采样，首先要算出该函数的 PDF，然后算它的 CDF，最后算 CDF 的反函数。在我们这个具体情形里，我们想在球面上生成采样，但与半球那个例子一样，我们会先从一个立体角出发来表达概率函数或 PDF。如你所（希望）知道的，一个球面有 \(4\pi\) 个球面度（立体角的单位）（如果你对立体角的概念不熟，请看「计算机图形学的数学与物理」部分中讲辐射度量学的那一课）。我们也知道 PDF 的积分为 1。所以在球面的情况下，我们可以写：</p><p>$$\int_0^{4\pi} p(\omega)dw = 1.$$</p><p>如果你照全局光照那一课描述的步骤做，会得到：</p><p>$$p(\omega)= { {1} \over {4\pi} }.$$</p><details open><p>注意与半球的差别，半球的 PDF 是 \({1} \over{2\pi}\)</p></details><p>和另一课一样，我们想用极坐标（\(\theta\) 和 \(\phi\)）来表达这个 PDF：</p><p>$$p(\phi, \theta)d\phi d\theta = p(\omega)d\omega.$$</p><p>然后回想微分立体角 \(d\omega\) 也可以定义为（这一点在另一课里同样解释过）：</p><p>$$d\omega = \sin \theta d\phi d\theta.$$</p><p>把这个式子代入上一个式子，得到：</p><p>$$
+\begin{array}{l}
+p(\phi,\theta)d\phi d\theta = p(\omega) d\omega,\\
+p(\phi,\theta) d\phi d\theta = p(\omega) \sin \theta d\phi d\theta.
+\end{array}
+$$</p><p>等式两边的 \(d\phi d\theta\) 项相互抵消，我们得到：</p><p>$$
+\begin{array}{l}
+p(\phi, \theta)=p(\omega) \sin \theta,\\
+p(\phi, \theta)= { \dfrac { \sin \theta} {4 \pi}}.
+\end{array}
+$$</p><p>接着我们按全局光照那一课所说，对 \(\phi\) 积分 \(p(\phi, \theta)\)。得到：</p><p>$$
+p(\theta)= \int_\phi^{2\pi}
+p(\phi, \theta) d \phi = 
+\int_\phi^{2\pi}  { \dfrac { \sin \theta} {4 \pi}} d \phi = 
+2\pi * { \dfrac { \sin \theta} {4 \pi} } = 
+{ \dfrac { \sin \theta} {2}}.
+$$</p><p>对于 \(\phi\) 的 PDF，我们得到：</p><p>$$
+p(\phi) = 
+{ \dfrac { p(\phi, \theta) } { p(\theta) } } = 
+{ \dfrac { \dfrac { \sin \theta} {4 \pi} } {\dfrac { \sin \theta} {2} } } = 
+{\dfrac {1}{2\pi}}.
+$$</p><p>现在我们有了 \(\phi\) 和 \(\theta\) 的 PDF，需要算出各自对应的 CDF 并求反：</p><p>$$Pr(X \le \theta) = P(\theta) = \int_0^\theta p(\theta) d\theta = \int_0^\theta { \dfrac { \sin \theta} {2}} d\theta.$$</p><p>用微积分基本定理，我们得到：</p><p>$$\int_0^\theta { \dfrac { \sin \theta} {2}} d\theta = \big [ {\dfrac {-\cos \theta}{2}} \big ]_0^{\theta} = \big [{\dfrac {-\cos \theta}{2 }} -- { \dfrac {\cos 0 } {2} } \big ] = {\dfrac {1}{2}} - {\dfrac {\cos \theta}{2}}.$$</p><p>\(p(\phi)\) 的 CDF 更简单：</p><p>$$Pr(X \le \phi) = P(\phi) = \int_0^\phi {\dfrac {1}{2\pi}} d\phi = {\dfrac {1}{2\pi}}[\phi - 0] = {\dfrac {\phi}{2\pi}}.$$</p><p>最后把这些 CDF 求反：</p><p>$$
+\begin{array}{l}
+\xi = {\dfrac {1}{2}} - {\dfrac {\cos \theta}{2}}\\
+{\dfrac {\cos \theta}{2}} = {\dfrac {1}{2}}  - \xi\\
+\cos \theta = 1 - 2\xi\\
+\theta = \cos^{-1}(1 - 2\xi) = \cos^{-1}(2\xi - 1).
+\end{array}
+$$</p><details open><p>注意 \(2\xi - 1\)，其中 \(\xi\)（希腊字母 xi）是 [0,1] 范围内的（均匀分布的）随机数，而 \(1 - 2\xi\) 给出相同的结果。</p></details><p>而对于 \(\phi\)：</p><p>$$
+\begin{array}{l}
+\xi =  {\dfrac {\phi}{2\pi}}\\
+\phi = 2 \pi \xi.
+\end{array}
+$$</p><p>其中 \(\xi\)，即希腊字母 xi，代表 [0,1] 范围内的均匀分布随机数。换句话说，要在球面上生成均匀随机点，你需要用下面的代码：</p><pre><code>
+unsigned seed = 2016;
+std::mt19937 generator(seed);
+std::uniform_real_distribution&amp;ltfloat&gt; distribution;
+auto dice = std::bind(distribution, generator);
+
+float theta = acos(2 * dice() - 1);
+float phi = 2 * dice() * M_PI; 
+
+float x = cos(phi) * sin(theta);
+float y = sin(phi) * sin(theta);
+float z = cos(theta);
+</code></pre><p>还有<a href="http://mathworld.wolfram.com/SpherePointPicking.html" target="_blank" rel="noreferrer noopener">其他方法</a>。但我们的 Perlin 噪声函数代码会用这一种。</p><pre><code>
+for (unsigned i = 0; i &lt; tableSize; ++i) { 
+    float theta = acos(2 * dice() - 1);
+    float phi = 2 * dice() * M_PI; 
+
+    float x = cos(phi) * sin(theta);
+    float y = sin(phi) * sin(theta);
+    float z = cos(theta);
+    gradients[i] = Vec3f(x, y, z);
+    permutationTable[i] = i; 
+}
+</code></pre><p>下图中 Perlin 噪声（右）总体上比值噪声（左）更好看。那么现在要解释的就是为什么会这样。</p><figure><img src="https://scratchapixel.com/images/noise-part-2/perlin-noise-vs-value-noise.png?" alt=""></figure><h2>为什么 Perlin 噪声／梯度噪声比值噪声好？</h2><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-value-vs-perlin1.png?" alt=""><figcaption><b>图 5：</b>理想情况。随机值围绕 x 轴分布得很好，因此噪声函数的振荡在频率上是规律的。</figcaption></figure><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-value-vs-perlin2.png?" alt=""><figcaption><b>图 6：</b>注意最坏情况。有些随机值连续几次恰好落在 x 轴的同一高度上，这意味着值噪声函数中的频率分布是不规律的。</figcaption></figure><p>在 1D 情况下，更容易理解为什么 Perlin 噪声比值噪声好。在值噪声中，我们沿「线」在整数位置上生成随机值，并在这些整数位置之间对这些值插值（如图 5 和图 6 所示）。但要注意，虽然这些值是随机选的，连续几个值却可能非常接近（如图 6 所示）。这不太好，因为噪声的某些部分会变化很快（当相邻的值彼此差别很大时），某些部分则变化很慢（当沿 x 轴的连续值相近时：例如符号相同）。噪声函数中值变化慢的部分，与值变化快的部分相比，被称为频率低；变化快的部分则被称为频率更高。这通常意味着值噪声（当你检查噪声由哪些频率构成时）是由高频和低频混合而成的。好的噪声看起来随机、局部变化平滑，但整体上又呈现出相当均匀的样子。换句话说，构成噪声的特征大体上应当有相近的尺寸（相近的频率）。由于我们刚解释的原因，值噪声并非如此。</p><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-value-vs-perlin4.png?" alt=""><figcaption><b>图 7：</b>梯度控制着 Perlin 噪声函数的形状。</figcaption></figure><figure><img src="https://scratchapixel.com/images/noise-part-2/noise-value-vs-perlin3.png?" alt=""><figcaption><b>图 8：</b>Perlin 噪声函数的特征在频率上比值噪声函数更规律。</figcaption></figure><p>Perlin 噪声技术与值噪声算法非常相似，只不过我们不是沿线的整数位置挑选随机值，而是挑选「梯度」。梯度可以看作 1D 噪声函数在网格点处的「切线」。如你在图 7 和图 8 中所见，梯度指向哪个方向并不重要，因为如果它让曲线在网格点的一侧上升（比如图 8 中某个网格点的右侧），它就会让曲线在同一点的另一侧下降（比如该点的左侧）。最坏的情况下，如果两个相邻网格点的梯度指向截然相反的方向（一个朝上、一个朝下），那么两点之间的噪声函数就会呈「S」形（如图 8a 所示）。另一种情况下，曲线会上升或下降（图 8b 和 8c）。但很容易看出，由于这种构造方式，所有特征的尺寸都差不多。在相邻两个网格点之间，要么是一个凸起，要么是一个凹陷，要么是一个「S」形。结果是，Perlin 噪声中的频率分布比值噪声的频谱更规律（特别是它去掉了后者中能找到的低频）。正如 Perlin 在论文中所说：</p><blockquote><p>上面的纹理具有带限特征；在某些尺寸范围之外没有细节。</p></blockquote><p>这是一个重要性质，尤其在过滤函数时（见讲过滤的那一课）。</p><h2>参考文献</h2><p><i>An Image Synthesizer</i>. Ken Perlin (1985)</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/procedural-generation-virtual-worlds/perlin-noise-part-2/perlin-noise.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/procedural-generation-virtual-worlds/perlin-noise-part-2/perlin-noise.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

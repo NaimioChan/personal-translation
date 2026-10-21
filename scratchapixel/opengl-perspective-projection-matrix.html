@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>透视投影矩阵 - Scratchapixel 中文译本</title>
+<meta name="description" content="透视与正交投影矩阵 · 透视投影矩阵（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>透视投影矩阵</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="projection-matrix-introduction.html">投影矩阵是什么，何处、为何要使用？</a></li>
+<li><a href="projection-matrices-what-you-need-to-know-first.html">投影矩阵：首先需要知道的事</a></li>
+<li><a href="building-basic-perspective-projection-matrix.html">构建基础的透视投影矩阵</a></li>
+<li><a style="font-weight:700" href="opengl-perspective-projection-matrix.html">透视投影矩阵</a></li>
+<li><a href="perspective-matrix-in-practice.html">迷路了？用真实的制作案例回顾一遍</a></li>
+<li><a href="projection-matrix-GPU-rendering-pipeline-clipping.html">投影矩阵、GPU 渲染管线与裁剪</a></li>
+<li><a href="orthographic-projection-matrix.html">正交投影矩阵</a></li>
+</ol>
+</div>
+<h2>透视投影矩阵</h2><p><b>阅读时间：22 分钟。</b></p><h2>OpenGL 的透视投影矩阵</h2><p>在所有 OpenGL 书籍与资料中，OpenGL 所用的透视投影矩阵都定义为：</p><p>$$
+\left[\begin{array}{cccc}
+\frac{2n}{r-l} & 0 & \frac{r + l}{r-l} & 0 \\
+0 & \frac{2n}{t-b} & \frac{t + b}{t-b} & 0 \\
+0 & 0 & -\frac{f+n}{f-n} & -\frac{2fn}{f-n}\\
+0 & 0 & -1 & 0\\
+\end{array}\right]
+$$</p><p>这个矩阵与我们上一章学过的矩阵有什么相似之处？要记住，OpenGL 中的矩阵是用列主序定义的，而不是行主序。在<a href="row-major-vs-column-major-vector.html">几何</a>这一课中我们讲过，要从一种顺序换到另一种，只需对矩阵求转置。把上面的矩阵转置，得到：</p><p>$$
+\left[\begin{array}{cccc}
+\frac{2n}{r-l} & 0 & 0 & 0 \\
+0 & \frac{2n}{t-b} & 0 & 0 \\
+\frac{r + l}{r-l} & \frac{t + b}{t-b} & -\frac{f+n}{f-n} & {\color{red}{-1}}\\
+0 & 0 & -\frac{2fn}{f-n} & 0\\
+\end{array}\right]
+$$</p><p>这就是我们在 Scratchapixel 上会用的矩阵，因为我们使用行向量。而在 OpenGL 中你会用第一个矩阵，因为 OpenGL 默认使用列向量——不过在 OpenGL 4.x 以及 Vulkan 这类现代实时三维图形 API 中这一点可以改。注意那个红色的元素（第三行第四列）。当我们用这个矩阵乘一个齐次点时，点的 \(w\) 坐标会乘以这个元素，最终 \(w\) 的值就成了投影点的 \(z\) 坐标：</p><p>$$
+\left[\begin{array}{cccc}x' & y' & z' & w'\end{array}\right] = 
+\left[\begin{array}{cccc}x & y & z & w = 1\end{array}\right] *
+\left[\begin{array}{cccc} 
+\frac{2n}{r-l} & 0 & 0 & 0 \\ 
+0 & \frac{2n}{t-b} & 0 & 0 \\ 
+\frac{r + l}{r-l} & \frac{t + b}{t-b} & -\frac{f+n}{f-n} & {\color{red}{-1}}\\ 
+0 & 0 & -\frac{2fn}{f-n} & 0\\ 
+\end{array}\right]
+$$
+$$P'_w = 0 \cdot P_x + 0 \cdot P_y - 1 \cdot P_z + 0 = -P_z.$$</p><p>我们的数学表达式与公式是准确的，正确反映了 OpenGL 所用透视投影矩阵的公式，以及它转置后的变换。</p><h2>原理</h2><p>总的说来，我们已经理解这个矩阵为 z 除法做了正确的设置。现在来看看 OpenGL（Vulkan、Metal、Direct3D 或 WebGL）中是如何投影点的。原理与上一章讨论的相同。从相机原点向我们想投影的点 \(P\) 画一条直线，这条直线与图像平面的交点决定了投影点 \(P_s\) 的位置。这里的设置与上一章图 1 所示相同，但要注意，在 OpenGL 中图像平面位于近裁剪面上，而不是恰好距相机原点一个单位。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/projectionOpenGL.png?" alt=""><figcaption><b>图 1：</b>我们利用相似三角形的性质来求 \(P_s\) 的位置。</figcaption></figure><p>第 1 章用过的相似三角形方法在这里同样适用。三角形 \(\Delta ABC\) 与 \(\Delta DEF\) 相似。因此可以写出：</p><p>$$\frac{AB}{DE} = \frac{BC}{EF}.$$</p><p>把 \(AB\) 换成 \(n\)（近裁剪面），\(DE\) 换成 \(P_z\)（\(P\) 的 z 坐标），\(EF\) 换成 \(P_y\)（\(P\) 的 y 坐标），这个方程可以改写为（公式 1）：</p><p>$$\frac{n}{-P_z} = \frac{BC}{P_y} \rightarrow BC = P_s{}_y = \frac{n \cdot P_y}{-P_z}.$$</p><p>可以看到，与上一章的公式相比唯一的不同是分子中多了 \(n\)。但除以 \(P_z\) 的原理没有变（注意，由于相机沿负 z 轴朝向，\(P_z\) 是负数：\(P_z < 0\)）。为了让投影点的 y 坐标保持为正——因为 \(P_y\) 为正——我们对 \(P_z\) 取负。按同样的逻辑，我们得到投影点 x 坐标的公式（公式 2）：</p><p>$$P_s{}_x = \frac{n \cdot P_x}{-P_z}.$$</p><h2>推导</h2><figure><img src="https://scratchapixel.com/images/perspective-matrix/projectionOpenGL2.png?" alt=""><figcaption><b>图 2：</b>相机的视锥体，即观察体积，由相机的视场角、近远裁剪面以及图像宽高比决定。在 OpenGL 中，点被投影到视锥体的前面，也就是近裁剪面上。</figcaption></figure><p>确定了 \(P_s{}_x\) 与 \(P_s{}_y\) 的取值之后，现在需要说明它们与 OpenGL 透视矩阵之间的关系。投影矩阵的用途是把投影到图像平面上的值重映射到一个单位立方体（分别由 \((-1,-1,-1)\) 与 \((1,1,1)\) 的最小、最大范围定义）。点 \(P\) 投影到图像平面后，如果它的 \(x\) 与 \(y\) 坐标分别落在 \(x\) 上的 \([left, right]\) 区间、以及 \(y\) 上的 \([bottom, top]\) 区间内，\(P_s\) 就被认为可见，如图 2 所示。之前在<a href="implementing-virtual-pinhole-camera.html">三维观察：针孔相机模型</a>这一课中我们讨论过 \(left\)、\(right\)、\(bottom\) 与 \(top\) 坐标如何计算，本章再回顾一下。这些屏幕坐标规定了图像平面上可见点（所有包含在观察视锥体内并投影到图像平面上的点）的界限或边界。假定 \(P_s{}_x\) 可见，它可以表示为：</p><p>$$l \leq P_s{}_x \leq r,$$</p><p>其中 \(l\) 与 \(r\) 分别表示 left 与 right 坐标。我们的目标是重映射 \(P_s{}_x\)，使其最终取值落在 \([-1,1]\) 区间内（即单位立方体沿 \(x\) 轴的尺寸）。重温<a href="projection-stage.html">上一课</a>中引入的公式，先在所有项上减去 \(l\)，把方程改写为：</p><p>$$0 \leq P_s{}_x - l \leq r - l.$$</p><p>把这个式子右边归一化，即把公式中所有项都除以 \(r-l\)，得到：</p><p>$$0 \leq \frac{P_s{}_x - l}{r-l} \leq 1.$$</p><p>所有项乘以 2，得到：</p><p>$$0 \leq 2\frac{P_s{}_x - l}{r-l} \leq 2.$$</p><p>所有项减去 1，得到：</p><p>$$-1 \leq 2\frac{P_s{}_x - l}{r-l} - 1 \leq 1.$$</p><p>这样就把中间项重映射到了 \([-1,1]\) 区间，正是我们的目标，不过这些项还可以进一步整理：</p><p>$$-1 \leq 2 \frac{P_s{}_x - l}{r-l} - \frac{r-l}{r-l} \leq 1.$$</p><p>展开后得到：</p><p>$$-1 \leq \frac{2P_s{}_x - 2l - r + l}{r-l} \leq 1.$$</p><p>因此：</p><p>$$-1 \leq \frac{2P_s{}_x - l - r}{r-l} \leq 1 \rightarrow -1 \leq \frac{2P_s{}_x}{r-l} - \frac{r + l}{r - l} \leq 1.$$</p><p>这两项与 OpenGL 透视投影矩阵第一行的前两项已经很接近了。我们越来越近了。如果把上一个式子里的 \(Ps_x\) 换成公式 2，就得到：</p><p>$$-1 \leq \dfrac{2n P_x}{-P_z(r-l)} - \dfrac{r + l}{r - l} \leq 1.$$</p><p>这个方程很容易写成矩阵形式。如果把矩阵第一行的第一个与第三个系数分别换成这个式子的第一项与第二项，就得到：</p><p>$$
+\left[\begin{array}{cccc}
+\dfrac{2n}{r-l} & 0 & \dfrac{r + l}{r-l} & 0 \\
+\ldots & \ldots & \ldots & \ldots \\
+\ldots & \ldots & \ldots & \ldots \\
+0 & 0 & -1 & 0\\
+\end{array}\right]
+$$</p><p>记住，OpenGL 矩阵使用列主序，因此必须把乘号放在矩阵右边，点坐标写成列向量：</p><p>$$
+\left[\begin{array}{cccc}
+\dfrac{2n}{r-l} & 0 & \dfrac{r + l}{r-l} & 0 \\
+\ldots & \ldots & \ldots & \ldots \\
+\ldots & \ldots & \ldots & \ldots \\
+0 & 0 & -1 & 0\\
+\end{array}\right] * \left[ \begin{array}{c}x \\ y \\ z \\ w\end{array}\right]
+$$</p><p>用这个矩阵计算 \(Ps_x\)，得到：</p><p>$$Ps_x = \dfrac{2n}{r-l} P_x + 0 \cdot P_y + \dfrac{r + l}{r-l} \cdot P_z + 0 \cdot P_w.$$</p><details open><p>到这里你应该已经熟悉矩阵-向量乘法的概念，也熟悉行主序与列主序的向量和矩阵之别了。在这个例子里我们使用列主序的向量记法（这是 OpenGL 的约定，不是 Scratchapixel 的——我们更偏好行主序记法），要算出第一个坐标（x）变换后的值，需要把矩阵第一行的系数与向量的坐标按如下方式配合：</p><p>$$Px_{transform} = M_{00} \cdot Px + M_{01} \cdot Py + M_{02} \cdot Pz + M_{03} \cdot Pw.$$</p><p>如果你对这些概念不熟悉，请读<a href="points-vectors-and-normals.html">几何</a>这一课。</p></details><p>而由于 \(Ps_x\) 最终会在把 \(Ps\) 从齐次坐标转成笛卡尔坐标时被 \(-P_z\) 除，我们得到：</p><p>$$
+Ps_x = \frac{\frac{2n}{r-l} P_x}{-P_z} + \frac{\frac{r + l}{r-l} P_z}{-P_z} \rightarrow \frac{2n P_x}{-P_z(r-l)} - \frac{r + l}{r-l}.
+$$</p><p>这就是用 OpenGL 透视矩阵算出的投影点 \(Ps\) 的第一个坐标。推导相当冗长，\(Ps_y\) 的情形我们跳过。不过如果你照着我们为 \(Ps_x\) 所用的步骤做，自己动手应该不成问题。只需把 \(l\) 与 \(r\) 换成 \(b\) 与 \(t\)，最后就得到下面的公式：</p><p>$$-1 \leq \frac{2n P_y}{-P_z(t-b)} - \frac{t + b}{t - b} \leq 1.$$</p><p>如果把矩阵第二行的第二个与第三个系数分别换成这个式子的第一项与第二项，就能通过点-矩阵乘法得到这个结果：</p><p>$$
+\left[\begin{array}{cccc}
+\frac{2n}{r-l} & 0 & \frac{r + l}{r-l} & 0 \\
+0 & \frac{2n}{t-b} & \frac{t + b}{t-b} & 0 \\
+\ldots & \ldots & \ldots & \ldots \\
+0 & 0 & -1 & 0\\
+\end{array}\right]
+$$</p><p>用这个矩阵计算 \(Ps_y\)，得到：</p><p>$$Ps_y = 0 \cdot P_x + \frac{2n}{t-b} \cdot P_y + \frac{t + b}{t-b} \cdot P_z + 0 \cdot P_w$$</p><p>再除以 \(-P_z\) 之后：</p><p>$$Ps_y = \frac{\frac{2n}{t-b} P_y}{-P_z} + \frac{\frac{t + b}{t-b} P_z}{-P_z} \rightarrow \frac{2n P_y}{-P_z(t-b)} - \frac{t + b}{t-b}$$</p><p>矩阵又对了。接下来只差找到把投影点的 z 坐标重映射到 [-1,1] 区间的方法。我们知道 \(P\) 的 x、y 坐标对投影点 z 坐标的计算没有贡献。因此矩阵第三行中会与 \(P\) 的 x、y 坐标相乘的第一、第二个系数必然为零（绿色）。剩下两个未知系数 \(A\) 与 \(B\)（红色）。</p><p>$$
+\left[\begin{array}{cccc}
+\frac{2n}{r-l} & 0 & \frac{r + l}{r-l} & 0 \\
+0 & \frac{2n}{t-b} & \frac{t + b}{t-b} & 0 \\
+\color{green}{0} & \color{green}{0} & \color{red}{A} & \color{red}{B}\\
+0 & 0 & -1 & 0 \\
+\end{array}\right]
+$$</p><p>如果写出用这个矩阵计算 \(Ps_z\) 的式子，得到（记住点从齐次坐标转成笛卡尔坐标时 \(Ps_z\) 也要除以 \(Ps_w\)，且 \(P_w = 1\)）：</p><p>$$
+Ps_z = \frac{0 \cdot P_x + 0 \cdot P_y + A \cdot P_z + B \cdot P_w}{Ps_w = -P_z} \rightarrow \frac{A \cdot P_z + B}{Ps_w = -P_z}.
+$$</p><p>我们需要求出 A 与 B 的值。幸运的是我们知道，当 \(P_z\) 位于近裁剪面上时，\(Ps_z\) 需要重映射为 -1；当 \(P_z\) 位于远裁剪面上时，\(Ps_z\) 需要重映射为 1。因此要把方程中的 \(Ps_z\) 分别换成 \(n\) 与 \(f\)，得到两个新方程（注意所有投影到图像平面上的点 z 坐标都是负的，而 \(n\) 与 \(f\) 是正的，所以我们改用 \(-n\) 与 \(-f\)）：</p><p>$$
+\left\{ \begin{array}{ll} \frac{(P_z=-n)A + B}{(-P_z=-(-n)=n)} = -1 & \text{ when } P_z = n\\ \frac{(P_z=-f)A + B}{(P_z=-(-f)=f)} = 1 & \text{ when } P_z = f \end{array} \right. \\ \rightarrow  \left\{ \begin{array}{ll} {-nA + B} = -n & (1)\\  {-fA + B} = f & (2) \end{array} \right.
+$$</p><p>从公式 1 解出 B：</p><p>$$B = -n + An.$$</p><p>把这个式子代入公式 2 中的 B：</p><p>$$-fA - n + An = f.$$</p><p>然后解出 A：</p><p>$$-fA + An = f + n \rightarrow -(f - n)A = f + n \rightarrow A = -\frac{f + n}{f - n}.$$</p><p>有了 A 的解，求 B 就很直接了。把 A 代回公式 1 就能求出 B：</p><p>$$B = -n + An = -n -\frac{f + n}{f - n} n = \\-(1+\frac{f + n}{f - n}) n = - \frac{{(f -n + f + n)}n}{f - n}=-\frac { 2fn }{f -n}.$$</p><p>把求得的 A 与 B 代回矩阵，最终得到：</p><p>$$\left[\begin{array}{cccc} \frac{2n}{r-l} & 0 & \frac{r + l}{r-l} & 0 \\ 0 & \frac{2n}{t-b} & \frac{t + b}{t-b} & 0 \\ 0 & 0 & -\frac{f+n}{f-n} & -\frac{2fn}{f-n}\\ 0 & 0 & -1 & 0\\ \end{array}\right]$$</p><p>这就是 OpenGL 的透视投影矩阵。</p><h2>z 该落在 \([-1,1]\) 还是 \([0,1]\)？这很遗憾地很重要</h2><p>z 该落在 \([-1,1]\) 还是 \([0,1]\) 区间，是个合理的问题。到目前为止我们选择把 \(z\) 重映射到 \([-1,1]\) 区间，并给出了相应的公式。多数透视矩阵代码都把 Z 重映射到这个区间。然而许多（即使不是大多数）实时图形 API，例如 OpenGL 与 Vulkan，期望深度范围落在 \([0,1]\) 内。严格说来，这些图形 API 允许你在创建图形管线时或多或少自行定义这个范围。在 Vulkan 中，你在 <code>VkPipelineViewportStateCreateInfo</code> 结构里设置 <code>minDepth</code> 与 <code>maxDepth</code>（该结构本身有一个 <code>pViewports</code> 参数，你在那里设置这些深度边界）。在 OpenGL 中，这些值通过 <code>glDepthRange</code> 设置。</p><p>现在，你有两种办法可以做到。一是修改原来的透视投影矩阵，让 z 坐标直接重映射到 \([0,1]\)。</p><p>$$
+\left\{
+\begin{array}{ll}
+\frac{(P_z = -n)A + B}{(-P_z = -(-n) = n)} = 0 & \text{ when } P_z = n \\
+\frac{(P_z = -f)A + B}{(P_z = -(-f) = f)} = 1 & \text{ when } P_z = f
+\end{array}
+\right.
+$$
+$$
+\rightarrow \left\{
+\begin{array}{ll}
+{-nA + B} = 0 & (1) \\
+{-fA + B} = f & (2)
+\end{array} 
+\right.
+$$</p><p>由此可以推出：</p><p>$$
+A = -\frac{f}{f-n}
+$$</p><p>以及：</p><p>$$
+B = -\frac{fn}{f-n}
+$$</p><p>另一种办法是直接用原来的矩阵，让实时图形 API 替你重映射这些值。这在 OpenGL 中可行，因为当点从 NDC 空间变换到窗口空间（或者你更愿意说的光栅空间）时，\(z\) 会按下面的方式重映射：</p><p>$$
+\begin{pmatrix}
+x_w \\
+y_w \\
+z_w \\
+\end{pmatrix}
+=
+\begin{pmatrix}
+\frac{P_x}{2} x_d + o_x \\
+\frac{P_y}{2} y_d + o_y \\
+\frac{f \cdot n}{2} z_d + \frac{n + f}{2}
+\end{pmatrix}
+$$</p><p>不必太在意这里的 \(x_w\) 与 \(y_w\)。我们只关心 \(z_w\)（顺便说一句，\(w\) 在这里指窗口空间）。在 OpenGL 中，在这一特定阶段，变量 \(n\) 与 \(f\) 被设为前面提到的 <code>minDepth</code> 与 <code>maxDepth</code> 值。因此如果它们分别是 0 与 1，这就等同于 \(\frac{1}{2} z_d + \frac{1}{2}\)，实际上把 \([-1,1]\) 区间内的点重映射到 \([0,1]\) 区间。</p><p>在 Vulkan 这类 API 中，情况会稍微复杂一些。XX</p><h2>深度缓冲的精度问题</h2><figure><img src="https://scratchapixel.com/images/perspective-matrix/depth2.png?" alt=""><figcaption><b>图 3：</b>投影点 z 坐标的重映射是非线性的。这张图展示了 near = 1、far = 5 时 \(\scriptsize Ps_z\) 的结果。</figcaption></figure><p>z 坐标的重映射会让离相机越近的点在数值精度上越占优势，相比更远的点精度更高。如上一章所述，这一特性会导致问题：数值精度不足，使得在世界空间中 z 坐标不同的相邻采样点，投影到屏幕后得到完全相同的深度值。这一现象称为 <b>z-fighting</b>，是个棘手的问题。虽然由于单精度浮点数的精度固有限制，这个问题无法彻底消除，但可以通过仔细调整近、远裁剪面，让它们尽量贴近场景中最近与最远的可见物体来缓解。这正是精确调整裁剪面之所以重要的原因。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/optimized-clip-planes.png?" alt=""></figure><h2>视场角与图像宽高比</h2><p>你可能已经注意到，到目前为止我们从未提及相机的视场角（FOV）与图像宽高比。然而正如上一章以及讲相机的课程（基础部分）中所说，改变 FOV 会改变相机看到的场景范围。因此视场角与图像宽高比在某种意义上与投影过程有关。我们特意忽略了这个细节，以便专注于 OpenGL 透视投影矩阵，它并不直接依赖相机的视场角，但间接地确实如此。这个矩阵的构建依赖六个参数：left、right、bottom、top 坐标，以及近、远裁剪面。近、远裁剪面的值由用户给出，可 left、right、bottom、top 坐标呢？它们是什么，从哪里来，怎么计算？观察图 2 与图 5 可以看到，这些坐标对应视锥体前面的左下角与右上角，也就是三维场景的图像投影到的那一面。</p><h3>计算坐标</h3><figure><img src="https://scratchapixel.com/images/perspective-matrix/openglsetup.png?" alt=""><figcaption><b>图 4：</b>相机的侧视图。三角形 ACD 的顶角定义了相机的垂直视场角（FOV）。图像平面的位置由近裁剪面的距离决定。用简单的三角学就能从这两个值（FOV 与近裁剪面）算出 top 坐标。</figcaption></figure><p>为了算出 top 坐标，我们看直角三角形 ABC。AB 与 AC 所夹的角是 FOV 的一半，三角形的邻边就是近裁剪面的值。用三角学可以写作：</p><p>$$\tan\left( \frac{ FOVY } {2}\right) = \frac{ opposite } { adjacent } = \frac {BC}{AB} = \frac{top}{near}$$</p><p>因此：</p><p>$$
+top = \tan\left( \frac{ FOVY } {2}\right) * near
+$$</p><p>而由于相机下半部分与上半部分对称，可以写出：</p><p>$$bottom = -top$$</p><details open><p>视场角既可以按垂直方向定义，也可以按水平方向定义。OpenGL 倾向于把视场角定义为垂直方向（FOVY 里的 Y 就来自这里），但在 Scratchapixel 上我们使用水平视场角，与 Maya、RenderMan 相同。</p></details><figure><img src="https://scratchapixel.com/images/perspective-matrix/openglsetup2.png?" alt=""><figcaption><b>图 5：</b>图像可以是正方形（左）或矩形（右）。注意左下角坐标与右上角坐标关于 x、y 轴对称。</figcaption></figure><p>图 5 考虑了两种情况：图像可以是正方形，也可以是矩形。对于正方形相机，事情很简单：left 与 bottom 坐标相同，right 与 top 坐标也相同，把左下角坐标关于 x、y 轴镜像就得到右上角坐标。因此只要算出 top 坐标，其余三个很容易设好：</p><p>$$
+\begin{array}{l} 
+top = \tan( \frac{ FOV } {2}) * near \\ 
+right = top \\ 
+left = bottom = -top 
+\end{array}
+$$</p><p>对于非正方形相机，如图 5 右侧所示，坐标的计算会稍微复杂一些。bottom 与 top 坐标保持不变，但 left 与 right 坐标要按宽高比缩放，宽高比定义为图像宽度除以图像高度。计算 left、right 与 bottom 坐标的一般公式为：</p><p>$$
+\begin{array}{l} 
+aspect\;ratio = \frac{width}{height}\\ 
+top = \tan( \frac{ FOV } {2}) * near \\ 
+bottom = -top \\ right = top * aspect\;ratio\\ 
+left = bottom = -top * aspect\;ratio 
+\end{array}
+$$</p><p>因此相机的视场角<b>与图像宽高比</b>在计算 left、right、bottom、top 坐标时都很关键，而这些坐标又用于构建透视投影矩阵。它们就是这样间接影响相机能看到多少场景的。</p><h2>测试程序</h2><p>为了测试 OpenGL 透视投影矩阵，我们沿用上一章的代码。在旧的固定功能渲染管线中，有两个函数 <code>gluPerspective</code>（属于 GLU 库）与 <code>glFrustum</code> 用来设置屏幕坐标与投影矩阵。在新的可编程渲染管线中它们已被废弃（自 OpenGL 3.1 起），但本课仍然使用它们，以展示本章所学内容对应的实现。如果需要，你完全可以在自己的 CPU 程序里模拟它们。</p><p>在 OpenGL 中设置透视投影矩阵是通过调用 <code>glFrustum</code> 完成的。这个函数接受六个参数：</p><pre><code>
+glFrustum(float left, float right, float bottom, float top, float near, float far);
+</code></pre><p>这个函数的实现如下（第 20 行）。<code>gluPerspective</code> 函数用于设置屏幕坐标，其参数为视场角、图像宽高比（图像宽度除以图像高度）以及裁剪面。</p><pre><code>
+void gluPerspective(float fovy, float aspect, float zNear, float zFar);
+</code></pre><p>在 OpenGL 中，视场角定义为垂直角（变量名里的 'y' 就来自这里）。在 Scratchapixel 上我们使用水平视场角。这个函数的一个实现如下（第 8 行）。其余代码保持不变。我们先算出屏幕坐标，再算出投影矩阵。接着遍历茶壶几何体的所有顶点，把它们从物体/世界空间变换到相机空间，最后用透视投影矩阵投影到屏幕上。记住，这个矩阵会把投影点重映射到 NDC 空间。因此与上一版代码一样，可见点在高度上落在 [-1,1] 区间，在宽度上落在 [-imageAspectRatio, imageAspectRatio] 区间（若图像为正方形则为 [-1,1]）。</p><pre><code>
+#include &amp;ltcstdio&gt; 
+#include &amp;ltcstdlib&gt; 
+#include &amp;ltfstream&gt; 
+#include "geometry.h" 
+#include "vertexdata.h" 
+ 
+// 先计算屏幕坐标
+void gluPerspective( 
+    const float &amp;angleOfView, 
+    const float &amp;imageAspectRatio, 
+    const float &amp;n, const float &amp;f, 
+    float &amp;b, float &amp;t, float &amp;l, float &amp;r) 
+{ 
+    float scale = tan(angleOfView * 0.5 * M_PI / 180) * n; 
+    r = imageAspectRatio * scale, l = -r; 
+    t = scale, b = -t; 
+} 
+ 
+// 设置 OpenGL 透视投影矩阵
+void glFrustum( 
+    const float &amp;b, const float &amp;t, const float &amp;l, const float &amp;r, 
+    const float &amp;n, const float &amp;f, 
+    Matrix44f &amp;M) 
+{ 
+    // 设置 OpenGL 透视投影矩阵
+    M[0][0] = 2 * n / (r - l); 
+    M[0][1] = 0; 
+    M[0][2] = 0; 
+    M[0][3] = 0; 
+ 
+    M[1][0] = 0; 
+    M[1][1] = 2 * n / (t - b); 
+    M[1][2] = 0; 
+    M[1][3] = 0; 
+ 
+    M[2][0] = (r + l) / (r - l); 
+    M[2][1] = (t + b) / (t - b); 
+    M[2][2] = -(f + n) / (f - n); 
+    M[2][3] = -1; 
+ 
+    M[3][0] = 0; 
+    M[3][1] = 0; 
+    M[3][2] = -2 * f * n / (f - n); 
+    M[3][3] = 0; 
+} 
+ 
+void multPointMatrix(const Vec3f ∈, Vec3f &amp;out, the Matrix44f &amp;M) 
+{ 
+    // out = in * Mproj;
+    out.x   = in.x * M[0][0] + in.y * M[1][0] + in.z * M[2][0] + M[3][0]; // 假设 in.z = 1
+    out.y   = in.x * M[0][1] + in.y * M[1][1] + in.z * M[2][1] + M[3][1]; 
+    out.z   = in.x * M[0][2] + in.y * M[1][2] + in.z * M[2][2]
+
+ + M[3][2]; 
+    float w = in.x * M[0][3] + in.y * M[1][3] + in.z * M[2][3] + M[3][3]; 
+ 
+    // 若 w 不等于 1 则归一化（从齐次坐标转换为笛卡尔坐标）
+    if (w != 1) { 
+        out.x /= w; 
+        out.y /= w; 
+        out.z /= w; 
+    } 
+} 
+ 
+int main(int argc, char **argv) 
+{ 
+    uint32_t imageWidth = 512, imageHeight = 512; 
+    Matrix44f Mproj; 
+    Matrix44f worldToCamera; 
+    worldToCamera[3][1] = -10; 
+    worldToCamera[3][2] = -20; 
+    float angleOfView = 90; 
+    float near = 0.1; 
+    float far = 100; 
+    float imageAspectRatio = imageWidth / (float)imageHeight; 
+    float b, t, l, r; 
+    gluPerspective(angleOfView, imageAspectRatio, near, far, b, t, l, r); 
+    glFrustum(b, t, l, r, near, far, Mproj); 
+    unsigned char *buffer = new unsigned char[imageWidth * imageHeight]; 
+    memset(buffer, 0x0, imageWidth * imageHeight); 
+    for (uint32_t i = 0; i &lt; numVertices; ++i) { 
+        Vec3f vertCamera, projectedVert; 
+        multPointMatrix(vertices[i], vertCamera, worldToCamera); 
+        multPointMatrix(vertCamera, projectedVert, Mproj); 
+        if (projectedVert.x &lt; -imageAspectRatio || projectedVert.x &gt; imageAspectRatio || projectedVert.y &lt; -1 || projectedVert.y &gt; 1) continue; 
+        // 转换到光栅空间，用一个小点标出顶点在图像中的位置
+        uint32_t x = std::min(imageWidth - 1, (uint32_t)((projectedVert.x + 1) * 0.5 * imageWidth)); 
+        uint32_t y = std::min(imageHeight - 1, (uint32_t)((1 - (projectedVert.y + 1) * 0.5) * imageHeight)); 
+        buffer[y * imageWidth + x] = 255; 
+    } 
+    // 导出为图像
+    std::ofstream ofs; 
+    ofs.open("./out.ppm"); 
+    ofs &lt;&lt; "P5\n" &lt;&lt; imageWidth &lt;&lt; " " &lt;&lt; imageHeight &lt;&lt; "\n255\n"; 
+    ofs.write((char*)buffer, imageWidth * imageHeight); 
+    ofs.close(); 
+    delete [] buffer; 
+ 
+    return 0; 
+} 
+</code></pre><p>我们在第 1 章就指出，即使矩阵的构建方式不同（看起来也不同），它们应该始终产生相同的结果：三维空间中的一个点应被投影到图像上相同的像素位置。比较用第一个矩阵投影茶壶顶点的结果，与用相同相机设置（相同的视场角、图像宽高比、近远裁剪面）加 OpenGL 透视投影矩阵的结果，得到的图像完全一致（见下图）。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspprojresults.png?" alt=""></figure><p>这个程序的源代码可以在 Scratchapixel 的 GitHub 仓库中找到。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/opengl-perspective-projection-matrix.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/opengl-perspective-projection-matrix.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

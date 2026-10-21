@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光线步进算法 - Scratchapixel 中文译本</title>
+<meta name="description" content="体积渲染 · 光线步进算法（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光线步进算法</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="intro-volume-rendering.html">体积渲染简介</a></li>
+<li><a style="font-weight:700" href="ray-marching-algorithm.html">光线步进算法</a></li>
+<li><a href="ray-marching-get-it-right.html">光线步进：把它做对！</a></li>
+<li><a href="volume-rendering-3D-density-field.html">三维密度场的体积渲染</a></li>
+<li><a href="volume-rendering-voxel-grids.html">基于三维体素网格的体积渲染</a></li>
+<li><a href="volume-rendering-summary-equations.html">从辐射传输方程到体积渲染方程</a></li>
+<li><a href="volume-rendering-stochastic-monte-carlo.html">下一步？蒙特卡罗的随机方法</a></li>
+</ol>
+</div>
+<h2>光线步进算法</h2><p><b>阅读时间：19 分钟。</b></p><h2>无所不能的光线步进算法</h2><p>为了沿光线积分因内散射而产生的入射光，我们要把光线穿过的体积拆成一个个小体积元素，再把每个小体积元素的贡献合成到整个体积物体上。这有点像在 2D 编辑软件（比如 Photoshop）里把带遮罩或 alpha 通道（通常表示物体的不透明度）的图像层层叠起来。这也是我们在第一章里讲 alpha 合成方法的原因。这些小的体积元素中的每一个，都对应第一章提到的黎曼和里的一个采样。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-backward-raymarching.gif" alt=""><figcaption><b>图 1：</b>反向光线步进。沿光线以小而规则的步长向前推进，从 t1 到 t0。</figcaption></figure><p>算法的流程如下：</p><p>1. 求出 t0 与 t1 的值，即相机光线/视线进入和离开体积物体的位置。</p><p>2. 把 t0-t1 所定的线段分成 X 个大小相同的小线段。一般做法是选定一个我们所说的<b>步长</b>，它不过是一个浮点数，用来定义小线段的长度。举例来说，若 t0=2.5、t1=8.3、步长 = 0.25，我们就把 t0-t1 所定的线段分成 (8.3-2.5)/0.25=23 个小线段（现在先别为小数部分操心，简单处理即可）。</p><p>3. 接下来你要做的就是沿相机光线「步进」X 次，从 t0 或 t1 开始（见第 6 条要点）。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-lix.png" alt=""><figcaption><b>图 2：</b>计算 Li(x) 需要我们朝光源方向追踪一条光线，以得知光束要穿过多少体积才能到达我们的采样点。</figcaption></figure><p>5. 每走一步，我们就从这一步的中点（即我们的采样点）朝光源射出一条「光线」。我们求出这条光线与体积元素相交（离开）的位置，并用 Beer 定律计算它对采样点的贡献（由内散射产生）。记住，来自光源的光在穿到采样点的过程中会被体积吸收。这就是上一章提到的黎曼和里的 <b>Li(x)</b> 值。别忘了还要把这个值乘以步长，步长在黎曼和里对应 <b>dx</b> 项，也就是我们矩形的宽度。写成伪代码就是：</p><pre><code>
+// 计算当前采样点 x 的 Li(x)
+float lgt_t0, lgt_t1; // 光源光线与球面各交点的参数距离
+volumeSphere-&amp;gtintersect(x, lgt_dir, t0, lgt_t1); // 计算光源光线与球体的交点
+color Li_x = exp(-lgt_t1 * sigma_a) * light_color * step_size; // step_size 就是我们的 dx
+...
+</code></pre><p>如你在图 2 中所见，光源光线与球体求交时，t0 应始终为 0，因为这条光线从球体内部出发；t1 则是从我们的采样位置 x 出发、光线与球面相交处的参数距离。因此我们可以把这个值用在 Beer 定律里，作为光在体积物体中被吸收所经过的距离。</p><p>6. 当然，穿过这个小体积元素（我们的采样点）的光在通过采样点本身时也会被衰减。所以我们用步长作为光束穿过体积的距离代入 Beer 定律，算出该采样点的透射率。然后用这个透射率去衰减（相乘）光量（内散射）。</p><p>7. 最后，我们需要把每一个采样点组合起来，计入它们各自对体积物体的整体不透明度与「颜色」的贡献。的确，如果反向来看这个过程（如图 1 所示），第一个体积元素（从 t1 开始）被第二个遮挡，第二个又被第三个遮挡，依此类推，直到到达「队列」里的最后一个元素（紧挨 t0 的那个采样点）。如果你沿相机光线「看过去」，紧挨 t1 的那个元素被它前面所有元素遮挡。紧跟在紧挨 t0 的那个采样点之后的采样点，则被那第一个采样点遮挡，依此类推。</p><p>「光线步进」（ray-marching）这个名字现在就很好理解了：我们沿光线推进，如图 1 所示（反向光线步进的一个例子）取小而规则的步长。请注意，使用规则步长并不是光线步进算法的必要条件。步长也可以是不规则的，不过为了说得简单，我们先按规则步长或者说跨步（Ken Musgrave 喜欢这么叫）来。使用规则步长时，我们称之为<b>均匀光线步进</b>（与之相对的是自适应光线步进）。</p><p>我们可以用两种方式组合采样点：<b>反向</b>（从 t1 步进到 t0）或<b>正向</b>（从 t0 步进到 t1）。其中一种比另一种更好（差不多算吧）。下面我们描述它们各自如何工作。</p><h2>反向光线步进。</h2><p>在反向光线步进中，我们沿光线从后往前推进。换句话说，从 t1 到 t0。这会改变我们组合采样点、计算最终像素不透明度与颜色值的方式。</p><p>很自然，既然我们从体积物体（我们的球体）的背面开始，就可以把像素颜色（该相机光线返回的颜色）初始化为背景色（我们那种偏蓝的颜色）。但在我们的实现里，只在过程结束时才把两者组合起来（等我们算完体积物体的颜色与不透明度之后），有点像在 2D 编辑软件里合成两张图像。</p><p>我们计算体积中第一个采样点（比如叫 X0）的贡献，如前所述从 t1 出发，往回走到 t0，取规则步长（由步长定义）。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-raymarching3.png" alt=""><figcaption><b>图 3：</b>要计算一个采样点，需要计入来自后方（背景色）的光，以及因内散射而从光源来的光。然后再计入这个小体积元素，它会吸收这些光贡献的一部分。你可以把它看成背景色与来自光源的颜色相加，再乘上小体积元素的透明度值。</figcaption></figure><p>这个采样点的贡献是什么？</p><ul><li><p>我们按上面说的（第 6 点）计算内散射贡献（光源的贡献）Li(X0)：朝光源方向射出一条光线，再用 Beer 定律衰减这份光贡献，计入体积物体在光从进入物体（我们的体积球体）的位置到采样点（X0）的行程中吸收掉的那部分光。</p></li><li><p>然后，我们需要把这份光乘以采样点的透明度值（它表示该采样点吸收了多少光）。采样点透明度同样用 Beer 定律算出，以步长作为光束穿过该采样点的距离（图 3）。</p></li></ul><pre><code>
+...
+color Li_x0 = exp(-lgt_t1 * sigma_a) * light_color * step_size; // step_size 就是我们的 dx
+color x0_contrib = Li_x0 * exp(-step_size * sigma_a);
+...
+</code></pre><p>我们刚算完第一个采样点 X0。接着移到第二个采样点（X1），但此时有两种光源需要计入：来自第一个采样点 X0 的光束（我们上一次的结果），以及因内散射而穿过第二个采样点的光束 X1\。前者我们已经算过（如刚才所说，那就是我们上一次的结果），后者我们也知道怎么渲染。把它们相加，再把这个和乘以第二个采样点的透射值。这就成了我们的新结果。我们不断用 X2、X3……重复这个过程，直到最终到达 t0\。最终结果就是体积物体对当前相机光线像素颜色的贡献。这个过程如下图所示。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-backward-raymarching2.png?" alt=""></figure><p>注意上图里我们计算了两个值：体积的整体颜色（存在 result 里）和体积的整体透明度。我们把该值初始化为 1（完全透明），然后随着我们沿光线往上（或往下）走（从 t1 到 t0），用每个采样点的透明度值去衰减它。最后我们就可以用这个整体透明度值，把体积物体组合到背景色<b>之上</b>。我们只需：</p><pre><code>
+color final = background_color * transmission + result;
+</code></pre><p>用合成的话说，「result」这一项已经预先乘过体积的整体透明度了。但这如果让你困惑，我们会在下一章澄清这一点。所以现在不必在这上面花太多心思。</p><p>还要注意，上图与下面的代码里，采样点的衰减项始终是同一个：<code>exp(-step_size * sigma_a)</code>。这当然不高效。你应当把这个项算一次、存进一个变量，之后用那个变量。但我们的目标是清楚，不是写高性能代码。何况目前这个值沿光线步进时是常量，不过我们会在后面几章发现，它最终会随采样点而变化。</p><p>翻译成代码就是这样的：</p><pre><code>
+constexpr vec3 background_color{ 0.572f, 0.772f, 0.921f };
+
+vec3 integrate(const vec3&amp; ray_orig, const vec3&amp; ray_dir, ...)
+{
+    const Object* hit_object = nullptr;
+    IsectData isect;
+    for (const auto&amp; object : objects) {
+        IsectData isect_object;
+        if (object-&amp;gtintersect(ray_orig, ray_dir, isectObject)) {
+            hit_object = object.get();
+            isect = isect_object;
+        }
+    }
+
+    if (!hit_object) 
+        return background_color;
+
+    float step_size = 0.2;
+    float sigma_a = 0.1; // 吸收系数
+    int ns = std::ceil((isect.t1 - isect.t0) / step_size);
+    step_size = (isect.t1 - isect.t0) / ns;
+
+    vec3 light_dir{ 0, 1, 0 };
+    vec3 light_color{ 1.3, 0.3, 0.9 };
+
+    float transparency = 1; // 透明度初始化为 1
+    vec3 result{ 0 }; // 体积颜色初始化为 0
+
+    for (int n = 0; n &lt; ns; ++n) {
+        float t = isect.t1 - step_size * (n + 0.5);
+        vec3 sample_pos= ray_orig + t * ray_dir; // 采样位置（步长的中点）
+
+        // 用 Beer 定律计算采样点透明度
+        float sample_transparency = exp(-step_size * sigma_a);
+        
+        // 用采样点透明度衰减整体透明度
+        transparency *= sample_transparency;
+
+        // 内散射。求出光穿过
+        // 体积到达我们的采样点所走的距离。然后应用 Beer 定律。
+        IsectData isect_vol;
+        if (hitObject-&amp;gtintersect(sample_pos, light_dir, isect_vol) &amp;&amp; isect_vol.inside) {
+            float light_attenuation = exp(-isect_vol.t1 * sigma_a);
+            result += light_color * light_attenuation * step_size;
+        }
+
+        // 最后用采样点透明度衰减结果
+        result *= sample_transparency;
+    }
+
+    // 与背景色组合后返回
+    return background_color* transparency + result;
+}
+</code></pre><p>但要留意这段代码。它还不准确。它缺了几项，我们会在下一章处理。现在，我们只想让你理解光线步进的原理。不过这段代码已经能生成一张有说服力的图像。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-raymarchedsphere2.png?" alt=""></figure><p>注意在这个例子里，我们用的是一束自上而下的平行光（光照方向沿 y 轴向上）。球体偏红的颜色来自光的颜色。你可以看到球体的上半部比下半部更亮。阴影效果已经可见了。</p><p>我们再看一遍沿光线步进时采样点发生了什么：</p><p>$$
+\begin{array}{l}
+A &=& Li(X_0) * \color{red}{Att};\text{ // first iteration n = 0} \\
+
+B &=& (A + Li(X_1)) * Att; \text{ // second iteration n = 1}\\
+B &=& (Li(X_0) * Att + Li(X_1)) * Att;\\
+B &=& (Li(X_0) * \color{red}{Att^2} + Li(X_1) * Att;\\
+
+C &=& (B + Li(X_2)) * Att;\text{ // third iteration n = 2}\\
+C &=& (Li(X_0) * Att^2 + Li(X_1) * Att + Li(X_2)) * Att;\\
+C &=& (Li(X_0) * \color{red}{Att^3} + Li(X_1) * Att^2 + Li(X_2) * Att;\\
+...
+\end{array}
+$$</p><p>如果你只看 \(Li(X_0)\) 在循环里的变化，可以发现它被乘以采样点衰减的某个幂次。沿光线走得越多，指数越高（先是 1，然后 2，然后 3……），结果也就越小（因为衰减即采样点透明度小于 1）。换句话说，随着累积的采样点增多，第一个采样点对体积最终散射出的总光量的贡献会减小。</p><h2>正向光线步进。</h2><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-raymarching.gif" alt=""><figcaption><b>图 4：</b>正向光线步进。沿光线以小而规则的步长向前推进，从 t0 到 t1。</figcaption></figure><p>在计算 Li(x) 与采样点透射率上，正向与反向光线步进没有区别。不同之处在于我们如何组合采样点，因为这一次我们从 t0 走到 t1（从前往后）。在正向光线步进中，一个采样点散射出的光的贡献，必须被我们迄今处理过的所有采样点（包括当前这个）的整体透射（透明）值衰减：Li(X1) 被采样点 X0 与 X1 的透射率衰减，Li(X2) 被采样点 X0、X1、X2 的透射率遮挡，依此类推。算法描述如下：</p><ul><li><p>第 1 步：进入光线步进循环之前：把整体透射（透明）值初始化为 1，把结果颜色变量初始化为 0（这个变量存放当前相机光线对应的体积物体颜色）：<code>float transmission = 1; color result = 0;</code>。</p></li><li><p>第 2 步：光线步进循环的每一次迭代：</p><ul><li><p>计算当前采样点的内散射：Li(x)。</p></li><li><p>把整体透射（透明）值乘以当前采样点的透射值来更新它：<code>transmission *= sample_transmission</code>。</p></li><li><p>把 Li(x) 乘以整体透射（透明）值：采样点散射出的光被我们迄今处理过的所有采样点（包括当前采样点）遮挡。把这个结果加进存放当前相机光线体积颜色的全局变量：<code>result += Li(x) * transmission</code>。</p></li></ul></li></ul><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-forward-raymarching2.png?" alt=""></figure><p>翻译成代码：</p><pre><code>
+...
+vec3 integrate(const vec3&amp; ray_orig, const vec3&amp; ray_dir, ...)
+{
+    ...
+    float transparency = 1; // 透明度初始化为 1
+    vec3 result{ 0 }; // 体积颜色初始化为 0
+
+    for (int n = 0; n &lt; ns; ++n) {
+        float t = isect.t0 + step_size * (n + 0.5);
+        vec3 sample_pos = ray_orig + t * ray_dir;
+
+        // 当前采样点透明度
+        float sample_attenuation = exp(-step_size * sigma_a);
+
+        // 用当前采样点的透射值衰减体积物体的透明度
+        transparency *= sample_attenuation;
+
+        // 内散射。求出光穿过
+        // 体积到达我们的采样点所走的距离。然后应用 Beer 定律。
+        if (hit_object-&amp;gtintersect(sample_pos, light_dir, isect_vol) &amp;&amp; isect_vol.inside) {
+            float light_attenuation = exp(-isect_vol.t1 * sigma_a);
+            // 用迄今累积的所有采样点的透射率衰减内散射贡献
+            result += transparency * light_color * light_attenuation * step_size;
+        }
+    }
+
+    // 组合背景色与体积物体的颜色
+    return background_color * transparency + result;
+}
+</code></pre><p>但要留意这段代码。它还不准确。它缺了几项，我们会在下一章处理。现在，我们只想让你理解光线步进的原理。不过这段代码已经能生成一张有说服力的图像。</p><p>这里不必再放图。如果我们做对了，正向与反向光线步进应给出相同的结果。好吧，我们知道你不会就这么信了，所以结果在此。</p><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-check.png?" alt=""></figure><h2>为什么正向光线步进比反向「更好」？</h2><p>因为一旦体积的透明度非常接近 0（只要体积足够大、和/或散射系数足够高就会如此），我们就可以停止步进。而这只有在向前步进时才可能做到。</p><p>目前渲染我们这个体积球体相当快，但随着章节推进你会看到，它最终会变慢。所以，如果我们沿光线步进到某一点、已知体积此时已不透明，从而能跳过那些对像素颜色没有贡献的采样点计算，那就是一项好优化。</p><p>我们会在下一章实现这个想法。</p><h2>选择步长</h2><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-stepsizesmall.png" alt=""><figcaption><b>图 5：</b>由于步长太大，我们没能捕捉到体积中的小细节。当然，这个例子很极端，但它是为了帮你建立概念而设计的。</figcaption></figure><figure><img src="https://scratchapixel.com/images/volume-rendering-developers/voldev-missshadow.png" alt=""><figcaption><b>图 6：</b>虽然这个例子同样极端（2 个采样点可能永远不足以正确渲染一个体积物体的光照），但你可以看到我们没有足够的采样点去捕捉体积物体中处于实体物体阴影里的那部分。我们需要小得多的步长。</figcaption></figure><p>记住，我们之所以做光线步进、从 t0 到 t1 取小步，是为了用黎曼和方法估计一个积分（沿相机光线因内散射而朝向眼睛散射的光量）。正如前一章以及<a href="mathematics-of-shading.html">着色的数学</a>那门课所解释的，用来估计积分的矩形越大（在我们这里，矩形的宽度由步长定义），近似就越不准确。或者反过来说：矩形越小（步长越小），估计越准确，但计算当然也越久。目前渲染我们的体积球体相当快，但随着课程推进你会看到，它最终会慢得多。这就是为什么选择步长是速度与精度之间的权衡。</p><p>目前我们还假定体积密度是均匀的。后面几章我们会看到，要渲染云、烟这类体积密度，密度是随空间变化的。这类体积由大频率特征构成，也含更小的特征。如果步长太大，它最终可能捕捉不到其中一些较小频率的特征（图 5）。这是一个<b>滤波</b>问题，本身重要而复杂。</p><p>还可能冒出另一个需要调整步长的问题：<b>阴影</b>。如果小的实体物体在体积物体上投下阴影，步长太大你就会漏掉它们（图 6）。</p><p>这些都没告诉我们怎样选一个好步长。理论上没有规则。你首先应对自己体积物体的尺寸有个概念。比如它是一个填满房间的矩形、里面装着某种均匀的大气，你就该对那个房间多大有数（还有你用的单位，比如 1 单位 = 10 厘米）。那么如果房间有 100 单位大，步长 0.1 可能太小，而 1 或 2 也许是合适的起点。然后你得反复调，像前面说的那样在速度与精度之间找到好的权衡。</p><p>不过这话也不算全对。虽然可以靠考虑场景里物体多大来凭经验选步长，但一定有更讲道理的做法。一种可能是考虑在我们进入体积物体的距离上「像素有多大」，把步长设为投影像素的尺寸。确实，像素是一个离散的单元，无法表现场景中比它自身尺寸更小的细节。这里我们不再深入，因为滤波值得单独开一门课。现在只说明一点：好的步长接近相机光线与体积相交处像素的投影尺寸。这可以用类似这样的式子来估计：</p><pre><code>
+float projPixWidth = 2 * tanf(M_PI / 180 * fov / (2 * imageWidth)) * tmin;
+</code></pre><p>如果你愿意，可以对它做优化。其中 <code>tmin</code> 是相机光线与体积物体相交处的距离。也可以类似地计算光线离开体积处的投影像素宽度，并对 <code>tmin</code> 与 <code>tmax</code> 处的投影像素宽度做线性插值，据此设定步进过程中的步长。</p><h2>继续之前还有几点值得考虑！</h2><p>写生产代码时，需要把光线的透明度与颜色随光线数据一起存起来。这样我们就可以先对实体物体做光线追踪，再处理体积物体，并在过程中逐步组合结果（类似上面例子中把背景色与体积球体组合的做法）。</p><p>注意相机光线的路径上可能有好几个体积物体。因此有必要在途中记录不透明度，并在步进过程中把相继的体积物体的不透明度与颜色组合起来。</p><p>一个体积物体也可以由一组互相重叠的物体（立方体或球体）组合而成。这种情况下，我们可能想把它们组合成某种聚合结构。对这类聚合体做光线步进时，需要特别小心地计算构成聚合体的各物体的相交边界。</p><h2>下一步：补上缺失的项，得到物理上准确的结果。</h2><p>在本课程的第三/下一章里，我们会给当前实现补上一些缺失的项，以得到（更）符合物理的结果。我们还会向你展示：有了这些知识，你现在应该已经能读懂别人的渲染器代码了。准备好了吗？</p><h2>源代码</h2><p>重现前两章图像所用的源代码可以下载，附带编译说明（嵌在文件里），放在本课程的最后一章（一如既往）。但请注意，代码与本章展示的代码片段有些不同。这些差异会在下一章说明。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/ray-marching-algorithm.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/volume-rendering-for-developers/ray-marching-algorithm.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

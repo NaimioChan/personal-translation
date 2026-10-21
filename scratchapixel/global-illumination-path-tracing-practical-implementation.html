@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全局光照与路径追踪：一个实际实现 - Scratchapixel 中文译本</title>
+<meta name="description" content="全局光照与路径追踪 · 全局光照与路径追踪：一个实际实现（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>全局光照与路径追踪：一个实际实现</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-global-illumination-path-tracing.html">全局光照与路径追踪的直观入门</a></li>
+<li><a style="font-weight:700" href="global-illumination-path-tracing-practical-implementation.html">全局光照与路径追踪：一个实际实现</a></li>
+</ol>
+</div>
+<h2>全局光照与路径追踪：一个实际实现</h2><p><b>阅读时间：36 分钟。</b></p><h2>实践中的全局光照：Monte Carlo 路径追踪</h2><p>上一章我们介绍了用 Monte Carlo 积分模拟全局光照的原理。我们也说明了，对半球做均匀采样在模拟间接漫反射光照时效果不错，但用来模拟间接镜面反射或焦散就不行。因此，本课我们只限于模拟间接漫反射光照。漫反射物体以一种「间接」效应互相照亮，这些物体反射光，从而在某种意义上充当光源。</p><p>第一章我们演示了 Monte Carlo 积分方法在二维下如何运作。把这个技术推广到三维相对「简单」，原理相同。下面这些步骤与我们在二维情形下所做的相当接近。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-hemispheresampling2.png?" alt=""><figcaption><b>图 1：</b>把采样从生成它们时所用的坐标系变换到世界空间（变换到着色点的局部坐标系，其中上向量与 \(N\) 对齐）。</figcaption></figure><p><b>思路：</b>理想情况下，我们想围绕着色点 \(P\) 的法线 \(N\) 在半球上生成采样。不过与二维情形一样，更容易的做法是先在一个沿「标准」笛卡尔坐标系 y 轴取向的半球上生成这些采样，再把它们变换到着色点的局部坐标系（在该坐标系中半球沿法线取向，如图 1 下所示）。我们更愿意在这样一个上向量与世界笛卡尔坐标系 y 轴对齐的半球上生成采样，是因为这个坐标系中的采样坐标可以用基本的球坐标转笛卡尔坐标公式轻松算出：</p><p>$$
+\begin{array}{l}
+x = \sin \theta \cos \phi,\\
+y = \cos \theta,\\
+z = \sin \theta \sin \phi,\\
+\end{array}
+$$</p><p>这些坐标随后被变换到着色点的局部坐标系。本课我们会讲如何生成采样、如何建立一个以着色法线 \(N\) 为上轴的新坐标系，以及如何计算这个局部笛卡尔坐标系的其他轴（它们在 \(P\) 处与表面相切、并且垂直于 \(N\)）。如果你读过讲几何的那门课，应该知道：一旦有了正交坐标系的各个轴 \(C\)，我们就能把任意点或向量（即方向）从任意笛卡尔坐标系变换到 \(C\)。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-indirectdiffusehemi.png?" alt=""><figcaption><b>图 2：</b>把 Monte Carlo 积分的原理应用到三维场景。光线在围绕着色法线 \(N\) 取向的方向半球内随机生成。如果这些光线命中了物体，就计算交点处的颜色并返回给着色点。所有颜色相加，再除以投射的采样数 \(N\)。Monte Carlo 理论还要求把每个采样除以该随机变量的 PDF。此外，我们还要把物体的颜色乘以着色法线与光线方向（在这里是光照方向）之间夹角的余弦。</figcaption></figure><ul><li><p><b>第 1 步：</b>建立一个笛卡尔坐标系，其上向量与着色点的法线 \(N\) 对齐。</p></li><li><p><b>第 2 步：</b>用球坐标转笛卡尔坐标的公式生成一个采样。本章会演示实践中怎么做。</p></li><li><p><b>第 3 步：</b>把采样方向从原来的坐标系变换到着色点的坐标系。</p></li><li><p><b>第 4 步：</b>沿采样方向向场景中追踪一条光线。</p></li><li><p><b>第 5 步：</b>如果光线与物体相交，就计算物体在交点处的颜色，并把这个结果加到一个临时变量里。由于表面是漫反射的，别忘了把沿每条光线返回的光强乘以光线方向（即光照方向）与着色法线 \(N\) 的点积（见下文）。</p></li><li><p><b>第 6 步：</b>把第 2 到第 5 步重复 \(N\) 次。</p></li><li><p><b>第 7 步：</b>把保存所有采样光线结果的临时变量除以 \(N\)，即采样总数。这个最终值近似着色点的间接漫反射光照：即场景中其他漫反射表面对 \(P\) 的照明。</p></li></ul><details open><p>记住，我们需要把每个采样的贡献除以该随机采样的 PDF。这一点本章后面会解释。</p></details><p>写成伪代码就是：</p><pre><code>
+Vec3f castRay(Vec3f &amp;orig, Vec3f &amp;dir, const uint32_t &amp;depth, ...)
+{
+    if (depth &gt; options.maxDepth) return 0;
+    Vec3f hitPointColor = 0;
+    // 计算直接光照
+    ...
+    // 第 1 步：用 法线 N 计算着色点的坐标系
+    ...
+    // 采样数量 N
+    uint32_t N = 16;
+    Vec3f indirectDiffuse = 0;
+    for (uint32_t i = 0; i &lt; N; ++i) {
+        // 第 2 步：在世界空间中生成一个采样
+        Vec3f sample = ...;
+        // 第 3 步：把采样从世界空间变换到着色点的局部坐标系
+        sampleWorld = ...;
+        // 第 4、5 步：沿这个方向投射一条光线
+        indirectDiffuse += N.dotProduct(sampleWorld) * castRay(P, sampleWorld, depth + 1, ...);
+    }
+    // 第 7 步：把和除以采样总数 N
+    hitPointColor += (indirectDiffuse / N) * albedo;
+    ...
+    return hitPointColor;
+}
+</code></pre><p><code>castRay</code> 本质上做的是返回物体沿 <code>sampleWorld</code> 方向反射向着色点的光量（如果光线命中了物体）。计算这条光线对 \(P\) 颜色的贡献所用的原理，与标准光源的情况相同。换句话说，如果表面是漫反射的，我们应当把光强乘以光照方向（<code>sampleWorld</code>）与着色法线 \(N\) 之间夹角的余弦。</p><p>接下来，我们一步步过一遍这些步骤的实现。</p><h3>第 1 步：建立沿着色法线 \(N\) 取向的局部坐标系</h3><p>我们要建立一个笛卡尔坐标系，使法线 \(N\) 与该坐标系的上向量（或 y 轴）对齐。从讲几何的那门课我们知道，一个向量也可以解释为一个平面方程的系数，而这个平面垂直于该向量：</p><p>$$
+\begin{array}{l}
+A * x + B * y + C * z = D = 0,\\
+N_x * x + N_y * y + N_z * z = D = 0.
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-coordsys.png?" alt=""><figcaption><b>图 3：</b>存在两个位于垂直于法线 \(N\) 的平面内的向量。</figcaption></figure><p>由于我们处理的是向量（而不是点），这个平面经过世界原点，所以可以设 \(D = 0\)。要建立笛卡尔坐标系，我们可以假定这个平面上的任意向量都垂直于 \(N\)。把这个向量叫作 \(N_T\)。我们可以用 \(N_T\) 作为坐标系的第二个轴。对 \(N_T\) 和 \(N\) 取叉积，就得到第三个向量 \(N_B\)，它同时垂直于 \(N_T\) 和 \(N\)。成了！\(N\)、\(N_T\) 和 \(N_B\) 现在构成一个笛卡尔坐标系。那么，怎么找到位于这个平面内的一个向量呢？</p><p>在图 3 中你会注意到，平面内有一个向量的 y 坐标等于 0。因此我们可以假定这个平面内存在一个 y 坐标为 0 的向量，这就把平面方程化简为两个未知数：</p><p>$$N_x * x + N_y * (y = 0) + N_z * z = N_x * x + N_z * z = 0.$$</p><p>我们可以把这个方程改写为：</p><p>$$N_x * x = - N_z * z.$$</p><p>当 \(x = N_z\) 且 \(z = -N_x\)，或者当 \(x = -N_z\) 且 \(z = N_x\) 时，这个方程成立。因此，取 \(N_T = \{N_z, 0, -N_x\}\) 或 \(N_T = \{-N_z, 0, N_x\}\) 都能得到位于垂直于 \(N\) 的平面内的一个向量。两种选择都可行，只要最终构成右手坐标系，而这也取决于我们在最后的叉积里如何安排 \(N\) 和 \(N_T\) 的顺序。剩下的唯一细节是对 \(N_T\) 做归一化：</p><pre><code>
+void createCoordinateSystem(const Vec3f &amp;N, Vec3f &amp;Nt, Vec3f &amp;Nb)
+{
+    Nt = Vec3f(N.z, 0, -N.x) / sqrtf(N.x * N.x + N.z * N.z);
+    ...
+}
+</code></pre><p>最后，我们用叉积计算 \(N_B\)：</p><pre><code>
+void createCoordinateSystem(const Vec3f &amp;N, Vec3f &amp;Nt, Vec3f &amp;Nb)
+{
+    Nt = Vec3f(N.z, 0, -N.x) / sqrtf(N.x * N.x + N.z * N.z);
+    Nb = N.crossProduct(Nt); 
+}
+</code></pre><p>不过，如果法线向量 \(N\) 的 y 坐标大于它的 x 坐标，这种做法在数值上可能不够稳健。这种情况下，更好的做法是在平面内构造一个 x 坐标为 0 的向量。参照图 3，可以看到这也是一个选项：</p><p>$$N_x * (x = 0) + N_y * y + N_z * z = N_y * y + N_z * z = 0.$$</p><p>用同样的推理，我们可以为 \(y\) 和 \(z\) 找到合适的值。最终得到：</p><pre><code>
+void createCoordinateSystem(const Vec3f &amp;N, Vec3f &amp;Nt, Vec3f &amp;Nb) 
+{ 
+    if (std::fabs(N.x) &gt; std::fabs(N.y))
+        Nt = Vec3f(N.z, 0, -N.x) / sqrtf(N.x * N.x + N.z * N.z);
+    else
+        Nt = Vec3f(0, -N.z, N.y) / sqrtf(N.y * N.y + N.z * N.z);
+    Nb = N.crossProduct(Nt); 
+}
+</code></pre><p>我们的局部坐标系现在建好了！接下来我们学习如何生成采样，以及如何在这个坐标系中变换这些采样。</p><h3>在半球上生成采样</h3><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-lightfunction.png?" alt=""><figcaption><b>图 4：</b>场景中物体反射向着色点 \(P\) 的光量，可以描述为立体角的一个函数，它也可以用球坐标来表示。二维情形下它只是角度 \(\theta\) 的函数。这就是我们想在二维半圆盘内、或三维半球内的所有方向上做积分的那条函数。</figcaption></figure><p>如你所知，我们可以用极坐标或笛卡尔坐标来定义球面（或半球）上一个点的位置。在极坐标中，一个点或一个向量（这里我们关心的是方向）用两个角度来定义：\(\theta\)（希腊字母 theta）和 \(\phi\)（希腊字母 phi）。第一个角 \(\theta\) 的范围是 \([0,\pi/2]\)，第二个角 \(\phi\) 的范围是 \([0,2\pi]\)。记住，Monte Carlo 积分方法在我们随机选取采样方向时才成立。</p><p>这就是 Monte Carlo 理论登场的地方。我们想做的是就立体角而言对半球做均匀采样。这里不再重讲 Monte Carlo 理论，所以如果你还没读过，现在正是复习的好时机，可以去看 <a href="quick-introduction-to-monte-carlo-methods.html">Monte Carlo 方法的数学基础</a> 和 <a href="monte-carlo-methods.html">Monte Carlo 方法实践</a> 这两门课。准备好了吗？我们进入数学部分。</p><p>我们要用的公式叫作<b>估计量</b>，长这样：</p><p>$$\langle F^N \rangle = \dfrac{1}{N} \sum_{i=0}^{N-1} \dfrac{f(X_i)}{pdf(X_i)}.$$</p><p>这是 Monte Carlo 估计量用来近似一个积分的一般形式。在这里，我们要积分的函数是 \(f(x)\)。如上一章所述，这个函数表示从围绕 \(P\) 处法线取向的半球内各个方向到达着色点 \(P\) 的光量。把它想象成二维的（或当作穿过半球的一个切片）会有帮助，如图 4 所示。我们要对随机方向上的这个函数采样。在公式里，这由随机变量 \(X_i\) 表示。所以思路是：在半球内生成一个随机方向 \(D_R\)，并在该方向上求函数的值，也就是「从 \(P\) 沿方向 \(D_R\) 向场景中投射一条光线，返回光线所交物体的颜色（如果它与物体相交的话）」。那个颜色代表被交物体沿光线方向 \(D_R\) 反射向 \(P\) 的光量。</p><p>在数学上，我们还需要把这个结果<b>除以</b>生成方向 \(D_R\) 的概率，在公式里由称为 PDF（概率密度函数）的那一项表示。每个随机方向 \(X_i\) 针对这个函数都可能有各自不同的取值，所以它被写成函数的形式。不过，既然我们要生成均匀分布的采样（或方向），所有光线的 PDF 都相同。在这种情况下，PDF 是常数，因为每条光线、每个方向被生成的概率都一样（等概率）。现在我们来找这个 PDF，并学习如何生成这些随机、均匀分布的采样或方向。</p><p>要对一个函数采样，我们首先需要求出它的 PDF，然后计算它的累积分布函数（CDF），最后求 CDF 的反函数。这些步骤在 <a href="quick-introduction-to-monte-carlo-methods.html">Monte Carlo 方法的数学基础</a> 那门课里有详细讲解。记住，我们要对半球做均匀采样，意思是每个采样或方向与其他任何方向被选中的概率相同。选中任意方向——无论是 \(A\)、\(B\)、\(C\) 还是 \(D\)——的概率由该函数的 PDF 给出。所有 PDF 在其采样空间（或积分域）上的积分都必须为 1。对半球来说，我们用立体角来定义这个采样空间，半球的立体角等于 \(2\pi\)。由于每个采样被生成的概率相等，我们的 PDF 将是常数。如果把 PDF 写成 \(p(x)\) 并在整个采样空间（\(2 \pi\)）上积分，得到：</p><p>$$\int_{\omega = 0}^{2\pi} p(\omega) \, d \omega = 1.$$</p><p>因为如前所述，PDF 在函数的采样空间上的积分必须为 1。由于 \(p(\omega)\) 是常数，我们可以写成（把公式中的 PDF 换成常数 \(C\)）：</p><p>$$C \int_{\omega = 0}^{2\pi} \, d\omega = 1.$$</p><p>我们知道（见「计算机图形学的数学」部分中讲着色数学的那门课）：</p><p>$$\int_{x=a}^b \, dx = b - a.$$</p><p>因此：</p><p>$$C * \int_{\omega = 0}^{2\pi} \, d\omega = C * (2\pi - 0) = 1.$$</p><p>由此可以求出 \(C\)，也就是我们函数的 PDF：</p><p>$$C = p(\omega) = \dfrac{1}{2\pi}.$$</p><p>到目前为止一切顺利。知道我们要采样的函数的 PDF 是个不错的开始，但我们没法直接拿立体角来做运算。最终目标是在半球内生成随机方向，所以我们需要把这个 PDF 用极坐标、也就是用 \(\theta\) 和 \(\phi\) 来表示：</p><p>现在，我们知道一个给定立体角属于一个更大集合的概率可以写成：</p><p>$$Pr(\omega \in \Omega) = \int_\Omega p(\omega) \, d\omega.$$</p><p>这把我们上面积分过的公式推广了，那里 \(\omega\) 等于 \(2\pi\)，覆盖整个半球。现在，要用 \(\theta\) 和 \(\phi\) 来表示概率密度函数，我们写：</p><p>$$p(\theta, \phi) \, d\theta \, d\phi = p(\omega) \, d\omega.$$</p><p>在<a href="diffuse-lambertian-shading.html">上一课</a>里我们学过，微分立体角可以用极坐标改写为：</p><p>$$d \omega = \sin \theta \, d \theta \, d \phi.$$</p><p>把它代入上一个公式，得到：</p><p>$$
+\begin{array}{l}
+p(\theta, \phi) \, d\theta \, d\phi = p(\omega) \, d\omega, \\
+p(\theta, \phi) \, d\theta \, d\phi = p(\omega) \, \sin \theta \, d \theta \, d \phi.
+\end{array}
+$$</p><p>两边的 \(d \theta\) 和 \(d \phi\) 项相互消去，得到：</p><p>$$
+\begin{array}{l}
+p(\theta, \phi) = p(\omega) \, \sin \theta, \\
+p(\theta, \phi) = \dfrac{\sin \theta}{2 \pi}.
+\end{array}
+$$</p><p>这里我们把 \(p(\omega)\) 换成了上面算出的值：\(p(\omega) = 1 / 2\pi\)。快要到了。函数 \(p(\theta, \phi)\) 叫作联合概率分布。现在我们需要独立地对 \(\theta\) 和 \(\phi\) 采样。在这种情况下，PDF 是<b>可分离</b>的：我们可以把它拆成两个 PDF，一个对应 \(\theta\)，一个对应 \(\phi\)。达到同样目的的另一种做法是用边缘 PDF 和条件 PDF。边缘分布是指在不涉及其他变量（例如 \(\phi\)）的情况下表达某个给定变量（例如 \(\theta\)）的概率。做法是对联合 PDF 就其中一个变量积分。在我们的情形里得到（把 \(p(\theta, \phi)\) 对 \(\phi\) 积分）：</p><p>$$
+p(\theta) = \int_{\phi=0}^{2 \pi} p(\theta, \phi) \, d \phi = \int_{\phi=0}^{2 \pi} \dfrac{\sin \theta}{2 \pi} \, d\phi = 2\pi * \dfrac{\sin \theta}{2 \pi} = \sin \theta.
+$$</p><p>条件概率函数给出的是在另一个变量（\(\theta\)）已知的条件下某个变量（例如 \(\phi\)）的概率函数。对连续函数（比如我们的 PDF）来说，它可以算成联合概率分布 \(p(\theta, \phi)\) 除以边缘分布 \(p(\theta)\)：</p><p>$$p(\phi) = \dfrac{ p(\theta, \phi) }{ p(\theta) } = \dfrac{1}{2\pi}.$$</p><p>现在我们有了 \(\theta\) 和 \(\phi\) 的 PDF，接下来需要求它们各自的 CDF（及其反函数）。回想 Monte Carlo 那门课里讲的：CDF 表示随机变量 \(X\) 的取值小于或等于 \(x\) 的概率。例如我们可以问：「如果我们为 \(\theta\) 随机生成一个值，那么 \(\theta\) 小于或等于 \(\pi/4\) 的概率是多少？」这个 CDF 可以通过对 PDF 积分算出来：</p><p>$$Pr(X \leq \theta) = P(\theta) = \int_0^\theta p(\theta) \, d\theta = \int_0^\theta \sin \theta \, d\theta.$$</p><p><b>微积分基本定理</b>指出，如果 \(f (x)\) 在 \([a, b]\) 上连续，且 \(F(x)\) 是 \(f(x)\) 的任一原函数，那么</p><p>$$\int_{a}^{b} f(x) \, dx = F(b) - F(a).$$</p><p>\(\sin x\) 的原函数是 \(-\cos x\)，所以：</p><p>$$\int_0^\theta \sin \theta \, d\theta = \left [ -\cos \theta \right ]_0^{\theta} = \left [-\cos \theta - - \cos 0 \right ] = 1 - \cos \theta.$$</p><p>\(p(\phi)\) 的 CDF 更简单：</p><p>$$Pr(X \leq \phi) = P(\phi) = \int_0^\phi \dfrac{1}{2\pi} \, d \phi = \dfrac{1}{2\pi} \left [ \phi - 0 \right ] = \dfrac{\phi}{2 \pi}.$$</p><p>我们把这两个 CDF 求反：</p><p>$$
+\begin{array}{l}
+y = 1 - \cos \theta, \\
+\cos \theta = 1 - y, \\
+\theta = \cos^{-1}(1-y).
+\end{array}
+$$
+$$
+\begin{array}{l}
+y = \dfrac{\phi}{2 \pi}, \\
+\phi = y * 2 \pi.
+\end{array}
+$$</p><p>恭喜！按照 Monte Carlo 理论，如果我们在 \([0,1]\) 范围内抽取若干均匀分布的随机变量，把这些随机数代入上面的公式，就得到 \(\theta\) 和 \(\phi\) 的均匀分布取值，把它们代入极坐标转笛卡尔坐标的公式，就能算出一个在半球上均匀分布的随机方向。实践中是这样做的：</p><pre><code>
+Vec3f uniformSampleHemisphere(const float &amp;r1, const float &amp;r2)
+{
+    // cos(theta) = r1 = y
+    // cos^2(theta) + sin^2(theta) = 1 -&gt; sin(theta) = sqrtf(1 - cos^2(theta))
+    float sinTheta = sqrtf(1 - r1 * r1);
+    float phi = 2 * M_PI * r2;
+    float x = sinTheta * cosf(phi);
+    float z = sinTheta * sinf(phi);
+    return Vec3f(x, r1, z);
+}
+
+...
+std::default_random_engine generator;
+std::uniform_real_distribution&amp;ltfloat&gt; distribution(0, 1);
+
+uint32_t N = 16;
+
+for (uint32_t n = 0; n &lt; N; ++n) {
+    float r1 = distribution(generator);
+    float r2 = distribution(generator);
+    Vec3f sample = uniformSampleHemisphere(r1, r2);
+    ...
+}
+</code></pre><p>关于上面这段代码，有几点值得一提：当我们对第一个 CDF 求反时，其中一个方程是 \(\cos \theta = 1 - y\)。这里 \(y\) 是在 0 到 1 之间均匀分布的随机变量，我们用它为 \(\theta\) 随机取一个值。于是 \(1 - y\)，或者说 \(1 - \epsilon\)（其中 \(\epsilon\) 是希腊字母 epsilon，表示我们那个均匀分布的随机变量）等于 \(\cos \theta\)。注意 \(\cos \theta\) 就是随机方向的 y 坐标，所以我们可以直接用 \(1 - \epsilon\) 设定 y 坐标（第 9 行）。另外，由于 \(\cos^2 \theta + \sin^2 \theta = 1\)，我们得到 \(\sin \theta = \sqrt{1 - \cos^2 \theta}\)。把 \(\cos \theta\) 替换成 \(1 - \epsilon\)，就得到 \(\sin \theta = \sqrt{1 - (1-\epsilon)^2}\)。由于 \(\epsilon\) 是均匀分布的，用 \(1-\epsilon\) 或 \(\epsilon\) 结果相同，两者可以互换使用。</p><p>数学不少，但现在你已知道如何在半球上生成均匀分布的随机采样。我们进入下一步，把这个采样变换到着色点的局部坐标系。</p><h3>第 3 步：把随机采样变换到着色点的局部坐标系</h3><p>我们已经算出了着色点法线与该坐标系上向量对齐的一个局部笛卡尔坐标系。如讲几何的那门课所学，这个笛卡尔坐标系的三个向量可以用来构造一个 4x4 矩阵（如果只关心方向，用 3x3 矩阵即可）。这个矩阵把一个方向从其初始空间变换到我们用来构造变换矩阵的那个坐标系。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-hemispheresampling.png?" alt=""></figure><p>在这个具体例子里，我们直接使用笛卡尔坐标系的向量，而不显式构造矩阵（如果你对这部分代码没把握，我们建议复习讲几何的那门课）：</p><pre><code>
+Vec3f Nt, Nb;
+
+createCoordinateSystem(hitNormal, Nt, Nb);
+
+for (uint32_t n = 0; n &lt; N; ++n) {
+    float r1 = distribution(generator); // cos(theta) = N.Light Direction
+    float r2 = distribution(generator);
+    Vec3f sample = uniformSampleHemisphere(r1, r2);
+    Vec3f sampleWorld( 
+        sample.x * Nb.x + sample.y * hitNormal.x + sample.z * Nt.x,
+        sample.x * Nb.y + sample.y * hitNormal.y + sample.z * Nt.y,
+        sample.x * Nb.z + sample.y * hitNormal.z + sample.z * Nt.z);
+    ...
+}
+</code></pre><details open><p>记住，着色法线 \(N\) 在这个坐标系里充当上向量（y 轴）。如果你看看我们在 <code>createCoordinateSystem</code> 函数里是怎么生成 \(N_t\) 和 \(N_b\) 的，就会发现：当着色法线等于 (0,1,0) 时，\(N_t\) 与 x 正轴对齐，\(N_b\) 与 z 正轴对齐。</p></details><h3>第 4、5、6 步：追踪间接光线</h3><p>下一步是追踪每条光线，把返回的颜色累加到一个临时变量里。所有光线追踪完后，把这个临时变量（保存了每条间接投射光线累积的光）除以 \(N\)，即采样总数。</p><pre><code>
+Vec3f indirectDiffuse = 0;
+for (uint32_t n = 0; n &lt; N; ++n) {
+    float r1 = distribution(generator); // cos(theta) = N.Light Direction
+    float r2 = distribution(generator);
+    Vec3f sample = uniformSampleHemisphere(r1, r2);
+    ...
+    // 别忘了应用余弦定律（即乘以 cos(theta) = r1）。
+    // 我们还应把结果除以 PDF（1 / (2 * M_PI)），但可以稍后再做
+    indirectDiffuse += r1 * castRay(hitPoint + sampleWorld * options.bias, 
+        sampleWorld, depth + 1, ...);
+}
+// 除以 N 和常数 PDF
+indirectDiffuse /= N * (1 / (2 * M_PI));
+</code></pre><p>记住，沿 <code>sampleWorld</code> 方向返回的光强还需要乘上着色法线与光照方向（在这里即光线方向）之间夹角的余弦。由于我们的物体是漫反射的，需要应用余弦定律（<a href="diffuse-lambertian-shading.html">讲着色的第一课</a>里介绍过）。注意随机变量 <code>r1</code> 等于 \(\cos \theta\)，也就是 \(N\) 与光线方向之间夹角的余弦（见 <code>uniformSampleHemisphere</code> 函数的代码）。所以这里要做的就是把 <code>castRay</code> 的结果（从 <code>sampleWorld</code> 方向到达 \(P\) 的光量）乘以 <code>r1</code>（第 8 行）。</p><details open><p>我们用这个基础 Monte Carlo 积分要求解的一般公式是：</p><p>$$L(P) = \int_{\Omega_N} L(\omega_i) \, BRDF(P, \omega_i, \omega_o) \, \cos(\omega_i, N) \, d \omega = \color{red}{\int_{\Omega_N} L(\omega_i) \, \dfrac{\rho}{\pi} \, \cos(\omega_i, N) \, d \omega}$$</p><p>这个简化后的公式就是计算机图形学里所说的<b>渲染方程</b>。我们会在后面的课程里更正式地介绍这个基础公式。左边的 \(L(P)\) 项代表点 \(P\) 的颜色，也就是我们想算的东西。严格来说，这是 \(P\) 处的<b>辐射亮度</b>。公式右边的积分号表示在围绕表面法线取向的方向半球上做积分。这里我们用的是立体角。</p><p>\(L(\omega_i)\) 项是从方向 \(\omega_i\) 照亮 \(P\) 的光，BRDF 描述 \(P\) 处的表面属性。对漫反射表面而言，BRDF 是 \(\rho/\pi\)，其中 \(\rho\) 是表面反照率或颜色。漫反射表面与视角无关，意思是这个函数的结果不依赖于入射光方向和视线方向。不过对大多数 BRDF 来说，结果确实依赖这些变量，所以我们把它们传给函数。最后，余弦定律项 \(\cos(\omega_i, N)\) 按入射光方向与表面法线之间的夹角对 BRDF 结果做衰减。</p><p>在这个公式里，着色点的 BRDF 和余弦项都可以通过访问场景数据轻松算出。未知项 \(L(\omega_i)\) 则通过在场景中追踪光线来求值。</p><p>这是对我们所求解问题更正式、更紧凑的表述。后面的课程里我们会再回到这个公式。</p></details><p>这里也是我们把 <code>castRay</code> 的结果除以随机变量 PDF 的地方，如前所示它是 \(1/(2\pi)\)。由于 PDF 是常数，我们不必对每条光线（或每个采样）都做这次除法，而可以在循环之后统一做（第 13 行）。后面我们会说明这还能进一步简化。但别忘了除以 PDF！</p><h3>第 7 步：把间接漫反射的贡献加到着色点的光照上</h3><p>最后，把间接漫反射计算的结果加到着色点的总光照上，并把直接与间接光照之和乘以物体反照率。</p><pre><code>
+hitColor = (directDiffuse + indirectDiffuse) * object-&amp;gtalbedo / M_PI;
+</code></pre><p>记住，漫反射表面的 BRDF 是 \(\rho/\pi\)，其中 \(\rho\) 表示表面反照率。所以我们要除以 \(\pi\)。对间接漫反射分量来说，别忘了我们本该把 <code>castRay</code> 的结果除以随机变量的 PDF，前面已确定它是 \(1/(2\pi)\)。把 <code>indirectDiffuse</code> 除以 \(1/(2\pi)\) 等同于乘以 \(2\pi\)。又因为反照率也要除以 \(\pi\)，所以上面的代码可以简化如下：</p><pre><code>
+// (indirectDiffuse / (1 / (2 * M_PI)) + directDiffuse) * albedo / M_PI
+// (2 * M_PI * indirectDiffuse + directDiffuse) * albedo / M_PI
+// (2 * indirectDiffuse + directDiffuse / M_PI) * albedo
+hitColor = (directDiffuse / M_PI + 2 * indirectDiffuse) * object-&amp;gtalbedo
+</code></pre><p><b>就这样！</b></p><h2>读者提问：为什么我们不像处理直接光那样做球面衰减计算（例如除以距离的平方）？</h2><p>以下是原问题：</p><blockquote><p>球面衰减计算（除以距离的平方）在采样直接光时会用到，但对间接光的传播却没有。那么，为什么间接光传播不需要这个计算？</p></blockquote><p>这是个好问题，不过你在读完本课以及 <a href="introduction-to-lighting.html">光照入门</a> 那门课之后，应该能自己回答。不过我们理解这些知识需要时间消化，所以这里这段更详尽的解释对某些读者会很有帮助。</p><p>首先，这个问题本身并不完全准确。平方衰减因子只在对球形 delta 光源（例如点光源或聚光灯）处理时才应用。它并不适用于所有类型的直接光。比如平行光就不受平方衰减因子影响。另外，如果你读过讲面光源的那门课，可能也注意到我们对面光源同样不应用平方衰减。所以，平方衰减因子只涉及点光源和聚光灯，如果你还记得专门讲光源的那门课，它们被定义为 delta 光源。</p><p>为什么是 delta 光源？因为如那门课所说，它们在场景中没有「物理尺寸」。换句话说，这些光源不由任何形状表示，因此我们需要用模拟有物理形状光源行为的公式，来弥补形状的缺失。在现实世界里，光源有物理尺寸，正因如此，光会表现出与受照点到光源位置之间距离的平方成正比的衰减。</p><ul><li><p>这就是我们在处理点光源和聚光灯这类 delta 光源时模拟平方衰减的原因。</p></li><li><p>这也是处理面光源时无需考虑平方衰减的原因——面光源是由形状表示的光源，无论是球体、圆盘、矩形、三角形，还是由三角形构成的网格。</p></li></ul><p>接下来你可能会追问：处理面光源时，平方衰减又是怎么、为什么会自动被考虑进去的？<b>这里的关键观察是：场景中的每个物体都反射光，因此都可以视为某种面光源——所以适用于面光源的道理，在模拟间接光照／漫反射光照时同样适用</b>。</p><p>培养这种直觉最好的办法是看下面几张图，图中一个球形面光源照亮一个点。左图里球形灯具距 \(x\) 为 2 个单位，右图里球体距它为 4 个单位。当我们对 \(x\) 上方的半球采样时（向场景投射 256 条光线），可以看到右图中打到灯具的光线比左图少得多（准确地说，38 对 86），左图里灯具离 \(x\) 更近。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-square-falloff.png" alt=""></figure><p>这显然合理，但关键的想法是：打中灯具的光线数量随 \(x\) 与灯具之间距离的增大而减少。在处理面光源时（在光线追踪／路径追踪的语境下），这就自然「编码」了平方衰减，因为打中灯具的光线数量与灯具的贡献之间有直接关系。光线越少，贡献越小。</p><p>这再次提供了直觉，说明为什么当场景中的光源是面光源时「我们不需要显式地」考虑距离平方衰减。如果代价可以接受，你应当尽量使用面光源而不是点光源、聚光灯这类 delta 光源，因为它们不需要人为地补上距离平方衰减。而 delta 光源因为缺少形状或尺寸，这是必需的（回想一下，delta 光源之所以被发明出来，只是因为计算机图形学早期模拟面光源——更不用说间接光照／漫反射——计算代价太高了）。</p><p>顺便提一句，有些 DCC 工具提供把衰减自定义成非 2 的幂的方式，给美术人员创作上的自由，但会导致结果不符合物理真实性。</p><p>希望这些说得通，也清楚回答了你的问题。</p><h2>Monte Carlo 路径追踪：结果</h2><p>我们看一些结果。渲染下面场景所用的源码，照例可以在本课最后一章找到。下图中渲染了两张图：左边关闭了全局光照，右边打开了。箭头标出了图中能观察到表面照亮其他物体的部位，比如地板影响了球体的右下侧，或绿色方碑影响了球体的左侧。注意球体染上了地板和方碑的红色或绿色调。这种物体颜色「渗」到其他物体上的现象，通常称为<b>颜色渗染</b>。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-results3.png?" alt=""></figure><p>渲染时间相比只渲染直接光照已经明显变慢。在这个例子里我们把反弹次数限制为 1；你可以随意试试更多反弹次数（如果你有耐心等结果的话）。</p><h2>Monte Carlo 路径追踪又慢又有噪声</h2><p>如下面的图所示，Monte Carlo 路径追踪会产生有噪声的图像。这是这项技术的一大缺点。为什么会这样？回到我们那个民意调查的例子，想象你选 1000 个不同的人作为样本去估计某个人群的平均体重。每跑一次调查，你很可能抽到不同的 1000 个人。因此，每次你计算一个新样本的平均值，都会得到略有不同的结果。精确结果（我们做积分的目标）与 Monte Carlo 近似结果（只是个估计）之间的这种波动，就造成了图像中的噪声。</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-results.png?" alt=""></figure><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-results2.png?" alt=""></figure><p>这种波动的幅度主要取决于采样数量 \(N\)。增大 \(N\) 可以降低图像中的噪声。上面的图是球体在不同 \(N\) 取值下的特写。随着 \(N\) 增大，噪声变得越来越不明显。但这是有代价的，渲染时间随采样数量增加而增加。Monte Carlo 理论告诉我们，要把噪声（或<b>方差</b>）减半，需要的采样数量是原来的四倍。例如，要把左图那张的噪声减半，你不需要 32 个采样，而是需要 128 个；而要把一幅用 128 个采样渲染的图再减半噪声，你需要 512 个采样。原因可以在 <a href="variance-and-standard-deviation.html">Monte Carlo 方法的数学基础</a> 那门课里了解。</p><details open><p>噪声是 Monte Carlo 路径追踪的主要挑战之一。噪声在静帧里也许还能忍，在动画序列里就麻烦得多。近年来许多 CG 动画长片，比如《海底总动员 2》或《超能陆战队》，都使用一种称为<a href="http://renderman.pixar.com/view/denoiser" target="_blank" rel="noreferrer noopener">去噪</a>的特殊技术来应对这个问题。渲染之后，可以用专门的图像处理技术部分去除噪声。</p></details><h2>我怎么知道我的实现是对的？熔炉测试</h2><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-whiteenvlight2.png?" alt=""><figcaption><b>图 5：</b>被白色球形光源照亮的球体，其颜色应当是球体反照率的颜色（本例中为 0.18）。</figcaption></figure><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-greysphere.png?" alt=""><figcaption><b>图 6：</b>被白色球形光源照亮的球体，其颜色应当是球体反照率的颜色（本例中为 0.18）。</figcaption></figure><p>实现本课描述的技术时，验证你的实现是否正确很重要。一个简单的测试方法是渲染一个反照率为 0.18（或者 0.5，具体数值无所谓）的灰色球体。想象你的灰色球体被一个更大的、发光的白色球体包围。在代码里，只要让 <code>castRay()</code> 在光线不与几何体相交时返回 1，然后渲染这个灰色球体，就能轻松模拟这种情况。</p><p>你会预期什么结果？理论告诉我们，如果物体是漫反射的，那么反照率代表它反射的光占它接收到的光的比例。在这个设置里，灰色球体上的每一点都从它上方半球内的每个方向接收「白」光。这些光如漫反射表面的典型行为那样，均匀地反射到整个半球。所以，如果一个点从所有方向接收「白」光并反射其中的 18%（假定球体反照率为 0.18），那么球体上每一点的强度应当恰好是 0.18。</p><p>要检验这一点，就在白色环境中渲染一个反照率为 0.18 的灰色球体。渲染出的球体应当像图 6 那样，表面上强度一致为 0.18。如果不是这样，你的代码里多半有错。用 Monte Carlo 积分渲染这幅图时，每个像素的强度可能略有波动，但随着 \(N\)（采样数量）增大，结果应当收敛到 0.18。在计算机图形学里，这个测试常被称为<b>熔炉测试</b>。</p><details open><p>这个名字来自处于热平衡状态的熔炉的性质。当熔炉达到平衡（即某点接收到的能量等于它发出的能量）时，它的内部看起来是均匀的，所有几何特征仿佛都消失了。</p></details><p>实现全局光照时可能出错的地方很多。常见的错误包括：没有把光照函数除以随机变量的 PDF，生成的随机变量分布不正确，或者忘了把光强乘以光照方向与表面法线之间夹角的余弦。</p><pre><code>
+Vec3f castRay(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    ...)
+{
+    if (trace(orig, dir, objects, isect)) {
+        ...
+        switch (isect.hitObject-&amp;gttype) {
+            case kDiffuse:
+            {
+                ...
+                Vec3f indirectLighting = 0;
+#ifdef GI
+                uint32_t N = 128; // （可选的深度调整）
+                Vec3f Nt, Nb;
+                createCoordinateSystem(hitNormal, Nt, Nb);
+                float pdf = 1 / (2 * M_PI);
+                for (uint32_t n = 0; n &lt; N; ++n) {
+                    float r1 = distribution(generator);
+                    float r2 = distribution(generator);
+                    Vec3f sample = uniformSampleHemisphere(r1, r2);
+                    Vec3f sampleWorld( 
+                        sample.x * Nb.x + sample.y * hitNormal.x + sample.z * Nt.x,
+                        sample.x * Nb.y + sample.y * hitNormal.y + sample.z * Nt.y,
+                        sample.x * Nb.z + sample.y * hitNormal.z + sample.z * Nt.z);
+                    // 别忘了除以 PDF 并乘以 cos(theta)
+                    indirectLighting += r1 * castRay(hitPoint + sampleWorld * options.bias,
+                        sampleWorld, objects, lights, options, depth + 1) / pdf;
+                }
+                // 除以 N
+                indirectLighting /= (float)N;
+#endif
+                hitColor = (directLighting + indirectLighting) * isect.hitObject-&amp;gtalbedo / M_PI;
+                break;
+            }
+            ...
+        }
+    }
+    else {
+        // 返回白色，就像有一个白色球形光源照亮了灰色球体
+        hitColor = 1;
+    }
+    return hitColor;
+}
+
+int main(int argc, char **argv)
+{
+    ...
+    Sphere *sph = new Sphere(Matrix44f::kIdentity, 1);
+    sph-&amp;gtalbedo = 0.18;
+    objects.push_back(std::unique_ptr&amp;ltObject&gt;(sph));
+    
+    // 最后渲染
+    render(options, objects, lights);
+    return 0;
+}
+</code></pre><h2>无偏路径追踪：这是什么意思？</h2><p>你可能听过「有偏」或「无偏」路径追踪这些说法。它们是什么意思？这些概念在 <a href="estimators.html">Monte Carlo 方法的数学基础</a> 那门课里有介绍。本课使用的估计量是：</p><p>$$\langle F^N \rangle = \dfrac{1}{N} \sum_{i=0}^{N-1} \dfrac{f(X_i)}{pdf(X_i)}.$$</p><p>这个估计量之所以有效，是因为它（虽然慢）会在概率意义上收敛到积分的精确解。如前所述，要把图像中的噪声减半，需要四倍的采样。其他估计量可以收敛得更快，但会引入一点偏差，也就是结果略高于或略低于精确值。这些被称为「有偏」估计量。当物理准确性不是关键时，有偏估计量可以是更好的选择，因为它们能在远更短的时间内产出噪声更少的图像。对生产级渲染器来说，在「准确性」与速度之间取得平衡往往至关重要。</p><h2>环境光照与基于图像的光照</h2><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-whiteenvlight1.png?" alt=""><figcaption><b>图 7：</b>由白色平行环境光照亮场景的直接光照。</figcaption></figure><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-whiteenvlight3.png?" alt=""><figcaption><b>图 8：</b>由白色平行环境光照亮场景的直接光照。</figcaption></figure><p>只要改一点代码就能实现<b>环境光照</b>。它通过用一个均匀发光的球形光源把物体包围起来，模拟物体被周围环境（例如天空或附近建筑）照亮的效果。随后用 Monte Carlo 积分，通过在着色法线上方的半球内均匀分布地投射 \(N\) 条光线，来求这个光源的贡献。</p><p>有些光线可能命中物体，从而挡住光到达着色点，如图 8 所示。当光线不与几何体相交时，就假定光源与着色点互相可见，也就是说 \(P\) 被该光线方向上的光照亮（图 8）。</p><p>在这个例子里，假定球形光源距着色点无限远，因此平方衰减规则不适用。这类<b>无限远环境光</b>常用来模拟来自远处环境的环境照明。</p><p>用这个技术，我们可以计算从球形光源到达 \(P\) 的光量，如下面图中左侧所示：</p><figure><img src="https://scratchapixel.com/images/shading-intro2/shad2-whitedome.png?" alt=""></figure><p>在这个设置下，Monte Carlo 积分计算的是球形光源的直接光照。也可以打开全局光照，把场景中物体反射的光也考虑进来。每当从 \(P\) 为直接光照投射的一条光线与物体相交，就会额外考虑一次光的反射。随着反弹次数增加，这种做法的计算代价会变高。把白色环境光的直接光照与间接光照相加，就得到右图所示的画面。</p><details open><p>除了使用常色（例如白色），你还可以用一张图像来「贴」到这个球形光源上。沿某个方向追踪光线时，把光线的笛卡尔坐标转换成球坐标，再映射到图像坐标。这些坐标指出了图像中沿该光线方向照亮 \(P\) 的那个像素。这个使用真实世界光照信息的技术称为<b>基于图像的光照</b>。下一部分有专门讲这个概念的课程。</p></details><h2>为什么叫 Monte Carlo 路径追踪？</h2><p>讲了这么多，这个名字的由来现在应该清楚了。<b>Monte Carlo</b> 指的是用 Monte Carlo 方法求解全局光照，而全局光照在数学上定义为一个积分，收集从 \(P\) 上方半球内各方向照亮 \(P\) 的所有光。<b>路径追踪</b>指的是模拟光线在表面之间自然反弹、或与玻璃、水、镜面表面等材质作用时所走的光路。</p><p>本课描述的技术是一种光传输，也称为<b>单向路径追踪</b>，因为它只沿一个方向追踪光路——从眼睛到光源。你可能猜到了，还有另一种算法叫<b>双向路径追踪</b>，它既从眼睛向物体追踪光线，也从光源向物体追踪光线，再把两者连接起来构成完整的光路。这种做法能更好地模拟间接镜面反射和焦散，我们会在下一部分讲。</p><p>恭喜！你现在对渲染已有扎实的理解。短短几课里，你已经接触了光传输、Monte Carlo 积分、BRDF 和路径追踪——计算机图形学里一些最具挑战性的概念。</p><h2>小结</h2><ul><li><p>就原理而言，用 Monte Carlo 积分模拟全局光照是直截了当的。</p></li><li><p>然而，要正确地实现它，需要扎实掌握 Monte Carlo 理论，包括 PDF、CDF、估计量和反函数采样法。幸运的是，这些主题在我们讲 Monte Carlo 方法的课程（<a href="quick-introduction-to-monte-carlo-methods.html">理论</a> 与 <a href="monte-carlo-methods.html">实践</a>）里有深入讲解。</p></li><li><p>光线追踪计算代价高昂，而使用大量光线的 Monte Carlo 路径追踪，随着采样数量或反弹次数增加，代价会更高。针对光线追踪的加速技术必不可少，下一部分会讨论。</p></li><li><p>噪声是 Monte Carlo 路径追踪的一大挑战，降噪技术将在下一部分探讨。</p></li><li><p>Monte Carlo 积分也可以用来模拟来自无限远环境光的直接光照。基于这一概念的基于图像的光照，将在下一部分讲。</p></li></ul><p>关于这些主题的更多细节，下一部分见！</p><h2>参考资料</h2><p>The Rendering Equation. Siggraph 1986, James T. Kajiya.</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/global-illumination-path-tracing/global-illumination-path-tracing-practical-implementation.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/global-illumination-path-tracing/global-illumination-path-tracing-practical-implementation.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

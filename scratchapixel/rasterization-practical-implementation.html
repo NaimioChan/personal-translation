@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光栅化：一个实际实现 - Scratchapixel 中文译本</title>
+<meta name="description" content="光栅化 · 光栅化：一个实际实现（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光栅化：一个实际实现</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="overview-rasterization-algorithm.html">光栅化算法概览</a></li>
+<li><a href="projection-stage.html">投影阶段</a></li>
+<li><a href="rasterization-stage.html">光栅化阶段</a></li>
+<li><a href="visibility-problem-depth-buffer-depth-interpolation.html">可见性问题、深度缓冲算法与深度插值</a></li>
+<li><a href="perspective-correct-interpolation-vertex-attributes.html">透视正确插值与顶点属性</a></li>
+<li><a style="font-weight:700" href="rasterization-practical-implementation.html">光栅化：一个实际实现</a></li>
+</ol>
+</div>
+<h2>光栅化：一个实际实现</h2><p><b>阅读时间：15 分钟。</b></p><h2>改进光栅化算法</h2><h3> 走样与抗锯齿</h3><p>前面几章介绍的技术构成了光栅化算法的基础。不过我们是以非常基础的方式实现这些技术的。GPU 渲染管线以及其他基于光栅化的生产级渲染器用的是同样的概念，只是算法的版本经过高度优化。把加速算法的各种技巧都讲清楚，超出了这篇入门文章的范围。下面我们简单过一遍其中一些，并打算将来专门用一门课来讲这个话题。</p><figure><img src="https://scratchapixel.com/images/rasterization/jaggies.png" alt=""><figcaption><b>图 1：</b>用抗锯齿可以减轻锯齿状边缘与像素瑕疵。</figcaption></figure><p>先来看 3D 渲染的一个根本问题。如果你把上一章渲染出的三角形图像放大，会发现三角形的边缘是不规则的（这种不规则也影响方块边缘处的棋盘格图案）。图 1 中可见的那些台阶叫作<b>锯齿</b>。这些锯齿状、阶梯状的边缘并非瑕疵，它们是三角形被拆解为像素所致。用光栅化，我们把一个连续表面（三角形）拆成离散的元素（像素），这个过程在<a href="computer-discrete-raster.html">渲染入门</a>中已经提过。这个难题好比用乐高积木去表现一条连续曲线或一个连续曲面，不看出积木是不可能的（图 2）。</p><figure><img src="https://scratchapixel.com/images/rasterization/antialiasing1.png" alt=""><figcaption><b>图 2：</b>像素无法准确表现连续表面的形状。</figcaption></figure><p>渲染中的解法叫作<b>抗锯齿</b>（AA）。我们不再对每个像素只做一个采样，而是把像素细分为子像素，对每个子像素做覆盖测试（图 3）。虽然每个子像素仍然只是另一块「积木」，但这种方法能稍微更精确地捕捉物体的边缘。像素通常被划分为 N×N 的子像素网格，N 一般是 2 的幂（2、4、8 等），技术上也可以是任何大于等于 1 的值（1、2、3、4、5 等）。处理走样问题有各种方法，这里描述的技术属于基于采样的抗锯齿方法。</p><figure><img src="https://scratchapixel.com/images/rasterization/antialiasing3.png" alt=""><figcaption><b>图 3：</b>只用单个采样时，三角形会被漏掉。而用子像素，我们就能探测到这个像素至少部分与三角形重叠。像素颜色等于各子像素颜色之和除以子像素（即采样）总数（本例中为 16 个采样）。</figcaption></figure><p>最终像素颜色按所有子像素颜色之和除以子像素总数来计算。举例来说，设想三角形是白色的。如果只有 2 个或 4 个采样与三角形重叠，最终像素颜色就等于 (0+0+1+1)/4=0.5。这个像素不会是完全的白或黑，而是有一段渐变，从而减轻阶梯状的像素瑕疵。这种技术就叫<b>抗锯齿</b>。要彻底理解抗锯齿，需要深入信号处理理论，那是一个庞大而复杂的题目。</p><figure><img src="https://scratchapixel.com/images/rasterization/antialiasing2.png" alt=""><figcaption><b>图 4：</b>用子像素有效地对抗走样。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/antialiasing4.png" alt=""><figcaption><b>图 5：</b>抗锯齿有助于让锯齿边缘平滑。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/antialiasing.png" alt=""><figcaption><b>图 6：</b>每像素 1 个采样（1 spp，上图）对比每像素 4 个采样（下图）。</figcaption></figure><p>把 N 取为 2 的幂是有好处的，因为如今的处理器大多能并行执行若干条指令，而并行指令数一般是 2 的幂。你可以在网上找到关于 CPU 专用的 SSE 指令集之类的资料，GPU 用的是类似的概念。SSE 是大多数现代 CPU 上具备的特性，通常能同时做 4 个或 8 个浮点运算（在一个周期内）。这意味着，花一次浮点运算的代价，你实际上白得了 3 次或 7 次额外的运算。理论上这能让渲染时间加快 4 倍或 8 倍（不过由于设置这些指令有少量开销，这样的性能很难达到）。例如，SSE 指令能在计算一个像素的代价下渲染 2x2 个子像素，几乎不增加开销就让边缘更平滑。</p><h3> 按像素块渲染</h3><p>另一种加速光栅化的技术是按像素块渲染。我们不去逐一测试块内的每个像素，而是先检查块角上的像素。GPU 的算法可能用 8x8 像素的块。这个方法是涉及 tile（瓦片）的复杂概念的一部分，这里不展开。如果 8x8 网格的四个角都覆盖了三角形，那么该块内剩余的像素很可能也覆盖这个三角形，如图 7 所示。</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-optimization.png" alt=""><figcaption><b>图 7：</b>若 8x8 像素网格的 4 个角都与三角形重叠，则该网格内所有剩余像素也都覆盖这个三角形。</figcaption></figure><p>这种情况下，再测试其余像素就没必要了，能省下不少时间。这些像素可以直接填上三角形的颜色。若需要在像素块范围内做插值顶点属性，这个过程同样被简化：既然已在块的四个角上算出了这些属性，只需沿两个方向（水平和垂直）做线性插值即可。这种优化对屏幕上显得很大的三角形最为有效。小三角形从中获益没那么多。</p><h3> 优化边函数</h3><p>边函数也可以优化。回顾一下它的实现：</p><pre><code>
+int orient2d(const Point2D&amp; a, const Point2D&amp; b, const Point2D&amp; c)
+{
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+</code></pre><p>记住，这个函数里的 <code>a</code> 和 <code>b</code> 代表三角形的顶点，<code>c</code> 表示像素坐标（在光栅空间中）。一个有意思的观察是：这个函数对三角形包围盒内的每个像素都要调用一次。遍历多个像素时，只有 <code>c</code> 在变；<code>a</code> 和 <code>b</code> 保持不变。假设我们算一次这个式子，得到一个结果 <code>w0</code>：</p><pre><code>
+w0 = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+</code></pre><p>如果 <code>c.x</code> 增加一个步长 <code>s</code>（即每像素的增量），<code>w0</code> 的新值就是：</p><pre><code>
+w0_new = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x + s - a.x);
+</code></pre><p>用新式子减去原式子，可得：</p><pre><code>
+w0_new - w0 = -(b.y - a.y) * s;
+</code></pre><p>由于 <code>-(b.y - a.y) * s</code> 对某个特定三角形是常量（因为 <code>s</code> 是固定的增量，<code>a</code> 与 <code>b</code> 也是常量），我们可以只算一次，把它存为 <code>w0_step</code>。于是计算就简化为：</p><pre><code>
+w0_new = w0 + w0_step;
+</code></pre><p>这一调整同样可以用于 <code>w1</code> 与 <code>w2</code>，也适用于 <code>c.y</code> 方向的步长。</p><p>原本边函数需要 2 次乘法与 5 次减法，经过这个优化，可以简化为一次加法，只是要先算出初始值。这个技巧在网上讨论得很多。本课程中我们不会用它，但打算将来专门讲高级光栅化技术的那门课里进一步探讨并实现它。</p><h3> 定点坐标</h3><figure><img src="https://scratchapixel.com/images/rasterization/subpixel-precision.png?" alt=""><figcaption><b>图 8：</b>定点坐标。</figcaption></figure><p>结束本节之前，简单说说在进入光栅化阶段前把顶点坐标从浮点格式转成定点格式这项技术。「定点」本质上就是整数表示的术语说法。顶点坐标从 NDC 转到光栅空间时，同时也从浮点数被转成定点数。为什么要这么做？答案并不直白，但本质上，GPU 使用定点算术是因为通过逻辑位运算处理整数，在计算上比处理 float 或 double 更容易、更快。这个解释相当笼统；从浮点坐标到整数坐标的转换，以及用整数坐标实现光栅化，涵盖的内容广泛而复杂，网上却几乎找不到文档，考虑到它在现代 GPU 功能中的核心地位，这挺令人意外的。</p><p>这个转换要把顶点坐标四舍五入到最近的整数。不过只做这一步，顶点坐标可能会过于贴近像素的角点，对静帧来说这是个小问题，但在动画中会造成视觉瑕疵（顶点可能逐帧对齐到不同的像素）。解决方案是把数转成最小的整数值，同时留出一些位来表示顶点的<b>子像素</b>位置（即顶点位置的小数部分）。通常 GPU 会分配 4 位给子像素精度。对一个 32 位整数来说，可能 1 位用于符号，27 位用于顶点的整数位置，4 位用于顶点在像素内的小数位置。这种安排意味着顶点位置被「对齐」到 16x16 子像素网格最近的角点上，如图 8 所示。虽然顶点仍被吸附到网格上，但这个方法比起对齐到像素坐标问题要小。这个过程还带来其他挑战，其中包括<b>整数溢出</b>——因为整数能表示的范围比浮点数窄，就可能发生溢出。此外，整合抗锯齿又增加了复杂性。要把这个话题讲透，得另开一门课。</p><p>定点坐标能加快光栅化过程与边函数的计算。这种效率正是把顶点坐标转成整数的一个关键原因，这门技术我们会在即将推出的一门课里进一步讨论。</p><h2>关于我们这套光栅化算法实现的几点说明</h2><p>下面简单过一遍源码那一章提供的代码，点出它的主要组成部分：</p><details open><p>这段代码仅供学习之用。它远谈不上高效。一些简单的优化就能显著提升性能，但我们把清晰放在了效率之前。我们的目标不是产出可用于生产的代码，而是帮助理解基本概念。优化这段代码可以是一个很好的练习。</p></details><details open><p>程序渲染的物体存在一个 include 文件里。对小程序来说这没问题，但专业应用中一般避免这种做法，因为可能增加程序体积与编译时间。不过对这个简单示例来说，鉴于物体本身不大，所以无妨。想更深入了解三维物体的几何在程序中如何表示，见建模与几何部分中讲这个题目的课程。本程序用到的信息只有三角形顶点的位置（在世界空间中）以及它们的纹理坐标或 st 坐标。</p></details><ul><li><p>我们用 <code>computeScreenCoordinates</code> 函数来确定屏幕坐标，方法依照<a href="how-pinhole-camera-works-part-1.html">针孔相机模型</a>那门课所述。这样我们的渲染输出就能与 Maya 的渲染结果相比较，后者同样采用基于物理的相机模型。</p><pre><code>
+float t, b, l, r; 
+
+computeScreenCoordinates( 
+    filmApertureWidth, filmApertureHeight, 
+    imageWidth, imageHeight, 
+    kOverscan, 
+    nearClippingPlane, 
+    focalLength, 
+    t, b, l, r); 
+</code></pre></li><li><p><code>convertToRaster</code> 函数把三角形顶点坐标从相机空间转到光栅空间，相当于前一门课里的 <code>computePixelCoordinates</code> 函数。记住，我们学过一种把屏幕空间坐标转到 NDC 空间（在 GPU 领域坐标范围是 [-1,1]）的方法。这里用的是同样的重映射方法。与前面几门课的一个重要区别是：投影后的点现在必须是三维点，其 x、y 坐标表示该点在屏幕空间中的投影位置，z 坐标则反映顶点在相机空间中的 z 坐标。这个 z 坐标对解决可见性问题至关重要，详见<a href="visibility-problem-depth-buffer-depth-interpolation.html">第四章</a>。</p><pre><code>
+convertToRaster(v0, worldToCamera, l, r, t, b, nearClippingPlane, imageWidth, imageHeight, v0Raster); 
+convertToRaster(v1, worldToCamera, l, r, t, b, nearClippingPlane, imageWidth, imageHeight, v1Raster); 
+convertToRaster(v2, worldToCamera, l, r, t, b, nearClippingPlane, imageWidth, imageHeight, v2Raster);
+</code></pre></li><li><p>记住，与三角形顶点相关的所有顶点属性，也需要用顶点的 z 坐标做「预除」，以实现透视正确插值。这通常在渲染三角形之前（紧接像素遍历循环之前）进行。不过在代码里，顶点的 z 坐标被设成了它的倒数（以便用乘法而非除法来加速深度计算）。</p><pre><code>
+// 预先算好顶点 z 坐标的倒数
+v0Raster.z = 1 / v0Raster.z, 
+v1Raster.z = 1 / v1Raster.z, 
+v2Raster.z = 1 / v2Raster.z; 
+
+Vec2f st0 = st[stindices[i * 3]]; 
+Vec2f st1 = st[stindices[i * 3 + 1]]; 
+Vec2f st2 = st[stindices[i * 3 + 2]]; 
+
+// 透视正确插值所需
+st0 *= v0Raster.z, st1 *= v1Raster.z, st2 *= v2Raster.z;
+</code></pre></li><li><p>这个函数包含两个循环：外层循环遍历场景中所有三角形，内层循环遍历包围盒内与当前三角形重叠的所有像素。值得注意的是，内层循环里有些变量是常量，因此可以预先算好，包括三角形顶点 z 坐标的倒数（对覆盖该三角形的每个像素做线性插值），以及需要除以各自 z 坐标的顶点属性。</p><pre><code>
+// 外层循环：遍历三角形
+for (uint32_t i = 0; i &lt; ntris; ++i) {
+    ...
+    // 内层循环：遍历像素
+    for (uint32_t y = y0; y &lt;= y1; ++y) { 
+        for (uint32_t x = x0; x &lt;= x1; ++x) {
+            ...
+        }
+    }
+}
+</code></pre></li><li><p>每个像素都用边函数技术做一次覆盖测试。若某个像素覆盖了三角形，我们就计算它的重心坐标，再确定采样点的深度。通过深度缓冲测试后，就可以用新的深度值更新深度缓冲，并用三角形的颜色更新帧缓冲。</p><pre><code>
+Vec3f pixelSample(x + 0.5, y + 0.5, 0); 
+float w0 = edgeFunction(v1Raster, v2Raster, pixelSample); 
+float w1 = edgeFunction(v2Raster, v0Raster, pixelSample); 
+float w2 = edgeFunction(v0Raster, v1Raster, pixelSample); 
+if (w0 &gt;= 0 &amp;&amp; w1 &gt;= 0 &amp;&amp; w2 &gt;= 0) { 
+    w0 /= area; 
+    w1 /= area; 
+    w2 /= area; 
+    // 线性插值采样点深度
+    float oneOverZ = v0Raster.z * w0 + v1Raster.z * w1 + v2Raster.z * w2; 
+    float z = 1 / oneOverZ; 
+    // 通过深度缓冲测试了吗？
+    if (z &lt; depthBuffer[y * imageWidth + x]) { 
+        depthBuffer[y * imageWidth + x] = z;
+        // 更新帧缓冲
+        ...
+    }
+}
+</code></pre></li><li><p><b>着色技术</b>：为了让画面更有看头，我们用了好几种着色方法。模型有一个顶点属性：st，也就是纹理坐标。这些坐标可以生成棋盘格图案，再配合一种叫朝向比的简单着色技术。朝向比是三角形法线（由两条三角形边叉积算出）与视线方向的点积。视线方向是从三角形上正在着色的点 P 指向相机位置 E 的向量。在相机空间中——现在所有点都在这个空间里定义——相机位置就是 E=(0,0,0)，于是视线方向就是 -P，然后要做归一化。由于点积可能为负，我们把它夹到只取正值。</p><pre><code>
+Vec3f n = (v1Cam - v0Cam).crossProduct(v2Cam - v0Cam); 
+n.normalize(); 
+Vec3f viewDirection = -pt; 
+viewDirection.normalize(); 
+// 朝向比 
+float nDotView =  std::max(0.f, n.dotProduct(viewDirection));
+</code></pre><p>这项技术需要算出 P（即像素所重叠的三角形上那一点）的坐标，做法跟其他任何顶点属性一样。我们取相机空间中的顶点，除以它们的 z 坐标，用重心坐标插值，再把结果乘以采样点的深度（顺便说一句，这也正是 P 的 z 坐标）：</p><pre><code>
+// 取得相机空间中的三角形顶点。
+Vec3f v0Cam, v1Cam, v2Cam; 
+worldToCamera.multVecMatrix(v0, v0Cam); 
+worldToCamera.multVecMatrix(v1, v1Cam); 
+worldToCamera.multVecMatrix(v2, v2Cam); 
+
+// 与任何其他顶点属性一样除以各自的 z 坐标，
+// 再用重心坐标做插值。
+float px = (v0Cam.x/-v0Cam.z) * w0 + (v1Cam.x/-v1Cam.z) * w1 + (v2Cam.x/-v2Cam.z) * w2; 
+float py = (v0Cam.y/-v0Cam.z) * w0 + (v1Cam.y/-v1Cam.z) * w1 + (v2Cam.y/-v2Cam.z) * w2; 
+ 
+// P in camera space
+Vec3f pt(px * z, py * z, -z);
+</code></pre></li><li><p><b>帧缓冲输出</b>：最后，帧缓冲的内容被保存成 PPM 文件，展示渲染结果。</p></li></ul><figure><img src="https://scratchapixel.com/images/rasterization/cowresult.png?" alt=""></figure><p>如所示，渲染并不神秘。理解了规则，就能复现专业应用产出的东西。</p><figure><img src="https://scratchapixel.com/images/rasterization/cowresult1.png?" alt=""></figure><figure><img src="https://scratchapixel.com/images/rasterization/cowresult2.png?" alt=""></figure><p>再补一个有意思的点：我们把图像每个像素所重叠的三角形上那一点的世界空间位置导了出来，在 3D 查看器里显示所有这些点。毫不意外，点只出现在相机直接可见的物体部位上，这印证了深度缓冲技术的有效性。第二张图是同一组点的特写（右侧）。</p><h2>结论</h2><p>光栅化的主要优点是简单和快，尽管它主要只用来解决可见性问题。记住，渲染包含两步：可见性与着色。这个算法不提供任何着色方案。</p><p>本课程旨在深入介绍光栅化。如果你觉得这些内容有启发、有教益，可以考虑支持我们的工作。</p><h2>练习</h2><ul><li><p>实现抗锯齿：把像素细分为 4 个子像素，在每个子像素中心生成一个采样，对每个采样做覆盖测试，把各采样的颜色求和，除以 4，再把结果设为像素颜色。这项技术的一个实现可以在讲纹理映射的课程里找到。</p></li><li><p>实现背面剔除：若三角形的法线与视线方向的点积低于某个阈值，就不渲染该三角形。这利用的原理是：方向相反的向量点积为负。两个向量的点积等于它们夹角的余弦。把阈值表示为以度为单位的夹角。</p></li><li><p>把 z 缓冲的内容输出到 PPM 文件，将深度缓冲的值重映射到 [0,255] 范围。</p></li></ul><h2>参考文献</h2><ul><li><p>Juan Pineda，《A Parallel Algorithm for Polygon Rasterization》，Siggraph 1988。</p></li><li><p>Edwin Earl Catmull，《A Subdivision Algorithm for Computer Display of Curved Surfaces》，学位论文，1974。</p></li><li><p>Paul S. Heckbert，《Fundamentals of Texture Mapping and Image Warping》，学位论文，1989。</p></li><li><p>Loren Carpenter，《The A-buffer, an Antialiased Hidden Surface Method》，1984。</p></li></ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-practical-implementation.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-practical-implementation.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

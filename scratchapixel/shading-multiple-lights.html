@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多光源 - Scratchapixel 中文译本</title>
+<meta name="description" content="着色简介 · 多光源（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>多光源</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="what-is-shading-light-matter-interaction.html">什么是着色：光与物质的相互作用</a></li>
+<li><a href="shading-normals.html">法线、顶点法线与朝向比</a></li>
+<li><a href="shading-lights.html">光源</a></li>
+<li><a href="diffuse-lambertian-shading.html">漫反射与朗伯着色</a></li>
+<li><a href="ligth-and-shadows.html">光照与阴影</a></li>
+<li><a href="shading-spherical-light.html">球形光源</a></li>
+<li><a style="font-weight:700" href="shading-multiple-lights.html">多光源</a></li>
+<li><a href="reflection-refraction-fresnel.html">反射、折射与菲涅尔</a></li>
+<li><a href="procedural-texturing.html">过程式纹理</a></li>
+</ol>
+</div>
+<h2>多光源</h2><p><b>阅读时间：4 分钟。</b></p><h2>线性的光照响应</h2><p>想象你要用不同的灯去拍一个物体，比如图 1 里的玩具。假设一开始所有灯都关着。你打开第一盏灯，拍一张；关掉它，再对每一盏灯重复这个过程。最后把所有灯都打开，再拍一张。现在把每盏灯单独打开时拍的照片全部相加，再和所有灯同时打开时拍的那张比较——得到的这两个图像看起来应该是一样的。</p><p>$$
+\text{Image}_{\text{light1}} + \text{Image}_{\text{light2}} + \text{Image}_{\text{light3}} + ... = \text{Image}_{\text{all lights}}.
+$$</p><figure><img src="https://scratchapixel.com/images/shading-intro/shad-lightlinear2.gif?" alt=""><figcaption><b>图 1：</b>每盏灯各自的贡献线性叠加。</figcaption></figure><p>换句话说，每盏灯的贡献是按线性方式叠加的。这个观察很重要，原因有两点。第一，如果你想生成照片级真实的图像，渲染器就必须遵循同一条原则。对美术人员来说这也重要：他们要从各个单独图层重新合成 CG 渲染结果，而每个图层代表场景中某一盏灯单独的贡献。如果在把某个图层与其他图层相加之前，先用曲线以非线性方式改变它的亮度（比如加个伽马），从物理角度看就会得到错误的结果。更重要的是从编程角度看，这条原则只是说：在渲染器里，把每盏灯的贡献加起来就行。换句话说，到达某一点的总光量，就是各盏灯对该点贡献的光量的线性之和。</p><p>用数学语言来说，对漫反射表面，这个概念可以写成下面的公式：</p><p>$$S_P = \sum_{N=0}^{N=(nlights-1)}\dfrac{\rho_d}{\pi} * Li_N * \cos (N.L_N).$$</p><p>其中 \(S_P\) 表示着色点。数学中符号 \(\sum\) 的意思是「求和」。换句话说，对场景中每一盏灯（总共有 \(nights\) 盏），我们把公式里的 \(Li_N\) 和 \(L_N\) 两项换成当前这盏灯的光强与方向，算出漫反射公式。这等同于：</p><p>$$S_P = \dfrac{\rho_d}{\pi} * (Li_0 * \cos (N.L_0) + Li_1 * \cos (N.L_1) + ... + Li_{N-1} * \cos (N.L_{N-1})) .$$</p><p>从编程角度看，处理多于一盏光源非常简单。首先，可以把所有灯放进一个列表，把这个列表传给 <code>castRay()</code> 函数——着色就在那里完成。然后遍历所有灯，把它们的贡献累加到该着色点的光照上。要记住，光的贡献会被 \(P\) 的法线与光线方向之间夹角的余弦所衰减。这一项对每盏灯都不同，因此需要逐灯计算。同样，每盏灯也都要投一条阴影光线。最终代码大致如下：</p><pre><code>
+int main(int argc, char **argv) 
+{ 
+    ... 
+ 
+    // 加载几何体      
+    std::vector&amp;ltstd::unique_ptr&amp;ltLight&gt;&gt; lights; 
+ 
+    Matrix44f l2w1; 
+    l2w1[3][0] = 2; 
+    l2w1[3][1] = 4; 
+ 
+    lights.push_back(std::unique_ptr&amp;ltLight&gt;(new PointLight(l2w1, Vec3f(1, 0.6, 0.6), 500))); 
+ 
+    Matrix44f l2w2; 
+    l2w2[3][0] = -1; 
+    l2w2[3][1] = 4; 
+    l2w2[3][2] = -1; 
+ 
+    lights.push_back(std::unique_ptr&amp;ltLight&gt;(new PointLight(l2w2, Vec3f(0.6, 0.6, 1), 500))); 
+ 
+    // 最后渲染       
+    render(options, objects, lights); 
+ 
+    ... 
+} 
+ 
+Vec3f castRay( 
+    const Vec3f &amp;orig, const Vec3f &amp;dir, 
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects, 
+    const std::vector&amp;ltstd::unique_ptr&amp;ltLight&gt;&gt; &amp;lights, 
+    const Options &amp;options) 
+{ 
+    Vec3f hitColor = 0; 
+    IsectInfo isect; 
+    if (trace(orig, dir, objects, isect)) { 
+        Vec3f hitPoint = orig + dir * isect.tNear; 
+        Vec3f hitNormal; 
+        Vec2f hitTexCoordinates; 
+        isect.hitObject-&amp;gtgetSurfaceProperties(hitPoint, dir, isect.index, isect.uv, hitNormal, hitTexCoordinates); 
+        for (uint32_t i = 0; i &lt; lights.size(); ++i) { 
+            Vec3f lightDir, lightIntensity; 
+            IsectInfo isectShad; 
+            lights[i]-&amp;gtgetShadingInfo(hitPoint, lightDir, lightIntensity, isectShad.tNear); 
+            bool vis = !trace(hitPoint + hitNormal * options.bias, -lightDir, objects, isectShad, kShadowRay); 
+            // 累加光的贡献                 
+            hitColor += vis * isect.hitObject-&amp;gtalbedo * lightIntensity * std::max(0.f, hitNormal.dotProduct(-lightDir)); 
+        } 
+    } 
+    else { 
+        hitColor = options.backgroundColor; 
+    } 
+ 
+    return hitColor; 
+} 
+</code></pre><p>下面是用两盏球形光源渲染这个场景的结果：</p><figure><img src="https://scratchapixel.com/images/shading-intro/shad-lightlinear3.png?" alt=""></figure><p>注意，你也可以分别渲染每盏灯的贡献，再在 Photoshop 之类的绘图软件里把这些图像相加，得到同样的效果（把混合模式设为 Linear Dodge）。把两盏灯全开时的渲染结果和你在 Photoshop 里合成的图像对比一下，它们应该看起来一样。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/shading-multiple-lights.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-shading/shading-multiple-lights.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

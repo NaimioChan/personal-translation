@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方差缩减方法：准蒙特卡罗快速入门 - Scratchapixel 中文译本</title>
+<meta name="description" content="蒙特卡罗方法实践 · 方差缩减方法：准蒙特卡罗快速入门（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>方差缩减方法：准蒙特卡罗快速入门</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="monte-carlo-methods.html">蒙特卡罗方法</a></li>
+<li><a href="monte-carlo-simulation.html">蒙特卡罗模拟</a></li>
+<li><a href="monte-carlo-integration.html">蒙特卡罗积分</a></li>
+<li><a href="monte-carlo-rendering-practical-example.html">渲染中的蒙特卡罗（一个实际例子）</a></li>
+<li><a href="generating-random-numbers.html">生成随机数</a></li>
+<li><a href="variance-reduction-methods.html">方差缩减方法：重要性采样快速入门</a></li>
+<li><a style="font-weight:700" href="introduction-quasi-monte-carlo.html">方差缩减方法：准蒙特卡罗快速入门</a></li>
+</ol>
+</div>
+<h2>方差缩减方法：准蒙特卡罗快速入门</h2><p><b>阅读时间：25 分钟。</b></p><details open><p>为了尽快把基础部分写完，本章的第一版只是浅层地介绍这个题目。等基础部分本身完成之后，它会被改进、展开并补全。准蒙特卡罗本来就是个复杂的题目，需要扎实的数学基础，没法在一章里讲完。进阶部分之后会专门开一门课讲这个题目。</p></details><p>你可能听过「准蒙特卡罗」或「准蒙特卡罗光线追踪」这个说法，想知道它是什么意思（又是图形圈的人天天挂在嘴边的魔法词之一，每次听到你都在心里咬牙，想「要是有人能用简单的话给我讲清楚就好了」——所以我们在这里）。准蒙特卡罗背后的数学可以相当复杂，要认真研究它，一章都不够（整本整本的数学教材都在讲这件事）。不过，为了给你一个关于蒙特卡罗的完整概览，我们会在本章试着快速介绍这个概念，并照例解释它是什么、如何工作、为什么工作。</p><p>等所有其他课程都完成后，我们会修订本章。QMC（准蒙特卡罗）是个非常有意思的方法，将来某个时候会在进阶课程里专门开一门课讲它。等我们完成讲光传输算法与采样的课程后，用 QMC 做实验会更容易，也能用更具体的例子说明它为什么优于基础 MC。</p><h2>引言</h2><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/clumping.png?" alt=""><figcaption><b>图 1：</b>当两个或更多样本彼此非常接近时，就出现了聚簇。当样本位置是随机选取的时候，这无法避免，即便用了重要性采样也一样。</figcaption></figure><p>基础蒙特卡罗是管用的。前面几章我们已经展示了这一点。它是一门很好的技术，实现简单，可以用来求解许多问题，尤其是在计算机图形学里。上一章我们还研究了重要性采样。它通过提高在被积函数最重要处生成样本的概率，有可能降低方差。不过，基础蒙特卡罗和重要性采样都受制于一个叫作<b>样本聚簇</b>的问题。样本生成时，其中一些可能彼此非常接近。它们形成簇。我们的样本额度有限，需要明智地使用，才能尽可能多地收集关于被积函数的信息。如果两个（或更多）样本彼此接近，它们各自（或多或少）给我们提供关于函数的相同信息，因此其中一个有用，其他的就浪费了。重要性采样并不能让我们免于聚簇。PDF 只控制被积函数任意部分内样本的密度，不控制它们的个数。图 1 给出了聚簇的一个例子。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/clumping02.png?" alt=""><figcaption><b>图 2：</b>当使用确定性求积技术时（比如黎曼和），样本是规则间隔的。</figcaption></figure><p>用蒙特卡罗时，我们知道样本是随机选取的。另一方面（与使用蒙特卡罗积分相对），你可以使用像黎曼和这样的确定性求积技术，其中函数在完全规则的间隔上被采样（如图 2 所示）。所以，一边是完全规则间隔的样本（用黎曼和），另一边是位置完全随机的样本（用蒙特卡罗积分），后者可能导致聚簇。于是你大概已经猜到，你可能会忍不住问：「我们能不能搞出点介于两者之间的东西？能不能用某种滑块，从完全规则间隔滑到完全随机，在中间某处找到某种最优位置？」简短的回答是：能——准蒙特卡罗大致就是干这个的。记住，我们不用黎曼和这类确定性技术的唯一原因，是它们扩展性不好：随着积分维度增加，它们会变得昂贵。这也正是相比之下 MC 积分有吸引力的原因。</p><p>在蒙特卡罗积分里，没有什么强迫我们必须用随机样本。我们完全可以在 MC 积分中用一列均匀分布的点替换 \(\xi\)，得到的估计依然有效。换句话说，我们可以用非随机样本替换随机样本，近似仍然成立。注意，当点完全均匀分布时，蒙特卡罗积分与黎曼和是相似的。如果 \({s_1, s_2, ..., s_n}\) 是区间 [a,b] 上一列均匀分布的数，那么：</p><p>$$\lim_{N \to \infty} {(b-a) \over N} \sum_{i=1}^N f(s_i) = \int_a^b f(x) \: dx,$$</p><p>其中 f 是黎曼可积函数。不过在 QMC 里，常用的序列被称为<b>等分布</b>，这个术语我们稍后解释。作为直观定义，我们可以说等分布的点就是分布得大致均匀的点，而实际点分布与一列完全均匀分布的点之间差别的度量，在 QMC 的行话里叫作<b>偏差</b>。在 QMC 的世界里，我们不说方差，而更多说偏差。这些同样会在本章简要说明，更多细节见进阶部分讲 QMC 的课程。简而言之，QMC 模糊了随机序列与确定性序列之间的界线。实际上，使用这些点列的想法，是要尽可能接近理想情形：<b>点分布得很好，但又并非均匀分布</b>。下面的图 3 图示了这个想法。上面那条随机序列显示出一些聚簇和空隙（没有样本的区域），因此并不理想。中间那条序列纯然规则，因此会造成走样。最下面那条介于两者之间：它表现出某种规则性，但点又不是完全均匀分布。把样本空间划分成规则区间、在每个子区间内随机放一个样本的想法，叫作抖动或分层采样。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/equidistributed.png?" alt=""><figcaption><b>图 3：</b>随机分布样本（上）、均匀分布样本（中）、以及准随机序列典型的那种「大致」均匀分布的样本（下）的示例。</figcaption></figure><p>准蒙特卡罗方法最早是在 1950 年代提出的，大约比蒙特卡罗方法晚十年（这合理，因为人们一旦开始熟悉蒙特卡罗方法，就开始寻找改进它的办法）。QMC 被用在许多领域，包括工程、金融，当然还有计算机图形学（只举几个），尽管能自称是这方面专家的人不多，它在过去几年里确实越来越流行。在渲染中，用 QMC 是否比传统 MC 更好，常常有人争论。它确实比 MC 收敛得快，但也有它的缺点。例如，它有时会产生走样</p><p>记住，从视觉伪影的角度说，像黎曼和这样的确定性技术产生的是<b>走样</b>，而蒙特卡罗积分产生的是<b>噪声</b>。从视觉上说，噪声与走样相比往往被认为是两害中较轻的那个。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/aliasing.png?" alt=""><figcaption><b>图 4：</b>规则采样（上）产生走样，而随机采样（下）产生噪声。从视觉上说，噪声一般更不刺眼。</figcaption></figure><p>这种视觉伪影很容易生成。图 4 显示了对频率递增的正弦函数采样的结果。当采样率低于 Nyquist 频率时，噪声或走样就出现了。进阶部分有一门课专门讲走样，其中会解释 Nyquist 极限的概念；等我们讲到采样与傅里叶分析这个题目时（我们把它留到最后），还会从数学角度解释走样。</p><pre><code>
+#include &amp;ltcstdlib&gt; 
+#include &amp;ltcstdio&gt; 
+#include &amp;ltcmath&gt; 
+#include &amp;ltfstream&gt; 
+#include &amp;ltstdint.h&gt; 
+ 
+float evalFunc(const float &amp;x, const float &amp;y, const float &amp;xmax, const float &amp;ymax) 
+{ 
+    return 1. / 2. + 1. / 2. * powf(1. - y / ymax, 3.) * sin( 2. * M_PI * ( x / xmax) * exp(8. * (x / xmax))); 
+} 
+ 
+int main(int argc, char **argv) 
+{ 
+    uint32_t width = 512, height = 512; 
+    uint32_t nsamples = 1; 
+    unsigned char *pixels = new unsigned char[width * height]; 
+    for (uint32_t y = 0; y &lt; height; ++y) { 
+        for (uint32_t x = 0; x &lt; width; ++x) { 
+            float sum = 0; 
+            for (uint32_t ny = 0; ny &lt; nsamples; ++ny) { 
+                for (uint32_t nx = 0; nx &lt; nsamples; ++nx) { 
+#ifdef REGULAR 
+                    sum += evalFunc(x + (nx + 0.5) / nsamples, y + (ny + 0.5) / nsamples, width, height); 
+#endif 
+#ifdef RANDOM 
+                    sum += evalFunc(x + drand48(), y + drand48(), width, height); 
+#endif 
+                } 
+            } 
+            pixels[y * width + x] = (unsigned char)(255 * sum / (nsamples * nsamples)); 
+ 
+        } 
+    } 
+    std::ofstream ofs; 
+    ofs.open("./sampling.ppm"); 
+    ofs &lt;&lt; "P5\n" &lt;&lt; width &lt;&lt; " " &lt;&lt; height &lt;&lt; "\n255\n"; 
+    ofs.write((char*)pixels, width * height); 
+    ofs.close(); 
+    delete [] pixels; 
+    return 1; 
+}
+</code></pre><h2>分层采样</h2><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/stratified.png?" alt=""><figcaption><b>图 5：</b>分层采样背后的想法，是把规则采样与随机采样结合起来。积分区间被划分成规则的小区间，每个子区间内生成一个随机样本。</figcaption></figure><p>在讲生成准随机数序列之前，我们先谈一个介于随机与规则分布样本之间的方法。这个方法叫分层采样，是由 Robert L. Cook 在一篇题为《计算机图形学中的随机采样》的开创性论文中引入图形学界的（论文 1986 年发表，但这门技术 1983 年就在 Pixar 开发出来了）。这篇论文对计算机图形学领域相当基础，我们会在（基础部分的）采样课程里深入研究。在这篇论文里，Cook 研究了不同采样策略的质量，特别是借助傅里叶分析——它与蒙特卡罗理论一样，都是那种真正宏大的题目，我们最好留到最后。在论文中，Cook 并没有把这个方法叫作分层采样，而是叫<b>抖动采样</b>，但如今它似乎只以先前那个名字为人所知。</p><p>分层采样的概念非常简单。它以某种方式把规则采样与随机采样的想法结合起来。积分区间被划分成 N 个子区间或小格（也常称为<b>层</b>），样本放在这些子区间的正中间，但被一个不能超过小格宽度一半的正或负随机偏移所抖动。换句话说，如果 h 是小格的宽度：\(-h/2 \leq \xi \leq h/2\)。不过技术上我们一般把样本放在小格的左边界上，再对它的位置做 \(h * \xi\) 的抖动。换句话说，我们只是在每一层里放一个随机样本。结果可以看作 N 个在子域上的蒙特卡罗积分之和。</p><p>$$\langle F^N \rangle = { (b-a) \over N} \sum_{i=0}^{N-1} f(a + ( { {i+\xi} \over N } ) (b-a)).$$</p><p>把这个想法推广到二维很直接。积分域（往往是单位正方形，比如像素）被划分成 N * M 个层，每个小格里放一个随机样本。同样，这很容易推广到更高维。在分层采样的情形下，方差随样本数线性下降（\(\sigma \propto 1 / N\)）。几乎所有情况下，分层采样都优于随机采样，应当优先使用。</p><details open><p>分层采样优于随机采样这一点，会在本课未来的一个修订版里证明（同时也会证明方差随样本数线性下降）。还存在其他分层方法，比如 N-Rooks 或拉丁超立方采样、多重抖动与正交阵列采样，以及多阶段 N-Rooks 采样。</p></details><h2>准随机数与低偏差序列</h2><p>准蒙特卡罗积分依赖于具有特定性质的点列。正如引言里解释的，目标是生成这样的样本序列：它们不完全均匀分布（均匀分布的样本会造成走样），但在间距上又显得有某种规则性。数学家引入了<b>偏差</b>这个概念来度量这些点的分布。直观上，偏差可以看作（解释为）样本在多大程度上偏离了规则分布。随机序列的偏差高，而一列均匀分布的样本偏差为零。我们想要的那种序列，是偏差尽可能低、但不为零的序列。有些序列把随机性最小化（实际样本位置与均匀分布的偏离应当尽可能小），但又不完全均匀（即我们对偏差为 0 的序列不感兴趣）。</p><details open><p>我们会在本课未来的一个修订版里回到偏差这个概念，给出它的数学定义。在此期间，你可能想看看维基百科上关于<a href="http://en.wikipedia.org/wiki/Low-discrepancy_sequence" target="_blank" rel="noreferrer noopener">低偏差序列</a>的那篇文章。</p></details><h2>例子：Van der Corput 序列</h2><p>生成低偏差序列的算法是在 1950 年代找到的（希望你也能看出计算技术如何影响了它们的设​​计）。有意思的是，这些算法往往实现起来相当简单（常常只要几行代码），但背后的数学可以相当复杂。这些序列可以用不同方式生成，不过在这篇引言里，我们只考虑一种特定类型的序列，叫作 <b>Van der Corput 序列</b>（许多其他算法都是用它构造的）。有一个例子可以摆弄，至少能让你看到这些序列长什么样（也帮我们研究它们的一些基本性质）。要生成 Van der Corput 序列，你需要熟悉基与基逆这两个概念，我们现在就解释（稍后也会解释为什么它叫「基逆」）。</p><p>每个整数都可以在你选定的<b>基</b>里分解，或者说重新表示。例如我们的计数系统用的是<b>十进制</b>。另外回想一下，任何数（整数）的零次幂都是 1（\(10^0=1\)）。所以在十进制里，数 271 可以定义为 \(\color{red}{2}\times\color{green}{10^2} + \color{red}{7} \times \color{green}{10^1} + \color{red}{1} \times \color{green}{10^0}\)。数学上我们可以把这个和写成：</p><p>$$n = \sum_{i=1}^N \color{red}{d_i} \color{green}{b^{i-1}}.$$</p><p>其中 \(b\) 是你想用来表示这个数的<b>基</b>（在我们的例子里 \(b=10\)），而各个 \(d\) 称为<b>数位</b>，在我们的例子里就是数字 2、7 和 1。同样的方法可以用在二进制上，你知道，计算机就是用二进制来编码数字的。第一位（一个字节最右边那位）代表 1（\(2^0\)）。</p><pre><code>
+00000001
+</code></pre><p>第二位是 2（\(2^1\)）。</p><pre><code>
+00000010
+</code></pre><p>第三位是 4（\(2^2\)）。</p><pre><code>
+00000100
+</code></pre><p>第四位是 8（\(2^3\)），依此类推。</p><pre><code>
+00001000
+</code></pre><p>把这些位组合起来，就能造出更多的数。例如数 3 可以通过打开第一位和第二位来编码。把它们代表的数加起来得到 3（\(2^0 + 2^1 = 1 + 2 = 3\)）。</p><pre><code>
+00000011
+</code></pre><p>这个字节编码的是数 11：</p><pre><code>
+00001011
+</code></pre><p>$$(1 \times 2^0 + 1 \times 2^1 + 0 \times 2^2 + 1 \times 2^3 = 1 + 2 + 0 + 8 = 11).$$</p><p>数学上我们可以把它写成：</p><p>$$n = \sum_{i=1}^{8} d_i 2^{i-1}.$$</p><p>其中 \(d_i\) 在二进制里要么是 0 要么是 1。有了这个，我们就能把任何整数分解成任意给定基下的一串数位（我们把这叫作「基 b 下的数位展开」）。现在注意，用这个序列能重建出来的数是个正整数。换句话说，你可以把这个数看作一串 0 和 1，位于一个「想象中的」<b>小数点</b>左边。</p><pre><code>
+       1. 
+      11. 
+     111. 
+    1111. 
+   11111. 
+  111111. 
+ 1111111. 
+11111111.
+</code></pre><p>Van der Corput 序列的想法，就是让这些位绕过这个想象中的小数点做镜像。例如我们的数 11 变成：</p><pre><code>
+00001011.          (number 11 in base 2) 
+        .11010000  (digits of number 11 in base 2 mirrored about a decimal point)
+</code></pre><p>要做到这一点，只需对我们用来计算 n 的方程稍作改动：</p><p>$$
+\begin{equation}
+\tag{equation 1} \phi_b(n) = \sum_{i=1}^N { d_{i-1} \over b^i }.
+\end{equation}
+$$</p><p>它等价于：</p><p>$$\phi_b(n) = {d_0 \over {2^1}} + {d_1 \over {2^2}} ... + {d_{N-1}\over {2^N}}.$$</p><p>可以看到，我们不是把数位 \(d_i\) 乘以 \(b^{i-1}\)，而是改为除以 \(b^{i}\)（取它的倒数）。我们把这个函数称为基 b 下的<b>基逆</b>函数 \(\phi_b(n)\)，它计算一维 Van der Corput 序列（为什么叫「基逆」，下面的注释里有解释）。系数 \(d_i\) 如前所述，由 n 在基 b 下的数位展开给出：</p><p>记住：</p><p>$${1 \over b^n} = 1 \times b^{-n}.$$</p><p>比如若 n = 1，\(\phi_2(1) = 1 \times 2-{1} = 1 \times 0.5 = 0.5\)（二进制下）。若 n = 3，\(\phi_2(3) = 1 \times 2^{-1} + 1 \times 2^{-2} = 0.75\)。下表给出 Van der Corput 序列（二进制下）的前几个数。</p><table><tr><th>\(i\) 十进制</th><th>\(i\) 二进制</th><th>\(\phi_2(i)\) 二进制</th><th>\(\phi_2(i)\) 十进制</th></tr><tr><td>0
+</td><td>0000.0
+</td><td>0.0000
+</td><td>0.0
+</td></tr><tr><td>1
+</td><td>0001.0
+</td><td>0.1000
+</td><td>0.5
+</td></tr><tr><td>2
+</td><td>0010.0
+</td><td>0.0100
+</td><td>0.25
+</td></tr><tr><td>3
+</td><td>0011.0
+</td><td>0.1100
+</td><td>0.75
+</td></tr><tr><td>4
+</td><td>0100.0
+</td><td>0.0010
+</td><td>0.125
+</td></tr><tr><td>5
+</td><td>0101.0
+</td><td>0.1010
+</td><td>0.625
+</td></tr><tr><td>...
+</td><td></td><td></td><td></td></tr><tr><td>11
+</td><td>1011.0
+</td><td>0.1101
+</td><td>0.8125
+</td></tr><tr><td>...
+</td><td></td><td></td><td></td></tr></table><p>实现这个算法相当简单。第一件事是找到计算数位展开的办法。我们需要的函数是取模运算：num % 2 计算整数 num 除以 2 的余数。比如 1 % 2 = 0、2 % 2 = 0、3 % 2 = 1、4 % 2 = 0，依此类推。所以本质上，num % 2 告诉我们 n 的当前值是不是基的倍数。在一个二进制整数里，唯一决定这个数是奇是偶的位是最右边那位（最低有效位，位位置为 0）。所以如果这个数是偶数（n % 2 = 0），最后这一位就该是 0。</p><pre><code>
+int n = 11; 
+int base = 2; 
+int d0 = n % base;  //返回 0 或 1
+</code></pre><p>下一步，开始把「数位除以基的（数位位置加一）次幂」的结果累加起来（如公式 1 所示）。</p><pre><code>
+int n = 11; 
+float result = 0; 
+int base = 2; 
+int d0 = n % base;  //返回 0 或 1
+int denominator = base;  //2 = powf(base, 1)
+result += d0 / denominator; 
+</code></pre><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/bitshift.png?" alt=""><figcaption><b>图 6：</b>去掉数左边的一位，就相当于把这个整数除以 2。</figcaption></figure><p>下一步是计算展开中的下一位。为此，我们只需把 n 除以基。例如若 n = 11，那么 n / 2 = 5。记住我们是在整数上运算。为什么要这样做？举个例子。当一个二进制整数的最后三位都是 1（其余全是 0）时，我们得到整数 7。我们的测试 7 % 2 给出 1，这就把第一位设为 1。既然我们已经知道最右一位的值，就可以通过右移把它从数里去掉。这样就得到一个少了位的新数，而因为每个二进制位代表的数都是它左边那位的两倍，把最低有效位右移（换种说法就是把它去掉）相当于把这个数除以 2。例如，如果把 111（整数 7）的最右一位去掉，我们得到 11，也就是整数 3，而正如你所见，这也正是 7 除以 2。这个想法在图 6 中有图示。</p><p>如图 6 所示，通过反复把 n 除以 2，我们只要看 n % 2 的结果，就能检验展开中的下一位应该设为 1 还是 0。再举一个 n = 11 的例子：</p><table><tr><th>n=</th><th>n%2=</th><th>n/2</th><th>n 的二进制</th><th>(\d_i\)</th></tr><tr><td>11
+</td><td>1
+</td><td>5
+</td><td>00001011
+</td><td>\(d_0=1\)
+</td></tr><tr><td>5
+</td><td>1
+</td><td>2
+</td><td>x0000101
+</td><td>\(d_1=1\)
+</td></tr><tr><td>2
+</td><td>0
+</td><td>1
+</td><td>xx000010
+</td><td>\(d_2=0\)
+</td></tr><tr><td>1
+</td><td>1
+</td><td>0
+</td><td>xxx00001
+</td><td>\(d_3=1\)
+</td></tr><tr><td>0
+</td><td>-
+</td><td>-
+</td><td>-
+</td><td>-
+</td></tr></table><p>最后是这个算法的完整实现：</p><pre><code>
+#include &amp;ltiostream&gt; 
+#include &amp;ltcmath&gt; 
+ 
+float vanDerCorput(int n, const int &amp;base = 2) 
+{ 
+    float rand = 0, denom = 1, invBase = 1.f / base; 
+    while (n) { 
+        denom *= base;  //2、4、8、16 等等，即 2^1、2^2、2^3、2^4 等等。
+        rand += (n % base) / denom; 
+        n *= invBase;  //除以 2
+    } 
+    return rand; 
+} 
+ 
+int main() 
+{ 
+    for (int i = 0; i &lt; 10; ++i) { 
+        float r = vanDerCorput(i, 2); 
+        printf("i %d, r = %f\n", i, r); 
+    } 
+    return 0; 
+} 
+</code></pre><details open><p>读者提问：「为什么叫<b>基逆</b>？」在数学中，根式函数（radical function）是变量位于 \(\sqrt{}\) 里面的函数。不过，在 Van der Corput 算法的语境里，radical 与根号毫无关系。它其实是 <a href="http://en.wikipedia.org/wiki/Radix" target="_blank" rel="noreferrer noopener"><b>radix</b></a> 的形容词形式，而 radix 是基的另一个说法，比如十进制、二进制等等。你是把基 b 下的展开——基数为 radix b 的展开——倒着写出来，也就是把它「反」过来。</p></details><p>Van der Corput 序列已被 Halton（1960）、Sobol（1967）、Faure（1982）和 Niederreiter（1987）推广到多维。更多信息见进阶部分的采样课程。<b>Halton 序列</b>在不同基下使用不同的 Van der Corput 序列，其中基是质数（2、3、5、7、11 等）。例如，如果你想生成二维的点，可以把基 2 的 Van der Corput 序列分配给点的 x 坐标，把另一个基 3 的序列分配给点的 y 坐标。</p><p>$$
+\begin{array}{l}
+P[n].x = vanDerCorput(n, 2)\\
+P[n].y = vanDerCorput(n, 3)\\
+...
+\end{array}
+$$</p><p><b>Hammersley 序列</b>对其中一个坐标使用基 2 的 Van der Corput 序列，另一个坐标直接赋为 \(n / N\)（假定你的点是二维点）。</p><p>$$
+\begin{array}{l}
+P[n].x = vanDerCorput(n, 2),\\
+P[n].y = \dfrac{n}{N}.
+\end{array}
+$$</p><p>下面的代码创建一个用于生成二维点的 Halton 序列：</p><pre><code>
+#include &amp;ltiostream&gt; 
+#include &amp;ltcmath&gt; 
+ 
+float vanDerCorput(int n, const int &amp;base = 2) 
+{ 
+   ... 
+} 
+ 
+int main() 
+{ 
+    Point2D pt; 
+    for (int i = 0; i &lt; 10; ++i) { 
+        pt.x = vanDerCorput(i, 2);  //质数 2
+        pt.x = vanDerCorput(i, 3);  //质数 3
+        printf("i %d, pt.x = %f pt.y\n", i, pt.x, pt.y); 
+    } 
+    return 0; 
+} 
+</code></pre><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/hammersley.png?" alt=""></figure><p>上图给出了不同样本数（N = 16、24 和 32）下二维 Hammersley 序列的点图。注意那个红色的点 (0,0) 总在序列里，而且对所有 N 值，点都分布得很好。生成 Van der Corput 序列的代码可以用位运算优化（例如把整数除以 2 可以用移位操作完成）。因为序列是以递增的 n 值调用的，之前计算的结果也可以复用（这同样能加速样本生成）。本课的下一个修订版会包含这个函数的优化版本。</p><h2>准蒙特卡罗</h2><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/areacam2.png?" alt=""><figcaption><b>图 7：</b>用蒙特卡罗积分近似穿过某个给定像素的辐射亮度。</figcaption></figure><p>准蒙特卡罗的想法，显然就是在生成样本时使用准随机序列而不是随机样本。这些序列经常被用来生成像素样本。在本课以及《着色的数学与辐射度量学》那门课里，我们展示了如何用蒙特卡罗积分近似穿过某个给定像素的辐射亮度（图 7）。随机采样当然是生成这些样本最简单（至少是最基本）的方式。我们也可以用分层采样（它比随机采样好），当然也可以用准随机序列（比如本章谈过的 Halton 或 Hammersley 序列）。使用低偏差序列时，我们称之为<b>准蒙特卡罗光线追踪</b>（与之相对，使用随机或分层采样的叫蒙特卡罗光线追踪）。注意，计算像素的辐射亮度只是可以用低偏差序列的蒙特卡罗积分的一个例子。Halton、Hammersley 或任何其他这类序列也常用于着色（这会在后面几门课里解释）。</p><h2>分层采样与准蒙特卡罗的优缺点</h2><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/structuredaliasing.png?" alt=""><figcaption><b>图 8：</b>某些低偏差序列的周期结构有时会显露出来。(c) Leonhard Grünschloß</figcaption></figure><p>QMC 的收敛速度比随机采样快，从渲染的角度说这无疑是它的主要优势（为什么，我们会在本课未来的一个修订版里从数学上解释）。用低偏差序列生成的图像，一般比用随机采样生成的图像噪声更少、视觉质量更好（在样本数相同的情况下）。用分层采样时，并不总能对任意 N 值高效地生成样本（比如试着用分层采样生成 7 个二维样本），而用低偏差序列则不成问题。此外注意，如果你想改变 N 的值，可以这么做而不丢掉之前已计算的样本。N 可以增大，而先前计算得到的所有样本仍然可用。这在自适应算法里特别有用——这类算法通常从一个很小的样本数出发，在画面方差高的区域边跑边生成更多样本。</p><p>缺点：如本章前面提到的，QMC 可能受走样之苦；而且因为低偏差序列具有周期结构，它们可能生成可辨认的图案（图 8）。这特别难以避免，因为序列可能从一个像素到另一个像素被复用。要摆脱这种结构可能需要额外的工作（比如旋转样本等等）。这可能使渲染器里 LDS 的稳健实现比分层采样（实现简单）更复杂。自 2000 年代以来，QMC 一直是个相当活跃的研究领域。虽然低偏差序列现在被认为是其他采样方法的可行替代，但图形学界仍有一场活跃的争论：它们是否优于其他方法、是否值得这番折腾。比如 A. Kensler 最近发表了一门生成分层样本的新技术，可与低偏差准蒙特卡罗序列相竞争（见下面的参考文献）。</p><p>一般来说，生成（好的）随机序列是一门复杂的技艺，研究它们的性质涉及复杂的技术（比如傅里叶分析）。一章只能对这些方法给出非常表面的概览。</p><h2>最后的话</h2><p>我们对蒙特卡罗方法的介绍到此结束。希望这几门课让你对蒙特卡罗方法是什么、如何工作、为什么工作有了不错的理解。虽然在过去几门课里我们几次谈到蒙特卡罗光线追踪，你可能还是想看看我们学到的一切如何应用到渲染、特别是光线追踪上。这就是我们下一门课的主题。</p><h2>参考文献</h2><p><i>Stochastic Sampling in Computer Graphics</i>, Robert L. Cook, Siggraph 1986.</p><p><i>Efficient Multidimensional Sampling</i>, T. Kollig, and A. Keller, 2002.</p><p><i>Correlated Multi-Jittered Sampling</i>, A. Kensler, 2013.</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/introduction-quasi-monte-carlo.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/introduction-quasi-monte-carlo.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

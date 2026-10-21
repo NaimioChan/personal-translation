@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>透视正确插值与顶点属性 - Scratchapixel 中文译本</title>
+<meta name="description" content="光栅化 · 透视正确插值与顶点属性（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>透视正确插值与顶点属性</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="overview-rasterization-algorithm.html">光栅化算法概览</a></li>
+<li><a href="projection-stage.html">投影阶段</a></li>
+<li><a href="rasterization-stage.html">光栅化阶段</a></li>
+<li><a href="visibility-problem-depth-buffer-depth-interpolation.html">可见性问题、深度缓冲算法与深度插值</a></li>
+<li><a style="font-weight:700" href="perspective-correct-interpolation-vertex-attributes.html">透视正确插值与顶点属性</a></li>
+<li><a href="rasterization-practical-implementation.html">光栅化：一个实际实现</a></li>
+</ol>
+</div>
+<h2>透视正确插值与顶点属性</h2><p><b>阅读时间：18 分钟。</b></p><h2>插值顶点属性</h2><p>如上一章所述，重心坐标可以用来插值三角形顶点位置上的任何变量。到目前为止，我们用它来求二维三角形上投影到像素中心的那一点的 z 坐标。不过正如刚刚说的，原则上我们也可以用它插值任何其他变量——三角形顶点本身、颜色、法线，或者纹理映射必不可少的纹理坐标。</p><p>要稍后对该点着色，就需要算出投影到像素中心的三维三角形上那一点的颜色、法线或纹理坐标；着色一般就是确定它的颜色（以及不透明度）。这个颜色由它固有的基色，以及该点由法线定义的朝向共同决定，朝向决定了它把环境中多少光反射回相机。注意，该点的颜色可以是一个常量颜色，也可以来自纹理，后者就要求能正确地插值纹理坐标。这个过程在纹理那门课里讲。附着在三角形顶点上的数据，一般称为<b>图元变量</b>或<b>顶点属性</b>。</p><p>顶点着色是一种只在三角形顶点位置做着色的技术。比如可以在三角形顶点位置计算光照结果、把它们随顶点一起存起来，然后在着色阶段对这些计算结果做插值，求出三角形表面上任意一点的值。这种方法现在用得不多，但在 1990 年代和 2000 年代初的电子游戏里相当流行，因为它需要的计算更少，从而节省算力来实现实时性能。</p><p>然而这里有个问题，本章正是为此而写。问题在于：和插值点的 z 坐标一样，只用点的重心坐标去插值原始的图元变量同样行不通。这个问题与上一章描述的问题非常相似，但别担心——我们马上会详细解释，并且照惯例给出解决方案。这个问题的解法叫作<b>透视正确插值</b>，也就是现在要研究的内容。有人可能会问，这个话题与着色关系更近，为什么放在这里讲而不放到着色那一节。顶点属性确实与着色关系更直接，但关于透视正确插值的讨论与光栅化的关联尤为紧密。</p><h2>透视正确的顶点属性插值</h2><p>如你所知，我们把原始顶点的 z 坐标（来自相机空间）存进投影后顶点（屏幕空间）的 z 坐标里。这一步对计算投影后三角形表面上各点的深度至关重要，而深度正是解决可见性问题所必需的。深度计算的做法是用重心坐标对三角形顶点 z 坐标的倒数做线性插值。这种插值技术同样可以用到三角形顶点上定义的任何变量，跟我们存原始 z 坐标的做法类似。通常三角形顶点上会带颜色。另外两个常见的顶点属性是纹理坐标与法线。纹理坐标是用来做纹理映射的二维坐标，法线表示表面的朝向，二者分别对纹理映射与着色不可或缺。本课程专门以颜色与纹理坐标为例来说明透视正确插值的概念，但同样的技术适用于任何顶点属性（或图元变量）。</p><figure><img src="https://scratchapixel.com/images/rasterization/persp-correct-interpo2.png?" alt=""><figcaption><b>图 1：</b>用 P 的重心坐标对三角形顶点处的颜色做插值，求出 Cp 的值。</figcaption></figure><p>正如光栅化那一章所讨论的，可以为三角形顶点指定颜色或其他属性。这些属性可以用重心坐标在三角形表面上插值，从而确定它们在三角形内任意一点的值。本质上，<b>光栅化过程中必须在三角形表面上插值顶点属性</b>。过程如下：</p><ul><li><p>按需要给三角形的顶点指定多个顶点属性。这些属性定义在相机空间中的原始三维三角形上。为方便说明，我们指定两个顶点属性：一个颜色，一个纹理坐标。</p></li><li><p>把三角形投影到屏幕上，将三角形顶点从相机空间转换到光栅空间。</p></li><li><p>在屏幕空间中对三角形做光栅化。若某个像素采样落在三角形边界之内，就计算它的重心坐标。</p></li><li><p>用算出的重心坐标对三角形顶点处定义的颜色（或纹理坐标）做插值，公式为：</p><p>$$C_P = \lambda_0 \cdot C_0 + \lambda_1 \cdot C_1 + \lambda_2 \cdot C_2$$</p><p>这里 \(\lambda_0\)、\(\lambda_1\)、\(\lambda_2\) 是像素的重心坐标，\(C_0\)、\(C_1\)、\(C_2\) 是三角形顶点处的颜色。得到的 \(C_P\) 随后写入帧缓冲中当前像素。同样，这个方法也能计算像素所重叠的三角形上那一点的纹理坐标：</p><p>$$ST_P = \lambda_0 \cdot ST_0 + \lambda_1 \cdot ST_1 + \lambda_2 \cdot ST_2$$</p><p>这些坐标用于纹理映射（想进一步了解纹理坐标与纹理映射，见本节中讲<a href="introduction-to-texturing.html">纹理映射</a>的课程）。</p></li></ul><figure><img src="https://scratchapixel.com/images/rasterization/persp-correct-interpo1.png?" alt=""><figcaption><b>图 2：</b>在三维空间中，点 P 位于四边形的中央，但在透视图里这个点看起来并不在几何体的中央。在绿色三角形的边上，点 P 在三维空间中恰好位于 V1 与 V2 的正中。然而在下图中可以清楚看到，P 离 V1 比离 V2 更近。</figcaption></figure><p>然而这样插值颜色和纹理坐标都行不通。要理解为什么，我们来看看三维四边形中央的一个点会发生什么。如图 2 上方视图所示，我们有一个四边形，点 \(P\) 显然在四边形中央（即 \(P\) 位于四边形对角线的交点上）。可是当我们从另一个视点观察这个四边形时就会发现，取决于四边形相对相机的朝向，\(P\) 看起来不再位于四边形的中心。这个偏差来自透视投影——前面说过，透视投影保持直线，但不保持距离。</p><p>要记住，重心坐标是在屏幕空间中计算的。假设这个四边形由两个三角形组成。在三维空间中 \(P\) 到 \(V1\) 与 \(V2\) 的距离相等，因此它在三维空间中的重心坐标为 \(\{0, 0.5, 0.5\}\)。但在屏幕空间中，由于 \(P\) 离 \(V1\) 比离 \(V2\) 更近，所以 \(\lambda_1\) 大于 \(\lambda_2\)（\(\lambda_0\) 等于 0）。</p><p>问题就在这里：如果 \(V1\) 是白色、\(V2\) 是黑色，那么 \(P\) 处的颜色应当是 0.5。可如果 \(\lambda_1\) 大于 \(\lambda_2\)，插值出来的值就会大于 0.5。这清楚说明我们的插值技术有问题。假设如图 1 那样，\(\lambda_1\) 与 \(\lambda_2\) 分别是 0.666 和 0.334，对三角形顶点颜色做插值得到：</p><p>$$C_P = \lambda_0 \cdot C_0 + \lambda_1 \cdot C_1 + \lambda_2 \cdot C_2 = 0 \cdot C_0 + 0.666 \cdot 1 + 0.334 \cdot 0 = 0.666.$$</p><p>这给出的 \(P\) 值为 0.666，而不是预期的 0.5。这个问题是不是跟上一章插值顶点 z 坐标时遇到的情形很像？幸运的是，找到正确插值图元变量的办法同样简单。</p><figure><img src="https://scratchapixel.com/images/rasterization/persp-correct-interpo3.png?" alt=""><figcaption><b>图 3：</b>比值 \((Z-Z_0)/(Z_1-Z_0)\) 等于比值 \((C-C_0)/(C_1-C_0)\)。上一章我们已经知道如何计算 \(Z\)。可以用这两个等式解出 \(C\)。</figcaption></figure><h3> 插值顶点属性</h3><p>设想我们有一个三角形，两边上的 z 坐标分别为 \(Z_0\) 与 \(Z_1\)，如图 3 所示。把这两个点连起来，就可以用线性插值求出这条线上任意一点的 z 坐标。同样，我们也可以在两个顶点属性值之间插值，\(C_0\) 与 \(C_1\) 分别定义在三角形上与 \(Z_0\) 和 \(Z_1\) 相同的位置。由于 \(Z\) 与 \(C\) 都是用线性插值算出来的，可以建立下面这个等式（公式 1）：</p><p>$$\frac{Z - Z_0}{Z_1 - Z_0} = \dfrac{C - C_0}{C_1 - C_0}.$$</p><p>回顾上一章（公式 2）：</p><p>$$Z = \dfrac{1}{\dfrac{1}{Z_0}(1-q) + \dfrac{1}{Z_1}q}.$$</p><p>先把 \(Z\) 的表达式（公式 2）代入公式 1 的左边。化简所得式子的窍门，是把公式 2 的分子与分母同乘 \(Z_0Z_1\)，以消掉 \(1/Z_0\) 与 \(1/Z_1\) 两项（别担心，最后我们会把那个 \(Z_0Z_1\) 项去掉）：</p><p>$$
+\begin{align*}
+\dfrac{\dfrac{1}{\dfrac{1}{Z_0}(1-q)+\dfrac{1}{Z_1}q} - Z_0}{Z_1 - Z_0} & = \dfrac{\dfrac{Z_0Z_1}{Z_1(1-q)+Z_0q} - Z_0}{Z_1 - Z_0}\\
+& = \dfrac{\dfrac{Z_0Z_1 - Z_0(Z_1(1-q) + Z_0q)}{Z_1(1-q) + Z_0q}}{Z_1 - Z_0}\\
+& = \dfrac{\dfrac{Z_0Z_1q - Z_0^2q}{Z_1(1-q) + Z_0q}}{Z_1 - Z_0}\\
+& = \dfrac{\dfrac{Z_0q(Z_1 - Z_0)}{Z_1(1-q) + Z_0q}}{Z_1 - Z_0}\\
+& = \dfrac{Z_0q}{Z_1(1-q) + Z_0q}\\
+& = \dfrac{Z_0q}{q(Z_0 - Z_1) + Z_1}.
+\end{align*}
+$$</p><p>现在解出 \(C\)：</p><p>$$
+\dfrac{C - C_0}{C_1 - C_0} = \dfrac{Z_0 q}{q(Z_0 - Z_1) + Z_1}
+$$</p><p>交叉相乘，消去分式：</p><p>$$
+(C - C_0) \cdot \left[q(Z_0 - Z_1) + Z_1\right] = (C_1 - C_0) \cdot Z_0 q
+$$</p><p>现在把两边展开：</p><p>$$
+C \cdot \left[q(Z_0 - Z_1) + Z_1\right] - C_0 \cdot \left[q(Z_0 - Z_1) + Z_1\right] = C_1 \cdot Z_0 q - C_0 \cdot Z_0 q
+$$</p><p>接下来我们要把 \(C\) 单独留在等式一边。于是把所有含 \(C\) 的项移到一边：</p><p>$$
+C \cdot \left[q(Z_0 - Z_1) + Z_1\right] = C_1 \cdot Z_0 q - C_0 \cdot Z_0 q + C_0 \cdot \left[q(Z_0 - Z_1) + Z_1\right]
+$$</p><p>提取公因式并解出 \(C\)：</p><p>$$
+C = \dfrac{C_1 \cdot Z_0 q + C_0 \cdot Z_1 (1 - q)}{q(Z_0 - Z_1) + Z_1}
+$$</p><p>记住我们曾把公式 2 的分子与分母同乘 \(Z_0Z_1\)，所以现在要把它去掉，做法是把分子和分母都乘 \(1/Z_0Z_1\)。分子变成：</p><p>$$
+\dfrac{1}{Z_0 Z_1} \cdot \left(C_1 \cdot Z_0 q + C_0 \cdot Z_1 (1 - q)\right)
+$$</p><p>化简为：</p><p>$$
+\dfrac{C_1 \cdot q}{Z_1} + \dfrac{C_0 \cdot (1 - q)}{Z_0}
+$$</p><p>分母变成：</p><p>$$
+\dfrac{1}{Z_0 Z_1} \cdot \left(q(Z_0 - Z_1) + Z_1\right)
+$$</p><p>展开得到：</p><p>$$
+\dfrac{q}{Z_1} - \dfrac{q}{Z_0} + \dfrac{1}{Z_0}
+$$</p><p>化简后为：</p><p>$$
+\dfrac{1 - q}{Z_0} + \dfrac{q}{Z_1}
+$$</p><p>于是，分子分母同乘 \(\dfrac{1}{Z_0 Z_1}\) 之后，\(C\) 的最终表达式为：</p><p>$$
+C = \dfrac{\dfrac{C_1 \cdot q}{Z_1} + \dfrac{C_0 \cdot (1 - q)}{Z_0}}{\dfrac{1 - q}{Z_0} + \dfrac{q}{Z_1}}
+$$</p><p>记住：</p><p>$$
+Z = \dfrac{1}{\dfrac{1 - q}{Z_0} + \dfrac{q}{Z_1}}
+$$</p><p>因此：</p><p>$$
+C = Z \left[ \dfrac{C_0}{Z_0}(1-q) + \dfrac{C_1}{Z_1}q \right].
+$$</p><p>这就是等式的最终形式，它表明 \(C\) 是如何以透视正确的方式被插值的。</p><p>如果你读过上一章，大概已经猜到了——而且这一点太重要，我们要在这里再说一遍——这就是数学中所说的<b>有理线性插值</b>或<b>双曲插值</b>。它的含义我在上一章已经解释过，这里不再重复，但如果你还没读，强烈建议去读一下。<b>透视正确插值</b>这个说法，就是有理线性插值或双曲插值的一种应用。它不在屏幕空间中直接插值深度、颜色或纹理坐标这类属性，而是先插值属性除以深度的结果（也就是除以 z 坐标的倒数，\( \frac{1}{z} \)）。</p><p>1. <b>插值比值：</b>用相应的重心坐标或插值因子，插值属性值除以深度的结果（例如 \( \frac{C_0}{Z_0} \) 与 \( \frac{C_1}{Z_1} \)）。</p><p>2. <b>把结果乘以 z：</b>求得比值的插值结果后，再乘以所讨论像素的深度（即 z 坐标），得到最终的插值属性值。</p><p>用公式来说，若 \( C_0 \) 与 \( C_1 \) 是两个顶点上的属性值，\( Z_0 \) 与 \( Z_1 \) 是它们对应的深度，则透视正确插值的公式为：</p><p>$$
+C = Z \left[ \frac{C_0}{Z_0}(1 - q) + \frac{C_1}{Z_1}q \right]
+$$</p><p>这里 \( q \) 是插值因子或重心坐标，\( Z \) 是插值得到的深度。</p><p>也就是说，先插值比值，再把结果乘以 z。这样插值就考虑了透视畸变，从而在三维表面上更准确地渲染纹理、颜色与其他属性。</p><p>这个结果对光栅化是根本性的，也正是正确插值顶点属性时需要用到的。</p><p>下面是第三章那段代码的更新版，演示<b>透视正确的顶点属性插值</b>：</p><p>编译时用：</p><ul><li><p>朴素顶点属性插值：<code>c++ -o raster3d raster3d.cpp</code></p></li><li><p>透视正确插值：<code>c++ -o raster3d raster3d.cpp -D PERSP_CORRECT</code></p></li></ul><pre><code>
+// (c) www.scratchapixel.com
+
+#include &amp;ltcstdio&gt;
+#include &amp;ltcstdlib&gt;
+#include &amp;ltfstream&gt;
+
+typedef float Vec2[2];
+typedef float Vec3[3];
+typedef unsigned char Rgb[3];
+
+inline
+float edgeFunction(const Vec3 &amp;a, const Vec3 &amp;b, const Vec3 &amp;c) {
+    return (c[0] - a[0]) * (b[1] - a[1]) - (c[1] - a[1]) * (b[0] - a[0]);
+}
+
+int main(int argc, char **argv) {
+    Vec3 v2 = {-48, -10, 82};
+    Vec3 v1 = {29, -15, 44};
+    Vec3 v0 = {13, 34, 114};
+    Vec3 c2 = {1, 0, 0};
+    Vec3 c1 = {0, 1, 0};
+    Vec3 c0 = {0, 0, 1};
+    
+    const uint32_t w = 512;
+    const uint32_t h = 512;
+    
+    // 把三角形投影到屏幕上
+    v0[0] /= v0[2], v0[1] /= v0[2];
+    v1[0] /= v1[2], v1[1] /= v1[2];
+    v2[0] /= v2[2], v2[1] /= v2[2];
+    // 从屏幕空间转到 NDC，然后光栅化（一步完成）
+    v0[0] = (1 + v0[0]) * 0.5 * w, v0[1] = (1 + v0[1]) * 0.5 * h;
+    v1[0] = (1 + v1[0]) * 0.5 * w, v1[1] = (1 + v1[1]) * 0.5 * h;
+    v2[0] = (1 + v2[0]) * 0.5 * w, v2[1] = (1 + v2[1]) * 0.5 * h;
+
+#ifdef PERSP_CORRECT
+    // 把顶点属性除以顶点的 z 坐标
+    c0[0] /= v0[2], c0[1] /= v0[2], c0[2] /= v0[2];
+    c1[0] /= v1[2], c1[1] /= v1[2], c1[2] /= v1[2];
+    c2[0] /= v2[2], c2[1] /= v2[2], c2[2] /= v2[2];
+    // 预先算好 1/z
+    v0[2] = 1 / v0[2], v1[2] = 1 / v1[2], v2[2] = 1 / v2[2];
+#endif
+    
+    Rgb *framebuffer = new Rgb[w * h];
+    memset(framebuffer, 0, w * h * 3);
+    
+    float area = edgeFunction(v0, v1, v2);
+    
+    for (uint32_t j = 0; j &lt; h; ++j) {
+        for (uint32_t i = 0; i &lt; w; ++i) {
+            Vec3 p = {i + 0.5, h - j + 0.5, 0};
+            float w0 = edgeFunction(v1, v2, p);
+            float w1 = edgeFunction(v2, v0, p);
+            float w2 = edgeFunction(v0, v1, p);
+            if (w0 &gt;= 0 &amp;&amp; w1 &gt;= 0 &amp;&amp; w2 &gt;= 0) {
+                w0 /= area, w1 /= area, w2 /= area;
+                float r = w0 * c0[0] + w1 * c1[0] + w2 * c2[0];
+                float g = w0 * c0[1] + w1 * c1[1] + w2 * c2[1];
+                float b = w0 * c0[2] + w1 * c1[2] + w2 * c2[2];
+#ifdef PERSP_CORRECT
+                float z = 1 / (w0 * v0[2] + w1 * v1[2] + w2 * v2[2]);
+                // 为透视正确插值，把结果乘以 z
+                r *= z, g *= z, b *= z;
+#endif
+                framebuffer[j * w + i][0] = static_cast&amp;ltunsigned char&gt;(r * 255);
+                framebuffer[j * w + i][1] = static_cast&amp;ltunsigned char&gt;(g * 255);
+                framebuffer[j * w + i][2] = static_cast&amp;ltunsigned char&gt;(b * 255);
+            }
+        }
+    }
+    
+    std::ofstream ofs;
+    ofs.open("./raster2d.ppm");
+    ofs &lt;&lt; "P6\n" &lt;&lt; w &lt;&lt; " " &lt;&lt; h &lt;&lt; "\n255\n";
+    ofs.write(reinterpret_cast&amp;ltchar*&gt;(framebuffer), w * h * 3);
+    ofs.close();
+    
+    delete[] framebuffer;
+    
+    return 0;
+}
+</code></pre><p>计算采样点的深度需要用到顶点 z 坐标的倒数。为此，我们在遍历所有像素之前先把这些值预算好。若选择了透视正确插值，顶点属性值会被除以该顶点自己的 z 坐标。下图从左到右依次是：未做透视正确插值算出的图像、做了透视正确插值的图像、z 缓冲的内容（以灰度图显示，越靠近屏幕的物体越亮）。差别虽然细微，但在左图里每种颜色看上去大致占据相同的面积，这是因为颜色是在二维三角形的「空间」里插值的（就好像这个三角形是一个平行于屏幕的平面）。然而看看三角形的顶点（以及深度缓冲）就会发现，这个三角形并不平行于屏幕，而是倾斜了某个角度。由于涂成绿色的那个顶点比其他两个更靠近相机，三角形这一部分占据了屏幕更大的面积，这在中间那张图里可以看出（绿色区域比蓝色或红色区域都大）。中间那张图显示的是正确插值的结果，与用 OpenGL、Vulkan、Metal 或 Direct3D 这类图形 API 得到的效果相当。</p><figure><img src="https://scratchapixel.com/images/rasterization/persp-correct-interpo4.png?" alt=""></figure><p>把正确与错误的透视插值用在纹理映射上，差别就更明显了。下一个例子给三角形顶点指定了纹理坐标作为顶点属性，并用这些坐标在三角形上生成棋盘格图案。带或不带透视正确插值来渲染这个三角形，作为练习留给你。下图展示了结果，它与同一三角形在 Maya 中用同样图案渲染出的图像也吻合。这说明我们的代码按预期工作。与颜色插值类似，所有顶点属性，包括纹理坐标（常记作 ST 坐标），都需要除以该顶点自己的 z 坐标。在代码后面，插值得到的纹理坐标值再乘以 Z。下面是对代码所做的修改：</p><pre><code>
+// (c) www.scratchapixel.com
+
+#include &amp;ltcstdio&gt;
+#include &amp;ltcstdlib&gt;
+#include &amp;ltfstream&gt;
+#include &amp;ltcmath&gt; // 用于 fmod 函数
+
+typedef float Vec2[2];
+typedef float Vec3[3];
+typedef unsigned char Rgb[3];
+
+inline
+float edgeFunction(const Vec3 &amp;a, const Vec3 &amp;b, const Vec3 &amp;c) {
+    return (c[0] - a[0]) * (b[1] - a[1]) - (c[1] - a[1]) * (b[0] - a[0]);
+}
+
+int main(int argc, char **argv) {
+    Vec3 v2 = {-48, -10, 82};
+    Vec3 v1 = {29, -15, 44};
+    Vec3 v0 = {13, 34, 114};
+	...
+    // 纹理坐标
+    Vec2 st2 = {0, 0};
+    Vec2 st1 = {1, 0};
+    Vec2 st0 = {0, 1};
+	...
+#ifdef PERSP_CORRECT
+    // 把顶点属性除以顶点的 z 坐标
+    c0[0] /= v0[2], c0[1] /= v0[2], c0[2] /= v0[2];
+    c1[0] /= v1[2], c1[1] /= v1[2], c1[2] /= v1[2];
+    c2[0] /= v2[2], c2[1] /= v2[2], c2[2] /= v2[2];
+
+    st0[0] /= v0[2], st0[1] /= v0[2];
+    st1[0] /= v1[2], st1[1] /= v1[2];
+    st2[0] /= v2[2], st2[1] /= v2[2];
+
+    // 预先算好 z 的倒数
+    v0[2] = 1 / v0[2], v1[2] = 1 / v1[2], v2[2] = 1 / v2[2];
+#endif
+
+    for (uint32_t j = 0; j &lt; h; ++j) {
+        for (uint32_t i = 0; i &lt; w; ++i) {
+            if (w0 &gt;= 0 &amp;&amp; w1 &gt;= 0 &amp;&amp; w2 &gt;= 0) {
+                float s = w0 * st0[0] + w1 * st1[0] + w2 * st2[0];
+                float t = w0 * st0[1] + w1 * st1[1] + w2 * st2[1];
+#ifdef PERSP_CORRECT
+                // 计算像素所重叠的那个 3D 三角形上该点的深度
+                float z = 1 / (w0 * v0[2] + w1 * v1[2] + w2 * v2[2]);
+                // 为透视正确插值，把插值结果乘以 z
+                s *= z, t *= z;
+#endif
+                // 生成棋盘格图案
+                float pattern = (fmod(s * M, 1.0) &gt; 0.5) ^ (fmod(t * M, 1.0) &lt; 0.5);
+                framebuffer[j * w + i][0] = (unsigned char)(pattern * 255);
+                framebuffer[j * w + i][1] = (unsigned char)(pattern * 255);
+                framebuffer[j * w + i][2] = (unsigned char)(pattern * 255);
+            }
+        }
+    }
+
+    return 0;
+}
+</code></pre><p>这是你应该得到的结果：</p><figure><img src="https://scratchapixel.com/images/rasterization/persp-correct-interpo5.png" alt=""><figcaption><b>图 4：</b>用透视正确插值在三角形上施加棋盘格图案的结果，展示了朴素纹理映射与透视正确纹理映射之间的差别。</figcaption></figure><h2>接下来讲什么？</h2><p>在本课程最后这一章，我们会讨论改进光栅化算法的若干办法。虽然不会具体去实现这些技术，但会解释最终代码如何工作，以及这些改进理论上可以怎样整合进去。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/perspective-correct-interpolation-vertex-attributes.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/perspective-correct-interpolation-vertex-attributes.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

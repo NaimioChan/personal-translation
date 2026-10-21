@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光线的定义 - Scratchapixel 中文译本</title>
+<meta name="description" content="用光线追踪生成相机光线 · 光线的定义（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光线的定义</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="definition-ray.html">光线的定义</a></li>
+<li><a href="generating-camera-rays.html">生成相机光线</a></li>
+<li><a href="standard-coordinate-systems.html">标准坐标系</a></li>
+</ol>
+</div>
+<h2>光线的定义</h2><p><b>阅读时间：10 分钟。</b></p><h2>前置知识</h2><p>从这一课往后，我们要学的大多数技术都会用到<a href="points-vectors-and-normals.html">几何</a>课程里讲过的点、向量、矩阵、相机与三角学。我们还会大量复用<a href="how-pinhole-camera-works-part-1.html">计算 3D 点的像素坐标</a>课程里学到的内容，那门课讲的是顶点与向量可以被变换到哪些不同的坐标系。你还应当熟悉<a href="how-pinhole-camera-works-part-1.html">3D 观察：针孔相机模型</a>课程中讨论的概念。开始读本课之前，请务必先把这些基础打好。</p><h2>本课讲什么？</h2><p>在<a href="ray-tracing-rendering-technique-overview.html">光线追踪</a>的入门课程中，我们已经简略提到过光线追踪如何用来解决可见性问题。回顾一下：在 3D 渲染的语境下，可见表面判定是这样一个过程——确定场景几何体的哪些部分透过相机是可见的。我们可以用光线追踪来计算可见性（这个过程上一课已经解释过）：为图像中的每个像素投射一条光线，寻找这条光线相交的最近物体（如果有的话）。再回顾一下，光线追踪是一种计算光线与表面之间交点的技术。用光线追踪计算可见性，也叫<b>光线投射</b>。</p><blockquote><p>给定欧几里得空间中的一组障碍物，若连接空间中两点的线段不与任何障碍物相交，则这两点被称为互相可见——维基百科上对 [visibility](http://en.wikipedia.org/wiki/Visibility_(geometry)) 的定义。</p></blockquote><p>用光线追踪解决可见性来生成图像，需要对图像中所有像素循环：为每个像素生成一条光线，把这条光线投射进场景，寻找这条光线与场景中任何表面的可能交点。这些光线叫作<b>主光线</b>（也叫相机光线或眼睛光线），因为它们是第一批投射进场景的光线（次级光线用来计算阴影、反射、折射等）。要判断光线是否与某个表面相交，我们需要对场景中的每个物体做一次与该光线的相交测试。一条光线可能命中不止一个表面。可见表面就是交点距离最近的表面。这里的距离，指的是从光线原点到交点的距离（对主光线来说，原点就是相机的位置）。</p><pre><code>
+for (int j = 0; j &lt; height; ++j) { 
+    for (int i = 0; i &lt; width; ++i) { 
+        // 生成主光线（这正是本课的主题）
+        ... 
+        float tnear = INFINITY;  //最近的交点，初始设为 INFINITY 
+        for (int k = 0; k &lt; numObjects; ++k) { 
+             float t = INFINITY;  //与当前物体的交点（如果有） 
+             if objects[k]-&amp;gtintersect(pimaryRay, tnear) &amp;&amp; t &lt; tnear) { 
+                 tnear = t; 
+                 framebuffer= objects[k].color; 
+            } 
+        } 
+    } 
+} 
+</code></pre><p>本课将把光线的概念形式化，更重要的是讲清主光线是如何生成以模拟针孔相机的。一旦理解了主光线如何生成，下一步就是学习几种计算光线与几何体交点的技术。这就是用光线追踪生成 3D 物体图像的最低要求。</p><details open><p>关于光线追踪与透视投影的说明：针孔相机模型是在 CG 中最容易模拟的。与光栅化一样，这也是我们要用于光线追踪的模型。用这个模型形成图像。记住，针孔相机所描述的 3D 到 2D 映射是透视投影。</p></details><p>本章我们会学习一些关于光线的有用内容。下一章我们将研究主光线是如何计算的。</p><h2>定义光线</h2><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/ray.png?" alt=""><figcaption><b>图 1：</b>光线由原点和方向定义。</figcaption></figure><p>正如<a href="light-transport-ray-tracing-whitted.html">上一课</a>所述，</p><blockquote><p>光线追踪是一种用来计算点之间可见性的技术。它就是一种基于光线概念的技术，而光线在数学上（以及在计算机程序中）可以定义为一个点（光线在空间中的原点）和一个方向。于是光线追踪背后的想法，就是寻找数学解，计算这条光线与各类几何体的交点：三角形、二次曲面（我们在后续某一课中会讲）、NURBs 等。光线追踪的全部内容就是这些。</p></blockquote><p>本课（更具体地说，本章）要解释的部分是光线的概念，以及我们如何在理论上和编程中定义它。定义一条光线只需要两个变量：一个点和一个向量。这个点（在程序里我们就简单地把它定义为一个 <code>vec3f</code> 代表光线的原点，向量则代表它的方向。记住，方向一般应当归一化。</p><pre><code>
+// 定义一条光线的最低要求是一个位置和一个方向
+Vec3f orig;  //光线原点 
+Vec3f dir;  //光线方向（已归一化） 
+</code></pre><p>这个点与这个方向结合起来，代表的就是一条半直线。数学上，这条半直线上的任意一点可以定义为：</p><p>$$P = orig + t * dir.$$</p><p>其中 \(t\) 是从原点到半直线上该点的距离。这个变量可以为负也可以为正。如果 \(t\) 为负，光线上的该点就在光线原点的后方；如果 \(t\) 为正，点 P 就在光线原点的「前方」。实践中，使用光线追踪时，我们一般只关心光线与位于原点前方的表面的交点。这意味着只有当 \(t\) 为正时，我们才认为光线与表面之间的交点是有效的。</p><pre><code>
+// 定义光线的原点与方向
+Vec3f orig = ...; 
+Vec3f dir = ...; 
+float t = INFINITY; 
+// 这条光线与该物体相交吗？若找到交点，intersect() 返回 true
+if (object.intersect(orig, dir, t) &amp;&amp; t &gt; 0) { 
+    // 这是一个有效交点，命中点位于光线原点的前方
+    ... 
+} 
+</code></pre><p>从数学角度看，上面的公式叫作<a href="http://en.wikipedia.org/wiki/Parametric_equation" target="_blank" rel="noreferrer noopener">参数方程</a>。这条半直线由一个方程描述，而该方程是参数变量 \(t\)（或称参数）的函数。</p><p>光线与几何体的求交程序总是以参数 \(t\) 的形式返回交点（如果找到了交点）。换句话说，如果找到了交点，求交程序会计算从光线原点到该交点的距离，并把这一信息返回给你。据此，你可以用上面介绍的光线参数方程轻松算出交点在 3D 空间中的位置（即命中点）。</p><pre><code>
+// 定义光线的原点与方向
+Vec3f orig = ...; 
+Vec3f dir = ...; 
+float t = INFINITY;  //到物体的交点距离（如果有）。初始设为一个很大的数 
+// 这条光线与该物体相交吗？若找到交点，intersect() 返回 true
+if (object.intersect(orig, dir, t) &amp;&amp; t &gt; 0) { 
+    // 这是一个有效交点，命中点位于光线原点的前方，用 t 算出命中点
+    Vec3f hitPoint = orig + dir * t; 
+} 
+</code></pre><p>光线就是这些。从编程角度看，光线也可以定义为一个 C++ 类：</p><pre><code>
+class Ray 
+{ 
+public: 
+    Ray(), orig(0), dir(0,0,-1) {} 
+    Ray(const Vec3f &amp;o, const Vec3f &amp;d) : orig(o), dir(d) {} 
+    // 等等
+    ... 
+    Vec3f orig; 
+    Vec3f dir; 
+}; 
+</code></pre><p>有些程序员喜欢给这个类再加几个成员变量，比如 \(t_{min}\) 和 \(t_{max}\) 距离。它们为 \(t\) 定义了一个有效取值范围。换句话说，如果求交程序返回的 \(t\) 不落在 [\(t_{min}\), \(t_{max}\)] 这个范围内，那就视为没有交点（即使 \(t\) 大于 0）。</p><pre><code>
+class Ray 
+{ 
+public: 
+    Ray(), orig(0), dir(0,0,-1), tMin(0.1), tMax(1000) {} 
+    Ray(const Vec3f &amp;o, const Vec3f &amp;d) : orig(o), dir(d), tMin(0.1), tMax(1000) {} 
+    // 等等
+    ... 
+    Vec3f orig; 
+    Vec3f dir; 
+    float tMin, tMax; 
+}; 
+ 
+Ray ray; 
+// 设置光线的方向与原点
+ray.orig = ...; 
+ray.dir = ...; 
+float t = INFINITY; 
+if (object.intersect(ray, t) &amp;&amp; t &gt;= ray.tMin &amp;&amp; t &lt;= r.tMax) { 
+     // 有效交点
+     ... 
+} 
+</code></pre><p>你想给 <code>Ray</code> 类加多少参数都行。用不用 Ray 类也由你决定。这完全取决于个人偏好与需求。程序里怎样表示这份数据没有定规。有些程序员喜欢往 Ray 类里加信息，比如到最近可见表面的距离 \(t\)（在求交程序找到交点时设置）、指向命中物体的指针等。另一些程序员则更喜欢把这些信息与光线变量分开，存进一个叫 <code>Intersection</code> 之类的结构体或类里。同样，除了至少要有光线原点和光线方向，其余一切都可以按你喜欢的方式来做（而且都是可选的）。</p><details open><p>不过编程时有一点可能有用：按类型给光线打上标记，比如主光线、阴影光线、反射光线、折射光线等。它可以用来做统计（比如你想知道渲染某个场景投射了多少条阴影光线），也可以在代码里根据光线类型调用不同的函数。这也是常见做法。</p></details><h2>光线有什么用？</h2><p>光线几乎到处都能用。它们被用来解决可见性问题、收集物体颜色的信息、计算阴影等。本课要学的这种光线叫作<b>相机光线</b>，也叫<b>主光线</b>。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/ray1.png?" alt=""><figcaption><b>图 2：</b>相机光线（主光线）是以相机原点为原点、穿过像素中心的光线。如果主光线命中了场景中的几何体，我们就计算交点处物体的颜色，并把该颜色赋给这条光线穿过的像素。</figcaption></figure><p>对画面中的每个像素，我们都需要构造一条相机光线，把它投射进场景。如果光线与物体相交，我们就计算这些交点处物体的颜色，并把这些颜色赋给对应的像素。简而言之，这就是用光线追踪生成一张 CG 图像的过程。我们可以区分主光线（第一批投射进场景、以相机原点为原点的光线）与<b>次级光线</b>（阴影、漫反射、镜面反射、透射等光线），后者用于着色。次级光线在光线的交点处从主光线派生出来。这些次级光线的方向取决于它们的类型：阴影（朝光源方向投射一条光线）、反射（朝反射方向投射一条光线）、折射（朝折射方向投射一条光线，可用 Snell 定律计算）等。</p><h2>接下来做什么？</h2><p>下一章我们将学习如何为画面中的每个像素初始化相机光线；做到那一步之后，要得到一张图像，我们只需实现一个简单的光线-物体求交程序，再把结果存成某种图像文件格式。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/definition-ray.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/definition-ray.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

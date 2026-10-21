@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>蒙特卡罗模拟 - Scratchapixel 中文译本</title>
+<meta name="description" content="蒙特卡罗方法实践 · 蒙特卡罗模拟（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>蒙特卡罗模拟</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="monte-carlo-methods.html">蒙特卡罗方法</a></li>
+<li><a style="font-weight:700" href="monte-carlo-simulation.html">蒙特卡罗模拟</a></li>
+<li><a href="monte-carlo-integration.html">蒙特卡罗积分</a></li>
+<li><a href="monte-carlo-rendering-practical-example.html">渲染中的蒙特卡罗（一个实际例子）</a></li>
+<li><a href="generating-random-numbers.html">生成随机数</a></li>
+<li><a href="variance-reduction-methods.html">方差缩减方法：重要性采样快速入门</a></li>
+<li><a href="introduction-quasi-monte-carlo.html">方差缩减方法：准蒙特卡罗快速入门</a></li>
+</ol>
+</div>
+<h2>蒙特卡罗模拟</h2><p><b>阅读时间：44 分钟。</b></p><details open><p>本章内容为独家所有并受版权保护。未经 Scrathapixel 许可，请勿复制和/或分发。这些免费内容需要数小时的工作，在网上完全是独一无二的。如果你觉得它有用，请考虑<a href="http://www.scratchapixel.com/donate.php" target="_blank" rel="noreferrer noopener">捐赠</a>。</p></details><h2>模拟中子输运</h2><p>正如本课引言里提到的，蒙特卡罗方法最初是由冯·诺依曼、Metropolis 和 Ulam 这些在 40 年代末从事原子能研究的科学家发展出来的。他们的动机之一（也可以说是他们发现的 MC 方法的一个应用，至于这里究竟是需求催生了发明，恐怕永远无从得知），是模拟中子穿过各种材料的输运过程。这是一段很长的故事；这项研究涉及的数学和物理超出本课范围，这里不作讨论。不过，因为这大概是蒙特卡罗方法第一个也最有趣的应用，我们会给出他们实验的一个版本（一个仿制品），但做了大幅简化（从科学角度看并不特别准确，但仍能给出说得过去的结果），也不真正解释其中某些方程的来源。同样的方法可以用来模拟光（光子）在组织（皮肤）或烟雾中的传播（关于参与介质中光传输的完整介绍，见进阶部分讲体积渲染与次表面散射的课程）。</p><h2>背景</h2><figure><img src="https://scratchapixel.com/images/monte-carlo-methods/MCSimulation1.png?" alt=""><figcaption><b>图 1：</b>模拟中子（或光子）输运的原理很简单。光子在介质中穿行时，可能与该介质中的粒子「碰撞」，并被这些粒子吸收或散射。最终，没有被吸收的光子可能从薄板的任意一侧离开介质。</figcaption></figure><p>我们用来解释 MC 模拟概念的这个程序，基于一些我们不会在本课里解释的方程和数学框架。这些方程涉及光（光子）或中子在组织及其他材料中传播的方式。对这个题目感兴趣的读者，可以在讲次表面散射和<a href="intro-volume-rendering.html">体积渲染</a>的课程里找到解释。如果你看不懂本章用到的数学，不必紧张（不过大部分方程照例都会完整解释）。这不是本章的重点（它们在上面提到的课程里也有解释）。本章的重点是向你展示蒙特卡罗模拟的原理，或者说用随机采样去近似那些极难或根本无法解析求解的方程的结果。不过要理解这个模拟，你需要先了解几件关于光子在组织中传播的基本事实（中子在材料中相互作用的原理与之相同）。这最终也会为你阅读讲体积渲染和次表面散射的课程做好准备。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods/MCSimulation2.png?" alt=""><figcaption><b>图 2：</b>各向同性（所有方向）与各向异性散射。</figcaption></figure><p>当一个光子与某种材料构成的物体（我们假定这个物体有一定厚度）相互作用时，在它穿行的过程中可能发生三件事。如果光子与该材料的某个原子发生相互作用，它要么被<b>吸收</b>（光子的能量传给原子，原子再以热的形式把它还给周围环境），要么被<b>散射</b>（它传播的方向被改变）。也始终存在另一种可能：光子根本不与任何原子相互作用，那就保持同一方向继续前进，直到最终要么与某个原子相互作用，要么从另一侧离开物体。从物体（或层）一侧穿到另一侧的光量称为<b>透射</b>。这些术语的图示见图 1。不过要注意，光子被散射时，它的方向会改变。如果光子被散射到原子周围任意随机的方向上，我们称之为<b>各向同性散射</b>（散射在各个方向上相等——iso 在希腊语里就是相等的意思）。然而有时候，光子只是被偏转到一个以入射方向为中心的锥形方向范围内。这种情况下，我们称之为<b>各向异性散射</b>（光子不是被散射到所有方向，而是被散射到以入射传播方向为中心的一个优选方向子集里）。在各向异性散射的情形下，散射后光子的新方向可以用所谓的相位函数或角函数算出（关于这个函数，见次表面散射或体积渲染的课程）。本章只处理各向同性散射，主要是为了避免代码上的复杂化（因此我们假定光子可以向它所作用的原子周围的任意方向散射）。这两种散射模式的直观表示见图 2。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods/MCSimulation3.png?" alt=""><figcaption><b>图 3：</b>光子穿过一块材料薄板的随机游走。光子可能被反射、被透射（或被吸收）。</figcaption></figure><p>光子在原子间不断弹跳时，确实遵循某种<a href="http://en.wikipedia.org/wiki/Random_walk" target="_blank" rel="noreferrer noopener">随机游走</a>，最终其中一些会从当初进入物体的那一侧离开。从那一侧离开物体的光子，构成了我们所说的<b>漫反射</b>或<b>反射率</b>（即没有被透射到另一侧、而是被反射回来的那部分光）。在文献中它常记作 Rd。不过要注意，这些光子是从同一侧进出物体的，但并不是在表面上的同一点（它们离开时距入射点有一段距离，在图 3 中记为 \(d\)）。换句话说，光在传播。这也正是为什么像皮肤这样的「半透明」材料被激光（或准直光束）照射时，看起来会把光散射到皮肤与激光接触点之外（图 3）。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/scatteringhalo.png?" alt=""></figure><p>而从另一侧（相反的一侧）逃出薄板的光子，则构成我们所说的<b>透射</b>（或<b>透射率</b>），通常用字母 T 表示（图 3）。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods/MCSimulation4.png?" alt=""><figcaption><b>图 4：</b>用 Beer-Lambert 定律方程画出的透射曲线。</figcaption></figure><p>在物理中，可以用两个量来定义一种材料吸收和散射光子的性质。它们就叫<b>吸收系数</b>和<b>散射系数</b>。通常用希腊字母 \(\sigma\)（sigma）表示：\(\sigma_a\) 是吸收系数，\(\sigma_s\) 是散射系数。它们衡量的是光子在单位长度材料内被吸收或被散射的可能性（单位长度可以是毫米、厘米等等）。换句话说，比如吸收系数，表示光子在穿过一块材料时被吸收的可能性有多大。注意这些值可以大于 1。不要把它们与概率混淆，尽管概念非常相似（记住概率永远不会大于 1）。在物理中，光子在穿过一块材料时被吸收或被散射的速率，由一条非常有名的定律——Beer-Lambert 定律——定义。这条定律的方程可以有不同形式。本课中我们使用下面这个公式：</p><p>$$
+\begin{array}{l}
+T & = & e^{-(\sigma_a + \sigma_s)x},\\
+& = & e^{-\sigma_t x}.
+\end{array}
+$$</p><p>其中 \(\sigma_t = \sigma_a + \sigma_s\)。这个 \(\sigma_t\)（读作「sigma t」）称为<b>消光系数</b>。你可以在图 4 中看到这条方程的曲线。如果你对指数函数（\(e\) 这一项）不熟，我们建议你对不同的 \(\sigma_t\) 值画出曲线看看（可以用 Mac 上的 Grapher 或 Linux 上的 GnuPlot）。参数 \(x\) 是光子在薄板中走过的距离。这条方程可以看作从薄板另一侧透过的光子数（或光量）（这也是上面方程里用 T 这个符号的原因）。光看这张图就能看出：距离越大，透射越小，而透射随距离下降的速率呈指数衰减。透射随距离下降的原因是光子在途中被吸收了。所以，它们要逃出另一侧表面所需走过的距离越大，被吸收的可能性自然就越大。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods/MCSimulation5.png?" alt=""><figcaption><b>图 5：</b>光子被吸收或被散射的距离是随机的。</figcaption></figure><p>如果我们把从入射点到薄板内 \(i\) 处（光子在该处被散射或被吸收）的距离记作 \(x_i\)，那么看图 5 就能发现，因为每个光子都有自己的「命运」，这个距离因光子而异：有些光子在进入薄板后不远就被散射，另一些则要走远得多的距离才与原子相互作用。事实上，这个距离——称为<b>自由程长度</b>——是……<b>随机的</b>。这个概念再次出现并不奇怪，因为你现在应该已经意识到，随机变量的概念是本课的核心，也是蒙特卡罗方法的核心。光子在给定距离内被吸收或被散射的概率，可以用下面的方程计算：</p><p>$$p(x) = \sigma_t e^{-\sigma_t x}, \: 0 \lt x \lt \infty.$$</p><p>同样，这是一个指数函数，我们知道它长什么样（图 4）。如果你不明白这些方程从何而来也没关系。你会在讲次表面散射的课程里看到它们的解释。</p><p>不过，你应当已经熟悉概率和概率密度函数的概念，我们在<a href="quick-introduction-to-monte-carlo-methods.html">蒙特卡罗方法的数学基础</a>那门课里已经讲过（在概率论中，<b>概率密度函数</b>或 <b>pdf</b>，是描述这个随机变量取某个给定值的相对可能性的函数）。<b>上面的方程就是这样一个 pdf 的例子</b>。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods/MCSimulation7.png?" alt=""><figcaption><b>图 6：</b>光子在距离 \(x_1\) 处发生散射事件的概率大于在距离 \(x_2\) 处。</figcaption></figure><p>关于这个函数，有一点值得注意：随着距离 \(x\) 增大，概率会下降（实际上收敛到 0）。乍看之下这似乎反直觉，因为你可能会期待这个概率随 \(x\) 增大而增大。确实，如果光子在走过一段距离 x 之后还没被散射或吸收，那么只要它继续在薄板中前进，我们几乎可以肯定它终将在路径更远处的某一点被散射或吸收。所以你很自然会倾向于认为概率随距离增加。但实际上恰恰相反。为什么？如果光子在 \(x\) 大于 \(x_0\) 时被散射或吸收的概率收敛到 0，这条方程只是告诉我们：光子在小于 \(x_0\) 的距离内被散射或吸收的可能性更大。比如看图 6，光子在距离 \(x_1\) 处发生散射事件的概率大于在距离 \(x_2\) 处。换句话说，你几乎可以确定光子在小于 \(x_0\) 的距离内更可能被散射或吸收，因此光子在大于 \(x_0\) 的距离上被散射的概率本身变得非常小。这一点很重要，需要理解并记住。</p><p>最后提一下，光子被吸收的概率是 \(\sigma_a / \sigma_t\)，被散射的概率是 \(\sigma_s / \sigma_t\)。</p><h2>实验原理：来模拟吧！</h2><p>如果我们能用计算机模拟一个光子在材料薄板中穿行的路径，会怎样？想法相当简单。我们要做的只是造一个虚拟光子，一开始把它放在薄板表面，然后模拟它的随机游走，这可以通过执行下面这棵<a href="http://en.wikipedia.org/wiki/Decision_tree" target="_blank" rel="noreferrer noopener">决策树</a>来完成：</p><ul><li><p>第 1 步：计算光子的新位置。从当前位置 \(x\) 沿方向 \(v\) 移动某段距离。</p></li><li><p>第 2 步：光子还在薄板中穿行吗？这很容易检验，只要算出光子的位置，再与薄板的边界比较即可。</p><ul><li><p>如果光子已在薄板边界之外，停止模拟。</p></li><li><p>如果光子仍在薄板中穿行，继续。</p></li></ul></li><li><p>第 3 步：在这个阶段，光子可能被吸收，也可能被散射。计算光子被吸收或被散射的概率（使用吸收系数与散射系数）。</p><ul><li><p>如果光子被吸收，停止模拟（光子消失了）</p></li><li><p>如果光子被散射，更新光子传播的方向（\(v\)），回到第 1 步。</p></li></ul></li></ul><p>下面这棵树的直观表示：</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods/MCSimulation6.png?" alt=""></figure><p>如果我们把这个实验重复几千次，最终就能估计出这块材料薄板反射或透射了多少光。不过上面描述的过程有个主要难点：要确定每次循环迭代时，光子应该前进多远的距离。技术上，这个距离——我们知道它叫自由程长度——应该随机选取，但究竟该取多少？短一点、长一点，这次短、下次长？当然，距离的选择无论怎么随机，总得与材料本身的性质有关，特别是它的散射系数和吸收系数（前面已经讲过了）。确实可以猜到，如果吸收系数和散射系数都很低，那么光子被吸收或反射的可能性也低，因此这种情况下两次散射事件之间的距离应该很长。反过来当然也成立。当这些系数值很高时，光子与原子相互作用的概率就高，那么两次散射事件之间的距离应该很短。这个可能性实际上由我们前面引入的 PDF 方程定义；</p><p>$$P(x) = \sigma_t e^{-\sigma_t x}.$$</p><p>这说明光子与原子相互作用的概率随距离 x 指数下降（其中「这个概率下降得多快」由消光系数控制，而消光系数是吸收系数与散射系数之和）。我们在这个练习里需要做的，是生成 x（光子被散射或被吸收的随机距离），但要让它符合这个 PDF 的概率密度。再回头看图 6：x 取平均自由程附近的值，比取趋近无穷大的值概率更高，因此如果你对 x 采样（即为 x 生成随机值），你得到的 x 中，值在平均自由程附近的也应该比趋近无穷大的多。这就是「基于给定 PDF 采样一个随机数」的含义。</p><p>在<a href="quick-introduction-to-monte-carlo-methods.html">蒙特卡罗方法的数学基础</a>那门课里，我们学过如何用任意给定分布对随机变量 X 采样。我们描述的方法叫作<a href="[sitetree_link id=476]">逆变换采样法</a>。首先，我们要从 PDF 构造 CDF。在我们的情形里，这个 CDF 定义的是光子在小于某个给定值 x 的距离内与原子相互作用的概率：</p><p>$$CDF(x) = Pr(\text{ Interaction Distance } < x).$$</p><p>记住概率只能取 [0,1] 范围内的值。逆采样法背后的想法，是想办法把 CDF 反过来，使 CDF 的输出（概率）成为反函数的输入，而 CDF 的输入（光子被散射处的距离 x）成为反函数的输出：</p><p>$$invCDF(\xi) = x.$$</p><p>把均匀分布的随机数喂给这个反 CDF，我们就能生成具有所需 PDF 的 x 值（这个方法在第 16 课有详细描述）。第 16 课里我们还学到，对某些 PDF，CDF 可以解析地算出，很幸运，指数分布函数就属于这种情况。该 PDF 的反 CDF：</p><p>\(PDF(x) = a e^{-a x}\) 是 \(x = - \dfrac{\ln(\xi)}{a}\)。</p><p>这个公式的推导可以在<a href="quick-introduction-to-monte-carlo-methods.html">蒙特卡罗方法的数学基础</a>那门课里找到。在我们的情形里，\(a\) 等于 \(\sigma_t\)，即消光系数。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/setupMCsim01.png?" alt=""><figcaption><b>图 7：</b>我们做 MC 模拟的装置设定。</figcaption></figure><p>这把我们带到哪里？现在我们已经有了对 x 采样的方法，写 MC 模拟代码所需的一切就齐了。我们实验的条件如下。我们会有一块材料薄板，其厚度 d 已知。我们还知道这种材料的吸收系数和散射系数。所有实验中，我们都假定采用一个笛卡尔坐标系，其中 z 轴向下指，xy 平面位于薄板的上表面内（图 7）。在材料样本中穿行的光子的位置和方向，就在这个坐标系中定义。这个模拟的目标是什么？目标是跟踪一个光子穿过薄板时的路径。一开始，我们假定这个光子的方向垂直于薄板上表面。换句话说，它的初始方向是 (0,0,1)。接着我们进入一个无限循环，直到光子可能离开薄板、或者直到它被吸收，我们才会离开这个循环。</p><pre><code>
+Vec3f P(0,0,0);  //光子在模拟中的初始位置
+Vec3f V(0,0,1);  //初始方向
+while (1) { 
+   if (photon leaves surface) break; 
+   if (photon is absorbed) break; 
+} 
+</code></pre><p>不过，只跟踪一个光子的路径并不真的有意思。我们真正想知道的是：平均有多少光子从顶面反射出去（漫反射）、从底面透射出去，或者被吸收。为了让这个模拟有用，我们会把同样的内层循环对大量光子各跑一遍，统计哪些被吸收、哪些被反射、哪些被透射。</p><pre><code>
+int photon = 10000; 
+int Rd = 0;  //漫反射，从顶面离开薄板的光子数
+int Tt = 0;  //从底面离开薄板的光子数
+int A = 0;  //被吸收的光子数
+for (int i = 0; i &lt; nphotons; ++i) { 
+    Vec3f P(0,0,0);  //光子在模拟中的初始位置
+    Vec3f V(0,0,1);  //初始方向
+    while (1) { 
+        if (photon leaves surface) { 
+            if (photon leaves through top surface) Rd++;  //漫反射
+            else Tt++;  //透射
+            break; 
+        } 
+        ... 
+        if (photon is absorbed) { A++; break; } 
+    } 
+} 
+printf("Rd %f Tt %f Absorption %f\n", Rd / nphotons, Tt / nphotons, A / nphotons; 
+</code></pre><p>因为光子被散射处的距离 x、以及它被散射后遵循的新方向，对每个光子、每次散射事件都不同，所以每个光子的路径都是独一无二的。但平均而言，当光子数趋于一个非常大的数时，漫反射、透射和吸收都会收敛。这就是这个蒙特卡罗模拟的原理与目标：通过模拟大量光子路径并对结果取平均，得到这些值的估计或近似。光子数越多，这个近似可能就越准，当然，模拟时间也随之增加。</p><p>我们要做的第一件事，是在这个循环的每次新迭代中，用指数分布的反 CDF 计算某个距离 x。</p><p>$$x = - \dfrac{\ln(\xi )}{\sigma_t },$$</p><p>其中 \(\epsilon\) 是在 [0,1] 范围内均匀分布的随机数。在 C/C++ 里，我们可以为此调用 drand48()；如果你用 C++11，也可以用更讲究的方案。</p><pre><code>
+float x = -ln(drand48())/sigma_t;  //其中 sigma_t = sigma_a + sigma_s
+</code></pre><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/setupMCsim02.png?" alt=""><figcaption><b>图 8：</b>可以用相似三角形法则求 s。它说的是，两个相似三角形的对应边之比相同。</figcaption></figure><p>接下来，我们用光子的方向和采样得到的 x 值，把光子移到新位置。不过在移动之前，我们需要检查移动后光子不会离开薄板。这很容易做到：算出光子当前位置到薄板上、下表面的距离，再与采样得到的距离 x 比较。如果 x 大于这个距离，光子实际上就会越过薄板边界并离开它。计算这个距离是个简单的几何问题。如图 8 所示，我们要求距离 s。用相似三角形的技术——两个相似三角形的对应边之比相同。于是我们可以写出：</p><p>$${||V|| \over V_z} = \dfrac{s}{P_z}.$$</p><p>因为 V 是归一化向量，其长度等于 1。由此可解出 s：</p><p>$$s = \dfrac{P_z}{V_z}.$$</p><p>我们还得判断 V 是指向上表面还是下表面。如果它指向下表面（即 \(V_z\) 大于 0 时成立），s 的方程略有不同：</p><p>$$s = \dfrac{(d - P_z)}{V_z}.$$</p><pre><code>
+float s = (V.z &gt; 0) ? (d - P.z) / V.z : - P.z / V.z; 
+if (x &gt; s) {  //是的，我们离开薄板了
+    if (P.z &gt; 0) Rd++;  //对漫反射的贡献
+    else Tt++;  //对透射的贡献
+    break;  //不必再跟踪光子的路径，跳出循环
+} 
+</code></pre><p>如果光子从顶面离开薄板，它将对漫反射有贡献。我们可以通过递增一个用于统计从顶面离开薄板的光子数（漫反射）的变量来记录这一点。如果它改为从底面离开薄板，我们也做同样的事，只是这次递增的是用于统计从底面离开薄板的光子数（透射）的变量。最后，如果光子离开了薄板，再继续跟踪它的路径就没有意义了，所以我们可以跳出循环。</p><p>如果光子在下一步没有离开薄板，我们就更新它的位置。</p><pre><code>
+// P 和 V 分别是光子的位置与方向
+P.x = P.x + x * V.x; 
+P.y = P.y + y * V.y; 
+P.z = P.z + z * V.z; 
+</code></pre><p>光子的下一个位置，对应光子与薄板中某个原子的一次相互作用。因此我们要判断：在这次散射事件中，光子是被吸收还是被散射。如果光子被吸收，它就「死了」。这时我们更新统计被吸收光子数的计数器，跳出循环，继续处理下一个光子。判断光子是否被吸收的方法很简单：比较一个均匀分布的随机变量是否小于光子被吸收的概率 \(\sigma_a / \sigma_t\)。</p><pre><code>
+if (drand48() &lt; sigma_a / sigma_t) { 
+    absorption++; 
+    break; 
+} 
+</code></pre><p>不过，大多数 MC 模拟解决这个问题用的是另一种做法。事实上，一个一个地模拟光子相当繁琐。我们可以改为认为我们在跟踪一「包」光子，它们走的是同一条路径。这些光子在介质中穿行时，其中一部分被吸收。我们记录有多少光子被吸收的办法，是给这包光子赋一个权重。这个权重初始设为 1。光子被吸收的概率（\(\sigma_a / \sigma_t\)）也可以看作——比如 100 个光子在一次与原子相互作用中被吸收的比例（如果你愿意，也可以看成百分比）。因此，在每次散射事件中，我们要做的就是按这个比例减小这包光子的权重。</p><pre><code>
+int photons = 10000; 
+... 
+float absorption = 0; 
+for (int i = 0; i &lt; nphotons; ++i) { 
+    float w = 1;  //把权重设为 1
+    Vec3f P(0, 0, 0); 
+    Vec3f V(0, 0, 1); 
+    while (1) { 
+        ... 
+        float dw = sigma_a / sigma_t; 
+        absorption += dw; 
+        w -= dw; 
+        if (w &lt;= 0) { 
+            break; 
+        } 
+    } 
+} 
+</code></pre><p>不过从代码可以看出，我们改变了计算吸收的方式。因为我们不再逐个统计光子，而是改为记录这包光子中被吸收的那部分。当权重小于或等于 0 时，我们就可以跳出循环。不过这里同样常用一门叫作<b>俄罗斯轮盘赌</b>的技术。这门技术在数学上做了什么，会在讲光传输的课程里解释。其思路是：当这包光子的权重变得非常小（阈值可以自己设）时，我们可以随机地决定是把它整个杀掉，还是让它继续穿过薄板。不过因为这个测试改变了这包光子的「命运」，如果它通过了测试，我们就需要相应地调整它的权重。在用蒙特卡罗方法求值/近似积分时，你经常会用到俄罗斯轮盘赌这门技术（例如见讲体积渲染与光线步进的课程）。</p><pre><code>
+int photons = 10000; 
+... 
+int m = 5;  //这包光子被吸收的机会是 6 分之 1
+for (int i = 0; i &lt; nphotons; ++i) { 
+    float w = 1;  //把权重设为 1
+    Vec3f P(0, 0, 0); 
+    Vec3f V(0, 0, 1); 
+    while (1) { 
+        ... 
+        float dw = sigma_a / sigma_t; 
+        absorption += dw; 
+        w -= dw; 
+        if (w &lt; 0.001) {  //权重很小时做俄罗斯轮盘赌
+            if (drand48() &lt; 1.0 / m) { 
+                break;  //我们杀掉这包光子
+            } 
+            else 
+                w *= m;  //调整权重
+        } 
+    } 
+} 
+</code></pre><p>从这段代码可以看到，这包光子的命运由变量 \(m\) 决定。你可以把它看成一把枪的弹巢能装多少发子弹。假定枪里只有一个弹膛装有子弹，那么这个测试要做的就是判断你会不会被这颗子弹打死。如果 \(m\) 是枪的转轮中弹膛的总数，那么这包光子被打死的概率就是 1 除以 m。如果你不明白为什么这包光子通过测试后权重要乘以 \(m\)，我们建议你去读讲光传输的课程。不过简单解释一下，可以这样理解：俄罗斯轮盘赌会产生「提前」杀死一些光包的效果。实际上这引入了某种偏差，因为使用俄罗斯轮盘赌改变了光包的命运，从而改变了模拟的潜在结果（与不使用俄罗斯轮盘赌测试的无偏版本相比）。因此我们需要补偿这些光包「提前」消失，办法是给存活下来的光包更长的寿命（把权重乘以 m 即可）。换句话说，我们按光包被杀死的概率成比例地延长存活者的寿命，以此补偿被提前杀掉的光包。这个过程使模拟保持<b>无偏</b>。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/setupMCsim03.png?" alt=""><figcaption><b>图 9：</b>光子可能被散射的锥形范围形状，由 H-G 散射相位函数的参数 g 控制。对 H-G 函数采样返回的是落在这些锥形范围内的某个角的余弦（\(\cos(\theta)\)）。角 \(\phi\) 只是在 [0,\(2\pi\)] 边界内随机选取。</figcaption></figure><p>最后，如果光子或这包光子没被杀掉，它就改为被散射。从代码角度看，这意味着我们要为这包光子计算一个新方向（更新向量 V）。这部分代码从来都不简单，因为正如本章引言里提到的，构成薄板的材料可能是各向同性的（光子会向所有可能方向散射），也可能是各向异性的（光子<b>「主要」</b>散射在一个以传播方向为中心的锥形方向范围内）。新方向可以通过对所谓的相位函数采样算出。计算机图形学中最流行的相位函数之一叫作 Henyey-Greenstein 散射相位函数。关于这个题目的详细解释，见<a href="intro-volume-rendering.html">体积渲染</a>那门课。这个函数只接受一个参数，通常记作 g。当 g 等于 1 时，光子沿入射方向散射。值为 0 表示介质是各向同性的。介于两者之间的值表示光子主要散射在以传播方向为中心的锥形方向范围内（见图 2 与图 9）。事实上，相位函数表明光子也可以被散射到以入射反方向为中心的一个锥形方向范围内。所以光子实际上既向前散射也向后散射，只是前向散射与后向散射的量取决于参数 g。当 g 大于 0 时，前向散射占主导；当 g 小于 0 时，后向散射占主导（见图 9）。散射函数返回的是偏转角 \(\theta\) 的余弦（见图 9）。要对 Henyey-Greenstein 函数采样，我们使用下面的公式（公式的推导见下面的注释框）：</p><p>$$
+\begin{cases}
+\dfrac{1}{2g} \left[ 1 + g^2 - \left(\dfrac{1-g^2}{1-g+2g\xi}\right)^2\right]&\text{ if }g\ne 0 \\
+1-2\xi&\text{ if }g= 0
+\end{cases},
+$$</p><p>其中，如往常一样，\(\xi\) 是 [0,1] 范围内均匀分布的随机数。</p><details open><p>Henyey-Greenstein 散射相位函数是一个概率密度函数。它返回光子在给定偏转角 \(\theta\) 下被散射的概率。这个函数的公式是：</p><p>$$p(\theta) = \dfrac{1}{4 \pi} \dfrac{1 - g^2}{(1 + g^2 - 2g \cos(\theta))^{3/2}}.$$</p><p>与所有 PDF 一样，这个函数的积分为 1。你需要对 \(4\pi\) 弧度积分：</p><p>$$\int_0^{2\pi}  \left\{ \int_0^\pi p(\theta) sin(\theta) d \theta \right\} d \phi = 1.$$</p><p>这个结果的推导可以在讲体积渲染的课程里找到。我们从《蒙特卡罗方法的数学基础》那门课知道，要对一个 PDF 采样，需要算出它的 CDF 再求反。我们可以把 H-G 函数写得更简单，用希腊字母 \(\mu\) 替代 \(\cos(\theta)\)：</p><p>$$p(\mu) = \dfrac{1}{2} \dfrac{1 - g^2}{(1 + g^2 - 2g \mu)^{3/2}},$$</p><p>然后：</p><p>$$\int_{-1}^1 p(\mu) d\mu = 1.$$</p><p>可以检验函数 \(p(\mu)\) 在某些 \(\mu\) 值下的结果。例如当 \(\scriptsize\mu = -1\)（或当 \(\theta = 0\)）以及 \(\mu = 1\)（\(\theta = \pi\)）时。</p><p>记住，PDF 的 CDF 返回的是随机变量 X 取小于某个可能结果的值的概率。想想掷骰子的例子：CDF(Pr &lt; 4) 返回的是掷一次骰子得到小于或等于 4 的值的概率（对骰子来说就是 4/6）。我们这个 H-G 的 CDF 需要返回任意角小于或等于比如说 \(\mu'\) 的概率。</p><p>$$\text{CDF}(\text{ Pr } < \mu') = \dfrac{1}{2} \int_{-1}^{\mu'} {\dfrac{(1 - g^2)d\mu}{(1 + g^2 - 2g \mu)^{3/2}}}.$$</p><p>要解决这个问题，我们需要在 [-1,\(\mu'\)] 上积分，为此我们会用到第二微积分基本定理，它在《着色的数学》那一章里介绍过 [link]。快速回顾一下：</p><p>$$\int_a^b f(x) dx = F(b) - F(a),$$</p><p>其中 F(x) 是 f(x) 的原函数。现在我们要做的，是求积分号右边那个函数的原函数。为了看懂推导，记住根据幂法则 \(x^n\) 的导数是 \(nx^{n-1}\)，还有 \((c + 2ax)^n\) 的导数是 \(2an(c + 2ax)^{n-1}\)（显然这里的数字 2 可以是任何别的值，c 是常数，并且要注意 2ax 前面的符号，它可以是负的，我们这个函数里正是这种情况）。还要记住，任何这样的表达式：</p><p>$$\dfrac{1}{x^{1/2}}$$</p><p>都可以写成 \(x^{-1/2}.\)。有了这个，我们就可以把：</p><p>$$\dfrac{1}{ (1 + g^2 - 2g \mu )^{3/2}},$$</p><p>改写为：</p><p>$$(1 + g^2 - 2g\mu)^{-3/2}.$$</p><p>为了求这个函数的原函数，我们会用幂法则。如果导数表达式的指数是 3/2，按幂法则，它是按 n - 1 = -3/2 算出来的，因此原函数的指数是 n = -3/2 + 1 = -1/2。比如若要求 \((1+g^2-2gx)^{-1/2}\) 的导数，我们会得到：</p><p>$$(-2g)( -\dfrac{1}{2}) (1 + g^2 - 2gx)^{-3/2},$$</p><p>所以如果最终的导数是 \((1 + g^2 - 2gx)^{-3/2}\)，我们的原函数必须是：</p><p>$$\dfrac{1}{g }(1 + g^2 - 2g \mu)^{-1/2}.$$</p><p>现在把这个结果放回分母，我们就得到：</p><p>$$\dfrac{1}{{g (1 + g^2 - 2g \mu)}^{1/2}}.$$</p><p>我们最终的原函数是：</p><p>$$\dfrac{1}{2} {\dfrac{1 - g^2 }{g \sqrt{1 + g^2 - 2g \mu}}}.$$</p><p>现在可以用第二微积分基本定理积分了：</p><p>$$
+\begin{array}{l} 
+CDF(\mu') & = & \left [ {1 \over 2} {\dfrac{1 - g^2 }{g \sqrt{1 + g^2 - 2g \mu}} } \right]_{-1}^{\mu'}\\ 
+& = & \dfrac{1}{2} {\dfrac{1 - g^2 }{g \sqrt{1 + g^2 - 2g \mu'}} } - \dfrac{1}{2} {\dfrac{1 - g^2 }{g \sqrt{1 + g^2 + 2g}} }\\
+& = & \dfrac{(1 - g^2)}{2g}(  {\dfrac{1}{\sqrt{1 + g^2 - 2g \mu'}} } -  {\dfrac{1}{{1 + g}} }).
+\end{array}
+$$</p><p>再把 CDF 求反，把 \(\mu\) 表达为概率的函数。如果我们写出：</p><p>$$\xi = \dfrac{(1 - g^2)}{2g} (  {\dfrac{1}{\sqrt{1 + g^2 - 2g \mu'} } } -  {\dfrac{1}{{1 + g}}}).$$</p><p>推导：</p><p>$${\dfrac{2g \xi }{ 1 - g^2 } } = \dfrac{1}{\sqrt{(1 + g^2 - 2g \mu}} - \dfrac{1}{1 + g}$$
+$${ 1 \over {\sqrt{1 + g^2 - 2g \mu} } } = {{2 g \xi} \over {1 - g^2}} + { 1 \over { 1 + g }}$$
+$${ 1 \over {\sqrt{1 + g^2 - 2g \mu} } } = {{2 g \xi} \over {1 - g^2}} + { (1 - g) \over {( 1 + g)(1 -g) }}$$
+$${ 1 \over {\sqrt{1 + g^2 - 2g \mu} } } = { {2 g \xi} \over {1 - g^2} } + { ( 1 - g) \over { (1 - g)^2 } }$$
+$${ 1 \over {\sqrt{1 + g^2 - 2g \mu} } } = {{2 g \xi + (1 - g)} \over {1 - g^2}} $$
+$${ {\sqrt{1 + g^2 - 2g \mu} } } = { {1 - g^2} \over  {2 g \xi + (1 - g)} } $$
+$${ {{1 + g^2 - 2g \mu} } } = \left( { {1 - g^2} \over  {2 g \xi + (1 - g)} } \right)^2 $$
+$$ \mu = {{1} \over { 2g}} \left( 1 + g^2 -\left( { {1 - g^2} \over  {2 g \xi + (1 - g)} } \right)^2\right).$$</p><p>于是得到：</p><p>$$\mu = \frac{1}{2g} \left[ 1 + g^2 - \left(\frac{1-g^2}{1-g+2g\xi}\right)^2\right],$$</p><p>这就是我们将用来对 \(\cos(\theta)\) 采样的函数。</p></details><p>现在我们知道如何对偏转角（\(\cos\theta\)）采样了，还需要一个公式来旋转光子的入射方向。记住，光子需要在 \(\theta\) 和 \(\phi\) 两个方向上都旋转（见图 9）。新方向向量各坐标的公式如下：</p><p>$$
+\begin{align}
+\mu'_x & = \mu_x \cos\theta + \frac{\sin\theta(\mu_x \mu_z \cos\phi - \mu_y \sin\phi)}{\sqrt{1-\mu_z^2}}\\
+\mu'_y & = \mu_y \cos\theta + \frac{\sin\theta(\mu_y \mu_z \cos\phi + \mu_x \sin\phi)}{\sqrt{1-\mu_z^2}} \\
+\mu'_z & = \mu_z \cos\theta - \sqrt{1-\mu_z^2}\sin\theta\cos\phi \\
+\end{align}
+$$</p><p>这些公式来自哪里，见下面的注释框。</p><details open><p>把一个向量 v 绕另一个 k 旋转的一种常用方法，叫作 Rodrigues 旋转公式。这个方法在进阶部分的几何课程（第 4 课）里有详细解释。回顾一下，公式如下：</p><p>$$v_{rot} = \cos(\theta) v + \sin(\theta) (k \times v) - k (k . v) (1 - \cos(\theta)).$$</p><p>在我们的情形里——稍后就会说明——我们会构造一个与 v 正交的向量 k。因此如果 \((k.v) = 0\)，公式就简化为 \(v_{rot} = \cos(\theta) v + \sin(\theta) (k \times v)\)。现在的问题是「k 怎么找」。</p><p><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/rotvector.png?" alt=""></p><p>从一个单位向量 \(\mathbf{\hat{x}}\equiv(u_o, v_o, w_o)\) 出发。我们希望算出所有单位向量 \(\mathbf{\hat{y}}\)，使得 \(\mathbf{\hat{x}}\) 与 \(\mathbf{\hat{y}}\) 之间的夹角为 \(\theta \)，即 \(\mathbf{\hat{x}}\cdot\mathbf{\hat{y}}=\cos\theta \)。</p><p>很容易看出，\(\mathbf{\hat{y}}\) 是一个满足 \(\mathbf{\hat{x}}\cdot\mathbf{\hat{y}}=\cos\theta\) 的单位向量，当且仅当 $$\mathbf{\hat{y}} = \cos\theta \mathbf{\hat{x}} + \sin\theta \mathbf{\hat{z}}$$ 对某个与 \(\mathbf{\hat{x}}\) 正交的单位向量 \(\mathbf{\hat{z}}\) 成立。（证明：假设 \(\mathbf{\hat{y}} = \cos\theta \mathbf{\hat{x}} + \sin\theta \mathbf{\hat{z}}\)，其中 \(\mathbf{\hat{x}}\cdot\mathbf{\hat{z}}=0\)。则 \(\mathbf{\hat{x}}\cdot\mathbf{\hat{y}}=\cos\theta\)。反过来，假设 \(\mathbf{\hat{y}}\) 是一个满足 \(\mathbf{\hat{x}}\cdot\mathbf{\hat{y}}=\cos\theta\) 的单位向量。则 $$\mathbf{\hat{y}} = \cos\theta\mathbf{\hat{x}} + \frac{\mathbf{\hat{y}}-\cos\theta\mathbf{\hat{x}}}{\| \mathbf{\hat{y}}-\cos\theta\mathbf{\hat{x}}\|}\| \mathbf{\hat{y}}-\cos\theta\mathbf{\hat{x}}\|.$$ 但 \(\|\mathbf{\hat{y}} - \cos\theta\mathbf{\hat{x}}\| = \sqrt{(\mathbf{\hat{y}} - \cos\theta\mathbf{\hat{x}})\cdot(\mathbf{\hat{y}} - \cos\theta\mathbf{\hat{x}})} = \sqrt{1-2\cos\theta + \cos^2\theta} = \sin\theta\) <img src="https://scratchapixel.com/images/monte-carlo-methods-practice/rotvector2.png?" alt=""> 接着，我们来刻画所有与 \(\mathbf{\hat{x}}\) 正交的单位向量。因为我们在 \(\mathbb{R}^3\) 中，所以与 \(\mathbf{\hat{x}}\) 正交的向量集合是一个二维向量空间（右图中的灰色圆盘）。如果我们找到两个彼此正交、且都与 \(\mathbf{\hat{x}}\) 正交的单位向量 \(\mathbf{\hat{h}_1}\) 和 \(\mathbf{\hat{h}_2}\)，那么每一个与 \(\mathbf{\hat{x}}\) 正交的单位向量都可以写成 $$\alpha \mathbf{\hat{h}_1} + \beta \mathbf{\hat{h}_2}$$，其中 \(\alpha\)、\(\beta\) 是满足 \(\alpha^2+\beta^2=1\) 的某个值。（证明很简单。）下面给出两个与 \(\mathbf{\hat{x}}\equiv(u_o,v_o,w_o)\) 正交、且彼此正交的向量：$$
+\begin{array}{l}
+(-v_o,u_o,0) \\
+(u_o w_o, v_o w_o, -u_o^2 - v_o^2).
+\end{array}
+$$ 本来也可以选很多别的向量。我们是通过考察给出的公式找到这两个向量中的第一个的。第二个我们算作 \(\mathbf{\hat{x}}\) 与第一个向量的叉积。这样就保证了两者相互正交。这两个向量的长度都是 \(\sqrt{u_o^2 + v_o^2} = \sqrt{1-w_o^2}\)。我们可以把每个都归一化，得到：$$
+\begin{array}{l}
+\mathbf{\hat{h}_1} &=& \frac{1}{\sqrt{1-w_o^2}}(-v_o,u_o,0) \\
+\mathbf{\hat{h}_2} &=& \frac{1}{\sqrt{1-w_o^2}}(u_o w_o, v_o w_o, -(1- w_o^2)).
+\end{array}
+$$ 把这一切合起来，我们可以这样计算 \(\mathbf{\hat{y}}\)：$$
+\begin{array}{l}
+\mathbf{\hat{y}}\equiv(u,v,w) &=& \cos\theta\ \ (u_o,v_o,w_o) + \alpha\sin\theta\frac{1}{\sqrt{1-w_o^2}}(-v_o,u_o,0) \\
+ & & + \beta\sin\theta\ \ \frac{1}{\sqrt{1-w_o^2}}(u_o w_o, v_o w_o, -(1-w_o^2)).
+\end{array}
+$$ 现在只需令：$$
+\begin{array}{l}
+\alpha & = & \frac{\xi_2}{\sqrt{\xi_1^2 + \xi_2^2}} \\
+\beta  & = & \frac{\xi_1}{\sqrt{\xi_1^2 + \xi_2^2}} \\
+\cos\theta & =& \mu_{lab} \\
+\sin\theta & = & \sqrt{1-\mu_{lab}^2}
+\end{array}
+$$ 我们就得到了最开始的那些公式。</p></details><p>一旦算出光子的新方向，我们就从循环顶部重新开始，重复这个过程，直到光子被吸收或离开薄板。所有光子的路径模拟完毕后，我们需要把 Rd 和 Tt 两个变量归一化，即把它们的值除以光子总数。这样得到的就是透射光与反射光的百分比。这两个数之和不一定等于 1，因为有一部分光子可能在离开薄板之前就被吸收了。最后，下面是整个光子输运算法的 C++ 实现（完整源码可在本课的下载区获取）：</p><pre><code>
+double getCosTheta(const double &amp;g) // 对 H-G 散射相位函数采样
+{
+    if (g == 0) return 2 * drand48() - 1;
+    double mu = (1 - g * g) / (1 - g + 2 * g * drand48());
+    return (1 + g * g - mu * mu) / (2.0 * g);
+}
+ 
+void spin(double μ_x, double μ_y, double μ_z, const double &amp;g)
+{
+    double costheta = getCosTheta(g);
+    double phi = 2 * M_PI * drand48();
+    double sintheta = sqrt(1.0 - costheta * costheta); // sin(theta)
+    double sinphi = sin(phi);
+    double cosphi = cos(phi);
+    if (mu_z == 1.0) {
+        mu_x = sintheta * cosphi;
+        mu_y = sintheta * sinphi;
+        mu_z = costheta;
+    }
+    else if (mu_z == -1.0) {
+        mu_x = sintheta * cosphi;
+        mu_y = -sintheta * sinphi;
+        mu_z = -costheta;
+    }
+    else {
+        double denom = sqrt(1.0 - mu_z * mu_z);
+        double muzcosphi = mu_z * cosphi;
+        double ux = sintheta * (mu_x * muzcosphi - mu_y * sinphi) / denom + mu_x * costheta;
+        double uy = sintheta * (mu_y * muzcosphi + mu_x * sinphi) / denom + mu_y * costheta;
+        double uz = -denom * sintheta * cosphi + mu_z * costheta;
+        mu_x = ux, mu_y = uy, mu_z = uz;
+    }
+}
+ 
+void MCSimulation()
+{
+    // 计算漫反射与透射
+    uint32_t nphotons = 100000;
+    double scale = 1.0 / nphotons;
+    double sigma_a = 1, sigma_s = 2, sigma_t = sigma_a + sigma_s;
+    double d = 0.1, g = 0.75;
+    static const short m = 10;
+    double Rd = 0, Tt = 0;
+    for (int n = 0; n &lt; nphotons; ++n) {
+        double w = 1;
+        double x = 0, y = 0, z = 0, mux = 0, muy = 0, muz = 1;
+        while (1) {
+            double s = -log(drand48()) / sigma_t;
+            double distToBoundary = 0;
+            if (muz &gt; 0) distToBoundary = (d - z) / muz;
+            else if (muz &lt; 0) distToBoundary = -z / muz;
+            if (s &gt; distToBoundary) {
+                if (muz &gt; 0) Tt += w; else Rd += w;
+                break;
+            }
+            // 移动
+            x += s * mux;
+            y += s * muy;
+            z += s * muz;
+            // 吸收
+            double dw = sigma_a / sigma_t;
+            w -= dw; w = std::min(0.0, w);
+            if (w &lt; 0.001) { // 俄罗斯轮盘赌测试
+                if (drand48() &gt; 1.0 / m) break;
+                else w *= m;
+            }
+            // 散射
+            spin(mux, muy, muz, g);
+        }
+    }
+    printf("Rd %f Tt %f\n", Rd * scale, Tt * scale);
+}
+</code></pre><p>不过，尽管能跑，这段代码对更关心视觉效果的人并不友好。我们可以做的一件事，是把透射的结果可视化。思路是创建一个二维数组，或者说由许多小格组成的二维网格，代表薄板的底面。如果光子从底面离开薄板，我们就由它的 xy 坐标算出它在网格中的位置，并把该光子的权重累加到它落入的那一格（见下图右）。模拟结束时，网格的内容可以保存为图像并显示出来（下图左）。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/setupMCsim04.png?" alt=""></figure><p>从这次光子输运模拟的结果可以看到，光子（或者说这些光子因散射而形成的分布）在入射光束周围的扩散是完全对称的。虽然在这个例子里最终很难看出来，但从扩散光晕中心到边缘的衰减遵循指数衰减。存放光子权重的伪代码大致如下（源码见本课下载区）：</p><pre><code>
+float *records = NULL;
+int weight = 512, height = 512;
+records = new float[width * height];
+memset(record, 0x0, sizeof(float) * width * height);
+void MCSimulation()
+{
+    // 只把光子投在薄板表面上
+    uint32_t nphotons = 100000;
+    double scale = 1.0 / nphotons;
+    double sigma_a = 1, sigma_s = 2, sigma_t = sigma_a + sigma_s;
+    double d = 0.1, slabwidth = 5, g = 0.75;
+    static const short m = 10;
+    uint32_t Rd = 0, Tt = 0;
+    for (int n = 0; n &lt; nphotons; ++n) {
+        ...
+        while (1) {
+            ...
+            if (s &gt; distToBoundary) {
+                int xi = (int)((x + slabwidth / 2) / slabwidth * width);
+                int yi = (int)((y + slabwidth / 2) / slabwidth * width);
+                if (muz &gt; 0 &amp;&amp; xi &gt;= 0 &amp;&amp; x &lt; width &amp;&amp; yi &gt;= 0 &amp;&amp; yi &lt; height) {
+                    records[yi * width + xi] += w;
+                }
+                break;
+            }
+            ...
+        }
+    }
+    // 归一化
+    for (int i = 0; i &lt; width * height * 3; ++i) record[i] *= scale;
+}
+</code></pre><p>取决于你的吸收系数和散射系数，你可能得把网格小格里存的值整体放大或缩小，才能真正看到东西。除了折腾散射系数，你也可以改变薄板的厚度（d），看看会得到什么不同结果。吸收系数和散射系数越高，材料越不半透明（下图左的 gif 动画）。随着薄板厚度增加，你可以看到光束的光变得越来越弥散（下图右的 gif 动画）</p><p>为了复核我们的实验（和方法）是否有效，我们可以对递增的 d（薄板厚度）计算透射，并把结果与 Beer-Lambert 定律的方程（\(T = e^{-\sigma_t x}\)）比较。代码的改动很简单：</p><pre><code>
+void MCSimulation(double d) // d 是薄板的深度
+{
+    ....
+}
+
+for (int i = 0; i &lt;= 20; ++i) {
+    MCSimulation(i / 20. * 2); // 在厚度为 2 的薄板上走 21 步
+}
+</code></pre><p>我们的模拟结果与预测非常接近。两条曲线（蓝色的实验曲线与红色的 Beer-Lambert 定律曲线）几乎完全重合（需要把 g 设为 0）：</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/MCSimulationResult.png?" alt=""></figure><p>以上就完成了我们用蒙特卡罗实现光子输运算法的工作。可以看到，这门技术给出的结果非常好，接近预测。它既展示了这个方法的力量，也展示了它的简单。这个模拟里的蒙特卡罗实际上用在好几个地方。我们对光子发生散射的距离做随机采样，对 H-G 相位函数采样，还把它用于俄罗斯轮盘赌测试。有一点很重要：这个模拟是无偏的（自始至终都是纯随机的），因此从技术上说会收敛到精确解。虽然模拟十万个光子的路径可能还不足以得到无噪声的视觉结果，但你可以把模拟多跑几遍，累加结果并在显示到屏幕前取平均。这个想法与<b>渐进式渲染</b>的方法有些关系，我们会在讲光传输的课程里详细介绍。本课附带的源码实现了这个方法。让程序一直跑，你就能看到模拟随时间不断改善（如下面这组截图所示）。</p><pre><code>
+int npasses = 1;
+double * records = new float[width * width]; // 记录光子
+void MCSimulation() {
+    ...
+    records[i] += w; // 累加结果
+    ...
+}
+
+for (int i = 0; i &lt; width * width; ++i)
+    records[i] = 0;
+
+float *pixels = new float[width * width]; // 图像
+
+while (refine) {
+    MCSimulation();
+    for (int i = 0; i &lt; width * width; ++i) pixels[i] = records[i] / npasses;
+    display(pixels);
+    npasses++
+}
+</code></pre><p>这个观察很重要，因为它说明用蒙特卡罗方法可以做彼此独立的近似，再通过平均这些近似的结果得到更好的结果。某种意义上这类似增加样本数，但它的好处（这在渲染里特别有用）是：如果画面在模拟初期颗粒感很重，但你就是喜欢它，你可以让它随时间自行细化，从而拿到一个更好的版本。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/MCSimulationResult02.png?" alt=""></figure><h2>还有什么？</h2><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/internalreflection.png?" alt=""></figure><p>这个模拟其实相当基础，但它包含了更真实的光子输运模拟程序里用到的所有最基本的构件。我们漏掉的几件事：当光子打到表面时，由于镜面反射，其中一些会立刻被反射回去（如果薄板表面处存在折射率不匹配的边界）。镜面反射率的方程很容易实现。另一件重要的事：当光子打到薄板的内表面时，它们可能不会离开表面，而是由于内反射被困在薄板里（参见附图，显示了在介质表面被反射的激光束）。这发生在入射角小于临界角的时候（我们在讲反射与折射那一章的「光与物质相互作用」课程里讲过临界角的概念）。内反射用 Fresnel 公式计算（你可以在讲 BRDF 的课程里找到它们的解释）。最后，你可能还想模拟光子在多层组织中的输运。更多关于这些特性的细节见参考文献部分。</p><h2>我们学到了什么？</h2><p>本章引入了许多新的想法和概念。首先也是最重要的，本章是通过模拟光/光子在组织中的输运，来展示一个<b>无偏蒙特卡罗模拟</b>的例子（同样的方法也可用于中子）。为了随机采样两次散射事件之间的距离，我们用了<b>逆变换采样法</b>，这是我们在<a href="quick-introduction-to-monte-carlo-methods.html">蒙特卡罗方法的数学基础</a>那门课里学到的。我们展示了它对定义光子在给定距离上被吸收或被散射的概率的 PDF、以及对 H-G 散射相位函数，分别是怎么运作的。我们还做了一些几何推导，为光子算出新方向（并用了 Rodrigues 旋转公式）。我们引入了<b>俄罗斯轮盘赌</b>的概念，并会在讲光传输的课程里更详细地讨论。最后，我们还引入了<b>渐进式渲染</b>的概念。</p><p>关于这个蒙特卡罗模拟，有一点重要的说明：因为光子彼此独立（每个光子走的路径都是唯一的，不依赖其他光子的路径），这段代码<b>高度可并行化</b>（所以非常适合 GPU）。一个例子会在本课未来的修订版里给出。</p><h2>参考文献</h2><p><i>Monte Carlo Modeling of Light Transport in Multi-layered Tissues in Standard C</i>, 1992, Lihong Wang, Ph. D. Steven L. Jacques, Ph. D.</p><p><i>An Assessment of Laser Range Measurement on Marble Surface</i>, 2001, G. Godin, M. Rioux, J-A Beraldin, M. Levoy, L. Cournoyer, F. Blais.</p><h2>练习</h2><p>把漫反射或吸收（作为深度的函数）可视化。</p><p>把代码改到 GPU 上，并行化。</p><p>把代码改成处理颜色。提示：你需要把吸收系数和散射系数声明为三个 float 的数组（分别对应 R、G、B 三个通道之一）。</p><p>用 3D 可视化几个光子的路径。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/monte-carlo-simulation.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/monte-carlo-simulation.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

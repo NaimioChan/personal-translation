@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>存储多边形网格的文件格式：OBJ、FBX、RenderMan、glTF、USD 等 - Scratchapixel 中文译本</title>
+<meta name="description" content="多边形网格简介 · 存储多边形网格的文件格式：OBJ、FBX、RenderMan、glTF、USD 等（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>存储多边形网格的文件格式：OBJ、FBX、RenderMan、glTF、USD 等</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-polygon-mesh-introduction.html">多边形网格简介</a></li>
+<li><a style="font-weight:700" href="polygon-mesh-file-formats.html">存储多边形网格的文件格式：OBJ、FBX、RenderMan、glTF、USD 等</a></li>
+</ol>
+</div>
+<h2>存储多边形网格的文件格式：OBJ、FBX、RenderMan、glTF、USD 等</h2><p><b>阅读时间：17 分钟。</b></p><h2>存储多边形网格</h2><p>说到渲染，你当然总可以在程序源码里直接定义网格，但这样做有很大局限。如果每换一个模型渲染就要重新编译程序，那就太不实用了。为求完整，本章仍会研究这种选项。一般来说，模型数据从不存放在程序代码里，而是存在单独的文件中。大多数 3D 渲染程序以场景文件作为输入，读取该文件的内容（其中包含相机的信息、灯光的信息，以及场景中所含的几何信息），再把这些信息传给最终渲染出该场景图像的引擎。本章我们将看看三种最常见文件格式如何存储多边形网格：RIB（RenderMan）、OBJ 和 FBX。最后，我们会写自己的格式，以便把几何数据导入我们的程序。</p><h2>用 C++ 写</h2><p>如上所述，可以在程序源码里直接定义网格数据，但这不仅不实用，一般也应当避免。它会拖慢编译过程，还可能把程序文件（可执行文件）撑得很大。不过当你写原型、不想应付实现场景文件导入器必然带来的那些麻烦时，这样做倒是方便。</p><p>我们在上一章已经研究过这段代码。你需要做的只是声明一个面下标数组，其长度必须事先已知（第 1、2 行）。你还需要一个顶点下标数组（第 3 行），当然还有顶点数组本身（顶点在 3D 空间中的位置——第 4 行）。注意这两个数组的长度可以直接从面下标数组算出来。顶点下标数组的长度可以由面下标数组各元素求和得到（立方体就是 6 乘 4——第 9 行）。顶点数组的长度可以通过找出面下标数组中的最大值再加一得到（别忘了 C++ 里所有数组都从 0 开始——第 15 行）。</p><pre><code>
+uint32_t numFaces = 6; 
+int faceIndex[numFaces] = {4, 4, 4, 4, 4, 4}; 
+int vertexIndex[24] = {0, 1, 2, 3, 0, 4, 5, 1, 1, 5, 6, 2, 0, 3, 7, 4, 5, 4, 7, 6, 2, 6, 7, 3}; 
+Vec3f verts[8] = {{-1,1,1},{1,1,1},{1,1,-1},{-1,1,-1},{-1,-1,1},{1,-1,1},{1,-1,-1},{-1,-1,-1}}; 
+Vec2f uvs[24] = {{0.375, 0},{0.625, 0} ... {0.125, 0.25}}; 
+// 先计算我们预期有多少个顶点
+uint32_t numVertices = 0; 
+for (int i = 0; i &lt; numFaces; ++i) { 
+    numVertices += faceIndex[i]; 
+} 
+ 
+// 找出顶点数组的最大长度
+uint32_t maxVertexIndex = 0; 
+for (int i = 0; i &lt; numVertices; ++i) { 
+    if (maxVertexIndex &lt; vertexIndex[i]) maxVertexIndex = vertexIndex[i]; 
+} 
+maxVertexIndex += 1; 
+ 
+// 遍历所有面
+int offset = 0; 
+for (int i = 0; i &lt; numFaces; ++i) { 
+    std::cerr &lt;&lt; "Face: " &lt;&lt; i &lt;&lt; " has " &lt;&lt; faceIndex[i] &lt;&lt; " vertices\n"; 
+    for (int j = 0; j &lt; faceIndex[i]; ++j) { 
+         int vertIndex = vertexIndex[offset + j]; 
+         std::cerr &lt;&lt; j &lt;&lt; " vertex index: " &lt;&lt; vertIndex &lt;&lt; " pos: " &lt;&lt; verts[verIndex] &lt;&lt; "\n"; 
+    } 
+    offset += faceIndex[i]; 
+} 
+</code></pre><h2>RIB（RenderMan）</h2><p>RIB 是 RenderMan Interface Bytestream 的缩写（RIB 文件的扩展名是 .rib）。它是 Pixar 用来把场景数据传给他们渲染器的格式（目前生产中使用的渲染器叫 RIS。在它之前是 Prman，许多著名的 Pixar 影片都是用 Prman 制作的：《玩具总动员》《海底总动员》《怪兽电力公司》《机器人总动员》等。RIB 文件可以存成二进制，也可以存成 ASCII。下面是我们的立方体在 RIB 文件里的样子：</p><pre><code>
+PointsPolygons [4 4 4 4 4 4] [0 1 3 2 2 3 5 4 4 5 7 6 6 7 1 0 1 7 5 3 6 0 2 4] "P" [-0.5 -0.5 0.5 0.5 -0.5 0.5 -0.5 0.5 0.5 0.5 0.5 0.5 -0.5 0.5 -0.5 0.5 0.5 -0.5 -0.5 -0.5 -0.5 0.5 -0.5 -0.5] "facevarying normal N" [0 0 1 0 0 1 0 0 1 0 0 1 0 1 0 0 1 0 0 1 0 0 1 0 0 0 -1 0 0 -1 0 0 -1 0 0 -1 0 -1 0 0 -1 0 0 -1 0 0 -1 0 1 0 0 1 0 0 1 0 0 1 0 0 -1 0 0 -1 0 0 -1 0 0 -1 0 0] "facevarying float s" [0.375 0.625 0.625 0.375 0.375 0.625 0.625 0.375 0.375 0.625 0.625 0.375 0.375 0.625 0.625 0.375 0.625 0.875 0.875 0.625 0.125 0.375 0.375 0.125] "facevarying float t" [0 0 0.25 0.25 0.25 0.25 0.5 0.5 0.5 0.5 0.75 0.75 0.75 0.75 1 1 0 0 0.25 0.25 0 0 0.25 0.25] "constant string primtype" ["mesh"]
+</code></pre><p>上一章我们已经讲过这个格式。声明以请求 <code>PointsPolygons</code> 开头。第一个数组是面下标数组，后面跟着顶点下标数组。之后的每个数组定义一个图元变量。第一个「P」是必需的（它包含网格顶点的位置）。其他所有变量（本例中是 N 和 st）都是可选的。</p><figure><img src="https://scratchapixel.com/images/polygon-mesh/mesh-cube-uvs.png?" alt=""><figcaption><b>图 1：</b>立方体的 uv 布局。</figcaption></figure><p>注意在这个格式中，法线数组和纹理坐标数组的长度等于顶点下标数组的长度。数组中法线和纹理坐标的数量等于所有面的顶点数之和。对立方体来说这个数是 24（立方体有 6 个面，每个面 4 个顶点）。不过纹理坐标方面，从图 1 可以看出只需要 14 个坐标（这也取决于你布局立方体 uv 的方式。你也完全可以在 uv 空间里把面拆开，那样就需要 24 个纹理坐标）。声明 24 个纹理坐标而不是 14 个并非最优，不过为网格每个面的每个顶点都声明 uv 坐标，就省去了使用纹理坐标下标数组的必要。想了解纹理下标数组或法线下标数组的例子，见 OBJ 或 FBX 文件格式。</p><h2>OBJ 格式</h2><p><a href="http://en.wikipedia.org/wiki/Wavefront_.obj_file" target="_blank" rel="noreferrer noopener">OBJ 文件格式</a>是一种相当古老但很常见的文件格式，最初由 Wavefront 开发（OBJ 文件的扩展名是 .obj）。与 RIB 接口或 FBX 等其他格式不同，OBJ 只存几何数据（不存灯光、相机等其他场景数据）。这种格式可以存储许多不同的几何类型和几何数据（比如物体的材质信息），不过在本课程的语境下，我们只研究多边形网格在 OBJ 文件中如何定义。下面是我们的立方体在这种格式里的样子：</p><pre><code>
+# This file uses centimeters as units for non-parametric coordinates.
+
+v -0.500000 -0.500000 0.500000
+v 0.500000 -0.500000 0.500000
+v -0.500000 0.500000 0.500000
+v 0.500000 0.500000 0.500000
+v -0.500000 0.500000 -0.500000
+v 0.500000 0.500000 -0.500000
+v -0.500000 -0.500000 -0.500000
+v 0.500000 -0.500000 -0.500000
+vt 0.375000 0.000000
+vt 0.625000 0.000000
+vt 0.375000 0.250000
+vt 0.625000 0.250000
+vt 0.375000 0.500000
+vt 0.625000 0.500000
+vt 0.375000 0.750000
+vt 0.625000 0.750000
+vt 0.375000 1.000000
+vt 0.625000 1.000000
+vt 0.875000 0.000000
+vt 0.875000 0.250000
+vt 0.125000 0.000000
+vt 0.125000 0.250000
+vn 0.000000 0.000000 1.000000
+vn 0.000000 0.000000 1.000000
+vn 0.000000 0.000000 1.000000
+vn 0.000000 0.000000 1.000000
+vn 0.000000 1.000000 0.000000
+vn 0.000000 1.000000 0.000000
+vn 0.000000 1.000000 0.000000
+vn 0.000000 1.000000 0.000000
+vn 0.000000 0.000000 -1.000000
+vn 0.000000 0.000000 -1.000000
+vn 0.000000 0.000000 -1.000000
+vn 0.000000 0.000000 -1.000000
+vn 0.000000 -1.000000 0.000000
+vn 0.000000 -1.000000 0.000000
+vn 0.000000 -1.000000 0.000000
+vn 0.000000 -1.000000 0.000000
+vn 1.000000 0.000000 0.000000
+vn 1.000000 0.000000 0.000000
+vn 1.000000 0.000000 0.000000
+vn 1.000000 0.000000 0.000000
+vn -1.000000 0.000000 0.000000
+vn -1.000000 0.000000 0.000000
+vn -1.000000 0.000000 0.000000
+vn -1.000000 0.000000 0.000000
+f 1/1/1 2/2/2 4/4/3 3/3/4
+f 3/3/5 4/4/6 6/6/7 5/5/8
+f 5/5/9 6/6/10 8/8/11 7/7/12
+f 7/7/13 8/8/14 2/10/15 1/9/16
+f 2/2/17 8/11/18 6/12/19 4/4/20
+f 7/13/21 1/1/22 3/3/23 5/14/24
+</code></pre><p>文件中每一行都以一个字母开头，代表后面那些数字所表示的数据类型。如果行以字母 <code>v</code> 开头，那么后面 3 个数字声明一个顶点的位置。该顶点在网格中的下标由它在文件中的位置决定。如果行以字母 <code>vt</code> 开头，那么后面 2 个数字定义纹理坐标。字母 <code>vn</code> 表示后面 3 个数字定义一个法线。最后，字母 <code>f</code> 定义一个面。它后面至少有 3 组由「/」分隔的三个数字。第一个数字定义顶点在顶点数组（v）中的下标。第二个数字定义顶点纹理坐标在纹理坐标数组（vt）中的下标。第三个数字定义顶点法线在法线数组（vn）中的下标。在 OBJ 文件格式中，数组从 1 开始编号（数组中第一个元素的下标是 1）。在上面的例子里，立方体的第一个面由顶点数组中的第一、第二、第四和第三个顶点定义（<span>1</span>/1/1 <span>2</span>/2/2 <span>4</span>/4/3 <span>3</span>/3/4）。这个面有 4 个顶点。该面的第一个顶点使用纹理坐标数组中的第一个纹理坐标，第二个顶点使用数组中的第二个纹理坐标，第三个顶点使用第四个纹理坐标，依此类推（1/<span>1</span>/1 2/<span>2</span>/2 4/<span>4</span>/3 3/<span>3</span>/4）。法线同理，第一个顶点使用法线数组中的第一个法线，第二个顶点使用第二个法线，第三个顶点使用第三个法线，依此类推（1/1/<span>1</span> 2/2/<span>2</span> 4/4/<span>3</span> 3/3/<span>4</span>）</p><p>注意在这种格式里（FBX 格式也一样），顶点在纹理坐标数组中的下标是面定义的一部分。只有 14 个纹理坐标被导出到 OBJ 文件，但现在立方体的每个顶点都需要定义它在该数组中的下标。法线也是如此。</p><h2>FBX</h2><p>FBX 是 Autodesk 的专有文件格式（FBX 文件的扩展名是 .fbx）。它用于方便地在 Autodesk 开发的应用程序之间（如 Maya 与 3DSMax）传递场景数据。它不是开放文件格式，该格式的规范并没有正式公开，不过如果 FBX 文件以 ASCII 存储，还是可以查看其内容的。FBX 文件格式作为一种 3D 应用程序之间的交换格式相当流行，可以描述构成场景的绝大多数元素（几何、灯光、材质、相机、材质指定、图层等）。下面是我们的立方体在 FBX 里的样子：</p><pre><code>
+; FBX 7.4.0 project file
+; Copyright (C) 1997-2010 Autodesk Inc. and/or its licensors.
+; All rights reserved.
+; ----------------------------------------------------
+
+Objects:  {
+    Geometry: 140208557167936, "Geometry::", "Mesh" {
+        Vertices: *24 {
+               a: -0.5,-0.5,0.5,0.5,-0.5,0.5,-0.5,0.5,0.5,0.5,0.5,0.5,-0.5,0.5,-0.5,0.5,0.5,-0.5,-0.5,-0.5,-0.5,0.5,-0.5,-0.5
+        } 
+        PolygonVertexIndex: *24 {
+            a: 0,1,3,-3,2,3,5,-5,4,5,7,-7,6,7,1,-1,1,7,5,-4,6,0,2,-5
+        } 
+        Edges: *12 {
+            a: 0,2,6,10,3,1,7,5,11,9,15,13
+        } 
+        GeometryVersion: 124
+        LayerElementNormal: 0 {
+            Normals: *72 {
+                a: 0,0,1,0,0,1,0,0,1,0,0,1,0,1,0,0,1,0,0,1,0,0,1,0,0,0,-1,0,0,-1,0,0,-1,0,0,-1,0,-1,0,0,-1,0,0,-1,0,0,-1,0,1,0,0,1,0,0,1,0,0,1,0,0,-1,0,0,-1,0,0,-1,0,0,-1,0,0
+            } 
+            NormalsW: *24 {
+                a: 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+            } 
+        }
+        LayerElementUV: 0 {
+            UV: *28 {
+                a: 0.375,0,0.625,0,0.375,0.25,0.625,0.25,0.375,0.5,0.625,0.5,0.375,0.75,0.625,0.75,0.375,1,0.625,1,0.875,0,0.875,0.25,0.125,0,0.125,0.25
+            } 
+            UVIndex: *24 {
+                a: 0,1,3,2,2,3,5,4,4,5,7,6,6,7,9,8,1,10,11,3,12,0,2,13
+            } 
+        }
+    }
+}
+</code></pre><p>在 FBX 格式里，面下标数组和顶点下标数组合并成了一个数组。看看上面例句中名为 <code>PolygonVertexIndex</code> 的数组，你会注意到它含有一些负值。这些负值用来表示一个面的结束。例如在上面的例子里，第一个面有 4 个顶点（0, 1, 3, -3）。要找出第四个顶点的下标，把该下标值乘以 -1 再减 1 即可。例如：</p><pre><code>
+-3 * - 1 - 1 = 2
+</code></pre><p>因此第一个面由顶点数组中下标为 0、1、3、2 的顶点构成。第二个面同样有 4 个顶点，它们在顶点数组中的下标是 2、3、5、4（-5 * -1 - 1 = 4），依此类推。你需要解析整个 <code>PolygonVertexIndex</code> 数组，才知道网格包含多少个面。</p><h2>那 USD、glTF 这类其他格式呢？</h2><p>glTF 格式在电子游戏行业尤其常见。它是一种轻量格式，规范由 <a href="https://www.khronos.org/gltf/" target="_blank" rel="noreferrer noopener">Khronos Group</a> 制定和维护。我们现在不细讲它，以后会专门写一门课。与 FBX 一样，它也是一种相当多用途、多面手的格式，支持几何、纹理、相机和灯光的存储与定义。它有 ASCII 和二进制两种形式。</p><p>另一些更新的格式正在出现，比如 USD。USD 是 Universal Scene Description 的缩写（这是个很有雄心的目标）。该格式最初由 Pixar 为满足内部生产需求而开发（2013 年之前）。USD 并不是那种附带一套规范、你可以照着读写兼容文件的格式。说到 USD，我们更多是指 Pixar 在 2016 年作为开源项目发布的代码。这些代码提供了框架以及一些辅助工具，让你可以读写 USD 文件，并把 USD 格式中存储的数据暴露给渲染器（通过一个称为 Hydra 的接口）。USD 的代码库相当吓人，USD 也是一种相当复杂的格式。它的主要目标是便于把来自各种来源的数据聚合并通过一种称为合成的机制组合成场景数据。它支持许多特性，比如分层、参数覆盖、类继承、变体、载荷等等。这是个相当复杂、令人吃不消的格式，我们将在以后的课程里写它。在此期间，如果你想开始多了解这个格式，可以访问 <a href="https://graphics.pixar.com/usd" target="_blank" rel="noreferrer noopener">Pixar 的网站</a>。</p><h2>我们自己的格式？</h2><p>我们在 Scratchapixel 上写的许多程序都需要一个多边形网格。因此总得想办法把这个网格载入程序。本章提到过的许多文件格式的问题是它们并不那么容易解析（尤其是 FBX 文件格式），而且我们的目标也不是教如何写场景文件解析器（虽然我们打算以后写一门关于这个主题的课程）。</p><p>那怎么办？我们可以写自己的文件格式。理由很实在：把我们需要的数据以一种易于读取的方式暴露出来。这样读取这些数据所需的代码就能尽量少。我们就把构成网格的数据序列化到一个 ASCII 文件里。文件长这样：</p><pre><code>
+6 4 4 4 4 4 4 0 1 2 3 0 4 5 1 1 5 6 2 0 3 7 4 5 4 7 6 2 6 7 3 -1 1 1 1 1 1 1 1 -1 -1 1 -1 -1 -1 1 1 -1 1 1 -1 -1 -1 -1 -1 0 0 1 0 0 1 0 0 1 0 0 1 0 1 0 0 1 0 0 1 0 0 1 0 0 0 -1 0 0 -1 0 0 -1 0 0 -1 0 -1 0 0 -1 0 0 -1 0 0 -1 0 1 0 0 1 0 0 1 0 0 1 0 0 -1 0 0 -1 0 0 -1 0 0 -1 0 0 0.375 0.625 0.625 0.375 0.375 0.625 0.625 0.375 0.375 0.625 0.625 0.375 0.375 0.625 0.625 0.375 0.625 0.875 0.875 0.625 0.125 0.375 0.375 0.125 0.375 0.625 0.625 0.375 0.375 0.625 0.625 0.375 0.375 0.625 0.625 0.375 0.375 0.625 0.625 0.375 0.625 0.875 0.875 0.625 0.125 0.375 0.375 0.125
+</code></pre><p>第一个数字定义构成网格的面数。第二行和第三行只是一串整数，分别表示面下标数组和顶点下标数组。下一行包含顶点位置数据。再下一行包含法线数据，最后一行包含纹理坐标数据。这种格式的好处是计算机读起来简单。为此，我们使用下面的代码：</p><pre><code>
+void loadGeoFile(const char *file) 
+{ 
+    std::ifstream ifs; 
+    try { 
+        ifs.open(file); 
+        if (ifs.fail()) throw; 
+        std::stringstream ss; 
+        ss &lt;&lt; ifs.rdbuf(); 
+        uint32_t numFaces; 
+        ss &gt;&gt; numFaces; 
+        std::cerr &lt;&lt; "Mesh has " &lt;&lt; numFaces &lt;&lt; " faces " &lt;&lt; std::endl; 
+        std::unique_ptr&amp;ltuint32_t []&gt; faceIndex(new uint32_t[numFaces]); 
+        uint32_t vertsIndexArraySize = 0; 
+        // 读取面下标数组
+        for (uint32_t i = 0; i &lt; numFaces; ++i) { 
+            ss &gt;&gt; faceIndex[i]; 
+            vertsIndexArraySize += faceIndex[i]; 
+            std::cerr &lt;&lt; faceIndex[i] &lt;&lt; std::endl; 
+        } 
+        std::cerr &lt;&lt; "Verts index array size " &lt;&lt; vertsIndexArraySize &lt;&lt; std::endl; 
+        std::unique_ptr&amp;ltuint32_t []&gt; vertsIndex(new uint32_t[vertsIndexArraySize]); 
+        uint32_t vertsArraySize = 0; 
+        // 读取顶点下标数组
+        for (uint32_t i = 0; i &lt; vertsIndexArraySize; ++i) { 
+            ss &gt;&gt; vertsIndex[i]; 
+            if (vertsIndex[i] &gt; vertsArraySize) vertsArraySize = vertsIndex[i]; 
+            std::cerr &lt;&lt; vertsIndex[i] &lt;&lt; std::endl; 
+        } 
+        vertsArraySize += 1; 
+        std::cerr &lt;&lt; "Max verts index " &lt;&lt; vertsArraySize &lt;&lt; std::endl; 
+        // 读取顶点
+        std::unique_ptr&amp;ltVec3f []&gt; verts(new Vec3f[vertsArraySize]); 
+        for (uint32_t i = 0; i &lt; vertsArraySize; ++i) { 
+            ss &gt;&gt; verts[i].x &gt;&gt; verts[i].y &gt;&gt; verts[i].z; 
+            std::cerr &lt;&lt; verts[i] &lt;&lt; std::endl; 
+        } 
+        // 读取法线
+        std::cerr &lt;&lt; "Reading normals\n"; 
+        std::unique_ptr&amp;ltVec3f []&gt; normals(new Vec3f[vertsIndexArraySize]); 
+        for (uint32_t i = 0; i &lt; vertsIndexArraySize; ++i) { 
+            ss &gt;&gt; normals[i].x &gt;&gt; normals[i].y &gt;&gt; normals[i].z; 
+            std::cerr &lt;&lt; normals[i] &lt;&lt; std::endl; 
+        } 
+        // 读取 st 坐标
+        std::cerr &lt;&lt; "Reading texture coordinates\n"; 
+        std::unique_ptr&amp;ltVec2f []&gt; st(new Vec2f[vertsIndexArraySize]); 
+        for (uint32_t i = 0; i &lt; vertsIndexArraySize; ++i) { 
+            ss &gt;&gt; st[i].x &gt;&gt; st[i].y; 
+            std::cerr &lt;&lt; st[i] &lt;&lt; std::endl; 
+        } 
+ 
+        createMesh(numFaces, faceIndex, vertsIndexArraySize, vertsIndex, vertsArraySize, verts, normals, st); 
+    } 
+    catch (...) { 
+        ifs.close(); 
+    } 
+    ifs.close(); 
+}
+</code></pre><p>这种做法也有缺点。例如我们会先把整个文件读进内存（第 8 行）再解析。如果文件很大，光是把文件内容传给引擎之前就可能占用大量内存。理想情况下，你可能只需要在需要时才读取个别数据块。不过我们的简单程序本来也不打算读大几何文件，所以实践中这应该从来不是问题。</p><figure><img src="https://scratchapixel.com/images/polygon-mesh/cow.png?" alt=""></figure><p>我们把这个函数加进了为课程<a href="overview-rasterization-algorithm.html">光栅化：一次实际实现</a>开发的 CPU 光栅化器代码里。在讲光栅化的课程中，我们选择直接在代码里定义几何数据，如前所述这并非理想方案。在这门课里，我们用上面代码的修改版从外部文件读取几何数据（几何已被三角化，因此可以跳过面下标数组，以及我们不用的法线顶点数组）。见课程末尾源码部分的 <code>raster3d.cpp</code> 文件。</p><p>我们打算以后写一门讲解析场景数据文件的课程。在那之前，我们就用这段代码和这个简单的几何文件格式，在程序里载入网格。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-polygon-mesh/polygon-mesh-file-formats.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-polygon-mesh/polygon-mesh-file-formats.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
