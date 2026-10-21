@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>着色器入门 - ofBook</title>
+<meta name="description" content="ofBook 章节「着色器入门」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="introducing-shaders">介绍着色器</h1>
+<p><em>作者：Lucasz Karluk、Joshua Noble、Jordi Puig</em></p>
+<h2 id="introducing">引言</h2>
+<p>本教程分为两部分：第一部分是这份 HTML 文档，第二部分是九个随教程推进的 OF 项目。你可以在 OF 下载包的示例文件夹里找到它们，路径是 <code>examples/shader</code>，也可以<a href="https://github.com/openframeworks/openFrameworks/tree/master/examples/shader">在 github 上</a>查看。阅读时你也应该对照下载的代码，因为很多代码并不在这里，而在那里。你会注意到，所有这些项目文件夹里都有源代码，以及一个 data 文件夹，其中包含 3 种不同的着色器：GL2、GL3 和 GLES2。它们是什么、彼此有何不同，下文会说明。</p>
+<p>你大概在什么地方听说过“着色器”——那些神秘的东西，能让你以极快的速度渲染出漂亮的画面。着色器其实并不神秘，只是刚开始上手时有点棘手，因为它们作用在计算机的另一个部分，而不是你在 openFrameworks 应用里通常打交道的那个部分：你是在图形处理器（Graphics Processing Unit）上工作，而不是在 OF 里常用的中央处理器上。要真正掌握着色器，我们得先让你对 GPU 有个基本了解。那么，废话不多说，开始吧：</p>
+<h3 id="the-graphics-pipeline">图形管线</h3>
+<p>三角形是构建 3D 乃至 2D 场景的根基。我们花了很多时间去掩盖这一点，或者让它们更花哨、更闪耀、更夺目，但事实是：几乎所有东西都是三角形。OpenGL 管线大致沿着这样一条工作路径：你的 OF 应用把 3D 空间中点的数组（我们称之为“顶点”）填入 OpenGL 管理的内存缓冲区，这些“顶点”被投影到屏幕空间，组装成三角形，最后在称为“光栅化”的过程中变成像素大小的片段。最终，每个片段（也就是像素）被赋予一个颜色值并绘制到帧缓冲区，这样你才能真正看到它。说到着色器，“算出顶点在屏幕空间中的位置”这一整套工作就是顶点着色器，而“给每个像素赋予颜色值”这一整套工作就是片段着色器。流程大致如下（请原谅这里的过度简化）</p>
+<figure><img alt="The pipeline" src="https://openframeworks.cc/ofBook/images/shaders/images/shaders_pipeline.png"/>
+<figcaption>管线</figcaption></figure>
+<p>从左上角走到右下角，依次是：</p>
+<ul>
+<li><ol style="list-style-type: decimal">
+<li>我们的 OF 应用把一些顶点位置和纹理坐标传给显卡</li>
+</ol></li>
+<li><ol start="2" style="list-style-type: decimal">
+<li>我们的顶点着色器。</li>
+</ol></li>
+<li><ol start="3" style="list-style-type: decimal">
+<li>图元装配：设置图元，例如三角形、直线和点</li>
+</ol></li>
+<li><ol start="4" style="list-style-type: decimal">
+<li>光栅化：为所有像素插值数据（颜色、纹理坐标、其他 varying 值）</li>
+</ol></li>
+<li><ol start="5" style="list-style-type: decimal">
+<li>我们的片段着色器</li>
+</ol></li>
+<li><ol start="6" style="list-style-type: decimal">
+<li>逐像素操作，比如因 alpha、深度等原因丢弃像素，使该像素不被绘制</li>
+</ol></li>
+<li><ol start="7" style="list-style-type: decimal">
+<li>送往帧缓冲区</li>
+</ol></li>
+<li><ol start="8" style="list-style-type: decimal">
+<li>显示到你的屏幕上</li>
+</ol></li>
+</ul>
+<p>我们说得更具体一些。</p>
+<h3 id="vertices">顶点</h3>
+<p>渲染一个 ofMesh 最初是 CPU 侧的一些顶点缓冲区，它们被填入顶点属性数组，比如颜色、位置或纹理坐标。这些属性作为顶点着色器的输入，也就是你在顶点着色器里处理的东西。当你在 ofMesh 上调用 draw() 时，索引决定了这些顶点稍后如何组装成三角形。</p>
+<h3 id="the-vertex-shader">顶点着色器</h3>
+<p>GPU 首先从顶点数组中读出每个被选中的顶点，让它跑过顶点着色器。顶点着色器是一个程序，它以一组顶点属性为输入，输出一组新的属性——称为 varying 值——送入光栅化器。最起码，顶点着色器要计算顶点在屏幕空间中的投影位置。它也可以生成其他 varying 输出，比如颜色或纹理坐标，供光栅化器在连接该顶点的三角形表面上进行混合。</p>
+<h3 id="the-fragment-shader">片段着色器</h3>
+<p>生成的片段随后经过另一个程序，即片段着色器。片段着色器接收顶点着色器输出、并经光栅化器插值后的 varying 值作为输入，输出颜色和深度值，再被绘制进帧缓冲区。片段着色器常见的操作包括纹理映射和光照。由于片段着色器对每个绘制的像素独立运行，它能够实现最复杂的特效；不过，它也是图形管线中对性能最敏感的部分。</p>
+<h3 id="glsl">GLSL</h3>
+<p>我们刚刚大致带过了顶点着色器和片段着色器，你可能在问：“嗯，听起来不错，可我要怎么用它们？”答案是：Graphics Language Shading Language，也就是 GLSL（两个 “Language” 该给双倍分，对吧？）。GLSL 是一门高级编程语言，在显卡的若干部分上与 C/C++ 相似。用 GLSL 你可以编写短小的程序，也就是着色器，它们在 GPU 上执行。着色语言是一种专门的编程语言，便于直接对应到着色器编程。它看起来和你在 OF 数学类里见到的东西差别不大：float、vec4、mat4 等等。由于 3D 图形面向各种不同的市场，人们开发了多种着色语言，但本教程只关注 GLSL。GLSL 着色器本身是一组字符串，应用通过 OpenGL API 的入口点把它们交给显卡驱动编译。着色器可以在应用运行时即时创建，也可以作为文本文件读入，但必须以文本字符串的形式发送给驱动。</p>
+<p>在 OF 里，我们把着色器加载进 ofShader 对象。我顺便快速过一遍这个对象最重要的几个成员：</p>
+<p><em>load()</em> —— 从两个（或三个）文件加载一个着色器：一个 .vert 文件和一个 .frag 文件。</p>
+<p><em>begin()</em> —— 开始使用你的着色器，改变应用当前进行的所有绘制</p>
+<p><em>end()</em> —— 停止使用你的着色器改变应用当前进行的所有绘制</p>
+<p>你可以用 <em>shader.load()</em> 把着色器程序加载进 ofShader 对象，也可以直接在应用里用字符串，通过 <em>shader.setupShaderFromSource()</em>，把着色器主体用 STRINGIFY 宏作为第二个参数以字符串形式传入，再用 <em>shader.linkProgram()</em> 链接。两种方式都完全没问题。</p>
+<p>在开始惹麻烦之前，有件事我想先说明一下：它一开始可能不太好理解，但知道它挺重要，而一开始不必深究。我们的示例大多使用 OpenGL3，而在 OF 里使用 OpenGL3 需要改动 main.cpp 文件。教程下载包里的 main 文件都长这样：</p>
+
+<pre><code>#include "ofMain.h"
+#include "ofApp.h"
+
+int main( ){
+    ofGLFWWindowSettings settings;
+    settings.setGLVersion(3, 2); // 这里定义我们要使用的 OpenGL 版本
+    settings.setSize(1024, 768);
+    ofCreateWindow(settings);
+    // 这里启动我的应用的运行
+    ofRunApp(new ofApp());
+}</code></pre>
+
+<p>注意到了吗？有一个新的设置对象，让你定义 OpenGL 版本和窗口尺寸。</p>
+<p>OpenGL3 是什么、它会如何改变你对计算机上代码与图形的看法，不是本教程的话题，但如果你想找些这方面的教程<a href="http://www.youtube.com/watch?v=XMgfddy7S7Q">尽管去看</a>。我们正在写一个 OpenGL 教程，但目前还是专注于着色器。OpenGL3 的着色器（令人困惑的是它用的是 GLSL 1.5）顶部有这样一行：</p>
+
+<pre><code>#version 150</code></pre>
+
+<p>OpenGL2 版本的着色器（同样令人困惑，GLSL 1.2）在顶部没有定义（不过你可以写一个 "#version 120"）。大多数显卡支持 OpenGL3，但有些并不支持。如果遇到问题，或者只是好奇，你随时可以运行 examples/gl 里的 glInfoExample，看看你的电脑支持什么。最后是 OpenGL ES 2，Android、iOS 支持的就是它，你可能从 WebGL 中已经熟悉了。它在顶部没有声明，但你会在大多数 GLES 着色器里注意到这样一行：</p>
+
+<pre><code>precision highp float;</code></pre>
+
+<p>这几种着色器之间的差异并不大，但确实存在；不过知道它们有差异，比逐行弄清三者哪里不同更重要。本教程中所有着色器示例都放在同一个文件夹里，所以往后你看会发现在教程里出现的代码越来越少，因为我们不想浪费太多篇幅重复同样的内容，而且读到本章末尾你已经是高手，本来也不需要把这些代码再重复一遍。</p>
+<h2 id="yourfirstshader">你的第一个着色器！</h2>
+<p>我们来看一个非常简单的例子，帮你上手。先看 OF 这一侧：</p>
+<p>在 ofApp.h 文件里加上这一行</p>
+
+<pre><code>ofShader shader;</code></pre>
+
+<p>然后在 opApp.cpp 里加上</p>
+
+<pre><code>
+void ofApp::setup(){
+  # 取决于你的硬件支持的 OpenGL 版本，你需要加载对应的着色器。
+  # 因为我们设定的 OpenGL 版本是 3.2，所以加载面向 OpenGL 3 的着色器
+  shader.load("shadersGL3/shader");
+}
+
+void ofApp::draw(){
+    ofSetColor(255);
+    shader.begin();
+    ofDrawRectangle(0, 0, ofGetWidth(), ofGetHeight());
+    shader.end();
+}</code></pre>
+
+<p>有两件重要的事要注意：看看 <em>setup()</em>，看到那句 <em>shader.load("shadersGL3/shader")</em> 了吗？着色器就是在这里真正被加载的。OF 让我们加载着色器时可以走个小捷径：只要告诉 OF 我们从哪个文件夹加载、两个文件都叫什么名字，就可以开跑了。这两个文件实际上叫 shader.vert（顶点着色器）和 shader.frag（片段着色器），所以一次调用就会把两个都加载进来。如果你的文件是分开命名的，你也可以随时这样写：</p>
+
+<pre><code>shader.load("myCrazyVertFile.vert", "myCrazyFragFile.frag");</code></pre>
+
+<p>随你喜好，跟着心走。上面我们那个版本有点乱，因为它根据你是在 iPhone、老式电脑还是新式电脑上，加载三种不同渲染器中的一种。虽然三种情况我们都有着色器，但接下来主要讲 OpenGL3 的例子，因为它大概是最容易上手的。</p>
+<p>接着注意 <em>draw()</em> 方法里的 <em>shader.begin()</em> 和 <em>shader.end()</em>：我们就是用它们告诉渲染器，希望所有顶点、纹理和片段都经过着色器处理，而不是直接送进帧缓冲区。我们的应用里差不多就这些。</p>
+<p>好，现在说着色器本身。在教程示例里，它们放在应用的 data 文件夹中，和图像、字体以及你想加载进应用的其他数据在一起。你也可以只把着色器当作应用里的一个字符串，但我们觉得把它们放在单独的文件夹里更好，这样你可以在 OF 应用之外编辑它们。</p>
+<p>这是顶点着色器，应用每次 <em>draw()</em> 中第一个被调用的着色器。</p>
+
+<pre><code>
+// 顶点着色器
+
+#version 150
+
+uniform mat4 modelViewProjectionMatrix;
+in vec4 position;
+
+void main(){
+    gl_Position = modelViewProjectionMatrix * position;
+}</code></pre>
+
+<p>接下来是片段着色器，它负责确定应用里每个像素的颜色。</p>
+
+<pre><code>
+// 片段着色器
+
+#version 150
+
+out vec4 outputColor;
+
+void main()
+{
+    // gl_FragCoord 保存该片段相对于窗口的坐标。
+    // 我们用 gl_FragCoord.x 位置来控制红色值。
+    // 我们用 gl_FragCoord.y 位置来控制绿色值。
+    // 请注意，r、g、b、a 的值都在 0 到 1 之间。
+
+    float windowWidth = 1024.0;
+    float windowHeight = 768.0;
+
+    float r = gl_FragCoord.x / windowWidth;
+    float g = gl_FragCoord.y / windowHeight;
+    float b = 1.0;
+    float a = 1.0;
+    outputColor = vec4(r, g, b, a);
+}</code></pre>
+
+<p>运行起来应该像下面这样：</p>
+<figure><img alt="IMG" src="https://openframeworks.cc/ofBook/images/shaders/images/001.png"/>
+<figcaption>IMG</figcaption></figure>
+<p>我们来稍微拆解一下其中一些东西。在片段着色器和顶点着色器的顶部，你会看到很多 “uniform”。uniform 是你的程序传给每个着色器的值，用来设置着色各阶段要用到的额外数据。uniform 变量表现得像常量，至少在你的 OF 应用执行 <em>draw()</em> 方法期间如此。你的 OF 应用把这些变量送进图形管线，让它们在两个着色阶段都可以访问。任何着色器都能访问任何 uniform 变量，只要它像我们示例里两个着色器那样声明了这个变量。不过要注意，这些变量在着色器里是只读的。如果你想更新某个 uniform 的值，可以在 OF 应用里这样调用：</p>
+
+<pre><code>shader.setUniform1f("myUniform", 1.f);</code></pre>
+
+<p>像这样设置一个 uniform：</p>
+
+<pre><code>uniform float myUniform;</code></pre>
+
+<p>你可以设置好几种不同类型的 uniform：vec3、vec4、mat4，甚至结构体。<em>ofShader</em> 里有一个 uniform 已经替你设好了：<em>modelViewProjectionMatrix</em>。</p>
+<h3 id="the-vertex-shader-1">顶点着色器</h3>
+<p><em>modelViewProjectionMatrix</em> —— 这实际上是 OF 传进来的值。你能看出来，因为它前面有 “uniform”。这意味着它传进每个顶点时值完全相同。</p>
+<p>顶点着色器里接下来是另一种变量：<em>in vec4 position</em>。这叫属性（attribute），每个顶点的值都不同。当你需要大量位置各不相同的顶点时，这一点很有用。每个顶点都有自己的位置，意味着你可以在着色器里访问每个顶点的位置，把它用于计算，甚至直接就地修改它。OF 里不同种类的对象有几种不同的属性：位置、颜色或纹理坐标，它们在构建复杂几何体并为其着色时都很方便。</p>
+<p><em>position</em> —— 这也是 OF 传进来的值，但你会注意到它前面有个 “in”，意味着传进来的值对每个顶点都不同，因为每个顶点的位置略有差异。这些叫属性，它们在创建 ofMesh 时就全部建立好了，每个值则在绘制时设置。</p>
+<p><em>gl_Position</em> —— 这是顶点着色器输出的东西。它是一个角色固定的变量：把顶点的位置交给三角形装配。“三角形装配”就是 GPU 把顶点连接起来组成三角形。它的做法是按元素数组指定的顺序取出顶点，把它们分成三个一组，然后生成三角形带或三角形扇。</p>
+<h3 id="the-fragment-shader-1">片段着色器</h3>
+<p><em>gl_FragCoord</em> —— 这是片段在屏幕空间中的位置。你就是这样知道每个像素在屏幕上的位置的。在我们的应用里，我们用它来决定给这个像素上什么颜色：</p>
+
+<pre><code>float r = gl_FragCoord.x / windowWidth;
+float g = gl_FragCoord.y / windowHeight;
+float b = 1.0;
+float a = 1.0;
+outputColor = vec4(r, g, b, a);</code></pre>
+
+<p><em>gl_FragCoord</em> 也可以替换成从顶点着色器传过来的 “out” vec2（我知道，这有点绕）。最后，片段着色器还有一个 “out” 变量</p>
+
+<pre><code>out vec4 outputColor;</code></pre>
+
+<p>标记为 “out” 的东西都会进入着色管线的下一阶段。对片段着色器来说，下一阶段就是把像素放进帧缓冲区，所以片段着色器必须有且只有一个 “out”。顶点着色器可以有多个 “out” 变量，它们只是传给片段着色器；而片段着色器则根据顶点着色器传来的所有值，决定每个像素应该输出什么颜色。</p>
+<p>outputColor —— 我们希望这个像素呈现的颜色，用 RGBA 描述。</p>
+<p>这就是你的第一个着色器。想玩玩的话，试着把 ofApp.cpp 的 <em>draw()</em> 里对 <em>shader.begin()</em> 和 <em>shader.end()</em> 的调用注释掉，看看没有着色器时会是什么样。挺无聊吧？还好有着色器可以消遣。接下来，我们让一些顶点动起来。</p>
+<h2 id="addinguniforms">添加 uniform</h2>
+<p>这部分会更有趣一点：我们要在着色器里挪动东西。先看 ofApp.cpp。我们只是建一个平面，好有一些顺手的顶点可以玩。ofPlanePrimitive 正适合“一堆可以随便玩的顶点”，那就用它：</p>
+
+<pre><code>
+#include "ofApp.h"
+
+void ofApp::setup(){
+
+    float planeScale = 0.75;
+    int planeWidth = ofGetWidth() * planeScale;
+    int planeHeight = ofGetHeight() * planeScale;
+    int planeGridSize = 20;
+    int planeColumns = planeWidth / planeGridSize;
+    int planeRows = planeHeight / planeGridSize;
+
+    plane.set(planeWidth, planeHeight, planeColumns, planeRows, OF_PRIMITIVE_TRIANGLES);
+}</code></pre>
+
+<p>接下来，我们要做一个随鼠标变化的颜色，并用它设置应用的前景颜色。GLSL 可以通过 globalColor 变量访问我们在应用里用 ofColor 设置的颜色。它其实不是 GLSL 的特殊对象，而是由 OF 创建并更新的，就像我们用来确定 3D 世界如何布局的 modelViewMatrix mat4 一样。</p>
+
+<pre><code>
+void ofApp::draw(){
+
+    float percentX = mouseX / (float)ofGetWidth();
+    percentX = ofClamp(percentX, 0, 1);
+
+    // 鼠标/触摸的 X 位置改变平面的颜色。
+    // 请看一下 frag 着色器内部，
+    // 我们用的是 OF 每次调用 ofSetColor() 时传进着色器的 globalColor 值。
+    ofColor colorLeft = ofColor::magenta;
+    ofColor colorRight = ofColor::cyan;
+    ofColor colorMix = colorLeft.getLerped(colorRight, percentX);
+    ofSetColor(colorMix);
+
+    shader.begin(); // 开始着色！
+
+    // 很多时候你需要把变量传进着色器。
+    // 这个例子里我们需要把流逝的时间传给正弦波动画。
+    shader.setUniform1f("time", ofGetElapsedTimef());
+
+    // 把平面平移到屏幕中心。
+    float tx = ofGetWidth() / 2;
+    float ty = ofGetHeight() / 2;
+    ofTranslate(tx, ty);
+
+    // 鼠标/触摸的 Y 位置改变平面的旋转。
+    float percentY = mouseY / (float)ofGetHeight();
+    float rotation = ofMap(percentY, 0, 1, -60, 60, true) + 60;
+    ofRotate(rotation, 1, 0, 0);
+
+    plane.drawWireframe();
+
+    shader.end(); // 结束着色！
+}</code></pre>
+
+<p>注意其中的 <em>ofSetColor(colorMix)</em> 调用。它实际上会设置我们<em>可以</em>在片段着色器里使用的颜色。我们也可以把 “out vec4 color” 设成随便什么值，但这里不这么做，因为顶点着色器里已经有好玩的事了。</p>
+<p>现在，由于每个顶点都会调用一次顶点着色器，我们可以在把顶点交给片段着色器之前摆弄它们的位置。<em>gl_Position</em> 是顶点着色器的输出，所以我们把它设成什么，顶点的位置就是什么。这里我们只用一点 <em>sin()</em> 波形来操作它，把平面变成一个漂亮的波浪：</p>
+
+<pre><code>
+#version 150
+
+// 这些属于可编程管线系统
+uniform mat4 modelViewProjectionMatrix;
+in vec4 position;
+
+// time 值由 OF 应用传进着色器。
+uniform float time;
+
+
+void main()
+{
+    // 正弦波沿 x 轴传播（横跨屏幕），
+    // 所以我们用每个顶点的 x 坐标来计算，
+    // 但我们在 y 轴上移动所有顶点（沿屏幕向上）/
+    float displacementHeight = 100.0;
+    float displacementY = sin(time + (position.x / 100.0)) * displacementHeight;
+
+    vec4 modifiedPosition = modelViewProjectionMatrix * position;
+    modifiedPosition.y += displacementY;
+    gl_Position = modifiedPosition;
+}</code></pre>
+
+<p>希望你记得上一小节说过，每个像素都会调用一次片段着色器，这意味着我们也可以摆弄它。上一个例子里我们就是这么做的；不过为了简单，这个例子里我们只用一个通过 uniform 设置的全局颜色。关键在于，我们在 OF 应用里设置它，使得每次 <em>draw()</em> 的颜色都随鼠标位置略有不同。</p>
+
+<pre><code>
+#version 150
+uniform vec4 globalColor;
+out vec4 outputColor;
+
+void main()
+{
+    outputColor = globalColor;
+}</code></pre>
+
+<p>和上一个例子一样，试着把 <em>shader.begin()</em> 和 <em>shader.end()</em> 的调用注释掉，看看没有着色器运行时是什么样子。差别挺大吧？我们再往顶点这边深入一点 :)</p>
+<h2 id="addingsomeinteractivity">增加一些交互</h2>
+<p>这部分让我们在着色器里用鼠标位置来操控顶点。传递方式嘛，你猜到了，用 uniform！由于鼠标位置实际上是两个值（x、y），我们用 <em>shader.setUniform2f()</em> 传进去。在着色器一侧，这意味着我们会有一个 “uniform vec2 mousePos” 来存放它。鼠标位置可以是 uniform，因为它不随顶点变化，只随每次绘制变化。不过接下来我们要根据这个鼠标位置来改变每个顶点的值。先是 ofApp 的 draw() 方法。看看这么多 “setUniform()” 调用！</p>
+
+<pre><code>
+void ofApp::draw(){
+
+    shader.begin();
+
+    // 屏幕中心。
+    float cx = ofGetWidth() / 2.0;
+    float cy = ofGetHeight() / 2.0;
+
+    // 平面被定位在屏幕正中，
+    // 所以在传进着色器之前，我们必须给鼠标坐标加上同样的偏移。
+    float mx = mouseX - cx;
+    float my = mouseY - cy;
+
+    // 我们可以用 setUniform1 函数把单个值传进着色器。
+    // 如果你想传浮点值，就用 setUniform1f。
+    // 如果你想传整数值，就用 setUniform1i。
+    shader.setUniform1f("mouseRange", 150); // 设置一个 UNIFORM
+
+    // 我们可以用 setUniform2 函数同时把两个值传进着色器。
+    // 在着色器内部，这两个值被放进一个 vec2 对象。
+    shader.setUniform2f("mousePos", mx, my);  // 设置一个 UNIFORM
+
+    // 鼠标从左向右移动时，颜色从洋红渐变到蓝色。
+    float percentX = mouseX / (float)ofGetWidth();
+    percentX = ofClamp(percentX, 0, 1);
+    ofFloatColor colorLeft = ofColor::magenta;
+    ofFloatColor colorRight = ofColor::blue;
+    ofFloatColor colorMix = colorLeft.getLerped(colorRight, percentX);
+
+    // 用颜色值创建一个 float 数组。
+    float mouseColor[4] = {colorMix.r, colorMix.g, colorMix.b, colorMix.a};
+
+    // 我们可以把四个值作为 float 数组同时传进着色器。
+    // 做法是把指向数组第一个元素的指针引用传进去。
+    // 在着色器内部，这四个值被放进一个 vec4 对象。
+    shader.setUniform4fv("mouseColor", &amp;mouseColor[0]);  // 设置一个 UNIFORM
+
+    ofTranslate(cx, cy);
+
+    plane.drawWireframe();
+
+    shader.end();
+}</code></pre>
+
+<p>这是 <em>3</em> 种不同的 uniform！一个浮点数（uniform float）、一个 2 个浮点数的向量（uniform vec2），以及一个 4 个浮点数的向量（uniform vec4）。</p>
+<p>现在来看着色器本身，先是顶点着色器</p>
+
+<pre><code>#version 150
+
+// 这些来自可编程管线系统，什么都不用做，爽！
+uniform mat4 modelViewProjectionMatrix;
+in vec4 position;
+
+uniform float mouseRange;
+uniform vec2 mousePos;
+uniform vec4 mouseColor;
+
+void main()
+{
+    // 复制 position，方便我们操作它。
+    vec4 pos = position;
+
+    // 从鼠标位置指向顶点位置的方向向量。
+    vec2 dir = pos.xy - mousePos;
+
+    // 鼠标位置与顶点位置之间的距离。
+    float dist =  distance(pos.xy, mousePos);
+
+    // 检查顶点是否在鼠标影响范围内。
+    if(dist &gt; 0.0 &amp;&amp; dist &lt; mouseRange) {
+
+        // 把距离归一化到 0 到 1 之间。
+        float distNorm = dist / mouseRange;
+
+        // 把它翻转，这样越近斥力越大。
+        distNorm = 1.0 - distNorm;
+
+        // 让方向向量的长度随着远离鼠标位置而衰减。
+        dir *= distNorm;
+
+        // 把方向向量加到顶点位置上。
+        pos.x += dir.x;
+        pos.y += dir.y;
+    }
+
+    // 最后把 pos 设为实际渲染的位置
+    gl_Position = modelViewProjectionMatrix * pos;
+}</code></pre>
+
+<p>看到了吗？<em>gl_Position</em> 被鼠标位置<em>相对</em>于顶点自身位置的关系所修改。挺巧妙！现在我们用上从 <em>ofShader</em> 对象传进来的那个鼠标颜色。</p>
+
+<pre><code>
+// 片段着色器
+
+#version 150
+
+out vec4 outputColor;
+uniform vec4 mouseColor;
+
+void main()
+{
+    outputColor = mouseColor;
+}</code></pre>
+
+<p>现在你知道如何把几种不同的值传进着色器，并用它们动态地对顶点做一些漂亮的事。接下来我们谈谈纹理。</p>
+<h2 id="addingtextures">添加纹理</h2>
+<p>来说说纹理：你理解的纹理，就是绘制 ofImage 或 <em>ofVideo</em> 播放器的一帧时在屏幕上看到的东西。在着色时，很多时候数据是逐个元素喂给顶点着色器的，比如在顶点数组里，顶点着色器无法访问其他元素。而纹理则把它全部内容开放给任何顶点着色器或片段着色器。这些着色器在一个（或一百个）不同的纹理坐标上对纹理采样。这让它在向着色器传递数据时非常强大：第一，上传纹理（相对）非常快；第二，你可以访问其中的任意一点。</p>
+<p>OF 里还封装了一个不错的小功能：<em>mapTexCoordsFromTexture()</em>。你只要把一个纹理引用传给平面，它就会自动算出纹理的每一部分该落在哪里。这很省事，省得你遍历每个顶点去指定纹理坐标。当然，等你想自己搞些花样时，你会宁愿亲自来做，好有更多控制权，但对一个简单的 ofPlanePrimitive 来说，这已经很好用了。</p>
+<p>另一点要注意的是，我们在调用 <em>shader.begin()</em> 之前，就在 <em>draw()</em> 方法里绑定了纹理。调用 <em>ofImage::draw()</em> 时这其实会自动发生，但因为这里没那样做，我们需要确保图像已经在显卡上可用。ofTexture 以及一般意义上的纹理有个特点：既然你的电脑显卡上可以有很多纹理，能指明程序里要用哪几个就很方便。做法是“绑定”这些图像，实际上就是确保存放纹理的内存对你的着色器可用。你可以绑定相当多的纹理，但刚开始我们只绑一个。</p>
+
+<pre><code>
+// OF
+
+#include "ofApp.h"
+
+void ofApp::setup() {
+    // setup
+    plane.mapTexCoordsFromTexture(img.getTextureReference());
+}
+
+void ofApp::draw() {
+
+    // 绑定我们的纹理。在着色器里它现在默认就是 tex0
+    // 所以我们直接在那里访问它即可。
+    img.getTextureReference().bind();
+
+    // 启动我们的着色器，在我们的 OpenGL3 着色器里，这会自动设置
+    // 一系列我们需要的矩阵，用来算出纹理矩阵
+    // 和 modelView 矩阵
+    shader.begin();
+
+    // 获取相对于屏幕中心的鼠标位置
+    float mousePosition = ofMap(mouseX, 0, ofGetWidth(), plane.getWidth(), -plane.getWidth(), true);
+
+    shader.setUniform1f("mouseX", mousePosition);
+
+    ofPushMatrix();
+    ofTranslate(ofGetWidth()/2, ofGetHeight()/2);
+    plane.draw();
+    ofPopMatrix();
+
+    shader.end();
+    img.getTextureReference().unbind();
+
+}</code></pre>
+
+<p>好，来看顶点着色器。没什么特别的，<em>除了</em>那一小句：<em>out vec2 varyingtexcoord</em>。我们就是在这里准备好要传给片段着色器的内容，好让片段着色程序知道该把纹理的哪一块放到它的像素上。你可能会想：等等，我只有 100 个顶点，却有 1024x768 个像素，把 100 个顶点的 100 个位置传过去，怎么管得了 1024x768 个像素？希望你想到了这个问题，因为这是个非常好的问题。答案是插值！我们来看一个带纹理的简单矩形：</p>
+<p>每个值都在顶点之间插值。从 0,0 到 0,1024，显卡会直接把图像的 512 个像素均匀分配给它们，也就是每个纹理像素落到两个屏幕像素上。可以想象，有时这会很难看；幸运的是有很多办法处理这种情况，不幸的是我们不打算在这里讲。</p>
+
+<pre><code>
+#version 150
+
+// 这些属于可编程管线系统，由 OpenFrameworks
+// 默认传入
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+uniform mat4 textureMatrix;
+uniform mat4 modelViewProjectionMatrix;
+
+in vec4 position;
+in vec4 color;
+in vec4 normal;
+in vec2 texcoord;
+// 默认功能的结尾
+
+// 这是我们为这个着色器自己创建的东西
+out vec2 varyingtexcoord;
+
+// 这个来自我们的 C++ 代码
+uniform float mouseX;
+
+void main()
+{
+    // 这里我们移动纹理坐标
+    varyingtexcoord = vec2(texcoord.x + mouseX, texcoord.y);
+
+    // 把顶点发送给片段着色器
+    gl_Position = modelViewProjectionMatrix * position;
+}</code></pre>
+
+<p>片段着色器只是用它收到的 vec2 去纹理里查位置。纹理本身由 sampler2DRect 这个构造表示。这是很多人刚开始在 OF 里用着色器时困惑的来源，因为有两种采样器：<em>sampler2DRect</em> 和 <em>sampler2D</em>。二者的区别在于你实际上传的是哪种纹理数据。如果你的纹理尺寸是 2 的幂，也就是高和宽都是 2 的幂，比如 256、512、1024 或 2048，那么你可以用 sampler2D 来表示纹理数据。然而作为 OF，我们希望假定你可以使用任意尺寸的图像，因为有时图像的形状和尺寸很怪，比如 4x1837 或 381x293，而这些也应该能用。确实能用，只要你在着色器里用 sampler2DRect 就没问题。从这些数据里取点的方法是 <em>texture()</em>，它接受你要读取数据的那个 <em>sampler2DRect</em>，以及你想要的那个像素的纹理坐标。</p>
+<p>你会注意到这个 <em>sampler2DRect</em> 名叫 “tex0”，而我们其实并没有在 OF 应用里设置这个 uniform。为什么呢？秘密在 <em>setUniformTexture()</em> 方法里，它会替你调用 <em>bind()</em>。另外，像我们用 <em>image.draw(0, 0)</em> 那样绘制图像时，纹理也会被绑定；由于没给它 uniform 名字，它就表现为 <em>tex0</em>。有点绕？也许吧，但这种情况很常见，所以我想提请你注意。明确地说，把纹理送进着色器有三种方式：</p>
+<ol style="list-style-type: decimal">
+<li>你可以绑定一个纹理，如果它是唯一一个没有 uniform 名字的绑定纹理，就用 <em>tex0</em> 访问它。</li>
+<li>你可以调用 <em>setUniformTexture()</em>，传入 uniform 名字和纹理本身</li>
+<li>你可以调用 <em>image.draw()</em>，如果它是唯一一个没有 uniform 名字的绑定纹理，就用 tex0 访问这张图像。</li>
+</ol>
+<p>这三种都值得了解，因为它们确实存在，你也会在外面见到。</p>
+
+<pre><code>
+// 片段着色器
+#version 150
+
+// 我们就是这样接收纹理的
+uniform sampler2DRect tex0;
+in vec2 varyingtexcoord;
+out vec4 outputColor;
+
+void main()
+{
+    outputColor = texture(tex0, varyingtexcoord);
+}</code></pre>
+
+<p>这就是一张纹理，但有了两张纹理，我们就能玩出好得多的花样。</p>
+<h2 id="alphamasking">Alpha 遮罩</h2>
+<p>在着色器里用多张纹理一点都不难，你只要确保用 <em>setUniformTexture()</em> 方法把它们传进去。和上一个例子一样，我们依赖默认的 <em>tex0</em>，但另外加了一张纹理，通过 <em>setUniformTexture()</em> 方法传入。</p>
+
+<pre><code>void ofApp::draw(){
+
+    // 画一个白色矩形作为背景。
+    ofDrawRectangle(0, 0, image.getWidth(), image.getHeight());
+
+    shader.begin();
+    shader.setUniformTexture("imageMask", imageMask.getTextureReference(), 1);
+
+    image.draw(0, 0);
+
+    shader.end();
+}</code></pre>
+
+<p>这个例子的顶点着色器没什么特别的，所以我们干脆略过，但你当然可以在 examples/bin/data 文件夹里找到全部三个例子。不过片段着色器里在概念上有一点新东西。把纹理当作数据，把纹理里的每个值当作一个数据点。你数据的 “in” 是一个颜色，数据的 “out” 也是一个颜色，但中间的一切都是纯粹的数据操作；那个 “in” 颜色可以代表的东西，从生成的地形几何体的高度到某个 sprite 的位置，什么都有可能。在这个例子里，我们用两张不同纹理的 alpha 值来确定遮罩从哪里开始、到哪里结束。一张纹理的遮罩 alpha 值范围是 0 到 1，另一张则只有满 alpha 的颜色值（例如 alpha = 1）。把两个 alpha 值相乘就得到了遮罩效果，因为——嗯，乘法就是这么工作的。我们用主图像的颜色和遮罩图像的 alpha 构造出一个 vec4：</p>
+
+<pre><code>
+#version 150
+
+uniform sampler2DRect tex0;
+uniform sampler2DRect imageMask;
+
+in vec2 texCoordVarying;
+
+out vec4 outputColor;
+
+void main()
+{
+    vec4 texel0 = texture(tex0, texCoordVarying);
+    vec4 texel1 = texture(imageMask, texCoordVarying);
+    // 前三个值是 rgb，第四个是 alpha
+    outputColor = vec4(texel0.rgb, texel0.a * texel1.a);
+}</code></pre>
+
+<p>瞧，你已经走上重造 Photoshop 的路了。说到这个，我们来看看着色器里更正经的一些合成策略，特别是 OpenFrameworks 对帧缓冲对象（Frame Buffer Object）的实现——<em>ofFbo</em>。</p>
+<h2 id="multipletextures">多张纹理</h2>
+<p>先说：FBO 是什么？本质上它是一个装着若干纹理的容器，外加一个可选的深度缓冲区。有点像——嗯——一个 OpenGL 帧缓冲区，也就是你平时渲染的目标。有一种理解方式，概念上正确但技术上稍显宽松：它是一个你可以往里写的渲染器。你可以把纹理画进去，把 3D 或 2D 对象画进去，把摄像机的视图渲染进去，关键区别只有一个：它只是一个对象。你可以有多个这样的对象，往里面画各种东西，然后把里面的纹理全部取出来，在着色器里使用，或者直接画到屏幕上。在大多数用途下，它们就是小号的渲染缓冲区，因此非常适合做多遍着色。所以，我们要建两个 <em>ofFbo</em> 对象，用它们按不同通道（也就是纹理的 RGB 分量）来做遮罩。运行应用后你就知道这是怎么工作的。为了让事情更有意思，这些纹理来自 ofCamera 和 ofVideoPlayer，搭建起来其实并不麻烦。我们会在 setup() 方法里先搭好摄像机和影片，<em>并</em>搭好要用的两个 FBO 对象：</p>
+
+<pre><code>
+int camWidth = 320;
+int camHeight = 240;
+
+camera.setVerbose(false);
+camera.initGrabber(camWidth, camHeight);
+
+movie.loadMovie("movie.mov");
+movie.play();
+
+image.loadImage("img.jpg");
+imageMask.loadImage("mask.jpg");
+
+// 说明每个 FBO 想要多大
+fbo.allocate(camWidth, camHeight);
+maskFbo.allocate(camWidth, camHeight);</code></pre>
+
+<p>调用 ofFbo::begin() 把这个 FBO 设为所有东西都会渲染进去的渲染缓冲区。反过来，调用 <em>ofFbo::end()</em> 就取消它作为渲染缓冲区的设置。</p>
+
+<pre><code>
+     //------------------------------------------- 绘制到 fbo。
+    fbo.begin();
+    ofClear(255, 255, 255, 255);
+
+    shader.begin();
+    shader.setUniformTexture("redTex", camera.getTextureReference(), 1);
+    shader.setUniformTexture("greenTex", image, 2);
+    shader.setUniformTexture("blueTex", movie.getTextureReference(), 3);
+    shader.setUniformTexture("imageMask", imageMask.getTextureReference(), 4);
+
+    imageMask.draw(0, 0);
+
+    shader.end();
+    fbo.end();</code></pre>
+
+<p>现在我们刚把图像遮罩、摄像机纹理、颜色纹理和影片纹理画进了 ofFbo，这意味着在第二个 FBO 对象被绘制之前，它们一个都不会显示出来。所以，继续往下看 <em>draw()</em> 方法，我们依次绘制摄像机、图像、影片、遮罩 FBO 和最终渲染的 FBO。</p>
+
+<pre><code>
+    ofSetColor(255);
+    camera.draw(5,5,320,240);
+    ofSetColor(ofColor::red);
+    ofDrawBitmapString("RED", 5+30, 5+30);
+
+    ofSetColor(255);
+    greenOF.draw(320+10,5,320,240);
+    ofSetColor(ofColor::green);
+    ofDrawBitmapString("GREEN", 320+10+30,5+30);
+
+    ofSetColor(255);
+    movie.draw(320*2+15,5,320,240);
+    ofSetColor(ofColor::blue);
+    ofDrawBitmapString("BLUE", 320*2+5+30,5+30);
+
+    ofSetColor(255);
+    imageMask.draw(320+10,240+10,320,240);
+    ofDrawBitmapString("RGB MASK", 320+10+30,240+10+30);
+
+    fbo.draw(320+10,240*2+15,320,240);
+    ofDrawBitmapString("Final FBO", 320+10+30,240*2+15+30);
+}</code></pre>
+
+<p>这样就把 4 张纹理送进了着色器，然后把着色器的结果渲染进 FBO，留待稍后绘制。这是一个非常强大的技巧，可用于多遍渲染、把复杂场景渲染到纹理、所谓的“纹理乒乓”，以及一系列用于弄花样和美化的技巧。我们来看片段着色器。不出所料，它声明了 4 个 <em>sampler2DRect</em> uniform，分别查询它们的颜色，然后用这些图像各自的通道生成最终输出像素的颜色。</p>
+
+<pre><code>
+#version 150
+
+uniform sampler2DRect redTex;
+uniform sampler2DRect greenTex;
+uniform sampler2DRect blueTex;
+uniform sampler2DRect imageMask;
+
+in vec2 texCoordVarying;
+
+out vec4 outputColor;
+
+void main()
+{
+    vec4 rTxt = texture(redTex, texCoordVarying);
+    vec4 gTxt = texture(greenTex, texCoordVarying);
+    vec4 bTxt = texture(blueTex, texCoordVarying);
+    vec4 mask = texture(imageMask, texCoordVarying);
+
+    outputColor = vec4(rTxt.r, gTxt.g, bTxt.b, mask.r);
+}</code></pre>
+
+<p>下一个例子里，我们会建一对 ofFbo，并用它们做一个绘图应用。</p>
+<h2 id="offbo">ofFbo</h2>
+<p>设置和上一个例子非常相似：建两个 ofFbo 对象，为它们分配空间，然后确保把显卡上这块 FBO 刚拿到的内存里可能残留的垃圾数据清掉。这是个重要的小教训：显卡在把内存交给你时往往不会替你清空，也就是说，除非你自己清一遍，否则那些垃圾就会显现出来。在 FBO 对象上尤其如此。</p>
+
+<pre><code>
+    backgroundImage.loadImage("A.jpg");
+    foregroundImage.loadImage("B.jpg");
+    brushImage.loadImage("brush.png");
+
+    int width = backgroundImage.getWidth();
+    int height = backgroundImage.getHeight();
+
+    maskFbo.allocate(width, height);
+    fbo.allocate(width, height);
+
+    // 清空 FBO
+    // 否则它会从内存里带来一些垃圾数据
+    maskFbo.begin();
+    ofClear(0,0,0,255);
+    maskFbo.end();
+
+    fbo.begin();
+    ofClear(0,0,0,255);
+    fbo.end();</code></pre>
+
+<p><em>draw()</em> 方法其实就是把数据送进这两个 FBO 对象：</p>
+
+<pre><code>
+// 这就是我们往里绘制的 alpha 遮罩。
+if(bBrushDown) {
+    maskFbo.begin();
+
+    int brushImageSize = 50;
+    int brushImageX = mouseX - brushImageSize * 0.5;
+    int brushImageY = mouseY - brushImageSize * 0.5;
+    brushImage.draw(brushImageX, brushImageY, brushImageSize, brushImageSize);
+
+    maskFbo.end();
+}</code></pre>
+
+<p>看到了吗？就是在用户拖动时把画笔图像画进 maskFbo。接着，和上一个例子一样，遮罩用的 FBO 直接传进着色器，然后对之前的图像做遮罩。</p>
+
+<pre><code>
+// 着色器遮罩就发生在这里
+fbo.begin();
+// 把所有东西用 alpha 遮罩清成 0，让它默认就是透明的
+ofClear(0, 0, 0, 0);
+
+shader.begin();
+// 这里就是把 fbo 传进着色器的地方
+shader.setUniformTexture("maskTex", maskFbo.getTextureReference(), 1 );
+
+backgroundImage.draw(0, 0);
+
+shader.end();
+fbo.end();
+
+// 先绘制背景图像
+foregroundImage.draw(0,0);
+
+// 然后把遮罩后的 fbo 画在上面
+fbo.draw(0,0);
+
+//----------------------------------------------------------
+ofDrawBitmapString("Drag the Mouse to draw", 15,15);
+ofDrawBitmapString("Press spacebar to clear", 15, 30);</code></pre>
+
+<p>在片段着色器里，我们真正要做的只是查一下遮罩纹理里任意一个值，来决定要不要使用它。我们的遮罩实际上是个 FBO 也没关系，因为它有纹理数据，这对我们的着色器来说就够了。本教程里还有一个小技巧要提一下，那就是 <em>outputColor</em> 变量实际上是用一个 vec3 和一个 float 设置的。这在 GLSL 里完全合法。事实上，一个 float 加一个 <em>vec3</em>、两个 <em>vec2</em>、<em>mat4</em> 的一行，任何具有 4 个值的东西或组合，都可以用来设置一个 vec4。具有 3 个值的东西设置 <em>vec3</em> 也是同样的道理，依此类推。这让 GLSL 代码非常优雅，虽然一开始接触会有点不习惯。</p>
+
+<pre><code>// 片段
+#version 150
+
+// 这些是我们的纹理
+uniform sampler2DRect tex0;
+uniform sampler2DRect maskTex;
+
+// 这个来自顶点着色器
+in vec2 texCoordVarying;
+
+// 这是片段着色器的输出
+out vec4 outputColor;
+
+void main()
+{
+    // 从 tex0 取 rgb
+    vec3 src = texture(tex0, texCoordVarying).rgb;
+
+    // 从遮罩取 alpha
+    float mask = texture(maskTex, texCoordVarying).r;
+
+    //把 tex0 的 rgb 和遮罩的 alpha 混合
+    outputColor = vec4(src , mask);
+}</code></pre>
+
+<p>把 FBO 当作数据传递的想法很有意思，但更有意思的是我们干脆直接把纹理当作纯粹的数据传进去——不出所料，这就是我们接下来要做的。</p>
+<h2 id="texturesasdataegdisplacement">把纹理当作数据（例如位移）</h2>
+<p>这个应用里，我们要生成一些噪声数据并存进一张纹理，然后把它当作位移值，在顶点着色器里移动顶点。噪声用 ofNoise() 生成，存进 ofPixels 对象，再作为纹理上传到显卡。</p>
+
+<pre><code>void ofApp::update(){
+    float noiseScale = ofMap(mouseX, 0, ofGetWidth(), 0, 0.1);
+    float noiseVel = ofGetElapsedTimef();
+
+    ofPixels &amp; pixels = img.getPixels();
+    int w = img.getWidth();
+    int h = img.getHeight();
+    for(int y=0; y&lt;h; y++) {
+        for(int x=0; x&lt;w; x++) {
+            int i = y * w + x;
+            float noiseVelue = ofNoise(x * noiseScale, y * noiseScale, noiseVel);
+            pixels[i] = 255 * noiseVelue;
+        }
+    }
+    img.update();
+}</code></pre>
+
+<p>着色器本身不需要什么特别处理，我们只是加了一点旋转，让视图更有动感。除此之外没什么花招。</p>
+
+<pre><code>
+// 绑定我们的纹理。在着色器里它现在默认就是 tex0
+// 所以我们直接在那里访问它即可。
+img.getTextureReference().bind();
+
+shader.begin();
+
+ofPushMatrix();
+
+// 把平面平移到屏幕中心。
+float tx = ofGetWidth() / 2;
+float ty = ofGetHeight() / 2;
+ofTranslate(tx, ty);
+
+// 鼠标/触摸的 Y 位置改变平面的旋转。
+float percentY = mouseY / (float)ofGetHeight();
+float rotation = ofMap(percentY, 0, 1, -60, 60, true) + 60;
+ofRotate(rotation, 1, 0, 0);
+
+plane.drawWireframe();
+
+ofPopMatrix();
+
+shader.end();
+
+ofSetColor(ofColor::white);
+img.draw(0, 0);</code></pre>
+
+<p>和前几个例子不同，这个例子里所有有趣的事都发生在顶点着色器里，因为从示例名字你大概已经猜到，位移主要是一种基于几何体的操作，而不是基于像素着色的操作。正如我在别处提到的，纹理数据的好处在于它同时在任何地方都可用，甚至在顶点着色器里。我们用 ofPlanePrimitive 传进来的纹理坐标处纹理的 <em>r</em> 值来修改 <em>gl_Position</em> 变量，花招就这些。</p>
+
+<pre><code>#version 150
+
+// 这些来自可编程管线系统
+uniform mat4 modelViewProjectionMatrix;
+in vec4 position;
+in vec2 texcoord;
+
+// 我们就是这样接收纹理的
+uniform sampler2DRect tex0;
+
+out vec2 texCoordVarying;
+
+void main()
+{
+    // 获取顶点相对于 modelViewProjectionMatrix 的位置
+    vec4 modifiedPosition = modelViewProjectionMatrix * position;
+
+    // 我们需要放大从纹理里取到的值
+    float scale = 100;
+
+    // 这里我们从纹理取红色通道的值
+    // 用它作为垂直方向的位移
+    float displacementY = texture(tex0, texcoord).r;
+
+    // 用我们从纹理数据生成的位移
+    // 来修改顶点位置
+    modifiedPosition.y += displacementY * scale;
+
+    // 这是最终得到的顶点位置
+    gl_Position = modifiedPosition;
+
+    // 把纹理坐标传给片段着色器
+    texCoordVarying = texcoord;
+}</code></pre>
+
+<p>最后，我们来看看用两个着色器和两个 FBO 创建模糊效果。</p>
+<p><a name="blurring"></a></p>
+<h2 id="blurring">模糊</h2>
+<p>模糊是开始思考多遍着色的最佳切入点之一，也就是在一个应用里用多个着色器做多遍处理。由于 GLSL（以及一般意义上的 GPU 计算）针对在离散内存块上执行特定类型的操作做了大量优化，有时分成多遍着色比在着色器里写分支逻辑更合理，性能也更好。模糊就是这样一种操作：虽然存在一遍完成的复杂技巧，但把它拆成两遍更容易——一个 X 方向 pass 和一个 Y 方向 pass。做两个着色器很简单：声明两个 ofShader 对象，然后分别加载两个着色器。</p>
+
+<pre><code>
+shaderBlurX.load("shadersGL3/shaderBlurX");
+shaderBlurY.load("shadersGL3/shaderBlurY");</code></pre>
+
+<p>在 draw() 里我们要建两个 <em>ofFbo</em> 用来绘制，先在第一个上跑 <em>shaderBlurX</em> 程序，把它画进第二个，然后在第二个上跑 shaderBlurY 程序。这叫作“乒乓”，是在多个阶段创建复杂效果的非常强大的方式——特别是在使用 FBO 对象时，相对而言又快又有效。</p>
+
+<pre><code>
+void ofApp::draw(){
+
+    float blur = ofMap(mouseX, 0, ofGetWidth(), 0, 10, true);
+
+    //----------------------------------------------------------
+    fboBlurOnePass.begin();
+
+    shaderBlurX.begin();
+    shaderBlurX.setUniform1f("blurAmnt", blur);
+
+    image.draw(0, 0);
+
+    shaderBlurX.end();
+
+    fboBlurOnePass.end();
+
+    //----------------------------------------------------------
+    fboBlurTwoPass.begin();
+
+    shaderBlurY.begin();
+    shaderBlurY.setUniform1f("blurAmnt", blur);
+
+    fboBlurOnePass.draw(0, 0);
+
+    shaderBlurY.end();
+
+    fboBlurTwoPass.end();
+
+    //----------------------------------------------------------
+    ofSetColor(ofColor::white);
+    fboBlurTwoPass.draw(0, 0);
+}</code></pre>
+
+<p>这是一个相当经典的模糊片段着色器，你会在很多不同的资料里看到它或非常类似的东西。其实你只是构造一个图像卷积核，查看纹理周围不同的纹素，算出每个像素模糊或平均后的近似值。这也是在某一时刻能访问整张纹理非常有帮助的地方之一，让我们可以在显卡上做图像处理，快速创建复杂效果。你会注意到这只是 X 方向的 pass。Y 方向的 pass 看起来几乎一样，只是 <em>vec2</em> 里换成 Y 值而不是 X 值。为什么要两遍？看看这笔账：多阶段模糊着色器的计算开销是 18（9 + 9）次纹理查找。如果在一遍里完成全部模糊，着色器的计算开销是 9*9，也就是 81 次纹理查找。你能看出分两遍能省不少时间吧？</p>
+
+<pre><code>
+#version 150
+
+uniform sampler2DRect tex0;
+uniform float blurAmnt;
+in vec2 texCoordVarying;
+out vec4 outputColor;
+
+void main()
+{
+    vec4 color;
+
+    color += 1.0 * texture(tex0, texCoordVarying + vec2(blurAmnt * -4.0, 0.0));
+    color += 2.0 * texture(tex0, texCoordVarying + vec2(blurAmnt * -3.0, 0.0));
+    color += 3.0 * texture(tex0, texCoordVarying + vec2(blurAmnt * -2.0, 0.0));
+    color += 4.0 * texture(tex0, texCoordVarying + vec2(blurAmnt * -1.0, 0.0));
+
+    color += 5.0 * texture(tex0, texCoordVarying + vec2(blurAmnt, 0));
+
+    color += 4.0 * texture(tex0, texCoordVarying + vec2(blurAmnt * 1.0, 0.0));
+    color += 3.0 * texture(tex0, texCoordVarying + vec2(blurAmnt * 2.0, 0.0));
+    color += 2.0 * texture(tex0, texCoordVarying + vec2(blurAmnt * 3.0, 0.0));
+    color += 1.0 * texture(tex0, texCoordVarying + vec2(blurAmnt * 4.0, 0.0));
+
+    color /= 25.0;
+
+    outputColor = color;
+}</code></pre>
+
+<h2 id="theendcongrats">结束，恭喜！</h2>
+<p>如果你一路读到了最后，谢谢你，也恭喜你。如果你有兴趣，这里还有一些延伸资源：</p>
+<ul>
+<li><a href="http://fgiesen.wordpress.com/2011/07/09/a-trip-through-the-graphics-pipeline-2011-index/">A trip through the graphics pipeline</a></li>
+<li><a href="http://www.amazon.com/Graphics-Shaders-Theory-Practice-Edition/dp/1568814348">Graphics Shaders Theory and Practice</a></li>
+<li><a href="http://www.amazon.com/OpenGL-4-0-Shading-Language-Cookbook/dp/1849514763">OpenGL 4.0 Shading Language Cookbook</a></li>
+</ul>
+<p>去看看其余的例子，尤其是 GL 相关的，在论坛上提问、分享你的作品，最重要的是玩得开心。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://openframeworks.cc/ofBook/chapters/shaders.html" rel="noreferrer noopener">openframeworks.cc/ofBook/chapters/shaders.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

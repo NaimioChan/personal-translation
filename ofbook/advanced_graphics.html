@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>高级图形 - ofBook</title>
+<meta name="description" content="ofBook 章节「高级图形」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="advanced-graphics">高级图形</h1>
+<p><em>作者：<a href="http://arturocastro.net">Arturo Castro</a></em></p>
+<p><em>勘误：<a href="http://brannondorsey.com">Brannon Dorsey</a></em></p>
+<h2 id="dimmediatemodevsofpolylineofpath">2D：立即模式与 ofPolyline/ofPath</h2>
+<p>传统上，在 openFrameworks 或 processing 这类框架里，画东西的方式大致是这样：</p>
+
+<pre><code>void ofApp::draw(){
+    ofFill();
+    ofSetColor(255,0,0);
+    ofBeginShape();
+    ofVertex(20,20);
+    ofVertex(40,20);
+    ofVertex(40,40);
+    ofVertex(20,40);
+    ofEndShape(true);
+}</code></pre>
+
+<p><code>openFrameworks version</code></p>
+<p>这会在 20,20 处画一个边长 20 的红色方块。像矩形这样的简单图元可以用 <code>ofRect()</code>，但想画更复杂的形状时，上面这种方法很常见。这种语法来自 OpenGL 里的对应写法：</p>
+
+<pre><code>void ofApp::draw(){
+    glColor4f(1.0,0.0,0.0,1.0);
+    glBegin(GL_TRIANGLE_FAN);
+    glVertex2i(20,20);
+    glVertex2i(40,20);
+    glVertex2i(40,40);
+    glVertex2i(20,40);
+    glEnd();
+}</code></pre>
+
+<p><code>GL version</code></p>
+<p>不过从 OpenGL 3 起，那种写法已被废弃。openFrameworks 的版本实际上做的是另一件事。因为像那样画一个矩形在 triangle fan 模式下可行，但画更复杂的东西（基本上是任何凹形），就行不通了。OpenGL 只懂怎么画三角形，所以画凹形需要多一步，叫做镶嵌（tessellation）。镶嵌的过程就是在把形状送到显卡之前，先把它拆成若干三角形。</p>
+<p>正如我们所说，如果用的是 OpenGL 3 以上（通过可编程渲染器），或者用的是 OpenGL ES（Android、iPhone，或 openFrameworks 里的 ARM Linux），那么 GL 那套语法在 openFrameworks 里其实已经废弃了。</p>
+<p>openFrameworks 的版本仍然能用，但取决于我们做什么，它可能并不高效。内部而言，openFrameworks 版本先对形状做镶嵌，把所有三角形存进一个 ofMesh，然后绘制这个 ofMesh。如果你用的是 OpenGL 3+，那绘制时用的不是 ofMesh，而是通过 VBO 绘制的 ofVboMesh，因为在较新的 OpenGL 里这是唯一可行的绘制方式。</p>
+<p>镶嵌有点慢，而且取决于形状的顶点数，每帧都把它们送到显卡也没多大意义。较新版本 OpenGL 采用的范式大致是这样：把形状创建一次，上传到显卡，然后每帧绘制它而不必重新上传。这通常通过显卡里某种缓冲区完成，一般就是 vbo。</p>
+<p>在 openFrameworks 里，2D 下由 ofPolyline 和 ofPath 类做这件事，3D 下则是 ofVboMesh。</p>
+<h3 id="ofpolyline">ofPolyline</h3>
+<p>ofPolyline 让我们能表示一个形状的轮廓。用 polyline 改写前面的例子，大致是这样：</p>
+
+<pre><code>//ofApp.h
+
+ofPolyline polyline;
+
+//ofApp.cpp
+
+void ofApp::setup(){
+    polyline.lineTo(20,20);
+    polyline.lineTo(40,20);
+    polyline.lineTo(40,40);
+    polyline.lineTo(20,40);
+    polyline.close();
+}
+
+void ofApp::draw(){
+    polyline.draw();
+}</code></pre>
+
+<p>现在，我们不再每帧计算顶点，而是在 setup 里创建一次，然后每帧绘制。</p>
+<p>不过，ofPolyline 仍然会把顶点送到显卡。ofPolyline 本质上是一个用来对折线做操作的类，比如简化、平滑……而且 ofPolyline 只能画轮廓，不能画填充形状。ofPath 才是绘制形状的推荐方式。</p>
+<h3 id="ofpath">ofPath</h3>
+<p>ofPath 内部是个复杂的类，相当于 2D 几何的 ofImage。就像 ofImage 在 RAM 里以 ofPixels 保存图像副本、在 GPU 上以 ofTexture 保存副本一样，ofPath 也包含几何的多种表示。它的用法很简单，和 ofPolyline 相当接近。它遵循同样的范式：形状创建一次，绘制多次：</p>
+
+<pre><code>//ofApp.h
+
+ofPath path;
+
+//ofApp.cpp
+
+void ofApp::setup(){
+    path.moveTo(20,20);
+    path.lineTo(40,20);
+    path.lineTo(40,40);
+    path.lineTo(20,40);
+    path.close();
+}
+
+void ofApp::draw(){
+    path.draw();
+}</code></pre>
+
+<p>与 ofPolyline 不同，ofPath 默认绘制填充形状。你可能已经注意到，ofFill/NoFill 对 ofPolyline 或 ofPath 都不起作用。这是因为它们同样遵循更现代的 OpenGL 范式，其中大部分全局状态值已被废弃。例如在 OpenGL 3+ 下，<code>glColor4f</code> 或 <code>glLineWidth</code> 已不复存在。取而代之，你可以为每个形状逐顶点设置颜色，或用着色器指定颜色或线宽。讲到 ofMesh 时我们会看到这一点。</p>
+<p>ofPath 允许我们为每条路径分别指定是否画轮廓、是否填充，以及颜色和宽度，因此这些属性属于每条路径自身，而不必全局设定：</p>
+
+<pre><code>//ofApp.h
+
+ofPath path;
+
+//ofApp.cpp
+
+void ofApp::setup(){
+    path.moveTo(20,20);
+    path.lineTo(40,20);
+    path.lineTo(40,40);
+    path.lineTo(20,40);
+    path.close();
+    path.setStrokeColor(ofColor::blue);
+    path.setFillColor(ofColor::red);
+    path.setFilled(true);
+    path.setStrokeWidth(2);
+}
+
+void ofApp::draw(){
+    path.draw();
+}</code></pre>
+
+<p>这避免了好几个问题。比如使用全局颜色时，一个函数必须先存下当前颜色，画完东西，再恢复之前的颜色。把形状的颜色存在它自己的对象里，画多个东西时就无需关心全局颜色，也不必维护全局状态。</p>
+<p>编程里的全局变量通常是个坏主意，而 OpenGL 至今的工作方式严重依赖全局变量。把形状的每个属性关联到代表它的对象上，能解决好几个问题，也是更面向对象的做法。</p>
+<p>ofPath 还打包了更有意思的东西。比如我们第一次绘制某条路径时，ofPath 会在内部计算它的镶嵌并存入一个 ofVboMesh，把顶点留在 GPU 上。如果下次绘制这条 ofPath 时顶点没有变化，就不必再把顶点上传到显卡。这让速度非常快。</p>
+<p>你其实可以用下面的方式访问那份镶嵌结果：</p>
+
+<pre><code>//ofApp.h
+
+ofPath path;
+ofVboMesh tessellation;
+
+//ofApp.cpp
+
+void ofApp::setup(){
+    path.moveTo(20,20);
+    path.lineTo(40,20);
+    path.lineTo(40,40);
+    path.lineTo(20,40);
+    path.close();
+    path.setStrokeColor(ofColor::blue);
+    path.setFillColor(ofColor::red);
+    path.setFilled(true);
+    path.setStrokeWidth(2);
+    tessellation = path.getTessellation();
+}
+
+void ofApp::draw(){
+    tessellation.drawWireframe();
+}</code></pre>
+
+<p>镶嵌只代表形状的填充部分。如果路径没有填充，它会返回一个空网格。</p>
+<p>我们也可以通过 <code>path.getOutline()</code> 把 ofPath 的轮廓取成一组 ofPolyline 的 vector</p>
+<blockquote>
+<p>进阶说明：ofPath 使用的 API 与 SVG、Cairo 或 Nvidia 的路径渲染 OpenGL 扩展等其他 2D 绘图格式和库相似。这不仅让它便于用 OpenGL 画到屏幕上，也便于通过 openFrameworks 里的 Cairo 渲染器输出到 PDF 或 SVG 这类矢量格式。Cairo 渲染器的用法超出本章范围，但要知道的重点是：ofPath 以 ofPath::Commands 的形式按原始格式存储图元。这些命令是 lineTo、bezierTo 之类，通常最终会被分解成折线，之后若想作为填充形状绘制再做镶嵌。这主要是因为 OpenGL 不知道怎么把 bezier 这样的东西分解成线段，也不知道怎么镶嵌一个形状，而 SVG 或 PDF 等其他格式可以。通过 Cairo 渲染器渲染时，ofPath 不会分解或镶嵌形状，而是把原始图元直接交给渲染器，后者无论如何缩放都能很好地适配我们想显示的大小。通常我们不需要意识到这些，因为 openFrameworks 内部会知道 ofPath 该用哪种表示更好。如果你只用 OpenGL，有个标志可以开启：<code>path.setMode(ofPath::POLYLINES)</code>，它会让该路径跳过图元的创建、直接以 ofPolyline 工作，在某些情况下会略快一些，尤其是当你创建了极大量路径并频繁修改它们时。</p>
+</blockquote>
+<h2 id="d">3D</h2>
+<p>就像我们有对象来创建 2D 形状并稍后绘制一样，也有一些类似的类来处理 3D，比如 ofMesh、ofVboMesh 和 of3dPrimitive。在看它们之前，我们先看看另一个与新版本 OpenGL 做法相关的主题，并学习 openFrameworks 里的对应写法。</p>
+<h3 id="transformation-matrices">变换矩阵</h3>
+<p>如果你用过 processing、openFrameworks 或类似框架，大概已经习惯这样在屏幕上摆放东西：</p>
+
+<pre><code>ofTranslate(20,20);
+ofRotate(45);
+ofDrawRectangle(20,20,20,20);</code></pre>
+
+<p>这会画一个绕其左上角旋转 45 度的方块。通常你会把它夹在 <code>ofPush/PopMatrix</code> 之间，这样之后的绘制不受刚才应用的变换影响。</p>
+<p>这来自 openGL 里的对应写法：</p>
+
+<pre><code>glTranslatef(20,20);
+glRotatef(45);
+ofDrawRectangle(20,20,20,20);</code></pre>
+
+<p>这从 OpenGL 3 起也已废弃。什么！？「我不能再 translate/rotate/scale 了？」你可能会问。其实在 openFrameworks 里你仍然可以用对应的 <code>ofTranslate/Rotate/Scale</code>，但那有一系列问题，所以才被废弃。我们来看看为什么：</p>
+<p>我们已经看到，在多数现代版本的 OpenGL 里画东西时，范式是形状创建一次，然后带着变换绘制多次。每一次调用 ofTranslate、Rotate、Scale 或对应的 gl 函数，都在做一次 4x4 矩阵乘法。这本身并不算慢，除非你调用成千上万次。但我们多少能避开它。与其每帧做所有这些矩阵乘法，我们可以为每个用到的形状准备一个 ofMatrix4x4，把该形状的变换只做一次（或每次形状移动时做），然后在要画那一帧时再应用：</p>
+
+<pre><code>//ofApp.h
+ofPath path
+ofMatrix4x4 m;
+
+//ofApp.cpp
+void ofApp::setup(){
+    path.moveTo(20,20);
+    path.lineTo(40,20);
+    path.lineTo(40,40);
+    path.lineTo(20,40);
+    path.close();
+    m.rotate(45,0,0,1);
+    m.translate(20,20,0);
+}
+
+void ofApp::draw(){
+    ofMultMatrix(m);
+    path.draw();
+}</code></pre>
+
+<p>现在我们每帧省掉了 1 次矩阵乘法。其实不算多，像这种情形大概继续用 ofTranslate 和 ofRotate 更省事，但你明白意思了。如果我们有几百个变换，只在它们变化时存储，会更快。</p>
+<p>另外，如果我们用同时包含 ofPath 和 ofMatrix4x4 的对象，把每个几何与它的变换封装在一起，就能避免混乱的全局状态。每个形状在绘制前设置自己的变换。</p>
+<p>在 openFrameworks 里，应用变换的类仍会把矩阵恢复原状，所以一切照旧工作。</p>
+<p>想进一步了解变换矩阵的工作原理，应该去看数学那一章。本章的目的不在于讲它们如何工作，而在于介绍最新版本 OpenGL 里的新范式。</p>
+<p>openFrameworks 里有一个实用类叫 ofNode，可以应用复杂的变换，比如让一个对象朝向另一个对象、建立节点层级……处理 3D 时，让每个网格配一个 ofNode 来表示它的变换很有用，这样绘制每个网格时，不用 ofTranslate、rotate、scale，只需用 <code>node.transformGL()</code> 应用节点的变换。它会把当前矩阵与节点里的矩阵相乘。做完之后可以用 <code>node.restoreTransformGL()</code>回到之前的状态。</p>
+<p>本节最重要的想法是：处理复杂变换时，与其用 ofTranslate/Rotate/Scale，通常更容易的做法是为你绘制的每个网格或形状实现一个关联的 ofNode。这也可读性更好。对于网格，openFrameworks 自 0.8.0 起有个新类 of3dPrimitive，内部含一个 ofVboMesh 和一个 ofNode，所以你可以轻松套用这个模式。</p>
+<h3 id="ofcamera">ofCamera</h3>
+<p>使用 OpenGL 时，我们总有一个透视矩阵，它决定 3D 物体如何投影到屏幕这个 2D 表面上，从而产生 3D 的观感。设置这个矩阵有几种方式，但通常我们需要知道 FOV。FOV，即视场角，是我们透过它观察的虚拟摄像机所能看到的夹角。我们还需要近、远裁剪面。它们定义了物体开始被绘制和结束被绘制的距离。最后，我们需要视口的宽度和高度。所有这些参数共同定义一个视锥体（frustum），一个六面多面体，既界定了会出现在屏幕上的东西的包围盒，也界定了它们如何从 3D 投影到 2D。</p>
+<p>我们还有第二个矩阵，叫做模型视图（model view），它定义了我们用来观察场景的虚拟摄像机的位置。视图矩阵其实是定义摄像机位置的矩阵的逆矩阵，所以我们修改它时，实际上是在变换被绘制物体的位置、旋转和缩放。默认情况下，用 ofTranslate、ofRotate 和 ofScale 时被修改的就是这个矩阵。关于这一点，数学那一章有更多信息。</p>
+<p>默认情况下，openFrameworks 设置的投影矩阵 FOV 为 60、宽高等于屏幕尺寸，裁剪面由其他参数自动算出。然后它计算出一个模型视图，把「虚拟摄像机」从 0,0 向后移动到某个位置，使屏幕左上角对应 0,0、右下角对应 width, height。</p>
+<p>而在 OpenGL 里，默认这些矩阵是单位矩阵，这使屏幕中心是 (0,0)、左上角是 (1,-1)、右下角是 (-1,1)。你可能已经注意到，OpenGL 里坐标向上增长，而 openFrameworks 里向下增长。这是为了避免混淆，也便于在 openFrameworks 中处理图像或鼠标坐标，它们同样向下增长。我们用的其他库也遵循这个约定。自 0.8.0 起，你可以这样改变它：<code>ofSetOrientation(OF_ORIENTATION_DEFAULT, false)</code>，其中 false 表示不做垂直翻转，于是 y 会向上增长。</p>
+<p>所以大多数时候，尤其是做 2D 时，这些透视设置就够了。我们可以画东西，坐标会与屏幕像素尺寸很好地对应。但做 3D 时，我们可能需要更复杂的东西，比如让摄像机在场景中移动，或改变视场角……这正是 ofCamera 提供的。</p>
+<p>ofCamera 其实就是一个 ofNode，所以你能对 ofNode 做的任何事都能对它做。比如你可以让它朝向另一个对象，或者把它加入节点层级，这样父节点移动时它会相对父节点位置移动……归根到底，ofNode 定义了摄像机在哪、看向哪里，而这又对应将要上传给 OpenGL 的视图矩阵的逆矩阵。</p>
+<p>除此之外，ofCamera 允许你设置透视矩阵。那是定义物体如何投影到 2D 屏幕上的矩阵。要用它，通常这样设置：</p>
+
+<pre><code>//ofApp.h
+ofCamera camera;
+
+// ofApp.cpp
+
+void ofApp::setup(){
+    camera.setFov(60);  // 设成 60 其实什么也不会发生，因为 60 就是默认值
+}
+
+void ofApp::draw(){
+    camera.begin();
+    // 画点东西
+    camera.end();
+}</code></pre>
+
+<p>使用 ofCamera 时，0,0 会位于屏幕中心，y 向上增长。在默认设置下，屏幕左上角是 (-w/2,h/2)，右下角是 (w/2,-h/2)。</p>
+<p>如例子所示，要想像从这台摄像机看出去那样绘制，我们调用 <code>camera.begin()</code> 画东西，然后调用 <code>camera.end()</code> 停止使用该摄像机，回到 openFrameworks 默认设置的透视，或我们之前设好的任何透视。</p>
+<p>应用运行期间，我们可以在 update 里调整摄像机参数，移动它、让它看向某个对象、旋转它，甚至改变 fov，效果就像改变真实摄像机的「变焦」。</p>
+<h3 id="ofmesh">ofMesh</h3>
+<p>在 openFrameworks 里，ofMesh 类让我们能表示一个 3D 模型。内部而言，它只是一堆 vector。每个 vector 代表网格的一种属性。这些属性是顶点、颜色、纹理坐标和法线。通常每个网格的这几种属性数量应该相同，除非它没用到其中某一种，那对应就是空的。</p>
+<p>例如要定义一个画红色方块的网格，我们可以这样：</p>
+
+<pre><code>// ofApp.h
+
+ofMesh mesh;
+
+// ofApp.cpp
+
+void ofApp::setup(){
+    mesh.addVertex(ofVec3f(20,20));
+    mesh.addColor(ofColor::red);
+    mesh.addVertex(ofVec3f(40,20));
+    mesh.addColor(ofColor::red);
+    mesh.addVertex(ofVec3f(40,40));
+    mesh.addColor(ofColor::red);
+    mesh.addVertex(ofVec3f(20,40));
+    mesh.addColor(ofColor::red);
+    mesh.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
+}
+
+void ofApp::draw(){
+    mesh.draw();
+}</code></pre>
+
+<p>或者</p>
+
+<pre><code>// ofApp.h
+
+ofMesh mesh;
+
+// ofApp.cpp
+
+void ofApp::setup(){
+    mesh.addVertex(ofVec3f(20,20));
+    mesh.addVertex(ofVec3f(40,20));
+    mesh.addVertex(ofVec3f(40,40));
+    mesh.addVertex(ofVec3f(20,40));
+    mesh.addColor(ofColor::red);
+    mesh.addColor(ofColor::red);
+    mesh.addColor(ofColor::red);
+    mesh.addColor(ofColor::red);
+    mesh.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
+}
+
+void ofApp::draw(){
+    mesh.draw();
+}</code></pre>
+
+<p>记住，网格只是若干 vector，每个顶点属性一个，所以我们添加的每个颜色都作用在相同位置的顶点上，这样就可以做渐变之类的事情：</p>
+
+<pre><code>// ofApp.h
+
+ofMesh mesh;
+
+// ofApp.cpp
+
+void ofApp::setup(){
+    mesh.addVertex(ofVec3f(20,20));
+    mesh.addColor(ofColor::red);
+    mesh.addVertex(ofVec3f(40,20));
+    mesh.addColor(ofColor::red);
+    mesh.addVertex(ofVec3f(40,40));
+    mesh.addColor(ofColor::blue);
+    mesh.addVertex(ofVec3f(20,40));
+    mesh.addColor(ofColor::blue);
+    mesh.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
+}
+
+void ofApp::draw(){
+    mesh.draw();
+}</code></pre>
+
+<p>纹理坐标和法线也一样。它们同样各自作用在相同位置的顶点上：</p>
+
+<pre><code>// ofApp.h
+
+ofMesh mesh;
+ofImage img;
+
+// ofApp.cpp
+
+void ofApp::setup(){
+    mesh.addVertex(ofVec3f(20,20));
+    mesh.addTexCoord(ofVec2f(0,0));
+    mesh.addVertex(ofVec3f(40,20));
+    mesh.addTexCoord(ofVec2f(20,0));
+    mesh.addVertex(ofVec3f(40,40));
+    mesh.addTexCoord(ofVec2f(20,20));
+    mesh.addVertex(ofVec3f(20,40));
+    mesh.addTexCoord(ofVec2f(0,20));
+    mesh.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
+    img.load("some20x20img.png");
+}
+
+void ofApp::draw(){
+    img.bind();
+    mesh.draw();
+    img.unbind();
+}</code></pre>
+
+<p>添加纹理坐标之后，我们大概会想在绘制该网格时使用纹理。使用纹理要对 ofImage 或 ofTexture 调用 <code>bind()</code>，用完再调用 <code>unbind()</code>。我们甚至可以只调用一次 bind/unbind，之间绘制多个共用同一纹理的网格，而且实际上推荐这么做，因为改变 OpenGL 状态——本例中即绑定的纹理——相对较慢。</p>
+<p>我们甚至可以把颜色和纹理结合起来，用赋给每个顶点的颜色给纹理着色。</p>
+<p>关于 ofMesh 如何工作，这个<a href="http://openframeworks.cc/tutorials/graphics/opengl.html">教程</a>里有更多信息。</p>
+<h3 id="ofvbomesh">ofVboMesh</h3>
+<p>ofVboMesh 是一个简单的类，封装了一个 vbo，并继承自 ofMesh。这意味着我们可以完全像用 ofMesh 那样用它，它本身就是一个 ofMesh；但绘制时，它不是每次调用 draw 就把所有顶点上传到显卡，而是在第一次绘制时上传一次，只有顶点变化时才再次上传。通常用 OpenGL 时，建议用 ofVboMesh 而不是 ofMesh。</p>
+<p>有一种情况用 ofVboMesh 可能更慢：我们想绘制一个 ofVboMesh，修改它的顶点，然后在同一帧里再画一次。问题在于 OpenGL 并不真的在我们叫它绘制时立刻绘制，而是把所有绘制命令存起来，然后与程序执行并行地一次性画完。当我们想绘制一个 vbo、修改其内容、然后在同一帧里再画一次时，OpenGL 就必须在那一刻真正画出这个 vbo，也就意味着要把此前所有东西都画完。这会大幅拖慢速度。如果你确实需要这样做，就复制一份 vbo，修改副本而不是原件。总的来说，不要在同一帧里绘制、修改、再重绘同一个 vbo：</p>
+
+<pre><code>// ofApp.h
+
+ofVboMesh mesh;
+
+// ofApp.cpp
+
+void ofApp::setup(){
+    mesh.addVertex(ofVec3f(20,20));
+    mesh.addVertex(ofVec3f(40,20));
+    mesh.addVertex(ofVec3f(40,40));
+    mesh.addVertex(ofVec3f(20,40));
+    mesh.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
+}
+
+void ofApp::draw(){
+    mesh.draw();
+    mesh.getVertices()[1].x+=0.1;
+    mesh.draw(); // 慢！！
+}</code></pre>
+
+<p>而应该这样做：</p>
+
+<pre><code>// ofApp.h
+
+ofVboMesh mesh;
+ofVboMesh mesh2;
+
+// ofApp.cpp
+
+void ofApp::setup(){
+    mesh.addVertex(ofVec3f(20,20));
+    mesh.addVertex(ofVec3f(40,20));
+    mesh.addVertex(ofVec3f(40,40));
+    mesh.addVertex(ofVec3f(20,40));
+    mesh.setMode(OF_PRIMITIVE_TRIANGLE_FAN);
+    mesh2 = mesh;
+}
+
+void ofApp::update(){
+    mesh.getVertices()[1].x+=0.1;
+    mesh2.getVertices()[1].x=mesh.getVertices()[1].x + 0.1;
+}
+
+void ofApp::draw(){
+    mesh.draw();
+    mesh2.draw(); // 快！！
+}</code></pre>
+
+<h3 id="of3dprimitive">of3dPrimitive</h3>
+<p>如前所述，of3dPrimitive 是一个辅助类，封装了 ofVboMesh 并继承自 ofNode。你可以调用任何 ofNode 上的方法，因为按继承的工作方式，它本身就是一个 ofNode，所以我们可以改变它的位置、旋转它、让它朝向其他节点、把它加入节点层级……当你对它调用 <code>draw</code> 时，它会绘制所含的网格，并应用其节点定义的变换。</p>
+<p>有几个预定义的 3D 图元，比如 <code>ofPlanePrimitive</code>、<code>ofSpherePrimitive</code>、<code>ofIcoSpherePrimitive</code> 或 <code>ofCylinderPrimitive</code>，它们了解所含网格几何的具体细节。这让给它们贴纹理或改变网格分辨率都变得容易……</p>
+<p>或者你可以直接用 <code>of3dPrimitive</code> 创建自己的：</p>
+
+<pre><code>// ofApp.h
+
+of3dPrimitive primitive;
+
+// ofApp.cpp
+
+void ofApp::setup(){
+    primitive.getMesh().addVertex(ofVec3f(20,20));
+    primitive.getMesh().addVertex(ofVec3f(40,20));
+    primitive.getMesh().addVertex(ofVec3f(40,40));
+    primitive.getMesh().addVertex(ofVec3f(20,40));
+    primitive.getMesh().setMode(OF_PRIMITIVE_TRIANGLE_FAN);
+}
+
+void ofApp::update(){
+    primitive.move(ofVec3f(10,0,0));
+}
+
+void ofApp::draw(){
+    primitive.draw();
+}</code></pre>
+
+<blockquote>
+<p>注意：虽然上面的例子意在展示如何用 of3dPrimitive 创建自定义几何，并且足够简单以适应此处语境，但通常不建议对上面那样的简单图元使用 of3dPrimitive。计算 ofNode 的变换在 CPU 开销上相当昂贵。对于顶点很多的图元，这是正确做法，但像前一个例子那样的情况，用 ofVboMesh 重新计算所有点在新位置上的坐标通常更快</p>
+</blockquote>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://openframeworks.cc/ofBook/chapters/advanced_graphics.html" rel="noreferrer noopener">openframeworks.cc/ofBook/chapters/advanced_graphics.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

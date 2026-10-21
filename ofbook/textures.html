@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在 3D 图元上使用纹理 - ofBook</title>
+<meta name="description" content="ofBook 章节「在 3D 图元上使用纹理」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="using-textures-on-a-3d-primitive">在 3D 图元上使用纹理</h1>
+<p><em>作者：<a href="http://www.davideprati.com/">Davide Prati</a> 和 <a href="http://hubris.xyz">Hubris</a></em></p>
+<h2 id="intro">简介</h2>
+<p>本章我们会从零开始构建行星地球。有一个球体和一张纹理，这比听起来容易得多。我们会用 <code>ofTexture</code> 类，读完本章你就能把任何纹理应用到 3D 图元上。之后你也就准备好进一步探索着色器与纹理的<a href="shaders.html#addingtextures">结合</a>了。</p>
+<h2 id="basicsaddingatexturestoasphere">基础：给球体添加纹理</h2>
+<p>要给球体加纹理，我们需要把想应用的图像保存到 <code>bin/data</code> 文件夹。假设我们已经保存了<a href="http://paulbourke.net/geometry/transformationprojection/earth.jpg">这张图像</a>，想把它贴到一个球体上。为此，你需要搭好一个基本的 3D 场景，包含一个球体和一个纹理对象。你的 app.h 文件应该像这样：</p>
+
+<pre><code>#pragma once
+
+#include "ofMain.h"
+
+class ofApp : public ofBaseApp{
+
+    public:
+        void setup();
+        void update();
+        void draw();
+
+        void keyPressed(int key);
+        void keyReleased(int key);
+        void mouseMoved(int x, int y );
+        void mouseDragged(int x, int y, int button);
+        void mousePressed(int x, int y, int button);
+        void mouseReleased(int x, int y, int button);
+        void mouseEntered(int x, int y);
+        void mouseExited(int x, int y);
+        void windowResized(int w, int h);
+        void dragEvent(ofDragInfo dragInfo);
+        void gotMessage(ofMessage msg);
+
+        ofSpherePrimitive sphere;
+        ofLight light;
+        ofTexture mTex;
+        ofEasyCam cam;
+};</code></pre>
+
+<p>你的 App.cpp 文件像这样：</p>
+
+<pre><code>#include "ofApp.h"
+
+//--------------------------------------------------------------
+void ofApp::setup(){
+    ofDisableAlphaBlending();
+    ofEnableDepthTest();
+    light.enable();
+    light.setPosition(ofVec3f(100,100,200));
+    light.lookAt(ofVec3f(0,0,0));
+}
+
+//--------------------------------------------------------------
+void ofApp::update(){
+
+}
+
+//--------------------------------------------------------------
+void ofApp::draw(){
+    cam.begin();
+    sphere.draw();
+    cam.end();
+}</code></pre>
+
+<p>运行这个 App，你会看到一个没有任何纹理的球体。要加上纹理，<code>ofTexture</code> 对象必须把 <code>earth.jpg</code> 文件加载到内存中。在 setup 方法里加上这几行：</p>
+
+<pre><code>ofDisableArbTex();
+ofLoadImage(mTex,"earth.jpg");</code></pre>
+
+<p>调用 <code>ofDisableArbText()</code> 是出于向后兼容的考虑，如果你想了解其中缘由，可以看看 <a href="https://forum.openframeworks.cc/t/what-does-ofdisablearbtex-do/26377">论坛</a>上的这个帖子。</p>
+<p>第二步是告诉 openFrameworks，在我们想画球体时应用这张纹理。按下面的方式修改 <code>draw()</code> 方法：</p>
+
+<pre><code>    cam.begin();
+    mTex.bind();
+    sphere.draw();
+    mTex.unbind();
+    cam.end();</code></pre>
+
+<p>瞧，地球就做好了。</p>
+<figure><img alt="earth" src="https://openframeworks.cc/ofBook/images/textures/images/gl_linear.png"/>
+<figcaption>地球</figcaption></figure>
+<h2 id="mipmaps">Mipmap</h2>
+<p>mipmap 是个聪明的东西，它让我们的球体从远处看很好，凑近看也很好。基本来说，mipmap 是一张包含我们图像多种分辨率的图像，从图像的高分辨率版本一直到低分辨率版本。当我们从远处看行星地球时，会用那张图像的低分辨率版本来渲染球体；当我们靠近看球体时，则改用高分辨率图像。这个方案避免了抗锯齿效应并提高速度。维基百科上关于 <a href="https://en.wikipedia.org/wiki/Mipmap">Mipmap</a> 的页面很有意思，想了解更多可以看看。</p>
+<p>这是否意味着我们得把地球图像缩放到不同分辨率，再根据情况决定渲染哪一张？不，openFrameworks 用一个简单的方法来帮忙，<code>generateMipmap()</code> 会替我们完成所有这些工作。按下面的方式修改 setup 方法：</p>
+
+<pre><code>ofDisableArbTex();
+ofLoadImage(mTex,"earth.jpg");
+mTex.generateMipmap();</code></pre>
+
+<p>或者，你也可以在加载纹理之前调用 <code>enableMipmap</code>：</p>
+
+<pre><code>ofDisableArbTex();
+mtex.enableMipmap();
+ofLoadImage(mTex,"earth.jpg");</code></pre>
+
+<p>现在，OpenGL 内部使用这些不同分辨率图像的方式有好几种。在 openFrameworks 中默认是用 <code>GL_LINEAR</code> 对这些图像做线性插值。要改变默认行为，有一个叫 <code>setTextureMinMagFilter()</code> 的方法。</p>
+<p>如果我们在 <code>mTex.generateMipmap()</code> 之后加上这一行</p>
+
+<pre><code>ofTexture.setTextureMinMagFilter(GL_LINEAR_MIPMAP_LINEAR, GL_NEAREST)</code></pre>
+
+<p>图像会变成这样：</p>
+<figure><img alt="earth" src="https://openframeworks.cc/ofBook/images/textures/images/gl_nearest.png"/>
+<figcaption>地球</figcaption></figure>
+<p>如你所见，我们得到了 mipmap 的好处，但由于把放大过滤设成了 <code>GL_NEAREST</code>，在纹理离得较近的地方会出现像素化的观感。</p>
+<p>如果我们把代码改成下面这样</p>
+
+<pre><code>ofTexture.setTextureMinMagFilter(GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR)</code></pre>
+
+<p>得到的图像就像下面这张：</p>
+<figure><img alt="earth" src="https://openframeworks.cc/ofBook/images/textures/images/gl_linear_mip_map.png"/>
+<figcaption>地球</figcaption></figure>
+<h2 id="texturerepetition">纹理重复</h2>
+<p>有时你需要把一个纹理在整个网格上重复。把行星地球的纹理绕球体重复很奇怪，但把树皮的纹理重复到一棵树上就很合理。我们来看看怎么做，以及纹理重复和 mipmap 如何改变网格的外观。为了清楚起见，我会略去加载树的网格和加载纹理的代码，并且我用了一张红底黑球的图像作为纹理，好让瑕疵更明显。</p>
+<p>下面代码里出现的新方法是 <code>setTextureWrap()</code>。它接受两个参数，第一个定义纹理是否在 x 方向重复，第二个定义纹理是否在 y 方向重复。</p>
+<p>我们来看看这张包含同一棵树、纹理用法不同的图。</p>
+<figure><img alt="textures" src="https://openframeworks.cc/ofBook/images/textures/images/repetition.jpg"/>
+<figcaption>纹理</figcaption></figure>
+<p>示例 A 由下面的代码生成：</p>
+
+<pre><code>// 假设你在 App.h 中已经声明了
+// ofTexture bark
+ofLoadImage(bark, "bark.png");</code></pre>
+
+<p>没有设置纹理重复，也没有设置 minMag 过滤。</p>
+<p>示例 B 的代码是这样的：</p>
+
+<pre><code>ofLoadImage(bark2, "bark.jpg");
+bark2.setTextureWrap(GL_REPEAT, GL_REPEAT);
+bark2.setTextureMinMagFilter(GL_NEAREST, GL_NEAREST);</code></pre>
+
+<p>如你所见，纹理正确地重复了，也没有被缩放，但树的末端看起来像素化很严重。我们在示例 C 的代码里解决这个问题</p>
+
+<pre><code>ofLoadImage(bark3,"bark.jpg");
+bark3.setTextureWrap(GL_REPEAT, GL_REPEAT);
+bark3.generateMipmap();
+bark3.setTextureMinMagFilter(GL_LINEAR_MIPMAP_LINEAR, GL_NEAREST);</code></pre>
+
+<p>当然，这棵树看起来更像豹子而不是树，试试不同的纹理以获得更真实的效果。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://openframeworks.cc/ofBook/chapters/textures.html" rel="noreferrer noopener">openframeworks.cc/ofBook/chapters/textures.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
