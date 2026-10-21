@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>三线性插值 - Scratchapixel 中文译本</title>
+<meta name="description" content="插值 · 三线性插值（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>三线性插值</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="interpolation-introduction.html">简介</a></li>
+<li><a href="bilinear-filtering.html">双线性过滤</a></li>
+<li><a style="font-weight:700" href="trilinear-interpolation.html">三线性插值</a></li>
+</ol>
+</div>
+<h2>三线性插值</h2><p><b>阅读时间：6 分钟。</b></p><figure><img src="https://scratchapixel.com/images/interpolation/trilinearfig.png" alt=""><figcaption><b>图 1：</b>三线性插值。我们用 tx 做四次线性插值，算出 a、b、c、d。然后用 ty 对 a、b、c、d 插值，算出 e 和 f，最后用 tz 对 e 和 f 插值，就得到我们的采样点。</figcaption></figure><p>三线性插值是双线性插值技术的直接延伸。它可以看作两个双线性插值的线性插值：一个针对格子的前表面，一个针对后表面。要算出 e 和 f，我们用上一章讲的技术做两次双线性插值。要算出 g，我们沿 z 轴（用 tz，也就是采样点 g 的 z 坐标）对 e 和 f 做线性插值。</p><p>三线性插值的优缺点和它的二维版本一样。它快、容易实现，但结果不够平滑。不过在体积渲染或流体模拟中，需要在三维网格里做极大量的查找，它仍然是个很好的选择。</p><p>下面是网格上三线性插值的一个简单例子。注意，和双线性插值一样，结果可以用一系列操作算出来（第 43 到 45 行），也可以写成格子 8 个角点的加权和（第 47 到 55 行）。</p><pre><code>
+template&amp;lttypename T&gt; 
+class Grid 
+{ 
+public: 
+    unsigned nvoxels;  //体素数量（立方体） 
+    unsigned nx, ny, nz;  //顶点数量 
+    Vec3&amp;ltT&gt; *data; 
+    Grid(unsigned nv = 10) : nvoxels(nv), data(NULL) 
+    { 
+        nx = ny = nz = nvoxels + 1; 
+        data = new Vec3&amp;ltt&gt;[nx * ny * nz]; 
+        for (int z = 0; z &lt; nz + 1; ++z) { 
+            for (int y = 0; y &lt; ny + 1; ++y) { 
+                for (int x = 0; x &lt; nx + 1; ++x) { 
+                    data[IX(x, y, z)] = Vec3&amp;ltt&gt;(drand48(), drand48(), drand48()); 
+                } 
+            } 
+        } 
+    } 
+    ~Grid() { if (data) delete [] data; } 
+    unsigned IX(unsigned x, unsigned y, unsigned z) 
+    { 
+        if (!(x &lt; nx)) x -= 1; if (!(y &lt; ny)) y -= 1; if (!(z &lt; nz)) z -= 1; 
+        return x * nx * ny + y * nx + z; 
+    } 
+    Vec3&amp;ltT&gt; interpolate(const Vec3&amp;ltT&gt;&amp; location) 
+    { 
+        T gx, gy, gz, tx, ty, tz; 
+        unsigned gxi, gyi, gzi; 
+        // 把点的坐标重映射到网格坐标
+        gx = location.x * nvoxels; gxi = int(gx); tx = gx - gxi; 
+        gy = location.y * nvoxels; gyi = int(gy); ty = gy - gyi; 
+        gz = location.z * nvoxels; gzi = int(gz); tz = gz - gzi; 
+        const Vec3&amp;ltT&gt; &amp; c000 = data[IX(gei, gyi, gzi)]; 
+        const Vec3&amp;ltT&gt; &amp; c100 = data[IX(gxi + 1, gyi, gzi)]; 
+        const Vec3&amp;ltT&gt; &amp; c010 = data[IX(gxi, gyi + 1, gzi)]; 
+        const Vec3&amp;ltT&gt; &amp; c110 = data[IX(gxi + 1, gyi + 1, gzi)]; 
+        const Vec3&amp;ltT&gt; &amp; c001 = data[IX(gxi, gyi, gzi + 1)]; 
+        const Vec3&amp;ltT&gt; &amp; c101 = data[IX(gxi + 1, gyi, gzi + 1)]; 
+        const Vec3&amp;ltT&gt; &amp; c011 = data[IX(gxi, gyi + 1, gzi + 1)]; 
+        const Vec3&amp;ltT&gt; &amp; c111 = data[IX(gxi + 1, gyi + 1, gzi + 1)]; 
+#if 1 
+        Vec3&amp;ltT&gt; e = bilinear&amp;ltVec3&amp;ltT&gt; &gt;(tx, ty, c000, c100, c010, c110); 
+        Vec3&amp;ltT&gt; f = bilinear&amp;ltVec3&amp;ltT&gt; &gt;(tx, ty, c001, c101, c011, c111); 
+        return e * ( 1 - tz) + f * tz; 
+#else 
+        return 
+            (T(1) - tx) * (T(1) - ty) * (T(1) - tz) * c000 + 
+            tx * (T(1) - ty) * (T(1) - tz) * c100 + 
+            (T(1) - tx) * ty * (T(1) - tz) * c010 + 
+            tx * ty * (T(1) - tz) * c110 + 
+            (T(1) - tx) * (T(1) - ty) * tz * c001 + 
+            tx * (T(1) - ty) * tz * c101 + 
+            (T(1) - tx) * ty * tz * c011 + 
+            tx * ty * tz * c111; 
+#endif 
+    } 
+}; 
+ 
+template&amp;lttypename T&gt; 
+void testTrilinearInterpolation() 
+{ 
+    Grid&amp;ltT&gt; grid; 
+    for (unsigned i = 0; i &lt; 1000; ++i) { 
+        // 生成一个随机位置
+        Vec3&amp;ltT&gt; result = grid.interpolate(Vec3&amp;ltt&gt;(drand48(), drand48(), drand48())); 
+    } 
+}
+</code></pre><h2>实现细节（2024 年更新）</h2><p>这门课最初写完之后，我们为修 bug 对代码做了些改动（2024 年）。检查代码的输出不像二维图像插值那样简单直接。原因是三维网格主要用来存储和渲染体积物体，要正确测试插值，得有一个能处理体积的渲染器。</p><p>这门课最初写的时候，体积渲染那门课还没有。现在情况不同了。我们推荐看看<a href="intro-volume-rendering.html">体积渲染</a>这门课，那里有三维线性插值的一个可能用法。</p><p>同时，代码也做了改进：为输出/升采样网格的每个切片输出一帧。把输出的图像逐张过一遍，就能实际看到插值的结果。感谢 @kristopolous 提出这个建议，并修改代码实现了这个想法。</p><p>下面是该程序输出结果的可视化。初始三维网格 <code>scr_grid3d</code> 的分辨率是 8x8x8，程序要把这个网格升采样成 <code>target_grid3d</code>，大小为 128x128x128。程序遍历升采样网格（<code>target_grid3d</code>）的每个顶点，用低分辨率网格的数据做三线性插值来设定它们各自的值。实现这门技术时，有几点需要小心：</p><ul><li><p>顶点数等于网格在任一维度上构成该维度的格子数加 1（在代码示例中，网格三个轴的维度相同）。</p><pre><code>
+uint32_t grid_size = 8; // 沿 x、y、z 轴的格子数
+uint32_t scale = 16;
+
+uint32_t src_num_verts = grid_size + 1;
+uint32_t target_num_verts = grid_size * scale + 1;
+</code></pre></li><li><p>在低分辨率网格里查找时，要确保没有下标大于低分辨率网格的大小（所以代码里计算下标时会用 <code>std::min(grid_size, ...)</code>）。</p><pre><code>
+for (uint32_t z = 0; z &lt; target_num_verts; ++z) {
+ gz = float(z) / scale;
+ gzi0 = uint32_t(gz); tz = gz - gzi0;
+ gzi1 = std::min(grid_size, gzi0 + 1); // 不能大于 grid_size
+ ...
+</code></pre></li></ul><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/interpolation/interpo-3dgrid-slices.mp4"></video></p></div>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/interpolation/trilinear-interpolation.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/interpolation/trilinear-interpolation.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

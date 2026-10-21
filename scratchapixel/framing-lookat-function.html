@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>取景：LookAt 函数 - Scratchapixel 中文译本</title>
+<meta name="description" content="放置相机：LookAt 函数 · 取景：LookAt 函数（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>取景：LookAt 函数</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+
+<h2>取景：LookAt 函数</h2><p><b>阅读时间：19 分钟。</b></p><details open><p>这门短课介绍一种简单而有效的三维相机摆位方法。要读懂本课内容，需要熟悉变换矩阵的概念以及向量之间的叉积。如果你还不了解这些概念，建议先复习<a href="points-vectors-and-normals.html">几何</a>这门课。</p></details><h2>放置相机</h2><p>在三维场景中摆放相机至关重要。在 Scratchapixel 的大多数课程里，我们通常用一个 4x4 矩阵来设定相机的位置与朝向（注意缩放相机是没有意义的），这个矩阵一般称为<b>相机到世界</b>矩阵。不过，手工配置一个 4x4 矩阵挺麻烦。</p><p>幸运的是，有一种通常称为 <b>look-at</b> 的方法能简化这个过程。思路很直接：要确定相机的位置与朝向，你需要空间中一个点作为相机位置，另一个点定义相机看向哪里。我们把第一个点叫作「from」，第二个点叫作「to」。</p><figure><img src="https://scratchapixel.com/images/lookat/look-at-1.png?" alt=""></figure><p>用这两个点，我们就能轻松构造出一个世界到相机的 4x4 矩阵，本课就来演示这一点。</p><p>不过，开始之前先澄清一个容易混淆的地方。在右手坐标系中，如果你沿 z 轴看过去，x 轴指向右，y 轴指向上，z 轴指向你自己，如下图所示。</p><figure><img src="https://scratchapixel.com/images/lookat/look-at-setup.png?" alt=""></figure><p>因此，在设想一套新的相机设置时，很自然会把相机摆成「看向右手坐标系、z 轴朝向相机」的样子（如上图所示）。由于相机习惯上就是这么摆放的，有些资料（例如《Physically Based Rendering》/ PBRT）就提出：这种朝向意味着相机是按左手坐标系定义的，即沿 z 轴看过去时 z 轴背离你（与视线同向）。右手坐标系是标准做法这一点没错，但为相机单独开例外，只会带来混乱。</p><p>我们更愿意认为相机和其他三维物体一样，工作在右手坐标系中。只不过在渲染时，我们通过沿相机局部 z 轴把光线方向「缩放」-1，把相机的朝向翻转过来，然后才向场景投射光线。正如<a href="generating-camera-rays.html">光线追踪：生成相机光线</a>这门课所说，在用相机到世界矩阵变换光线方向向量之前，光线方向的 z 分量被设为 -1。这个调整严格来说不是缩放，它只是把光线方向向量沿相机局部 z 轴反向。</p><figure><img src="https://scratchapixel.com/images/lookat/look-at-setup1.png?" alt=""></figure><p>结论是：如果你的程序使用右手坐标系，为保持一致，相机也应当像其他任何三维物体一样定义在右手坐标系里。但由于我们朝相反方向投射光线，看起来就像是相机沿负 z 轴方向看过去。这一点澄清之后，我们来看看这个矩阵怎么构造。</p><figure><img src="https://scratchapixel.com/images/lookat/look-at-2.png?" alt=""><figcaption><b>图 1：</b>相机瞄准某一点时的局部坐标系。</figcaption></figure><figure><img src="https://scratchapixel.com/images/lookat/look-at-3.png?" alt=""><figcaption><b>图 2：</b>由相机位置与目标点算出前向向量。</figcaption></figure><p>记住，一个 4x4 矩阵编码了笛卡尔坐标系的三个轴。如果这个概念还不清楚，请回头看看<a href="points-vectors-and-normals.html">几何</a>这门课。注意处理矩阵和坐标系时有两种约定要考虑。对矩阵，你得在行主序和列主序表示之间选一个，我们用<b>行主序</b>。对坐标系，你得在右手系和左手系之间选一个，我们采用<b>右手</b>坐标系。4x4 矩阵的第四行（行主序表示下）编码平移值。</p><p>$$
+\begin{matrix}
+\color{red}{Right_x}&\color{red}{Right_y}&\color{red}{Right_z}&0\\
+\color{green}{Up_x}&\color{green}{Up_y}&\color{green}{Up_z}&0\\
+\color{blue}{Forward_x}&\color{blue}{Forward_y}&\color{blue}{Forward_z}&0\\
+T_x&T_y&T_z&1
+\end{matrix}
+$$</p><figure><img src="https://scratchapixel.com/images/lookat/look-at-4.png?" alt=""><figcaption><b>图 3：</b>向量 (0,1,0) 位于前向向量与上向量所定义的平面内。垂直于这个平面的向量就是右向量。</figcaption></figure><p>笛卡尔坐标系各轴的命名是任意的。你可以叫它们 x、y、z，但为了本课叙述清晰，我们按图 1 把它们命名为 <b>right</b>（对应 x 轴）、<b>up</b>（对应 y 轴）和 <b>forward</b>（对应 z 轴）。由「from」和「to」两个点构造 4x4 矩阵的过程可归纳为四步：</p><ul><li><p><b>第 1 步：算出前向轴</b>。如图 1 和图 2 所示，相机局部坐标系的前向轴与 <i>from</i>、<i>to</i> 两点确定的线段同向。稍用一点几何知识就能算出这个向量：把向量 \(\text{From-To}\) 归一化。注意它的方向：是 \(\text{From-To}\)，不是 \(\text{To-From}\)。这一步可以用下面这段代码完成：</p><pre><code>
+Vec3f forward = Normalize(From - To);
+</code></pre><p>现在来算另外两个向量。</p></li><li><p><b>第 2 步：算出右向量</b>。正如我们在几何课上所学，笛卡尔坐标由三个相互垂直的单位向量定义。我们也知道，如果有两个向量 \(A\) 和 \(B\)，可以认为它们位于同一个平面内。而且这两个向量的叉积给出第三个向量 \(C\)，它垂直于该平面，因而垂直于 \(A\) 和 \(B\)。利用这一性质就能生成右向量。做法是：用一个<i>任意向量</i>与前向向量求叉积，得到的向量必然垂直于前向向量，可以拿来当作笛卡尔坐标系里的右向量。计算代码很直接，只需前向向量与这个任意向量的一次叉积：</p><pre><code>
+Vec3f right = crossProduct(randomVec, forward);
+</code></pre><p>这个<i>任意</i>向量该怎么选？实际上它并不能真的任意，所以我们才把「任意」写成斜体。想想看：如果前向向量是 (0,0,1)，那么右向量应当是 (1,0,0)。只有选 (0,1,0) 作为任意向量，才能得到这个结果。确实，\((0,1,0) \times (0,0,1) = (1,0,0)\)，其中符号 \(\times\) 表示叉积。回想一下叉积的计算公式：</p><details open><p>还可以从这一点看出，右向量总是落在 xz 平面内。你可能会问：如果给相机加一个滚转，右向量不就会跑到别的平面上去了吗？确实，直接用 look-at 方法无法给相机加滚转。要给相机加滚转，得先构造一个使相机滚转（绕 z 轴旋转）的矩阵，再把它乘到用 look-at 方法构造的相机到世界矩阵上。</p></details><p>下面是算出右向量的最终代码：</p><pre><code>
+Vec3f tmp(0, 1, 0); Vec3f right = crossProduct(tmp, forward);
+</code></pre><p>叉积计算中向量的顺序要特别注意。回想一下，叉积满足反交换律（详情参见几何课）。记住正确顺序的一个好办法是：前向向量 (0,0,1) 与上向量 (0,1,0) 的叉积应当得到 (1,0,0) 而不是 (-1,0,0)。熟悉叉积公式的人一眼就能看出正确顺序是 \(up \times forward\)，而不是反过来。现在有了前向向量和右向量，接着找出「真正的」上向量。</p></li><li><p><b>第 3 步：算出上向量</b>。这一步很直接：已知前向向量和右向量这两个正交向量，对它们求叉积就得到缺失的第三个向量，即上向量。如果前向向量和右向量都已归一化，那么叉积算出的上向量也必然是归一化的（\(u\) 与 \(v\) 的叉积长度等于 \(u\) 与 \(v\) 所确定的平行四边形面积，\(\|u \times v\| = \|u\| \cdot \|v\| \cdot \sin \theta\)）：</p><pre><code>
+Vec3f up = crossProduct(forward, right);
+</code></pre><p>再说一次，叉积中向量的顺序要当心。现在我们已经有了定义相机坐标系的那三个向量。接下来构造最终的 4x4 相机到世界矩阵。</p></li><li><p><b>第 4 步：用 right、up、forward 三个向量作为基向量填充 4x4 矩阵</b>。剩下的任务就是把相机到世界矩阵本身搭出来：把矩阵的每一行替换成相应的数据：</p><ul><li><p>第 1 行：前三个系数换成 <i>right</i> 向量的坐标，</p></li><li><p>第 2 行：前三个系数换成 <i>up</i> 向量的坐标，</p></li><li><p>第 3 行：前三个系数换成 <i>forward</i> 向量的坐标，</p></li><li><p>第 4 行：前三个系数换成 <i>from</i> 点的坐标。</p></li></ul></li></ul><p>如果这个安排的来由不清楚，回头看看几何课或许有帮助。下面是完整函数的源代码，它由 <i>from</i> 和 <i>to</i> 两个参数算出并返回一个相机到世界矩阵。函数的第三个参数（_up_）就是计算右向量时用的那个<i>任意</i>向量。在 main 函数里它被设为 (0,1,0)，但为了安全，你可能需要把它归一化（以防用户输入了未归一化的向量）。</p><pre><code>
+#include &amp;ltcmath&gt; 
+#include &amp;ltcstdint&gt; 
+#include &amp;ltiostream&gt; 
+ 
+struct float3 
+{ 
+public: 
+    float x{ 0 }, y{ 0 }, z{ 0 }; 
+    float3 operator - (const float3&amp; v) const 
+    { return float3{ x - v.x, y - v.y, z - v.z }; } 
+}; 
+ 
+void normalize(float3&amp; v) 
+{ 
+    float len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); 
+    v.x /= len, v.y /= len, v.z /= len; 
+} 
+ 
+float3 cross(const float3&amp; a, const float3&amp; b) 
+{ 
+    return { 
+        a.y * b.z - a.z * b.y, 
+        a.z * b.x - a.x * b.z, 
+        a.x * b.y - a.y * b.x 
+    }; 
+} 
+ 
+struct mat4 
+{ 
+public: 
+    float m[4][4] = {{1, 0, 0, 0},  {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}}; 
+    float* operator [] (uint8_t i) { return m[i]; } 
+    const float* operator [] (uint8_t i) const { return m[i]; } 
+    friend std::ostream&amp; operator &lt;&lt; (std::ostream&amp; os, const mat4&amp; m) 
+    { 
+        for (int i = 0; i &lt; 4; i++) {
+            for (int j = 0; j &lt; 4; j++) {
+                os &lt;&lt; m[i][j];
+                if (j &lt; 3) os &lt;&lt; ", ";
+            }
+            if (i &lt; 3) os &lt;&lt; ",\n";
+        }
+        return os;
+    } 
+}; 
+ 
+void lookat(const float3&amp; from, const float3&amp; to, const float3&amp; arbitraryUp, mat4&amp; m) 
+{ 
+    float3 forward = from - to; 
+    normalize(forward); 
+    float3 right = cross(arbitraryUp, forward); 
+    normalize(right); 
+    float3 up = cross(forward, right); 
+ 
+    m[0][0] = right.x,   m[0][1] = right.y,   m[0][2] = right.z; 
+    m[1][0] = up.x,      m[1][1] = up.y,      m[1][2] = up.z; 
+    m[2][0] = forward.x, m[2][1] = forward.y, m[2][2] = forward.z; 
+    m[3][0] = from.x,    m[3][1] = from.y,    m[3][2] = from.z; 
+} 
+ 
+int main() 
+{ 
+    mat4 m; 
+ 
+    float3 up{ 0, 1, 0 }; 
+    float3 from{ 1, 1, 1 }; 
+    float3 to{ 0, 0, 0 }; 
+ 
+    lookat(from, to, up, m); 
+ 
+    std::cout &lt;&lt; m &lt;&lt; std::endl; 
+ 
+    return 0; 
+}
+</code></pre><p>输出应当是：</p><pre><code>
+0.707107, 0, -0.707107, 0, -0.408248, 0.816497, -0.408248, 0, 0.57735, 0.57735, 0.57735, 0, 1, 1, 1, 1
+</code></pre><details open><p>我偶然看到<a href="https://github.com/KhronosGroup/Vulkan-Tools/blob/main/cube/linmath.h" target="_blank" rel="noreferrer noopener">一段代码</a>，它对 <code>LookAt</code> 方法是这样实现的：</p><pre><code>
+LINMATH_H_FUNC void mat4x4_look_at(mat4x4 m, vec3 const eye, vec3 const center, vec3 const up)
+{
+    vec3 f;
+    vec3_sub(f, center, eye);
+    vec3_norm(f, f);
+
+    vec3 s;
+    vec3_mul_cross(s, f, up);
+    vec3_norm(s, s);
+
+    vec3 t;
+    vec3_mul_cross(t, s, f);
+
+    m[0][0] =  s[0];
+    m[0][1] =  t[0];
+    m[0][2] = -f[0];
+    m[0][3] =  0.f;
+
+    m[1][0] =  s[1];
+    m[1][1] =  t[1];
+    m[1][2] = -f[1];
+    m[1][3] =  0.f;
+
+    m[2][0] =  s[2];
+    m[2][1] =  t[2];
+    m[2][2] = -f[2];
+    m[2][3] =  0.f;
+
+    m[3][0] =  0.f;
+    m[3][1] =  0.f;
+    m[3][2] =  0.f;
+    m[3][3] =  1.f;
+
+    mat4x4_translate_in_place(m, -eye[0], -eye[1], -eye[2]);
+}
+</code></pre><p>这个方法算的不是<b>相机到世界</b>矩阵，而是<b>世界到相机</b>矩阵——它的逆。用实时图形 API 的程序通常需要的是这个矩阵，它常被称为<b>视图</b>矩阵，在顶点着色器里用来把顶点从世界空间变换到相机空间。因此，想直接拿到<b>世界到相机</b>矩阵时，用这个方法可能比上面给出的那个（它得到的是<b>相机到世界</b>矩阵）更方便。</p><p>这段代码与前面给出的实现有以下几处不同：</p><ul><li><p>首先，前向向量是按 <code>center - eye</code> 算的，和我们先前的做法正好相反。这样得到的向量从相机指向目标，更贴合「前向向量」的概念。但由于这个向量的方向是反的（相对于我们一直用的那个），后面叉积里的项也随之反了过来。</p><p>给定：</p><ul><li><p><code>eye</code> = (0, 0, 1)</p></li><li><p><code>center</code> = (0, 0, 0)</p></li><li><p><code>up</code> = (0, 1, 0)</p></li></ul><p>$$ \text{f} = \text{center} - \text{eye} = (0, 0, 0) - (0, 0, 1) = (0, 0, -1) $$</p><p>用叉积运算 <code>f × up</code> 计算右向量 <code>s</code>：</p><p>$$ \text{s} = \text{f} \times \text{up} = (0, 0, -1) \times (0, 1, 0) $$</p><p>套用叉积公式：</p><p>$$ \text{s} = \left((0)(0) - (-1)(1), (-1)(0) - (0)(0), (0)(1) - (0)(0)\right) = (1, 0, 0) $$</p><p>右向量 <code>s</code> 正确地指向 x 轴正方向。</p><p>用叉积运算 <code>s × f</code> 计算上向量 <code>t</code>：</p><p>$$ \text{t} = \text{s} \times \text{f} = (1, 0, 0) \times (0, 0, -1) $$</p><p>套用叉积公式：</p><p>$$ \text{t} = \left((0)(-1) - (0)(0), (0)(0) - (1)(-1), (1)(0) - (0)(1)\right) = (0, 1, 0) $$</p><p>新的上向量 <code>t</code> 仍然与 y 轴正方向一致。</p><p>最后，如你所见，在 x 轴和 y 轴上，我们的结果与 <code>lookat</code> 方法给出的结果是一致的。</p></li><li><p>最后，在填写矩阵各项时要注意，我们是按矩阵已经转置过的样子来填的。这是因为，正如几何课所讲，假设矩阵是正交矩阵，那么正交矩阵的逆就是它的转置。所以，要构造世界到相机矩阵，你只需把相机到世界矩阵的系数转置一下。</p></li><li><p>我们把前向向量的值取了负，因为如课上所指出的，相机需要沿负 z 轴方向看。</p></li><li><p>至于平移，你要按「用平移值为 <code>-eye[0], -eye[1], -eye[2]</code> 的矩阵去乘当前矩阵」的方式来做。这正是 <code>mat4x4_translate_in_place</code> 所完成的事。更准确地说，在这个例子里我们并没有直接为眼睛位置设置平移矩阵。相机到世界矩阵的平移值我们是知道的，就是 <code>eye</code> 向量。但因为这个矩阵是把顶点从世界空间变换到相机空间，我们需要把世界空间中的眼睛位置再变回相机空间。因此 <code>mat4x4_translate_in_place</code> 可以看作一次 <code>Tr * M</code> 乘法，其中 <code>Tr</code> 是平移矩阵，<code>M</code> 是我们的世界到相机矩阵。得到的结果矩阵就是平移矩阵乘上世界到相机矩阵。</p></li></ul><p>注意这里用的是 <code>-eye</code> 而不是 <code>eye</code>，因为我们要把眼睛位置平移回原点，这就要考虑在最后这一步平移之前，世界到相机矩阵上可能已经施加的旋转、缩放和平移。</p><pre><code>
+LINMATH_H_FUNC void mat4x4_translate_in_place(mat4x4 M, float x, float y, float z)
+{
+	vec4 t = {x, y, z, 0};
+	vec4 r;
+	int i;
+	for (i = 0; i &lt; 4; ++i) {
+		mat4x4_row(r, M, i);
+		M[3][i] += vec4_mul_inner(r, t);
+	}
+}
+</code></pre><p><code>mat4x4_translate_in_place</code> 的代码可能有点让人困惑，因为它遵循 OpenGL 的约定：矩阵是列主序的，但矩阵的每一列在内存中是按一行 float 连续存放的。这只是给以后去看那段链接代码的人提个醒。如果你对行主序与列主序的区别、以及在这些约定下元素到底怎么存进内存感到一头雾水（欢迎加入彻底懵圈俱乐部！），可以看几何课里讲矩阵的那一章。</p><p>总的来说，这种能直接算出世界到相机矩阵、不必对相机到世界矩阵求逆的做法，值得了解。</p></details><h2>行主序与列主序矩阵、相机到世界与世界到相机、以及 GPU 管线</h2><p>如果你打算在 DirectX、Vulkan 或 Metal 这类 API 的 GPU 渲染管线里使用 look-at 方法的结果，请读下面这一段。</p><p>有位读者被搞糊涂了：互联网上某份资料里，look-at 方法算出的矩阵把平移值放在矩阵最右边一列，而不是第四行。如你所知，也如我们多次强调的，同一个矩阵之所以看起来不一样，是因为行主序与列主序的约定不同（深入解释见几何课）。本质上，你可以通过一次转置操作在两种约定之间切换（前提是矩阵正交，见下文）。</p><p>要记住，本课算的是相机到世界矩阵。也就是说，这个矩阵把相机从默认位置（位于世界原点、沿 z 轴方向看）变换到它在场景中的最终位置与朝向。一个用来移动相机的矩阵，其缩放值（矩阵对角线）不应该是 (1,1,1) 之外的东西。换句话说，缩放相机毫无道理。确实，你永远不该缩放相机。记住，在 Screatchapixel 上一律使用行主序矩阵约定，没有别的。</p><p>不过，当你用 GPU 渲染几何体时，渲染管线的第一步就是把三角形顶点的位置从世界空间转到相机空间。这个转换总是在顶点着色器里完成。这个矩阵是本课所算矩阵的逆。因此，如果你要在使用三维实时图形 API 和 GPU 渲染场景的程序里用到本课的成果，你需要传给顶点着色器的是<b>世界到相机</b>矩阵，也就是我们在这里学会计算的<b>相机到世界</b>矩阵的逆。</p><p>你可能还记得几何课里讲过：对于正交矩阵——即在变换下保持直角和向量长度的矩阵——它的逆就是它的转置。这个性质在这里很有用，因为相机到世界矩阵按其构造方式本来就应当是正交的。原因是我们只涉及平移值和用于旋转的单位长度向量，没有引入任何缩放或错切。换句话说，如果你在 GPU 顶点着色器里看到一个矩阵，看起来像是我们算的矩阵的逆，那很正常：因为你在那个着色器里看到的正是我们的逆矩阵，也就是我们矩阵的转置。证毕。</p><p>如今在现代 GPU API 里事情更「绕」了一些，因为它们让程序员可以控制着色器里用哪种矩阵约定。用户现在可以选择在顶点或片元着色器里使用行主序还是列主序矩阵，而在过去这是不可能的。Vulkan 或较早版本 DirectX 等 API 中的着色器一直只处理列主序矩阵。所以，如果你面对的是现代三维实时 API，得先看看那个允许你在两种约定之间选择的选项有没有打开。若没打开，就按列主序约定来假定。下面的代码展示了如何把矩阵约定设为行主序——再说一次，这不是默认值（出于历史原因，默认是列主序）：</p><pre><code>
+layout(set = 0, binding = 0, row_major) uniform UBO {
+    mat4 matrix;
+} ubo;
+</code></pre><p>记住：</p><ul><li><p>我们在这里算的是相机到世界矩阵。</p></li><li><p>GPU 顶点着色器需要的是世界到相机矩阵，用来把顶点从世界空间转到相机空间。</p></li><li><p>假设你的世界到相机矩阵不含任何缩放（它本来也不该有），那么从相机到世界矩阵转到世界到相机矩阵，只要取相机到世界矩阵的转置即可（这里不需要计算代价高昂的求逆方法）。</p></li><li><p>现代 GPU API 允许你在着色器里决定矩阵使用哪种约定。所以，这一点你也许也要检查一下。</p></li></ul><h2>Look-At 方法的局限</h2><p>look-at 方法简单直接，通常能有效地把相机摆进三维场景。但它有一个明显的局限，尤其是当相机朝向竖直——正下看或正上看时。在这类朝向下，前向轴与计算右轴时所用的任意轴十分接近，甚至平行。当前向向量与任意轴完全平行时，这个问题最严重，例如前向向量是 (0,1,0) 或 (0,-1,0)。在这种情况下，生成右向量所依赖的叉积运算无法给出有效结果，因为两个平行向量之间没有垂直分量。</p><p>遗憾的是，这个问题没有简单的解决办法。一种实用的做法是检测这种情况何时发生，并利用我们对这类情形下向量应有配置的了解来手工设定向量。更精巧优雅的方案是使用四元数插值。四元数插值能在不同朝向之间平滑过渡，即使接近竖直朝向也能在旋转状态之间给出连续路径，从而避开万向节死锁以及这里描述的问题。这种方法可以维持稳定一致的相机朝向，绕过叉积在极端情形下的局限。你可以在<a href="3d-nav-cam-nav-controls.html">相机导航控制课程</a>里学到这门技术。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function/framing-lookat-function.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function/framing-lookat-function.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

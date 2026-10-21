@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一个极简光线追踪器：渲染球体 - Scratchapixel 中文译本</title>
+<meta name="description" content="一个极简光线追踪器 · 一个极简光线追踪器：渲染球体（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>一个极简光线追踪器：渲染球体</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="parametric-and-implicit-surfaces.html">参数曲面与隐式曲面</a></li>
+<li><a href="ray-sphere-intersection.html">光线与球体求交</a></li>
+<li><a style="font-weight:700" href="minimal-ray-tracer-rendering-spheres.html">一个极简光线追踪器：渲染球体</a></li>
+<li><a href="ray-plane-and-ray-disk-intersection.html">光线与平面、光线与圆盘求交</a></li>
+<li><a href="ray-box-intersection.html">光线与盒子求交</a></li>
+</ol>
+</div>
+<h2>一个极简光线追踪器：渲染球体</h2><p><b>阅读时间：11 分钟。</b></p><h2>一个极简光线追踪器：渲染球体</h2><p>本章详细讲解本课程附带的程序源码。这个程序是一个基础但可用的工具，能准确渲染一个只含球体的场景。下面是程序的主要特性列表：</p><ul><li><p>支持相机变换，也就是说我们可以从任意视点渲染场景。这一能力用到了我们在<a href="definition-ray.html">上一课生成相机光线</a>中学到的东西。</p></li><li><p>正确的几何可见性。如果一条光线与不止一个球体相交，显示的是交点距离最近的那个球体。</p></li><li><p>找到交点后，会算出球面上交点处的法线与纹理坐标，并用它们给球体着色。</p></li></ul><p>首先要解决的一个难题，是让程序支持不同的几何类型。比如在这个版本里，我们只想渲染球体。可如果下一个版本想渲染多边形网格呢？这个问题有几种解法，在 C++ 中通常借助类继承机制来解决。一般做法是先定义一个<b>基类</b>，给出程序里几何体的通用定义。然后我们可以按需要添加任意多个虚函数（派生类在 C++ 中可以覆盖虚函数），并为每个派生自基类的类定制这些方法。例如：</p><pre><code>
+class Object
+{
+public:
+    // 虚函数 intersect 需要由派生类覆盖
+    virtual bool intersect(const Vec3f &amp;orig, const Vec3f &amp;dir, float &amp;t) const = 0;
+    virtual ~Object() {} // 虚析构函数
+    Object() {} // 构造函数
+};
+
+class Sphere : public Object
+{
+public:
+    ...
+    bool intersect(const Vec3f &amp;orig, const Vec3f &amp;dir, float &amp;t) const override
+    {
+        // 计算光线与球体交点的代码
+        ...
+
+        return false;
+    }
+};
+
+int main(...)
+{
+    Sphere mySphere;
+    ...
+    if (mySphere.intersect(orig, dir, t)) {
+        // 这条光线与 Sphere 类的这个实例相交
+    }
+}
+</code></pre><p>在上面的伪代码中，类 <code>Object</code> 是纯虚的，这意味着派生自 <code>Object</code> 的类必须实现 <code>intersect()</code> 方法。这个方法就是放置光线与该类所代表几何类型专用求交代码的地方，比如本课程第二章讲过的光线与球体求交代码。</p><pre><code>
+class Sphere : public Object
+{
+public:
+    ...
+    bool intersect(const Vec3f &amp;orig, const Vec3f &amp;dir, float &amp;t) const override
+    {
+        float t0, t1; // 若光线相交，t 的解
+#if 0
+        // 几何解法
+        Vec3f L = center - orig;
+        float tca = L.dotProduct(dir);
+        if (tca &lt; 0) return false;
+        float d2 = L.dotProduct(L) - tca * tca;
+        if (d2 &gt; radius * radius) return false;
+        float thc = sqrt(radius * radius - d2);
+        t0 = tca - thc;
+        t1 = tca + thc;
+#else
+        // 解析解法
+        Vec3f L = orig - center;
+        float a = dir.dotProduct(dir);
+        float b = 2 * dir.dotProduct(L);
+        float c = L.dotProduct(L) - radius * radius;
+        if (!solveQuadratic(a, b, c, t0, t1)) return false;
+#endif
+        if (t0 &gt; t1) std::swap(t0, t1);
+
+        if (t0 &lt; 0) {
+            t0 = t1; // 若 t0 为负，改用 t1
+            if (t0 &lt; 0) return false; // t0 和 t1 都为负
+        }
+
+        t = t0;
+
+        return true;
+    }
+    ...
+};
+</code></pre><p>下次我们决定加入另一种几何类型时，只需创建一个派生自 <code>Object</code> 的新类，并在 <code>intersect()</code> 方法里实现计算光线与这种新几何体交点所需的代码。例如：</p><pre><code>
+class TriangulatedMesh : public Object
+{
+public:
+    ...
+    bool intersect(const Vec3f &amp;orig, const Vec3f &amp;dir, float &amp;t) const override
+    {
+        // 计算光线与三角网格交点的代码
+        ...
+        return true;
+    }
+    ...
+};
+</code></pre><p>为了简单起见，这个程序里没有引入 <code>Ray</code> 类。这样做是为了说明：仅仅为了把两个变量归拢在一起而建一个类，未必站得住脚。因此我们在 <code>intersect()</code> 方法里直接使用光线的原点与方向。</p><p>球体如何定义已经确定了，现在可以创建一个布满大量球体的场景，它们的位置和半径在三维空间中随机生成。这些球体被加入一个物体列表。这个列表可以容纳任何 <code>Object</code> 类型的物体，而借助 C++ 的继承机制，派生自 <code>Object</code> 的任何类的实例也都能放进去（注意，纯虚的 <code>Object</code> 类是无法创建实例的）。在我们的场景里，这些实例就是 <code>Sphere</code> 类的对象。</p><pre><code>
+int main(int argc, char **argv)
+{
+    // 创建场景（添加物体与光源）
+    std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; objects;
+
+    // 生成一个由随机球体组成的场景
+    uint32_t numSpheres = 32;
+    gen.seed(0);
+    for (uint32_t i = 0; i &lt; numSpheres; ++i) {
+        Vec3f randPos((0.5 - dis(gen)) * 10, (0.5 - dis(gen)) * 10, (0.5 + dis(gen)) * 10);
+        float randRadius = (0.5 + dis(gen)) * 0.5;
+        objects.push_back(std::make_unique&amp;ltSphere&gt;(randPos, randRadius));
+    }
+
+    // 设置选项
+    Options options;
+    options.width = 640;
+    options.height = 480;
+    options.fov = 51.52;
+    options.cameraToWorld = Matrix44f(0.945519, 0, -0.325569, 0, -0.179534, 0.834209, -0.521403, 0, 0.271593, 0.551447, 0.78876, 0, 4.208271, 8.374532, 17.932925, 1);
+
+    // 最后渲染
+    render(options, objects);
+
+    return 0;
+}
+</code></pre><p>此外，我们在程序的 <code>main()</code> 函数里配置图像宽高之类的选项，然后把物体列表与选项传给 <code>render()</code> 函数。通常 <code>render()</code> 函数会遍历图像的所有像素，构造主光线。<b>相机到世界</b>矩阵用来变换光线的原点与方向。</p><pre><code>
+void render(
+    const Options &amp;options,
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects)
+{
+    ...
+    float scale = std::tan(deg2rad(options.fov * 0.5));
+    float imageAspectRatio = options.width / static_cast&amp;ltfloat&gt;(options.height);
+    Vec3f orig;
+    options.cameraToWorld.multVecMatrix(Vec3f(0), orig);
+    for (uint32_t j = 0; j &lt; options.height; ++j) {
+        for (uint32_t i = 0; i &lt; options.width; ++i) {
+#ifdef MAYA_STYLE
+            float x = (2 * (i + 0.5) / static_cast&amp;ltfloat&gt;(options.width) - 1) * scale;
+            float y = (1 - 2 * (j + 0.5) / static_cast&amp;ltfloat&gt;(options.height)) * scale * 1 / imageAspectRatio;
+#else
+            float x = (2 * (i + 0.5) / static_cast&amp;ltfloat&gt;(options.width) - 1) * imageAspectRatio * scale;
+            float y = (1 - 2 * (j + 0.5) / static_cast&amp;ltfloat&gt;(options.height)) * scale;
+#endif
+            Vec3f dir;
+            options.cameraToWorld.multDirMatrix(Vec3f(x, y, -1), dir);
+            dir.Normalize();
+            *(pix++) = castRay(orig, dir, objects);
+        }
+    }
+
+    // 把结果保存为 PPM 图像（在 Windows 下编译请保留这些标志）
+    ...
+}
+</code></pre><details open><p>关于 <code>MAYA_STYLE</code> 那处 if-else：当图像不是正方形时，需要按图像宽高比调整屏幕窗口。数学上这种调整有两种做法。第一种，把屏幕窗口的宽度（x 轴）乘以图像宽高比。例如图像分辨率为 640x480 时，宽高比是 1.33，于是屏幕窗口在 x 方向宽 1.33 个单位、在 y 方向高 1 个单位（这里假定视场角不影响屏幕窗口的尺寸）。另一种做法是让屏幕窗口沿 x 轴保持 1 个单位的宽度，而在 y 轴上按图像宽高比的倒数进行缩放，如下图所示。</p><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/impsurf-maya-flag.png?" alt=""></figure><p>两种做法在数学上都会改变透过相机看到的物体取景，但同样有效。Maya 采用第二种做法。因此，如果你希望光线追踪器的输出与 Maya 的渲染结果对齐，就需要按图像宽高比的倒数调整光线方向的 y 分量。否则，你可以保持光线的 y 坐标不变，而把 x 坐标乘以宽高比：</p><pre><code>
+#ifdef MAYA_STYLE 
+float x = (2 * (i + 0.5) / (float)options.width - 1) * scale; 
+float y = (1 - 2 * (j + 0.5) / (float)options.height) * scale / imageAspectRatio; 
+#else 
+float x = (2 * (i + 0.5) / (float)options.width - 1) * imageAspectRatio * scale; 
+float y = (1 - 2 * (j + 0.5) / (float)options.height) * scale; 
+#endif
+</code></pre><p>在编译命令里加上 <code>-DMAYA_STYLE</code> 选项即可启用第一种情形。</p></details><p>光线的原点、方向以及物体列表被传给 <code>castRay()</code> 函数。我们没有在这个函数里遍历场景的所有物体，而是交给 <code>trace()</code> 函数。<code>trace()</code> 函数接收物体列表以及光线的原点与方向，遍历场景中的物体，调用每个物体的 <code>intersect()</code> 方法。因此，如果物体是球体，就会触发 <code>Sphere</code> 类的 <code>intersect()</code> 方法。对于 <code>TriangulatedMesh</code>（待实现），则会调用 <code>TriangulateMesh</code> 类的 <code>intersect()</code> 方法。这个函数在光线与物体相交时返回真，否则返回假。找到交点后，作为 <code>intersect()</code> 方法输入参数的 \(t\) 会被更新为光线原点到交点之间的距离。<code>trace()</code> 函数对于维护最近交点距离至关重要，因为一条光线可能与多个物体相交。变量 <code>tNear</code> 初始被设为一个大得多的数，一旦发现更近的交点就更新（如下面的伪代码所示）。</p><pre><code>
+bool trace(
+    const Vec3f &amp;orig, const Vec3f &amp;dir, 
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects, 
+    float &amp;tNear, const Object *&amp;hitObject)
+{
+    tNear = kInfinity;
+    auto iter = objects.begin();
+    for (; iter != objects.end(); ++iter) {
+        float t = kInfinity;
+        if ((*iter)-&amp;gtintersect(orig, dir, t) &amp;&amp; t &lt; tNear) {
+            hitObject = iter-&amp;gtget();
+            tNear = t;
+        }
+    }
+
+    return (hitObject != nullptr);
+}
+</code></pre><details open><p>关于 <a href="http://en.cppreference.com/w/cpp/memory/unique_ptr" target="_blank" rel="noreferrer noopener">std::unique_ptr</a>：<code>unique_ptr</code> 是一种智能指针，通过指针持有对象的独占所有权，并在 <code>unique_ptr</code> 离开作用域时释放该对象。用 <code>unique_ptr</code> 管理动态分配的几何体，可以让程序员不必手动释放内存，智能指针在离开作用域时会自动处理。</p></details><p>如果 <code>castRay()</code> 函数里 <code>trace()</code> 返回真，就表示光线与 <code>hitObject</code> 变量所指的物体相交。我们同时得到了到该物体的交点距离 <code>t</code>。有了这些信息，就能算出交点（下面第 9 行），并对相交物体调用 <code>getSurfaceData()</code> 方法，取得交点处表面的法线与纹理坐标（下面第 12 行）。随后用法线与纹理坐标对该点着色。把光线的方向取反，再与法线做点积，就能算出所谓的朝向比。当法线与光线方向一致时，这个比值趋近于 1；当两者垂直或方向相反时，它趋近于 0 或降到 0 以下。最后，用纹理坐标计算一个棋盘图案。交点处的颜色由物体颜色（创建时随机赋予）、朝向比结果和图案混合而成：</p><pre><code>
+Vec3f castRay(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects)
+{
+    Vec3f hitColor = 0;
+    const Object *hitObject = nullptr; // 指向被击中物体的指针。
+    float t; // 光线原点到命中点的交点距离。
+    if (trace(orig, dir, objects, t, hitObject)) {
+        Vec3f Phit = orig + dir * t;
+        Vec3f Nhit;
+        Vec2f tex;
+        hitObject-&amp;gtgetSurfaceData(Phit, Nhit, tex);
+        // 用法线与纹理坐标给命中点着色。
+        // 法线用来算一个简单的朝向比，纹理坐标
+        // 用来算一个基本的棋盘图案。
+        float scale = 4;
+        float pattern = (fmodf(tex.x * scale, 1) &gt; 0.5) ^ (fmodf(tex.y * scale, 1) &gt; 0.5);
+        hitColor = std::max(0.f, Nhit.dotProduct(-dir)) * mix(hitObject-&amp;gtcolor, hitObject-&amp;gtcolor * 0.8, pattern);
+    }
+
+    return hitColor;
+}
+</code></pre><p>本节结束了程序源码的讲解。程序的结果如下图。左边是场景在 Maya 中的渲染，右边是我们程序的输出。唯一的差别是物体的颜色，我们没有试图在 Maya 场景中精确复现这些颜色。可以看到，球体在两张图里的位置完全一致，图案也吻合。</p><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/impsurf-proj-results.png?" alt=""></figure><p>和往常一样，完整源码可在 GitHub 上获取。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/minimal-ray-tracer-rendering-spheres.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/minimal-ray-tracer-rendering-spheres.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

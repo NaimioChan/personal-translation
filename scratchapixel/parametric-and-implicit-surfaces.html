@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>参数曲面与隐式曲面 - Scratchapixel 中文译本</title>
+<meta name="description" content="一个极简光线追踪器 · 参数曲面与隐式曲面（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>参数曲面与隐式曲面</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="parametric-and-implicit-surfaces.html">参数曲面与隐式曲面</a></li>
+<li><a href="ray-sphere-intersection.html">光线与球体求交</a></li>
+<li><a href="minimal-ray-tracer-rendering-spheres.html">一个极简光线追踪器：渲染球体</a></li>
+<li><a href="ray-plane-and-ray-disk-intersection.html">光线与平面、光线与圆盘求交</a></li>
+<li><a href="ray-box-intersection.html">光线与盒子求交</a></li>
+</ol>
+</div>
+<h2>参数曲面与隐式曲面</h2><p><b>阅读时间：12 分钟。</b></p><h2>引言</h2><p>上一课我们学会了如何生成主光线。但因为还没学会如何计算这些主光线与任何几何体的交点，所以还没能产出图像。本课我们将研究简单形状（例如球体）的光线与几何体求交。球体做光线追踪相对直接，因此是学习编写光线追踪器的人常选的形状。于是本课会涉及一个略显混杂的话题组合：</p><ul><li><p><b>参数曲面与隐式曲面</b>：本章深入参数曲面与隐式曲面。这些曲面（形状）之所以特别，是因为它们可以用数学方式定义。这一基础知识将支撑下一章要研究的技术——计算它们与光线的交点。</p></li><li><p><b>第 2 章</b>：介绍几种计算光线与球体交点的方法。</p></li><li><p><b>第 3 章</b>：把上一课关于生成主光线的洞见，与本章第 2 章学到的方法结合起来，判定主光线是否与构成场景的任何一个球体相交。本课开发的程序将作为一个微型但可用的光线追踪器的基础。我们先研究 <code>trace()</code> 函数，在其中对每个球体做主光线测试，返回交点距离以及指向最近相交球体的指针（如果发生相交）。然后在 <code>castRay()</code> 函数里，我们学习利用交点处的法线与纹理坐标来实现基础着色。</p></li><li><p><b>第 4、5 章</b>：介绍计算光线与其他简单形状（例如平面、圆盘与轴对齐包围盒）交点的各种技术。</p></li></ul><p>一如既往，本课开发的全部程序的完整源代码（包括如何编译的说明）都可以在网站的 GitHub 仓库里找到（链接见页面顶部目录表）。</p><h2>光线与几何体求交</h2><p>上一课我们学会了如何生成主光线。现在必须研究光线与几何体求交，才能产出图像。目标是用数学判定一条光线是否与某个物体相交。前面讨论过，几何体或 3D 物体在计算机图形学中可以用好几种方式表示。例如我们提到过多边形网格（由面构成）、NURBS 曲面、细分曲面等。不过，除了三角形网格（它是多边形网格的一个子集）之外，NURBS 与细分曲面我们还没有涉及。</p><p>这类几何体在计算机图形学中很有用，能描绘复杂物体的形状。而球体、平面、圆盘或包围盒这类简单形状，可以用更简单的方法更直接地渲染。这些形状可以用方程作数学描述，我们就可以用方程解析地计算光线是否与它们相交。本课将讲这些数学定义，聚焦两种主要方式：<b>参数式</b>与<b>隐式</b>。</p><h2>参数曲面</h2><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/impsurf-ray.png" alt=""><figcaption><b>图 1：</b>光线的参数式定义。</figcaption></figure><p>回想上一课讲过，光线也可以用下面这个<a href="http://en.wikipedia.org/wiki/Parametric_equation" target="_blank" rel="noreferrer noopener"><b>参数方程</b></a>来定义：</p><p>$$P = O + tD$$</p><p>其中 \(P\) 是光线半直线上的一点，\(O\) 是光线的原点，\(D\) 是光线的方向。项 \(t\) 叫作参数。改变 \(t\) 的值，我们就可以描述光线半直线上的许多点，这些点的集合就构成这条半直线本身。本质上，它描述的是沿光线生成一个有序点序列。球体也可以用参数形式定义。下面是球体的参数方程：</p><p>$$
+\begin{array}{l}
+P.x = \cos(\phi)\sin(\theta),\\
+P.y = \cos(\theta),\\
+P.z = \sin(\phi)\sin(\theta).\\
+\end{array}
+$$</p><p>由球坐标计算笛卡尔坐标的公式可能因资料而异（关于这个题目的更多历史信息，见<a href="https://en.wikipedia.org/wiki/Spherical_coordinate_system" target="_blank" rel="noreferrer noopener">维基百科上关于球坐标的条目</a>）。差异来自给坐标系各轴命名所用的约定，以及 \(\theta\) 表示的是极角（纬度）还是方位角（经度）。在这个特定情形中，\(\theta\) 定义的是极角，如图 2 所示。这是物理学家偏好的约定，而数学家通常把 \(\theta\) 称为方位角、把 \(\phi\) 称为极角。</p><p>你还需要注意给坐标系各轴命名所用的约定类型。数学家倾向于使用这样一种体系：\(z\) 表示向上的向量，而垂直于 \(xz\) 平面的轴背离你指向（\(x\) 轴指向你的右侧）。除了 Blender 之外的许多 3D 应用（Blender 用的是我们刚描述的那种约定，因为它最初是在 90 年代开发的），使用 \(y\) 为向上轴、\(x\) 指向右方、\(z\) 位于垂直于 \(xy\) 平面的平面上的约定。</p><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/impsurf-sphere.png?" alt=""><figcaption><b>图 2：</b>球体的参数式定义。</figcaption></figure><p>或者也可以写成：</p><p>$$
+\begin{array}{l}
+\vec r(\theta,\phi) = (\sin(\theta) \cos(\phi), \cos(\theta), \sin(\theta) \sin(\phi)), \\
+0 \leq \phi < 2\pi, 0 \leq \theta \leq \pi.
+\end{array}
+$$</p><p>其中 \(\theta\) 与 \(\phi\) 表示球面上某点的纬度（极角）与经度（方位角）坐标，以弧度定义。角 \(\theta\)（希腊字母 theta）限定在 \([0, \pi]\) 范围内，角 \(\phi\)（希腊字母 phi）限定在 \([0, 2\pi]\) 范围内。我们之前在<a href="spherical-coordinates-and-trigonometric-functions.html">几何</a>课程里介绍过这些公式。球面上某点的坐标 \(\theta, \phi\)，也叫<a href="http://en.wikipedia.org/wiki/Spherical_coordinate_system" target="_blank" rel="noreferrer noopener">球坐标</a>，对于理解球体可以用三个方程一组来描述这一点很关键。在这些参数方程中，\(\theta\) 与 \(\phi\) 充当参数。可以用这类方程定义的 3D 物体，就叫作<b><a href="http://en.wikipedia.org/wiki/Parametric_surface" target="_blank" rel="noreferrer noopener">参数曲面</a></b>。</p><p>在计算机图形学（CG）中，这种表示方式有利之处在于：这两个参数 \(\theta\) 与 \(\phi\)（在一般情形中常记作 \(u\) 与 \(v\)，或 \(s\) 与 \(t\)）可以直接用作物体 3D 表面上某点的纹理坐标。例如在球体的情形里，我们可以方便地把这两个参数 \(\theta\) 与 \(\phi\) 重映射到 [0, 1] 范围，并用这些坐标去查询纹理，或用过程式方法生成图案。本课会给出这一技术的一个示例（<a href="minimal-ray-tracer-rendering-spheres.html">第 3 章</a>）。本质上，这个过程可以看作从 2D 空间到 3D 空间的映射，用这些 2D 坐标来纹理化，也就是我们的 \(s\) 与 \(t\) 坐标。</p><p>总之要记住：参数曲面描述一条曲线需要一个参数，描述一个 3D 曲面需要两个参数。</p><h2>隐式曲面</h2><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/impsurf-circle.png?" alt=""><figcaption><b>图 3：</b>半径为 \(r\) 的圆的隐式形式。</figcaption></figure><p>隐式曲面与参数曲面有相似之处。作为起点，考虑一个用隐式形式由下面的方程定义的圆：</p><p>$$x^2 + y^2 = r^2.$$</p><p>这里 \(x\) 与 \(y\) 表示 2D 空间中某点的坐标，\(r\) 表示圆的半径（图 1）。对位于半径为 \(r\) 的圆上的任意一点，这个方程都成立。换句话说，取圆上任意一点的坐标，平方后相加，结果等于圆半径的平方。默认情况下，这个例子假设圆心在原点。不过，你可以把方程推广到圆心位于任意位置的圆：</p><p>$$(x - O_x)^2 + (y - O_y)^2 = r^2.$$</p><p>这里 \(O\) 表示圆心的位置。这个改动只是把圆心平移到原点。上面这个就是圆的隐式方程。把这个概念推广到 3D，球体的隐式方程是：</p><p>$$x^2 + y^2 + z^2 = r^2.$$</p><p>原理仍然相同：对位于半径为 \(r\) 的球面上的所有点，这个方程都成立。</p><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/impsurf-bounding-sphere.png?" alt=""><figcaption><b>图 4：</b>用球体作为包围体，判断光线是否可能与所围住的几何体相交。如果光线不与球体相交，那它就不可能与被围住的物体相交。</figcaption></figure><p>本课将研究如何利用这些方程来测试光线与隐式曲面之间的相交。</p><p>平面、球体、圆锥、圆环等各种形状都可以用这类方程定义。虽然这些形状在描绘复杂物体时显得用处不大——本课开头也承认了这一点——但它们有宝贵的用途。例如球体可以作为一个<b>包围体</b>把物体的整体体积包裹起来（图 4）。测试光线与复杂物体的相交在计算上可能相当昂贵。先检查光线与包围球是否相交，若光线未命中球体，就免去了直接测试物体的必要，从而节省计算时间。如果测试光线-球体相交所需的时间少于光线-物体相交，这种做法就很有价值。由于光线与隐式曲面求交的代价往往低于光线与三角形求交，对包含许多复杂物体的场景来说，采用这种简单的光线-几何体加速技术能显著降低计算时间。因此，尽管隐式曲面的形态看似简单，理解隐式曲面及其在计算光线-几何体相交中的用处仍然有价值。</p><details open><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/blobbies.png" alt=""></figure><p>隐式曲面与 blobies：隐式曲面中有一类很迷人的东西，在 CG 文献中通常叫作 blobies 或 metaballs。blobies 可以想象成互相影响形状的小球。把两个 blobies 靠近，它们的表面会在中间融合，形成一个更大的统一团块。这种建模技术尤其在 80、90 年代流行，擅长创建有机形状。不过 blobies 通常需要先转换成多边形网格，才能方便地做光线追踪。关于 blobies 的更多内容可以在建模部分找到。</p></details><h2>这些曲面在光线追踪中为什么有用？</h2><p>本课的重点是研究「可由方程定义」这一性质如何方便光线-几何体相交测试的计算。在做这类相交测试时，隐式曲面不如参数曲面灵活，但在计算隐式物体表面上某点的纹理坐标时却非常有用，这一点我们下一章再解释。因此，理解这两种表示方式既有益也必要。此外，这些曲面还有前面提到的几点好处：</p><ul><li><p>光线与隐式曲面相交的解，通常比其他类型的几何体更容易计算。</p></li><li><p>计算光线与隐式曲面的相交，通常比其他几何体类型更快。</p></li><li><p>虽然这些形状过于简单，无法直接表示复杂物体，但它们可以作为包围体，帮助加速光线-几何体相交测试。</p></li><li><p>光线与隐式曲面相交测试体现了数学概念的实际应用，比如求解<a href="http://en.wikipedia.org/wiki/Quadratic_equation#Solving_the_quadratic_equation" target="_blank" rel="noreferrer noopener">一元二次方程的根</a>。</p></li></ul><p>本课将讲光线与球体、平面、圆盘（平面情形的延伸）以及包围盒之间的相交测试。球体属于一类叫作<b>二次曲面</b>的曲面。任何二次曲面（包括圆锥、圆环等）都可以用类似球体的方法来测试光线相交。</p><h2>积分与微分：导数、切线与法向量</h2><p>参数曲面或隐式曲面的另一个好处是，它们的定义方程可以用来计算其他有用的量，比如曲面上任意点处的导数、切线、副切线与法线。法线在着色中至关重要，导数则对纹理过滤这类操作很重要。切线与副切线可以用来在曲面上任意一点建立局部坐标系，对开着色有帮助。计算这些量所涉及的数学，可能比计算光线与隐式曲面相交所用的数学复杂得多，因此本课不涉及。对这个题目感兴趣的人可以在网上查找微分几何的资料。我们会另设一门课专门讲这个主题。尽管后续课程会讨论法线，但为球体和三角形这类形状计算法线更简单，不需要高等微分几何技术。</p><h2>关于光线追踪球体与编写生产级光线追踪器</h2><p>本课要研究的判定光线与球体相交的技术，与下一课要考察的光线-三角形求交方法不同。前面某课讨论过，在渲染器里支持多种几何体类型通常是应当避免的，原因有几点。首先，它需要额外写代码。更关键的是，每个程序特性（比如运动模糊、置换、纹理映射与加速结构）都必须与每一种受支持的几何体类型兼容，这给程序员加上额外的约束。因此，一般更可取的做法是只支持一种几何体类型（三角形是最常见的选择），把其他几何体类型转换成这种标准形式。多数生产渲染器渲染球体、圆环这类简单形状时，是在内部把这些形状转换成多边形网格（通常利用它们的参数表示），而不是为每种形状实现专门的光线-几何体求交程序。实践中，直接渲染球体在生产环境里很少见。与本课讨论的方法不同，对这些形状做光线追踪的传统做法（或称原生做法）不需要把它们转换成多边形网格，优势是比追踪由成百上千个三角形组成的球体渲染更快。学习光线追踪球体或二次曲面是很有价值的练习，尽管从实用角度说，这种做法与生产级渲染器采用的并不相同。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/parametric-and-implicit-surfaces.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/parametric-and-implicit-surfaces.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

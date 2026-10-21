@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>读写图像（一个简单的图像类） - Scratchapixel 中文译本</title>
+<meta name="description" content="简单的图像处理 · 读写图像（一个简单的图像类）（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>读写图像（一个简单的图像类）</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="reading-writing-images.html">读写图像（一个简单的图像类）</a></li>
+<li><a href="image-processing.html">简单的图像处理</a></li>
+<li><a href="bookeh-effect.html">例 1：在二维中模拟散景效果</a></li>
+</ol>
+</div>
+<h2>读写图像（一个简单的图像类）</h2><p><b>阅读时间：20 分钟。</b></p><p>在讲图像处理的任何一门课程之前，先学会读写图像，看起来是很自然的事。本课我们还会写一个非常基础的 Image 类，之后它会被逐步扩展。设计方式显然有很多种，但我们先从最简单的一种开始。这个基础图像类只支持浮点图像（如今这是必须的），而且只包含三个通道。你可以把这个类当作练习轻松扩展，比如用模板随时定义图像的数据类型和通道数。废话不多说，我们先快速回顾一下已知的图像知识，然后写一些简单的代码来读写图像，并把它们存进内存。下一课我们会扩展这个基础 C++ 类，让它支持基本的图像处理。</p><figure><img src="https://scratchapixel.com/images/simple-image-class/sic-imageplanes.png?" alt=""><figcaption><b>图 1：</b>RGB 图像的各个通道。</figcaption></figure><p>数字图像这个概念我们很熟悉。简单定义一下：数字世界中的图像，是以二维像素数组的形式存储或表示的。图像分辨率定义了这个二维数组的尺寸。<b>宽度</b>（水平方向尺寸）和<b>高度</b>（垂直方向尺寸）共同定义了图像的<b>分辨率</b>。数字世界中的一个<b>像素</b>通常由三个数值定义，每个基本色（原色）对应一个。如果你用的是<a href="http://en.wikipedia.org/wiki/Additive_color" target="_blank" rel="noreferrer noopener"><b>加色系统</b></a>（计算机屏幕用的就是这种），这三种颜色是<b>红</b>、<b>蓝</b>和<b>绿</b>（在<a href="http://en.wikipedia.org/wiki/Subtractive_color" target="_blank" rel="noreferrer noopener">减色系统</a>里，原色是青、品红和黄）。早年间计算机内存和磁盘空间都很紧张，像素值往往用尽可能少的字节数来存储。1 个字节（8 位）可以为每种颜色编码或表示 256 个不同的值。如果用三个字节分别编码一个像素的红、绿、蓝，就能定义多达 1680 万种不同的颜色。这种格式称为 <a href="http://en.wikipedia.org/wiki/True_Color#True_color_.2824-bit.29" target="_blank" rel="noreferrer noopener">真彩色（Truecolor）</a>。每个像素所用的位数（不是字节数）通常用缩写 <b>bpp</b> 表示，它代表 <b>bits per pixel</b>（每像素位数）。真彩色用 24 bpp。有时位数是按通道（也就是按颜色）来定义的，这时缩写是 <b>bpc</b>（<b>bits per channel</b>，每通道位数），但用得不多。单个像素中每个颜色分量所用的位数，称为<b>色彩深度</b>或<b>位深度</b>。真彩色对互联网来说一般够用，但视频或电影行业的专业人士使用的大多数图像格式，会把像素颜色编码为三个单精度（或半精度）浮点数（C++ 里的 float 类型）。这意味着一个像素占用 12 字节内存（也就是 96 bpp）。一张高清图像（通常是 1920x1080 像素）大约需要 24 MB 存储空间（假设不压缩）。用浮点数存储像素颜色，最初是为了满足<b>高动态范围图像</b>（即 HDR 图像）的需要，这类图像能存下物理世界中可观察到的更大范围的颜色与亮度。这个概念会在单独一课中再看。从编程角度看，我们要做的只是创建一个简单的 Image 类，在里面存图像的宽度、高度，以及一个一维像素数组（你也可以用二维数组，但未必更实用，效率也不如它）。我们需要两个构造函数，一个创建空图像，另一个按用户指定的分辨率创建图像（第 20 行），还可以用给定的常量颜色填充（该颜色默认为黑色）。像素本身用一种名为 <code>rib</code> 的特殊结构表示。这很方便，因为我们可以写运算符，一次操作像素的三个浮点数。通过重载方括号运算符 <code>[]</code>，从图像中访问像素是件轻而易举的事，之后就能对这些像素施加各种数学运算：相乘、比较、相加等等。方法 <code>friend float&amp; operator += (...)</code> 挺有意思。它可用来计算一个像素的亮度，并把结果累加进一个 float。后面几章我们会用到它。最后，像素在图像中以 Rgb 元素的一维数组形式存储。这块区域的大小等于图像宽度乘以图像高度。不必再把这个数乘以通道数，因为每个像素（类型为 Rgb）本身就已经包含了存三种颜色所需的内存。</p><pre><code>
+#include &amp;ltcstdlib&gt; 
+#include &amp;ltcstdio&gt; 
+ 
+class Image 
+{ 
+public: 
+    // Rgb 结构体，即一个像素 
+    struct Rgb 
+    { 
+        Rgb() : r(0), g(0), b(0) {} 
+        Rgb(float c) : r(c), g(c), b(c) {} 
+        Rgb(float _r, float _g, float _b) : r(_r), g(_g), b(_b) {} 
+        bool operator != (const Rgb &amp;c) const 
+        { return c.r != r || c.g != g || c.b != b; } 
+        Rgb&amp; operator *= (const Rgb &amp;rgb) 
+        { r *= rgb.r, g *= rgb.g, b *= rgb.b; return *this; } 
+        Rgb&amp; operator += (const Rgb &amp;rgb) 
+        { r += rgb.r, g += rgb.g, b += rgb.b; return *this; } 
+        friend float&amp; operator += (float &amp;f, const Rgb rgb) 
+        { f += (rgb.r + rgb.g + rgb.b) / 3.f; return f; } 
+        float r, g, b; 
+    }; 
+ 
+    Image() : w(0), h(0), pixels(nullptr) { /* empty image */ } 
+    Image(const unsigned int &amp;_w, const unsigned int &amp;_h, const Rgb &amp;c = kBlack) : 
+        w(_w), h(_h), pixels(NULL) 
+    { 
+        pixels = new Rgb[w * h]; 
+        for (int i = 0; i &lt; w * h; ++i) 
+            pixels[i] = c; 
+    } 
+    const Rgb&amp; operator [] (const unsigned int &amp;i) const 
+    { return pixels[i]; } 
+    Rgb&amp; operator [] (const unsigned int &amp;i) 
+    { return pixels[i]; } 
+    ~Image() 
+    { if (pixels != NULL) delete [] pixels; } 
+    unsigned int w, h;  //图像分辨率 
+    Rgb *pixels;  //像素的一维数组 
+    static const Rgb kBlack, kWhite, kRed, kGreen, kBlue;  //预设颜色 
+}; 
+ 
+const Image::Rgb Image::kBlack = Image::Rgb(0); 
+const Image::Rgb Image::kWhite = Image::Rgb(1); 
+const Image::Rgb Image::kRed = Image::Rgb(1,0,0); 
+const Image::Rgb Image::kGreen = Image::Rgb(0,1,0); 
+const Image::Rgb Image::kBlue = Image::Rgb(0,0,1); 
+ 
+int main(int argc, char **argv) 
+{ 
+    Image *img = new Image(512, 512); 
+    return 0; 
+} 
+</code></pre><h2>读写图像：PPM，一种简单的图像格式</h2><details open><p>Photoshop 和 Mac 上的 Preview 都能读写 PPM 文件。在 Photoshop 里，这个格式叫 Portable Bit Map。如果你用 Photoshop 导出这类文件，需要把文件扩展名从 .bpm 改成 .ppm（或者在代码里把扩展名改成 .bpm）。</p></details><figure><img src="https://scratchapixel.com/images/simple-image-class/sic-rgbimage.png?" alt=""><figcaption><b>图 2：</b>在 PPM 文件格式中，像素是紧挨着打包在一起的。</figcaption></figure><p>PPM 格式是人们能设计出的最简单的图像文件格式。它完全没有优化，也不使用任何形式的压缩，因此磁盘上的图像文件相比 PNG 或 JPEG 等其他格式要大得多。但读写 PPM 图像的代码写起来简单得惊人，正因为如此，当你需要让程序读写图像时，这个格式非常有用。可以用它来给一些想法做原型，之后再换成更成熟的格式（支持压缩、并且可能支持任意通道数等有用特性的那种）。本课并不是对 PPM 格式的完整介绍。PPM 格式虽然基础（非常接近原始格式），却也有它的细微之处。例如它既能存彩色图像，也能存黑白图像，像素数据既可以用 ASCII 模式也可以用二进制模式。本课我们只处理二进制文件和彩色图像。</p><details open><figure><img src="https://scratchapixel.com/images/simple-image-class/sic-file.png?" alt=""></figure><p>大多数图像文件格式的设计方式都一样。文件开头通常存放所谓的<b>文件头</b>，它一般是一个结构，里面定义了图像的标准属性：当然是分辨率，还有图像中存了几个图像平面、每通道多少位、数据是否压缩、像素用哪种压缩算法处理等等。一般来说，真正必需的信息只有图像分辨率，其他都是可选的。文件头里还可以包含元数据，比如文件由谁创建、生成文件的日期和时间等。如果文件来自数码相机，这些元数据里还可能包含所用镜头的信息，以及拍摄时的相机设置，比如快门速度、光圈等。这些信息会有用，等我们讲到 HDR 图像那一课时会看到。最后，文件头几乎总是紧跟图像数据本身。数据的编码方式在不同格式之间差别很大。像素的颜色可以放在一起存（PPM 格式就是如此），也可以每个平面单独存。颜色可以用整数、字符、浮点数等来存。图像数据也可以压缩（一般都会压缩）。</p></details><p><b>文件头</b>（文件开头那几行，提供我们要读的图像的必要信息）由三行定义。第一行是一个字符串，可以是 "P1"、"P2"……"P6"。我们只关心 "P6" 的 PPM 图像，它代表二进制彩色图像。下一行是两个整数，表示图像的分辨率。第三行是另一个整数，表示每种颜色用多少个等级来编码（也就是黑白之间有多少个灰度值，一般是 255）。你可以在文件头里插入注释，注释以字符 '#' 开头，但本课我们会忽略它们。</p><pre><code>
+P6 640 480 255 # comment but we won't support them for now
+</code></pre><p>在 PPM 格式中，颜色用 24 bpp 编码。换句话说，每种颜色编码为 1 个字节（C++ 里就是 unsigned char）。每个像素在文件中编码为三个字节的序列（图 2），每种颜色一个：</p><pre><code>
+R1G1B1R2G2B2R3G3B3...
+</code></pre><p>像素按扫描线顺序编码，从图像的第一行到最后一行，每行从左到右（图 2）。换句话说，文件里的头三个字节对应图像中位置 (1,1) 的像素（(1,1) 指图像左上角），文件中最后三个字节对应画面右下角的像素（假设图像分辨率为 640x480，那就是位置 (640, 480)）。下面看看我们读取 PPM 文件的代码：</p><pre><code>
+Image readPPM(const char *filename) 
+{ 
+    std::ifstream ifs; 
+    ifs.open(filename, std::ios::binary); 
+    // Windows 用户需要指定二进制模式
+    Image src; 
+    try { 
+        if (ifs.fail()) { 
+            throw("Can't open input file"); 
+        } 
+        std::string header; 
+        int w, h, b; 
+        ifs &gt;&gt; header; 
+        if (strcmp(header.c_str(), "P6") != 0) throw("Can't read input file"); 
+        ifs &gt;&gt; w &gt;&gt; h &gt;&gt; b; 
+        src.w = w; 
+        src.h = h; 
+        src.pixels = new Image::Rgb[w * h];  // 若 bad_alloc 会抛异常 
+        ifs.ignore(256, '\n');  // 必要时跳过空行，直到进入二进制数据 
+        unsigned char pix[3];  // 逐个读取像素，把字节转成浮点数 
+        for (int i = 0; i &lt; w * h; ++i) { 
+            ifs.read(reinterpret_cast&amp;ltchar *&gt;(pix), 3); 
+            src.pixels[i].r = pix[0] / 255.f; 
+            src.pixels[i].g = pix[1] / 255.f; 
+            src.pixels[i].b = pix[2] / 255.f; 
+        } 
+        ifs.close(); 
+    } 
+    catch (const char *err) { 
+        fprintf(stderr, "%s\n", err); 
+        ifs.close(); 
+    } 
+ 
+    return src; 
+} 
+</code></pre><p>注意有些特殊情况需要小心处理。比如要读的文件在磁盘上不存在，或者文件大小为 0（这不太可能，但仍需考虑这种可能）。有些程序在写出 PPM 文件时，会在文件头之后插入一个空行。如果存在这些空行，代码会把它们去掉。注意这段代码完全没有优化。你可以把整块数据一次性读进内存再转成 float，或者至少一次读一行像素数据。从字节到 float 的转换只需除以 255。我们知道一个字节只能编码 0 到 255 之间的数，其中 0 代表黑、255 代表白。把这个值除以 255，就把像素颜色重新映射到 [0,1] 区间内的浮点数，其中 0 代表屏幕上的黑、1 代表白。</p><p>一位读者提出的重要问题：「从编程的角度看，返回一个图像高效吗？」问得好。看下面这段代码：</p><pre><code>
+Image dst= readPPM("./lena.ppm");
+</code></pre><p>首先，在读 PPM 文件的函数里，return 语句处会发生一次拷贝（<code>src</code> 本身被拷到一个由函数返回的临时变量里）。然后，<code>dst</code> 初始化时，这个临时变量的数据又被拷一次到 <code>dst</code> 本身。这意味着两次拷贝（以及一连串内存分配），涉及的内存块可能还很大，确实不够高效。不过在我们这个特定例子里，<code>src.pixels</code> 是指向一块动态分配内存的指针，拷贝指针的值本身倒不算太糟（不过后面会看到，这会带来更多问题）。然而如今的 C++ 支持所谓的<b>拷贝省略</b>（copy elision，前提是你用的编译器够新）。它的意思是：编译器会发现函数返回的类型，和你用来接收该函数结果的变量类型相同。这种情况下，<code>dat</code> 实际上会像直接在 <code>readPPM</code> 函数里创建那样被初始化，前面涉及的所有拷贝都被省掉（或者说被<b>省略</b>了）。换句话说，编译器会替你在 <code>readPPM()</code> 函数里把 <code>src</code> 换成 <code>dst</code>。这叫作<b>返回值优化</b>（简称 <b>RVO</b>）。解决这个问题的经典做法之一，是返回指向动态分配的 Image 类实例的指针。指针的初始化或赋值远比拷贝代价低：</p><pre><code>
+Image* readPPM(...) 
+{ 
+    Image *img = new Image(...); 
+    ... 
+    return img; 
+} 
+ 
+Image *img = readPPM(...); 
+</code></pre><p>但有了拷贝省略之后，这就不必要了。简而言之，在多数现代编译器上，这段代码应该是高效的，而且根本不需要拷贝图像数据（前提是拷贝省略生效）。</p><details open><p>在下面这段代码里：</p><pre><code>
+Image operator + (const Image &amp;img) const { Image tmp; // ... return tmp; }
+</code></pre><p>你创建并返回的对象，与函数的返回类型相同。这意味着按 12.8/32 的规定，<code>return tmp;</code> 会把 <code>tmp</code> 当作右值（rvalue）看待：</p><blockquote><p>当拷贝操作被省略的条件已经满足，或者除了源对象是函数参数这一点之外本会满足，而被拷贝的对象由一个左值指定时，选择拷贝构造函数的那个重载决议，首先要像是被拷贝对象由右值指定那样执行。</p></blockquote><p>上述条件在 12.8/31 中给出，其中第一条说：</p><blockquote><p>——在一个返回类型为类类型的函数中的 return 语句里，当表达式是一个非 volatile 自动对象的名称（且该对象不是函数参数或 catch 子句参数），其 cv 限定类型与函数返回类型相同时，可以通过把该自动对象直接构造进函数的返回值来省略拷贝/移动操作</p></blockquote><p>其实细读 12.8/31 就会发现，在你的情况下编译器是允许完全省略拷贝或移动的（而且最流行的那些编译器确实这么做）。这就是所谓的<b>返回值优化</b>（<b>RVO</b>）。来看你这个代码的简化版：</p><pre><code>
+struct Image { 
+    Image() { 
+    } 
+    Image(const Image&amp;) { 
+        std::cout &lt;&lt; "copy\n"; 
+    } 
+    Image(Image&amp;&amp;) { 
+        std::cout &lt;&lt; "move\n"; 
+    } 
+    Image operator +(const Image&amp;) const { 
+        Image tmp; 
+        return tmp; 
+    } 
+}; 
+int main() { 
+    Image src; 
+    Image copy = src + src; 
+} 
+</code></pre><p>用 GCC 4.8.1 编译，这段代码没有任何输出，也就是说不执行拷贝或移动操作。我们把代码稍微弄复杂一点，看看 RVO 无法进行时会发生什么。</p><pre><code>
+Image operator +(const Image&amp;) const { 
+    Image tmp1, tmp2; 
+    if (std::rand() % 2) 
+        return tmp1; 
+    return tmp2; 
+} 
+</code></pre><p>细节就不多说了，这里 RVO 用不上并不是因为标准禁止，而是其他技术原因。用这个版本的 <code>operator +()</code>，程序输出 <code>move</code>。也就是说，没有拷贝，只有一次移动操作。最后再说一句：不建议写 <code>return std::move(tmp);</code>，因为它会阻止 RVO。确实，用这个实现：</p><pre><code>
+Image operator +(const Image&amp;) const { 
+    Image tmp; 
+    return std::move(tmp); 
+} 
+</code></pre><p>输出是 <code>move</code>，也就是调用了移动构造函数；而正如我们看到的，用 <code>return tmp</code> 时不会调用任何拷贝/移动构造函数。这才是正确的行为，因为被返回的表达式 <code>std::move(tmp)</code> 并不是上面引用的 RVO 规则所要求的「非 volatile 自动对象的名称」。那个引入 <code>tmp</code> 和 <code>tmp2</code> 的 <code>operator +()</code> 实现，只是人为阻止 RVO 的一种做法。我们回到最初的实现，看看另一种阻止 RVO 的方式，它也能展示完整的图景：用 <code>-fno-elide-constructors</code> 选项编译代码（clang 里也有这个选项）。输出（GCC 上的结果，clang 里可能不同）是：</p><pre><code>
+move
+move
+</code></pre><p>函数被调用时会分配栈内存，用来构造要返回的对象。我要强调，这并不是上面那个变量 <code>tmp</code>，而是另一个无名的临时对象。然后，<code>return tmp;</code> 触发一次从 <code>tmp</code> 到这个无名对象的拷贝或移动，而初始化 <code>Image cry = src + src;</code> 最后又把这个无名对象拷贝/移动进 <code>cry</code>。这就是基本语义。关于第一次拷贝/移动，情况如下。由于 <code>tmp</code> 是左值，通常会用拷贝构造函数把 <code>tmp</code> 拷到无名对象。但前面那条特殊条款开了个例外，规定 <code>return tmp;</code> 里的 <code>tmp</code> 应当被当作右值看待，于是调用了移动构造函数。此外，在 RVO 生效的情况下，这次移动被省略，<code>tmp</code> 实际上是直接建在那个无名对象上面。关于第二次拷贝/移动，就更简单了。无名对象是右值，所以会选用移动构造函数，把它移动到 <code>cry</code>。现在还有另一项优化（与 RVO 类似，但据我所知没有名字），它在 12.8/31 的第三条中也有规定，允许编译器不使用这个无名临时对象，而改用 <code>cpy</code> 的内存。因此，当 RVO 和这项优化都生效时，<code>tmp</code>、无名对象和 <code>cry</code> 本质上就是「同一个对象」。关于 RVO（返回值优化）的工作方式，似乎有不少混淆。一个简单的例子：</p><pre><code>
+struct A { 
+    int a; 
+    int b; 
+    int c; 
+    int d; 
+}; 
+ 
+A create(int i) { 
+    A a = {i, i+1, i+2, i+3 }; 
+    std::cout &lt;&lt; &amp;a &lt;&lt; "\n"; 
+   return a; 
+} 
+ 
+int main(int argc, char*[]) { 
+    A a = create(argc); 
+    std::cout &lt;&lt; &amp;a &lt;&lt; "\n"; 
+} 
+</code></pre><pre><code>
+0xbf928684
+0xbf928684
+</code></pre><p>意外吗？其实这正是 RVO 的效果：要返回的对象直接就地构造在调用者那里。怎么做到的呢？传统上，调用者（这里是 <code>main</code>）会在栈上为返回值预留一些空间，即返回槽（return slot）；被调函数（这里是 <code>create</code>）会（以某种方式）拿到返回槽的地址，用来把返回值拷进去。被调函数随后为自己的局部变量另分配空间，在这个局部变量里构造结果（和任何其他局部变量一样），然后在 <code>return</code> 语句处把它拷进返回槽。当编译器从代码中推断出该变量可以按等价语义（as-if 规则）直接构造进返回槽时，RVO 就被触发。注意这是一项如此常见的优化，以至于标准明确把它列入白名单，编译器无须担心拷贝（或移动）构造函数可能带来的副作用。那什么时候触发呢？编译器很可能采用一些简单的规则，例如：</p><pre><code>
+// 1. 有效
+A unnamed() { return {1, 2, 3, 4}; } 
+// 2. 有效
+A unique_named() { 
+    A a = {1, 2, 3, 4}; 
+    return a; 
+} 
+// 3. 有效
+A mixed_unnamed_named(bool b) { 
+    if (b) { return {1, 2, 3, 4}; } 
+    A a = {1, 2, 3, 4}; 
+    return a; 
+} 
+// 4. 无效
+A mixed_named_unnamed(bool b) { 
+    A a = {1, 2, 3, 4}; 
+    if (b) { return {4, 3, 2, 1}; } 
+    return a; 
+} 
+</code></pre><p>在后一种情况（4）里，返回 "A" 时无法应用这项优化，因为编译器不能把 "a" 构造在返回槽中，它可能还要把 "a" 用于别处（取决于布尔条件 "b"）。因此一条简单的经验法则是：如果在 "return" 语句之前没有声明其他可能占用返回槽的候选对象，就应当应用 RVO。</p></details><p>现在我们来看把图像保存为 PPM 文件的函数：</p><pre><code>
+void savePPM(const Image &amp;img, const char *filename) 
+{ 
+    if (img.w == 0 || img.h == 0) { fprintf(stderr, "Can't save an empty image\n"); return; } 
+    std::ofstream ofs; 
+    try { 
+        ofs.open(filename, std::ios::binary);  //Windows 用户需要指定二进制模式 
+        if (ofs.fail()) throw("Can't open output file"); 
+        ofs &lt;&lt; "P6\n" &lt;&lt; img.w &lt;&lt; " " &lt;&lt; img.h &lt;&lt; "\n255\n"; 
+        unsigned char r, g, b; 
+        // 遍历图像中的每个像素，做钳制并转成字节格式
+        for (int i = 0; i &lt; img.w * img.h; ++i) { 
+            r = static_cast&amp;ltunsigned char=""&gt;(std::min(1.f, img.pixels[i].r) * 255); 
+            g = static_cast&amp;ltunsigned char=""&gt;(std::min(1.f, img.pixels[i].g) * 255); 
+            b = static_cast&amp;ltunsigned char=""&gt;(std::min(1.f, img.pixels[i].b) * 255); 
+            ofs &lt;&lt; r &lt;&lt; g &lt;&lt; b; 
+        } 
+        ofs.close(); 
+    } 
+    catch (const char *err) { 
+        fprintf(stderr, "%s\n", err); 
+        ofs.close(); 
+    } 
+}
+</code></pre><p>这里代码同样很基础。如果图像的某个维度为 0，我们就不保存。如果文件打不开，就抛出异常。然后我们写文件头："P6" 字符串，接着是图像宽度、高度，以及黑白之间的灰度值个数（255）。最后遍历画面的所有像素。unsigned char 只能编码 [0,255] 区间内的整数值，所以在把像素颜色乘以 255 之前，需要先把它的值钳制到 [0,1] 区间。最后，转成 unsigned char 之后，当前像素的颜色就可以写入文件了。</p><h2>源代码</h2><p>完整源代码见本课末尾。</p><h2>接下来</h2><p>下一课我们会学习如何扩展图像类的功能，以及如何用运算符轻松地操作图像。我们会用一个例子演示，如何借助这些简单的特性来模拟真实照片中有时能在焦外区域看到的模糊。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/digital-imaging/simple-image-manipulations/reading-writing-images.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/digital-imaging/simple-image-manipulations/reading-writing-images.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

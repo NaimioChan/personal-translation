@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>基础实现 - Scratchapixel 中文译本</title>
+<meta name="description" content="纹理简介 · 基础实现（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>基础实现</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-to-texturing.html">纹理简介</a></li>
+<li><a style="font-weight:700" href="introduction-to-texturing-basic-implementation.html">基础实现</a></li>
+<li><a href="introduction-to-texturing-texture-filtering.html">纹理过滤</a></li>
+<li><a href="introduction-to-texturing-texture-manipulation.html">操作纹理</a></li>
+<li><a href="introduction-to-texturing-color-space.html">色彩空间</a></li>
+<li><a href="introduction-to-texturing-normal-mapping.html">法线贴图</a></li>
+</ol>
+</div>
+<h2>基础实现</h2><p><b>阅读时间：35 分钟。</b></p><p>先剧透一下：下面这张图就是我们的程序将要输出的图像，例子中的球体和平面都用纹理提供了颜色。本章我们将通过一个简单的纹理映射实现来学习如何在实际中做到这一点，把它作用于着色器的颜色参数。</p><figure><img src="https://scratchapixel.com/images/introduction-to-texturing/intro-to-texturing-aim.png" alt=""></figure><h2>它是如何工作的</h2><p>原理简单得出人意料。纹理映射的思路，是把多边形网格的每个顶点与一个二维坐标关联起来，这个坐标指明纹理中的位置。这些坐标用浮点数表示，当然，图像的坐标本身是按像素来定义的。纹理坐标通常（并非总是如此，课程末尾会看到）落在 [0,1] 区间内。这种情况下我们说纹理坐标是<b>归一化</b>的。课程末尾我们会看到，这些纹理并不需要归一化，事实上对生产资产（特效电影或 Pixar、Disney 这类动画电影里用的复杂模型）来说，这早已不是惯例。原因我们后面再解释。</p><p>我们拿一个四边形作例子，从简单的东西开始。通常纹理坐标 (0,0) 对应图像的左下角，纹理坐标 (1,1) 对应右上角。设想一个四边形，四个顶点的坐标为 v0={-1,0,-1}、v1={-1,0,1}、v2={1,0,1}、v3={1,0,-1}，我们就可以给这些顶点分别赋上纹理坐标 uv0={0,0}、uv1={1,0}、uv2={1,1}、uv3={0,1}。</p><p>注意纹理坐标最常用字母 <b>uv</b> 或 <b>st</b> 来表示。人们常说「uv」或「st 坐标」而不说「纹理坐标」。这两个词的准确来源并不确定，不过在数学里用 <b>s</b> 和 <b>t</b> 或 <b>u</b> 和 <b>v</b> 表示参数曲面（比如 NURBS 或 Bézier 曲面片）上的坐标是常见做法。纹理坐标同样是定义表面上位置的二维坐标（只不过在纹理空间而非几何空间里），所以早期图形学研究者也拿这些字母来指代纹理坐标，并不奇怪。</p><details open><p>注意多数图形 API 用的是 <i>st</i> 而不是 <i>uv</i>。有意思的是，多数软件里却叫 UV 编辑器，美术人员也习惯说 UV 展开而不是 ST 展开，所以术语有点不一致。不过说清楚一点：这两个词含义完全相同，可以互换。</p></details><p>我说纹理坐标指的是纹理空间中表面上的一个位置，这里得把含义讲清楚。我们从四边形这个简单例子入手，但立方体、球体或任何其他任意形状上该怎么做？纹理映射的复杂之处就在这里。你需要把 3D 物体「摊开」或「展开」成平的，才能把纹理贴上去。立方体有比较直接的解法，因为它可以展开，如下面的动画所示。对其他表面，比如球体，事情就复杂了。把球体摊平，这个难题几乎和地图学一样古老——地图学的目标就是把分布在地球表面的陆地与海洋表示到一张平面地图上。我们不会深入各种解法，但必要时用过程式方法赋纹理坐标是相当容易的，只是这样得到的 UV 未必最好，很可能让纹理在球体两极处收缩。避免纹理收缩或任何形式的畸变，正是纹理映射的主要难点。</p><p>总结一下：渲染带纹理的物体时，我们先做一层映射，把网格的每个顶点赋到图像/纹理平展二维空间中的某个位置，这就是我们说的纹理空间。在技术论文里，这一步也叫<b>参数化</b>。然后我们把 3D 物体投影到二维屏幕空间。之所以要提这些步骤，是因为底层的映射过程要经过几次变换：</p><ul><li><p><b>参数化这一步：</b>这一步把纹理映射到 3D 物体的表面上。它用两个参数 \(u\) 和 \(v\)（或 \(s\) 和 \(t\)）来描述 3D 顶点。事实上，在各种论文和资料里你常会看到它写作 \((u,v) = T(x,y)\)，其中 \((u,v)\) 是函数 \(T\) 的结果参数，该函数以采样位置坐标 \((x,y)\) 为输入。</p></li><li><p><b>渲染过程：</b>这一步把那个 3D 物体投影到屏幕的二维表面上，其间被映射的纹理会经历一次<b>重采样</b>。等下一章讨论过滤时，这一点会看得最清楚。</p></li></ul><details open><p>NURBS 或 Bézier 曲面，更一般地说参数曲面，非常适合做纹理，因为它们的参数性质使得纹理坐标可以在把曲面从参数形式转成多边形的过程中顺手生成。参数曲面的多边形化，是沿 <b>s</b> 和 <b>t</b> 参数坐标以固定间隔计算曲面位置。一旦为这些 <b>st</b> 或 <b>uv</b> 坐标生成了 3D 点，我们只需把这些坐标赋给顶点本身，它们自然就成了曲面的纹理坐标。因此这类曲面不需要用专门的 UV 编辑器（如 Maya、Blender 等 3D 软件提供的那些）来生成纹理坐标，这一点与多边形网格不同——后者必须在网格建好之后再创建纹理坐标。</p></details><p>然而多数多边形网格的形状并不像立方体或球体那么简单。那怎么办？很遗憾，这个问题没有简单解法。一般来说，Blender 或 Maya 这样的 3D 建模工具都会提供 UV 编辑器，内置多种尽量有效地摊平 3D 物体表面的方法。把 3D 模型摊到二维平面上是个重要的研究课题，因为它相当复杂。</p><ul><li><p>从技术上说，这个过程要尽可能保持多边形的相对面积以及它们的宽高比。以矩形为例：如果纹理坐标对应的不是一个宽高比相同的矩形，那么贴上纹理时，如果用作纹理的图像没有相应缩放，渲染出来就会显得被拉伸（如下图）。</p></li><li><p>其次，必须避免多边形相互重叠。</p></li><li><p>第三，最好让多边形彼此保持连接，这样纹理编辑会简单些。不过这并不总能做到。可以把这个过程想象成把一张羊皮或牛皮摊平成地毯（幸好用狮子皮已经是过去的事了）。如你所见，必须在腿和肚子处剪开，才能摊平。网格也是同样的道理，但要决定在哪里剪开才能最优化地摊平网格这层「皮」，并不总是那么直接。</p></li><li><p>最后，要优化可用的纹理空间——具体说就是 [0,0] 到 [1,1] 这块区域——让映射过程中用到尽可能多的纹理像素，以保证最终结果的分辨率最优。</p></li></ul><p>要想在任意形状的网格上同时满足所有这些约束、得到令人满意的结果，并不简单。这项工作需要专门的艺术家来做，往往是建出网格的建模师本人，这活叫 <b>UV 展开</b>或<b>展开</b>。一般是在 Maya 或 Blender 这类建模软件里用 <b>UV 编辑器</b>完成。这个编辑器通常提供多种工具，尽量有效地把网格摊平：有平面、柱面、立方体、球面这类相对简单的映射技术，也有适合复杂网格的更高级方法——不管是前面说的羊、牛、Jurassic Park 里的恐龙、Toy Story 里的 Woody、Minion 角色还是 King Kong，问题都一样。这对建模师也是麻烦：网格之后任何改动都需要重做或至少调整 UV。要不是会牵连已画好的纹理，这问题还不算大——UV 一改，那些纹理本身可能也要大改重画。这些调整会引发连锁反应，带来额外的手工工作，所以制作过程中真要做这类改动时，时间与金钱成本都不小。</p><p>顺带一提：前面提到的参数化过程其实是一种仿射变换。这个变换把 3D 空间中平面多边形（比如三角形或平行四边形）的顶点转换到纹理空间（一个二维空间）的坐标。它可以用下面的公式有效表示：</p><p>$$
+\begin{pmatrix}
+u \\
+v \\
+1
+\end{pmatrix}
+=
+M_{t0}
+\cdot
+\begin{pmatrix}
+x_o \\
+y_o \\
+z_o \\
+1
+\end{pmatrix}
+$$</p><p>这个公式的意思是：3D 空间中由坐标 \(x, y, z\) 定义的一个点，它对应的 \(uv\) 坐标可以通过把这个 3D 点乘以矩阵 \(M_{t0}\) 得到。如果构成三角形的 3D 顶点在 UV 平面上的位置已知，就可以通过解一个线性方程组来确定该矩阵的系数：</p><p>$$
+M_{t0} =
+\begin{pmatrix}
+a & b & c & d \\
+e & f & g & h \\
+i & j & k & l
+\end{pmatrix}
+$$</p><p>构成网格的每个三角形或四边形都可以有自己独有的映射。这是因为表面上的纹理映射在网格不同部位可以不一样。比如不同三角形可能映射到纹理的不同区域，也可能映射到同一区域但朝向或缩放不同。因此每个三角形（或四边形）通常都有自己独有的 3x4 矩阵 \(M_{t0}\)。</p><p>不过本课程并不关注参数化这一步背后的科学原理，也不打算讲纹理坐标是怎么生成的。但要知道，参数化本身就是一个课题，数学上可以相当繁重（将来大概应该专门开一课讲它）。本课程假定 UV 已经用 Maya 或 Blender 这类软件生成好了，并且我们要处理的模型已经带着这些拓扑信息：构成它的顶点、定义网格面的索引列表，以及它的纹理坐标。话虽如此，我们还是仔细看看这些信息是怎么呈现的。</p><h2>实际实现：基础</h2><p>第一个例子里，我们要渲染一个有朝向的球体，它的 UV 映射是在 Maya 里做的——这是许多从业者常用的数字内容创作工具。这个练习的目标是重现前一章提到的 Pixar Luxo 短片里那个带纹理的球。下图是 Maya 的 UV 编辑器里 UV 的样子。我们给球体的每一半都施加了平面映射，让两个半球各自收到不同的图案，不过在例子里它们是相同的。注意有些 UV 在图像中心附近重叠了。这不成问题，因为相关的顶点重叠的是纹理中一块纯色区域。</p><figure><img src="https://scratchapixel.com/images/introduction-to-texturing/intro-to-texturing-maya-setup.png" alt=""></figure><p>如果你对纹理这个概念还不熟，这个例子希望能帮你更好地理解它。从这张图上可以清楚看到，3D 球体的顶点被摊平了。另一种也许更准确、更不易混淆的说法是：这是一个顶点在 2D 而非 3D 的网格。这个 2D 网格的每个顶点对应 3D 网格的一个顶点。</p><p>现在我们有了带纹理坐标（以及一张纹理）的模型，接下来要导出必要的数据，好用我们的程序渲染这个模型。</p><p>在一步步拆解这个过程之前，先给个概览。如果你翻翻早期的图形学论文，会发现它们提出了几种可行的做法。不过它们同时也指出，当时就已经最流行、如今几乎被普遍采用的方法叫作<b>屏幕顺序</b>方法。本课程用的就是它。</p><p>思路是：屏幕空间里的每个像素被逆变换到纹理空间，然后从那个位置读取纹理中的一个像素。把像素采样位置（例如每个像素一个采样时就是像素中心）变换到 \(st\) 坐标的过程，在光栅化那一课里讲过，特别是 <a href="perspective-correct-interpolation-vertex-attributes.html">透视正确插值与顶点属性</a> 那一章，这里不再重复。不过它会在示例代码里重新实现一遍。本课程要学的，更多是读取纹理像素值的过程。</p><h3> 第一步：定义所需数据</h3><p>如你所知，定义一个多边形网格至少需要一个顶点数组。然后是面顶点数数组，它对应网格每个面由多少个顶点组成。最后是索引数组，给出构成多边形网格的每个面各顶点的索引。</p><p>为了支持纹理坐标，我们还需要一个纹理坐标数组，只不过这次是 2D 点而不是 3D 点。每个纹理坐标对应图像空间中的一个位置，但用的是归一化坐标，也就是取值从 0 到 1。网格中每个顶点对应一个纹理坐标。有人可能以为这种映射（即每个纹理坐标与构成网格的顶点之间的对应关系）与面的索引数组相同，但一般并非如此。所以要明白：每个纹理坐标数组都自带一个索引数组，把各个纹理坐标映射到网格相应的顶点上。</p><p>总结一下：为支持纹理映射，我们在原有三个数组之上又多了两个——纹理坐标列表，以及能把每个纹理坐标映射到网格上特定点的索引列表。</p><pre><code>
+int faceVertexCounts[] = {4, 4, ... 3};
+
+int faceVertexIndices[] = {0, 1, 41, 40, 1, 2, 42, 41, ... 1559, 1520, 1561};
+
+point3f points[] = {{0.8900543, 0.7908807, 0.4050587}, {0.8934053, 0.7852825, 0.39461803}, ... {-0.8607362, 1.2789372, -0.42582545}};
+
+texcoord2f st[] = {{0.3236586, 0.2969423}, {0.3228032, 0.29337937}, ... {0.6763413, 0.70305765}};
+
+int indices[] = {0, 1, 2, 3, 1, 4, 5, 2, ... 762, 1580, 761};
+</code></pre><p>上面的例子里包含以下元素：</p><ul><li><p><b><code>faceVertexCounts</code></b>：这是一个数组，其中每个元素指明该元素索引处的面由多少个顶点组成。</p></li><li><p><b><code>faceVertexIndices</code></b>：如果第一个面由四个顶点组成，那么这个数组的前四个数字就是这些顶点在 <code>points</code> 数组中的索引。</p></li><li><p><b><code>points</code></b>：顶点数组，表示 3D 位置。</p></li><li><p><b><code>st</code></b>：纹理坐标，表示为 2D 点。</p></li><li><p><b><code>indices</code></b>：与 <code>faceVertexIndices</code> 类似，这个数组的前四个数字代表组成第一个面的 4 个顶点在 <code>st</code> 数组中的索引。如上所述，这让我们能以一种与 <code>points</code> 数组中存储方式无关的顺序来定义纹理坐标。</p></li></ul><p>我们把这些数据载入 <code>mesh</code> 对象。记住，首先要把每个面转成三角形，这个过程我们已经讲过了，不再重复。先根据 <code>faceVertexCounts</code> 算出最终会得到多少个三角形，然后据此把 <code>points</code> 和 <code>st</code> 坐标复制到各自的数组里，并建立一个索引列表，存放网格中每个三角形各顶点的索引。这些数组中每连续三个元素代表一个三角形：对 <code>mesh-&gt;face_vertex_indices</code> 数组是三角形在 <code>points</code> 中的索引，对 <code>mesh-&gt;st.indices</code> 数组是三角形在 <code>st</code> 中的索引。下面是处理网格的代码：</p><details open><p>注意本课程我们决定用 C 来写代码（尽量全用 C）。这算是一次练习，因为体验一下写一个 C 兼容而非 C++ 的程序挺有意思。我们不少朋友都抱怨过 C++，退回去用 C，所以我们也想亲自看看用 C 写东西（到 2000 年代初为止我用得最多的语言就是 C）跟用 C++ 写相比是什么感觉。另外，Scratchapixel 是个以教育为目标的平台，用稍有不同的语言展示代码也不是坏主意，能帮你多学几种做事方式。</p><p>总体上，因为我们 C 和 C++ 都熟，切换过程中没遇到什么意外。C 完全够用，但它要求你自己管理大部分内存，这增加了内存泄漏和内存破坏导致崩溃的风险。好处是不依赖替你处理这些事的库，那些库会让二进制变大并带来其他开销。这个争论我们不再深入——继续往下做。C 和 C++ 一样是好语言。事实上，C 就像是 C++ 的原始版本，好比 AC/DC 之于 Britney Spears，或者对 Z 世代来说，Iron Maiden 之于 Taylor Swift。</p></details><pre><code>
+struct mesh {
+	struct point3f* points;
+	int* face_vertex_indices;
+	struct {
+		struct texcoord2f* coords;
+		int* indices;
+	} st;
+	int num_triangles;
+	int num_points;
+	struct normal3f* normals;
+
+	struct shader* shader;
+};
+
+static void create_mesh(struct context* const context, struct mesh* const mesh) {
+#include "sphere.h"
+	int num_faces = sizeof(faceVertexCounts) / sizeof(faceVertexCounts[0]);
+	mesh-&amp;gtnum_points = sizeof(points) / sizeof(points[0]);
+	fprintf(stderr, "num points %d\n", mesh-&amp;gtnum_points);
+	mesh-&amp;gtpoints = (struct point3f*)malloc(sizeof(points));
+	struct point3f* pts = mesh-&amp;gtpoints
+	memcpy((char*)pts, points, mesh-&amp;gtnum_points * sizeof(struct point3f));
+	
+	for (int i = 0; i &lt; mesh-&amp;gtnum_points; ++i, ++pts) {
+		point_mat_mult(pts, context-&amp;gtworld_to_cam, pts);
+	}
+
+	mesh-&amp;gtnum_triangles = 0;
+	for (int i = 0; i &lt; num_faces; ++i) {
+		mesh-&amp;gtnum_triangles += faceVertexCounts[i] - 2;
+	}
+	assert(mesh-&amp;gtnum_triangles);
+
+	mesh-&amp;gtface_vertex_indices = (int*)malloc(mesh-&amp;gtnum_triangles * 3 * sizeof(int));
+	mesh-&amp;gtst.indices = (int*)malloc(mesh-&amp;gtnum_triangles * 3 * sizeof(int));
+	
+	int vert_index_array_size = sizeof(faceVertexIndices) / sizeof(faceVertexIndices[0]);
+	int tex_index_array_size = sizeof(indices) / sizeof(indices[0]);
+	int tex_coord_array_size = sizeof(st) / sizeof(st[0]);
+	
+	mesh-&amp;gtst.coords = (struct texcoord2f*)malloc(sizeof(st));
+	memcpy((char*)mesh-&amp;gtst.coords, st, tex_coord_array_size * sizeof(struct texcoord2f));
+
+	int vi[3], ti[3], index_offset = 0;
+	int* pvi = mesh-&amp;gtface_vertex_indices;
+	int* pti = mesh-&amp;gtst.indices
+	for (int i = 0; i &lt; num_faces; ++i) {
+		vi[0] = faceVertexIndices[index_offset]; ti[0] = indices[index_offset++];
+		vi[1] = faceVertexIndices[index_offset]; ti[1] = indices[index_offset++];
+		for (int j = 0; j &lt; faceVertexCounts[i] - 2; ++j) {
+			vi[2] = faceVertexIndices[index_offset]; ti[2] = indices[index_offset++];
+			memcpy((char*)pvi, vi, sizeof(int) * 3);
+			memcpy((char*)pti, ti, sizeof(int) * 3);
+			vi[1] = vi[2];
+			ti[1] = ti[2];
+			pvi += 3; pti += 3;
+		}
+		
+	}
+	...
+}
+</code></pre><p>现在我们的网格有了所需的全部数据，不只是渲染网格本身要用的那些——比如顶点信息以及它们如何连接成三角形——还有网格的纹理坐标。有了这些，就可以渲染网格了。</p><h3> 第二步：渲染场景</h3><p>渲染过程的其余部分相当直接，因为无论用哪种算法——光线追踪还是光栅化——原理都一样。例如在光线追踪里，我们通过从相机投射光线来判断三角形的可见性，检查这些光线是否与构成网格的三角形相交。然后我们会看到如何用纹理坐标来确定光线与三角形交点所对应像素的颜色。</p><p>先记住，这些三角形的每个顶点都带纹理坐标。思路很简单：如前面讲光线与三角形求交的课程所述，计算光线与三角形的交点时，我们不仅返回光线起点到交点的距离（用变量 \(t\) 表示），还返回交点在三角形上的<b>重心坐标</b>。这些重心坐标让我们能对附着或赋给三角形顶点的任何变量——也叫<b>图元变量</b>——做插值。这里我们用它插值纹理坐标，确定光线与三角形交点处准确的纹理坐标。</p><p>本课程除了用 C 写代码（而不是我们通常用的 C++），还决定采用光栅化算法而不是光线追踪。正如在 C 与 C++ 之间来回换有益，在光栅化与光线追踪之间也值得都试一遍。虽然历史（至少目前）显示多数渲染系统（包括 GPU 架构）都在转向光线追踪，但 1）光栅化在游戏里仍然非常普遍，2）它生成图像比光线追踪快得多（至少在解决较简单场景、不含复杂着色的可见性问题时），3）它涉及一些重要技术，比如透视除法与投影这两个概念。</p><p>不过与光线追踪相比，用光栅化处理图元变量和重心坐标的插值会引入额外的复杂度。光线追踪里过程很直接：从光线与三角形求交得到的重心坐标可以直接用来插值任何顶点或图元变量，因为求交发生在 3D 物体/世界空间里。而光栅化要麻烦一些：</p><ul><li><p>首先，把纹理（st）坐标除以各自对应的 3D 顶点 z 坐标。</p></li><li><p>然后，计算屏幕投影后三角形的重心坐标。</p></li><li><p>接着，用这些重心坐标和三角形顶点的 z 坐标算出当前像素采样的插值深度。</p></li><li><p>之后，用重心坐标插值纹理（st）坐标。</p></li><li><p>最后，把插值得到的纹理（st）坐标乘回插值深度值，以校正透视投影造成的畸变。</p></li></ul><p>这个过程在<a href="overview-rasterization-algorithm.html">光栅化那一课</a>里有详细解释，尤其是 <a href="perspective-correct-interpolation-vertex-attributes.html">透视正确插值与顶点属性</a> 一章。需要复习或初次接触这个算法的话请参考那一课。简单提醒一下：这样做是为了校正透视投影——透视投影保持直线但不保持距离。这项技术叫顶点属性的<b>透视正确插值</b>，也叫<b>有理线性插值</b>或<b>双曲插值</b>。用光栅化器时，要得到正确的纹理坐标就必须理解这个过程。</p><figure><img src="https://scratchapixel.com/images/introduction-to-texturing/intro-to-texturing-projection.png" alt=""><figcaption><b>图 1：</b>不论用光线追踪还是光栅化，目标都一样：找出三角形表面上与图像中每个像素中心（或使用 MSAA 时每个像素采样）对应的点。光线追踪里，你穿过像素中心投射一条光线，求出与三角形的交点。光栅化里，你把三角形投影到屏幕上，检查像素中心是否落在三角形各边之内。如果在，就插值三角形的顶点位置，确定三角形表面上对应的 3D 点。这一步需要把点从屏幕空间反投影回相机空间。</figcaption></figure><p>这里重要的是：我们得到的纹理（st）坐标，是在 3D 空间中三角形上那个点处、对附着于三角形顶点的纹理坐标做插值的结果，而那个点投影到屏幕上正好位于像素中心。我们的示例程序用了 <a href="https://docs.vulkan.org/samples/latest/samples/performance/msaa/README.html" target="_blank" rel="noreferrer noopener">MSAA（multi-sample anti-aliasing，多重采样抗锯齿）</a> 的一种简单形式。我们用了 4 个像素采样，所以这里的采样位置是相对像素坐标分别偏移 {0.25, 0.25}、{0.75, 0.25}、{0.75, 0.25}、{0.75, 0.75} 的位置。</p><details open><p>严格来说，如果你去看 Vulkan 规范，会发现采样位置通常略有旋转。对 2x2 的采样模式，Vulkan 规范里定义的采样位置是 (0.375, 0.125)、(0.875, 0.375)、(0.125, 0.625)、(0.625, 0.875)。只是提一句。采样有单独一课讲。</p></details><p>不论用光线追踪还是光栅化，目标都一样：找出三角形表面上与图像中每个像素中心（或使用 MSAA 时每个像素采样）对应的点。光线追踪里，你穿过像素中心投射一条光线，求出与三角形的交点。光栅化里，你把三角形投影到屏幕上，检查像素中心（或像素采样）是否落在三角形各边之内。如果在，就插值三角形的顶点位置，确定三角形表面上对应的 3D 点。这一步需要把点从屏幕空间反投影回相机空间。这个过程同样在<a href="overview-rasterization-algorithm.html">光栅化</a>那一课里有详细解释。插值任何图元变量我们都用同样的方法。本课程关心的是找出三角形上这个点处的纹理坐标（图 1）。</p><p>下面是我们示例程序中负责计算三角形 st 坐标的那段代码：</p><pre><code>
+static inline void rasterize(int x0, int y0, int x1, int y1, 
+							 const struct point3f* const p0, const struct point3f* const p1, const struct point3f* const p2, 
+							 const struct texcoord2f* const st0, const struct texcoord2f* const st1, const struct texcoord2f* const st2,
+							 const struct mesh* const mesh,
+							 struct context* context) {
+	float area = edge(p0, p1, p2);
+	struct point3f pixel, sample;
+	pixel.y = y0;
+	for (int j = y0, row = y0 * context-&amp;gtextent.width j &lt;= y1; ++j, pixel.y += 1, row += context-&amp;gtextent.width) {
+		pixel.x = x0;
+		for (int i = x0, index = row + x0; i &lt;= x1; ++i, pixel.x += 1, ++index) {
+			for (int k = 0; k &lt; num_samples; ++k) {
+				sample.x = pixel.x + sample_pattern[k].x;
+				sample.y = pixel.y + sample_pattern[k].y;
+				
+				float w0 = edge(p1, p2, &amp;sample);
+				float w1 = edge(p2, p0, &amp;sample);
+				float w2 = edge(p0, p1, &amp;sample);
+				
+				if (w0 &gt;= 0 &amp;&amp; w1 &gt;= 0 &amp;&amp; w2 &gt;= 0) {
+					w0 /= area, w1 /= area, w2 /= area;
+					float one_over_z = w0 / p0-&amp;gtz + w1 / p1-&amp;gtz + w2 / p2-&amp;gtz
+					float z = 1 / one_over_z;
+
+					if (z &lt; context-&amp;gtdepth_buffer[index * num_samples + k]) {
+						context-&amp;gtdepth_buffer[index * num_samples + k] = z;
+
+						struct texcoord2f st;
+						st.s = st0-&amp;gts * w0 + st1-&amp;gts * w1 + st2-&amp;gts * w2;
+						st.t = st0-&amp;gtt * w0 + st1-&amp;gtt * w1 + st2-&amp;gtt * w2;
+						st.s *= z;
+						st.t *= z;
+						shade(mesh-&amp;gtshader, st, &amp;context-&amp;gtcolor_buffer[index * num_samples + k]);
+					}
+				}
+			}		
+		}
+	}
+}
+</code></pre><p>眼尖的读者会注意到对 <code>shade</code> 函数的调用，我们用插值得到的 st 坐标从纹理中这些特定坐标处取颜色。</p><h3> 第三步：纹理查找</h3><p>接下来，在按这些特定纹理坐标去查纹理颜色之前，我们首先得有一张纹理。这一步在我们的示例程序里保持基础。我们只是加载一张以 PPM 文件格式存储的图像的内容，这种格式在 <a href="display-image-to-screen.html">数字图像：从文件到屏幕</a> 那一课里有说明。这类图像可以用 Photoshop 或 GIMP（免费，虽然不那么好用）之类的程序打开和保存。</p><p>程序的结构相当标准。每个网格包含一个指向 shader 对象的指针，该对象保存关于表面外观的信息。我们的基础 shader 只用一个联合体保存一个常量颜色和/或一个指向图像的指针，以备我们想用纹理代替常量颜色。下面是负责这些任务的代码片段。先看 shader 的定义和实现：</p><pre><code>
+struct image {
+    int width;
+    int height;
+    unsigned char* data;
+};
+
+struct shader {
+    union color {
+        struct color3f constant_value;
+        struct image* image_ptr;
+    } color;
+};
+
+struct mesh {
+    struct point3f* points;
+    int* face_vertex_indices;
+    struct {
+        struct texcoord2f* coords;
+        int* indices;
+    } st;
+    int num_triangles;
+    int num_points;
+    struct normal3f* normals;
+    struct shader* shader;
+};
+</code></pre><p>下面是分配 shader 并加载纹理的代码片段：</p><pre><code>
+void set_texture(struct image* const image, const char* filename) {
+    FILE* file = fopen(filename, "rb");
+    char format[3];
+    int bpp;
+    fscanf(file, "%2s", format);  // 内容应为 P6
+    fscanf(file, "%d %d", &amp;image-&amp;gtwidth, &amp;image-&amp;gtheight);
+    fscanf(file, "%d", &amp;bpp);
+    fgetc(file);
+    image-&amp;gtdata = (unsigned char*)malloc(image-&amp;gtwidth * image-&amp;gtheight * 3);
+    fread(image-&amp;gtdata, 3, image-&amp;gtwidth * image-&amp;gtheight, file);
+    fclose(file);
+}
+
+static void create_mesh(struct context* const context, struct mesh* const mesh) {
+    #include "sphere.h"
+    ...
+    mesh-&amp;gtshader = (struct shader*)malloc(sizeof(struct shader));
+    mesh-&amp;gtshader-&amp;gtcolor.image_ptr = (struct image*)malloc(sizeof(struct image));
+    mesh-&amp;gtshader-&amp;gtcolor.image_ptr-&amp;gtdata = NULL;
+    set_texture(mesh-&amp;gtshader-&amp;gtcolor.image_ptr, "./pixar-texture3.pbm");
+}
+</code></pre><p>好，我们现在有了像素处可见三角形上的 <code>st</code> 坐标，也有了一张纹理。下一步就是做我们通常所说的<b>纹理查找</b>——这个词的意思就是「找出纹理在纹理坐标 \(st\) 处的颜色」。它并不是什么特别复杂的操作，不过我们还是用专业术语吧。来做一次纹理查找！</p><p>记住纹理坐标是归一化的，也就是取值从 0 到 1（通常如此，后面我们会看到并非总是如此，并讨论如何处理这类情况）。所以第一件要做的事，是把这些归一化的纹理坐标转成图像中实际的纹理坐标。这个转换就是把 0–1 区间映射到像素值。</p><p>过程很直接。既然知道纹理的尺寸，我们只需把纹理坐标（<code>x</code> 和 <code>y</code> 值）乘以纹理的尺寸（以像素为单位的宽和高）。这样就把归一化坐标转成了纹理图像内的像素坐标，同时要把索引值钳制到图像的宽和高减一。</p><pre><code>
+static void shade(const struct shader* shader, struct texcoord2f st, struct color3f* ci) {
+	if (shader-&amp;gtcolor.image_ptr != NULL) {
+		const struct image* const image = shader-&amp;gtcolor.image_ptr;
+		struct point2i texel;
+		texel.x = (int)fminf(st.s * image-&amp;gtwidth, image-&amp;gtwidth - 1);
+		texel.y = (int)fminf((1 - st.t) * image-&amp;gtheight, image-&amp;gtheight - 1);
+		unsigned char texel_color[3];
+		memcpy(texel_color, image-&amp;gtdata + (texel.y * image-&amp;gtwidth + texel.x) * 3, 3);
+		ci-&amp;gtx = texel_color[0] / 255.f;
+		ci-&amp;gty = texel_color[1] / 255.f;
+		ci-&amp;gtz = texel_color[2] / 255.f;
+		return;
+	}
+	ci-&amp;gtx = shader-&amp;gtcolor.constant_value.x;
+	ci-&amp;gty = shader-&amp;gtcolor.constant_value.y;
+	ci-&amp;gtz = shader-&amp;gtcolor.constant_value.z;
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/introduction-to-texturing/intro-to-texturing-uv-editor.png" alt=""><figcaption><b>图 2：</b>纹理坐标的原点与图像的左下角对齐。</figcaption></figure><p>关于这段代码有一个细节要注意：我们需要反转 <code>st.t</code> 坐标。如果你看 UV 编辑器里坐标是怎么定义的，会发现原点在图像左下角而不是左上角。因此我们必须沿 y 轴反转坐标——0 变 1，1 变 0。做了这个调整，结果应该像这样：</p><figure><img src="https://scratchapixel.com/images/introduction-to-texturing/intro-to-texturing-result1.png" alt=""></figure><p>走到这第一步，恭喜你！如你所见，纹理映射的核心原理一点也不复杂。它依赖光线与三角形求交测试和重心坐标的概念（或者懂得如何用光栅化算法插值图元变量——后者同样基于重心坐标，但由于透视投影的特殊性，要多费点工夫）。这些让我们能插值顶点上的值。除此之外，原理都很直接。最后一步是把这些纹理坐标映射到图像空间，转成像素值。基本就是这样，你可以看到我们程序的结果，它展示了这初步的成果。</p><p>在进入下一章之前（没错，核心原理虽然基础，但纹理映射这事的魔鬼都在细节里，要讲的还很多），先简单谈谈可以对代码做的一处小调整。如前所述，纹理坐标最好总在 [0,1] 区间内，因为这些值用来计算像素位置。大于 1 的值意味着我们可能试图访问（重新映射到纹理空间即像素空间后）超出图像尺寸的像素值，这显然是不对的。我们当然可以钳制这些值，确保它们不会超出 [0,1]，也可以在重新映射到像素空间后钳制索引值。</p><p>不过纹理坐标超出 [0,1] 区间并不一定就是「不想要」的情况。后面专门讲纹理操作那一章会看到，对纹理坐标做简单变换就能得到一些很酷、想要的效果。比如我们可能想把它们放大或缩小，使投影到几何体上的图像变小或变大。这些后面再展开，但至少目前，应对输入纹理坐标可能大于 1 的一种办法，是对代码做如下改动：</p><pre><code>
+static void shade(const struct shader* shader, struct texcoord2f st, struct color3f* ci) {
+	if (shader-&amp;gtcolor.image_ptr != NULL) {
+		const struct image* const image = shader-&amp;gtcolor.image_ptr;
+		float s = st.s - floor(st.s);
+		float t = ceil(st.t) - st.t;
+		point2i pixel;
+		pixel.x = (int)fminf(s * image-&amp;gtwidth, image-&amp;gtwidth - 1);
+		pixel.y = (int)fminf(t * image-&amp;gtheight, image-&amp;gtheight - 1);
+		unsigned char texel[3];
+		memcpy(texel, image-&amp;gtdata + (pixel.y * image-&amp;gtwidth + pixel.x) * 3, 3);
+		ci-&amp;gtx = texel[0] / 255.f;
+		ci-&amp;gty = texel[1] / 255.f;
+		ci-&amp;gtz = texel[2] / 255.f;
+		return;
+	}
+	ci-&amp;gtx = shader-&amp;gtcolor.constant_value.x;
+	ci-&amp;gty = shader-&amp;gtcolor.constant_value.y;
+	ci-&amp;gtz = shader-&amp;gtcolor.constant_value.z;
+}
+</code></pre><p>我们只是用一个副本减去原始 <code>s</code> 坐标自身，但先把副本取整（对 <code>t</code> 我们用 <code>ceil</code> 函数，因为如前所述需要反转它的值）。</p><p>在继续之前你应该知道，我们通常不把纹理中的像素叫「像素」，而叫<b>纹素</b>。Texel 是 <b>texture element</b>（纹理元素）的缩写，这名字挺酷。据我所知，这么叫的原因是要表明：当我们说「纹素」而不是「像素」时，特指纹理中的像素。明白了吗？总之，就叫纹素。</p><p>我们刚用的这项技术叫<b>最近邻</b>方法（有时也叫<b>点采样</b>方法）。之所以这么叫，是因为给三角形上的点找颜色的方式，是把 <code>st</code> 坐标转成纹理坐标（以像素计），再把得到的浮点值取整到<b>最近</b>的像素坐标值（按 IEEE 算术的定义）。举例来说，如果 <code>st</code> 坐标是 {0.13, 0.78}，图像宽高分别是 2048 和 2048（注意纹理不必是正方形，但常常是），那么在纹理空间中得到的坐标是 {266.24, 1597.44}。取整到最近的整数后得到坐标 {266, 1597}，我们用它作为索引来计算该像素在图像数据数组中的位置。</p><p><b>注意</b>：如果你有兴趣用 Vulkan、OpenGL、DirectX 甚至 Metal 这类 GPU 实时图形 API，可能会想这跟你在这些 API 里在 GPU 上做纹理处理的方式有什么关系。实时图形 API 支持纹理与采样器的概念。采样器是定义如何从纹理读取数据的对象。它们支持几种模式，其中最常见的两种（其余等我们水平高些再讲）是 <code>NEAREST</code> 和 <code>LINEAR</code> 过滤模式。现在你知道 <code>NEAREST</code> 模式做什么了。你可能会问，这还不够好吗？<code>NEAREST</code> 模式不够用吗？既够也不够。它能用，简单又快，这都不错。但事情没这么简单。这里还有两个额外问题需要考虑：</p><ul><li><p>还有另一种叫 <code>LINEAR</code> 的模式，能以很小的额外计算代价取得稍好一些的结果。我们下一步就研究并实现这个模式。</p></li><li><p><code>LINEAR</code> 模式与广义上的过滤问题既有关又无关。有关，是因为它某种程度上也算一种过滤。但它并没有完全解决过滤问题，因为就纹理而言，单靠这个模式并不能完整解决与过滤相关的那些挑战。我们之所以需要过滤，原因很复杂，所以我们会用整整一章（下一章）来讲这个题目。</p></li></ul><p>本章余下部分，我们就先搞清 <code>LINEAR</code> 模式是什么并把它实现出来，然后再进入更广义的过滤讨论。</p><h2>线性模式或双线性过滤</h2><p>前面我们讲了纹理映射的基本原理，并展示了用最近邻或点采样方法可以快速简单地得到初步结果。不过我们也能以相对很少的额外工作改进这个结果。</p><p>你已注意到，把纹理坐标转成图像坐标（以像素计）时，自然会得到一个浮点值，很可能带小数。在点采样的情况下，我们只是向下取整就把这些坐标转成了整数。当然，利用小数部分在相邻像素之间做线性插值、再用这些值在 4 个像素之间做线性插值，可以得到好得多、至少更精确的结果。线性插值这项技术在专门讲<a href="bilinear-filtering.html">线性插值</a>的那一课里讲过。</p><figure><img src="https://scratchapixel.com/images/introduction-to-texturing/intro-to-texturing-bilinear-filtering.png" alt=""><figcaption><b>图 3：</b>XX。</figcaption></figure><p>上图中可以看到，我们的 \(st\) 或 \(uv\) 值是 \{1.5,1.5}\)，也就是说它位于纹理第二行第二列那个像素的中心，即坐标为 \{(1,1}\) 的像素。用双线性过滤（线性模式）时，我们会用与该像素相邻的三个像素（图中绿色部分），构成一个 2x2 的像素块，其中左上角的像素包含我们要采样的那个点（有时称为锚点）。然后我们用线性插值，以 \(s\) 为插值参数，分别在像素对 \(P_{1,1}\)-\(P{2,1}\) 与 \(P_{2,1}\)-\(P{2,2}\) 之间做线性插值，最后这次再用 \(t\) 对这些结果做线性插值，得到最终结果。这又是一个典型的双线性插值过程，在讲插值的那一课里有解释。</p><p>XX 代码</p><pre><code>
+xx
+</code></pre><figure><img src="https://scratchapixel.com/images/introduction-to-texturing/intro-to-texturing-point-sampling-problem.png" alt=""><figcaption><b>图 4：</b>XX。</figcaption></figure><p>说双线性过滤只是稍稍缓解过滤问题，其实并不完全准确。有一种情况这类过滤非常有用，90 年代在硬件（GPU）原生支持双线性过滤之前玩过电子游戏的人可以作证。这类过滤的好处最明显的时候是：比如你渲染的三角形在纹理空间里很小（或者不小，但纹理分辨率很低，比如 64x64 像素），在屏幕上却很大。换句话说，屏幕上的三角形覆盖很多像素，但在纹理空间里它只覆盖几个纹素，如下图所示。</p><p>这种情况下点采样的问题在于，纹理中的单个纹素最终覆盖图像中的很多像素，使三角形表面看上去一块一块的——很多电子游戏一直到 90 年代末都受这个问题困扰。我不是 GPU 或显卡史学家/专家，但我相信第一块用硬件加速双线性过滤的显卡属于 Voodoo 家族，特别是 90 年代末发布的 <a href="https://en.wikipedia.org/wiki/Voodoo2" target="_blank" rel="noreferrer noopener">Voodoo2 芯片</a>。当多个纹素落进单个像素时，也会出现类似的问题。涉及动画时（比如相机移动时）这个问题更明显，屏幕上的「纹素」看起来会逐帧跳动，就像这段视频里那样。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/introduction-to-texturing/intro-to-texturing-point-sampling.mp4"></video></p></div><p>这种情况下，在第 N 帧像素可能采样到纹理中一个红色纹素，在第 N+1 帧可能采样到紧挨着它的那个纹素，而三角形相对相机只移动了一点点。如果这个采样在颜色或亮度上差别很大，就会造成明显的跳变。</p><p>双线性过滤在两种情况下都有帮助，但对第一种情况（一个纹素覆盖屏幕上多个像素）尤其有效，因为它让纹素与纹素之间过渡平滑，有助于减轻块状感。对第二种情况，双线性过滤有点帮助但不彻底，因为这种情况与下一章要讲的纹理欠采样问题关系更直接。要解决它，光用双线性滤波器不够。</p><p>xx</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-texturing/introduction-to-texturing-basic-implementation.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-texturing/introduction-to-texturing-basic-implementation.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

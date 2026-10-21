@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光栅化阶段 - Scratchapixel 中文译本</title>
+<meta name="description" content="光栅化 · 光栅化阶段（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光栅化阶段</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="overview-rasterization-algorithm.html">光栅化算法概览</a></li>
+<li><a href="projection-stage.html">投影阶段</a></li>
+<li><a style="font-weight:700" href="rasterization-stage.html">光栅化阶段</a></li>
+<li><a href="visibility-problem-depth-buffer-depth-interpolation.html">可见性问题、深度缓冲算法与深度插值</a></li>
+<li><a href="perspective-correct-interpolation-vertex-attributes.html">透视正确插值与顶点属性</a></li>
+<li><a href="rasterization-practical-implementation.html">光栅化：一个实际实现</a></li>
+</ol>
+</div>
+<h2>光栅化阶段</h2><p><b>阅读时间：42 分钟。</b></p><h2>光栅化：我们要解决什么问题？</h2><blockquote><p>光栅化是把一个图元转换为二维图像的过程。这张图像的每个点都含有颜色与深度这类信息 因此，光栅化一个图元包含两部分 第一部分是确定窗口坐标下整数网格中哪些方格被该图元占据 第二部分是为每个这样的方格赋予颜色与深度值。</p></blockquote><p>引自 <a href="https://registry.khronos.org/OpenGL/specs/gl/glspec10.pdf" target="_blank" rel="noreferrer noopener">OpenGL 规范（1.0 版）文档</a>第 3 章，由 Mark Segal、Kurt Akeley 和 Chris Frazier 于 1994 年撰写。</p><blockquote><p>为避免可能的混淆，先让我给「光栅化」下个定义：就我们当前的目的而言，它就是判断哪些像素位于一个三角形内部的过程，仅此而已。</p></blockquote><p><a href="https://en.wikipedia.org/wiki/Michael_Abrash" target="_blank" rel="noreferrer noopener">Michael Abrash</a>，2009。</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-triangle1.png?" alt=""><figcaption><b>图 1：</b>通过检测图像中的像素是否与三角形重叠，我们就能画出该三角形的图像。这就是光栅化算法的原理。</figcaption></figure><p>上一章我们学习了如何执行光栅化算法的第一步，即把三角形从三维空间投影到画布上。不过这个说法并不完全准确。实际上我们做的是把三角形从相机空间变换到屏幕空间，而如前所述，屏幕空间同样是三维空间。顶点在屏幕空间中的 x、y 坐标（我们称之为 \(VProj\)）对应三角形顶点在画布上的位置（我们称之为 \(V\)）。把它们从屏幕空间转换到 NDC（归一化设备坐标）空间，再从 NDC 空间转换到光栅空间，于是得到：</p><ul><li><p>\(VProj\) 的 x、y 坐标保存 \(V\) 各顶点在光栅空间中的坐标（换句话说，就是它们投影到屏幕上的坐标）。</p></li><li><p>\(VProj\) 的 z 坐标保存 \(V\) 原始的 z 坐标，并取相反数，这样我们就用正数而不是负数来工作。</p></li></ul><p>这样一来，你可以把 \(VProj\) 当作一个三维点。</p><p>接下来要做的是遍历图像中的像素，看看其中是否有像素与三角形的「投影图像」重叠（图 1）。</p><p>2024 年重读这门课——距 2012 年写下它的第一版已过了许多年——我发现自己被自己的措辞弄糊涂了，尤其是「像素与三角形重叠」这个说法。十二年后我想，反过来讲、说「三角形与像素重叠」会不会让读者少些困惑。不过关键的想法是——如果你能在脑子里把它想象出来会很有帮助——把三维三角形投影到屏幕表面，然后看图像中的一个个像素，判断它们是否实际上与那个投影后的三角形重叠。在这个语境下，把像素看作与三角形重叠确实说得通，所以我决定在这门课余下的部分沿用这个说法。不过我补上了这段说明和下面这幅小示意图，帮你把过程看得更清楚。</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-clarification-overlap.png?" alt=""></figure><p>现在（当然）事情要再复杂一点，因为我们实际检查的是位于像素中心的那个点（称为采样点）是否落在投影三角形的边界之内。也就是说，我们并没有真的把像素看成一个面、去检查投影三角形的整个表面是否被像素「覆盖」，而是检查像素中心那个点是否在投影三角形的各条边之内。这就是本章要学的测试。</p><p>然而（是的，还会更复杂），记住像素本质上是通向三维场景的一扇小窗。你可以把像素想象成透过一扇真实的窗户看外面的风景。透过那扇窗，三角形可能看起来完全盖住了像素这块面，也可能只盖住一部分。理想情况下，透过这个像素窗口看到的应当是该场景的一幅完美图像。看下面这幅图，我们理想中希望像素的内容代表透过右边那扇窗看到的东西。当然，左边我们挑了一个简单的例子：场景里只有一个三角形，而这个三角形覆盖了像素的整个面。所以这种情况下没问题，但设想一下透过那个像素能看到好几个三角形的情形，或者像右图那样的场景。</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-pixel-window.png?" alt=""></figure><p>然而，由于一个像素只是单个元素、只能存一种颜色，我们无法在像素里装下透过窗口所见的整幅图像，只能存一种颜色。于是我们的做法是对窗口中心处可见的颜色采样。简言之，我们用「像素」窗口中心处可见的颜色来代表透过该窗口所见的内容。我们用一个采样点对场景采样，得到一个颜色，作为该像素的颜色存下来。</p><p>眼光敏锐的读者可能会问：「如果透过那扇窗能看到多个不同颜色的三角形，而投影到像素窗口中心的那个三角形并不代表其他几个（也许它小得多，或者只是部分可见）呢？如果中心那个采样点『漏掉』了它，就像下图那样呢？」</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-under-sampling.png?" alt=""></figure><p>这个问题问得很好。你刚刚指出了数字成像技术最关键的局限之一：它迫使我们把一个本质上由连续曲面构成的世界离散化。这会带来大量与采样理论相关的问题。我们这里不深入这个话题，但重要的是你要意识到这个局限，并清楚地理解这一过程及其关键约束。</p><p>缓解你指出的这个问题的一种办法，是每个像素取多个采样点，这种技术叫作<b>多重采样</b>。对于三角形只部分覆盖像素窗口的情形，这种做法能更准确地表达。这里涉及的是<b>覆盖</b>，这是你在 GPU 技术里经常遇到的词。如果透过窗口能看到多个三角形，用多个采样点就能提高捕捉到透过该像素可见的各种颜色的可能性。把这些颜色取平均，最终像素颜色就能更准确地代表透过该像素所见的场景整体图像。当然，采样点用得越多，渲染图像耗时越长。但在现实中，GPU——尤其是专为光栅化算法设计的那些——有办法利用光栅化过程本身的数学性质，让用上比如 4 个采样点的开销几乎可以忽略。</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-multi-sampling.png?" alt=""></figure><p>（当初我问自己，写成「像素与三角形重叠」是否真的没问题时，没料到会引我说这么远）这些澄清说完之后，我们回到光栅化过程。</p><p>记住，现在的目标是遍历图像中的像素，判断其中是否有像素（或者更准确地说，如前所述，是像素中心的那个点）与三角形的「投影图像」重叠。在图形 API 规范里，这个测试有时叫作<b>内外测试</b>或<b>覆盖测试</b>。「覆盖」这个词源自早期光栅化算法，比如 Pixar 最初的 PRMAN 渲染器所用的那种，它会记录每个三角形在像素内部覆盖的面积。</p><p>如果像素与三角形重叠，我们就把图像中该像素设为三角形的颜色（图 1 的例子里是绿色）。概念很简单，但现在我们需要一种方法来判断给定像素是否与三角形重叠。这就是本章要探讨的内容。</p><p>光栅化中通常用来解决这个问题的方法，涉及一种叫作<b>边函数</b>的技术。这个函数还能提供关于像素在三角形投影图像中位置的有价值信息，即<b>重心坐标</b>。重心坐标在计算像素所覆盖的三角形表面上那个点在三维（相机）空间中的实际深度（也就是 z 坐标）时起着关键作用。换句话说，是该点的 \(P\) z 坐标（见下图）。本章我们也会解释重心坐标是什么、怎么算。</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-p-proj.png?" alt=""></figure><p>学完本章，你就能写出一个非常基础的光栅化器。下一章我们会考察这种非常朴素的光栅化算法实现可能存在的问题，列出这些问题，并研究通常怎么解决。</p><details open><p>虽然真实的实现（无论跑在 GPU 还是 CPU 上）都经过高度优化，但本课的重点是帮你理解光栅化的基本原理，而不是开发一个优化过的渲染器。光栅化算法内部的优化探索，就留给你自己，或者作为以后某门课的主题。</p></details><p>请记住，画一个三角形（因为这里我们用的图元就是三角形）是一个两步问题：</p><ul><li><p>第 1 步：先要找出哪些像素与三角形重叠。</p></li><li><p>第 2 步：再确定与三角形重叠的像素该设成什么颜色，这个过程叫作<b>着色</b>。</p></li></ul><p>光栅化阶段本质上处理的是第一步。我们说「本质上」而不说「只」，是因为在光栅化阶段我们还会算出所谓的<b>重心坐标</b>，它们某种程度上会用在第二步。我们先学边函数（第 1 步），再讲重心坐标及其生成，这是第 2 步所必需的。</p><h2>边函数</h2><p>如前所述，判断一个像素（或像素中心的点）是否在三角形各边之内，有几种方法。把旧的方法记录下来也有价值，但本课聚焦于今天最常用的方法。这一方法由 Juan Pineda 在 1988 年的论文 <a href="https://www.cs.drexel.edu/~deb39/Classes/Papers/comp175-06-pineda.pdf" target="_blank" rel="noreferrer noopener">A Parallel Algorithm for Polygon Rasterization</a> 中提出。</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-triangle2.png?" alt=""><figcaption><b>图 2：</b>Pineda 方法的原理是找出一个函数，使得当我们检测某个点在直线的哪一侧时，点在直线左侧函数返回负数，在右侧返回正数，点恰好在直线上时返回零。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-triangle3.png?" alt=""><figcaption><b>图 3：</b>白色区域内的点都位于三角形三条边的右侧。</figcaption></figure><p>在深入 Pineda 的技术本身之前，先理解他方法背后的原理。把三角形的一条边想象成把二维平面（图像平面）一分为二的直线（如图 2 所示）。Pineda 方法的原理是找出一个函数（他称之为<b>边函数</b>），使得当我们检测某个给定点（图 2 中的点 P）在直线哪一侧时，点在右侧函数返回正数，在左侧返回负数，点恰好在直线上时返回零。</p><p>在图 2 中，我们把这一方法用在三角形的第一条边上（由顶点 v0 和 v1 定义；注意顺序很重要）。如果把同样的方法用到另外两条边（v1-v2 和 v2-v0）上，就能看到存在一块区域（白色三角形），其中所有点都给出正的结果（图 3）。如果我们在这个区域内取一个点，就会发现它位于三角形三条边的右侧。如果 \(P\) 是某个像素中心的点，我们就可以用这个方法判断该像素是否与三角形重叠或覆盖三角形。如果对这个点，边函数在三条边上都返回正数，那么该像素就在三角形之内（也可能落在某条边上）。Pineda 用的函数恰好是线性的，这意味着它可以增量计算，这一点我们稍后再谈。</p><p>原理清楚了，我们来看函数本身。边函数的定义如下（以顶点 V0 和 V1 定义的边为例）：</p><p>$$E_{01}(P) = (P.x - V0.x) \cdot (V1.y - V0.y) - (P.y - V0.y) \cdot (V1.x - V0.x).$$</p><p>正如论文所述，这个函数有一个有用的性质：它的取值与点 \(P\) 相对于 \(V0\) 和 \(V1\) 所定义那条边的位置有关：</p><ul><li><p>\(E(P) > 0\)，如果 \(P\) 在「右」侧</p></li><li><p>\(E(P) = 0\)，如果 \(P\) 恰好在直线上</p></li><li><p>\(E(P) < 0\)，如果 \(P\) 在「左」侧</p></li></ul><p>这个函数在数学上等价于向量 \((V1-V0)\) 与 \((P-V0)\) 之间叉积的大小。我们也可以把这些向量写成矩阵形式。把它们表示成矩阵，除了能整齐地展示这两个向量之外没有别的用途：</p><p>$$
+\begin{vmatrix}
+(P.x - V0.x) & (P.y - V0.y) \\
+(V1.x - V0.x) & (V1.y - V0.y)
+\end{vmatrix}
+$$</p><p>若记 \(A = (P-V0)\) 与 \(B = (V1 - V0)\)，则可以把向量 \(A\) 与 \(B\) 表示为一个 2x2 矩阵：</p><p>$$
+\begin{vmatrix}
+ A.x & A.y \\ 
+ B.x & B.y
+\end{vmatrix}
+$$</p><p>这个矩阵的<a href="http://en.wikipedia.org/wiki/Determinant#2.C2.A0.C3.97.C2.A02_matrices" target="_blank" rel="noreferrer noopener"><b>行列式</b></a>可以这样计算：</p><p>$$A.x \cdot B.y - A.y \cdot B.x.$$</p><p>如果把向量 \(A\) 与 \(B\) 分别换回 \((P-V0)\) 与 \((V1-V0)\)，我们得到：</p><p>$$(P.x - V0.x) \cdot (V1.y - V0.y) - (P.y - V0.y) \cdot (V1.x - V0.x).$$</p><p>可以看到，这与我们上面定义的边函数相似。换句话说，边函数既可以解释为由二维向量 \((P-V0)\) 与 \((V1-V0)\) 的分量所定义的 2x2 矩阵的行列式，也可以解释为向量 \((P-V0)\) 与 \((V1-V0)\) 叉积的大小。两个向量的叉积大小与行列式在几何上有相同的解释。下面来说明。</p><figure><img src="https://scratchapixel.com/images/rasterization/cross-product-anim.gif?" alt=""><figcaption><b>图 4：</b>向量 B（蓝色）与 A（红色）的叉积得到与 A、B 所定义平面垂直的向量 C（绿色）（按右手定则约定）。向量 C 的大小取决于 A 与 B 之间的夹角。它可正可负。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/cross-product.png?" alt=""><figcaption><b>图 5：</b>平行四边形的面积等于由向量 A 和 B 构成的矩阵行列式的绝对值（或两个向量 B 与 A 叉积的大小，按右手定则约定）。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/cross-product1.png?" alt=""><figcaption><b>图 6：</b>平行四边形的面积等于由向量 A 和 B 构成的矩阵行列式的绝对值。如果夹角 \(\theta\) 小于 \(\pi\)，那么「有符号」面积为正。如果夹角大于 \(\pi\)，则「有符号」面积为负。夹角是相对于由向量 A 和 D 定义的笛卡尔坐标系来计算的，可以看出 A 和 D 把平面分成了两半。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/cross-product2.gif?" alt=""><figcaption><b>图 7：</b>如果边函数对图中标出的三对向量都返回正数，则 P 在三角形之内。</figcaption></figure><p>考察两个三维向量的叉积结果，更容易理解其中发生了什么（图 4）。在三维中，叉积返回另一个与原来两个向量垂直（正交）的三维向量。然而如图 4 所示，这个正交向量的长度取决于两个向量之间的夹角。两个向量越接近平行，长度越小；越接近垂直，长度越大。</p><p>假定是右手坐标系，当向量 A（红色）与 B（蓝色）指向完全相同的方向或完全相反的方向时，第三个向量 C（绿色）的长度为零。向量 A 的坐标是 (1,0,0)，固定不动。当向量 B 的坐标是 (0,0,-1) 时，绿色向量 C 的坐标是 (0,-1,0)。如果计算它的「有符号」长度，会发现等于 -1。反过来，当向量 B 的坐标是 (0,0,1) 时，向量 C 的坐标是 (0,1,0)，其有符号长度等于 1。一种情况下「有符号」长度为负，另一种情况下为正。</p><p>在三维中，向量的长度也可以解释为以向量 A 和 B 为边形成的平行四边形的面积。用叉积在数学上表示为：</p><p>$$\text{Area} = || A \times B ||.$$</p><p>不过，也可以写成：</p><p>$$\text{Area} = ||A|| \cdot ||B|| \cdot \sin(\theta),$$</p><p>其中 \(\theta\) 是两个向量之间的夹角。正弦函数恰好解释了符号的变化：当夹角 \(\theta\) 在 0 到 180 度之间时，结果为正；当夹角大于 180 度时，结果为负。这一关系是理解向量朝向如何影响叉积结果的方向与符号的关键。面积总应为正，不过上式的符号提供了向量 A 与 B 相互朝向的提示。当 B 落在由向量 A 和一个与 A 正交的向量（我们称之为 D；注意 A 与 D 构成一个二维笛卡尔坐标系）所定义的半平面内时，公式结果为正。当 B 落在相反的半平面内时，结果为负（图 6）。换一种说法：当夹角 \(\theta\) 落在 \((0,\pi)\) 范围内时结果为正，当 \(\theta\) 落在 \((\pi, 2\pi)\) 范围内时为负。注意当 \(\theta\) 恰好等于 0 或 \(\pi\) 时，叉积或边函数返回 0。</p><details open><p>开区间通常用小括号书写，比如 (a, b) 表示该区间不含端点 a 和 b。数学记号中表示闭区间用方括号，表示端点包含在范围内。例如：\([a, b]\) 表示该区间包含 \(a\) 与 \(b\)。</p></details><p>判断点是否在三角形内，真正重要的是用来计算平行四边形面积的函数的符号。不过面积本身在光栅化算法中也扮演关键角色；它用来计算点在三角形内的重心坐标，这是接下来要探讨的技术。二维和三维中计算平行四边形面积的方法在概念上相似，叉积和行列式两种做法在两个维度上都适用。三维与二维中的叉积有相同的几何解释：两者都返回由两个向量所定义平行四边形的<b>有符号面积</b>。在三维中，这个面积用叉积的长度计算：</p><p>$$\text{Area} = || A \times B || = ||A|| \cdot ||B|| \cdot \sin(\theta).$$</p><p>在二维中，面积也可以用叉积计算，它等价于一个 2x2 矩阵的行列式：</p><p>$$\text{Area} = A.x \cdot B.y - A.y \cdot B.x.$$</p><p>两种方法都在各自维度上有效计算了平行四边形的面积，二维中的行列式做法直接给出有符号面积。关键区别在于：三维中叉积得到一个向量，其长度给出面积；二维中结果是一个标量，直接表示有符号面积。</p><p>从实用的角度说，现在我们要做的全部事情，就是对三角形的每条边、以及由点和所测边的第一个顶点定义的另一个向量，检测边函数的符号（图 7）。</p><p>$$
+\begin{array}{l}
+E_{01}(P) = (P.x - V0.x) \cdot (V1.y - V0.y) - (P.y - V0.y) \cdot (V1.x - V0.x),\\
+E_{12}(P) = (P.x - V1.x) \cdot (V2.y - V1.y) - (P.y - V1.y) \cdot (V2.x - V1.x),\\
+E_{20}(P) = (P.x - V2.x) \cdot (V0.y - V2.y) - (P.y - V2.y) \cdot (V0.x - V2.x).
+\end{array}
+$$</p><p>如果三个测试的结果都为正或等于 0，则该点在三角形内（或落在某条边上）。如果任何一个测试结果为负，则该点在三角形外。写成代码就是：</p><pre><code>
+bool edgeFunction(const Vec2f &amp;a, const Vec3f &amp;b, const Vec2f &amp;c) {
+    return ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x) &gt;= 0);
+}
+
+bool inside = true;
+inside &amp;= edgeFunction(V0, V1, p);
+inside &amp;= edgeFunction(V1, V2, p);
+inside &amp;= edgeFunction(V2, V0, p);
+
+if (inside) {
+    // 点 p 位于由顶点 V0、V1、V2 定义的三角形内
+    ...
+}
+</code></pre><details open><p>边函数具有线性性质。如果你想进一步了解这个性质以及如何用它优化算法，请参阅原始论文。简言之，正是由于这个性质，边函数可以并行运行（可以同时测试多个像素），使这一方法非常适合硬件实现。这也部分解释了为什么 GPU 上像素通常按 2x2 的块渲染（使像素能在单个周期内被测试）。提示：在 CPU 上你也可以用 SSE 指令和多线程来优化算法。</p></details><h2>边函数之外的替代方法</h2><p>除边函数之外，判断像素是否与三角形重叠还有别的方法。不过如本章引言所述，本课不会探讨它们。供参考，另一种常见技术是基于 Bresenham 算法的扫描线光栅化，一般用于画线。GPU 大多采用边函数方法，因为它更通用、比扫描线方式更容易并行，但本课不提供这方面的更多细节。</p><h2>绕序：顶点顺序很重要</h2><figure><img src="https://scratchapixel.com/images/rasterization/winding.png?" alt=""><figcaption><b>图 8：</b>顺时针与逆时针绕序。</figcaption></figure><p>有一个方面我们还没讨论，但它在三维渲染中普遍非常重要，那就是构成三角形的顶点的定义顺序。如图 8 所示，有两种可能的选项：<b>顺时针</b>或<b>逆时针顺序</b>。这个顺序也叫<b>绕序</b>。绕序之所以关键，是因为它本质上定义了三角形的一个重要属性：哪一面算作正面，而这又决定了三角形的法线朝向。记住，三角形的法线可以由两个向量 \(A=(V2-V0)\) 与 \(B=(V1-V0)\) 的叉积算出。假设 \(V0=\{0,0,0\}\)、\(V1=\{1,0,0\}\)、\(V2=\{0,-1,0\}\)，那么 \((V1-V0)=\{1,0,0\}\)、\((V2-V0)=\{0,-1,0\}\)。现在来算这两个向量的叉积：</p><p>$$
+\begin{array}{l}
+N = (V1-V0) \times (V2-V0)\\
+N.x = a.y \cdot b.z - a.z \cdot b.y = 0 \cdot 0 - 0 \cdot -1\\
+N.y = a.z \cdot b.x - a.x \cdot b.z = 0 \cdot 0 - 1 \cdot 0\\
+N.z = a.x \cdot b.y - a.y \cdot b.x = 1 \cdot -1 - 0 \cdot 0 = -1\\
+N=\{0,0,-1\}
+\end{array}
+$$</p><p>然而，如果你按逆时针顺序声明顶点，取 \(V0=\{0,0,0\}\)、\(V1=\{0,-1,0\}\)、\(V2=\{1,0,0\}\)，则 \((V1-V0)=\{0,-1,0\}\) 与 \((V2-V0)=\{1,0,0\}\)，再对这两个向量求叉积，得到：</p><p>$$
+\begin{array}{l}
+N = (V1-V0) \times (V2-V0)\\
+N.x = a.y \cdot b.z - a.z \cdot b.y = 0 \cdot 0 - 0 \cdot -1\\
+N.y = a.z \cdot b.x - a.x \cdot b.z = 0 \cdot 0 - 1 \cdot 0\\
+N.z = a.x \cdot b.y - a.y \cdot b.x = 0 \cdot 0 - -1 \cdot 1 = 1\\
+N=\{0,0,1\}
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/rasterization/winding1.png?" alt=""><figcaption><b>图 9：</b>绕序决定了法线的朝向。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-triangle4.png?" alt=""><figcaption><b>图 10：</b>绕序决定了三角形内部的点为正还是为负。</figcaption></figure><p>正如预期，两条法线方向相反。法线的朝向之所以关键，有几个原因，其中最重要的一点是<b>面剔除</b>。大多数光栅化器、甚至光线追踪器，都可能不渲染法线背对相机的三角形，这个过程叫作<a href="http://en.wikipedia.org/wiki/Back-face_culling" target="_blank" rel="noreferrer noopener">背面剔除</a>。大多数渲染 API，比如 OpenGL 或 DirectX，允许关闭背面剔除。不过仍需注意，顶点顺序会影响渲染结果，这还只是其中一个因素。令人意外的是，边函数也受顶点顺序影响。值得一提的是，选择顺序没有通用规则。渲染器实现中的许多细节都会改变法线的朝向，所以你不能假定按某种顺序声明顶点就能保证法线朝向特定方向。例如，用向量 \(A=(V0-V1)\) 与 \(B=(V2-V1)\) 可能得到相同的法线但方向相反。即便用 \(A=(V1-V0)\) 与 \(B=(V2-V0)\)，<a href="math-operations-on-points-and-vectors.html">叉积中向量的顺序</a>（\(A \times B = -B \times A\)）也会影响法线的方向。由于这些原因，依据顶点顺序假定某个特定结果是不可靠的。重要的是遵守你所选定的约定。一般来说，OpenGL、Vulkan、DirectX 这类图形 API 期望三角形按逆时针顺序声明，我们也采用这一做法。绕序以及你要渲染三角形的正面、背面还是两面，这两个参数都可以通过各自的 API 指定，一般用的是名为 <code>FrontFace</code> 的参数（有两种模式：<code>FRONT_FACE_COUNTER_CLOCKWISE</code> 与 <code>FRONT_FACE_CLOCKWISE</code>，用于指定顺序），以及 <code>CullMode</code>，可以设为 <code>NONE</code>、<code>CULL_MODE_FRONT</code>、<code>CULL_MODE_BACK</code> 或 <code>CULL_MODE_FRONT_AND_BACK</code>。</p><p>说到边函数，绕序为什么重要？你可能注意到，从本章开头起，我们都是按顺时针顺序画三角形顶点的。我们也把边函数定义为：</p><p>$$
+\begin{array}{l}
+E_{AB}(P) &= (P.x - A.x) \cdot (B.y - A.y) - \\
+& (P.y - A.y) \cdot (B.x - A.x)
+\end{array}
+$$</p><p>如果沿用这个约定，那么位于顶点 A 与 B 所定义直线右侧的点为正。例如，位于 \(V0V1\)、\(V1V2\) 或 \(V2V0\) 右侧的点都为正。然而，如果我们按逆时针顺序声明顶点，那么位于顶点 \(A\) 与 \(B\) 所定义边右侧的点仍然为正，但它们在三角形之外。换句话说，三角形内部的点不再为正，而是为负（图 10）。你仍然可以让代码用正数工作，只要把边函数改成：</p><p>$$
+E_{AB}(P) = (A.x - B.x) \cdot (P.y - A.y) - (A.y - B.y) \cdot (P.x - A.x).
+$$</p><p>总之，取决于你遵循哪种绕序约定，你可能需要用边函数的这一版或那一版。</p><h2>重心坐标</h2><figure><img src="https://scratchapixel.com/images/rasterization/barycentric1.png?" alt=""><figcaption><b>图 11：</b>平行四边形的面积是三角形面积的两倍。</figcaption></figure><p>重心坐标的计算并不是光栅化算法能工作的必要条件。在渲染技术的基础实现里（生成一个或几个三角形的图像），你只需投影顶点，再用前面讲过的边函数之类的技术判断像素是否落在投影三角形的各边之内。这就是生成图像所需仅有的两步。这已经算是一项成就，但它只让我们画出填充均匀颜色的三角形。可如果我们想让颜色在三角形表面上变化呢？更一般地说，着色怎么办？</p><p>边函数的结果可以解释为由向量 A 和 B 所定义的平行四边形面积，它也可以用来计算前面提到的重心坐标。多巧！边函数的结果可以派两个用场：测试点是否在三角形内，以及计算重心坐标——你可能已经猜到，这些坐标对为三角形着色至关重要。</p><p>在继续之前，先解释一下重心坐标是什么。首先，它是一组<b>三个浮点数</b>，本课中用 \(\lambda_0\)、\(\lambda_1\)、\(\lambda_2\) 表示。存在许多不同的约定，Wikipedia 用的是希腊字母 lambda（\(\lambda\)），其他作者也这么用（有时也用希腊字母 omega（\(\omega\)））。这无关紧要，你想怎么叫都行。简言之，这些坐标可以按下面的方式定义三角形上的任意一点：</p><p>$$P = \lambda_0 \cdot V0 + \lambda_1 \cdot V1 + \lambda_2 \cdot V2.$$</p><p>其中，一如往常，\(V0\)、\(V1\)、\(V2\) 是三角形的顶点。这些坐标可以取任意值，但对于三角形内部（或落在某条边上）的点，它们必须落在 \([0, 1]\) 范围内，且三个坐标之和必须等于 1。换句话说：</p><p>$$\lambda_0 + \lambda_1 + \lambda_2 = 1, \text{ for } P \in \triangle{V0, V1, V2}.$$</p><figure><img src="https://scratchapixel.com/images/rasterization/barycentric2.png?" alt=""><figcaption><b>图 12：</b>我们怎么求 P 的颜色？</figcaption></figure><p>这个公式 \(P = \lambda_0 \cdot V0 + \lambda_1 \cdot V1 + \lambda_2 \cdot V2\) 可以说就是一种插值形式。与三角形重叠的点可以定义成「一点 V0，加一点 V1，加一点 V2」。注意当其中任一坐标为 1 时（也就意味着另外两个为 0），点 \(P\) 就等于三角形的某个顶点。例如，若 \(\lambda_2 = 1\)，则 \(P\) 等于 \(V2\)。这就是为什么重心坐标有时被称作三角形顶点的<b>权重</b>（所以在代码里我们用字母 \(w\) 表示它们）。</p><p>对三角形顶点做插值以求出三角形内部某点的位置，乍看似乎没多大用（不过等我们更认真地考虑着色时会需要这个信息，因为三角形上的点和该点处的法线都是着色过程中的关键变量），但这个方法在着色上真正有价值。它可以把定义在三角形顶点上的任意变量沿三角形表面插值。举例来说，假设你给三角形的每个顶点都定义了颜色：\(V0\) 是红色，\(V1\) 是绿色，\(V2\) 是蓝色（图 12）。你想确定在点 \(P\)（采样点）处这三种颜色沿三角形表面是如何插值的。如果你知道这个点 \(P\) 的重心坐标，那么它的颜色 \(C_P\)（即三角形各顶点颜色的组合）定义为：</p><p>$$C_P = \lambda_0 \cdot C_{V0} + \lambda_1 \cdot C_{V1} + \lambda_2 \cdot C_{V2}.$$</p><p>这项技术在为三角形着色时非常有用。与三角形顶点相关联的数据叫作<b>顶点属性</b>，这是计算机图形学（CG）中常见而重要的技术。<b>最常见的顶点属性包括颜色、法线和纹理坐标</b>。实际做起来就是：定义三角形时，你不只把三角形的顶点传给渲染器，还要传与之关联的顶点属性。例如，为三角形着色可能需要颜色和法线顶点属性，这就意味着每个三角形由 3 个点（三角形顶点的位置）、3 个颜色（三角形顶点的颜色）和 3 条法线（三角形顶点的法线）来定义。法线同样可以沿三角形表面插值。插值后的法线用于一种叫作<a href="http://en.wikipedia.org/wiki/Gouraud_shading" target="_blank" rel="noreferrer noopener"><b>平滑着色</b></a>的技术，它由 Henri Gouraud 最早提出。我们会在后面讲着色时探讨这项技术。</p><p>这些重心坐标怎么求？结果其实很直接。前面介绍边函数时提到，边函数的结果可以解释为由向量 \(A\) 与 \(B\) 所定义平行四边形的面积。如果你看图 8，会发现由顶点 \(V0\)、\(V1\)、\(V2\) 定义的三角形面积，正好是由向量 \(A\) 与 \(B\) 构成的平行四边形面积的一半。因此，三角形面积是平行四边形面积的一半，而如我们所知，这可以用两个二维向量 \(A\) 与 \(B\) 的叉积来计算：</p><p>$$Area_{\triangle{V0V1V2}}= \frac{1}{2} \times (A \times B) = \frac{1}{2} \times (A.x \cdot B.y - A.y \cdot B.x).$$</p><figure><img src="https://scratchapixel.com/images/rasterization/barycentric3.png?" alt=""><figcaption><b>图 13：</b>把 P 连接到三角形的每个顶点，就形成三个子三角形。</figcaption></figure><p>如果点 P 在三角形内，那么如图 3 所示，我们可以画出三个子三角形：\(V0-V1-P\)（绿色）、\(V1-V2-P\)（品红）和 \(V2-V0-P\)（青色）。显然，这三个子三角形的面积之和等于三角形 \(V0-V1-V2\) 的面积：</p><p>$$
+\begin{array}{l}
+Area_{\triangle{V0V1V2}} = Area_{\triangle{V0V1P}} + \\ Area_{\triangle{V1V2P}} + \\ Area_{\triangle{V2V0P}}.
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/rasterization/barycentric4.png?" alt=""><figcaption><b>图 14：</b>\(\lambda_0\)、\(\lambda_1\)、\(\lambda_2\) 的取值取决于 P 在三角形上的位置。</figcaption></figure><p>先凭直觉理解它们如何工作，看图 14 也许更容易。这一系列图中每一幅都展示了：当点 \(P\) 从原来的边上（由顶点 \(V1-V2\) 定义）向 \(V0\) 移动时，子三角形发生了什么变化。起初 P 恰好落在边 \(V1-V2\) 上。这种情形类似于两点之间的基本线性插值。换句话说，我们可以写：</p><p>$$P = \lambda_1 \cdot V1 + \lambda_2 \cdot V2$$</p><p>其中 \(\lambda_1 + \lambda_2 = 1\)，因此 \(\lambda_2 = 1 - \lambda_1\)、\(\lambda_0 = 0\)。</p><p>归纳一下：</p><p>$$
+\begin{array}{l}
+P = \lambda_0 \cdot V0 + \lambda_1 \cdot V1 + \lambda_2 \cdot V2,\\
+P = 0 \cdot V0 + \lambda_1 \cdot V1 + \lambda_2 \cdot V2,\\
+P = \lambda_1 \cdot V1 + \lambda_2 \cdot V2.\\
+P = \lambda_1 \cdot V1 + (1- \lambda_1) \cdot V2.
+\end{array}
+$$</p><p>这相对直观。另外注意，在第一幅图里红色三角形不可见，而 \(P\) 离 \(V1\) 比离 \(V2\) 更近。因此 \(\lambda_1\) 必然大于 \(\lambda_2\)。而且绿色三角形大于蓝色三角形。归纳起来：当 \(\lambda_0 = 0\) 时红色三角形不可见，绿色三角形大于蓝色三角形，且 \(\lambda_1\) 大于 \(\lambda_2\)。这暗示着三角形面积与重心坐标之间存在某种关系。再者，红色三角形似乎与 \(\lambda_0\) 关联，绿色三角形与 \(\lambda_1\) 关联，蓝色三角形与 \(\lambda_2\) 关联：</p><ul><li><p>\(\lambda_0\) 与红色三角形的面积成正比，</p></li><li><p>\(\lambda_1\) 与绿色三角形的面积成正比，</p></li><li><p>\(\lambda_2\) 与蓝色三角形的面积成正比。</p></li></ul><p>直接跳到最后一幅图，此时 \(P\) 等于 \(V0\)，这种情况只可能在 \(\lambda_0\) 等于 1、另外两个坐标等于 0 时出现：</p><p>$$
+\begin{array}{l}
+P = \lambda_0 \cdot V0 + \lambda_1 \cdot V1 + \lambda_2 \cdot V2,\\
+P = 1 \cdot V0 + 0 \cdot V1 + 0 \cdot V2,\\
+P = V0.
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/rasterization/barycentric5.png?" alt=""><figcaption><b>图 15：</b>要计算某个重心坐标，就用由 P 与该重心坐标所属顶点对边所构成的三角形面积。</figcaption></figure><p>在这个特定情形下，蓝色和绿色三角形消失了，三角形 \(V0-V1-V2\) 的面积与红色三角形相同。这印证了我们关于子三角形面积与重心坐标关系的直觉。由上面的观察还可以推出：每个重心坐标都与「由对应顶点的对边和点 \(P\) 所定义的子三角形」的面积有关。换句话说（见图 15）：</p><ul><li><p>\(\color{red}{\lambda_0}\) 与 \(V0\) 关联。\(V0\) 的对边是 \(V1-V2\)，与 \(V1-V2-P\) 构成红色三角形。</p></li><li><p>\(\color{green}{\lambda_1}\) 与 \(V1\) 关联。\(V1\) 的对边是 \(V2-V0\)，与 \(V2-V0-P\) 构成绿色三角形。</p></li><li><p>\(\color{blue}{\lambda_2}\) 与 \(V2\) 关联。\(V2\) 的对边是 \(V0-V1\)，与 \(V0-V1-P\) 构成蓝色三角形。</p></li></ul><p>红、绿、蓝三个三角形的面积，分别等于我们前面用来判断 \(P\) 是否在三角形内的那些边函数结果除以 2（回顾一下：边函数给出的是由向量 \(A\) 与 \(B\) 所定义的平行四边形的「有符号」面积，其中 \(A\) 与 \(B\) 可以是三角形三条边中的任意一条）：</p><p>$$
+\begin{array}{l}
+\color{red}{Area_{tri}(V1,V2,P)} = \dfrac{1}{2}E_{12}(P),\\
+\color{green}{Area_{tri}(V2,V0,P)} = \dfrac{1}{2}E_{20}(P),\\
+\color{blue}{Area_{tri}(V0,V1,P)} = \dfrac{1}{2}E_{01}(P).
+\end{array}
+$$</p><p>重心坐标可以算成子三角形面积与三角形 \(V0V1V2\) 面积之比：</p><p>$$
+\begin{array}{l}
+\color{red}{\lambda_0 = \dfrac{Area(V1,V2,P)}{Area(V0,V1,V2)}},\\
+\color{green}{\lambda_1 = \dfrac{Area(V2,V0,P)}{Area(V0,V1,V2)}},\\
+\color{blue}{\lambda_2 = \dfrac{Area(V0,V1,P)}{Area(V0,V1,V2)}}.
+\end{array}
+$$</p><p>除以三角形面积对坐标起到<b>归一化</b>作用。例如，当 \(P\) 位于 \(V0\) 时，三角形 \(V2V1P\)（红色三角形）的面积与三角形 \(V0V1V2\) 的面积相同。于是两者相除得 1，这正是坐标 \(\lambda_0\) 的值。由于此时绿色和蓝色三角形的面积为 0，\(\lambda_1\) 与 \(\lambda_2\) 等于 0，于是得到：</p><p>$$P = 1 \cdot V0 + 0 \cdot V1 + 0 \cdot V2 = V0,$$</p><p>这正是预期结果。</p><p>要计算三角形面积，可以像前面说的那样用边函数。这个方法对子三角形和主三角形 \(V0V1V2\) 都适用。不过边函数返回的是平行四边形面积而不是三角形面积（图 8）。但由于重心坐标是子三角形面积与主三角形面积之比，我们可以不管那个除以 2（分子分母都有这个因子，会抵消）：</p><p>$$\lambda_0 = \dfrac{Area_{tri}(V1,V2,P)}{Area_{tri}(V0,V1,V2)} = \dfrac{\frac{1}{2} E_{12}(P)}{\dfrac{1}{2}E_{12}(V0)} = \dfrac{E_{12}(P)}{E_{12}(V0)}.$$</p><p>注意 \(E_{01}(V2) = E_{12}(V0) = E_{20}(V1) = 2 \cdot Area_{tri}(V0,V1,V2)\)。</p><p>来看代码实现。前面我们计算边函数只是用来测试点是否在三角形内，按函数结果是正还是负简单地返回 true 或 false。要算重心坐标，我们需要边函数的实际结果。我们也可以用边函数来计算三角形面积（乘以 2 的那个）。下面这个实现检测点 \(P\) 是否在三角形内，若在，则算出它的重心坐标：</p><pre><code>
+float edgeFunction(const Vec2f &amp;a, const Vec3f &amp;b, const Vec2f &amp;c)
+{
+    return (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x);
+}
+
+float area = edgeFunction(v0, v1, v2); // 三角形面积乘以 2
+float w0 = edgeFunction(v1, v2, p); // 三角形 v1v2p 的有符号面积乘以 2
+float w1 = edgeFunction(v2, v0, p); // 三角形 v2v0p 的有符号面积乘以 2
+float w2 = edgeFunction(v0, v1, p); // 三角形 v0v1p 的有符号面积乘以 2
+
+// 如果点 p 位于由顶点 v0、v1、v2 定义的三角形内
+if (w0 &gt;= 0 &amp;&amp; w1 &gt;= 0 &amp;&amp; w2 &gt;= 0) {
+    // 重心坐标就是子三角形面积除以主三角形面积
+    w0 /= area;
+    w1 /= area;
+    w2 /= area;
+}
+</code></pre><p>我们把这段代码拿去生成一张真实的图像。</p><details open><p>我们知道：</p><p>$$\lambda_0 + \lambda_1 + \lambda_2 = 1.$$</p><p>此外，我们知道沿三角形表面的任意值都可以用下面的公式计算：</p><p>$$Z = \lambda_0 \cdot Z0 + \lambda_1 \cdot Z1 + \lambda_2 \cdot Z2.$$</p><p>在这个例子里，我们插值的值是 Z，它可以代表任何我们想要的东西，比如三角形顶点在相机空间中的 z 坐标。第一个公式可以改写成：</p><p>$$\lambda_0 = 1 - \lambda_1 - \lambda_2.$$</p><p>把这个式子代入计算 Z 的公式并化简，得到：</p><p>$$Z = Z0 + \lambda_1(Z1 - Z0) + \lambda_2(Z2 - Z0).$$</p><p>其中 \(Z1 - Z0\) 与 \(Z2 - Z0\) 一般可以预先算好，这样 Z 的计算就简化成两次加法加两次乘法。这项优化值得一提，因为 GPU 正是利用它，人们讨论它多半也是出于这个原因。</p></details><h2>插值与外推</h2><figure><img src="https://scratchapixel.com/images/rasterization/extrapolate.png?" alt=""><figcaption><b>图 16：</b>插值与外推。</figcaption></figure><p>需要注意，重心坐标的计算与点相对于三角形的位置无关。换句话说，无论点在三角形内还是外，这些坐标都是有效的。点在内部时，用重心坐标求某个顶点属性的值叫作插值；点在外部时，则叫作外推。这一区分很关键，因为在某些情况下，我们可能需要为不与三角形重叠的点求某个顶点属性的值。具体来说，计算三角形纹理坐标的导数就需要这么做，而纹理坐标的导数用于正确的纹理过滤。如果你想深入了解这个主题，推荐阅读<a href="introduction-to-texturing.html">纹理</a>这门课。</p><p>目前请记住：即使点不与三角形重叠，重心坐标依然有效；理解顶点属性外推与插值的区别很重要。等学到纹理那门课时，这会派上用场。</p><h2>光栅化规则</h2><figure><img src="https://scratchapixel.com/images/rasterization/top-left.png?" alt=""><figcaption><b>图 17：</b>像素可能覆盖两个三角形共享的一条边。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/top-left2.png?" alt=""><figcaption><b>图 18：</b>如果几何体是半透明的，在像素与两个三角形重叠的地方可能出现一条暗边。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/top-left3.png?" alt=""><figcaption><b>图 19：</b>上边与左边。</figcaption></figure><p>在某些情况下，一个像素可能覆盖不止一个三角形，尤其是当它恰好落在两个三角形共享的边上时，如图 17 所示。这样的像素会同时通过两个三角形的覆盖测试。如果三角形是半透明的，那么在像素与两个三角形重叠的地方可能出现一条暗边，原因是半透明物体的合成方式（想象两片叠在一起的半透明塑料片，表面变得更不透明，看起来比单片更暗）。这一现象造成的结果类似图 18 所示：在两个三角形共享那条边的地方出现了一条更暗的线。</p><p>为了解决这个问题，需要一条规则来确保一个像素绝不会两次与共享一条边的两个三角形都重叠。大多数图形 API，比如 OpenGL 和 DirectX，定义了所谓的<b>左上规则</b>。这条规则规定：一个像素或点只要位于三角形内部，或者落在三角形的上边、以及任何被视为左边的边上，就算作与该三角形重叠。什么算上边和左边？图 19 清楚地展示了上边与左边的定义。</p><ul><li><p><b>上边</b>是完全水平、且其定义顶点的位置高于第三个顶点的边。技术上讲，这意味着向量 V[(X+1)%3]-V[X] 的 y 坐标等于 0，而它的 x 坐标为正（大于 0）。</p></li><li><p><b>左边</b>本质上是向上走的一条边。鉴于我们的语境中顶点按顺时针顺序定义，如果一条边对应的向量 V[(X+1)%3]-V[X]（其中 X 可以是 0、1、2）的 y 坐标为正，就认为这条边是向上走的。</p></li></ul><details open><p>如果你用的是逆时针顺序，那么上边是水平且 x 坐标为负的边，而左边是 y 坐标为负的边。</p></details><p>写成伪代码就是：</p><pre><code>
+// 它通过左上规则了吗？
+Vec2f v0 = { ... };
+Vec2f v1 = { ... };
+Vec2f v2 = { ... };
+
+float w0 = edgeFunction(v1, v2, p); 
+float w1 = edgeFunction(v2, v0, p); 
+float w2 = edgeFunction(v0, v1, p); 
+
+Vec2f edge0 = v2 - v1;
+Vec2f edge1 = v0 - v2;
+Vec2f edge2 = v1 - v0;
+
+bool overlaps = true;
+
+// 如果点落在边上，判断该边是否为上边或左边，
+// 否则判断边函数是否为正
+overlaps &amp;= (w0 == 0 ? ((edge0.y == 0 &amp;&amp; edge0.x &gt; 0) || edge0.y &gt; 0) : (w0 &gt; 0));
+overlaps &amp;= (w1 == 0 ? ((edge1.y == 0 &amp;&amp; edge1.x &gt; 0) || edge1.y &gt; 0) : (w1 &gt; 0));
+overlaps &amp;= (w2 == 0 ? ((edge2.y == 0 &amp;&amp; edge2.x &gt; 0) || edge2.y &gt; 0) : (w2 &gt; 0));
+
+if (overlaps) {
+    // 该像素与三角形重叠。
+    ...
+}
+</code></pre><p>这一版只是概念验证，高度未优化。基本思路是：先检查边函数返回的值是否有等于 0 的，那说明点落在边上；这种情况下检测该边是否为左上边，是则返回 true。如果边函数返回的值不为 0，那么值大于 0 就返回 true。本课附带的程序不会实现左上规则。</p><h2>汇总一下：判断像素是否与三角形重叠</h2><figure><img src="https://scratchapixel.com/images/rasterization/raster2d.png?" alt=""><figcaption><b>图 20：</b>用重心坐标做顶点属性线性插值的示例。</figcaption></figure><p>我们把本章学到的技术用在一个能生成真实图像的程序里。假定三角形已经投影完成（光栅化算法的完整实现见本课最后一章）。我们还会给三角形的每个顶点指定一种颜色。流程如下：遍历图像中的所有像素，用边函数方法测试它们是否与三角形重叠。如果边函数在三条边上都返回正数，那么这个像素与三角形重叠。接着我们可以算出该像素的重心坐标，并用这些坐标对三角形每个顶点定义的颜色插值，从而为该像素着色。帧缓冲的结果保存为 PPM 文件（可以用 Photoshop 打开）。程序的输出如图 20 所示。</p><p>这个程序的一项优化可以是只遍历三角形包围盒内的像素。当前版本的程序没有实现这项优化，鼓励你用前面几章的代码自己试一下。本课的源代码放在本课顶部（章节列表底部）链接的 GitHub 仓库里。</p><p>注意在这个版本的程序里，我们把点 \(P\) 移到每个像素的中心。你也可以改用像素的整数坐标。关于这个话题的更多细节将在下一章讨论。</p><pre><code>
+// c++ -o raster2d raster2d.cpp
+// (c) www.scratchapixel.com
+
+#include &amp;ltcstdio&gt;
+#include &amp;ltcstdlib&gt;
+#include &amp;ltfstream&gt;
+
+typedef float Vec2[2];
+typedef float Vec3[3];
+typedef unsigned char Rgb[3];
+
+inline float edgeFunction(const Vec2 &amp;a, const Vec2 &amp;b, const Vec2 &amp;c) {
+    return (c[0] - a[0]) * (b[1] - a[1]) - (c[1] - a[1]) * (b[0] - a[0]);
+}
+
+int main(int argc, char **argv) {
+    Vec2 v0 = {491.407, 411.407};
+    Vec2 v1 = {148.593, 68.5928};
+    Vec2 v2 = {148.593, 411.407};
+    Vec3 c0 = {1, 0, 0};
+    Vec3 c1 = {0, 1, 0};
+    Vec3 c2 = {0, 0, 1};
+    
+    const uint32_t w = 512;
+    const uint32_t h = 512;
+    
+    Rgb *framebuffer = new Rgb[w * h];
+    memset(framebuffer, 0x0, w * h * 3);
+    
+    float area = edgeFunction(v0, v1, v2);
+    
+    for (uint32_t j = 0; j &lt; h; ++j) {
+        for (uint32_t i = 0; i &lt; w; ++i) {
+            Vec2 p = {i + 0.5f, j + 0.5f};
+            float w0 = edgeFunction(v1, v2, p);
+            float w1 = edgeFunction(v2, v0, p);
+            float w2 = edgeFunction(v0, v1, p);
+            if (w0 &gt;= 0 &amp;&amp; w1 &gt;= 0 &amp;&amp; w2 &gt;= 0) {
+                w0 /= area;
+                w1 /= area;
+                w2 /= area;
+                float r = w0 * c0[0] + w1 * c1[0] + w2 * c2[0];
+                float g = w0 * c0[1] + w1 * c1[1] + w2 * c2[1];
+                float b = w0 * c0[2] + w1 * c1[2] + w2 * c2[2];
+                framebuffer[j * w + i][0] = (unsigned char)(r * 255);
+                framebuffer[j * w + i][1] = (unsigned char)(g * 255);
+                framebuffer[j * w + i][2] = (unsigned char)(b * 255);
+            }
+        }
+    }
+    
+    std::ofstream ofs;
+    ofs.open("./raster2d.ppm");
+    ofs &lt;&lt; "P6\n" &lt;&lt; w &lt;&lt; " " &lt;&lt; h &lt;&lt; "\n255\n";
+    ofs.write((char*)framebuffer, w * h * 3);
+    ofs.close();
+    
+    delete [] framebuffer;
+    
+    return 0; 
+}
+</code></pre><p>如你所见，总而言之，我们可以说光栅化算法相当直接，它的基础实现也相对容易。</p><h2>结论与接下来做什么？</h2><figure><img src="https://scratchapixel.com/images/rasterization/barycentric6.png?" alt=""><figcaption><b>图 21：</b>重心坐标在平行于某条边的直线上保持不变。</figcaption></figure><p>与重心坐标这个主题相关的、有趣的技术和冷知识很多，但本课只是光栅化算法的入门，所以我们不再深入。不过有一条有趣的冷知识值得记下：重心坐标在平行于某条边的直线上保持不变，如图 21 所示。</p><p>本课我们探讨了两种重要的方法和若干概念：</p><ul><li><p>首先，我们学了边函数，以及它用来判断点 \(P\) 是否与三角形重叠。边函数对三角形的每条边各计算一次，另一个向量由该边的第一个顶点和点 \(P\) 定义。如果函数在三条边上都给出正的结果，那么点 \(P\) 与三角形重叠。</p></li><li><p>此外，我们发现边函数的结果可以用来计算点 \(P\) 的重心坐标。这些坐标充当三角形顶点的权重，使我们能把顶点数据或属性沿三角形表面插值。最常被插值的顶点属性包括颜色、法线和纹理坐标。</p></li></ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-stage.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-stage.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

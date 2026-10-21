@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>标准坐标系 - Scratchapixel 中文译本</title>
+<meta name="description" content="用光线追踪生成相机光线 · 标准坐标系（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>标准坐标系</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="definition-ray.html">光线的定义</a></li>
+<li><a href="generating-camera-rays.html">生成相机光线</a></li>
+<li><a style="font-weight:700" href="standard-coordinate-systems.html">标准坐标系</a></li>
+</ol>
+</div>
+<h2>标准坐标系</h2><p><b>阅读时间：8 分钟。</b></p><h2>标准坐标系</h2><p>谈到顶点变换管线时，用来描述顶点被变换到哪些坐标系的术语存在一些差异，尤其在两个最常见的渲染 API——OpenGL 与 RenderMan 接口——之间（本课使用的坐标系定义遵循这一接口的定义）。如果你熟悉 OpenGL 渲染管线，也许会以为我们在上一章里有些术语用错了。首先必须记住：本课讲的不是 OpenGL，也不是基于 z 缓冲的渲染器所用的经典顶点变换管线，而是光线追踪器如何生成主光线（相机光线）。生成这些光线的过程，与基于光栅化的渲染器把点投影到图像平面上的过程正好相反。其次要注意，用来定义点被变换到其中的空间的那些坐标系，其含义并不取决于我们用光线追踪器还是光栅化器，更多是一个约定问题。一般来说，世界空间、相机空间、物体空间与光栅空间在所有渲染 API 中定义相同，但裁剪坐标（这个概念更偏 OpenGL 专有）、NDC 与屏幕空间的定义则可能因系统而异。为了更清楚地帮你区分至少两件事——本课为构造主光线所描述的体系，与 OpenGL 顶点变换管线（我们在<a href="projection-matrix-GPU-rendering-pipeline-clipping.html">上一课</a>描述过）——我们将在本章里把两者再简述一遍并做比较。希望这个练习能消除阅读本课时可能在图形 API 专家脑中留下的任何困惑。</p><p>在光线追踪中，我们从一个像素位置出发，把它变换成图像平面上的一个点，再据此构造光线方向。这个过程涉及把原本以像素坐标（即<b>光栅空间</b>）表示的「点坐标」变换到 <b>NDC 空间</b>，再变换到<b>屏幕空间</b>（我们已在前面几章描述过这个过程）。光栅到 NDC 的转换把原始像素坐标重映射到 [0,1] 范围。NDC 到屏幕空间的转换把值从 [0,1] 重映射到 [-1,1]（图像为正方形时），若图像宽度大于高度，则 x 轴上为 [-宽高比, 宽高比]、y 轴上为 [-1,1]。这些坐标随后按相机视场角的正切除以二进行缩放。总结一下：我们从光栅走到 NDC，再走到屏幕空间。</p><p>光栅化的过程不同。它的目标是取 3D 空间中的一个点，把它投影到图像平面上，再把得到的坐标转换成像素坐标。我们从一个 3D 空间中的点出发，需要设法把它投影到图像上，这一步一般使用<a href="projection-matrix-introduction.html">透视（或正交）投影矩阵</a>。首先，点从 3D 的<b>世界空间</b>转换到<b>相机空间</b>。此时点的坐标是相对相机的坐标系定义的。进入相机空间后，点再用例如透视投影矩阵投影到图像平面上。在 OpenGL 顶点变换管线的这个阶段，点据说带有<b>裁剪坐标</b>。这些点还没有除以其 z 坐标，但 OpenGL 已经可以测试它们是否可见。如果它们通过了这个可见性或裁剪测试，就再从齐次坐标转换成笛卡尔坐标（这个过程叫作 z 除或透视除法）。这些点据说带有<b>归一化设备坐标</b>，或说位于 <b>NDC 空间</b>。注意在这个空间里，OpenGL 中点的坐标处于 [-1,1] 范围。而在 RenderMan 接口中，NDC 空间定义的是坐标处于 [0,1] 范围的点。最后，NDC 空间中的点被转换成<b>光栅坐标</b>或<b>窗口坐标</b>，也就是点最终的像素坐标。</p><p>我们在下表中总结了这两套体系的各个步骤及其对应的坐标系：</p><table><tr><th>由像素坐标计算光线方向</th><th>OpenGL/Metal/Vulkan/DirectX（顶点变换管线）</th></tr><tr><td>像素的位置（像素坐标）。<b>光栅空间</b>。</td><td>点的坐标定义在<b>世界空间</b>中。</td></tr><tr><td>把点从像素坐标或光栅空间变换到 <b>NDC 空间</b>。点坐标被重映射到 [0:1] 范围。</td><td>把点从世界空间变换到<b>相机空间</b>。</td></tr><tr><td>把点的坐标从 NDC 重映射到<b>屏幕空间</b>。点在屏幕空间中的坐标沿 x 轴在 [-宽高比, 宽高比] 之间变化，沿 y 轴在 [-1, 1] 之间变化。</td><td>用投影矩阵把点投影到近裁剪面（图像平面）上。</td></tr><tr><td>屏幕空间中的点按相机视场角的正切除以二进行缩放。</td><td><b>裁剪坐标</b>（透视除法之前）。点通过裁剪测试：它是否可见？</td></tr><tr><td>用所得点的坐标构造光线方向向量。</td><td>透视除法。所得点的坐标据说位于 <b>NDC 空间</b>。它们现在处于 [-1, 1] 范围（包括 z 坐标）。</td></tr><tr><td>光线的原点与方向由相机到世界矩阵变换。现在可以测试这条光线与场景几何体的交点了。</td><td>点从 NDC 空间变换到<b>光栅空间</b>或<b>窗口坐标</b>（像素坐标）。</td></tr></table><p>点从 NDC 空间变换到<b>屏幕空间</b>或<b>窗口坐标</b>（像素坐标）。</p><table><tr><th>坐标空间名称</th><th>说明</th></tr><tr><td>物体空间</td><td>3D 模型在最终被变换之前所处的空间。你在 3D 建模应用里建一个物体时，模型一般以原点为中心。不过，你可能需要把这个物体（包括旋转、平移与缩放）移动到渲染场景中的另一个位置。物体空间指的就是物体被变换到场景中这个最终位置之前的位置。</td></tr><tr><td>世界空间</td><td>顶点坐标相对世界笛卡尔坐标系表示。这是物体被变换到场景中最终位置之后的顶点坐标。</td></tr><tr><td>相机空间</td><td>物体是世界空间中的顶点，经变换后相对相机的笛卡尔坐标系表示（相机处于默认位置时，世界与相机的笛卡尔坐标系是对齐的）。</td></tr><tr><td>屏幕空间</td><td>在 RenderMan 规范中，这个空间指相机图像平面上某点的坐标。在 OpenGL 中，它指以像素坐标表示的投影点位置（该坐标系的原点是画面的左上角）。</td></tr><tr><td>NDC 空间</td><td>归一化设备坐标（Normalized Device Coordinates）——在 RenderMan 规范中，以这个空间表示的点，其 x 与 y 坐标处于 [0, 1] 范围内（与光栅空间相同，只不过不是 x 轴上 [0:宽度]、y 轴上 [0:高度]，而是两个坐标都从 0 到 1）。在 OpenGL 中，以这些坐标表示的点，其 x 与 y 坐标沿 x 轴处于 [-宽高比, 宽高比] 范围，沿 y 轴处于 [-1, 1] 范围（假设图像的宽度大于其高度）。</td></tr><tr><td>光栅空间</td><td>在 RenderMan 规范中，它指以像素坐标表示的某点的位置（等同于 OpenGL 中的屏幕空间或窗口坐标）。在这个空间里，1 个单位对应 1 个像素（参见 NDC 空间）。</td></tr><tr><td>裁剪坐标</td><td>投影点在 z 除之前的坐标（仅 OpenGL）。</td></tr><tr><td>窗口坐标</td><td>以像素坐标表示的投影点坐标（仅 OpenGL）。类似于 RenderMan 中的光栅空间。</td></tr></table><p>总之，我们已经说明所描述的这两套体系做的并不是同一件事，不应混淆。前面几章描述的体系，是把以像素坐标定义的点转换成图像平面上的点，用来计算光线方向。第二套体系，即 OpenGL 顶点变换管线，是把 3D 场景中的点投影到图像平面上，再把这些投影点转换成像素坐标。</p><h2>一点提醒</h2><p>屏幕空间、NDC 空间这类有标准名称的坐标系，在 OpenGL 顶点变换管线与 RenderMan 接口中都会出现，但在各自的渲染 API 里用途与定义都不同。如果你熟悉 OpenGL 渲染管线，我们建议你读下一章，那里我们解释这两种渲染接口之间的差异。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/standard-coordinate-systems.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/standard-coordinate-systems.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

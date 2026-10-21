@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>把曲线作为几何体渲染：毛发渲染 - Scratchapixel 中文译本</title>
+<meta name="description" content="贝塞尔曲线与曲面 · 把曲线作为几何体渲染：毛发渲染（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>把曲线作为几何体渲染：毛发渲染</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="bezier-curve.html">贝塞尔曲线</a></li>
+<li><a href="bezier-surface.html">贝塞尔曲面</a></li>
+<li><a href="fast-forward-differencing.html">前向差分法</a></li>
+<li><a href="bezier-patch-normal.html">计算贝塞尔曲面的法线</a></li>
+<li><a style="font-weight:700" href="curves-as-geometry.html">把曲线作为几何体渲染：毛发渲染</a></li>
+</ol>
+</div>
+<h2>把曲线作为几何体渲染：毛发渲染</h2><p><b>阅读时间：12 分钟。</b></p><h2>曲线要怎么渲染？</h2><figure><img src="https://scratchapixel.com/images/bezier/bez-twistedhair.png?" alt=""><figcaption><b>图 1：</b>一条渲染成细圆柱的贝塞尔曲线。</figcaption></figure><figure><img src="https://scratchapixel.com/images/bezier/bez-curvestan.png?" alt=""><figcaption><b>图 2：</b>沿曲线按等间隔生成点与切线。</figcaption></figure><p>写完贝塞尔曲线与曲面那门课之后，有人来信问：怎样把三维贝塞尔曲线当作几何体来渲染？如果你能用到某个图形 API（OpenGL、DirectX、WebGL 等），大概可以开一个三维窗口，把一条三维曲线显示成一串短线段。当然，另一种做法是用某种同样能参与渲染的三维几何体来表示这条曲线。这个问题最常见的两种做法是：</p><ul><li><p><b>带状面（ribbon）</b>：带状面的想法很简单，沿曲线造一条四边形带。造出来的几何体当然就像一条带子，也就是一个平面。这种做法的难点常常在于确定这些四边形的法线该是什么、四边形该如何定向。你有几种选择，最常见的一种是让四边形的法线朝向相机。</p></li><li><p><b>细圆柱</b>，也就是圆截面曲面，或者 RIS 文档里说的「一根面条」：在这个做法里，我们把曲线渲染成一根顺着曲线形状走的圆柱或圆管（如上面那张渲染图所示）。你也可以理解成一根软管。注意这种做法生成的几何体比带状面更多（很可能包含更多多边形）。不过它也没有法线朝向的问题。</p></li></ul><p>两种做法其实都非常适合渲染<b>毛发</b>、<b>皮毛</b>或<b>草</b>之类的东西，这也是我们觉得值得为这个题目单开一章的原因——尽管我们打算将来专门写一门主要讲<b>毛发渲染</b>的课程（至少我们希望这段简短介绍能在这期间满足你的好奇心）。</p><p>本章不展示带状面的方案。我们只讲第二种，不过从第二种方案出发去实现第一种，要比反过来简单得多。那就开始吧，好吗？</p><h3> 第 1 步：按等间隔生成位置</h3><p>需要什么？首先需要沿曲线生成一圈圈顶点，再把这些顶点连起来构成面。第一步，我们已经会求曲线上三维位置。在我们的例子里，用的是一条控制点多于 4 个的贝塞尔曲线。我们需要根据输入控制点的数量算出共有几条曲线，然后对每条曲线逐个迭代，最后在当前曲线上「行走」，按等间隔生成一系列三维位置。同时还要算出该点处的切线，第 2 步构造局部坐标系时要用。</p><pre><code>
+constexpr uint32_t curveNumPts = 22; 
+Vec3f curveData[curveNumPts] = { 
+    {-0.0029370324, 0.0297554422, 0}, 
+    ... 
+    { 0.7606914144, 1.7038639600, 0} 
+}; 
+ 
+void createCurveGeometry() 
+{ 
+    uint32_t ndivs = 16; 
+    uint32_t ncurves = 1 + (curveNumPts - 4) / 3; 
+    Vec3f pts[4]; 
+    for (uint32_t i = 0; i &lt; ncurves; ++i) { 
+        for (uint32_t j = 0; j &lt; ndivs; ++j) { 
+            pts[0] = curveData[i * 3]; 
+            pts[1] = curveData[i * 3 + 1]; 
+            pts[2] = curveData[i * 3 + 2]; 
+            pts[3] = curveData[i * 3 + 3]; 
+            float s = j / (float)ndivs; 
+            Vec3f pt = evalBezierCurve(pts, s); 
+            Vec3f tangent = derivBezier(pts, s).normalize(); 
+        } 
+        ... 
+    } 
+    ... 
+} 
+</code></pre><h3> 第 2 步：构造局部坐标系，生成一圈顶点</h3><figure><img src="https://scratchapixel.com/images/bezier/bez-curvescoordinatesys.png?" alt=""><figcaption><b>图 3：</b>构造一个局部坐标系，其 up 轴沿曲线的切线方向。</figcaption></figure><p>第 2 步要构造一个局部坐标系，第 3 步生成那一圈点（它们之后会成为细圆柱的顶点）时要用。我们希望这一圈的所有点都落在一个垂直于曲线切线的平面上。到目前为止，我们已经知道采样点处曲线的切线。由这条切线可以构造一个笛卡尔坐标系。难点在于：我们需要让这个笛卡尔坐标系沿曲线保持一致的方向，这样第 3、4 步才能方便地把顶点两两相连构成面。要快速做到这一点，可以总是取同一个「随机」向量作为起点，并用几何那门课里讲过的技巧：先求我们的向量 \(v\) 与一个随机向量 \(r\) 的叉积。这给出一个垂直于 \(v\) 的向量 \(u\)。再对 \(u\) 与 \(v\) 做叉积，就得到第三个向量 \(w\)，它同时垂直于 \(u\) 与 \(v\)。三个向量 \(u\)、\(v\)、\(w\) 于是构成一个笛卡尔坐标系。</p><p>我们总是取曲线上的切线作为坐标系的 up 向量，并总是为 \(r\) 选一个固定的向量。这样就能沿曲线构造出一系列方向一致的笛卡尔坐标系，如图 3 所示。不过注意，我们选 \(r\) 的方式取决于切线（或 up 向量）的 y 坐标。我们选 \(r\)，让它与切线向量尽量不同。所以先找出切线各坐标中绝对值最大的那个，据此选取 \(r\)（见下面代码第 9 到 38 行）。</p><pre><code>
+void createCurveGeometry() 
+{ 
+    ... 
+    for (uint32_t i = 0; i &lt; ncurves; ++i) { 
+        for (uint32_t j = 0; j &lt; ndivs; ++j) { 
+            ... 
+            Vec3f tangent = derivBezier(pts, t).normalize(); 
+ 
+            uint8_t maxAxis; 
+            if (std::abs(tangent.x) &gt; std::abs(tangent.y)) 
+                if (std::abs(tangent.x) &gt; std::abs(tangent.z)) 
+                    maxAxis = 0; 
+                else 
+                    maxAxis = 2; 
+            else if (std::abs(tangent.y) &gt; std::abs(tangent.z)) 
+                    maxAxis = 1; 
+            else 
+                maxAxis = 2; 
+ 
+            Vec3f up, forward, right; 
+ 
+            switch (maxAxis) { 
+                case 0: 
+                case 1: 
+                    up = tangent; 
+                    forward = Vec3f(0, 0, 1); 
+                    right = up.crossProduct(forward); 
+                    forward = right.crossProduct(up); 
+                    break; 
+                case 2: 
+                    up = tangent; 
+                    right = Vec3f(0, 0, 1); 
+                    forward = right.crossProduct(up); 
+                    right = up.crossProduct(forward); 
+                    break; 
+                default: 
+                    break; 
+            }; 
+ 
+            ... 
+        } 
+    } 
+    ... 
+} 
+</code></pre><h3> 第 3 步：生成一圈顶点</h3><figure><img src="https://scratchapixel.com/images/bezier/bez-curvespoints.png?" alt=""><figcaption><b>图 4：</b>沿曲线按等间隔生成、方向正确的一圈圈点。</figcaption></figure><p>下一步是在曲线周围生成方向正确的一圈圈点。我们先（在世界坐标系的 x-z 平面上）用基本三角函数造出一个点环，再用那个笛卡尔坐标系把点变换到最终位置。记住，变换矩阵不只是表示坐标系各轴的三个向量。套用点与矩阵相乘的公式之后，点应当被正确定向（它们会落在该笛卡尔坐标系的 x-z 平面上）。剩下要做的就是给点的位置加上（也就是平移）曲线上的位置，把它们移到沿曲线的最终位置。我们还希望圆柱在越靠近曲线尖端时越细。为此，我们算出一个沿曲线归一化（范围 [0:1]）的参数位置（第 7 行）。这个值随后用来缩放点的位置（第 8 行与第 11 行）。我们还设置点的法线（这些点之后会成为圆柱网格的顶点），它就是变换后点的位置（不含平移——第 16 行）。别忘了归一化。代码如下：</p><pre><code>
+void createCurveGeometry() 
+{ 
+    ... 
+    for (uint32_t i = 0; i &lt; ncurves; ++i) { 
+        for (uint32_t j = 0; j &lt; ndivs; ++j) { 
+            ... 
+            float sNormalized= (i * ndivs + j) / float(ndivs * ncurves); 
+            float rad = 0.1 * (1 - sNormalized); 
+            for (uint32_t k = 0; k &lt;= ndivs; ++k) { 
+                float t = k / (float)ndivs; 
+                float theta = t * 2 * M_PI; 
+                Vec3f pc(cos(theta) * rad, 0, sin(theta) * rad); 
+                float x = pc.x * right.x + pc.y * up.x + pc.z * forward.x; 
+                float y = pc.x * right.y + pc.y * up.y + pc.z * forward.y; 
+                float z = pc.x * right.z + pc.y * up.z + pc.z * forward.z; 
+                P[i * (ndivs + 1) * ndivs + j * ndivs + k] = Vec3f(pt.x + x, pt.y + y, pt.z + z); 
+                N[i * (ndivs + 1) * ndivs + j * ndivs + k] = Vec3f(x, y, z).normalize(); 
+                st[i * (ndivs + 1) * ndivs + j * (ndivs + 1) + k] = Vec2f(sNormalized, t); 
+            } 
+        } 
+    } 
+    ... 
+} 
+</code></pre><h3> 第 4 步：构建网格</h3><p>最后一步，把顶点连起来构成网格的面。这部分是一些逻辑，不需要太多解释，但你得把它弄对。我们需要创建一个整数数组，存放网格中每个面由多少个顶点构成。除了曲线尖端网格最后一排面是三角形以外，所有面都是四边形。曲线末端那一条三角形构成一个锥体，其顶点就是曲线的最后一个点。为这个网格生成 st 坐标并不复杂：只要把沿曲线归一化的参数位置设为顶点的 s 坐标，把顶点在环里的参数位置设为它的 t 坐标。下面的图展示了 <code>ndivs = 8</code> 时网格化的结果与顶点法线。</p><figure><img src="https://scratchapixel.com/images/bezier/bez-twistedhair1.png?" alt=""></figure><p>下面是完整最终函数的代码：</p><pre><code>
+void createCurveGeometry() 
+{ 
+    uint32_t ndivs = 8; 
+    uint32_t ncurves = 1 + (curveNumPts - 4) / 3; 
+    Vec3f pts[4]; 
+    std::unique_ptr&amp;ltVec3f []&gt; P(new Vec3f[(ndivs + 1) * ndivs * curves + 1]); 
+    std::unique_ptr&amp;ltVec3f []&gt; N(new Vec3f[(ndivs + 1) * ndivs * ncurves + 1]); 
+    std::unique_ptr&amp;ltVec2f []&gt; st(new Vec2f[(ndivs + 1) * ndivs * ncurves + 1]); 
+    for (uint32_t i = 0; i &lt; ncurves; ++i) { 
+        for (uint32_t j = 0; j &lt; ndivs; ++j) { 
+            pts[0] = curveData[i * 3]; 
+            pts[1] = curveData[i * 3 + 1]; 
+            pts[2] = curveData[i * 3 + 2]; 
+            pts[3] = curveData[i * 3 + 3]; 
+            float s = j / (float)ndivs; 
+            Vec3f pt = evalBezierCurve(pts, s); 
+            Vec3f tangent = derivBezier(pts, s).normalize(); 
+ 
+            uint8_t maxAxis; 
+            if (std::abs(tangent.x) &gt; std::abs(tangent.y)) 
+                if (std::abs(tangent.x) &gt; std::abs(tangent.z)) 
+                    maxAxis = 0; 
+                else 
+                    maxAxis = 2; 
+            else if (std::abs(tangent.y) &gt; std::abs(tangent.z)) 
+                    maxAxis = 1; 
+            else 
+                maxAxis = 2; 
+ 
+            Vec3f up, forward, right; 
+ 
+            switch (maxAxis) { 
+                case 0: 
+                case 1: 
+                    up = tangent; 
+                    forward = Vec3f(0, 0, 1); 
+                    right = up.crossProduct(forward); 
+                    forward = right.crossProduct(up); 
+                    break; 
+                case 2: 
+                    up = tangent; 
+                    right = Vec3f(0, 0, 1); 
+                    forward = right.crossProduct(up); 
+                    right = up.crossProduct(forward); 
+                    break; 
+                default: 
+                    break; 
+            }; 
+ 
+            float sNormalized = (i * ndivs + j) / float(ndivs * ncurves); 
+            float rad = 0.1 * (1 - sNormalized); 
+            for (uint32_t k = 0; k &lt;= ndivs; ++k) { 
+                float t = k / (float)ndivs; 
+                float theta = t * 2 * M_PI; 
+                Vec3f pc(cos(theta) * rad, 0, sin(theta) * rad); 
+                float x = pc.x * right.x + pc.y * up.x + pc.z * forward.x; 
+                float y = pc.x * right.y + pc.y * up.y + pc.z * forward.y; 
+                float z = pc.x * right.z + pc.y * up.z + pc.z * forward.z; 
+                P[i * (ndivs + 1) * ndivs + j * (ndivs + 1) + k] = Vec3f(pt.x + x, pt.y + y, pt.z + z); 
+                N[i * (ndivs + 1) * ndivs + j * (ndivs + 1) + k] = Vec3f(x, y, z).normalize(); 
+                st[i * (ndivs + 1) * ndivs + j * (ndivs + 1) + k] = Vec2f(sNormalized , t); 
+            } 
+        } 
+    } 
+    P[(ndivs + 1) * ndivs * ncurves] = curveData[curveNumPts - 1]; 
+    N[(ndivs + 1) * ndivs * ncurves] = (curveData[curveNumPts - 2] - curveData[curveNumPts - 1]).normalize(); 
+    st[(ndivs + 1) * ndivs * ncurves] = Vec2f(1, 0.5); 
+    uint32_t numFaces = ndivs * ndivs * ncurves; 
+    std::unique_ptr&amp;ltuint32_t []&gt; verts(new uint32_t[numFaces]); 
+    for (uint32_t i = 0; i &lt; numFaces; ++i) 
+        verts[i] = (i &lt; (numFaces - ndivs)) ? 4 : 3; 
+    std::unique_ptr&amp;ltuint32_t []&gt; vertIndices(new uint32_t[ndivs * ndivs * ncurves * 4 + ndivs * 3]); 
+    uint32_t nf = 0, ix = 0; 
+    for (uint32_t k = 0; k &lt; ncurves; ++k) { 
+        for (uint32_t j = 0; j &lt; ndivs; ++j) { 
+            if (k == (ncurves - 1) &amp;&amp; j == (ndivs - 1)) { break; } 
+            for (uint32_t i = 0; i &lt; ndivs; ++i) { 
+                vertIndices[ix] = nf; 
+                vertIndices[ix + 1] = nf + (ndivs + 1); 
+                vertIndices[ix + 2] = nf + (ndivs + 1) + 1; 
+                vertIndices[ix + 3] = nf + 1; 
+                ix += 4; 
+                ++nf; 
+            } 
+            nf++; 
+        } 
+    } 
+ 
+    for (uint32_t i = 0; i &lt; ndivs; ++i) { 
+        vertIndices[ix] = nf; 
+        vertIndices[ix + 1] = (ndivs + 1) * ndivs * ncurves; 
+        vertIndices[ix + 2] = nf + 1; 
+        ix += 3; 
+        nf++; 
+    } 
+}
+</code></pre><p>在本章开头可以看到这个网格在光线追踪器里渲染的结果。完整源码可以在本课程的最后一章找到。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/geometry/bezier-curve-rendering-utah-teapot/curves-as-geometry.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/geometry/bezier-curve-rendering-utah-teapot/curves-as-geometry.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

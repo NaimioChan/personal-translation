@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>针孔相机如何工作（第 1 部分） - Scratchapixel 中文译本</title>
+<meta name="description" content="针孔相机模型 · 针孔相机如何工作（第 1 部分）（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>针孔相机如何工作（第 1 部分）</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="how-pinhole-camera-works-part-1.html">针孔相机如何工作（第 1 部分）</a></li>
+<li><a href="how-pinhole-camera-works-part-2.html">针孔相机如何工作（第 2 部分）</a></li>
+<li><a href="virtual-pinhole-camera-model.html">虚拟针孔相机模型</a></li>
+<li><a href="implementing-virtual-pinhole-camera.html">实现虚拟针孔相机</a></li>
+</ol>
+</div>
+<h2>针孔相机如何工作（第 1 部分）</h2><p><b>阅读时间：16 分钟。</b></p><h2>本课你会学到什么？</h2><p>上一课我们了解了生成图像过程中涉及的一些关键概念。但我们并没有专门讨论相机。3D 渲染不仅是通过透视投影生成真实感图像，还要能给出与真实相机拍摄结果相似的图像。为什么？因为当 CG 图像与实拍素材合成时，渲染器输出的图像必须与拍摄那些素材的相机所捕捉到的图像匹配。本课我们将开发一个相机模型，用它来模拟真实相机的结果，并用现实世界的参数来设置相机。为此，我们先回顾胶片相机与摄影相机的工作原理。</p><p>更具体地说，本课将演示如何实现一个类似 Maya 以及大多数（如果不是全部）3D 应用（如 Houdini、3DS Max、Blender 等）所用的相机模型。我们会解释相机上每一个控件对最终图像的影响，以及如何在 CG 中模拟这些控件。本课会回答你对 CG 相机可能有的所有疑问，比如胶片孔径参数是干什么的、焦距参数与视角参数是什么关系。</p><p>用真实相机生成图像所涉及的光学定律虽然简单，但在 CG 中复现它们可能颇有挑战——不是因为它们复杂，而是因为模拟起来可能很贵。不过，你并不需要非常复杂的相机才能生成图像。事实上恰恰相反。你可以用一种非常简单的成像设备拍照，它叫<b>针孔相机</b>，就是一个一侧有个小孔、另一侧放着照相胶片的盒子。针孔相机产生的图像比复杂相机产生的图像容易复现得多（也更便宜）。正因如此，针孔相机是大多数（如果不是全部）3D 应用和电子游戏采用的模型。我们先回顾这些相机在现实世界中如何工作，再由此建立数学模型。</p><details open><p>最好先理解针孔相机模型——它是 CG 中最常用的相机模型——再去谈透视投影矩阵，因为后者会复用本课要研究的一些概念，比如相机视角、裁剪平面等。</p></details><h2>暗箱：图像是如何形成的？</h2><p>我们在计算机图形学中使用的多数算法都在模拟现实世界中事物的运作方式。虚拟相机尤其如此，它对生成计算机图形图像的过程至关重要。真实相机中的成像过程用计算机来复现相对简单。它主要依赖模拟光在空间中传播以及与物体（包括相机镜头）相互作用的方式。光与物质的相互作用过程极为复杂，但光学定律相对简单，很容易在计算机程序中模拟。摄影原理有两大组成部分：</p><ul><li><p>图像被存储在胶片上或文件中的过程。</p></li><li><p>图像在相机中被生成的过程。</p></li></ul><p>在计算机图形学中，我们不需要物理介质来存储图像，因此不必模拟传统胶片摄影所用的光化学过程（除非你像 Maxwell 渲染器那样想提供一个真实的相机模型，但要得到一个能用的基础模型并不需要这么做）。</p><figure><img src="https://scratchapixel.com/images/cameras/pinholeprinciple.png?" alt=""><figcaption><b>图 1：</b>1925 年《The Boy Scientist》中图解说明的针孔相机与暗箱原理。这幅图描绘了针孔相机模型的简洁与其基本机制，凸显了它在摄影技术演进中的重要意义。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/cameraobscura.png?" alt=""><figcaption><b>图 2：</b>暗箱是一个一侧开孔的盒子。穿过该孔的光在盒子另一侧形成场景的倒立图像，演示了通过小孔成像的基本原理。</figcaption></figure><p>现在我们谈摄影过程的第二部分：图像如何在相机中形成。成像过程背后的<b>基本</b>原理很直接，正如 20 世纪初发表的一幅插图的复刻所示（图 1）。在图 1 的装置中，第一个表面（红色）挡住了光，使它到不了第二个表面（绿色）。但只要开一个小孔（针孔），光线就能在单一点处穿过第一个表面，从而在另一侧形成蜡烛的（倒立）图像。沿着光线从蜡烛到成像表面的路径去看，就能明白图像是如何在几何上构造出来的。现实中，蜡烛的像会相当暗淡，因为蜡烛发出并穿过 B 点的光量，与蜡烛本身发出的总光量相比微不足道（火焰发出的光线或经蜡烛反射的光线中，只有一小部分会穿过那个孔）。</p><p><a href="https://en.wikipedia.org/wiki/Camera_obscura" target="_blank" rel="noreferrer noopener">暗箱</a>（camera obscura，拉丁语意为「暗室」）的原理相同。它是一个不透光的盒子或房间，内壁为黑色（以尽量减少光的反射），一端中央有一个极小的孔（图 2）。穿过这个孔的光在盒子另一侧形成外部场景的倒立图像。这个简单装置促成了摄影相机的发展。你甚至可以把你的房间改成暗箱，如 National Geographic 的一个视频所示（版权所有）。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/cameras/Making-Your-Own-Room-With-a-View.mp4"></video></p></div><p>要看清楚投在墙上的图像，你的眼睛首先需要适应房间的黑暗。要用相机记录下这个效果，需要很长的曝光时间（从几秒到半分钟不等）。要把暗箱变成<b>针孔相机</b>，只需在正对针孔的那一面放一张胶片。如果你等得够久（并让相机完全静止），光会改变胶片上的化学物质，随时间形成潜影。数码相机的原理类似，只是胶片换成了把光转换为电荷的传感器。</p><h2>真实相机如何工作？</h2><p>在真实相机中，光落在对光敏感的表面上时图像就形成了（这条原理对眼睛同样适用）。对胶片相机，这个敏感表面是胶片；对数码相机，是传感器（或 CCD）。其中一些概念在课程 <a href="how-does-it-work.html">光线追踪入门</a> 中介绍过，这里我们简要回顾。</p><figure><img src="https://scratchapixel.com/images/cameras/cameragen.gif?" alt=""><figcaption><b>图 3：</b>在现实世界中，光源发出的光到达物体后向许多方向反射。但只有一条光线沿相机方向传播并打在胶片表面或 CCD 上，如此处所示。</figcaption></figure><p>现实世界中的光来自各种光源，其中太阳最重要。光照到物体上时，可能被吸收，也可能被反射进场景。这个现象在《计算机图形学的数学与物理》部分专讲光与物质相互作用的课程里有深入探讨。你拍照时，其中一些反射光（以光子包的形式）朝相机传播，穿过针孔，在胶片或数码相机传感器上形成清晰的图像，如图 3 所示。</p><details open><p>互联网上能找到许多讲照相胶片如何工作的资料。值得注意的是，曝光后的胶片并不会立刻产生可见图像，而是产生所谓的潜影（肉眼不可见），我们需要在暗房里用化学药剂处理胶片才能让图像显影。如果你把一次性相机的后盖换成半透明塑料片，应该就能看到通常投影到胶片上的那个倒立图像。</p></details><figure><img src="https://scratchapixel.com/images/cameras/realcamera.png?" alt=""></figure><h2>针孔相机</h2><p>现实世界中最简单的相机就是针孔相机。它由一个简单的不透光盒子组成，前面有一个极小的孔，称为<b>孔径</b>，盒子内部正对这个针孔的一侧放有感光胶片或相纸。要拍照，你只要打开孔径让胶片曝光。为了在不使用时阻止光进入盒子，用一段不透明胶带盖住针孔；拍照时把它取下，拍完再贴上。</p><figure><img src="https://scratchapixel.com/images/cameras/pinholecam.png?" alt=""><figcaption><b>图 4：</b>针孔相机的原理。为便于追踪路径而人工上色的光线在孔径处汇聚，在相机后部的胶片平面上形成场景的倒立图像。</figcaption></figure><p>针孔相机的原理很直接。场景中的物体向各个方向反射光。孔径小到这种程度：在场景中物体表面某点 P 反射出的许多光线里，只有一束很窄的光线或光子进入相机。现实中从来不是恰好一条光线，而更像一束光线，但这个简化有助于理解概念。在图 3 中，我们可以看到 P 处许多反射光线中的单独一条如何穿过孔径。在图 4 中，其中六条光线被上了色，便于追踪它们到胶片平面的路径，演示它们如何形成旋转了 180 度的物体图像。针孔在几何中也称为<b>投影中心</b>；所有进入相机的光线都在这一点汇聚，并在另一侧从这一点发散。</p><p>总结一下：照到物体上的光在场景中沿随机方向反射。但只有沿同一方向传播的那一束光线进入相机，并打在胶片上的某一点。<b>场景中的每个点都对应胶片上的一个点</b>。</p><details open><p>上面的解释用「点」这个概念来描述物体表面和胶片表面上局部发生的事。但要记住，物体表面是连续的（至少在宏观层面如此），因此这些物体在胶片上的图像也显得连续。所谓简化的「点」，实际上是物体表面或胶片上的一小块面积。理想情况下，这个过程应当描述为表面之间的光能交换（物体发光表面与胶片接收表面），但为简化起见，这些小面被当作点处理。</p></details><figure><img src="https://scratchapixel.com/images/cameras/pinholeaperture1.png?" alt=""><figcaption><b>图 5：</b>上图，针孔小时，只有很窄的一组光线进入相机。下图，针孔大得多时，物体上的同一个点在胶片平面上出现多次，导致图像模糊。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/cone.png?" alt=""><figcaption><b>图 6：</b>现实中，穿过针孔的光线形成一个小的光锥。它的大小取决于针孔的直径（上图）。当光锥太大时，它们在胶片表面投下的光斑相互重叠，导致图像模糊。</figcaption></figure><p>孔径的大小很关键。要得到清晰的图像，物体表面上的每个点（或小块面积）都必须由胶片上的一个点（另一小块面积）来表示。如前所述，穿过孔的不是恰好一条光线，而是包含在一个方向锥内的一小组光线。这个锥的角度，更准确地说是它的<a href="https://en.wikipedia.org/wiki/Angular_diameter" target="_blank" rel="noreferrer noopener">角直径</a>，取决于孔的大小，如图 6 所示。</p><figure><img src="https://scratchapixel.com/images/cameras/blur.png?" alt=""><figcaption><b>图 7：</b>针孔越小，图像越清晰。孔径太大时，图像就变得模糊。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/confusion.png?" alt=""><figcaption><b>图 8：</b>拍摄明亮的小物体时，弥散圆要明显得多，比如暗背景上的小彩灯。</figcaption></figure><p>针孔越小，图像越清晰。但针孔越小，需要的曝光时间越长，因为随着孔变小，穿过孔并打到胶片表面的光量会减少。在相纸上成像需要一定量的光；因此接收到的光越少，需要的曝光时间就越长。这对 CG 相机不是问题，但对真实针孔相机，曝光时间越长，相机不是完全静止或场景内物体移动时图像模糊的风险就越大。一般来说，较短的曝光时间更可取。然而，针孔能小到什么程度是有下限的。当它非常小——大约与光波长相当——就会发生衍射，这可不妙。对一个鞋盒大小的针孔相机来说，约 2 mm 的针孔直径是最优的，兼顾了图像清晰度与曝光时间。注意孔径太大时（如图 5 下图），图像上的一个点——当被构想为离散的光线或光点时（例如图 5 中的点 A 或 B）——会出现多次，造成模糊。更准确的想象方式是光锥在胶片上的足迹相互重叠（图 6 下图）。针孔越大，光锥也越大，重叠就越多。这种多重性（光锥在胶片上的足迹或光斑变大，把原光源的颜色摊到更大的区域上，而不是像理论上那样只落在一个点上）导致图像模糊或失焦。拍摄暗背景上的明亮小物体时这个效果尤其明显，比如夜里的彩灯（图 8），生成的圆盘清晰可见。在摄影中，这些圆盘——尽管并不总是完美的圆形——被称为<b>弥散圆</b>（还有其他叫法）。</p><p>为进一步阐明成像过程，我们做了两段短动画。第一段动画（图 9）表现一个小针孔，由于每个物体点对应胶片上的一个点，圆盘的图像很清晰。</p><figure><img src="https://scratchapixel.com/images/cameras/pinhole1.gif?" alt=""><figcaption><b>图 9：</b>动画展示光线穿过针孔并在胶片平面上成像。场景的图像是倒立的。</figcaption></figure><p>第二段动画演示针孔过大时的后果。在这种情况下，物体上的每个点在胶片上由多个点表示，圆盘的图像就模糊了。</p><figure><img src="https://scratchapixel.com/images/cameras/pinhole2.gif?" alt=""><figcaption><b>图 10：</b>孔径或针孔太大时，几何体上的一个点会在胶片平面上出现多处，得到的图像是模糊的。</figcaption></figure><p>总之，要产生清晰的图像，我们必须保证针孔相机的孔径尽可能小。孔径越小，就只有来自单一方向的窄光束能进入相机，并打在胶片或传感器的单个点（或尽可能小的面积）上。<b>理想针孔相机</b>的孔径会小到只有来自场景中每个点的单独一条光线进入相机。然而，孔径太小时会出现衍射问题，这样的相机在现实世界中造不出来。相反，在计算机的虚拟世界里，光线不受衍射影响，理想针孔相机是可以存在的。使用这个理想模型的渲染器能生成完全清晰的 3D 场景图像。</p><figure><img src="https://scratchapixel.com/images/cameras/gnome-dof.png?" alt=""><figcaption><b>图 11：</b>相机的镜头影响景深。镜头只能把距相机特定距离的物体对焦。比这个对焦距离近得多或远得多的物体，在图像中会显得模糊。景深定义了场景中物体显得「还算」清晰的那个范围。针孔相机的景深是无限的，产出完全清晰的图像。</figcaption></figure><p>在摄影中，<b>景深</b>（DOF）指场景中最近与最远的、在图像里显得「还算」清晰的物体之间的范围。与带镜头的相机不同，针孔相机有<b>无限景深</b>，也就是说物体的清晰度不受其与相机距离的影响。计算机图形学常用理想针孔相机模型，于是得到无限景深，透过相机可见的所有场景物体都以完全清晰的方式渲染。这也让计算机生成的图像被批评为过于干净、过于锐利，而这一特征很大程度上归因于这个相机模型。不过，模拟景深相对简单，本部分有专门一课讲它。</p><details open><p>针孔非常小时，只有极少量的光能穿过孔径，因此需要很长的曝光时间。这在想拍出运动主体的清晰图像或在弱光条件下就是个限制。自然，更大的孔径能让更多光进入相机，但代价是模糊更严重。在孔径前加一枚镜头，可以把光线重新聚焦到胶片平面上的单个点，从而缓解这个问题。本课只是针孔相机的入门，而非对相机机械结构与镜头在摄影中作用的全面解释。关于这个主题的更多信息见专讲景深的那一课。值得注意的是，现代相机使用镜头是为了放大孔径，从而缩短曝光时间，同时避免大针孔带来的模糊。镜头把物体表面反射的光重新聚焦回胶片上的单个点，把大孔径的好处与镜头的好处结合起来，既得到短曝光时间，又得到清晰的图像。不过，使用镜头会引入景深问题，这超出本课范围。针孔相机以其简洁见长，不需要镜头，因此容易搭建，也容易在计算机图形学中模拟。</p><figure><img src="https://scratchapixel.com/images/cameras/lens.png?" alt=""></figure></details>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/3d-viewing-pinhole-camera/how-pinhole-camera-works-part-1.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/3d-viewing-pinhole-camera/how-pinhole-camera-works-part-1.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

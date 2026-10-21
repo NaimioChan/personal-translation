@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光线与盒子求交 - Scratchapixel 中文译本</title>
+<meta name="description" content="一个极简光线追踪器 · 光线与盒子求交（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光线与盒子求交</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="parametric-and-implicit-surfaces.html">参数曲面与隐式曲面</a></li>
+<li><a href="ray-sphere-intersection.html">光线与球体求交</a></li>
+<li><a href="minimal-ray-tracer-rendering-spheres.html">一个极简光线追踪器：渲染球体</a></li>
+<li><a href="ray-plane-and-ray-disk-intersection.html">光线与平面、光线与圆盘求交</a></li>
+<li><a style="font-weight:700" href="ray-box-intersection.html">光线与盒子求交</a></li>
+</ol>
+</div>
+<h2>光线与盒子求交</h2><p><b>阅读时间：10 分钟。</b></p><h2>光线与盒子求交</h2><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/line.png" alt=""><figcaption><b>图 1：</b>直线的方程。直线方程可以写成 \(y=mx+b\)。对于方程为 \(y=x-1\) 的那条斜线，我们有 \(m=1\) 和 \(b=-1\)。</figcaption></figure><p>在这个例子里，我们考虑的是一个与笛卡尔坐标系各轴对齐的盒子，称为轴对齐盒子或轴对齐包围盒（AABB）。不与笛卡尔坐标系各轴对齐的盒子称为有向包围盒（OBB）。计算光线与 AABB 交点的过程相对直接。有必要记住，一条直线可以定义为：</p><p>$$y = mx + b.$$</p><p>在数学里，\(m\) 这个项叫作斜率（或称梯度），它决定直线的朝向；\(b\) 表示直线与 y 轴相交的点。如果这条一维直线与 x 轴平行，如图 1 所示（也就是方程为 \(y=2\) 的那条线），那么 \(m\) 等于 0。同样，一条光线可以表示为：</p><p>$$O + Dt.$$</p><p>这里 \(O\) 表示光线的原点，\(D\) 是它的方向，\(t\) 可以是任意实数（负、正或零）。改变这个方程中的 \(t\)，就能定义由光线位置与方向所确定的直线上的任意点。这个方程与直线方程很像。本质上它们是等价的：\(O\) 对应 \(b\)，\(D\) 对应 \(m\)。要划定一个轴对齐包围体，我们用两个点表示盒子的最小与最大范围（在代码里称为 bounds）。</p><pre><code>
+class Box3
+{
+public:
+    Box3(const Vec3f &amp;vmin, const Vec3f &amp;vmax)
+    {
+        bounds[0] = vmin;
+        bounds[1] = vmax;
+    }
+    Vec3f bounds[2];
+};
+</code></pre><p>包围体的边界定义了与坐标系各轴平行的一组直线，这些直线我们也可以用直线方程表示。假设有一条直线由下面的方程定义：</p><p>$$y = B0_x.$$</p><p>其中 \(B0_x\) 是包围盒最小坐标的 x 分量（在代码里就是 <code>bounds[0].x</code>）。要找光线与这条直线的交点，可以写成：</p><p>$$O_x + tD_x = B0_x \quad \text{(eq1)}.$$</p><p>重排各项即可解出：</p><p>$$t_{0x} = \frac{B0_x - O_x}{D_x} \quad \text{(eq2)}.$$</p><p>包围体最大范围的 x 分量可以同样用来算出变量 \(t_{1x}\)。注意，当 \(t\) 的值为负时，交点位于光线「后方」（相对光线原点 \(O\) 与方向 \(D\) 而言）。最后，对 y 和 z 分量做同样的处理，这个过程结束时我们会得到六个值，表示光线与盒子六个面对应平面的交点位置。</p><p>$$
+\begin{array}{l}
+t_{0x} = \frac{(B0_x - O_x)}{D_x},\\
+t_{1x} = \frac{(B1_x - O_x)}{D_x},\\
+t_{0y} = \frac{(B0_y - O_y)}{D_y},\\
+t_{1y} = \frac{(B1_y - O_y)}{D_y},\\
+t_{0z} = \frac{(B0_z - O_z)}{D_z},\\
+t_{1z} = \frac{(B1_z - O_z)}{D_z}.\\ 
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/2dfig.png" alt=""><figcaption><b>图 2：</b>一条光线与二维盒子相交。</figcaption></figure><p>注意，如果光线与某个轴平行，它就不会与该轴对应的包围体平面相交（此时光线的直线方程退化为常数 \(b\)，公式 1 无解）。下一步是判断这六个值里哪一个对应光线与盒子的交点（前提是光线确实与盒子相交）。到目前为止，我们只是找出了光线与盒子各面对应平面的交点。我们知道这可以用算出的每个 \(t\) 值得到。看图 2，这项测试背后的逻辑就清楚了（这个例子里我们只考虑二维情形）。光线先在两处与盒子最小范围所定义的平面相交：\(t_{0x}\) 和 \(t_{0y}\)。但这些平面上的交点不一定落在立方体上（如果不落在立方体上，光线就没有与盒子相交）。数学上，我们可以通过比较数值找出这两点中哪一个落在立方体上：为此要选 \(t\) 较大的那个点。写成伪代码就是：</p><pre><code>
+t0x = (B0x - Ox) / Dx;
+t0y = (B0y - Oy) / Dy;
+tmin = (t0x &gt; t0y) ? t0x : t0y;
+</code></pre><p>找光线与盒子相交的第二个点，过程类似；不过这种情况下我们会用盒子最大范围所定义平面算出的 \(t\) 值，并选出 \(t\) 最小的那个点：</p><pre><code>
+t1x = (B1x - Ox) / Dx;
+t1y = (B1y - Oy) / Dy;
+tmax = (t1x &lt; t1y) ? t1x : t1y;
+</code></pre><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/2dfigmiss.png" alt=""><figcaption><b>图 3：</b>错过二维盒子的光线。</figcaption></figure><p>光线不一定与盒子相交。图 3 展示了光线错过立方体的几种情形。通过比较 \(t\) 值，我们可以判定这些情况。如图所示，当 \(t_{0x}\) 大于 \(t_{1y}\)，或当 \(t_{0y}\) 大于 \(t_{1x}\) 时，光线就错过了盒子。把这处测试加进代码：</p><pre><code>
+if (t0x &gt; t1y || t0y &gt; t1x) return false;
+</code></pre><p>把这项技术推广到三维情形，只需对 z 分量算出 \(t\) 值，再与针对 x、y 分量算出的 \(t\) 值比较：</p><pre><code>
+t0z = (B0z - Oz) / Dz; 
+t1z = (B1z - Oz) / Dz; 
+if (tmin &gt; t1z || t0z &gt; tmax) 
+    return false; 
+if (t0z &gt; tmin) tmin = t0z; 
+if (t1z &lt; tmax) tmax = t1z;
+</code></pre><p>下面是该方法在 C++ 中的完整实现。变量 <code>min</code> 与 <code>max</code> 表示包围盒的最小与最大范围（坐标）：</p><pre><code>
+bool intersect(const Ray &amp;r) { 
+    float tmin = (min.x - r.orig.x) / r.dir.x; 
+    float tmax = (max.x - r.orig.x) / r.dir.x; 
+
+    if (tmin &gt; tmax) swap(tmin, tmax); 
+
+    float tymin = (min.y - r.orig.y) / r.dir.y; 
+    float tymax = (max.y - r.orig.y) / r.dir.y; 
+
+    if (tymin &gt; tymax) swap(tymin, tymax); 
+
+    if ((tmin &gt; tymax) || (tymin &gt; tmax)) 
+        return false; 
+
+    if (tymin &gt; tmin) tmin = tymin; 
+    if (tymax &lt; tmax) tmax = tymax; 
+
+    float tzmin = (min.z - r.orig.z) / r.dir.z; 
+    float tzmax = (max.z - r.orig.z) / r.dir.z; 
+
+    if (tzmin &gt; tzmax) swap(tzmin, tzmax); 
+
+    if ((tmin &gt; tzmax) || (tzmin &gt; tmax)) 
+        return false; 
+
+    if (tzmin &gt; tmin) tmin = tzmin; 
+    if (tzmax &lt; tmax) tmax = tzmax; 
+
+    return true; 
+}
+</code></pre><p>注意，取决于光线的方向，<code>tmin</code> 可能大于 <code>tmax</code>。既然我们所有测试的逻辑都依赖 \(t_0\) 小于 \(t_1\)，那就需要在 \(t_1\) 小于 \(t_0\) 时把两个值交换过来。</p><h2>优化代码</h2><p>这段代码有几处可以改进，以提升性能与健壮性。首先，我们可以用下面这个条件代替交换操作，来应对光线的方向：</p><pre><code>
+if (ray.dir.x &gt;= 0) { 
+    tmin = (min.x - r.orig.x) / ray.dir.x; 
+    tmax = (max.x - r.orig.x) / ray.dir.x; 
+} else { 
+    tmin = (max.x - r.orig.x) / ray.dir.x; 
+    tmax = (min.x - r.orig.x) / ray.dir.x; 
+}
+</code></pre><p>这一调整让算法能高效处理不同方向的光线，并通过去掉多余的交换来优化 \(t_{min}\) 与 \(t_{max}\) 的计算。</p><p>不过这段代码有问题。当光线 x、y 或 z 分量的值为 0 时，就会出现除以零。编译器应当优雅地处理这种情况，返回 <code>+INF</code>，乍看之下似乎没问题。问题在于编译器不区分 0 和 -0（它们认为 <code>-0 == 0</code>，会返回 <code>true</code>）。因此，如果光线方向的任一分量是 -0，tmin/tmax 的值就会被分别设成 <code>+INF</code> 和 <code>-INF</code>，而不是 <code>-INF</code> 和 <code>+INF</code>。这种误判会让算法执行 if 语句里错误的分支（对负值而言，条件本应判为假，而不是真）。结果它可能检测不到交点。要纠正这一点，可以把光线方向换成光线方向的倒数：</p><pre><code>
+Vec3f invdir = 1 / ray.dir; 
+if (invdir.x &gt;= 0) { 
+    tmin = (min.x - r.orig.x) * invdir.x; 
+    tmax = (max.x - r.orig.x) * invdir.x; 
+} 
+else { 
+    tmin = (max.x - r.orig.x) * invdir.x; 
+    tmax = (min.x - r.orig.x) * invdir.x; 
+}
+</code></pre><p>当光线方向是 -0 时，方向分量的倒数值会是 <code>-INF</code>，于是 <code>if (invdir.x &gt;= 0)</code> 这项测试会如预期那样正确返回假。如果要把光线拿去与大量盒子做求交测试，可以在光线构造函数里预先算好光线的方向倒数，并在 intersect 函数里复用，从而节省时间。我们还可以预先算出光线方向的符号，让这个方法写得紧凑得多。下面是光线与盒子求交方法的最终版本：</p><pre><code>
+class Ray
+{
+public:
+    Ray(const Vec3f &amp;orig, const Vec3f &amp;dir) : orig(orig), dir(dir)
+    {
+        invdir = 1 / dir;
+        sign[0] = (invdir.x &lt; 0);
+        sign[1] = (invdir.y &lt; 0);
+        sign[2] = (invdir.z &lt; 0);
+    }
+    Vec3&amp;ltT&gt; orig, dir;       // 光线的原点与方向
+    Vec3&amp;ltT&gt; invdir;
+    int sign[3];
+};
+ 
+bool intersect(const Ray &amp;r) const
+{
+    float tmin, tmax, tymin, tymax, tzmin, tzmax;
+    
+    tmin = (bounds[r.sign[0]].x - r.orig.x) * r.invdir.x;
+    tmax = (bounds[1-r.sign[0]].x - r.orig.x) * r.invdir.x;
+    tymin = (bounds[r.sign[1]].y - r.orig.y) * r.invdir.y;
+    tymax = (bounds[1-r.sign[1]].y - r.orig.y) * r.invdir.y;
+    
+    if ((tmin &gt; tymax) || (tymin &gt; tmax))
+        return false;
+
+    if (tymin &gt; tmin)
+        tmin = tymin;
+    if (tymax &lt; tmax)
+        tmax = tymax;
+    
+    tzmin = (bounds[r.sign[2]].z - r.orig.z) * r.invdir.z;
+    tzmax = (bounds[1-r.sign[2]].z - r.orig.z) * r.invdir.z;
+    
+    if ((tmin &gt; tzmax) || (tzmin &gt; tmax))
+        return false;
+
+    if (tzmin &gt; tmin)
+        tmin = tzmin;
+    if (tzmax &lt; tmax)
+        tmax = tzmax;
+
+    return true;
+}
+</code></pre><p>优化后的版本在我们的机器上比第一版快大约 1.5 倍，具体加速幅度取决于编译器。</p><details open><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/rayboxisect2.png?" alt=""></figure><p>本课程的代码会返回盒子位于光线原点前方和后方两处的交点。例如，如果光线的原点在盒子内部（如旁边的图所示），就会有两个交点：一个在光线前方，一个在后方。当 \(t\) 为负时，我们判定交点位于光线原点「后方」。反之，当 \(t\) 为正时，相对光线方向而言，交点位于光线原点前方。</p></details><p>完整示例请参见文件 <code>raybox.cpp</code>，它可在 GitHub 仓库中获取。</p><figure><img src="https://scratchapixel.com/images/ray-simple-shapes/impsurf-proj-cube.png?" alt=""></figure><h2>参考文献</h2><p>An Efficient and Robust Ray–Box Intersection Algorithm，Amy Williams 等，2004 年。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

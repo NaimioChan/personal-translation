@@ -54,7 +54,7 @@ window.PT_LIBRARIES = [
     source: 'https://docs.juce.com/master/index.html',
     updated: '2026-10-19', pages: 1160 },
   { dir: 'faust-docs', title: 'Faust 文档',
-    desc: 'Faust 官方文档（手册、示例、教程、工作坊）的中文译本。',
+    desc: 'Faust 官方文档的中文译本。',
     source: 'https://faustdoc.grame.fr/',
     updated: '2026-10-19', pages: 57 },
   { dir: 'touchdesigner-docs', title: 'TouchDesigner 文档',
@@ -88,5 +88,9 @@ window.PT_LIBRARIES = [
   { dir: 'gpu-gems-3', title: 'GPU Gems 3',
     desc: 'GPU Gems 第三册的中文译本。',
     source: 'https://developer.nvidia.com/gpugems/gpugems3',
-    updated: '2026-10-21', pages: 51 }
+    updated: '2026-10-21', pages: 51 },
+  { dir: 'scratchapixel', title: 'Scratchapixel',
+    desc: 'Scratchapixel 全站课程的中文译本。',
+    source: 'https://scratchapixel.com/index.html',
+    updated: '2026-10-21', pages: 166 }
 ];

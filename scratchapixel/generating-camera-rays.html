@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>生成相机光线 - Scratchapixel 中文译本</title>
+<meta name="description" content="用光线追踪生成相机光线 · 生成相机光线（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>生成相机光线</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="definition-ray.html">光线的定义</a></li>
+<li><a style="font-weight:700" href="generating-camera-rays.html">生成相机光线</a></li>
+<li><a href="standard-coordinate-systems.html">标准坐标系</a></li>
+</ol>
+</div>
+<h2>生成相机光线</h2><p><b>阅读时间：22 分钟。</b></p><h2>生成相机光线</h2><p>首先回顾一下：渲染器的目的是给画面的每个像素指定一种颜色。结果必须准确表现从某个 3D 视点所看到的场景几何体。我们还从上一章知道，视场角这类参数会改变我们能看到场景的多大一部分。第 1 课和本课也都解释过，光线追踪图像是通过为画面中每个像素生成一条光线来创建的。当光线与场景中的某个物体相交时，我们用交点处物体的颜色来设置该像素的颜色。这个过程我们在第 1 课已经讲过，后面几课还会再详细展开，它叫作<b>反向</b>追踪或<b>眼睛追踪</b>（因为我们沿光线路径从相机追到物体、再从物体追到光源，而不是从光源追到物体、再从物体追到相机）。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/campixel.gif?" alt=""><figcaption><b>图 1：</b>反向追踪（眼睛追踪）的做法是从眼睛出发，穿过图像中每个像素的中心投射光线。如果光线与场景中的物体相交，就用交点处物体的颜色来设置这条光线所穿过的那个像素的颜色。</figcaption></figure><p>自然，生成图像的过程要从构造这些光线开始，我们称之为<b>主光线</b>或<b>相机光线</b>（之所以叫主，是因为这是第一批投射进场景的光线。次级光线例如阴影光线，我们稍后再说）。关于这些光线，我们知道哪些有助于构造它们的信息？我们知道它们从相机原点出发。在几乎所有 3D 应用里，相机创建时的默认位置都是世界原点，即坐标为 (0, 0, 0) 的那个点。回想<a href="how-pinhole-camera-works-part-1.html">3D 观察：针孔相机模型</a>那一课，相机原点可以看作针孔相机的孔径（也就是投影中心）。真实针孔相机的胶片位于孔径后方，由几何构造导致光线在胶片上形成场景的倒像。不过，如果胶片平面与场景位于同一侧（在孔径前方而不是后方），这种倒置就可以避免。按惯例，在光线追踪中它常被放在恰好距相机原点 1 个单位处（这个距离永远不会变，原因我们后面再解释）。按惯例，我们还会把相机朝向定为负 z 轴方向（相机默认朝向由开发者自行选择，不过一般沿正 z 轴或负 z 轴。RenderMan、Maya、PBRT 与 OpenGL 都把相机沿负 z 轴对齐，我们建议开发者遵循同一惯例）。最后，为了让演示在一开始更简单，我们假设渲染出的图像是正方形的（图像宽度与高度的像素数相同）。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/cambasic.png?" alt=""><figcaption><b>图 2：</b>左：一台基本相机。原始图像尺寸为 6x6 像素，眼睛的默认位置是世界中心 (0, 0, 0)。注意相机沿负 z 轴指向。图像平面恰好距原点 1 个单位。右：位于 y 轴左侧、x 轴下方的像素，其世界空间坐标为负。</figcaption></figure><p>我们的任务是为画面上每个像素创建一条主光线。做法很简单：从相机原点出发，画一条穿过每个像素中心的线（图 1）。我们可以把这条线表示成一条光线，其原点是相机原点，方向是从相机原点指向像素中心的向量。要算出像素中心处某点的位置，我们需要把原本以<b>光栅空间</b>表示的像素坐标（点坐标以像素为单位，坐标 (0,0) 是画面的左上角）转换到<b>世界空间</b>。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/raydisk.png?" alt=""><figcaption><b>图 3：</b>光线与圆盘求交。</figcaption></figure><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/rastertoworld.gif?" alt=""><figcaption><b>图 4：</b>从光栅空间到屏幕空间。</figcaption></figure><p>为什么是世界空间？世界空间是场景中所有物体、几何体、光源与相机的坐标所表达的那个空间。例如，如果一个圆盘位于沿负 z 轴距世界原点 5 个单位处，那么这个圆盘的世界空间坐标就是 (0, 0, -5)。如果我们要让计算光线与该圆盘交点的数学成立，光线的原点与方向也必须定义在同一个空间里。例如，若一条光线的原点是 (0, 0, 0)、方向是 (0, 0, -1)，而这些数字代表世界空间坐标系下的坐标，那么这条光线将在 (0, 0, -5) 处与圆盘相交。如图 3 所示。</p><details open><p>关于各种空间的更多信息，见<a href="computing-pixel-coordinates-of-3d-point-perspective-projection.html">计算 3D 点的像素坐标</a>课程。</p></details><p>看这个问题的另一种方式是从相机出发。我们知道图像平面恰好位于距世界原点 1 个单位处，并沿负 z 轴对齐。我们也知道图像是正方形的，因此图像平面用来投影的那块区域也必然是正方形的。原因我们很快会解释，这块投影区域的尺寸是 2 乘 2 个单位（图 2）。我们还知道光栅图像由像素构成。我们需要的是找到这些像素在光栅空间中的坐标，与同一批像素在世界空间中的坐标之间的关系。这个过程需要几步，如图 5 所示。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/cambasic1A.png?" alt=""><figcaption><b>图 5：</b>把像素中心处某点的坐标转换成世界坐标需要几步。这个点的坐标先在光栅空间中表示（像素坐标加上 0.5 的偏移），然后转换到 NDC 空间（坐标被重映射到 [0,1] 范围），再转换到屏幕空间（NDC 坐标被重映射到 [-1,1]）。最后应用相机到世界的 4x4 变换矩阵，把屏幕空间中的坐标变换到世界空间。</figcaption></figure><p>首先，我们需要用画面的尺寸把这个像素位置归一化。像素的新归一化坐标据说定义在 <b>NDC 空间</b>中（NDC 即 Normalized Device Coordinates，归一化设备坐标）：</p><p>$$
+\begin{array}{l}
+PixelNDC_x = \dfrac{(Pixel_x + 0.5)}{ImageWidth},\\
+PixelNDC_y = \dfrac{(Pixel_y + 0.5)}{ImageHeight}.
+\end{array}
+$$</p><p>注意我们给像素位置加了一个小的偏移（0.5），因为我们希望最终的相机光线穿过像素中心。以 NDC 空间表示的像素坐标在 [0,1] 范围内（是的，光线追踪里的 NDC 空间与光栅化世界里的 NDC 空间不同，后者一般映射到 [-1,1] 范围）。不过如图 2 所示，胶片或图像平面是以世界原点为中心的。换句话说，位于图像左侧的像素应当有负的 x 坐标，而右侧的像素应当有正的 x 坐标。y 轴也是同样的道理。位于 x 轴所定义的直线之上的像素应当有正的 y 坐标，之下的应有负的 y 坐标。我们可以把当前处于 [0:1] 范围的归一化像素坐标重映射到 [-1:1] 范围来修正这一点：</p><p>$$
+\begin{array}{l}
+PixelScreen_x = 2 * {PixelNDC_x} - 1,\\
+PixelScreen_y = 2 * {PixelNDC_y} - 1.
+\end{array}
+$$</p><p>不过要注意，用这个公式，位于 x 轴上方的像素其 \({Pixel \; Remapped_y}\) 为负，下方的为正（而实际情况应当相反）。下面的公式可以修正这个问题：</p><p>$$ PixelScreen_y = 1 - 2 * {PixelNDC_y}.$$</p><p>现在当 \({Pixel_y}\) 从 0 变到 \({ImageWidth}\) 时，该值从 1 变到 -1。以此方式表示的坐标据说定义在<b>屏幕空间</b>中。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/camratio.png?" alt=""><figcaption><b>图 6 左：</b>因为图像的宽度和高度不同，像素不是正方形的。要修正这一点，我们需要沿 x 轴按图像宽高比缩放图像平面，宽高比可以用图像的宽度（以像素计）除以高度算出。</figcaption></figure><p>不过到目前为止我们都假设图像是正方形的。考虑宽高比其实很简单。现在看一个图像尺寸为 7 乘 5 像素的情形（图像虽小，但终究是图像）。用图像宽度除以高度得到值 1.4。当像素坐标定义在屏幕空间中时，它们在 [-1, 1] 范围内。然而沿 x 轴的像素（7 个）比沿 y 轴的像素（5 个）多，因此像素被压扁、沿竖直轴被拉长（见图 6）。要让它们重新变成正方形（像素本该如此），需要把像素的 x 坐标乘以图像宽高比，这里就是 1.4（再见图 6）。注意这个操作不改变 y 像素坐标（在屏幕空间中），它们仍在 [-1,1] 范围内，但 x 像素坐标现在处于 [-1.4, 1.4] 范围（更一般地说是 [-宽高比, 宽高比]）。</p><p>$$ \begin{array}{l}
+ImageAspectRatio = \dfrac{ImageWidth}{ImageHeight},\\
+PixelCamera_x = (2 * {PixelScreen_x} - 1) * {ImageAspectRatio},\\
+PixelCamera_y = (1 - 2 * {PixelScreen_y}).
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/camprofile.png?" alt=""><figcaption><b>图 7：</b>我们相机设置的侧视图。从眼睛位置到图像平面的距离是 1 个单位（向量 AB）。从 B 到 C 的距离也是 1 个单位。用简单的三角学就可以轻松算出角 \(\alpha\)。</figcaption></figure><p>最后，我们需要考虑视场角。注意到目前为止，屏幕空间中任何点的 y 坐标都在 [-1, 1] 范围内。我们还知道图像平面距相机原点 1 个单位。如果从侧视图看这个相机设置，把相机原点连到胶片平面的上下边缘，就得到一个三角形。因为知道相机原点到胶片平面的距离（1 个单位）和胶片平面的高度（2 个单位，因为它从 y=1 到 y=-1），我们可以用简单的三角学求出直角三角形 ABC 的角，它是竖直角 \(\alpha\)（alpha）的一半，而后者正是我们关心的角：</p><p>$${\alpha \over 2} = atan (\dfrac{OppositeSide}{AdjacentSide }) = atan(\dfrac{1}{1}) = \dfrac{\pi}{4}.$$</p><p>换句话说，这个特定情形下的视场角，也就是角 \(\alpha\)，是 90 度。现在注意，要算出线段 BC 的长度，我们只需计算角 \(\alpha\) 的正切再除以 2：</p><p>$$\||BC|| = tan(\dfrac{\alpha}{2}).$$</p><p>回想几何课上的记号 ||V|| 表示向量 V 的长度。我们还能观察到，当 \(\alpha\) 大于 90 度时 ||BC|| 大于 1，小于 90 度时 ||BC|| 小于 1。例如 \(\alpha\)=60 时 tan(60/2)=0.57，\(\alpha\)=110 时 tan(110/2)=1.43。因此我们可以把屏幕像素坐标（目前位于 [-1, 1] 范围内）乘以这个数，把它们放大或缩小。你大概已经猜到了，这个操作会改变我们能看到场景的多大一部分，等价于拉近（视场角变小时看到的场景更少）与拉远（视场角变大时看到的场景更多）。总之，我们可以用角 \(\alpha\) 来定义相机的视场角，并把屏幕像素坐标乘以这个角的正切除以二的结果（如果这个角以度为单位，别忘了换算成弧度）：</p><p>$$
+\begin{array}{l}
+PixelCamera_x = (2 * {PixelScreen_x } - 1) * ImageAspectRatio * tan(\dfrac{\alpha}{2}),\\
+PixelCamera_y = (1 - 2 * {PixelScreen_y }) * tan(\dfrac{\alpha}{2}).
+\end{array}
+$$</p><p>到这里，原始像素坐标已经是相对相机的图像平面来表示的了。它们被归一化、重映射到 [-1:1] 之间、乘以图像宽高比，再乘以视场角 \( \alpha\) 的正切除以 2。这个点据说位于<b>相机空间</b>，因为它的坐标是相对相机的坐标系表示的。当相机处于默认位置时，相机的坐标系与世界坐标系是对齐的。这个点位于图像平面上，该平面距相机原点 1 个单位，但记住相机也是沿负 z 轴对齐的。因此我们可以把像素在图像平面上的最终坐标写成：</p><p>$$ P_{cameraSpace} = (PixelCamera_x, PixelCamera_y, -1)$$</p><p>这样我们就得到了图像中某个像素在相机图像平面上的位置 P（\( P_{cameraSpace}\)）。据此，我们可以为这个像素计算一条光线：把光线的原点定义为相机原点（我们称这个点为 O），把光线的方向定义为归一化的向量 OP（图 8）。向量 OP 就是该点在图像平面上的位置减去相机原点。当相机处于默认位置时，相机原点与世界笛卡尔坐标系是同一个，因此点 O 就是 (0, 0, 0)。</p><p>写成伪代码就是（真正的 C++ 实现见本课末尾）：</p><pre><code>
+float imageAspectRatio = imageWidth / (float)imageHeight; // 假设宽度大于高度
+float Px = (2 * ((x + 0.5) / imageWidth) - 1) * tan(fov / 2 * M_PI / 180) * imageAspectRatio;
+float Py = (1 - 2 * ((y + 0.5) / imageHeight) * tan(fov / 2 * M_PI / 180);
+Vec3f rayOrigin(0);
+Vec3f rayDirection = Vec3f(Px, Py, -1) - rayOrigin; // 注意这其实就等于 Vec3f(Px, Py, -1);
+rayDirection = normalize(rayDirection); // 这是方向向量，别忘了归一化
+</code></pre><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/camtransform.png?" alt=""><figcaption><b>图 8：</b>我们可以把相机在空间中移动，按需要取景。相机的最终位置与朝向可以用一个 4x4 矩阵表示，我们通常称之为相机到世界变换矩阵。如果知道 0（相机的原点，也是世界坐标系的原点）和 P（光线所穿过的像素在世界空间中的位置），把 O 与 P 乘以相机到世界矩阵，就能轻松得到 0' 与 P'。最后，光线方向可以按 P'-O' 计算。</figcaption></figure><p>最后，我们希望能从任意特定视点渲染场景的图像。把相机从初始位置（位于世界坐标系原点、沿负 z 轴对齐）移开之后，你可以用一个 4x4 矩阵来表达相机的平移与旋转值。通常这个矩阵叫作<b>相机到世界矩阵</b>（它的逆叫作<b>世界到相机矩阵</b>）。如果我们把这个相机到世界矩阵应用到点 O 与 P 上，那么向量 ||O'P'||（其中 O' 是点 O、P' 是点 P 经相机到世界矩阵变换后的结果）就表示光线在世界空间中的归一化方向（图 8）。把相机到世界变换应用到 O 与 P 上，就是把这两个点从相机空间变换到世界空间。另一种做法是趁相机还在默认位置时先算出光线方向（向量 OP），再把这个矩阵应用到该向量上。</p><p>注意相机的坐标系是随相机一起移动的。我们的伪代码可以很容易地修改成考虑相机变换（旋转与平移；缩放相机并不特别推荐）：</p><pre><code>
+float imageAspectRatio = imageWidth / imageHeight; // 假设宽度大于高度
+float Px = (2 * ((x + 0.5) / imageWidth) - 1) * tan(fov / 2 * M_PI / 180) * imageAspectRatio;
+float Py = (1 - 2 * ((y + 0.5) / imageHeight) * tan(fov / 2 * M_PI / 180);
+Vec3f rayOrigin = Point3(0, 0, 0);
+Matrix44f cameraToWorld;
+cameraToWorld.set(...); // 设置矩阵
+Vec3f rayOriginWorld, rayPWorld;
+cameraToWorld.multVectMatrix(rayOrigin, rayOriginWorld);
+cameraToWorld.multVectMatrix(Vec3f(Px, Py, -1), rayPWorld);
+Vec3f rayDirection = rayPWorld - rayOriginWorld;
+rayDirection.normalize(); // 这是方向向量，别忘了归一化
+</code></pre><p>要计算最终图像，我们需要用刚才描述的方法为画面中的每个像素创建一条光线，并测试这些光线中是否有任何一条与场景中的几何体相交。遗憾的是，在这套课程里我们还没走到能计算光线与物体交点的那一步，不过这将是接下来两课的主题。</p><h2>源代码</h2><p>本课的源代码只是一个简单示例，演示如何为图像中的每个像素生成光线。代码遍历图像的所有像素（第 13-14 行），并为当前像素计算一条光线。我们把本章描述的所有重映射步骤合并到了一行代码里。原始的 x 像素坐标除以图像宽度，把初始坐标重映射到 [0,1] 范围。得到的值再重映射到 [-1,1] 范围，乘以 <code>scale</code> 变量（第 9 行）和图像宽高比（第 10 行）。像素的 y 坐标也做类似变换，不过记住 y 的归一化坐标需要翻转（第 16 行）。这个过程结束后，我们可以用变换后的点 x、y 坐标创建一个向量。这个向量的 z 坐标设为负一（第 18 行）：默认情况下相机沿负 z 轴看向前方。得到的向量最后由相机到世界矩阵变换并归一化。相机的原点也会被相机到世界矩阵变换（第 12 行）。最后我们可以把变换到世界空间的光线方向与原点传给 <code>rayCast</code> 函数。</p><pre><code>
+void render(
+    const Options &amp;options,
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects,
+    const std::vector&amp;ltstd::unique_ptr&amp;ltLight&gt;&gt; &amp;lights)
+{
+    Matrix44f cameraToWorld;
+    Vec3f *framebuffer = new Vec3f[options.width * options.height];
+    Vec3f *pix = framebuffer;
+    float scale = tan(deg2rad(options.fov * 0.5));
+    float imageAspectRatio = options.width / (float)options.height;
+    Vec3f orig;
+    cameraToWorld.multVecMatrix(Vec3f(0), orig);
+    for (uint32_t j = 0; j &lt; options.height; ++j) {
+        for (uint32_t i = 0; i &lt; options.width; ++i) {
+            float x = (2 * (i + 0.5) / (float)options.width - 1) * imageAspectRatio * scale;
+            float y = (1 - 2 * (j + 0.5) / (float)options.height) * scale;
+            Vec3f dir;
+            cameraToWorld.multDirMatrix(Vec3f(x, y, -1), dir);
+            dir.normalize();
+            *(pix++) = castRay(orig, dir, objects, lights, options, 0);
+        }
+    }
+
+    // 把结果保存为 PPM 图像（在 Windows 下编译请保留这些标志）
+    std::ofstream ofs("./out.ppm", std::ios::out | std::ios::binary);
+    ofs &lt;&lt; "P6\n" &lt;&lt; options.width &lt;&lt; " " &lt;&lt; options.height &lt;&lt; "\n255\n";
+    for (uint32_t i = 0; i &lt; options.height * options.width; ++i) {
+        char r = (char)(255 * clamp(0, 1, framebuffer[i].x));
+        char g = (char)(255 * clamp(0, 1, framebuffer[i].y));
+        char b = (char)(255 * clamp(0, 1, framebuffer[i].z));
+        ofs &lt;&lt; r &lt;&lt; g &lt;&lt; b;
+    }
+
+    ofs.close();
+
+    delete [] framebuffer;
+}
+</code></pre><p>接下来几课我们会演示如何把主光线投射进场景：调用 <code>rayCast</code> 函数，它接收光线原点与方向作为参数（还接收物体列表、光源等其他东西），返回一种颜色。如果光线什么都没命中，函数返回背景颜色；否则返回交点处物体的颜色。注意，在遍历图像所有像素计算颜色之前，我们先创建了一个帧缓冲，用来存放 <code>rayCast</code> 函数的结果（第 7 行）。等图像中所有像素的光线都追踪完毕，我们就可以把这张图像的结果存到磁盘上。遗憾的是，在进入下一课之前我们还没法实现 <code>rayCast</code> 函数。在此期间，我们先把光线方向转换成颜色，并为当前像素存下这个颜色（下面第 8-9 行）。最终图像以 ppm rabbits 格式保存到磁盘（上面第 25-34 行）。</p><pre><code>
+Vec3f castRay(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects,
+    const std::vector&amp;ltstd::unique_ptr&amp;ltLight&gt;&gt; &amp;lights,
+    const Options &amp;options,
+    uint32_t depth)
+{
+    Vec3f hitColor = (dir + Vec3f(1)) * 0.5;
+    return hitColor;
+}
+</code></pre><details open><p>在计算机图形学中，用不同做法得到同一结果的方式往往有好几种。如果你去看其他渲染引擎的源代码，很可能会发现把光线从图像空间变换到世界空间这个问题有很多种解法。当然，无论采用哪种做法，结果都应当相同。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-camera/trigosetup.png?" alt=""></figure><p>例如，我们可以这样看这个问题：像素坐标不必归一化（也就是说，不必从像素坐标转到 NDC 再转到屏幕空间）。我们可以用下面的公式计算光线方向：</p><p>$$
+\begin{array}{l}
+d_x &=& x - width / 2 \\ 
+d_y & = & height / 2 - y\\
+d_z & = &-(height / 2) / tan(fov * 0.5).
+\end{array}
+$$</p><p>其中 x 与 y 是像素的坐标，fov 是竖直视场角。记住 \(d_z\) 为负，因为相机默认沿负 z 轴朝向。然后如果我们把这个向量归一化，得到的结果与走一遍光栅到 NDC、NDC 到屏幕变换是相同的。如果我们把这个光线方向变换到世界空间（用相机到世界矩阵乘以向量 d），就得到：</p><p>$$
+\begin{array}{l}
+d_x &=& (x - width / 2) u_x + (height / 2 - y) v_x - ((height / 2 ) / tan(fov * 0.5)) w_x \\ d_y &=& (x - width / 2) u_y + (height / 2 - y) v_y - ((height . 2)/tan(fov * 0.5)) w_y \\ d_z & =  & (x -width /2) u_z + (height / 2 - y) v_z - ((height / 2)/tan(fov * 0.5)) w_z
+\end{array}
+$$</p><p>展开并重新归并各项，得到：</p><p>$$
+\begin{array}{l}
+d_x & = & x u_x - width / 2 u_x + height / 2 v_x - y v_x - (height /2 )/tan(fov * 0.5) w_x \\ 
+& = & x u_x + y (-v_x) + (width / 2 u_x + height / 2 v_x - (height / 2) /tan(fov * 0.5) w_x) \\
+d_y & = & x u_y - width / 2 u_y + height / 2 v_y - y v_y - (height /2 )/tan(fov * 0.5) w_y \\ 
+& = & x u_y + y (-v_y) + (width / 2 u_y + height / 2 v_y - (height / 2) /tan(fov * 0.5) w_y) \\
+d_z & = & x u_z - width / 2 u_z + height / 2 v_z - y v_z - (height /2 )/tan(fov * 0.5) w_z \\ 
+& = & x u_z + y (-v_z) + (width / 2 u_z + height / 2 v_z - (height / 2) /tan(fov * 0.5) w_z)
+\end{array}
+$$</p><p>可以改写成（公式 1）：</p><p>$$d = x u + y (-v) + w'.$$</p><p>其中 \( w' = (-width / 2) u + (height / 2) v - ((height / 2) / tan(fov * 0.5)) w.\)</p><p>换句话说，如果知道相机到世界矩阵，我们可以预先算出 w' 向量，用公式 1 在世界空间中算出光线方向，再对得到的向量归一化。伪代码如下：</p><pre><code>
+Vec3f w_p = (-width / 2 ) * u + (height / 2) * v - ((height / 2) / tan(fov_rad * 0.5); 
+Vec3f ray_dir = normalize(x * u + y * (-v) + w_p); 
+</code></pre><p>向量 w' 只需计算一次，之后每次需要计算新的光线方向时重复使用即可。向量 u、v 与 w 就是相机到世界矩阵的第一、第二和第三个向量（如果你用行主序矩阵，就是前三行）。</p></details><h2>小结：我们快要能渲染第一张图像了</h2><p>随着这套课程推进，我们就能把目前学到的各种技术组合起来，做出一个基础但可用的光线追踪器（所谓可用，是指能渲染一些几何体并把结果图像存成磁盘上的文件）。要达到这个结果，现在只差学习光线与几何体求交，而这正是下一课的主题。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

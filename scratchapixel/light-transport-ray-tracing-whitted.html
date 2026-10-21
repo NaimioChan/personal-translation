@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光传输算法与光线追踪：Whitted 光线追踪 - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪渲染技术概览 · 光传输算法与光线追踪：Whitted 光线追踪（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光传输算法与光线追踪：Whitted 光线追踪</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="ray-tracing-rendering-technique-overview.html">光线追踪渲染技术概览</a></li>
+<li><a style="font-weight:700" href="light-transport-ray-tracing-whitted.html">光传输算法与光线追踪：Whitted 光线追踪</a></li>
+</ol>
+</div>
+<h2>光传输算法与光线追踪：Whitted 光线追踪</h2><p><b>阅读时间：21 分钟。</b></p><blockquote><p>光线追踪是计算机图形学中最优雅的技术之一。用其他技术很难或根本无法实现的许多现象，用光线追踪却很简单，包括阴影、反射和折射光。」Robert L. Cook、Thomas Porter、Loren Carpenter。《Distributed Ray-Tracing》（1984）。</p></blockquote><h2>光传输</h2><p>如第一章所述，光线追踪只是一种用来计算两点之间可见性的技术。它就是一种基于光线概念的技术，而光线在数学上（以及在计算机程序里）可以用一个点（光线在空间中的原点）和一个方向来定义。于是光线追踪背后的想法，就是找出各种数学解，来计算这条光线与各类几何体——三角形、二次曲面（我们会在后面某一门课里学习）、NURBS 等——的交点。光线追踪就这么多内容。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-light-transport.png?" alt=""><figcaption><b>图 1：</b>直接光照与间接光照。</figcaption></figure><p>求物体表面任意一点的颜色是个复杂的问题。物体的外观本质上是光从物体表面弹开、或者在物体透明时穿过物体的结果。比如反射、折射这类效果，就是光线在穿过透明表面时被折射、或从光滑物体表面被反射的结果。当我们看到一个物体，我们其实「看到」的是这个物体朝我们眼睛方向反射出的光线。从这个物体表面反射出的许多光线可能并不朝向眼睛，不过其中一些可能经场景中另一个物体的间接反射而进入眼睛（图 1）。光如何被物体反射是一个人们熟知、研究得很透的现象，但这不是讲着色的课，所以这里不深入细节。本课只需要你知道一点：要计算物体表面任意给定点的颜色，我们必须模拟光从物体表面反射的方式。在计算机图形学里，这就是我们所说的<b>光传输算法</b>的任务。后面几门课里我们会详细研究光传输这个概念，所以现在只触及皮毛也不用太担心。</p><p>我们可以用<b>暴力</b>的方式模拟场景中的光传输，也就是直接套用描述光与物质相互作用的那些光学与物理定律；这样大概能得到一张极其精确的图像，但这种做法的问题在于（长话短说）：即使动用今天能拿到的最强大的计算机，要得到那个完美结果大概也要花非常非常长的时间。这种路子根本不实用。</p><blockquote><p>要真正准确地模拟光的所有效果，你得把整个宇宙都编进程序里。</p></blockquote><p>光传输算法所做的，本质上是在「可接受」的时间内找到模拟各种光照情形的办法，同时尽可能保证视觉上的准确度。你可以把光传输算法看作解决光传输问题的一种<b>策略</b>（我们都知道，解决某个给定问题的策略有好有坏，而且在某一种情形下好用的策略换到另一种情形未必管用——光传输算法也是如此，这也是为什么会有这么多种）。</p><p>计算打到物体表面的光线的新路径，是有明确定义的数学模型的。主要问题在于，这条光线可能被反射进场景，又打到场景中另一个物体的表面上。因此，如果你想模拟一条光线在表面之间弹来弹去的轨迹或路径，我们需要的就是计算光线与表面交点的解。你大概猜到了，这正是光线追踪登场的地方。光线追踪当然非常适合用来计算从场景中任意给定点、沿任意给定方向的第一个可见表面。相比之下，光栅化完全不适合这个任务。它能很好地计算从相机视点出发的第一个可见表面，但对场景中任意点就不行了。注意，用光栅化也不是做不到，只是这个过程会非常低效（对这个方向感兴趣的读者可以搜索一种叫半球面或半立方体的技术，它在辐射度算法里用到），甚至比计算代价本来就很高的光线追踪还低效。</p><p>总结一下：如果这些光传输算法涉及计算表面之间的可见性，那么任何技术——光线追踪也好，光栅化也好——都能用来做，不过如前所述，在这种特定语境下光线追踪就是更省事。正因如此，一些最流行的光传输算法，比如路径追踪或双向路径追踪，就不可避免地与光线追踪绑在了一起。最终这造成了一种混乱的局面：光线追踪被理解成一种生成照片级真实感图像的技术。它不是。一张照片级真实感的计算机生成图像，是光传输算法与表面间可见性计算技术的结合。所以当你考察任何一个渲染程序时，想弄清它的特点，可以问自己两个问题：它用的是哪种光传输算法？它整体上用什么技术计算可见性——光栅化、光线追踪，还是两者的混合？</p><p>如前所述，现在不必太操心光传输算法。我们想说的其实只是：不要把光线追踪与真正求出场景中物体颜色的过程混为一谈。我们之所以强调这一点，是因为光线追踪经常被介绍成一种生成 3D 物体照片级真实感图像的技术。它不是。模拟全局光照效果是光传输算法的活儿。</p><p>想深入了解光传输算法，请阅读《着色入门：渲染方程与光传输算法》这门课。</p><h2>Whitted 光线追踪</h2><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-whitted.png?" alt=""><figcaption><b>图 2：</b>Turner Whitted 用他在 1980 年提出的算法生成的图像。</figcaption></figure><p>既然已经厘清了光线追踪与光传输算法的区别，我们终于可以介绍基于光线追踪的最经典的光传输算法之一了。这项技术最早由 Turner Whitted 在 1980 年的一篇 Siggraph 论文中详述，题为《An Improved Illumination Model for Shaded Display》。因此这个算法常被称为<b>Whitted（式）光线追踪</b>。</p><p>在 Whitted 的论文之前，大多数程序已经能模拟漫反射与镜面反射表面的外观了。著名的 Phong 光照模型（我们会在专讲着色器的那门课里谈到）当时已为人所知。但模拟复杂的反射与折射还有待完成。Whitted 提出用光线追踪来解决这个问题。如果物体 A 是一个镜面般的表面，而物体 B 就放在它上面，那我们希望能看到 B 在 A 中的倒影。如果 A 不是平面，就没有简单的办法算出这个反射。如果 B 也是反光的，事情就更难了。镜面会不断反射自身的影像，造成电影里常见的「无限空间」效果。</p><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-mirror-maze.png?" alt=""></figure><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-mirror.png?" alt=""><figcaption><b>图 3：</b>球发出的光线在两面镜子表面之间弹射多次后才到达眼睛</figcaption></figure><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-refract.png?" alt=""><figcaption><b>图 4：</b>透过透明物体看到的物体会因折射而扭曲。</figcaption></figure><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-whitted-example.png?" alt=""><figcaption><b>图 5：</b>向由反光、透明和漫反射物体组成的场景中投射的不同类型的光线</figcaption></figure><p>图 3 给出了一个例子：球被两面镜子反射了几次，其影像才最终到达眼睛。那透明物体呢？我们应该能看穿透明表面，但水、玻璃这类材质会因折射现象而弯折光线。支配反射与折射现象的光学（以及物理）定律是众所周知的。反射方向只取决于表面朝向和入射光方向。折射方向可以用 Snell 定律算出，取决于表面朝向（表面法线）、入射光方向和材质折射率（水约 1.3，玻璃约 1.5）。只要知道这些参数，计算这些方向就只是直接套用反射定律和折射定律，方程都很简单。</p><p>Whitted 提出用这些定律，在光线与反光或透明表面相交时算出反射方向和折射方向，并沿着这些光线的路径去求出它们会相交的物体的颜色。在这些反射光线与折射光线的交点处（在 CG 里，我们叫它们次级光线，以区别于主光线或相机光线），可能出现三种情况：</p><ul><li><p>情况 1：如果交点处的表面是不透明的漫反射表面，我们只需用一个光照模型（比如 Phong 模型）算出该物体在交点处的颜色。这个过程还包括朝场景中每个光源投射一条光线，判断该点是否处于阴影中。这些光线叫阴影光线。</p></li><li><p>情况 2：如果表面是镜面般的表面，我们就在交点处再追踪一条反射光线。</p></li><li><p>情况 3：如果表面是透明的，我们就在交点处再投射一条反射光线和一条折射光线。</p></li></ul><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-reflection2.gif?" alt=""><figcaption><b>图 6：</b>我们如何求出一面镜子表面反射出的颜色？</figcaption></figure><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-refraction2.gif?" alt=""><figcaption><b>图 7：</b>我们如何求出透过玻璃球看到的物体的颜色？</figcaption></figure><p>如果 P1 生成的一条次级光线与 P2 相交，而在 P2 处又生成另一条次级光线与另一个物体在 P3 处相交，那么 P3 处的颜色就成为 P2 的颜色，P2 的颜色又成为 P1 的颜色（假设 P1 和 P2 都属于镜面般的表面），如图 6 所示。透明物体的折射率越高，这些镜面反射就越强。此外，入射角越大，被反射的光也越多（这是 Fresnel 效应造成的）。折射光线用同样的方法处理。如果光线在 P1 处被折射，在 P2 处又被折射，最后在 P3 处打到一个漫反射物体上，那么 P2 取 P3 的颜色，P1 取 P2 的颜色，如图 7 所示。折射率越高，扭曲越强（图 3）。</p><ul><li><p>注意 Whitted 的算法用<b>反向追踪</b>来模拟反射与折射，如上一章所述，这比正向追踪更高效。我们从眼睛出发，投射主光线，找到第一个可见表面，然后要么在该物体不透明且为漫反射时计算交点处该表面的颜色，要么在表面反光（如镜子）或透明时，投射一条反射光线，或者一条反射光线加一条折射光线。</p></li><li><p>还要注意，Whitted 的算法是一种光传输算法。它可以用来模拟漫反射物体（如果你用 Phong 光照，会得到漫反射与镜面反射的混合，但这暂时是题外话）、镜面般物体和透明物体（玻璃、水等）的外观。<b>我们会在着色入门课 [link] 里学习如何按光传输算法能模拟的光照效果种类来给它们分类</b>（这对看清各算法之间的差异非常重要）。例如，Whitted 算法能模拟漫反射与光泽表面，以及镜面反射与折射。</p></li><li><p>最后，这大概也是最重要的部分：注意 Whitted 的算法依靠计算两点之间的可见性来模拟反射、折射、阴影这类效果。一旦找到交点 P1，我们就能用反射定律或折射定律算出反射方向或折射方向。于是我们得到一个新的光线方向（如果表面透明，就是两个新方向）。下一步要把这条光线投射进场景，找出下一个交点（如果有的话，也就是例子里的 P2）。自然地，Whitted 在他的具体实现里用光线追踪来计算两点之间的可见性（在我们的例子里，就是眼睛与 P1、P1 与 P2、P2 与 P3，以及最后 P3 与光源之间）。总的来看，Whitted 是第一个用光线追踪来模拟这些效果的人。不出意料，他的技术大获成功，因为它首次实现了物理上准确的反射与折射模拟（图 2）。</p></li></ul><details open><p>论文发表于 1980 年，但由于计算代价高昂，又过了大约二十年，光线追踪才开始被用于研究项目之外的场合。直到 1990 年代末和 2000 年代初，光线追踪才开始用于生产（电影制作）。</p></details><details open><p>有些程序采用<b>混合方案</b>：用光栅化加 z 缓冲计算从眼睛出发的第一个可见表面，用光线追踪模拟反射、折射这类效果。</p></details><p>Whitted 算法是用光线追踪生成照片级真实感计算机图像的<b>经典例子</b>。自论文首次发表以来，人们又发展出了许多更先进的光传输算法。下面我们来回顾这个算法的一些性质。</p><h3>递归性</h3><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-recursive.png?" alt=""><figcaption><b>图 8：</b>Whitted 算法是递归的。</figcaption></figure><p>每当一条光线与透明表面相交，就会生成两条新光线（一条反射光线和一条折射光线）。如果这些光线又与另一个透明物体相交，每条光线又会再生成两条。只要次级光线不断与反光或透明物体相交，这个过程就可以一直进行下去。在这种情形下，光线数量随递归深度增加而指数增长。主光线生成 2 条次级光线，这是第一层递归（深度 1）。经过两层递归（深度 2），生成 4 条光线。到深度 3，每条光线再产生 2 条，合计 8 条。到深度 4 有 16 条，到深度 5 有 32 条。这在实践中意味着渲染时间也随深度指数增长。针对这个算法的<b>递归特性</b>、以及次级光线数量随深度指数增长这一事实，最简单的办法就是给允许的最大递归次数（或最大深度）设一个上限。一旦达到最大深度，我们就干脆不再生成新光线。</p><p>&gt;，与以往的光线追踪算法不同，可见性计算并不在找到光线与场景中物体的最近交点时终止。相反，光线与表面的每一次可见交点都会在反射方向、折射方向以及每个光源的方向上产生更多光线。求交过程对每条光线重复进行，直到所有新光线都不再与任何物体相交。」《An Improved Illumination Model for Shaded Display》，Turner Whitted，1980</p><h3>光线树</h3><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-tree.png?" alt=""><figcaption><b>图 9：</b>一棵光线树。</figcaption></figure><p>在一些讲光线追踪的论文里（尤其是这个题目最早的几篇论文），你常会看到「光线树」这个说法。由主光线本身或其他次级光线衍生出的所有次级光线，都可以表示成一棵树，如图 9 所示（它表示的是图 8 中主光线生成的那棵光线树）。树中每往下一层，就对应一层递归。</p><blockquote><p>为了准确渲染三维场景的二维图像，必须在计算像素强度的那一刻，就知道影响该像素强度的全局光照信息。简化地说，这些信息保存在一棵「光线」树里，这棵树从观察者延伸到遇到的第一个表面，再从那里延伸到其他表面和光源。」《An Improved Illumination Model for Shaded Display》，Turner Whitted，1980。</p></blockquote><h2>用 C++ 实现 Whitted 光线追踪</h2><p>本课附带的这个程序会跟往常不一样，因为我们不打算讲解它。它用到了我们还没学过的技术，比如生成主光线，或者计算光线与球、三角形等各类几何体的交点。反射定律、折射定律以及 Fresnel 方程被用来计算反射与折射，Phong 光照模型被用来计算漫反射与光泽物体的颜色，而这些技术在本课里同样不会解释。你会在后面几门课里看到它们被逐个讲解。</p><p>这个程序的主要目的是让你在更高的层面理解它所依据的概念。例如，注意这个程序本质上是围绕以下四个主要构件组织起来的：</p><ul><li><p><code>main()</code> 函数，场景在其中创建。这包括向场景中添加物体和光源（我们只是把动态创建的物体和光源加入 C++ 的 vector）。<code>render()</code> 函数也是在这里被调用。</p><pre><code>
+int main() 
+{ 
+ std::vector&amp;ltObject *&gt; objects; 
+ std::vector&amp;ltLight *&gt; lights; 
+ // 添加物体和光源
+ objects.push_back(new Object); 
+ ... 
+ Options options; 
+ options.width = 640; 
+ options.height = 480; 
+ options.maxDepth = 5; 
+ ... 
+ render(objects, lights, options); 
+ ... 
+ return 0; 
+} 
+</code></pre></li><li><p><code>render()</code> 函数负责遍历图像中的所有像素，为每个像素生成一条主光线，并把得到的主光线投射进场景。光线投射本身，也就是计算那条主光线颜色的过程，由 <code>castRay()</code> 函数完成。图像中所有像素都处理完之后，我们把帧缓冲的结果存入文件。注意，因为 <code>castRay()</code> 是递归函数，我们需要跟踪递归深度（也就是 <code>castRay()</code> 参数表里的 <code>depth</code> 变量）。</p><pre><code>
+void render(...) 
+{ 
+ for (j = 0; j &lt; options.height; ++j) { 
+  for (i = 0; i &lt; options.width; ++i) { 
+	  // 生成主光线，使用
+	  ... 
+	  framebuffer[j * options.width + i] = rayCast(orig, dir, objects, lights, options, 0); 
+  } 
+ } 
+} 
+</code></pre></li><li><p><code>castRay()</code> 函数实现了 Whitted 的光传输算法。传给该函数的光线被投射进场景，并用 <code>trace()</code> 函数算出最近的可见表面。如果光线与某个物体相交，就根据该物体材质类型分三种情况处理：</p><ul><li><p>如果物体是透明的，我们投射一条反射光线和一条折射光线。递归调用 <code>castRay()</code> 时别忘了递增 depth 值。得到的颜色用 Fresnel 方程的结果混合（Fresnel 方程根据入射光线方向、表面法线和材质折射率，返回有多少光被反射）。</p></li><li><p>如果物体只是反光的（比如镜子），我们只需投射一条反射光线。</p></li><li><p>如果物体是漫反射的和/或光泽的，我们求值 Phong 光照模型。朝场景中的每个光源投射阴影光线，判断该点是否处于阴影中。</p></li></ul><p>注意，如果递归深度超过允许的最大深度，函数就直接返回背景色，不再投射额外的次级光线。</p><pre><code>
+Vec3f castRay(const Vec3f &amp;orig, const Vec3f &amp;dir, ..., uint32_t depth)
+{
+    if (depth &gt; options.maxDepth)
+        return options.backgroundColor;
+
+    float tNear = INFINITY;  // 到相交物体的距离
+    Object *hitObject = NULL;  // 指向相交物体的指针
+    Vec3f hitColor = 0;  // 交点处的颜色
+    if (trace(orig, dir, objects, tnear, hitObject....) {
+        switch (hitObject-&amp;gtmaterialType) {
+            case REFLECTION_AND_REFRACTION:
+                // 计算反射光线和折射光线
+                ...
+                // 投射反射光线和折射光线，别忘了递增 depth
+                Vec3f reflectionColor = castRay(hitPoint, reflectionDirection, ..., depth + 1);
+                Vec3f refractionColor = castRay(hitPoint, refractionDirection, ..., depth + 1);
+                float kr;  // 有多少光被反射，由 Fresnel 方程算出
+                fresnel(dir, N, hitObject-&amp;gtior, kr);
+                hitColor = reflectionColor * kr + refractionColor * (1 - kr);
+                break; 
+            case REFLECTION:
+                // 计算反射光线
+                ...
+                // 投射反射光线，递增 depth
+                Vec3f reflectionColor = castRay(hitPoint, reflectionDirection, ..., depth + 1);
+                hitColor = reflectionColor;
+                break;
+            default:
+                // 计算 Phong 光照模型
+                for (uint32_t i = 0; i &lt; lights.size(); ++i) {
+                    // 计算阴影光线
+                    Vec3f lightDirection = lights[i].position - hitPoint;
+                    float len2 = dot(lightDirection, lightDirection);  // 长度的平方
+                    float tNearShadow = INFINITY;
+                    // hitPoint 是否处于这个光源的阴影中，以及交点是否离光源本身足够近？
+                    bool isInShadow = (trace(hitPoint, normalize(lightDirection), tNearShadow, ...) &amp;&amp; tNearShadow * tNearShadow &lt; len2);
+                    // 计算 Phong 模型的各项
+                    hitColor = (1 - isInShadow) * (...);
+                }
+                break;
+        }
+    }
+
+    return hitColor;
+} 
+</code></pre></li><li><p>最后是 <code>trace()</code> 函数本身。它遍历场景中的所有物体，找出光线相交的最近表面。如果光线与某个物体相交则返回 true，否则返回 false。</p><pre><code>
+bool trace(const Vec3f &amp;orig, const Vec3f &amp;dir, float tNear, ...)
+{ 
+    hitObject = NULL;
+    for (uint32_t i = 0; i &lt; objects.size(); ++i) {
+        float tNearK = INFINITY;
+        if (objects[i]-&amp;gtintersect(orig, dir, tNearK, ...) &amp;&amp; tNearK &lt; tNear) {
+            hitObject = objects[i];
+            tNear = tNearK;
+            ...
+        }
+    }
+
+    return (hitObject != NULL);
+}
+</code></pre></li></ul><p>这个程序的完整源代码可以在下一章找到。如果你编译并运行它，大概会发现在这个简单场景上也要渲染相当久。下面是程序的输出：</p><figure><img src="https://scratchapixel.com/images/ray-tracing-refresher/rt-result.png?" alt=""></figure><p>可以看到，我们试着再现了 Whitted 在他原始论文中发表的那张图。不过注意，这张图里有几处还可以改进。首先，如果你凑近看画面本身，会发现它和光栅化一样有锯齿（走样）。我们会在后面几门课里学习光线追踪的抗锯齿技术。还要注意玻璃球下面的影子是不透明的。这种情况我们没有考虑，但用光线追踪里所谓的透射概念很容易处理。这个话题同样留到后面几门课再讲。</p><h2>有比 Whitted 光传输算法更好的东西吗？</h2><p>与论文发表之前能做出的任何结果相比，这个方法已经是巨大的进步。不过某些效果，比如光泽反射（光泽表面对物体的反射）、软阴影或焦散，用这个算法无法模拟。此后人们发展出了更先进的光传输算法来解决这些局限。其中最著名的、纯粹基于光线追踪的算法有<b>路径追踪</b>、<b>双向路径追踪</b>和<b>Metropolis 光传输</b>算法。我们会在本节学习路径追踪。另一个非常重要的基于光线追踪的算法由 Robert L. Cook、Thomas Porter 和 Loren Carpenter 提出，发表在另一篇奠基性论文《<b>Distributed Ray-Tracing</b>》（1984）中。我们也会在这一节学习这个算法。</p><h2>接下来学什么？</h2><p>现在我们可以开始学光线追踪的基础了。我们会学习如何生成主光线，如何计算光线与简单几何形状以及三角形的交点。在此基础上，我们会学习如何对三角化网格做光线追踪，以及如何对经 4x4 仿射变换矩阵变换过的物体做光线追踪。之后我们就有了所需的工具，去研究着色、光传输算法，以及运动模糊、景深、纹理这些效果——它们对生成照片级真实感的计算机图像都至关重要。</p><h2>练习</h2><ul><li><p>给程序加一个计时器，测量渲染这个简单场景所需的时间。</p></li><li><p>统计这个场景中投射的主光线、反射光线、折射光线和阴影光线的数量。在渲染结束时把这些数字打印到终端。</p></li></ul><h2>参考文献</h2><p>An Improved Illumination Model for Shaded Display. Turner Whitted, 1980</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-overview/light-transport-ray-tracing-whitted.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-overview/light-transport-ray-tracing-whitted.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>投影矩阵、GPU 渲染管线与裁剪 - Scratchapixel 中文译本</title>
+<meta name="description" content="透视与正交投影矩阵 · 投影矩阵、GPU 渲染管线与裁剪（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>投影矩阵、GPU 渲染管线与裁剪</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="projection-matrix-introduction.html">投影矩阵是什么，何处、为何要使用？</a></li>
+<li><a href="projection-matrices-what-you-need-to-know-first.html">投影矩阵：首先需要知道的事</a></li>
+<li><a href="building-basic-perspective-projection-matrix.html">构建基础的透视投影矩阵</a></li>
+<li><a href="opengl-perspective-projection-matrix.html">透视投影矩阵</a></li>
+<li><a href="perspective-matrix-in-practice.html">迷路了？用真实的制作案例回顾一遍</a></li>
+<li><a style="font-weight:700" href="projection-matrix-GPU-rendering-pipeline-clipping.html">投影矩阵、GPU 渲染管线与裁剪</a></li>
+<li><a href="orthographic-projection-matrix.html">正交投影矩阵</a></li>
+</ol>
+</div>
+<h2>投影矩阵、GPU 渲染管线与裁剪</h2><p><b>阅读时间：18 分钟。</b></p><h2>更新</h2><p>2024 年，我给这一课加上了前面那一章：<a href="perspective-matrix-in-practice.html">迷路了？用真实的制作案例回顾一遍</a>。在那一章里，我们提到了许多与 GPU 顶点处理管线相关的概念，而这些概念是本章才介绍的。如果你有勇气把前面那章完整读完，却因为不了解 GPU 图形管线而没能全部看懂，那就先读本章，再回头读那一章。我还在 2024 年给本章补充了一些关于 GPU 的信息，同时也在等一门专门讲 GPU 如何构成、如何工作的课程。</p><h2>本章我们要学什么？</h2><p>第一章里我们讨论过投影矩阵在 GPU 渲染管线中的关键作用。我们指出 GPU 渲染管线有两类：较老的「固定功能管线」和较新的、常被称为「可编程渲染管线」的那种。我们深入到裁剪的过程——丢弃或裁掉落在视锥体外或边界上的图元——以及它在投影矩阵变换点的过程中如何发生。此外我们还澄清了一点：投影矩阵实际上是把点从相机空间变换到<b>齐次裁剪空间</b>，而不是变换到 NDC（归一化设备坐标）空间。现在，是时候把这些题目讲得更深了。我们会解释变换过程中裁剪的机制，定义裁剪空间究竟是什么，并回顾投影矩阵在老式和新式 GPU 渲染管线里的用法。</p><h2>裁剪与裁剪空间</h2><figure><img src="https://scratchapixel.com/images/perspective-matrix/clipping2.png?" alt=""><figcaption><b>图 1：</b>二维裁剪的例子。在裁剪阶段，只要原始几何体与视锥体的边界相交，就可能生成新的三角形。</figcaption></figure><figure><img src="https://scratchapixel.com/images/perspective-matrix/clipping6.png?" alt=""><figcaption><b>图 2：</b>三维裁剪的例子。</figcaption></figure><p>我们简要回顾一下：裁剪的主要目标是把位于眼睛之后、或正好落在眼睛上的几何图元「拒绝」掉（这些图元在透视除法过程中会导致除以零，是个不想要的结果），更宽泛地说，是裁掉几何图元中位于可视区域之外的部分（这个话题的更多细节见第 2 章）。这个可视区域由透视视锥体或视图视锥体的截棱锥形状界定。裁剪并不是任何渲染系统的绝对必需，它更像一个优化步骤。说到底，我们凭什么去处理屏幕上看不见的几何体？而省下的每一纳秒都让我们离实时渲染更近一步。要注意，这个过程可能导致生成比场景中原有更多的三角形，如图 1 所示。</p><p>最常用的裁剪算法包括用于线段的 Cohen-Sutherland 算法和用于多边形的 Sutherland-Hodgman 算法。事实证明，在裁剪空间里执行裁剪，比在相机空间（顶点被投影矩阵变换之前）或在 NDC（透视除法之后）里执行更高效。必须记住：点被投影矩阵变换时，先按处理任何其他 4x4 矩阵的方式来处理，变换后的坐标随后被归一化，也就是把变换后点的 x、y、z 坐标除以该点的 z 坐标。裁剪空间指的是点在归一化之前所处的那个空间。</p><p>总结起来，GPU 上的流程是这样展开的：</p><ul><li><p>点从相机空间变换到 \(\rightarrow\) 裁剪空间，这发生在 GPU 上我们所说的顶点着色器里。输入的顶点从笛卡尔坐标转换成齐次坐标，其 w 坐标被设为 1。用于存放变换后点的预定义变量 <code>gl_Position</code>（在 GLSL 语言中）同样表示齐次坐标下的一个点。但输入顶点乘上投影矩阵时，归一化这一步还没有发生。<code>gl_Position</code> 处于<b>齐次裁剪空间</b>。</p></li><li><p>所有顶点都被顶点着色器处理完之后，顶点已在裁剪空间中的三角形进行裁剪。</p></li><li><p>裁剪完成后，所有顶点才被归一化。也就是说，每个顶点的 x、y、z 坐标都除以它自己的 w 坐标，这就是透视除法的发生之处。我们的顶点现在又重新用笛卡尔坐标表示。在上一章里我们展示过这个机制：透视矩阵由于其设计方式，实际上把点转换到了 NDC 空间。在这个空间里，屏幕上所有可见顶点的 x 与 y 坐标都落在 \([-1, 1]\) 范围内，深度值也落在 \([-1, 1]\) 范围内（不过要注意，Vulkan 和 OpenGL 等某些 API 最终会在管线的某个位置把它们重映射到 \([0, 1]\) 范围，但那是另一个话题了）。</p></li></ul><figure><img src="https://scratchapixel.com/images/perspective-matrix/vertex-transform-pipeline.png?" alt=""></figure><p>归一化这一步之后，对相机可见的点在 x 与 y 两个维度上都落在 \([-1,1]\) 范围内。这是点与矩阵相乘过程的最后阶段的一部分，也就是前面提到的坐标归一化。它如何发生同样在上一章有详细说明，但要记住透视投影矩阵的设计使得：当一个点乘上它之后，得到的点（用齐次坐标表示）的 w 坐标装着该顶点在相机空间里的 z 坐标值（更准确地说，是其负的 z 坐标值，因为相机空间中相机前方的所有点 z 坐标都是负的，而我们想把这个值取负以便用正的 z 值来运算）。在从齐次坐标转回笛卡尔坐标时，我们把该点的 x、y、z 坐标（此时已被透视矩阵变换过）除以该点的 w 坐标，而这个 w 坐标实际上装着该点原始的 z 坐标。透视除法就是这样实际完成的。从齐次坐标到笛卡尔坐标的转换看起来是这样的：</p><p>$$
+\begin{align*}
+-1 \leq \dfrac{x'}{w'} \leq 1 \\
+-1 \leq \dfrac{y'}{w'} \leq 1 \\
+-1 \leq \dfrac{z'}{w'} \leq 1 \\
+\end{align*}
+$$</p><p>因此，我们也可以把它写成：</p><p>$$
+\begin{align*}
+-w' \leq x' \leq w' \\
+-w' \leq y' \leq w' \\
+-w' \leq z' \leq w' \\
+\end{align*}
+$$</p><p>于是，在齐次坐标 \(\rightarrow\) 笛卡尔坐标的转换之前，我们可以看到该点的 x、y、z 坐标都落在由 \([-w_c, w_c]\) 定义的同一范围内。顺便说一句，在技术资料和图形 API 规范里，你经常会看到它们被写成：</p><p>$$
+\begin{align*}
+-w_c &\leq x_c \leq w_c \\
+-w_c &\leq y_c \leq w_c \\
+-w_c &\leq z_c \leq w_c \\
+\end{align*}
+$$</p><p>其中下标 \(c\) 表示<b>裁剪空间</b>。注意在这个阶段 \(w_c\) 应当大于 0（以保证不会出现除以零的麻烦）。</p><p>这些等式在数学上是成立的，可以用它们判断某个顶点在屏幕上是否可见。如果它的 x、y、z 坐标全都落在 \([-w_c, w_c]\) 范围内，那么这个顶点就是可见的。任意给定顶点的裁剪空间可以想象成一个立方体，其最小与最大范围分别是 \(\{-w_c, -w_c, -w_c\}\) 和 \(\{w_c, w_c, w_c\}\)。不过还要注意，每个点很可能都有它自己独有的裁剪空间（因为每一组 x、y、z 坐标很可能对应不同的 w 值）。换句话说，每个顶点都存在于自己的裁剪空间里，并且必须「装得进」这个空间。</p><p>本课只讲投影矩阵。在这个语境下需要理解的，只是裁剪发生在顶点变换管线的哪个位置，以及裁剪空间的定义，这些我们刚刚已经解释过了。更多细节会在专门讲 Sutherland-Hodgman 与 Cohen-Sutherland 算法的课程里展开。</p><h2>「老式」的点（或顶点）变换管线</h2><details open><p>固定功能管线在 OpenGL 中已被废弃，现代图形 API（Vulkan、DirectX、Metal）全都使用可编程管线。建议不要再使用它，改用「新的」可编程 GPU 渲染管线。保留这一节只是为了备查，也因为你在网上可能还会遇到一些引用老管线方法的文章。</p></details><p>在 OpenGL（或 Vulkan、DirectX、Metal）中讨论点（顶点）的变换时，更倾向用「顶点」这个说法。在老式固定功能管线里，OpenGL 提供了两种模式来改变相机的状态：GL_PROJECTION 和 GL_MODELVIEW。GL_PROJECTION 用于设置投影矩阵本身。如我们所学（见上一章），这个矩阵由左、右、下、上四个屏幕坐标（由相机的视场角与近裁剪面决定）以及近、远裁剪面（相机的参数）构造出来。这些参数界定了相机的视锥体形状，视锥体内的所有顶点或点都是可见的。在 OpenGL 里，这些参数通过调用 <code>glFrustum</code> 来指定（上一章展示过它的一个实现）：</p><pre><code>
+glFrustum(float left, float right, float bottom, float top, float near, float far);
+</code></pre><p>GL_MODELVIEW 模式用于设置世界到相机的矩阵。OpenGL 程序里设置透视投影矩阵与模型视图矩阵的一段典型调用序列会是：</p><pre><code>
+glMatrixMode(GL_PROJECTION);
+glLoadIdentity();
+glFrustum(l, r, b, t, n, f);
+glMatrixMode(GL_MODELVIEW);
+glLoadIdentity();
+glTranslate(0, 0, 10);
+...
+</code></pre><p>一开始激活 GL_PROJECTION 模式（第 1 行）。然后为了设置投影矩阵，调用 glFrustum，把左、右、下、上四个屏幕坐标以及近、远裁剪面作为参数传进去。投影矩阵设置好之后，模式切换到 GL_MODELVIEW（第 4 行）。本质上，GL_MODELVIEW 矩阵可以看作「VIEW」变换矩阵（世界到相机矩阵）与「MODEL」矩阵（施加于物体的变换，即物体到世界矩阵）的组合。除了物体到世界的变换之外，当时并没有单独的世界到相机变换的概念；两者都合并在 GL_MODELVIEW 矩阵里。</p><p>$$GL\_MODELVIEW = M_{object-to-world} \times M_{world-to-camera}$$</p><p>一开始，<b>世界空间</b>中的点 \(P_w\) 用 GL\_MODELVIEW 矩阵变换到<b>相机空间</b>（或称<b>眼睛空间</b>）。得到的点 \(P_c\) 随后用 GL\_PROJECTION 矩阵投影到图像平面上，成为一个齐次坐标下的点，其 w 坐标装着点 \(P_c\) 的 z 坐标（更准确地说，是 \(-z\)，用以把原本为负的 z 坐标变成正值）。</p><h2>新式可编程 GPU 渲染管线中的顶点变换管线</h2><p>新式可编程 GPU 渲染管线中的管线与老管线大体相似，但在设置方式上有显著差别。在这个更新后的管线里，GL_MODELVIEW 与 GL_PROJECTION 模式的概念不复存在。相应的功能现在可以在顶点着色器里自行编程。如本课第一章所述，<b>顶点着色器</b>相当于一个小程序，规定 GPU 如何处理场景几何体的顶点。这意味着所有顶点变换，包括世界到相机的变换，以及更关键的投影变换，都应当在这里执行。要注意，使用 OpenGL、Vulkan、DirectX 或 Metal API 的程序，如果不定义顶点着色器和与之对应的片元着色器，是生成不出图像的。最简单的顶点着色器大概长这样：</p><pre><code>
+in vec3 vert;
+
+void main()
+{
+    // 完全不改变顶点
+    gl_Position = vec4(vert, 1);
+}
+</code></pre><p>这个例子<b>并没有</b>用透视投影矩阵变换输入的顶点，在某些条件下，它仍可能根据几何体的尺寸与位置、以及视口配置产生可见的结果（你可以直接把输入顶点定义在 NDC 空间里）。不过这超出了我们当前讨论的范围。从这段代码可以看到，输入的顶点被当作 <code>vec4</code>，本质上就是齐次坐标下的一个点。同样，<code>gl_Position</code> 表示齐次坐标下的一个点。如所预料，<b>顶点着色器输出的是裁剪空间中的顶点位置</b>（参见前面提到的顶点变换管线示意图）。</p><p>实际上，更常见的顶点着色器会这样写：</p><pre><code>
+uniform mat4 worldToCamMatrix, projMatrix;
+in vec3 vert;
+
+void main()
+{
+    gl_Position = projMatrix * worldToCamMatrix * vec4(vert, 1);
+}
+</code></pre><p>这个着色器同时使用世界到相机矩阵与投影矩阵，把顶点经过相机空间送入裁剪空间。这些矩阵是在外部通过特定调用配置的（<code>glGetUniformLocation</code> 用来定位着色器变量，<code>glUniformMatrix4fv</code> 用来按定位到的位置设置矩阵变量），由 OpenGL API 提供支持：</p><pre><code>
+Matrix44f worldToCamera = ...
+// 注意：先确定在 glUniformMatrix4fv 中使用之前是否需要转置矩阵
+// worldToCamera.transposeMe();
+// projMatrix.transposeMe();
+GLuint projMatrixLoc = glGetUniformLocation(p, "projMatrix");
+GLuint worldToCamLoc = glGetUniformLocation(p, "worldToCamMatrix");
+glUniformMatrix4fv(projMatrixLoc,  1, GL_FALSE, projMatrix);
+glUniformMatrix4fv(worldToCamLoc,  1, GL_FALSE, worldToCamera);
+</code></pre><p>在许多讲图形 API 的书和教程里，你经常会看到 <b>MVP</b> 这个说法。它代表 <b>Model-View-Projection</b>（模型-视图-投影）矩阵。思路是把三个矩阵合成一个，这样当输入顶点乘上这个矩阵时，一次向量与矩阵的乘法就完成了三次变换。模型矩阵把顶点从比如说物体空间变换到世界空间，视图矩阵（即相机矩阵）把顶点从世界空间变换到 \(\rightarrow\) 相机空间，最后投影矩阵把顶点从相机空间变换到 \(\rightarrow\) 裁剪空间。</p><pre><code>
+layout(set = 0, binding = 0) uniform buf {
+	mat4 MVP;
+} ubuf;
+
+layout(location = 0) in vec3 inPosition;
+
+out gl_PerVertex {
+	vec4 gl_Position;
+};
+
+void main() {
+	gl_Position = ubuf.MVP * vec4(inPosition, 1.0);
+}
+</code></pre><p>大多数程序倾向于在 CPU 上把这些矩阵合成，然后以我们所说的 Uniform Buffer Object 的形式传给顶点着色器。</p><pre><code>
+struct ubo ubo;
+mat4x4 MVP, VP;
+mat4x4_mul(VP, ctx-&amp;gtprojection_matrix, ctx-&amp;gtview_matrix);
+mat4x4_mul(MVP, VP, ctx-&amp;gtmodel_matrix);
+memcpy(&amp;ubo.mvp, MVP, sizeof(MVP));
+</code></pre><p>不熟悉这些术语也没关系。你只需要知道模型、视图、投影这三个矩阵可以合成，而这在生产中是很常见的做法。有一个细节是，通常每个物体都有自己的物体到世界变换，那些变换会以动态缓冲对象的形式传入。想了解更多，请看我们讲 Vulkan 或 DirectX 的课程。</p><details open><p><i>在 OpenGL 程序里需要对矩阵求转置吗？</i></p><p>判断是否应该在把矩阵传给图形管线之前先求转置，这件事容易让人困惑。按 OpenGL 规范，矩阵习惯上按列主序书写。但困惑的来源在于，像 <code>glUniformMatrix4fv()</code> 这样的 API 调用，设计上是接受按行主序在内存中排列的系数。因此，如果你的矩阵在内存里是按行主序排列的，传给 OpenGL 之前就不需要转置。反过来，如果它们是列主序的，你可能需要转置——不过那也不是严格必需的。因为你可以通过 <code>glUniformMatrix4fv()</code> 函数里的一个标志来控制是否需要转置。这个函数的第三个参数在示例中设为 <code>GL_FALSE</code>，它告诉图形 API 是否替你转置矩阵的系数。所以，即使系数是列主序的，只要把 <code>glUniformMatrix4fv()</code> 里的转置标志设为 <code>GL_TRUE</code>，就可以避免手动转置。</p><p>再考虑 OpenGL 顶点着色器里矩阵相乘的顺序，情况就更让人迷惑了。你可能会注意到写法是 \(Proj * View * vtx\) 而不是 \(vtx * View * Proj\)，前者表明使用的是列主序矩阵（意味着矩阵与点相乘，而不是点与矩阵相乘，详见我们讲<a href="row-major-vs-column-major-vector.html">几何</a>的课程）。于是，OpenGL 的着色器假定矩阵是列主序的，尽管系数是按行主序存储的。是不是已经糊涂了？</p></details><p>记住，OpenGL（以及向量）按列主序运作。因此，如果你用的是行向量，就像 Scratchapixel 这样，那么在把矩阵用到顶点着色器设置里之前（见第 2 行），你需要先对它求转置。虽然现代 OpenGL 提供了处理这件事的其他方法，但它们超出了本课的范围——本课并不专门讲那个话题。关于这些替代方法的更多信息，在网上很容易找到。</p><h2>要点</h2><p>结合上一章的知识，本章需要你记住的是：顶点会经历下面这些变换：<b>物体空间</b> \(\rightarrow\) <b>世界空间</b> \(\rightarrow\) <b>相机空间</b> \(\rightarrow\) <b>裁剪空间</b>。最后一次变换实际上是把相机空间中的顶点乘以透视投影矩阵得到的。这个乘法在顶点着色器里完成，而顶点着色器的主要功能就是把输入的顶点乘上你提供的投影矩阵。再次说明，如何把数据从 CPU 程序传给 GPU 顶点着色器不在本课范围内，但任何讲如何用 OpenGL 或 Vulkan 写程序的教程都会教你。</p><p>你还需要知道，正是在顶点处于裁剪空间时，GPU 决定保留还是丢弃这个顶点。这个过程稍微复杂一些，因为顶点彼此相连构成三角形，而构成一个三角形的顶点可能横跨裁剪体的边界。这就是我们说的是<b>裁剪</b>而不是<b>剔除</b>的原因。如果构成一个三角形的三个顶点全都在裁剪空间之内，我们就保留这个三角形。如果所有顶点都在裁剪体之外，我们可以剔除这个三角形。如果三角形至少有一个顶点横跨了该体积的边界，那我们就需要把这个三角形裁剪到该体积上，从而生成新的三角形。裁剪讲的就是这件事。</p><p>然后，裁剪完成之后，三角形的顶点 进行透视除法，这一步由 GPU 执行。它涉及把此时用齐次坐标表示的顶点转回笛卡尔坐标。顶点从裁剪空间 \(\rightarrow\) 归一化设备坐标空间（NDC）过渡，在那里它们的 x、y、z 坐标全都落在 \([-1, 1]\) 范围内。</p><h2>GPU 是怎么做到的（这么快）？</h2><p>GPU 在这类运算上优于 CPU，原因在于 GPU 由我们所说的流式多处理器（SM）构成——比如每张卡 72 个（这是 2010 年代末、2020 年代初所造显卡的数量级）——而每个 SM 本身又由我们所说的 ALU 构成（比如每个 SM 64 个），ALU 是 Arithmetic Logic Unit（算术逻辑单元）的缩写。注意单个 GPU 上可以有很多这样的 SM，它们各自归入多个图形处理簇（GPC）（例如 6 个 GPC，每个含 12 个 SM）。所以归纳一下：一张 GPU 上有多个 GPC（×6），每个含许多 SM（×12），它们全都含许多 ALU（×64）。在我们的例子里，这总计 4608 个核心（在 Nvidia 的术语里叫 CUDA 核心）。CPU 上也有 ALU，但数量没有 GPU 那么多。正因为 GPU 有成千上万个这样的单元，每个都能同时处理运算，GPU 才能成批并行地处理顶点，从而比 CPU 处理得更快。图形管线中的许多运算（这里假设是光栅化，不过同样的逻辑有一部分也适用于光线追踪）可以很容易地施加到顶点这样的数据单元上，与其他顶点无关。所以管线可以一次取一批顶点并行处理。顶点着色器就是这样，它可以独立地施加于各个顶点。</p><p>裁剪与光栅化可以在专门为此过程设计的硬件上完成（称为<b>光栅引擎</b>），而管线的其余部分，比如透视除法和逐个片元的着色（片元是光栅化过程的产物，可以看作像素的一种雏形），也可以由这些多个 SM 并行处理，而每个 SM 本身又含有大量能并行运行运算的 ALU。</p><p>现在你更清楚 GPU 为什么擅长渲染 3D 场景的图像了。本质原因在于，它们被设计成把图形管线中所有可并行的步骤都并行化，并提供足够多的晶体管来有效地并行完成这些事，而透视投影矩阵在其中扮演了关键角色。下面这个视频用有趣的方式演示了这个概念。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/perspective-matrix/Mythbusters Demo GPU versus CPU.mp4"></video></p></div><p>所以简而言之，GPU 在某种意义上比 CPU 有更多的「核心」（尽管它们通常运行在更低的时钟频率上），并且有别的专用硬件来执行图形管线的某些步骤，比如光栅化。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/projection-matrix-GPU-rendering-pipeline-clipping.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/projection-matrix-GPU-rendering-pipeline-clipping.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用 Perlin 噪声创建地形网格 - Scratchapixel 中文译本</title>
+<meta name="description" content="Perlin 噪声 · 用 Perlin 噪声创建地形网格（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>用 Perlin 噪声创建地形网格</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="perlin-noise.html">Perlin 噪声</a></li>
+<li><a style="font-weight:700" href="perlin-noise-terrain-mesh.html">用 Perlin 噪声创建地形网格</a></li>
+<li><a href="perlin-noise-computing-derivatives.html">计算导数</a></li>
+<li><a href="improved-perlin-noise.html">改进的 Perlin 噪声</a></li>
+</ol>
+</div>
+<h2>用 Perlin 噪声创建地形网格</h2><p><b>阅读时间：7 分钟。</b></p><p>本章我们会学一种有趣的技巧：用 2D Perlin 噪声位移网格的顶点，从而生成地形。正如讲噪声的第一课提到的，噪声函数是一个关键的「过程式纹理」基元，可以用它构造更复杂的过程式纹理，比如分形图案或湍流图案。我们会先展示一个用简单噪声函数生成地形的例子（下图），接着再展示分形图案的例子。</p><p>这项技巧能帮我们更好地理解计算 Perlin 噪声函数导数的重要性，那正是下一章的主题。</p><figure><img src="https://scratchapixel.com/images/noise-part-2/perlin-noise-terrain-mesh1.png?" alt=""></figure><p>XX TODO。我们这里缺一张图，用来显示图像与网格之间的映射关系 XX</p><p>这项技巧背后的想法很直接，与我们所说的<b>置换贴图</b>类似。如果你从上方俯视网格，会看到把噪声图像叠加到网格上时，二者完美吻合：每个网格顶点都对应噪声图像里的一个像素。如你所知，我们可以在某种归一化设备坐标中定义像素坐标（此时像素坐标落在 [0,1] 范围内）。网格顶点也可以这样做：这些坐标在术语上叫作<b>纹理坐标</b>。我们来看看创建这个网格要用的代码：</p><pre><code>
+PolyMesh* createPolyMeshPlane( 
+    uint32_t width = 1, 
+    uint32_t height = 1, 
+    uint32_t subdivisionWidth = 40, 
+    uint32_t subdivisionHeight = 40) 
+{ 
+    PolyMesh *poly = new PolyMesh; 
+    poly-&amp;gtnumVertices = (subdivision with + 1) * (subdivisionHeight + 1); 
+    poly-&amp;gtvertices = new Vec3f[poly-&amp;gtnumVertices]; 
+    poly-&amp;gtst = new Vec2f[poly-&amp;gtnumVertices]; 
+    float invSubdivisionWidth = 1.f / subdivisionWidth; 
+    float invSubdivisionHeight = 1.f / subdivisionHeight; 
+    for (uint32_t j = 0; j &lt;= subdivisionHeight; ++j) { 
+        for (uint32_t i = 0; i &lt;= subdivisionWidth; ++i) { 
+            poly-&amp;gtvertices[j * (subdivisionWidth + 1) + i] = Vec3f(width * (i * invSubdivisionWidth - 0.5), 0, height * (j * invSubdivisionHeight - 0.5)); 
+            poly-&amp;gtst[j * (subdivisionWidth + 1) + i] = Vec2f(i * invSubdivisionWidth, j * invSubdivisionHeight); 
+        } 
+    } 
+ 
+    poly-&amp;gtnumFaces = subdivisionWidth * subdivisionHeight; 
+    poly-&amp;gtfaceArray = new uint32_t[poly-&amp;gtnumFaces]; 
+    for (uint32_t i = 0; i &lt; poly-&amp;gtnumFaces ++i) 
+        poly-&amp;gtfaceArray[i] = 4; 
+ 
+    poly-&amp;gtverticesArray = new uint32_t[4 * poly-&amp;gtnumFaces]; 
+    for (uint32_t j = 0, k = 0; j &lt; subdivisionHeight; ++j) { 
+        for (uint32_t i = 0; i &lt; subdivisionWidth; ++i) { 
+            poly-&amp;gtverticesArray[k] = j * (subdivisionWidth + 1) + i; 
+            poly-&amp;gtverticesArray[k + 1] = j * (subdivisionWidth + 1) + i + 1; 
+            poly-&amp;gtverticesArray[k + 2] = (j + 1) * (subdivisionWidth + 1) + i + 1; 
+            poly-&amp;gtverticesArray[k + 3] = (j + 1) * (subdivisionWidth + 1) + i; 
+            k += 4; 
+        } 
+    } 
+ 
+    return poly; 
+}
+</code></pre><p>顶点的纹理坐标在第 16 行计算。这也是一个坐标落在 [0,1] 范围内的空间。网格左上角的顶点纹理坐标是 [0,0]，而右下角的顶点纹理坐标是 [1,1]。这样，用顶点的纹理坐标去查噪声图像就很方便了。</p><p>在这个例子里，我们把 2D 噪声函数的值烘焙进一张图像，再从那张图像里读取噪声值（上一章展示过怎么做）。实践中我们更可能直接求 2D 噪声函数的值。当一张图像被用来置换物体的顶点时，我们说这张图像是一张<b>高度图</b>（或置换贴图）。</p><p>在高度图的情况下，我们通常用像素颜色的明度（比如亮度）来控制置换的幅度。一般来说，像素越亮，置换越大，当然，如果你愿意，完全可以用另一种方式把像素值映射到置换量。这都取决于你想造出的效果。你需要记住的是：你用一张图像以某种方式控制物体顶点沿法线被置换或移动的量（法线是垂直于网格表面的方向。对于躺在 xz 平面上的平面来说，网格法线处处都是 (0,1,0)）。</p><pre><code>
+for (unsigned j = 0; j &lt; imageHeight; ++j) { 
+    for (unsigned i = 0; i &lt; imageWidth; ++i) { 
+        // Perlin 噪声的范围是 [-1:1]
+        float perlinNoise = PerlinNoise::evalAtPoint(Vec3f(i, j, 0) * (1 / 128.f)); 
+        noiseMap[j * imageWidth + i] = (perlinNoise + 1) * 0.5; 
+    } 
+} 
+ 
+// 置换
+for (uint32_t i = 0; i &lt; poly-&amp;gtnumVertices ++i) { 
+    Vec2f st = poly-&amp;gtst[i]; 
+    uint32_t x = std::min(static_cast&amp;ltuint32_t&gt;(st.x * imageWidth), imageWidth - 1); 
+    uint32_t y = std::min(static_cast&amp;ltuint32_t&gt;(st.y * imageHeight), imageHeight - 1); 
+    poly-&amp;gtvertices[i].y = 2 * noiseMap[y * imageWidth + x] - 1; 
+}
+</code></pre><p>要记住，Perlin 噪声的值落在 [-1,1] 范围内。但当我们把这些值存进图像缓冲时，把它们重映射到了 [0,1] 范围（第 5 行）。不过后面置换顶点时，这些值又被映回 [-1,1] 范围（第 15 行），因为这样网格才能沿 y 轴保持以原点为中心。我们会把顶点向上推（值大于 0 时）或向下推（值小于 0 时），而如果值为 0，顶点的 y 坐标就保持 0。</p><p>如果你渲染这个网格，并把噪声图像作为纹理贴在上面，应该会得到与本章第一张图类似的结果。注意噪声图像中白亮的部分对应网格上的凸起，而图像中的暗部对应凹陷或谷地（也注意置换量与像素值成正比）。</p><p>正如本章开头提到的，你可以用更有趣的过程式图案来置换网格顶点，比如分形图案——它可以构造成若干噪声层的加权和。看<a href="simple-pattern-examples.html">上一课讲噪声的内容</a>，学习如何以噪声函数为积木生成分形图案。下面是生成那张用于置换网格的分形图像的代码：</p><pre><code>
+uint32_t numLayers = 5; 
+float maxVal = 0; 
+for (uint32_t j = 0; j &lt; imageHeight; ++j) { 
+    for (uint32_t i = 0; i &lt; imageWidth; ++i) { 
+        float fractal = 0; 
+        float amplitude = 1; 
+        Vec3f pt = Vec3f(i, j, 0) * (1 / 128.f); 
+        for (uint32_t k = 0; k &lt; numLayers; ++k) { 
+            fractal += (1 + PerlinNoise::evalAtPoint(pt)) * 0.5 * amplitude; 
+            pt *= 2; 
+            amplitude *= 0.5; 
+        } 
+        if (fractal &gt; maxVal) maxVal = fractal; 
+        noiseMap[j * imageWidth + i] = fractal; 
+    } 
+} 
+ 
+for (uint32_t i = 0; i &lt; imageWidth * imageHeight; ++i) 
+    noiseMap[i] /= maxVal;
+</code></pre><p>分形图像通常比单层噪声含有更高频的细节。因此，要在置换中看到这些细节，你大概得提高网格本身的密度。下面是用分形图像置换后的网格渲染结果。</p><figure><img src="https://scratchapixel.com/images/noise-part-2/perlin-noise-terrain-mesh2.png?" alt=""></figure><p>正如上一课所建议的，这项技巧能生成逼真的地形（希望上面那张图足够有说服力）。我们也可以用噪声函数来创建并动画化水面。在这个例子里，我们用的过程式图案（一个分形）相当简单。你可以稍微调调参数来改变地形的样子，但要想提升地形的真实感，我们还需要加入侵蚀之类的效果。不过这个话题留到另一课。</p><p>最后一点：我们还没有计算置换后网格的法线。这该怎么做？那就是下一章的主题。我们会学习如何用噪声函数的导数，在置换后的顶点位置上计算「真正的」法线。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/procedural-generation-virtual-worlds/perlin-noise-part-2/perlin-noise-terrain-mesh.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/procedural-generation-virtual-worlds/perlin-noise-part-2/perlin-noise-terrain-mesh.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

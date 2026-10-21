@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>贝塞尔曲线 - Scratchapixel 中文译本</title>
+<meta name="description" content="贝塞尔曲线与曲面 · 贝塞尔曲线（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>贝塞尔曲线</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="bezier-curve.html">贝塞尔曲线</a></li>
+<li><a href="bezier-surface.html">贝塞尔曲面</a></li>
+<li><a href="fast-forward-differencing.html">前向差分法</a></li>
+<li><a href="bezier-patch-normal.html">计算贝塞尔曲面的法线</a></li>
+<li><a href="curves-as-geometry.html">把曲线作为几何体渲染：毛发渲染</a></li>
+</ol>
+</div>
+<h2>贝塞尔曲线</h2><p><b>阅读时间：18 分钟。</b></p><h2>Newell 的茶壶</h2><figure><img src="https://scratchapixel.com/images/bezier/newelldrawing.png?" alt=""><figcaption><b>图 1：</b>Newell 手绘的茶壶原始图稿。</figcaption></figure><p>1975 年，计算机研究员 Martin Newell 需要一个新三维模型。当时图形学界可用的模型极少，而做模型要花很多功夫。大多数模型的点位只能手工敲进程序，或者用图形输入板录入（「一种计算机输入设备，可以把手绘的图像与图形输入电脑。例如，可以用来描摹铺在板面上的纸上的图。这样采集数据叫做数字化」）。传说是 Newell 画下了家里的一把茶壶，把这些手稿数字化，做出了我们今天熟知的 Utah Teapot 模型（图 1）。如今，这把茶壶通常和球体、立方体、圆环等几何基元一起，出现在渲染或建模程序里。自 2003 年起，Pixar 在 SIGGRAPH 上赠送的走路茶壶玩具，致敬 Newell 的工作与他那把标志性的茶壶，甚至成了一种亚文化现象（图 2）。</p><figure><img src="https://scratchapixel.com/images/bezier/pixarteapot.png?" alt=""><figcaption><b>图 2：</b>Pixar 的 RenderMan 走路茶壶。致敬 Newell 的工作与他那把标志性的茶壶。</figcaption></figure><p>Newell 做的这把茶壶有个有趣之处：用来定义物体表面的数学模型非常紧凑。茶壶含 32 个曲面片，每片由 16 个点表示（原始数据集里是 28 片）。你可能会问：「这么少的点，怎么可能造出茶壶这样复杂而光滑的形状？」这项技术的核心想法是：这 16 个点并不像我们上一节学过的多边形网格那样定义多边形的顶点。相反，它们表示的是一张网格或点阵的控制点，用来影响底下那张光滑曲面的形状。这些点就像磁铁，推或拉着底下的曲面。当然，曲面本身并不以实体的形式存在。要把它可视化，就得把它算出来；做法是把这 16 个控制点按某些系数加权后组合起来。由于曲面的生成基于方程，它属于<b>参数曲面</b>这一类。Newell 给茶壶用的模型（参数曲面还有很多其他类型）叫做<b>贝塞尔曲面</b>（对曲线而言就是贝塞尔曲线）。Pierre Bézier 在 1962 年首次描述了它。这项技术的原理用曲线比用曲面更容易理解。不过把它应用到三维曲面上很直接。</p><h2>贝塞尔曲线</h2><p>要构造一条贝塞尔曲线，只需要四个点。这些点是在三维空间中定义的控制点。与曲面一样，曲线本身并不存在，要等我们把四个点按某些系数加权组合、算出来之后才有。</p><figure><img src="https://scratchapixel.com/images/bezier/beziercurve.png?" alt=""><figcaption><b>图 3：</b>一条贝塞尔曲线及其四个控制点。</figcaption></figure><p>这条曲线怎么算？参数曲线是由方程定义的曲线。如同每个方程都有变量，在参数曲线里这个变量叫做<b>参数</b>。通常这个参数用字母 \(t\) 表示。例如图 4 里，我们画出了抛物线 \(y=t^2\) 的方程。和抛物线的例子一样，\(t\) 不必限定在任何特定区间内，它完全可以从负无穷到正无穷。不过对贝塞尔曲线，我们只需要 t 从 0 到 1 的取值。</p><figure><img src="https://scratchapixel.com/images/bezier/parabola.png?" alt=""><figcaption><b>图 4：</b>参数曲线的例子（抛物线的图像）。</figcaption></figure><p>对 \(t\) 从 0 到 1 的取值逐一求曲线方程的值，就相当于沿着曲线行走。务必理解：\(t\) 是标量，但对 [0:1] 区间内任何 \(t\) 求得的结果都是三维空间中的一个位置（对三维曲线而言；对二维曲线显然是二维点）。换句话说，要把一条参数曲线可视化，只需按递增的 \(t\) 在若干规则位置（当然不必非规则不可）上求曲线方程的值，再把得到的一系列空间位置连起来，构成一条<b>多边形路径</b>（如图 5 所示）。</p><figure><img src="https://scratchapixel.com/images/bezier/beziercurve1.png?" alt=""><figcaption><b>图 5：</b>图例：一条曲线可以用有限个位于曲线上的点、以线段相连构成多边形路径来近似。</figcaption></figure><p>只画四段，就能看出曲线的大致形状。要得到更平滑的结果，只要增加点的个数与段数。这本质上就是我们构造和可视化贝塞尔曲线的方式：按等间隔采样，把点连起来，形成一系列相连的线段。现在的问题是，这些位置怎么算？前面提到，曲线的形状是把控制点按某个权重加权组合的结果（公式 1）：</p><p>$$P_{curve}(t) = P1 * k_1 + P2 * k_2 + P3 * k_3 + P4 * k_4.$$</p><p>其中 P1、P2、P3、P4 是贝塞尔控制点，\(k_1\)、\(k_2\)、\(k_3\)、\(k_4\) 是给各控制点贡献加权的（标量）系数。看图 3，凭直觉就能看出：当 \(t\) = 0 时，曲线上的第一个点与控制点 P1 重合（当 \(t\) = 1 时，末端点与 P4 重合）。也就是说，可以写成：</p><p>$$
+P_{curve}(t) = \left\{
+\begin{array}{ll}
+P_{curve}(0)= P1 * 1 + P2 * 0 + P3 * 0 + P4 * 0\\
+P_{curve}(1)= P1 * 0 + P2 * 0 + P3 * 0 + P4 * 1\\  
+\end{array}
+\right.
+$$</p><p>现在参数 \(t\) 在这些公式里已经看不到了。\(t\) 的取值用来按下面这组方程（公式 2）算出系数 \(k_1\)、\(k_2\)、\(k_3\)、\(k_4\) 本身：</p><p>$$
+\begin{array}{l}
+k_1(t) = (1 - t) * (1 - t) * (1 - t)\\
+k_2(t) = 3(1 - t)^2 * t\\
+k_3(t) = 3(1 - t) * t^2\\
+k_4(t) = t^3
+\end{array}
+$$</p><p>要对某个特定的 \(t\) 求曲线上的位置时，需要把这四个方程里的 \(t\) 替换掉，算出四个系数 \(k_1\)、\(k_2\)、\(k_3\)、\(k_4\)，再把它们分别乘到四个控制点上。这样就得到给定 \(t\) 下三维空间中的一个位置。例如，要构造一条由 10 段构成的多边形路径，就让 \(t\) 以 1/10 为步长依次递增，算出 11 个点。下面的代码示例会算出曲线上这 11 个位置：</p><pre><code>
+int numSegments = 10;
+for (int i = 0; i &lt;= numSegments; ++i) {
+	float t = i / (float)numSegments;
+	// 计算系数
+	float k1 = (1 - t) * (1 - t) * (1 - t);
+	float k2 = 3 * (1 - t) * (1 - t) * t;
+	float k3 = 3 * (1 - t) * t * t;
+	float k4 = t * t * t;
+	// 用系数给四个控制点加权
+	point Pt = P1 * k1 + P2 * k2 + P3 * k3 + P4 * k4;
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/bezier/curves.png?" alt=""><figcaption><b>图 6：</b>n = 3 时伯恩斯坦多项式的图像。</figcaption></figure><p>可以看到，原理很直白。做这条曲线所需的全部，就是四个控制点，你移动它们，就能让曲线变成想要的形状。每次改动其中一个控制点去看新曲线，上面那段代码都要重新执行一遍。既然明白了这个方法的原则，我们把它推广并形式化。上面的公式可以正式地改写，用来计算 P（公式 1）。你可以把它写成控制点乘以某些系数后的求和：</p><p>$$P_{curve}(t)=\sum_{i = 0}^{n} b_{i,n}(t) P_i, \; t \in [0,1]$$</p><p>系数 \(B_{i,n}\) 是多项式（「多项式是由变量与常数、只用加法、减法、乘法以及非负整数次幂构造出来的、长度有限的表达式」），称为<b>伯恩斯坦多项式</b>。从这个公式可以看出，求和里涉及 n + 1 个系数与控制点（求和从 i = 0 起到 i = n 止，因此若 n = 3，就有 i = 0、1、2、3，也就是四个系数）。</p><details open><p>伯恩斯坦多项式可以用下面的公式计算：</p><p>$$B_{i,n}(t) = \left( \begin{array}{c}n \\ i \end{array} \right)t^i(1-t)^{n-i}, \; i=0,...,n.$$</p><p>其中 \(\left( \begin{array}{c}n \\ i \end{array} \right)\) 这些项叫做二项式系数。它们可以很方便地用阶乘（! 号）按下式求得：</p><p>$$\left(\begin{array}{c}n \\ i \end{array} \right) = {n! \over {i!(n - i)! }}$$</p><p>当 n = 3 时，二项式系数是 1、3、3、1。</p><p>n 次的 n+1 个伯恩斯坦多项式（我们的例子里 n=3）构成一个单位分解，因为它们加起来等于一。</p></details><p>n 的取值是可以改的（记住：多项式的次数等于该多项式中任一项的最高次数）。用伯恩斯坦多项式时，n = 0 情况下算 P 等价于一次线性插值：</p><p>$$P = (1 - t) * P0 + t * P1$$</p><p>当 n = 2 时，我们说这条贝塞尔曲线是<b>二次</b>的（\(t\) 或 \((1-t)\) 被提到 2 次幂），P 可以用下面的公式算出：</p><p>$$P = (1 - t)^2 * P0 + 2(1-t)t * P1 + t^2 * P2$$</p><p>当 n = 3 时（公式 2），我们说这条贝塞尔曲线是<b>三次</b>的（\(t\) 或 \((1-t)\) 被提到 3 次幂）。</p><details open><p>用某些（由方程算出的）系数给控制点加权这项技术，在 CG 里用得极广。贝塞尔曲线是学习和理解这项技术的绝佳素材。它也有助于体会到作为数学工具它有多强大。在我们的例子里，我们用它来对三维空间中的曲线建模，但不妨把这条曲线想象成一个函数；那么只用几个点和几个系数，我们就有了对更复杂（例如离散）函数的紧凑编码方式。球谐函数实际上就是这么工作的（也类似于我们在二维那一节讲的 DCT 的原理）。其他曲线或曲面类型（比如 NURBs）用的也是同一个原理。</p></details><h2>贝塞尔基矩阵</h2><p>可以把用来计算系数的四个贝塞尔基函数展开：</p><p>$$
+\begin{split}
+k_1(t) =& (1 - t)^3 = 1 + 3t^2 - 3t - t^3=- t^3 + 3t^2 - 3t + 1\\
+k_2(t) =& 3(1 - t)^2t = 3(1 - 2t + t^2)t = 3t - 6t^2 + 3t^3 =\\& 3t^3 - 6t^2 + 3t\\
+k_3(t) =& 3(1 - t)t^2 = 3t^2 - 3t^3 = -3t^3 + 3t^2\\
+k_4(t) =& t^3 
+\end{split}
+$$</p><p>记得这些代数恒等式：\((a-b)^2=a^2-2ab+b^2\) 与 \((a-b)^3=a^3 - 3a^2b + 3ab^2 - b^3\)。注意我们已经把前面各式中的项按指数值递减排好了。可以把这些式子改写成 \(ax^3 + bx^2 + cx +d\) 的形式：</p><p>$$
+\begin{array}{l}
+k_1(t) = -1 t^3 + 3t^2 - 3t + 1 \\ 
+k_2(t) = 3t^3 - 6t^2 + 3t + 0\\ 
+k_3(t) = -3t^3 + 3t^2 + 0t + 0\\ 
+k_4(t) = 1t^3 + 0t^2 + 0t + 0
+\end{array}
+$$</p><p>最后，可以从这些式子里提取常数 a、b、c、d，写成一个 4x4 矩阵：</p><p>$$\left[\begin{array}{rrrr} -1 & 3 & -3 & 1\\ 3 & -6 & 3 & 0\\ -3 & 3 & 0 & 0 \\ 1 & 0 & 0 & 0\end{array}\right]$$</p><p>我们称它为贝塞尔基矩阵。采用这种记法的主要想法是：参数方程可以表达成下面这种紧凑形式：</p><p>$$\left[\begin{array}{c}t^3 & t^2 & t & 1\end{array}\right]\left[\begin{array}{c}a\\b\\c\\d\end{array}\right]$$</p><p>这种记法是必要的，因为只要改变这个矩阵的数值，就能定义不同类型的双三次参数曲线（这类曲线的例子有 Hermite、BSpline、Catmull-Rom、Bézier）。这个话题我们会在本课将来的版本里展开。</p><h2>De Casteljau 算法</h2><figure><img src="https://scratchapixel.com/images/bezier/decasteljau.gif?" alt=""><figcaption><b>图 7：</b>t = 0.5 时 De Casteljau 算法的运行过程。</figcaption></figure><p>De Casteljau 算法是（相比直接用参数形式）数值上更稳定的方法，用来求曲线上给定 t 处点的位置（它只需要一系列线性插值）。De Casteljau 是 1950 年代最早研究用伯恩斯坦多项式构造曲线与曲面的数学家之一（和 Bézier 一样，他也供职于一家汽车厂商，有志于开发能用于 CAD 软件的曲面造型方法）。算法的原理是：对给定 t，在四个控制点定义的三条线段上分别做线性插值，算出中间位置。这一步得到三个点，把它们连起来构成两条线段。接着在这两条线段上重复线性插值，又得到两个新位置，再对它们做一次插值。这一过程最终得到的点就落在 t 处的曲线上（该过程如图 7 所示）。下面是实现该算法的伪代码：</p><pre><code>
+point decasteljau(point P1, point P2, point P3, point P4, float t)
+{
+    // 沿主线段 P1-P2、P2-P3、P3-P4 算出最初的三个点
+    point P12 = (1 - t) * P1 + t * P2;
+    point P23 = (1 - t) * P2 + t * P3;
+    point P34 = (1 - t) * P3 + t * P4;
+    // 沿线段 P1P2-P2P3、P2P3-P3P4 算出两个点
+    point P1223 = (1 - t) * P12 + t * P23;
+    point P2334 = (1 - t) * P23 + t * P34;
+
+    // 最后得到 P
+    return (1 - t) * P1223 + t * P2334; // P
+}
+</code></pre><p>也许与直觉相反，De Casteljau 方法比直接求伯恩斯坦多项式更费计算量（伯恩斯坦多项式是 6 次减、9 次加、22 次乘；De Casteljau 方法是 6 次减、18 次加、36 次乘），但如前面所说，它在数值上被证明更稳定。此外，De Casteljau 算法适用于任意次数的曲线（n=2、n=3……），并且可以递归实现。这一点很重要，因为这个算法最初就是为了递归地细分贝塞尔曲线，直到满足某个准则（通常是把贝塞尔曲线细分到像素级，以保证显示在屏幕上时精度最高）。这项技术会在讲 REYES 算法的一课（进阶部分）里详述。</p><h2>贝塞尔曲线的性质</h2><figure><img src="https://scratchapixel.com/images/bezier/convexhull.gif?" alt=""><figcaption><b>图 8：</b>控制点定义出一个凸包，曲线被包含在其中。直线 P1P2 与 P3P4 分别是 P1 与 P4 处的切线。</figcaption></figure><p>贝塞尔曲线有一些有意思的性质。我们已经知道，曲线的首末点分别与第一、第四个控制点重合。直线 P1-P2 与 P3-P4 也分别是曲线首末点处的切线。由此可以推出：如果第一条曲线的直线 P3-P4 与第二条曲线的直线 P1-P2 对齐（共线），那么两条贝塞尔曲线之间的过渡就看不出接缝（见图 8）。利用这个性质，既可以延长一条已有的贝塞尔曲线（把几条曲线接起来），也可以把一条曲线一分为二（见后文）。最后，由控制点定义的贝塞尔多边形<b>凸包</b>包含这条贝塞尔曲线（见图 8）。</p><h2>贝塞尔曲线的拼接与分割</h2><figure><img src="https://scratchapixel.com/images/bezier/splitbeziercurves.png?" alt=""><figcaption><b>图 9：</b>两条贝塞尔曲线之间一阶连续的例子。第一条曲线（红色）的控制点 P3、P4 与第二条曲线（橙色）的点 P1、P2 共线。</figcaption></figure><p>多条贝塞尔曲线可以接起来。<b>零阶连续</b>意味着曲线只是接上（第一条曲线的末点与第二条曲线的首点确实重合），但并不相切。<b>一阶连续</b>意味着点重合，且曲线在交点处相切。<b>二阶连续</b>也可以做到，代价是对控制点的对齐加更多约束（实现起来更复杂，尤其是随着曲线次数（n 的取值）增大）。</p><figure><img src="https://scratchapixel.com/images/bezier/splitbezier.gif?" alt=""><figcaption><b>图 10：</b>用 De Casteljau 方法分割一条贝塞尔曲线。P1、P12、P1223 与 P 构成第一条子曲线（品红）的控制点，P、P2334、P34、P4 构成第二条子曲线（绿色）的控制点。</figcaption></figure><p>如果两条贝塞尔曲线能以 1 阶连续相接（若第一条曲线的末两个控制点与第二条曲线的首两个控制点共线），那么也可以把一条贝塞尔曲线分成两条子曲线（它们同样是贝塞尔曲线）。分割曲线的技术依赖前面介绍的 De Casteljau 算法。看图 7 中动画的最后一帧（我们在图 10 里重画了一遍），凭直觉就能看出：可以用 P1、P12、P1224 与 P 作第一条子曲线的点，用 P、P2334、P34 与 P4 作第二条子曲线的点，构造出两条子曲线。改造实现 De Casteljau 方法的伪代码，让它输出这两条子曲线的控制点，是很直接的（函数对原始输入曲线取四个点，对生成的两条曲线各输出四个点）：</p><pre><code>
+point splitBezier(point P[4], float t, point P1[4], point P2[4])
+{
+    // 沿主线段 P1-P2、P2-P3、P3-P4 算出最初的三个点
+    point P12 = (1 - t) * P[0] + t * P[1];
+    point P23 = (1 - t) * P[1] + t * P[2];
+    point P34 = (1 - t) * P[2] + t * P[3];
+    // 沿线段 P1P2-P2P3、P2P3-P3P4 算出两个点
+    point P1223 = (1 - t) * P12 + t * P23;
+    point P2334 = (1 - t) * P23 + t * P34;
+    // 最后得到 P
+    point P = (1 - t) * P1223 + t * P2334;
+    P1[0] = P[0], P1[1] = P12, P1[2] = P1223, P1[3] = P;
+    P2[0] = P, P2[1] = P2334, P2[2] = P34, P3[3] = P4;
+}
+</code></pre><p>递归地分割曲线，直到得到的子曲线足够小，可能是有好处的。例如，若我们选择在 t = 0. 处分割曲线，那么就可以把 De Casteljau 算法稍作优化，写成（把前一段代码里的 t 换成 0.5 并整理各项）：</p><pre><code>
+point splitBezierOptimize(point P[4], point P1[4], point P2[4])
+{
+    P1[0] = P[0], 
+    P1[1] = (P[0] + P[1]) / 2; 
+    P1[2] = (P[0] + 2P[1] + P[2]) / 4; 
+    P1[3] = P2[0] = (P[0] + 3(P[1] + P[2]) + P[3]) / 8;
+    P2[1] = (P[3] + 2P[2] + P[1]) / 4;
+    P2[2] = (P[2] + P[3]) / 2;
+    P2[3] = P[3];
+}
+</code></pre><h2>可交互的小程序</h2><p>为了更好地理解贝塞尔曲线如何工作，我们写了一个小的二维可交互小程序，让你在移动控制点时看到曲线形状如何变化。按 'r' 键可以随机化控制点的位置。注意默认用了七个控制点。你可以把这个配置理解成两条贝塞尔曲线，其中第一条曲线的末点与第二条曲线的首点相同。当控制点 P2、P3、P4 共线时，我们得到一条在 P3 处一阶连续的曲线（曲线在此处看起来是光滑的，没有断口）。两条曲线在接合点处<b>C1 连续</b>。如果你移动 P2 或 P4，使 P2、P3、P4 不再共线（也可以改为移动 P3），注意看 P3 处出现了断口。用七个控制点，可以把这条曲线理解成一条具有三个点（P0、P3、P6）和三条切线的曲线——前提是 P2、P3、P4 共线；若不共线则是四条切线（我们说切线在 P3 处断开）。要改变这些切线的长度与方向，可以移动点 P1、P2、P4、P5 的位置。你可以通过强制 P2、P3、P4 在你移动其中任一点时保持共线，来让切线 P2-P3 与 P3-P4 不断开。当然，你还可以继续加点，做出更长的曲线或更复杂的形状。</p><p>另外，如果你觉得摆弄这么多点太麻烦，可以按 'm' 键，只显示曲线的前四个点。这就是你能画出的最简单的贝塞尔曲线（只有四个点）。再按一次 'm' 键会切回七个控制点的示例。</p><p>+++</p><p>你的浏览器不支持 canvas</p><p>window.addEventListener("load", bezierApp, false);</p><p>+++</p><h2>接下来</h2><p>把贝塞尔曲线的原理推广到曲面是很直接的，这将是我们下一章的主题。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/geometry/bezier-curve-rendering-utah-teapot/bezier-curve.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/geometry/bezier-curve-rendering-utah-teapot/bezier-curve.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

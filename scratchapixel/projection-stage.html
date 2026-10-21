@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>投影阶段 - Scratchapixel 中文译本</title>
+<meta name="description" content="光栅化 · 投影阶段（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>投影阶段</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="overview-rasterization-algorithm.html">光栅化算法概览</a></li>
+<li><a style="font-weight:700" href="projection-stage.html">投影阶段</a></li>
+<li><a href="rasterization-stage.html">光栅化阶段</a></li>
+<li><a href="visibility-problem-depth-buffer-depth-interpolation.html">可见性问题、深度缓冲算法与深度插值</a></li>
+<li><a href="perspective-correct-interpolation-vertex-attributes.html">透视正确插值与顶点属性</a></li>
+<li><a href="rasterization-practical-implementation.html">光栅化：一个实际实现</a></li>
+</ol>
+</div>
+<h2>投影阶段</h2><p><b>阅读时间：14 分钟。</b></p><h2>快速回顾</h2><p>上一章我们对光栅化渲染技术作了一份高层概览。这项技术可以拆成两个主要阶段：先把三角形的顶点投影到画布上，再对三角形本身做光栅化。在这里，光栅化的意思是<b>把三角形的形状「拆散」成像素</b>或<b>栅格单元方块</b>——后者是过去对像素的叫法。本章我们重访第一步。前两门课里已经讨论过这个方法，所以这里不再重复讲解。如果你对透视投影背后的原理还有疑问，建议回去重看那两门课。不过本章会探讨几个与投影相关的新技术，它们在后面讲透视投影矩阵时很有用。我们会介绍一种新方法，把投影后顶点的坐标从屏幕空间重映射到 NDC（归一化设备坐标）空间。此外，我们还会深入讨论 z 坐标在光栅化算法中的作用，以及它在投影阶段的处理方式。</p><p>如上一章所述，请记住光栅化渲染技术的首要目标是解决可见性、也就是隐藏面的问题，即判断三维物体的哪些部分可见、哪些部分被遮挡。</p><h2>投影：我们要解决什么问题？</h2><p>在光栅化算法的这个阶段，我们要解决什么问题？如上一章所解释的，光栅化的原理是判断图像中的像素是否与三角形重叠。要做到这一点，我们首先要把三角形投影到画布上，再把它们的坐标从屏幕空间转换到光栅空间。这样像素和三角形就定义在同一个空间里，我们才能比较各自的坐标（也就是说，可以把给定像素的坐标与三角形顶点的光栅空间坐标作对照）。</p><p>这一阶段的目标，是把构成三角形的顶点从相机空间转换到光栅空间。</p><h2>投影顶点：留意 z 坐标！</h2><p>前两门课里我们提到，计算一个三维点的光栅坐标时，最终需要的只是它的 x、y 坐标（即该三维点在图像中的位置）。简单回顾一下：这些二维坐标的求法，是把相机空间中该三维点的 x、y 坐标分别除以该点的 z 坐标（我们称之为透视除法），再把得到的二维坐标从屏幕空间重映射到 NDC 空间，最后从 NDC 空间重映射到光栅空间。请记住，由于图像平面位于近裁剪面上，我们还需要把 x、y 坐标乘以近裁剪面的距离。前两门课对此过程有非常详细的讲解。</p><p>$$
+\begin{array}{l}
+P_{\text{screen}}.x = \dfrac{ \text{near} \times P_{\text{camera}}.x }{ -P_{\text{camera}}.z }\\
+P_{\text{screen}}.y = \dfrac{ \text{near} \times P_{\text{camera}}.y }{ -P_{\text{camera}}.z }\\
+\end{array}
+$$</p><p>注意，透视投影这个概念大概相当古老（如果你能找到最早解释它的原始文献，请告诉我们）。不过，1970 到 1990 年代奠定 3D 计算机图形学基础的研究者们常引用的一处来源，是 Maxwell 于 1946 年出版的一本书，书名为《The Methods of Plane Projective Geometry Based on the Use of General Homogeneous Coordinates》。</p><p>到目前为止，我们把屏幕空间中的点当作本质上的二维点（透视除法之后并不需要用到点的 z 坐标）。但从现在起，我们会把屏幕空间中的点声明为三维点，并把它们的 z 坐标设为相机空间中对应点的 z 坐标，如下：</p><p>$$
+\begin{array}{l}
+P_{\text{screen}}.x = \dfrac{ \text{near} \times P_{\text{camera}}.x }{ -P_{\text{camera}}.z }\\
+P_{\text{screen}}.y = \dfrac{ \text{near} \times P_{\text{camera}}.y }{ -P_{\text{camera}}.z }\\
+P_{\text{screen}}.z = { -P_{\text{camera}}.z }\\
+\end{array}
+$$</p><p>此时，建议把投影后点的 z 坐标设为原始点 z 坐标的相反数——如你现在所知，原始点的 z 坐标是负值。处理正的 z 坐标会让后面的事情简单一些（不过这并不是必须的）。</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterizer-z.png" alt=""><figcaption><b>图 1：</b>当相机空间中的两个顶点得到相同的二维光栅坐标时，我们可以用原顶点的 z 坐标判断哪一个在前（因而哪一个可见）。</figcaption></figure><p><b>在相机空间中记录顶点的 z 坐标，对解决可见性问题至关重要</b></p><p>观察图 1，就能更清楚地理解为什么必须记录相机空间中的顶点 z 坐标。设想两个顶点 v1 和 v2，它们投影到画布后得到完全相同的光栅坐标（如图 1 所示）。如果先投影 v1 再投影 v2，那么图像中 v2 会显得可见，而实际上该可见的是 v1（因为 v1 明显在 v2 前面）。但如果我们在保存顶点的二维光栅坐标时一并保存它们的 z 坐标，那么无论顶点按什么顺序投影，都能判断出哪个点离相机最近，正如下面的代码片段所示。</p><pre><code>
+// 投影 v2
+Vec3f v2screen;
+v2screen.x = near * v2camera.x / -v2camera.z;
+v2screen.y = near * v2camera.y / -v2camera.z;
+v2screen.z = -v2camera.z;
+
+Vec3f v1screen;
+v1screen.x = near * v1camera.x / -v1camera.z;
+v1screen.y = near * v1camera.y / -v1camera.z;
+v1screen.z = -v1camera.z;
+
+// 如果两个顶点在图像中的坐标相同，就比较它们的 z 坐标
+if (v1screen.x == v2screen.x &amp;&amp; v1screen.y == v2screen.y &amp;&amp; v1screen.z &lt; v2screen.z) {
+    // 如果 v1.z 小于 v2.z，就把 v1 存入帧缓冲
+    ....
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/rasterization/rasterizer-z2.png?" alt=""><figcaption><b>图 2：</b>像素所覆盖的三角形表面上的点，可以通过对构成这些三角形的顶点插值来确定。详见第 4 章。</figcaption></figure><p>虽然我们关注的是渲染三角形而不是单个顶点，刚才探讨的方法同样适用于三角形。具体来说，我们用三角形顶点的坐标来定位像素所覆盖的三角形上那个点的位置（包括它的 z 坐标）。这个概念如图 2 所示。如果一个像素与两个或更多三角形重叠，我们可以算出像素所覆盖的三角形上各点的位置，再用这些点的 z 坐标（就像前面用顶点的 z 坐标那样）判断哪个三角形离相机最近。这一方法将在 <a href="visibility-problem-depth-buffer-depth-interpolation.html">第 4 章（深度缓冲：通过插值求采样点的深度值）</a>.. 中详细解释。</p><h2>屏幕空间也是三维的</h2><figure><img src="https://scratchapixel.com/images/rasterization/screen-space-3D.png?" alt=""><figcaption><b>图 3：</b>屏幕空间是三维的（中间那幅图）。</figcaption></figure><p>要从相机空间过渡到屏幕空间，而这个过程里会发生透视除法，我们需要：</p><ul><li><p>执行透视除法，即把相机空间中点的 x、y 坐标除以该点的 z 坐标。</p><p>$$
+  \begin{array}{l}
+  P_{\text{screen}}.x = \dfrac{ \text{near} \times P_{\text{camera}}.x }{ -P_{\text{camera}}.z }\\
+  P_{\text{screen}}.y = \dfrac{ \text{near} \times P_{\text{camera}}.y }{ -P_{\text{camera}}.z }\\
+  \end{array}
+  $$</p></li><li><p>此外，把投影后点的 z 坐标设为相机空间中原始点 z 坐标的相反数。</p><p>$$
+  P_{\text{screen}}.z = { -P_{\text{camera}}.z }
+  $$</p></li></ul><p>这实际上意味着我们投影得到的点不只是一个二维点，而是一个三维点。换句话说，屏幕空间是三维的，不是二维的。<a href="http://en.wikipedia.org/wiki/Edwin_Catmull" target="_blank" rel="noreferrer noopener">Ed-Catmull</a> 在他的论文中写道：</p><blockquote><p>「屏幕空间也是三维的，但物体经历了透视变形，使得把物体正交投影到 x-y 平面上会得到预期的透视图像」（Edwin Catmull 的论文，1974）。</p></blockquote><p>同样，Paul S. Heckbert 的论文《Fundamentals of Texture Mapping and Image Warping》中写道：</p><blockquote><p>「三维屏幕空间是显示器的三维坐标系，是一个带像素坐标 (x, y) 和深度 z（用于 z 缓冲）的透视空间。它通过相机参数（位置、朝向与视场角）与世界空间相联系。最后，二维屏幕空间是三维屏幕空间去掉 z 之后的二维子集。」</p></blockquote><p>注意他在这里区分了三维屏幕空间与二维屏幕空间。不过他强调，在流程的某个环节，被投影的点同时包含顶点在屏幕上的二维坐标和第三个 z 坐标，后者代表该点原顶点的深度值。这可以看作三维空间中的一个三维点。</p><figure><img src="https://scratchapixel.com/images/rasterization/screen-space-3D2.png?" alt=""><figcaption><b>图 4：</b>屏幕空间中物体的图像，可以通过沿与 x-y 图像平面正交（或者你更喜欢的话：垂直）的直线作投影来形成。</figcaption></figure><p>现在你应该能领会这些引文的分量，也能看懂图 3 所示的过程了。起初，几何体的顶点定义在相机空间中（如最上面那幅图所示）。接着，每个顶点经历一次透视除法，即顶点的 x、y 坐标被除以它的 z 坐标。如前所述，我们还会把所得投影点的 z 坐标设为原始顶点 z 坐标的相反数。这一操作意味着屏幕空间坐标系中 z 轴方向发生了改变，使 z 轴朝内而不是朝外，正如你在图 3 中间那幅图所见。重要的是，这个过程得到的物体不仅是原物体的变形版本，而且是一个三维物体。</p><p>此外，Edwin Catmull 所说的「把物体正交投影到 x-y 平面上，会得到预期的透视图像」，意思是：物体一旦进入屏幕空间，从物体沿垂直于 x-y 图像平面的方向画线到画布，就得到该物体的透视表示（如图 4 所示）。这个观察很有意思，因为它暗示图像生成过程可以看作<b>先做透视投影，再做正交投影</b>。如果你此刻还不太清楚透视投影与正交投影的区别，不用担心，那是下一门课的重点。不过请记住这个观察，它后面会派上用场。</p><h2>把屏幕空间坐标重映射到 NDC 空间</h2><p>前几门课里我们讲过，进入屏幕空间之后，投影点的 x、y 坐标需要重映射到 NDC（归一化设备坐标）空间。我们也提到，在 NDC 空间中，画布上的点的 x、y 坐标落在 [0,1] 区间内。但在 GPU 处理的语境下，NDC 空间中的坐标落在 [-1,1] 区间。这个分歧属于我们必须应对的约定之一。虽然可以沿用 [0,1] 的约定，但跟 GPU 光栅化的标准保持一致更好。</p><p>你可能会问，我们为什么不一上来就采用 [-1,1] 的约定。原因有几个。其一，在我们看来，「归一化」这个词应当意味着被归一化的值落在 [0,1] 区间内。另外，认识到各种渲染系统对 NDC 空间采用不同的约定也有好处。例如 RenderMan 规范把 NDC 空间定义为 [0,1] 区间。</p><p>因此，点从相机空间变换到屏幕空间之后，接下来的步骤是把 x 坐标从 [l,r] 区间、y 坐标从 [b,t] 区间重映射到 [-1,1] 区间。其中 \(l\)、\(r\)、\(b\)、\(t\) 分别对应画布的左、右、下、上坐标。</p><details open><p>\(l\)、\(r\)、\(b\)、\(t\) 这些坐标是什么、该怎么算，在 <a href="implementing-virtual-pinhole-camera.html">针孔相机模型：实现虚拟针孔相机</a>）这门课里有说明。简单回顾一下：这些坐标取决于焦距（以 mm 或英寸计）、胶片孔径的宽度与高度（以 mm 或英寸计）以及近裁剪面。</p></details><p>重新整理这些项，就能推出完成所需重映射的公式。已知 \(l < x < r\)，其中 x 表示屏幕空间中某个三维点的 x 坐标（记住屏幕空间中的点现在视为三维点），从两端减去 \(l\) 得到：</p><p>$$0 < x - l < r - l$$</p><p>把各项都除以 \(r-l\)，得到：</p><p>$$
+0 < \dfrac{x - l}{r - l} < 1
+$$</p><p>把公式中间那一项展开，得到：</p><p>$$0 < \dfrac{x}{r - l} - \dfrac{l}{r - l} < 1$$</p><p>把各项都乘以 2，得到：</p><p>$$0 < 2 \cdot \dfrac{x}{r - l} - 2 \cdot \dfrac{l}{r - l} < 2$$</p><p>各项都减去 1，得到：</p><p>$$-1 < 2 \cdot \dfrac{x}{r - l} - 2 \cdot \dfrac{l}{r-l} - 1 < 1$$</p><p>展开并合并各项，我们得到：</p><p>$$
+\begin{array}{l}
+-1 < 2 \cdot \dfrac{x}{r - l} + \dfrac{-2l + l - r}{r-l} < 1 \\
+-1 < 2 \cdot \dfrac{x}{r - l} + \dfrac{-l - r}{r-l} < 1 \\
+-1 < \color{red}{\dfrac{2x}{r - l}} \color{green}{- \dfrac{r + l}{r-l}} < 1
+\end{array}
+$$</p><p>这个公式很关键，因为其中间红色的项和绿色的项会成为透视投影矩阵的系数，下一门课我们会讲到。眼下这个公式用来<b>把屏幕空间中点的 x 坐标重映射到 NDC 空间</b>，保证画布上任何点在 NDC 空间中都落在 [-1,1] 区间内。对 y 坐标套用同样的推导，得到：</p><p>$$-1 < \color{red}{\dfrac{2y}{t - b}} \color{green}{- \dfrac{t + b}{t-b}} < 1$$</p><h2>汇总一下</h2><p>到这门课结束，我们就有能力执行光栅化算法的第一个阶段，它可分为两步：</p><ul><li><p><b>把点从相机空间转换到屏幕空间。</b>这一步本质上就是把点投影到画布上。务必记住，我们还要保留原始点的 z 坐标。屏幕空间中的点是三维的，它的 z 坐标在后面解决可见性问题时非常关键。</p><p>$$
+  \begin{array}{l}
+  P_{\text{screen}}.x = \dfrac{ \text{near} \times P_{\text{camera}}.x }{ -P_{\text{camera}}.z }\\
+  P_{\text{screen}}.y = \dfrac{ \text{near} \times P_{\text{camera}}.y }{ -P_{\text{camera}}.z }\\
+  P_{\text{screen}}.z = { -P_{\text{camera}}.z }\\
+  \end{array}
+  $$</p></li><li><p><b>用下面的公式把屏幕空间中这些点的 x、y 坐标转换到 NDC 空间：</b> </p><p>$$
+  \begin{array}{l}
+  -1 < \dfrac {2x}{(r  -l)} - \dfrac {r + l}{(r-l)} < 1\\
+  -1 < \dfrac {2y}{(t  - b)} - \dfrac {t + b}{(t-b)} < 1
+  \end{array}
+  $$</p><p>这里 \(l\)、\(r\)、\(b\)、\(t\) 分别表示画布的左、右、下、上坐标。</p></li></ul><p>要从 NDC 空间过渡到光栅空间，只需把 NDC 空间中的 x、y 坐标重映射到 [0,1] 区间，再把得到的数分别乘以图像宽度和高度（注意在光栅空间中，y 轴方向与 NDC 空间相反）。这个转换过程体现在下面的代码片段中：</p><pre><code>
+float nearClippingPlane = 0.1;
+// 相机空间中的点
+Vec3f pCamera;
+worldToCamera.multVecMatrix(pWorld, pCamera);
+// 转换为屏幕空间
+Vec2f pScreen;
+pScreen.x = nearClippingPlane * pCamera.x / -pCamera.z;
+pScreen.y = nearClippingPlane * pCamera.y / -pCamera.z;
+// 现在把点从屏幕空间转换到 NDC 空间（区间 [-1,1]）
+Vec2f pNDC;
+pNDC.x = 2 * pScreen.x / (r - l) - (r + l) / (r - l);
+pNDC.y = 2 * pScreen.y / (t - b) - (t + b) / (t - b);
+// 转换为光栅空间，并把点的 z 坐标设为 -pCamera.z
+Vec3f pRaster;
+pRaster.x = (pNDC.x + 1) / 2 * imageWidth;
+// 在光栅空间中，y 方向是反向的
+pRaster.y = (1 - pNDC.y) / 2 * imageHeight;
+// 保存点在相机空间中的 z 坐标（作为正值）
+pRaster.z = -pCamera.z;
+</code></pre><p>需要注意的是，这里光栅空间中点或顶点的坐标仍然定义为浮点数，而不是整数（像素坐标通常是整数）。</p><h2>接下来做什么？</h2><p>把三角形投影到画布、并把这些投影后的顶点转换到光栅空间之后，三角形的顶点和像素就处在同一个坐标系里了。现在我们可以遍历图像中的所有像素，用某种技术判断它们是否落在投影到屏幕上的平面三角形内部。这将是下一章的重点。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/projection-stage.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/projection-stage.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光线追踪多边形网格（第 2 部分） - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪多边形网格 · 光线追踪多边形网格（第 2 部分）（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光线追踪多边形网格（第 2 部分）</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="polygon-to-triangle-mesh.html">从多边形到三角网格</a></li>
+<li><a href="ray-tracing-polygon-mesh-part-1.html">光线追踪多边形网格（第 1 部分）</a></li>
+<li><a style="font-weight:700" href="ray-tracing-polygon-mesh-part-2.html">光线追踪多边形网格（第 2 部分）</a></li>
+</ol>
+</div>
+<h2>光线追踪多边形网格（第 2 部分）</h2><p><b>阅读时间：9 分钟。</b></p><p>现在我们来看看，怎么把光栅化课程里渲染出的那张图重现出来。我们已经知道如何载入一个圆盘几何体文件，并用光线追踪渲染这个物体。把这两项技术放进同一个程序里。理论上，如果一切正常（数学从不说谎），我们应该得到两张完全相同的图像。不过，如果前面关于光线追踪学到和说到的都成立，光线追踪应该比光栅化更耗时。我们来验证这些假设。</p><p>首先，我们把 <a href="polygon-mesh-file-formats.html">多边形网格</a> 课程里讲过的几何体文件读取函数整合进程序代码。从文件中读出的所有数据（面数、面索引数组与顶点索引数组、点坐标数组、法线数组与 st 坐标数组）都传给 <code>TriangleMesh</code> 的构造函数（第 5 行）。</p><pre><code>
+class TriangleMesh : public Object 
+{ 
+public: 
+    // 由面索引数组和顶点索引数组构建三角网格
+    TriangleMesh( 
+        const uint32_t nfaces, 
+        const std::unique_ptr&amp;ltuint32_t []&gt; &amp;faceIndex, 
+        const std::unique_ptr&amp;ltuint32_t []&gt; &amp;vertsIndex, 
+        const std::unique_ptr&amp;ltVec3f []&gt; &amp;verts, 
+        std::unique_ptr&amp;ltVec3f []&gt; &amp;normals, 
+        std::unique_ptr&amp;ltVec2f []&gt; &amp;st) : 
+        numTris(0) 
+    { 
+        ... 
+    } 
+}; 
+ 
+TriangleMesh* loadPolyMeshFromFile(const char *file) 
+{ 
+    std::ifstream ifs; 
+    try { 
+        ifs.open(file); 
+        if (ifs.fail()) throw; 
+        std::stringstream ss; 
+        ss &lt;&lt; ifs.rdbuf(); 
+        uint32_t numFaces; 
+        ss &gt;&gt; numFaces; 
+        std::unique_ptr&amp;ltuint32_t []&gt; faceIndex(new uint32_t[numFaces]); 
+        uint32_t vertsIndexArraySize = 0; 
+        // 读取面索引数组
+        for (uint32_t i = 0; i &lt; numFaces; ++i) { 
+            ss &gt;&gt; faceIndex[i]; 
+            vertsIndexArraySize += faceIndex[i]; 
+        } 
+        std::unique_ptr&amp;ltuint32_t []&gt; vertsIndex(new uint32_t[vertsIndexArraySize]); 
+        uint32_t vertsArraySize = 0; 
+        // 读取顶点索引数组
+        for (uint32_t i = 0; i &lt; vertsIndexArraySize; ++i) { 
+            ss &gt;&gt; vertsIndex[i]; 
+            if (vertsIndex[i] &gt; vertsArraySize) vertsArraySize = vertsIndex[i]; 
+        } 
+        vertsArraySize += 1; 
+        // 读取顶点
+        std::unique_ptr&amp;ltVec3f []&gt; verts(new Vec3f[vertsArraySize]); 
+        for (uint32_t i = 0; i &lt; vertsArraySize; ++i) { 
+            ss &gt;&gt; verts[i].x &gt;&gt; verts[i].y &gt;&gt; verts[i].z; 
+        } 
+        // 读取法线
+        std::unique_ptr&amp;ltVec3f []&gt; normals(new Vec3f[vertsIndexArraySize]); 
+        for (uint32_t i = 0; i &lt; vertsIndexArraySize; ++i) { 
+            ss &gt;&gt; normals[i].x &gt;&gt; normals[i].y &gt;&gt; normals[i].z; 
+        } 
+        // 读取 st 坐标
+        std::unique_ptr&amp;ltVec2f []&gt; st(new Vec2f[vertsIndexArraySize]); 
+        for (uint32_t i = 0; i &lt; vertsIndexArraySize; ++i) { 
+            ss &gt;&gt; st[i].x &gt;&gt; st[i].y; 
+        } 
+ 
+        return new TriangleMesh(numFaces, faceIndex, vertsIndex, verts, normals, st); 
+    } 
+    catch (...) { 
+        ifs.close(); 
+    } 
+    ifs.close(); 
+ 
+    return nullptr; 
+} 
+ 
+int main(int argc, char **argv) 
+{ 
+    ... 
+    std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; objects; 
+    TriangleMesh *mesh = loadPolyMeshFromFile("./cow.geo"); 
+    if (mesh != nullptr) objects.push_back(std::unique_ptr&amp;ltObject&gt;(mesh)); 
+ 
+    // 最后渲染
+    render(options, objects, 0); 
+ 
+    return 0; 
+}
+</code></pre><p><code>readGeometryFile()</code> 函数返回一个指针，指向动态分配出来的 <code>TriangleMesh</code> 类实例。这个实例保存着我们刚读入的物体的几何数据（如果原始数据里包含顶点数超过 3 的面，此时几何体已经三角化）。该实例被加入物体列表，随后传给 <code>render()</code> 函数（第 3 行）。</p><pre><code>
+void render( 
+    const Options &amp;options, 
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects, 
+    const uint32_t &amp;frame) 
+{ 
+    ... 
+    for (uint32_t j = 0; j &lt; options.height; ++j) { 
+        for (uint32_t i = 0; i &lt; options.width; ++i) { 
+            ... 
+            *(pix++) = castRay(orig, dir, objects, options); 
+        } 
+    } 
+    ... 
+}
+</code></pre><p>程序其余部分就是光线追踪器的常规写法。我们遍历图像中的每个像素，生成一条主光线（其方向与原点由相机到世界空间的 4x4 变换矩阵变换），并检测这条主光线是否与场景中的任何物体相交。在 <code>castRay()</code> 里，我们调用 <code>trace()</code> 函数，在其中遍历 <code>objects</code> 列表中的所有物体。</p><pre><code>
+bool trace( 
+    const Vec3f &amp;orig, const Vec3f &amp;dir, 
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects, 
+    float &amp;tNear, uint32_t &amp;index, Vec2f &amp;uv, Object **hitObject) 
+{ 
+    *hitObject = nullptr; 
+    for (uint32_t k = 0; k &lt; objects.size(); ++k) { 
+        float tNearTriangle = kInfinity; 
+        uint32_t indexTriangle; 
+        Vec2f uvTriangle; 
+        if (objects[k]-&amp;gtintersect(orig, dir, tNearTriangle, indexTriangle, uvTriangle) &amp;&amp; tNearTriangle &lt; tNear) { 
+            *hitObject = objects[k].get(); 
+            tNear = tNearTriangle; 
+            index = indexTriangle; 
+            uv = uvTriangle; 
+        } 
+    } 
+ 
+    return (*hitObject != nullptr); 
+} 
+ 
+Vec3f castRay( 
+    const Vec3f &amp;orig, const Vec3f &amp;dir, 
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects, 
+    const Options &amp;options) 
+{ 
+    Vec3f hitColor = options.backgroundColor; 
+    float tnear = kInfinity; 
+    Vec2f uv; 
+    uint32_t index = 0; 
+    Object *hitObject = nullptr; 
+    if (trace(orig, dir, objects, tnear, index, uv, &amp;hitObject)) { 
+        Vec3f hitPoint = orig + dir * tnear; 
+        Vec3f hitNormal; 
+        Vec2f hitTexCoordinates; 
+        hitObject-&amp;gtgetSurfaceProperties(hitPoint, dir, index, uv, hitNormal, hitTexCoordinates); 
+        float NdotView = std::max(0.f, hitNormal.dotProduct(-dir)); 
+        const int M = 10; 
+        float checker = (fmod(hitTexCoordinates.x * M, 1.0) &gt; 0.5) ^ (fmod(hitTexCoordinates.y * M, 1.0) &lt; 0.5); 
+        float c = 0.3 * (1 - checker) + 0.7 * checker; 
+ 
+        hitColor = c * NdotView; 
+    } 
+ 
+    return hitColor; 
+}
+</code></pre><p>最后调用三角网格的 <code>intersect()</code> 方法。为检测光线是否与网格相交，我们对每个三角形调用光线-三角形求交测试函数。如上一章所述，在这个过程中我们还会记录最近的交点距离，以防光线与不止一个三角形相交（我们还需要记录相交三角形的索引以及交点的重心坐标，着色时会用到这些信息）。</p><pre><code>
+bool intersect(const Vec3f &amp;orig, const Vec3f &amp;dir, float &amp;tNear, uint32_t &amp;triIndex, Vec2f &amp;uv) const 
+{ 
+    uint32_t j = 0; 
+    bool isect = false; 
+    for (uint32_t i = 0; i &lt; numTris; ++i) { 
+        const Vec3f &amp;v0 = P[trisIndex[j]]; 
+        const Vec3f &amp;v1 = P[trisIndex[j + 1]]; 
+        const Vec3f &amp;v2 = P[trisIndex[j + 2]]; 
+        float t = kInfinity, u, v; 
+        if (rayTriangleIntersect(orig, dir, v0, v1, v2, t, u, v) &amp;&amp; t &lt; tNear) { 
+            tNear = t; 
+            uv.x = u; 
+            uv.y = v; 
+            triIndex = i; 
+            isect = true; 
+        } 
+        j += 3; 
+    } 
+ 
+    return isect; 
+}
+</code></pre><p>最后，如果光线与网格相交，我们在 <code>castRay()</code> 函数里执行着色（第 47-56 行）。先调用相交网格的 <code>getGeometryData()</code> 方法，计算交点处的法线与纹理坐标。然后用这些信息生成棋盘格图案并计算朝向比，两者混合后构成最终的像素颜色（第 56 行）。</p><pre><code>
+class TriangleMesh : public Object 
+{ 
+    ... 
+    void getSurfaceProperties( 
+        const Vec3f &amp;hitPoint, 
+        const Vec3f &amp;viewDirection, 
+        const uint32_t &amp;triIndex, 
+        const Vec2f &amp;uv, 
+        Vec3f &amp;hitNormal, 
+        Vec2f &amp;hitTextureCoordinates) const 
+    { 
+        // 面法线
+        const Vec3f &amp;v0 = P[trisIndex[triIndex * 3]]; 
+        const Vec3f &amp;v1 = P[trisIndex[triIndex * 3 + 1]]; 
+        const Vec3f &amp;v2 = P[trisIndex[triIndex * 3 + 2]]; 
+        hitNormal = (v1 - v0).crossProduct(v2 - v0); 
+        hitNormal.normalize(); 
+ 
+        // 纹理坐标
+        const Vec2f &amp;st0 = texCoordinates[triIndex * 3]; 
+        const Vec2f &amp;st1 = texCoordinates[triIndex * 3 + 1]; 
+        const Vec2f &amp;st2 = texCoordinates[triIndex * 3 + 2]; 
+        hitTextureCoordinates = (1 - uv.x - uv.y) * st0 + uv.x * st1 + uv.y * st2; 
+ 
+        // 顶点法线
+        /* 
+        const Vec3f &amp;n0 = N[triIndex * 3]; 
+        const Vec3f &amp;n1 = N[triIndex * 3 + 1]; 
+        const Vec3f &amp;n2 = N[triIndex * 3 + 2]; 
+        hitNormal = (1 - uv.x - uv.y) * n0 + uv.x * n1 + uv.y * n2; 
+        */ 
+    } 
+    ... 
+}; 
+ 
+Vec3f castRay( 
+    const Vec3f &amp;orig, const Vec3f &amp;dir, 
+    const std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; &amp;objects, 
+    const Options &amp;options) 
+{ 
+    Vec3f hitColor = options.backgroundColor; 
+    float tnear = kInfinity; 
+    Vec2f uv; 
+    uint32_t index = 0; 
+    Object *hitObject = nullptr; 
+    if (trace(orig, dir, objects, tnear, index, uv, &amp;hitObject)) { 
+        Vec3f hitPoint = orig + dir * tnear; 
+        Vec3f hitNormal; 
+        Vec2f hitTexCoordinates; 
+        hitObject-&amp;gtgetSurfaceProperties(hitPoint, dir, index, uv, hitNormal, hitTexCoordinates); 
+        float NdotView = std::max(0.f, hitNormal.dotProduct(-dir)); 
+        const int M = 10; 
+        float checker = (fmod(hitTexCoordinates.x * M, 1.0) &gt; 0.5) ^ (fmod(hitTexCoordinates.y * M, 1.0) &lt; 0.5); 
+        float c = 0.3 * (1 - checker) + 0.7 * checker; 
+ 
+        hitColor = c * NdotView; //Vec3f(uv.x, uv.y, 0); 
+    } 
+ 
+    return hitColor; 
+}
+</code></pre><p>关于着色补一句：如果理解着色相关代码时需要帮助，不必太担心。着色简介里会讲。注意这段代码和光栅化课程里用过的很相似。首先，我们用交点的重心坐标插值出物体实际的 st 或纹理坐标。交点最终的纹理坐标随后用来计算棋盘格图案。至于法线，我们有两个选择。面法线——光栅化课程里讲过——可以通过对三角形的两条边取叉积算得。我们也可以用交点的重心坐标插值顶点法线（从几何体文件读入），方式和插值纹理坐标一样。如前所述，这段代码很快就会讲到（见着色简介课程）。</p><h2>结果</h2><p>先看视觉结果。如你所见，光线追踪器生成的图像与光栅化器生成的图像完全相同（背景色除外）。正如本课开头所说，数学从不说谎。只要做对了，两种渲染技术应该给出完全一样的结果。至少我们证明了情况确实如此，这也是验证程序做对了的一种方式。万岁！</p><figure><img src="https://scratchapixel.com/images/ray-triangle-mesh/cow-comparaison.gif?" alt=""></figure><p>现在比较渲染时间。光线追踪：15.22 秒。光栅化器：0.00628 秒（两个程序在同一台机器上运行）。正如预期，在朴素实现下，光线追踪慢了 2421 倍。这是相当大的差距。好在如上一章所说，可以用加速结构来改善。本节不会讲加速结构，但你可以在「高级光线追踪」部分找到相关课程。尽管慢，接下来的课程里我们仍会继续用光线追踪来学习着色。如前所述，光线追踪是更适合着色的技术。着色涉及计算空间中各点之间的可见性，而光线追踪正擅长于此。它提供了一个统一的框架，既能解决可见性问题，也能完成着色。</p><h2>结论</h2><p>恭喜。走到学习旅程的这一步，你已经知道光线追踪与光栅化的区别，知道如何实现这两种算法，并能生成从给定视点观察某个 3D 模型的图像，而且无论用哪种技术渲染，这张图都一致。你也已经能够判断两种方法在性能上的差异。下一课我们会学习变换物体。之后就准备好开始第一堂讲着色的课程了。</p><h2>练习</h2><p>计算物体的包围盒，并实现光线-包围盒求交测试来加速渲染。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-polygon-mesh/ray-tracing-polygon-mesh-part-2.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-polygon-mesh/ray-tracing-polygon-mesh-part-2.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

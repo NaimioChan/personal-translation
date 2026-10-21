@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光线与三角形求交：几何解法 - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪：渲染三角形 · 光线与三角形求交：几何解法（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光线与三角形求交：几何解法</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="why-are-triangles-useful.html">三角形为什么有用？</a></li>
+<li><a href="geometry-of-a-triangle.html">三角形的几何</a></li>
+<li><a style="font-weight:700" href="ray-triangle-intersection-geometric-solution.html">光线与三角形求交：几何解法</a></li>
+<li><a href="single-vs-double-sided-triangle-backface-culling.html">单面与双面三角形以及背面剔除</a></li>
+<li><a href="barycentric-coordinates.html">重心坐标</a></li>
+<li><a href="moller-trumbore-ray-triangle-intersection.html">Möller-Trumbore 算法</a></li>
+</ol>
+</div>
+<h2>光线与三角形求交：几何解法</h2><p><b>阅读时间：16 分钟。</b></p><h2>光线与三角形求交：几何解法</h2><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-setup.png" alt=""><figcaption><b>图 1：</b>光线与三角形的交点。三角形位于一个平面内。\(t\) 是光线原点到交点的距离。</figcaption></figure><p>前面几段里我们学会了如何计算平面的法线。接下来需要确定点 \(P\) 的位置（有些插图里我们也写成「Phit」），也就是光线与平面的交点。</p><h3> 第 1 步：求 P</h3><p>我们知道 \(P\) 位于由原点 \(O\) 和方向 \(R\) 所定义的光线上的某个位置。上一课我们用的是 \(D\)，但这一课改用 \(R\)，以免与平面方程里的 \(D\) 混淆。光线的参数方程是（公式 1）：</p><p>$$P = O + tR$$</p><p>其中 \(t\) 是光线原点 \(O\) 到 \(P\) 的距离。要求出 \(P\)，必须先求出 \(t\)（参见图 1）。我们还知道什么？我们已经算出了平面法线和平面方程（2），它是（更多细节见<a href="ray-plane-and-ray-disk-intersection.html">上一课</a>中关于光线与平面求交的一章）：</p><p>$$
+\begin{array}{l}
+Ax + By + Cz + D = 0 \\
+D = -(Ax + By + Cz)
+\end{array}
+$$</p><p>其中 \(A\)、\(B\)、\(C\) 是平面法线（\({N}_{\text{plane}} = (A, B, C)\)）的分量（或坐标），\(D\) 是原点 \((0, 0, 0)\) 到该平面的距离。如果还是不清楚，就想象一张过原点的纸，你绕原点转动它。等你对平面的朝向满意了，再沿垂直于纸面的方向把它从原点移开一段距离。变量 \(x\)、\(y\)、\(z\) 代表这个平面上任意一点的坐标。</p><p>已知平面法线，并且三角形的顶点 \(v_0\)、\(v_1\)、\(v_2\) 都落在该平面上，就可以算出 \(D\)。这里我们选 \(v_0\) 来做（你也可以选 \(v_1\) 或 \(v_2\)）：</p><pre><code>
+float D = -dotProduct(N, v0);
+// 或者，如果你想直接计算点积：
+float D = -(N.x * v0.x + N.y * v0.y + N.z * v0.z);
+</code></pre><p>我们还知道，点 \(P\) 是光线与平面的交点，因此它落在该平面内。于是可以把公式 1 里的 \(O + tR\) 替换成 \({P}\)（公式 2），解出 \(t\)（公式 3）：</p><p>$$
+\begin{array}{l}
+A(O_x + tR_x) + B(O_y + tR_y) + C(O_z + tR_z) + D = 0 \\
+t = -\dfrac{(A \cdot O_x + B \cdot O_y + C \cdot O_z + D)}{(A \cdot R_x + B \cdot R_y + C \cdot R_z)} \\
+t = -\dfrac{{N} \cdot {O} + D}{{N} \cdot {R}}
+\end{array}
+$$</p><pre><code>
+float t = -(dot(N, orig) + D) / dot(N, dir);
+</code></pre><p>算出 \(t\) 之后，现在就可以求 \(P\) 的位置了：</p><pre><code>
+Vec3f Phit = orig + t * dir;
+</code></pre><p>哇！不错，这还挺简单的，但记住：这只给出了光线与三角形所在平面的交点。交点本身仍可能落在三角形边界之外。所以事情还没完，我们还得测试交点 \(P\) 是否在三角形内部（或落在三角形的某条边或某个顶点上）。不过在动手之前，有两个重要情形需要先考虑。</p><h3> 光线与三角形平行</h3><p>如果光线与平面平行，它们就不会相交（参见图 2）。为了保证稳健，一旦出现这种情况我们必须处理。这种情形很容易识别：如果三角形与光线平行，那么三角形法线与光线方向垂直。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/trirays.png?" alt=""><figcaption><b>图 2：</b>可能出现几种情形：光线可以与三角形相交、错过它，或与它平行。当光线与三角形平行时不可能相交。这种情形出现在三角形法线与光线方向垂直时（这两个向量的点积为 0）。</figcaption></figure><p>我们知道，两个垂直向量的点积为 0。看公式 3 的分母（分数线下方的那一项），它计算的是三角形法线 \(N\) 与光线方向 \(R\) 的点积。代码必须足够稳健，以防出现除零。当这一项等于 0 时，光线与三角形平行，说明没有交点。因此，在计算 \(t\) 之前，我们先求 \(N \cdot R\)；若结果为 0，函数返回 false，表示没有交点。</p><h3> 三角形在光线的「后方」</h3><figure><img src="https://scratchapixel.com/images/ray-triangle/tribehind.png?" alt=""><figcaption><b>图 3：</b>如果三角形在光线的「后方」，就不该把它算作交点。只要用公式 3 算出的 \(t\) 小于 0，交点就位于光线原点的后方，应当丢弃。这种情况下没有交点。</figcaption></figure><p>到目前为止，我们都假定三角形总是位于击中它的光线的前方。但如果光线位于三角形「后方」（已经越过三角形）而方向不变呢？顺便说一句，别把这个和光线从背面击中三角形的情形搞混。所以这里有两种情形：</p><ul><li><p><b>情形 1</b>：光线可以从正面或背面击中三角形。此时光线在三角形的前方或后方，但光线方向始终朝着目标。</p></li><li><p><b>情形 2</b>：第二种情形好比一个弓箭手站在靶子前方或后方，但箭总是朝前射。在虚拟世界里，站在靶子后面朝前射箭，仍可能射中靶子。这多酷啊？</p></li></ul><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-font-back.png" alt=""></figure><p>这里我们关心的是<b>情形 2</b>。当弓箭手站在靶子后面朝前射箭时，箭通常不该射中靶子——它应该落在弓箭手前方的某个地方，从此永远丢失。类似地，在我们的情形里，如果光线从三角形后方出发并且正在远离它，那么这个三角形就不该可见。然而在这种情形下，公式 3 仍可能给出一个有效结果。所幸这种情况很容易检测：当光线从三角形后方出发时，\(t\) 的值为负，意味着交点位于光线前进方向的反方向（交点会在弓箭手的「后方」）。不考虑这一点，就可能错误地把这个三角形算进最终图像，这是我们不想要的。</p><p>再说一次，别把这个和光线从背面击中三角形的情形搞混——那是一个完全合理的情形，就像无论从正面还是背面看一个人，你都能看见他。但如果你背对一个人，你就不会指望还能看见他，对吧？</p><p><b>结论</b>：在确认相交有效之前，必须先检查 \(t\) 的符号。如果 \(t\) 小于 0，说明三角形相对光线方向位于光线原点后方，也就是不可见（「背对着」的情形），此时应返回 <code>false</code> 表示没有交点。反过来，如果 \(t\) 大于 0（你正看着那个人，不管是他的脸还是背），三角形对这条光线就是「可见」的，可以进入下一步。</p><h3> 第 2 步：\(P\) 在三角形内部还是外部？</h3><p>现在我们已经确定了点 \(P\)，即光线与三角形所在平面的交点，接下来要判断 \(P\) 是在三角形内部（说明光线与三角形相交）还是在外部（说明光线错过了三角形）。图 2 展示了这些可能。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-insideout.png" alt=""><figcaption><b>图 4：</b>\(\textcolor{cyan}{{v0v1 \times v0v2}}\) 与 \(\textcolor{purple}{{v0v1 \times v0v2'}}\) 方向相反。</figcaption></figure><p>这个问题的解法很直接，叫作<b>内外测试</b>。我们在讲光栅化的课程里已经见过这个说法，那里是对二维三角形做这个测试。这里我们把它改用到三维三角形上。按图 4 所示定义向量 \(v0v1\) 与 \(v0v2\)。求这两个向量的叉积，得到的结果与 z 轴和三角形法线方向相同（计算法线也可以用 \(v0v1\) 与 \(v1v2\)，或者 \(v0v1\) 与 \(v2v0\)，但那只是细节）。</p><p>$$
+\begin{array}{l}
+v0v1 = (1, 0, 0) \\
+v0v2 = (1, 1, 0) \\
+{v0v1 \times v0v2}_x = v0v1_y \cdot v0v2_z - v0v1_z \cdot v0v2_y = 0 \\
+{v0v1 \times v0v2}_y = v0v1_z \cdot v0v2_x - v0v1_x \cdot v0v2_z = 0 \\
+{v0v1 \times v0v2}_z = v0v1_x \cdot v0v2_y - v0v1_y \cdot v0v2_x = 1 \cdot 1 - 0 \cdot 1 = 1 \\
+{v0v1 \times v0v2} = (0, 0, 1)
+\end{array}
+$$</p><p>现在把 \(v2\) 沿 x 轴镜像，这个镜像点记作 \(v2'\)，坐标为 \((1, -1, 0)\)。叉积 \(v0v1 \times v0v2'\) 会得到 \(v0v1 \times v0v2' = (0, 0, -1)\)。</p><p>$$
+\begin{array}{l}
+v0v1 = (1, 0, 0) \\
+v0v2' = (1, -1, 0) \\
+{v0v1 \times v0v2'}_x = v0v1_y \cdot v0v2'_z - v0v1_z \cdot v0v2'_y = 0 \\
+{v0v1 \times v0v2'}_y = v0v1_z \cdot v0v2'_x - v0v1_x \cdot v0v2'_z = 0 \\
+{v0v1 \times v0v2'}_z = v0v1_x \cdot v0v2'_y - v0v1_y \cdot v0v2'_x = 1 \cdot (-1) - 0 = -1 \\
+{v0v1 \times v0v2'} = (0, 0, -1)
+\end{array}
+$$</p><ul><li><p>由于 \(v0v1 \times v0v2\) 与 \(N\) 方向相同，它们的点积为正。</p></li><li><p>反过来，由于 \(v0v1 \times v0v2'\) 与 \(N\) 方向相反，它们的点积为负。</p></li></ul><details open><p>你可能注意到了，按 \({v0} \rightarrow {v1} \rightarrow {v2'}\) 的顺序沿顶点走，我们是顺时针转，而按 \({v0} \rightarrow {v1} \rightarrow {v2}\) 的顺序走是逆时针转。你可能还记得几何课上的内容：法线方向由这个顶点顺序决定。如果按某个顺序绕三角形顶点算出法线 \(N\)，那么按相反方向绕就会得到 \(-N\)。记住这一点。</p></details><p>这个测试说明：如果一个位于三角形所在平面内的点 \(P\)（比如顶点 \(v2\) 或交点）处在向量 \(v0v1\) 的左侧，那么三角形法线与叉积 \(v0v1 \times v0v2\) 的点积为正。 </p><p>关键在于理解点 \(P\) 在这个方法里起什么作用。前面的例子里，我们用 \(v2\) 来算向量 \(v0v2\)。现在我们想象 \(P\) 代表平面内某个任意点，不一定非得是顶点 \(v2\)。逻辑完全一样。我们算出向量 \(v0P\)，如果三角形法线与 \(v0v1 \times v0P\) 的点积为正，就知道 \(P\) 在向量 \(v0v1\) 的左侧。</p><p>反过来，如果三角形法线与 \(v0v1 \times v0P\) 的点积为负（比如我们用一个点 \(P'\) 的情形，像镜像顶点 \(v2'\)），那么 \(P\) 就在 \(v0v1\) 的右侧。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-insideout2.png" alt=""><figcaption><b>图 5：</b>当 \(P\) 在 \(v0v1\) 左侧时，点积 \(N \cdot (v0v1 \times v0v2)\) 为正。当 \(P\) 在右侧（\(P'\)）时，\(N \cdot (v0v1 \times v0v2')\) 为负。</figcaption></figure><p>这两种情形在图 5 中都有图示。如果点 \(P\) 在三角形内部，那么三角形法线与向量 \(v0v1 \times v0P\) 的点积为正，说明 \(P\) 在由 \(v0v1\) 所确定的那条假想线的左侧，这条线实际上把三角形所在平面分成了两半。如果点 \(P'\) 在三角形外部，具体说落在把向量 \(v0v1\) 延长所确定的直线右侧的半平面内，那么三角形法线与「向量 \(v0v1\) 与 \(v0P'\) 的叉积」所得向量的点积为负。</p><p>要把这套方法用到光线与三角形求交问题上，就对三角形的每条边做左右测试。如果点 \(P\) 位于三角形每条边的左侧，其中每条边按 \(e_{n} = v_{(n+1) \% 3} - v_{n}\) 计算，那么 \(P\) 就在三角形内部（\(n\) 是顶点索引，对三角形来说它的取值从 0 到 2）。只要有任何一条边的测试不通过，\(P\) 就落在三角形边界之外。图 6 展示了这个过程。</p><p>换个角度看：三角形的每条边 \(e_{n} = v_{(n+1) \% 3} - v_{n}\) 都把三角形所在的平面切成两部分——这条边的左侧和右侧。「左」与「右」是相对向量 \(e_{n} = v_{(n+1) \% 3} - v_{n}\) 的方向来定的。要判断 \(P\) 在这条边的左侧还是右侧，按以下步骤做：</p><ul><li><p>计算从 \(v_n\) 指向 \(P\) 的向量：\(v_nP = P - v_n\)。</p></li><li><p>计算向量 \(e_{n} = v_{(n+1) \% 3} - v_{n}\)。</p></li><li><p>求这两个向量的叉积，记作 \(N_p\)。</p></li><li><p>计算三角形法线 \(N\) 与 \(N_p\) 的点积。这个点积的符号告诉我们 \(P\) 位于该边 \(e_n\) 的左侧还是右侧。</p></li><li><p>对三角形的每条边重复这一过程（只要多边形是凸的，这个方法对三条边以上的多边形同样适用）。</p></li></ul><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-insideout3.png" alt=""><figcaption><b>图 6：</b>要判断 \(P\) 是否在三角形内部，可以测试沿边的向量与「由所测边的第一个顶点指向 \(P\) 的向量」的点积是否为正（为正表示 \(P\) 在这条边的左侧）。如果 \(P\) 位于三条边的左侧，那么 \(P\) 就在三角形内部。</figcaption></figure><p>下面是内外测试的伪代码示例：</p><pre><code>
+Vec3f v0v1 = v1 - v0;
+Vec3f v1v2 = v2 - v1;
+Vec3f v0v2 = v0 - v2;
+Vec3f v0p = P - v0;
+Vec3f v1p = P - v1;
+Vec3f v2p = P - v2;
+if (dotProduct(N, crossProduct(v0v1, v0p)) &gt; 0 &amp;&amp; 
+    dotProduct(N, crossProduct(v1v2, v1p)) &gt; 0 &amp;&amp;
+    dotProduct(N, crossProduct(v0v2, v2p)) &gt; 0) return true; // P 在三角形内部
+</code></pre><details open><p>注意这个方法与光栅化课程里判断像素是否覆盖（二维）三角形所用的方法之间的相似之处。</p></details><p>我们来写出完整的光线与三角形求交测试函数代码。先算出三角形法线，再测试光线与三角形是否平行。若平行，求交测试失败。若不平行，就计算 \(t\)，由它确定交点 \(P\)。如果内外测试通过（也就是测试 \(P\) 是否在三角形每条边的左侧），那么光线与三角形相交，\(P\) 位于三角形边界之内，测试成功。</p><pre><code>
+bool rayTriangleIntersect(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    const Vec3f &amp;v0, const Vec3f &amp;v1, const Vec3f &amp;v2,
+    float &amp;t)
+{
+    // 计算平面的法线
+    Vec3f v0v1 = v1 - v0;
+    Vec3f v0v2 = v2 - v0;
+    // 不需要归一化
+    Vec3f N = v0v1.crossProduct(v0v2); // N
+ 
+    // 第 1 步：求 P
+    
+    // 检查光线与平面是否平行
+    float NdotRayDirection = N.dotProduct(dir);
+    if (fabs(NdotRayDirection) &lt; kEpsilon) // 近似为 0
+        return false; // 两者平行，所以它们不相交！
+
+    // 用公式 2 计算 d 参数
+    float d = -N.dotProduct(v0);
+    
+    // 计算 t（公式 3）
+    t = -(N.dotProduct(orig) + d) / NdotRayDirection;
+    
+    // 检查三角形是否在光线后方
+    if (t &lt; 0) return false; // 三角形在后方
+ 
+    // 用公式 1 计算交点
+    Vec3f P = orig + t * dir;
+ 
+    // 第 2 步：内外测试
+    Vec3f Ne; // 垂直于三角形所在平面的向量
+ 
+    // 测试 P 相对边 v0v1 的侧向
+    Vec3f v0p = P - v0;
+    Ne = v0v1.crossProduct(v0p);
+    if (N.dotProduct(Ne) &lt; 0) return false; // P 在右侧
+ 
+    // 测试 P 相对边 v2v1 的侧向
+	Vec3f v2v1 = v2 - v1;
+    Vec3f v1p = P - v1;
+    Ne = v2v1.crossProduct(v1p);
+    if (N.dotProduct(Ne) &lt; 0) return false; // P 在右侧
+ 
+    // 测试 P 相对边 v2v0 的侧向
+	Vec3f v2v0 = v0 - v2;
+    Vec3f v2p = P - v2;
+    Ne = v2v0.crossProduct(v2p);
+    if (N.dotProduct(Ne) &lt; 0) return false; // P 在右侧
+
+    return true; // 光线击中了三角形
+}
+</code></pre><details open><p>这套「内外」方法适用于任何<a href="http://en.wikipedia.org/wiki/Convex_polygon" target="_blank" rel="noreferrer noopener">凸多边形</a>。对多边形的每条边重复用于三角形的那套做法。求「由该边两个顶点定义的向量」与「由该边第一个顶点指向该点的向量」的叉积，再求所得向量与多边形法线的点积。这个点积的符号决定该点在这条边的右侧还是左侧。遍历多边形的每一条边。只要有一条边的测试不通过，就不必再测其余边。</p></details><p>注意，如果为场景中的每个三角形预先算出并保存三角形法线和平面方程里的 \(D\)，这项技术还可以优化。</p><h2>接下来做什么？</h2><p>这一章里我们介绍了一种用简单几何来算光线与三角形求交的方法。不过光线与三角形求交还有我们没讲到的东西，比如判断光线是从正面还是背面击中三角形。我们还可以算出交点的重心坐标。这些坐标在做诸如给三角形贴纹理这类事情时是必需的。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/ray-triangle-intersection-geometric-solution.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/ray-triangle-intersection-geometric-solution.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

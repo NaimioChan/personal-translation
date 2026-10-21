@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>重心坐标 - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪：渲染三角形 · 重心坐标（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>重心坐标</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="why-are-triangles-useful.html">三角形为什么有用？</a></li>
+<li><a href="geometry-of-a-triangle.html">三角形的几何</a></li>
+<li><a href="ray-triangle-intersection-geometric-solution.html">光线与三角形求交：几何解法</a></li>
+<li><a href="single-vs-double-sided-triangle-backface-culling.html">单面与双面三角形以及背面剔除</a></li>
+<li><a style="font-weight:700" href="barycentric-coordinates.html">重心坐标</a></li>
+<li><a href="moller-trumbore-ray-triangle-intersection.html">Möller-Trumbore 算法</a></li>
+</ol>
+</div>
+<h2>重心坐标</h2><p><b>阅读时间：23 分钟。</b></p><h2>重心坐标</h2><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-barycentric.png" alt=""><figcaption><b>图 1：</b>重心坐标可以看作子三角形 BCP（对应 u）、CAP（对应 v）、ABP（对应 w）的面积与三角形 ABC 面积之比，这也是它们又叫面积坐标的原因。</figcaption></figure><p>重心坐标在计算机图形学里格外重要。它们有若干用途，也是 Möller-Trumbore 提出的光线与三角形求交算法的关键，下一章就会讲到。本章末尾还会讨论重心坐标在计算机图形学里的其他用法（不限于光线与三角形求交）。所以这一节要仔细读，这个概念你会经常碰到。</p><p>重心坐标让我们可以用三个标量来表示落在三角形上的任意一点的位置。这包括三角形内部的任意位置、三角形某条边上的任意位置，以及某个顶点上的位置。要用重心坐标计算这个点的位置，我们使用下面的公式：</p><p>$$P = uA + vB + wC$$</p><p>其中 A（代码里常写作 \(v0\)）、B（\(v1\)）、C（\(v2\)）是三角形的顶点，\(u\)、\(v\)、\(w\) 是<b>重心坐标</b>。这些坐标是实数（标量，用编程的话说就是 float/double），它们有一个独特性质：经过归一化，使得：</p><p>$$u + v + w = 1$$</p><p>因为有这个归一化性质，注意：只要知道其中两个坐标，就能确定第三个。例如：\(w = 1 - u - v\)，这也意味着 \(u + v \leq 1\)（后面我们会用到这个简单却重要的性质）。 </p><p>公式 1 定义了由顶点 A、B、C 构成的三角形所在平面上点 P 的位置。如果 \(0 \leq u, v, w \leq 1\)，该点就在三角形 (A, B, C) 之内。只要有一个坐标小于零或大于一，点就在三角形之外。若有任一坐标为零，P 就落在三角形的某条边上。</p><p>你也可以只用两个坐标（比如 u 和 v）来表示 P 在某个二维坐标系里的坐标，这个坐标系由它的原点（A）以及边 AB 与 AC 定义（很像在由 x 轴和 y 轴定义的正交二维坐标系里表示二维点。区别只在于，在我们的情形里 AB 与 AC 不一定正交，而且这个坐标系的原点是 A）。总之，只是想说：你可以用公式 \(P = A + u*AB + v*AC\) 定义三角形内部的一个位置（其中 \(u \ge 0\)、\(v \ge 0\)、\(u + v \le 1\)）。这个公式可以读作「从 A 出发，沿 AB 方向走一点，再沿 AC 方向走一点，你就找到 P 了」。现在如果把这条公式展开，可以写成：</p><p>$$
+\begin{array}{l}
+P = A + u(B - A) + v(C - A) = \\
+A + uB - uA + vC - vA = (1 - u - v) * A + u * B + v * C 
+\end{array}
+$$</p><p>这条公式与公式 1 相似，只是当 \(w = 1 - u - v\) 时，你得到的是下面这个式子：</p><p>$$P = w * A + u * B + v * C$$</p><p>而不是 </p><p>$$P = u * A + v * B + w * C.$$</p><p>这两条公式在数学上等价，但如果没有刚才的解释，就不容易看出我们为什么常写 \((1 - u - v) * A + u * B + v * C\) 而不是 \(u * A + v * B + (1 - u - v) * C\)。这门课最初的版本里，这段解释只是一个脚注，后来我把它提升为一条重要提示，因为当你看代码或读使用重心坐标的论文时，可能会遇到作者用不同方式指定 \(u\)、\(v\)、\(w\) 这几个坐标。</p><p>比如你可能会看到 \(wA + uB + vC\) 或 \(uA + wB + vC\) 之类的写法。具体怎么排列并不重要，只要满足两个条件：第一，归一化性质 \(u + v + w = 1\) 必须成立；第二，所有重心坐标都必须大于或等于零。<b>当然，你不能把系数 \(u\)、\(v\)、\(w\) 随便配给某个顶点。每个系数都必须配给特定的顶点，而这种配对关系取决于你如何计算这些系数。你计算坐标的方式，决定了哪个重心坐标与三角形的哪个顶点「配对」。后面看代码时我们会仔细看这种配对。</b> </p><p>为简洁和一致起见，本课始终采用 \(uA + vB + wC\) 这种配对。<b>本课所有计算都使用这种配对</b>，它决定了我们如何计算 \(u\)、\(v\)、\(w\)。</p><p>更具体地说，我们选的配对在某些场合可能不是默认做法，一个原因是它意味着 <code>edge0</code> 是由点 \(B\) 和 \(C\) 定义的边（见图 1），而更直观的做法可能是把 <code>edge0</code> 看作由点 \(A\) 和 \(B\) 定义的边。所以要留意你的代码用的是哪种「配对」，它取决于你用哪条边来计算 \(u\) 和 \(v\)。如果你计算 \(u\) 和 \(v\) 所用的边与我们不同，务必相应调整插值 \(P\) 的代码。最终结果应当是一样的，而这才是真正重要的事。记住这条重要提示，我们往下走。</p><p>重心坐标也叫<b>面积坐标</b>。这个说法不太常用，但它点明了 u、v、w 这三个坐标与三个子三角形的面积成正比，这些子三角形由落在三角形上的点 P 和三角形的顶点（A、B、C）构成。这三个子三角形记作 ABP、BCP 和 CAP（见图 1）。</p><p>由此得到计算重心坐标的公式：</p><p>$$
+\begin{array}{l}
+u = {\dfrac{TriangleBCP_{Area}}{TriangleABC_{Area}}}\\
+v = {\dfrac{TriangleCAP_{Area}}{TriangleABC_{Area}}}\\
+w = {\dfrac{TriangleABP_{Area}}{TriangleABC_{Area}}}\\
+\end{array}
+$$</p><p>本课余下部分，我们假定 \(u\) 对应三角形 \(\triangle BCP\)，\(v\) 对应三角形 \(\triangle CAP\)，\(w\) 对应三角形 \(\triangle ABP\)。正如上面那条重要提示所说，关于如何把重心坐标的字母与「大三角形 \(\triangle ABC\) 加上落在其上的点 \(P\) 所构成的这三个子三角形」配对，并没有严格约定。所以当你去看不同项目里使用重心坐标的源码时，可能会遇到各种组合。</p><p>前面也提到过，虽然可能不那么常见（不过我们读过的一些生产级渲染器里确实这么用），我们会始终采用这种配对：\(u \rightarrow \triangle BCP\)、\(v \rightarrow \triangle CAP\)、\(w \rightarrow \triangle ABP\)。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/parallelogram.png?" alt=""><figcaption><b>图 2：</b>要计算三角形的面积，我们从计算平行四边形的公式出发（底乘高 H）。要算出 H，我们把 sin(\(\theta\)) 乘以向量 AC 的长度。</figcaption></figure><p>计算三角形面积很直接。把三角形复制一份，沿它最长的那条边镜像翻转，就得到一个平行四边形。要算平行四边形的面积，只需用底乘高，再乘上 \(\sin(\theta)\)，其中 \(\theta\) 是向量 AB 与 AC 所夹的角（见图 2）。由于这个平行四边形由两个三角形组成，一个三角形的面积就是平行四边形面积的一半。</p><p>理解了这一点，计算 \(u\) 和 \(v\) 就变得容易了（其中 \(w\) 如前所述由 \(u\) 和 \(v\) 确定）。</p><p>$$
+\text{Area of the Triangle} = \frac{{||B - A|| \cdot ||C - A|| \cdot \sin(\theta)}}{2}
+$$</p><p>这条公式用向量 \(B - A\) 与 \(C - A\) 的长度来计算三角形面积，其中 \(\theta\) 表示这两个向量之间的夹角。面积是由这两个向量构成的平行四边形的一半。</p><p>为简化起见，我们可以利用这样一个事实：子三角形 \( \triangle BCP\)、\( \triangle CAP\)、\( \triangle ABP\) 的面积，与上一章为求交点 \(P\) 而计算的那些叉积的模长成正比。叉积的一个关键性质是<b>它的模长等于由这两个向量构成的平行四边形的面积</b>。 </p><p>因此，我们不必显式地计算上面那条公式（其中涉及「昂贵」的 \(\sin(\theta)\)），而可以用下面这个：</p><p>$$
+\begin{aligned}
+\text{Parallelogram Area} &= ||(B - A) \times (C - A)|| \\
+\text{Triangle Area} &= \frac{\text{Parallelogram Area}}{2}
+\end{aligned}
+$$</p><p>这个做法又一次让我们绕开了三角函数，从而简化计算。注意，在数学写法里，双竖线记号（\(|| ||\)）表示向量的「长度」或模长。换句话说，我们要算的是叉积 \((B - A) \times (C - A)\) 所得向量的长度。既然我们已知怎么算两个向量的叉积、怎么算向量的长度，那么计算交点重心坐标所需的一切就都齐了。</p><pre><code>
+bool rayTriangleIntersect(
+    const Vec3f&amp; orig, const Vec3f&amp; dir,
+    const Vec3f&amp; v0, const Vec3f&amp; v1, const Vec3f&amp; v2,
+	const Vec3f&amp; P,
+    float&amp; t, float&amp; u, float&amp; v)
+{
+	// 计算平面的法线
+    Vec3f v0v1 = v1 - v0;
+    Vec3f v0v2 = v2 - v0;
+    // 不需要归一化
+    Vec3f N = v0v1.crossProduct(v0v2); // N
+
+    // 光线与平面求交：由平面方程解出 t
+    float NdotRayDirection = N.dotProduct(dir);
+    if (fabs(NdotRayDirection) &lt; 1e-8) return false; // 光线与三角形平行
+
+    float d = N.dotProduct(v0); // 平面常数
+    t = (N.dotProduct(v0) - N.dotProduct(orig)) / NdotRayDirection;
+
+    // 若 t 为负，三角形在光线后方
+    if (t &lt; 0) return false; 
+
+    // 计算交点 P
+    Vec3f P = orig + dir * t;
+
+    // 第 2 步：计算三角形面积
+    float area = N.length() / 2; // 整个三角形的面积
+
+    // 第 3 步：用重心坐标做内外测试
+	Vec3f C;
+
+    // 计算 u（对应三角形 BCP）
+    Vec3f v1p = P - v1;
+	Vec3f v1v2 = v2 - v1;
+    C = v1v2.crossProduct(v1p);
+    u = (C.length() / 2) / area;
+    if (N.dotProduct(C) &lt; 0) return false; // P 在错误的一侧
+
+    // 计算 v（对应三角形 CAP）
+    Vec3f v2p = P - v2;
+    Vec3f v2v0 = v0 - v2;
+    C = v2v0.crossProduct(v2p);
+    v = (C.length() / 2) / area;
+    if (N.dotProduct(C) &lt; 0) return false; // P 在错误的一侧
+
+    // 第三条边
+    Vec3f v0p = P - v0;
+	// Vec3f v0v1 = v1 - v0; -&gt; already defined
+    C = v0v1.crossProduct(v0p);
+    if (N.dotProduct(C) &lt; 0) return false; // P 在右侧
+
+    // 该点在三角形内部
+    return true;
+}
+</code></pre><p>注意，这段代码能正常工作，前提是平面法线没有归一化，因为我们用向量的长度来计算三角形面积。</p><h2>使用重心坐标</h2><p>重心坐标在着色里特别有用。三角形是一个平面，我们可以把额外的信息或数据（比如点、颜色、向量等）关联到它的每个顶点上。这些额外数据通常称为<b>顶点数据</b>或<b>顶点属性</b>。比如，想象给顶点 A 指定红色、给顶点 B 指定绿色、给顶点 C 指定蓝色。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-barycentric2.png" alt=""><figcaption><b>图 3：</b>重心坐标可用来在命中点处插值顶点数据。比如在这个例子里，我们用顶点颜色算出 P 处的颜色。</figcaption></figure><p>如果交点正好与三角形某个顶点重合，该点处物体的颜色就是与那个顶点关联的颜色——再简单不过。问题是，当光线在别处（边上的某处或三角形内部）与三角形相交时，会发生什么？重心坐标既然能根据三角形顶点算出三角形上某点的位置，那么用同样的方式，我们也能插值在顶点上定义的任何其他数据（比如颜色）。换句话说，重心坐标用于在三角形表面上插值顶点数据（或属性）。这套方法适用于任何数据类型，比如 float、颜色等等。</p><p>这种插值方法对着色尤其有用，可以用它在交点处插值法线。物体的法线可以按面或按顶点定义（分别称为面法线或顶点法线）。如果法线是按顶点定义的，我们就可以用这种插值技术在三角形表面上模拟平滑着色，即便三角形本身在几何上是平的。命中点处的法线是各顶点法线的组合，所以如果各顶点法线互不相同，插值结果就会在表面上变化，产生平滑着色的效果。</p><pre><code>
+// 顶点位置
+Vec3f triVertex[3] = {{-3,-3,5}, {0,3,5}, {3,-3,5}};
+// 顶点数据
+Vec3f triColor[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
+if (rayTriangleIntersect(...)) {
+    // 计算像素颜色
+    // col = u * col0 + v * col1 + w * col2，其中 w = 1 - u - v
+    Vec3f ColorPhit = u * triColor[0] + v * triColor[1] + (1 - u - v) * triColor[2];
+}
+</code></pre><p>重心坐标也用来计算纹理坐标（我们会在讲<a href="introduction-to-texturing.html">纹理映射</a>的课程里研究这个题目）。</p><h2>优化重心坐标的计算</h2><p>我们用 \(BC\) 与 \(BP\) 的叉积，以及 \(CA\) 与 \(CP\) 的叉积，分别计算 \(u\) 和 \(v\)。不过，如果你再看一眼代码，会注意到这些叉积我们在内外测试里已经算过了。它们被用来判断点 \(P\) 位于边 \(BC\) 和 \(CA\) 的右侧还是左侧。自然，第一个优化就是复用这些计算的结果。另外注意（见公式 2）：</p><p>$$
+\begin{array}{l}
+u & = & \dfrac{triangleBCP_{area}}{triangleABC_{area}} \\
+& = & \dfrac{parallelogramBCP_{area} / 2}{parallelogramABC_{area} / 2} = \dfrac{parallelogramBCP_{area}}{parallelogramABC_{area}} = \dfrac{||BC \times BP||}{||AB \times AC||}
+\end{array}
+$$</p><p>不必显式算出三角形面积，因为三角形 \(BCP\) 与三角形 \(ABC\) 的比值，等于平行四边形 \(BCP\)（它是三角形 \(BCP\) 面积的两倍）与平行四边形 \(ABC\)（它是三角形 \(ABC\) 面积的两倍）的比值。因此，除以 2 这一步也可以省掉。代码变成：</p><pre><code>
+bool rayTriangleIntersect(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    const Vec3f &amp;v0, const Vec3f &amp;v1, const Vec3f &amp;v2,
+    float &amp;t, float &amp;u, float &amp;v)
+{
+	// 计算平面的法线
+	Vec3f v0v1 = v1 - v0;
+    Vec3f v0v2 = v2 - v0;
+    // 不需要归一化
+    Vec3f N = v0v1.crossProduct(v0v2); // N
+    float area2 = N.length();
+ 
+    // 第 1 步：求 P
+    
+    // 检查光线与平面是否平行。
+    float NdotRayDirection = N.dotProduct(dir);
+    if (fabs(NdotRayDirection) &lt; kEpsilon) // 近似为 0
+        return false; // 两者平行，所以不相交！ 
+
+    // 用公式 2 计算 d 参数
+    float d = -N.dotProduct(v0);
+    
+    // 计算 t（公式 3）
+    t = -(N.dotProduct(orig) + d) / NdotRayDirection;
+    // 检查三角形是否在光线后方
+    if (t &lt; 0) return false; // 三角形在后方
+ 
+    // 用公式 1 计算交点
+    Vec3f P = orig + t * dir;
+ 
+    // 第 2 步：内外测试
+    Vec3f C; // 垂直于三角形所在平面的向量
+ 
+	// 计算 u（对应三角形 BCP）
+	Vec3f v1p = P - v1;
+	Vec3f v1v2 = v2 - v1;
+    Vec3f C = v1v2.crossProduct(v1p);
+	u = C.length() / area2;
+    if (N.dotProduct(C) &lt; 0) return false; // P 在右侧
+ 
+    // 计算 v（对应三角形 CAP）
+    ...
+
+    return true; // 这条光线击中了三角形
+}
+</code></pre><p>最后，我们可以证明（公式 3）：</p><p>$$
+u = {\dfrac{triangleBCP_{area}} {triangleABC_{area}}} = {\dfrac{(BC \times BP) \cdot  N}{(AB \times AC) \cdot N}}
+$$</p><p>首先，记住 \(N = AB \times AC\)。因此，可以把上面那条公式改写为：</p><p>$$
+u = {\dfrac{triangleBCP_{area}}{triangleABC_{area}}} = {\dfrac{(BC \times BP) \cdot  N}{N \cdot N}}
+$$</p><p>现在需要证明这条公式成立。回想几何课上的内容：两个向量的点积可以解释为：</p><p>$$||A|| \cdot ||B|| = \cos(\theta) ||A|| ||B||$$</p><p>其中角 \(\theta\) 是向量 \(A\) 与 \(B\) 所夹的角，\(||A||\) 和 \(||B||\) 分别是向量 \(A\) 与 \(B\) 的模长。我们还知道，当两个向量 \(A\) 与 \(B\) 共线（指向相同方向）时，它们之间的夹角为 0，所以 \(\cos(0) = 1\)。\(N \cdot N\) 的结果（一个向量与自身的点积）是 \(\cos(0)||N|| ||N|| = ||N||^2\)，也就是向量 \(N\) 模长的平方。</p><p>现在来看公式 3 的分子。从构造上说（因为点 \(A\)、\(B\)、\(C\)、\(P\) 共面），三角形 \(BCP\) 与 \(ABC\) 共面。因此，由叉积 \(BC \times BP\) 与 \(AB \times AC\) 得到的向量也共线（指向相同方向）。于是可以把分子改写为：</p><p>$$\textcolor{blue}{(BC \times BP) \cdot N} = \textcolor{green}{(BC \times BP)} \cdot \textcolor{red}{(AB \times AC)}$$</p><p>设 \(\textcolor{green}{BC \times BP = A}\)、\(\textcolor{red}{AB \times AC = N = B}\)。那么：</p><p>$$\textcolor{blue}{(BC \times BP) \cdot N} = \cos(0) ||A|| ||B|| = ||A|| ||B||$$</p><p>在这种情况下，\(A\) 与 \(B\) 共线，因为它们是由共面的向量构造出来的。最后，把分子和分母的结果代回公式 3：</p><p>$$u = \dfrac{triangleBCP_{area}}{triangleABC_{area}} = \dfrac{||BC \times BP|| \cdot N}{N \cdot N} = \dfrac{||A|| ||B||}{||B|| ||B||}$$</p><p>可以约掉一个 \(||B||\) 项，剩下：</p><p>$$u = \dfrac{triangleBCP_{area}}{triangleABC_{area}} = \dfrac{||A||}{||B||}$$</p><p>把 \(A\) 代回 \(\textcolor{green}{BC \times BP}\)、把 \(B\) 代回 \(\textcolor{red}{AB \times AC}\)，我们得到：</p><p>$$\dfrac{||A||}{||B||} = \dfrac{||BC \times BP||}{||AB \times AC||}$$</p><p>这条公式与我们最初用来计算 \(u\) 的那条相似（公式 2）。因此公式 3 也是计算 \(u\) 的有效公式。既然我们在内外测试中已经算出了分子 \((BC \times BP) \cdot N\)，就可以复用这个结果来计算重心坐标（\(v\) 也可以用类似的办法）。</p><details open><p>在数学里，公式 \((A \times B) \cdot C\) 叫作<b>标量三重积</b>（因为它是三个向量的乘积）。它可以解释为一个平行六面体的体积，这个平行六面体的棱由向量 \(A\)、\(B\)、\(C\) 定义。也可以把它理解为以这些向量为行的 3x3 矩阵的行列式，下一章我们会用到这个性质。</p></details><p>下面是我们求交函数的最终版本，采用了优化后的重心坐标计算方法：</p><pre><code>
+bool rayTriangleIntersect(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    const Vec3f &amp;v0, const Vec3f &amp;v1, const Vec3f &amp;v2,
+    float &amp;t, float &amp;u, float &amp;v)
+{
+    // 计算平面的法线
+    Vec3f v0v1 = v1 - v0;
+    Vec3f v0v2 = v2 - v0;
+    // 不需要归一化
+    Vec3f N = v0v1.crossProduct(v0v2); // N
+    float denom = N.dotProduct(N);
+
+    // 第 1 步：求 P
+
+    // 检查光线与平面是否平行？
+    float NdotRayDirection = N.dotProduct(dir);
+
+    if (fabs(NdotRayDirection) &lt; kEpsilon) // 近似为 0
+        return false; // 两者平行，所以不相交！
+
+    // 用公式 2 计算 d 参数
+    float d = -N.dotProduct(v0);
+
+    // 计算 t（公式 3）
+    t = -(N.dotProduct(orig) + d) / NdotRayDirection;
+
+    // 检查三角形是否在光线后方
+    if (t &lt; 0) return false; // 三角形在后方
+
+    // 用公式 1 计算交点
+    Vec3f P = orig + t * dir;
+
+    // 第 2 步：内外测试
+    Vec3f C; // 垂直于三角形所在平面的向量
+
+	// 计算 u（对应三角形 BCP）
+    Vec3f v1p = P - v1;
+	Vec3f v1v2 = v2 - v1;
+    C = v1v2.crossProduct(v1p);
+	if ((u = N.dotProduct(C)) &lt; 0) return false; // P 在右侧
+
+    // 计算 v（对应三角形 CAP）
+    Vec3f v2p = P - v2;
+	Vec3f v2v0 = v0 - v2;
+    C = v2v0.crossProduct(v2p);
+    if ((v = N.dotProduct(C)) &lt; 0) return false; // P 在右侧
+
+    Vec3f v0p = P - v0;
+    C = v0v1.crossProduct(v0p);
+    if (N.dotProduct(C) &lt; 0) return false; // P 在右侧
+
+    u /= denom;
+    v /= denom;
+
+    return true; // 这条光线击中了三角形
+}
+</code></pre><h2>源代码</h2><p>在这个版本的光线与三角形求交方法里，我们实现了第 3 章所述的计算命中点坐标的技术，以及本章所述的计算相交点重心坐标的方法。当光线击中三角形时，你可以选择用重心坐标插值三种颜色，也可以直接可视化这些原始坐标。</p><pre><code>
+...
+constexpr float kEpsilon = 1e-8;
+
+inline
+float deg2rad(const float °)
+{ return deg * M_PI / 180; }
+
+inline
+float clamp(const float &amp;lo, const float &amp;hi, const float &amp;v)
+{ return std::max(lo, std::min(hi, v)); }
+
+bool rayTriangleIntersect(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    const Vec3f &amp;v0, const Vec3f &amp;v1, const Vec3f &amp;v2,
+    float &amp;t, float &amp;u, float &amp;v)
+{
+     // 计算平面的法线
+    Vec3f v0v1 = v1 - v0;
+    Vec3f v0v2 = v2 - v0;
+    // 不需要归一化
+    Vec3f N = v0v1.crossProduct(v0v2); // N
+    float denom = N.dotProduct(N);
+
+    // 第 1 步：求 P
+
+    // 检查光线与平面是否平行？
+    float NdotRayDirection = N.dotProduct(dir);
+
+    if (fabs(NdotRayDirection) &lt; kEpsilon) // 近似为 0
+        return false; // 两者平行，所以不相交！
+
+    // 用公式 2 计算 d 参数
+    float d = -N.dotProduct(v0);
+
+    // 计算 t（公式 3）
+    t = -(N.dotProduct(orig) + d) / NdotRayDirection;
+
+    // 检查三角形是否在光线后方
+    if (t &lt; 0) return false; // 三角形在后方
+
+    // 用公式 1 计算交点
+    Vec3f P = orig + t * dir;
+
+    // 第 2 步：内外测试
+    Vec3f C; // 垂直于三角形所在平面的向量
+
+	// 计算 u（对应三角形 BCP）
+    Vec3f v1p = P - v1;
+	Vec3f v1v2 = v2 - v1;
+    C = v1v2.crossProduct(v1p);
+	if ((u = N.dotProduct(C)) &lt; 0) return false; // P 在右侧
+
+    // 计算 v（对应三角形 CAP）
+    Vec3f v2p = P - v2;
+	Vec3f v2v0 = v0 - v2;
+    C = v2v0.crossProduct(v2p);
+    if ((v = N.dotProduct(C)) &lt; 0) return false; // P 在右侧
+
+    Vec3f v0p = P - v0;
+    C = v0v1.crossProduct(v0p);
+    if (N.dotProduct(C) &lt; 0) return false; // P 在右侧
+
+    u /= denom;
+    v /= denom;
+
+    return true; // 这条光线击中了三角形
+}
+
+int main(int argc, char **argv)
+{
+    Vec3f v0(-1, -1, -5);
+    Vec3f v1( 1, -1, -5);
+    Vec3f v2( 0,  1, -5);
+    
+    const uint32_t width = 640;
+    const uint32_t height = 480;
+	// v0 是黄色，v1 是青色，v2 是品红
+    Vec3f cols[3] = {{1.f, 1.f, 0.f}, {0, 1.f, 1.f}, {1.f, 0.f, 1.f}};
+    Vec3f *framebuffer = new Vec3f[width * height];
+    Vec3f *pix = framebuffer;
+    float fov = 51.52;
+    float scale = tan(deg2rad(fov * 0.5));
+    float imageAspectRatio = width / (float)height;
+    Vec3f orig(0);
+    for (uint32_t j = 0; j &lt; height; ++j) {
+        for (uint32_t i = 0; i &lt; width; ++i) {
+            // 计算主光线
+            float x = (2 * (i + 0.5) / (float)width - 1) * imageAspectRatio * scale;
+            float y = (1 - 2 * (j + 0.5) / (float)height) * scale;
+            Vec3f dir(x, y, -1);
+            //cameraToWorld.multDirMatrix(Vec3f(x, y, -1), dir);
+            dir.normalize();
+            float t, u, v;
+            if (rayTriangleIntersect(orig, dir, v0, v1, v2, t, u, v)) {
+                *pix = u * cols[0] + v * cols[1] + (1 - u - v) * cols[2];
+                //*pix = Vec3f(u, v, 1 - u - v); // 用于可视化 u、v、w
+            }
+            pix++;
+        }
+    }
+    
+    // 把结果保存为 PPM 图像（在 Windows 上请保留这些标志）
+    ...
+
+    return 0;
+}
+</code></pre><p>下图展示了程序的输出（源码可以在本课最后一章找到）。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-triangle-results.png" alt=""></figure><h2>花絮与一点历史</h2><p>说来有趣，2024 年我偶然翻到了那份名声在外的 <b>RTNews</b> 存档，多数读者可能对它了解不多，除非你在八九十年代已经成年。那算是一种公共论坛，对光线追踪感兴趣的人在上面展示、交流想法。下面是我找到的其中一个帖子的副本，专门讨论重心坐标的计算（<a href="https://www.realtimerendering.com/resources/RTNews/html/rtnews5b.html#art3" target="_blank" rel="noreferrer noopener">这里是链接</a>）：</p><pre><code>
+From: hpfcla!bogart%gr@cs.utah.edu (Rod G. Bogart)
+...
+Another way to think of barycentric coordinates is by the relative areas of the subtriangles defined by the intersection point and the triangle vertices.
+
+        1         If the area of triangle 123 is A, then the area of
+       /|\        P23 is rA.  Area 12P is sA and area 1P3 is tA.
+      / | \       With this image, it is obvious that r+s+t must equal
+     /  |  \      one.  If r, s, or t go outside the range zero to one,
+    / t | s \     P will be outside the triangle.
+   /  _-P-_  \
+  / _-     -_ \
+ /_-    r    -_\
+2---------------3
+By using the above area relationships, the following equations define r, s, and t.
+
+        N = triangle normal = (vec(1 2) cross vec(1 3))
+            (vec(1 P) cross vec(1 3)) dot N
+        s = -------------------------------
+                     (length N)^2
+            (vec(1 2) cross vec(1 P)) dot N
+        t = -------------------------------
+                     (length N)^2
+        r = 1 - (s + t)
+</code></pre><p>顺便说一句，我很喜欢用 ASCII 来排版的这种做法，当年非常普遍。里面的内容大部分现在对你来说应该都不陌生了。我加上这一段，既是向同行致意，也是给这个题目补一点历史脉络，顺便让你了解计算机图形学相关的若干重要史实（在我看来，这些也值得一学）。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/barycentric-coordinates.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/barycentric-coordinates.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

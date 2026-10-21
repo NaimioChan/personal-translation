@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>虚拟针孔相机模型 - Scratchapixel 中文译本</title>
+<meta name="description" content="针孔相机模型 · 虚拟针孔相机模型（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>虚拟针孔相机模型</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="how-pinhole-camera-works-part-1.html">针孔相机如何工作（第 1 部分）</a></li>
+<li><a href="how-pinhole-camera-works-part-2.html">针孔相机如何工作（第 2 部分）</a></li>
+<li><a style="font-weight:700" href="virtual-pinhole-camera-model.html">虚拟针孔相机模型</a></li>
+<li><a href="implementing-virtual-pinhole-camera.html">实现虚拟针孔相机</a></li>
+</ol>
+</div>
+<h2>虚拟针孔相机模型</h2><p><b>阅读时间：21 分钟。</b></p><p>下一步，我们要基于与针孔相机相同的原理做一个虚拟相机。更确切地说，目标是建立一个相机模型，让它产生的图像与真实针孔相机拍出的图像相似。举例来说，如果用针孔相机给某个物体拍照，那么用我们的虚拟相机渲染这个物体的 3D 复制品时，计算机生成（CG）渲染中物体的尺寸与形状，必须与照片中真实物体的尺寸与形状完全一致。不过在深入模型本身之前，先多了解一些计算机图形学中的相机模型是有必要的。</p><p>先看几个细节：</p><ul><li><p>CG 相机有近裁剪面与远裁剪面。比近裁剪面更近、或比远裁剪面更远的物体对相机不可见。这个特性让我们能排除一部分场景几何体，只渲染场景的特定部分，这对光栅化能否工作至关重要。</p></li><li><p>本章还会探讨：在 CG 中，图像平面为什么放在相机光圈之前，而不是像真实针孔相机那样放在它之后。这个位置安排在 CG 里相机的惯常定义方式中起着关键作用。</p></li><li><p>最后，我们必须弄清如何从任意给定视点渲染场景。这个话题在上一课已经讨论过，本章会简要回顾。</p></li></ul><p>还有一个重要问题我们尚未回答：「研究真实相机、弄清它们如何工作固然很好，但相机模型究竟是怎样用来生成图像的？」本章会说明，这个问题的答案取决于我们把光栅化还是光线追踪作为渲染技术。</p><p>本章我们先逐条回顾上面列出的几点，以便对 CG 中相机如何工作有一个完整的「图景」。之后，虚拟相机模型会在本课程下一章（也是最后一章）中介绍，并在程序里实现。</p><h2>在 CG 世界里，我们如何表示相机？</h2><p>真实世界的针孔相机拍出的照片是倒立的。原因如第一章所述：胶片平面位于投影中心之后。不过，如果投影平面与场景位于同一侧，就可以避免倒立，如图 1 所示。在真实世界里，图像平面无法放在光圈之前，因为那样就没法把它与不需要的光隔离开。但在计算机的虚拟世界里，以这种方式构建相机是可行的。在概念上，这种构建方式让我们把相机的孔（它同时也是投影中心）看作眼睛的实际位置，而图像平面就是眼睛看到的画面。</p><figure><img src="https://scratchapixel.com/images/cameras/pinholecam1.png" alt=""><figcaption><b>图 1：</b>对我们的虚拟相机，可以把图像平面移到光圈之前。这样，场景在图像平面上的投影图像就不会倒置。</figcaption></figure><p>这样定义虚拟相机之后，就清楚了：沿着光线从场景中任一点追溯到眼睛来构造图像，其实是一个简单的几何问题，称为<b>透视投影</b>。透视投影就是通过这套装置生成图像的方法：装置像一座金字塔，顶点对齐眼睛，底面则界定出画布表面，三维场景的图像就「投影」在这块画布上。</p><h2>近裁剪面、远裁剪面与视锥体</h2><p>近裁剪面与远裁剪面是设在相机前方的虚拟边界，与成像的图像平面平行。它们沿相机的视线方向布置，与相机局部 z 轴对齐。这与现实世界中的任何东西都不同：这些裁剪面在虚拟相机模型里起着关键作用，决定场景的哪些部分可见。位于近裁剪面之前或远裁剪面之后的物体，相机会把它们当作不可见。这个概念对采用 z 缓冲算法的扫描线渲染器（如 OpenGL）尤其重要。这类渲染器用裁剪面来管理深度值范围，并帮助把场景点投影到图像平面上。此外，调整这些裁剪面还能缓解精度问题，比如 z-fighting，我们会在下一课探讨。值得注意的是，光线追踪本身在执行中并不需要裁剪面。</p><figure><img src="https://scratchapixel.com/images/cameras/frustum.png?" alt=""><figcaption><b>图 2：</b>视锥体内的任何物体都可见。</figcaption></figure><h2>近裁剪面与图像平面</h2><figure><img src="https://scratchapixel.com/images/cameras/clippingplanescanvas1.png?" alt=""><figcaption><b>图 3：</b>画布在相机局部 z 轴上的位置可以变化，其尺寸也随之改变。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/canvascoordinates5.png?" alt=""><figcaption><b>图 4：</b>这里画布位于近裁剪面处。投影到画布上的点是否可见，用画布的左下角与右上角坐标来判定。</figcaption></figure><p>画布（在某些图形学文献里也叫屏幕）代表图像平面内那个二维表面，场景的图像就投影在它上面。按惯例，我们可能把画布放在距眼睛 1 个单位处，这个选择能简化投影公式。但如图 3 所示，画布在相机局部 z 轴上的位置是灵活的，既不影响图像的投影，也不要求它与眼睛保持固定距离。视锥体这个概念——一个由近、远裁剪面切出的截头金字塔——界定了透过相机可见的那部分场景。图形学里常见的一种做法，是把视锥体内的点重映射到一个单位立方体，为后面课程要讲的透视投影矩阵打下基础。这一做法也正说明了为什么把图像平面放在近裁剪面处更有利。</p><p>在本课程余下的部分，我们假定画布（或屏幕）位于近裁剪面处，这是一个任意但实用的选择。这个位置不会限制我们将要探讨的投影公式，无论画布在相机 z 轴上的具体位置如何，这些公式都成立，如图 4 所示。</p><p>要注意区分三个概念：眼睛到画布的距离、近裁剪面，以及焦距。下一章会详细展开这一区分，进一步厘清计算机图形学中相机建模的细节。</p><h2>计算画布尺寸与画布坐标</h2><figure><img src="https://scratchapixel.com/images/cameras/clippingplanes2.png?" alt=""><figcaption><b>图 5：</b>我们相机设置的侧视图。比近裁剪面更近或比远裁剪面更远的物体对相机不可见。眼睛到画布的距离定义为近裁剪面。画布尺寸取决于这个距离（Znear）与视场角。只有当投影点的 x、y 坐标落在画布边界之内时，该点才对相机可见（在这个例子里，P1 可见，因为 P1' 落在画布范围之内；而 P2 不可见）。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/clippingplanes1.png?" alt=""><figcaption><b>图 6：</b>只有当投影点的 x、y 坐标落在画布边界之内时，该点才对相机可见（在这个例子里，P1 可见，因为 P1' 落在画布范围之内；而 P2 不可见）。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/canvascoordinates6.png?" alt=""><figcaption><b>图 7：</b>画布坐标用来判定位于图像平面上的点对相机是否可见。</figcaption></figure><p>上一节我们强调过：画布在相机局部 z 轴上的位置会影响它的尺寸。眼睛与画布的距离减小时，画布变小；反之距离增大时，画布变大。画布的左下角与右上角坐标与画布尺寸直接相关。知道了尺寸，计算这些坐标就很直接，因为画布（或屏幕）以图像平面坐标系的原点为中心。这些坐标很关键，因为它们让我们能方便地检查投影到图像平面上的点是否落在画布之内、从而对相机可见。图 5、图 6 和图 7 把两个点投影到画布上。其中一点（P1'）在画布范围之内，对相机可见；另一点（P2'）在边界之外，因而不可见。知道了画布坐标与投影坐标，判断点是否可见就很简单了。</p><p>我们来看看如何用数学方式计算这些坐标。在本课程第二章，我们给出了计算画布尺寸的公式（假定画布是正方形，如图 3、图 4 和图 6 所示）：</p><p>$$\text{Canvas Size} = 2 \times \tan\left(\frac{\theta}{2}\right) \times \text{Distance to Canvas}$$</p><p><b>其中 \(\theta\) 是视场角</b>（所以除以 2）。注意画布为正方形时，垂直视场角与水平视场角相同。由于眼睛到画布的距离定义为近裁剪面，可以写成：</p><p>$$\text{Canvas Size} = 2 \times \tan\left(\frac{\theta}{2}\right) \times Z_{near}.$$</p><p>其中 \(Z_{near}\) 是眼睛到近裁剪面沿相机局部 z 轴的距离，如图 5 所示。由于画布以图像平面坐标系的原点为中心，计算画布的角点坐标很直接。首先，把画布尺寸除以 2，再根据角点相对坐标系原点的位置确定坐标的正负号：</p><p>$$
+\begin{array}{l}
+\text{top} &=& &\frac{\text{canvas size}}{2},\\
+\text{right} &=& &\frac{\text{canvas size}}{2},\\
+\text{bottom} &=& -&\frac{\text{canvas size}}{2},\\
+\text{left} &=& -&\frac{\text{canvas size}}{2}.\\
+\end{array}
+$$</p><p>知道了画布左下角与右上角的坐标，就可以把投影点的坐标与这些值作比较（首先需要算出点在图像平面上的坐标，图像平面位于近裁剪面处，这一过程我们将在下一章学习）。如果点的 x、y 坐标分别大于或等于左下角坐标、小于或等于右上角坐标，那么这个点就落在画布边界之内（因而可见）。下面的代码片段计算画布坐标，并用这些坐标检查图像平面上某点是否可见：</p><pre><code>
+// 这段代码优先保证清晰而非优化，以便于理解。
+// 它的目的是阐明，而不是让人费解。
+float canvasSize = 2 * tan(angleOfView * 0.5) * Znear;
+float top = canvasSize / 2;
+float bottom = -top;
+float right = canvasSize / 2;
+float left = -right;
+// 计算投影点的坐标。
+Vec3f Pproj = ...;
+if (Pproj.x &lt; left || Pproj.x &gt; right || Pproj.y &lt; bottom || Pproj.y &gt; top) {
+    // 该点在画布边界之外，不可见。
+}
+else {
+    // 该点在画布边界之内，可见。
+}
+</code></pre><h2>相机到世界与世界到相机的矩阵</h2><figure><img src="https://scratchapixel.com/images/perspective-matrix/camera2.png?" alt=""><figcaption><b>图 8：</b>用相机到世界的变换矩阵变换相机坐标系。</figcaption></figure><p>最后，我们需要一种从任意视点生成物体或场景图像的方法。这个话题在上一课讨论过，本章会简要再过一遍。在这方面，CG 相机与真实相机相似。但在 CG 中，我们看着相机的取景画面（相当于真实相机的取景器），在场景或物体周围移动，从而选定一个视点（「视点」指相机相对于被摄主体的位置）。</p><p>相机创建时，默认位于原点，并朝向负 z 轴（图 8）。这一朝向在<a href="mathematics-computing-2d-coordinates-of-3d-points.html">上一课</a>中有详细解释。这样一来，相机局部坐标系与世界坐标系的 x 轴指向相同。因此，用 4x4 矩阵定义相机的变换很方便。这个 4x4 矩阵与用来变换三维物体的 4x4 矩阵没有区别，称为<b>相机到世界</b>变换矩阵（因为它定义的是相机相对于世界坐标系的变换）。</p><p>相机到世界变换矩阵的用法，取决于用的是光栅化还是光线追踪：</p><ul><li><p>在光栅化中，用该矩阵的逆矩阵（世界到相机的 4x4 矩阵）把世界空间中的点转换到相机空间。进入相机空间后，再做一次透视除法，算出点在图像平面上的投影坐标。关于这一过程的深入描述可见上一课。</p></li><li><p>在光线追踪中，我们先在相机的默认位置构建相机光线（光线的起点与方向），然后用相机到世界矩阵变换它们。完整过程详见「光线追踪：生成相机光线」一课。</p></li></ul><p>如果你还没弄懂光线追踪如何工作，不必担心。我们会先学光栅化，之后再来学光线追踪。</p><h2>理解虚拟相机如何使用</h2><p>课程讲到这里，关于针孔相机与 CG 相机需要知道的东西，我们几乎都讲完了。但还剩下一点：这些相机是怎样形成图像的。这个过程取决于渲染技术是光栅化还是光线追踪。下面我们分别来看。</p><figure><img src="https://scratchapixel.com/images/cameras/pinholecam3.png?" alt=""><figcaption><b>图 9：</b>在真实世界里，光源发出的光到达物体后，会向场景中的许多方向反射。只有一条光线朝相机方向前进并打中胶片或传感器。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/pinholecam2.png?" alt=""><figcaption><b>图 10：</b>每条从物体表面反射并穿过光圈的光线，都会打中一个像素。</figcaption></figure><p>在这之前，先简要回顾一下针孔相机的原理。光源发出的光线与场景中的物体相交后，会从这些物体表面向随机方向反射。对于相机能看到的场景中的每一点，这些反射光线中只有一条会穿过针孔相机的光圈，并在唯一的位置打中相纸（或胶片、或传感器）表面。如果我们把胶片表面划分成规则的像素网格，得到的就是一台<b>数字针孔相机</b>，而这本质上正是我们希望虚拟相机成为的东西（图 9 和图 10）。</p><p>真实针孔相机就是这么工作的。那么在 CG 中又如何呢？在 CG 中，相机建立在针孔相机的原理之上，但图像平面位于投影中心（光圈，在虚拟相机模型里我们更愿意称之为眼睛）之前，如图 11 所示。用这个虚拟针孔相机模型如何生成图像，取决于渲染技术。先来看两种主要的可见性算法：光栅化与光线追踪。</p><h3> 光栅化</h3><figure><img src="https://scratchapixel.com/images/cameras/pinholecam4.png?" alt=""><figcaption><b>图 11：</b>三维点在图像平面上的透视投影。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/pinholecam5.png?" alt=""><figcaption><b>图 12：</b>一个三维点在图像平面上的透视投影。</figcaption></figure><p>本章要解释光栅化算法是如何工作的。想完整了解这个算法，建议你阅读专门讲 REYES 算法的那一课——REYES 是广受认可的光栅化算法。接下来，我们会探讨针孔相机模型在这种渲染技术中如何应用。回想一下：穿过针孔相机光圈的每条光线，都会在胶片表面的单一位置打中，而在数字图像中这个位置对应一个像素。</p><p>考虑一条具体的光线 R，它从物体表面的点 O 反射，沿方向 D 朝眼睛传播，在点 A 穿过相机光圈，并在像素位置 X 打中图像平面（图 12）。要模拟这个过程，我们需要算出任意一条给定光线在图像中打中的是哪个像素，并把这条光线的颜色（即光线发出点处的颜色，本质上就是光线自身携带的信息）记录在该像素位置上。</p><p>这个过程等价于用透视投影计算三维点 O 的像素坐标 X。透视投影通过求从该点连向眼睛的直线与图像平面的交点，来确定三维点在图像平面上的位置。计算这个交点的方法在<a href="mathematics-computing-2d-coordinates-of-3d-points.html">上一课</a>中有详细描述。下一章我们将学习当画布位于距眼睛任意距离处时如何计算这些坐标（在此之前，眼睛与画布之间的距离都假定为恒定的 1）。</p><p>如果你对光栅化如何工作仍不清楚，此刻不必太在意。如前所述，有一整课专门讲这个话题。那一课的关键要点是：把三维点「投影」到图像平面上，并算出投影点的像素坐标。这套方法就是我们在光栅化中要重点掌握的。投影过程可以看作是在模拟针孔相机内部如何成像：沿着光线从场景中的发出点「追踪」到眼睛，并「记录」这些光线与图像平面相交的位置（以像素坐标表示）。这个过程包括：把点从世界空间变换到相机空间，做透视除法算出它们在屏幕空间中的坐标，把这些坐标转换到 NDC 空间，最后再把坐标从 NDC 空间转到光栅空间。我们在上一课就用过这套方法，生成了一个三维物体的线框图像。</p><pre><code>
+for each point in the scene {
+    transform a point from world space to camera space;
+    perform perspective divide (x/-z, y/-z);
+    if point lies within canvas boundaries {
+        convert coordinates to NDC space;
+        convert coordinates from NDC to raster space;
+        record point in the image;
+    }
+}
+// 连接各投影点，重建物体的棱
+...
+</code></pre><p>在这种技术中，图像是由一批投影到图像平面上的点（概念上定义为光线从物体表面反射的位置）汇集而成的。本质上，你从几何体出发，把光路「抛」向眼睛，找出这些光线打中图像平面的像素坐标。再由这些交点在画布上的坐标，确定它们在数字图像中对应的位置。因此，光栅化方法本质上是「以物体为中心」的。</p><h3> 光线追踪</h3><figure><img src="https://scratchapixel.com/images/cameras/pinholecam6.png?" alt=""><figcaption><b>图 13：</b>光线 R 的方向，可以通过从点 O 向相机光圈 A 画线来确定，也可以通过从相机光圈 A 向被该光线打中的像素 X 画线来确定。</figcaption></figure><figure><img src="https://scratchapixel.com/images/cameras/pinholecam7.png?" alt=""><figcaption><b>图 14：</b>光线追踪算法可以分三步描述。首先，从眼睛向当前像素中心画一条直线，构建一条光线。然后，把这条光线投射到场景中，检查它是否与场景中的任何几何体相交。如果相交，就把当前像素的颜色设为交点处物体的颜色。对图像中的每个像素重复这一过程。</figcaption></figure><p>就相机模型而言，光线追踪的操作与光栅化算法的运作方式正好相反。如前面所述，从物体表面反射的光线 R 穿过针孔相机的光圈并打到图像平面表面时，会打中某个特定像素 X。反过来说，图像中的每个像素 X 都对应一条具有给定方向 D 和给定起点 O 的光线 R。要注意的是，要确定光线的方向，并不需要知道它的起点。光线的方向可以通过从 O（光线发出的点）向相机光圈 A 画线来确定，也可以通过从像素 X 向相机光圈 A 画线来定义（如图 13 所示）。因此，如果你能通过从 X（像素）向 A（相机光圈）画线求出光线的方向 D，就可以把这条光线延伸进场景，找到 O（光线的起点），如图 14 所示。这条原理称为光线追踪或光线投射，它让我们能够通过把像素颜色设为各光线起点处的颜色来生成图像。由于针孔相机的特性，图像中每个像素都对应唯一一条光线，我们可以通过从像素向相机光圈画线来构造它。然后我们把这条光线投射到场景中，把像素颜色设为光线所交物体的颜色（如果相交的话——光线也可能不与任何几何体相交，此时把像素颜色设为黑色）。这个交点对应物体表面上的那一点，光线正是从那里朝眼睛反射出去的。</p><p>与光栅化算法相反，光线追踪是「以图像为中心」的。我们不去沿光线从物体到相机的自然路径（光栅化就是这么做的），而是<b>沿同一路径反向前进</b>，从相机走向物体。</p><p>在我们的虚拟相机模型里，光线都从相机原点发出；因此光圈收缩为一个点（投影中心），这个模型里不存在光圈尺寸的概念。我们的 CG 相机模型表现得像一台<b>理想针孔相机</b>，因为我们认为只有单条光线穿过光圈（而不是像真实针孔相机那样一束包含许多条光线的光）。当然，这在真实针孔相机上是不可能的——孔太小时会发生衍射。用这样一台理想针孔相机，我们可以生成完全清晰的图像。下面是完整的伪代码算法：</p><pre><code>
+for (each pixel in the image) {
+    // 第 1 步
+    build a camera ray: trace a line from the current pixel location to the camera's aperture;
+    // 第 2 步
+    cast the ray into the scene;
+    // 第 3 步
+    if (the ray intersects an object) {
+        set the current pixel's color with the object's color at the intersection point;
+    }
+    else {
+        set the current pixel's color to black;
+    }
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/cameras/pinholecam8.png?" alt=""><figcaption><b>图 15：</b>对相机可见的点，是距眼睛最近的那个点。</figcaption></figure><p>如第一课所讲，光线追踪要稍复杂一些，因为任何一条相机光线都可能与多个物体相交，如图 15 所示。在这些点中，对相机可见的是距眼睛最近的那个。如果你想要光线追踪算法的快速入门，可以读本节<a href="how-does-it-work.html">第一课</a>，或者继续阅读本节专门讲光线追踪的后续课程。</p><p>进阶：你可能已经意识到，多条光线可能打中图像上的同一个像素位置。这种情况在真实世界中很常见，因为反射光线的表面是连续的。在实践中，我们观察的是一个连续表面（物体表面）到另一个连续表面（像素表面）的投影。关键在于理解：物理世界中的像素不是一个理想点，而是一个接收来自另一表面反射光的表面。在计算机图形学（CG）中常采用的一种更准确的理解方式，是把它看作<b>表面之间光能的「交换」或传输</b>。想了解更多，请参阅计算机图形学的数学与物理部分，特别是讲着色数学与 Monte Carlo 方法的那几课，以及讲 Monte Carlo 光线追踪与路径追踪的那一课。</p><h2>接下来是什么？</h2><p>现在我们已经准备好实现一个针孔相机模型，其控制方式类似于 Maya 这类软件中的做法。随附的还有一份程序源码，它生成的图像在效果上可与 Maya 相比。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/3d-viewing-pinhole-camera/virtual-pinhole-camera-model.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/3d-viewing-pinhole-camera/virtual-pinhole-camera-model.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

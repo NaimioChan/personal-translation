@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>在 Windows 操作系统上创建窗口 - Scratchapixel 中文译本</title>
+<meta name="description" content="窗口系统 · 在 Windows 操作系统上创建窗口（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>在 Windows 操作系统上创建窗口</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="windows-intro.html">窗口系统的通用问题</a></li>
+<li><a style="font-weight:700" href="windows-winapi.html">在 Windows 操作系统上创建窗口</a></li>
+</ol>
+</div>
+<h2>在 Windows 操作系统上创建窗口</h2><p><b>阅读时间：16 分钟。</b></p><p>到本章结束时，我们会有一个功能完整的 C++ 应用，演示如何显示一张图像并用鼠标在屏幕上画图。代码大约不超过 200 行，从编程角度说这算不了什么，而且一条命令就能编译。</p><figure><img src="https://scratchapixel.com/images/windowing/screenshot.png" alt=""></figure><p>再说一次，这不是一门 Windows 编程课，所以我们不会深究太多细节，只讲足够你上手的部分。对示例中那些 API 专属代码想深入探究的读者，我们会把你留给专门讲这些的资料。微软的网站在这方面做得相当不错，提供了一些很好的分步示例。</p><p>此外，更根本的一点是，Scratchapixel 的使命不是教你怎么用 API（那通常属于教程的事），而是解释这些 API 所用的算法以及它们如何工作。这也包括对计算机图形学中算法与技术的整体关注。</p><h2>进入无限循环</h2><p>现在开始深入。原生 Windows 程序常常用一个叫 <code>WinMain</code> 的方法替换掉程序通常的 <code>int main()</code> 入口。这并非必须，我们更愿意保持传统的应用结构，因此继续用 <code>main</code>：</p><pre><code>
+int main(int argc, char** argv) {
+	HINSTANCE hInstance = GetModuleHandle(NULL);
+	CreateAndRegisterWindow(hInstance);
+	MSG msg;
+	while (1) {
+		while(PeekMessage(&amp;msg, nullptr, 0, 0, PM_REMOVE) != 0) {
+			TranslateMessage(&amp;msg);
+			DispatchMessage(&amp;msg);
+			if (msg.message == WM_QUIT) {
+				break;
+			}
+		}
+		if (msg.message == WM_QUIT)
+			break;
+		DoSomeWork();
+	}
+	return 0;
+}
+</code></pre><p>你可能想用 <code>WinMain</code> 的唯一理由，是它直接把一个 <code>hInstance</code> 值传给方法，而如果你不用 <code>WinMain</code>，就得自己用 <code>GetModuleHandle(NULL)</code> 把它取出来。显然这太简单了，本身不足以成为使用 <code>WinMain</code> 的理由。接着我们调用创建窗口的方法，这部分我们下一步深入。窗口跑起来之后，我们进入无限循环。我们检查消息、处理消息，当队列里没有新消息时，就做点事。如上一章所述，这里就是我们做渲染的地方。最后要注意，如果其中一条消息是关于退出应用的（<code>WM_QUIT</code>），我们就跳出事件循环，然后再跳出外层循环，从而真正退出应用。之所以这么做，是因为虽然一般来说退出就是退出，但 Windows 有时会在收到 <code>WM_QUIT</code> 之后又生成事件（尤其是 <code>WM_TIMER</code> 事件）。所以可以预期 <code>WM_QUIT</code> 之后还会收到更多消息。</p><p><code>TranslateMessage</code> 与 <code>DispatchMessage</code> 是 Windows 原生调用。调用这些函数时，Windows 会把这些消息重新分派给一个叫 <code>WinProc</code> 的方法，那里基本上就是我们放置处理鼠标、键盘等事件全部逻辑的地方。等讲到创建窗口时再说这个。</p><p>现在我们看看 <code>CreateAndRegisterWindow</code> 方法长什么样。</p><h2>创建窗口</h2><p>代码如下：</p><pre><code>
+void CreateAndRegisterWindow(HINSTANCE hInstance) {
+	WNDCLASSEX wc = {0};
+	wc.cbSize = sizeof(WNDCLASSEX);
+	wc.lpfnWndProc = WndProc;
+	wc.hInstance = hInstance;
+	wc.lpszClassName = CLASSNAME;
+	wc.hCursor = LoadCursor(nullptr, IDC_ARROW); // 设置默认的箭头光标
+	wc.hIcon = LoadIcon(hInstance, IDI_APPLICATION); // 加载默认的应用图标
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.lpszMenuName = nullptr;
+	wc.hIconSm = LoadIcon(hInstance, IDI_APPLICATION); // 加载应用的小图标
+
+	if (!RegisterClassEx(&amp;wc)) {
+		MessageBox(nullptr, L"Window Registration Failed", L"Error",
+			MB_ICONEXCLAMATION | MB_OK);
+	}
+
+	hwnd = CreateWindowEx(
+		WS_EX_CLIENTEDGE,
+		CLASSNAME,
+		L"Foo",
+		WS_OVERLAPPEDWINDOW &amp; ~WS_THICKFRAME &amp; ~WS_MAXIMIZEBOX, // 不可调整大小
+		CW_USEDEFAULT, CW_USEDEFAULT, win_width, win_height,
+		nullptr, nullptr, hInstance, nullptr);
+
+	if (hwnd == nullptr) {
+		MessageBox(nullptr, L"Window Creation Failed", L"Error",
+			MB_ICONEXCLAMATION | MB_OK);
+	}
+
+	InitializeOffScreenDC(hwnd);
+
+	ShowWindow(hwnd, SW_SHOWDEFAULT); // 也可以用 WS_VISIBLE，但这个选项控制更精细
+	UpdateWindow(hwnd);
+}
+</code></pre><p>创建窗口很直接。首先，我们需要设置 <a href="https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-wndclassexa" target="_blank" rel="noreferrer noopener">WNDCLASSEX</a> 结构的几个字段，顾名思义，这个结构用来注册窗口的类。窗口类背后的概念是：为某一类窗口定义一组它们共享的行为，而 <code>WNDCLASSEX</code> 描述一个窗口类的特征。目前需要关注的结构中最重要三个组成部分是：</p><ul><li><p><code>lpfnWndProc</code>：本质上这是一个指针，指向处理发送到我们窗口的消息的函数。如我们的示例所示，这个函数叫 <code>WndProc</code>，我们会在那里处理按键、鼠标输入等事件。下一节会深入讲它。</p></li><li><p><code>hInstance</code>：这是包含该类窗口过程的实例句柄。从 <code>GetModuleHandle</code> 得到的 <code>hInstance</code> 参数代表一个模块的实例句柄。在 Windows 编程中，模块可以是一个可执行文件（.exe）或动态链接库（.dll）文件。实例句柄是操作系统在把模块加载进某个进程的地址空间时分配给它的唯一值。系统与应用都用这个句柄来标识该模块的实例。</p></li><li><p><code>lpszClassName</code>：这是一个字符串，指定你的窗口类名。在我们的示例代码里，它被设为 <code>myapp_window</code>，但你想用什么都可以，只要在应用范围内唯一。这个名字唯一地标识窗口类。用 <code>RegisterClassEx</code> 函数注册窗口类时，系统用这个名字来识别。如果同名的类已经注册过，<code>RegisterClassEx</code> 就会失败，除非这个类是由同一个模块注册的。这意味着在单个应用内，更准确地说，在同一个模块（DLL 或可执行文件）内，每个窗口类必须有唯一的名字。</p></li></ul><p>设置好 <code>WNDCLASSEX</code> 实例的成员变量之后，我们注册这个类，并检查成功还是失败。如果成功，就进入下一步：创建窗口本身。<code>CreateWindowEx</code> 有若干参数，全都能在网上查到，所以这里不详述。只需注意，我们传入了上一步注册的类名，设置了窗口标题（<code>Foo</code>），并传入一些标志位——在我们的示例里，这些标志让窗口不可调整大小。窗口在屏幕上的位置我们用了默认的 x、y 值，另外传入了窗口的宽和高。</p><p>就这样。然后我们调用 <code>ShowWindow</code> 和 <code>UpdateWindow</code>，两者都是 Windows API 调用。前者负责把窗口显示到屏幕上，后者强制重绘窗口内容。</p><p>轻松愉快。</p><p>唯一还没解释的函数是 <code>InitializeOffScreenDC(hwnd)</code>，因为它与窗口创建过程没有直接关系。回想一下，我们程序的目标是显示一张图像。这个函数在实现这个目标时很关键，不过在深入它之前，我们先过一遍 <code>WndProc</code> 函数。</p><h2>处理窗口事件</h2><p>代码如下：</p><pre><code>
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	switch(msg) {
+		case WM_CLOSE:
+			if (hBitmap != nullptr) {
+				DeleteObject(hBitmap);
+				hBitmap = nullptr;
+			}
+			CleanupOffScreenDC();
+			DestroyWindow(hWnd);
+			break;
+		case WM_DESTROY:
+			PostQuitMessage(0);
+			break;
+		case WM_LBUTTONDOWN:
+			is_drawing = true;
+			break;
+		case WM_LBUTTONUP:
+			is_drawing = false;
+			break;
+		case WM_MOUSEMOVE: {
+			int xpos = GET_X_LPARAM(lParam);
+			int ypos = GET_Y_LPARAM(lParam);
+			if (is_drawing) {
+				SetPixelColor(pBits, win_width, xpos, ypos, 255, 0, 0);
+				InvalidateRect(hWnd, NULL, TRUE);
+			}
+			break;
+		}
+		case WM_ERASEBKGND:
+			return 1; // 表示背景擦除已经处理
+		case WM_PAINT:
+			{
+				PAINTSTRUCT ps;
+				HDC hdc = BeginPaint(hWnd, &amp;ps);
+				BitBlt(hdc, 0, 0, win_width, win_height, hdcOffscreen, 0, 0, SRCCOPY);
+				EndPaint(hWnd, &amp;ps);
+			}
+			break;
+		default:
+			return DefWindowProc(hWnd, msg, wParam, lParam);
+	}
+	return 0;
+}
+</code></pre><p>发送到我们窗口的事件类型存放在 <code>msg</code> 变量里。处理方式很直接：用 switch-case 结构检查收到的事件类型，为我们关心的每种事件类型关联相应的代码。Windows 提供了几十种、甚至上百种事件类型，你可以在<a href="https://learn.microsoft.com/en-us/windows/win32/winmsg/about-messages-and-message-queues#system-defined-messages" target="_blank" rel="noreferrer noopener">这里</a>找到列表。我们一开始要用的那些以 <code>WM</code> 为前缀，代表 Window Messages（窗口消息）。这包括所有键盘和鼠标事件，也包括诸如 <code>WM_PAINT</code> 这样的消息——比如窗口被别的窗口遮住后系统要求它重绘时会发出这条消息——以及 <code>WM_CLOSE</code> 和 <code>WM_DESTROY</code>，它们在用户关闭窗口或窗口被终止时（比如通过任务管理器结束进程）触发。</p><p>注意我们的代码没有处理 <code>WM_SIZE</code> 事件，因为我们的窗口不能调整大小。</p><p>这段直白的代码我们不会深挖。不过值得讲一下程序是如何组织起来实现我们的目标的，也就是除了显示图像之外，还要能在图像上画图。我们这么做，是为了演示如何捕获鼠标和键盘事件，用于在 3D 场景中导航，那将是下一门课的主题。</p><p>关于 <code>WM_CLOSE</code> 和 <code>WM_DESTROY</code> 没什么好多说的，除了退出应用时需要做一些清理。更有意思的是 <code>WM_LBUTTONDOWN</code> 和 <code>WM_LBUTTONUP</code>，它们分别在你按下和松开鼠标左键时触发。按下按钮会把布尔变量 <code>is_drawing</code> 设为 true，告诉应用之后任何鼠标移动都要用来在图像上画图。松开按钮会把 <code>is_drawing</code> 设为 false，模拟画图程序里画笔工具的行为。<code>WM_MOUSEMOVE</code> 事件在鼠标移动时触发。我们可以用 <code>GET_X_LPARAM</code> 宏取得鼠标的 x 和 y 位置。想了解更多细节，可以看看 Windows 编程教程，这相当直接。如果 <code>is_drawing</code> 为 true——说明用户按住鼠标左键移动——我们就往保存图像数据的缓冲区里画（下一节详述）。然后我们调用 Windows 原生函数 <code>InvalidateRect</code>，告诉 Windows 强制重绘窗口内容。</p><p>不出所料，这会触发一个 <code>WM_PAINT</code> 事件，其结构类似，绘制代码通常夹在一对 <code>BeginPaint-EndPaint</code> 之间。<code>hdc</code> 表示窗口设备上下文的句柄，我们需要把它传给 <code>BitBlt</code> 这类绘制调用，这里用它请求把位图绘制到屏幕上。</p><p>如果我们自己不处理某个事件，就简单地把它转交给默认的消息处理函数 <code>DefWindowProc</code>（由 Windows 提供，不是我们自己写的）。</p><p>当然，接下来如何扩展这个基础示例就看你了。举例来说，如果你需要加入鼠标中键和右键来扩展自己应用的能力，那你要做的只是查文档，弄清这些事件对应哪些消息（在这个例子里，右键是 <code>WM_RBUTTONDOWN</code>，中键是 <code>WM_MBUTTONDOWN</code>）。这里还有无数其他选项，带来极多的可能性。放飞想象，尽情创造！</p><p>大意就是这些。还能再简单到哪去？这个阶段剩下的，就是看看如何加载一张图像、创建一个 Windows 兼容的位图对象，以及如何往这张图像里画，然后我们就完成了。</p><h2>创建 Windows 兼容的位图</h2><p>下面是我们将要使用的代码：</p><pre><code>
+auto CreateBitmapFromRGB(char* pData, int width, int height) 
+	-&gt; std::pair&amp;ltHBITMAP, void*&gt; {
+	BITMAPINFO bmi = {0};
+	bmi.bmiHeader.biSize = sizeof(bmi.bmiHeader);
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height; // 负值表示自上而下的位图
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 24; // 假定为 24 位 RGB
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+	HDC hdc = GetDC(nullptr);
+    void* pBits;
+    HBITMAP hbm = CreateDIBSection(hdc, &amp;bmi, DIB_RGB_COLORS, &amp;pBits, nullptr, 0);
+    if (hbm != nullptr) {
+        std::memcpy(pBits, pData, width * height * 3); // 假定每像素 3 字节（RGB）
+    }
+    ReleaseDC(nullptr, hdc);
+    return {hbm, pBits};
+}
+
+void InitializeOffScreenDC(HWND hwnd) {
+	std::unique_ptr&amp;ltchar[]&gt; raw_data(new char[win_width * win_height * 3]);
+	
+	memset(raw_data.get(), 0x0, win_width * win_height * 3);
+	std::ifstream ifs("./sample.pbm", std::ios::binary);
+	std::string header;
+	int width, height, bpp;
+	ifs &gt;&gt; header;
+	ifs &gt;&gt; width &gt;&gt; height &gt;&gt; bpp;
+	ifs.ignore();
+	ifs.read(raw_data.get(), win_width * win_height * 3);
+	for (uint32_t i = 0; i &lt; win_width * win_height * 3; i += 3) {
+		std::swap(raw_data[i], raw_data[i + 2]);
+	}
+	ifs.close();
+    
+    auto bitmap_data = CreateBitmapFromRGB(raw_data.get(), win_width, win_height);
+    hBitmap = bitmap_data.first;
+    pBits = bitmap_data.second;
+
+    HDC hdc = GetDC(hwnd);
+    hdcOffscreen = CreateCompatibleDC(hdc);
+    SelectObject(hdcOffscreen, hBitmap);
+    ReleaseDC(hwnd, hdc);
+}
+
+void CleanupOffScreenDC() {
+    if (hdcOffscreen) DeleteDC(hdcOffscreen); // 删除离屏 DC
+}
+
+void SetPixelColor(void* pBits, int width, int x, int y, uint8_t red, uint8_t green, uint8_t blue) {
+    if (!pBits) return; // 确保我们有一个有效的指针。
+
+    int pixel_index = (y * width + x) * 3; // RGB 每像素 3 字节。
+    
+    uint8_t* pPixel = static_cast&amp;ltuint8_t*&gt;(pBits) + pixel_index;
+
+    pPixel[0] = blue;
+    pPixel[1] = green;
+    pPixel[2] = red;
+}
+</code></pre><p>我们从 <code>InitializeOffScreenDC()</code> 开始，你可能记得，我们在 <code>CreateAndRegisterWindow</code> 之后立刻调用了它。这里正是我们加载图像数据、生成位图 Windows 对象的地方。说到 Windows 对象，我们指的是为图像数据创建一种表示，使之与 Windows 处理图像数据以在屏幕上显示的方式相兼容，从而能用 <code>BitBlt</code> 这类 Windows 内置原生调用，也就是上一节讲过的那些。</p><p>这个过程并不过于复杂。我们会用 <code>.ppm,</code> 或 <code>.pbm</code> 格式，这两种格式我们在讲 <a href="display-image-to-screen.html">图像</a> 的那门课里介绍过。简单回顾一下：<code>ppm</code> 或 <code>pbm</code> 代表 <b>Portable Pixmap or Bitmap Format</b>（可移植像素图/位图格式，别跟 <code>BMP</code> 格式混淆，后者是 <a href="https://en.wikipedia.org/wiki/BMP_file_format" target="_blank" rel="noreferrer noopener">Windows 的原生位图格式</a>）。更准确地说，它是一种用来存储光栅图形、也就是由像素构成的图像的格式。它是世界上最简单的图像格式，大概也是全宇宙最简单的。它有两个变种：ASCII 版和二进制版。在我们的例子里，用的图像数据存于该格式的二进制版本。如果你需要复习或入门这个文件格式，还是去看讲图像的那门课。图像数据以 <code>char</code> 存储，所以每个像素的值分别用三个 char 存红、绿、蓝通道，取值范围是 [0..255]。</p><p>然后我们把原始图像数据传给一个叫 <code>CreateBitmapFromRGB</code> 的函数。这里我们用 <code>CreateDIBSection</code> 这个 Windows 原生 API 调用创建一个 Windows 兼容的位图对象。DIB 代表 device-independent bitmap（设备无关位图）。这个名字已经说明了一切。该函数返回两样东西：位图本身，以及一个指向位图图像数据的 <code>void</code> 指针。我们会用这个指针在自定义的 <code>SetPixelColor</code> 函数里，按鼠标所在的像素位置往图像里写。</p><p>关于我们的实现，你唯一需要了解的是 <code>hdcOffscreen</code> 对象的用法。它是一个与我们的设备（简单说就是我们的窗口）相关联的设备兼容<b>图形</b>对象。我们用 <code>SelectObject(hdcOffscreen, hBitmap)</code> 把位图绑定到该对象上。这么做是为了能在离屏状态下往位图里「画」，只有在 <code>WM_PAINT</code> 事件期间才决定把它呈现到屏幕上。这有时被称为双缓冲，但在这里用这个说法会误导人，因为一般来说，双缓冲指的是实时图形中用的一种方法，而在这里我们可以同时处理不止一张图像，通常是两张，有时三张。我们往图像 1 里画，然后把图像 1 呈现到屏幕。图像 1 在屏幕上的同时，我们往图像 2 里画，画完再把图像 2 呈现到屏幕，这样就能回去接着画图像 1，如此往复。如果我们在图像呈现到屏幕的同时往它里面画，可能会产生视觉瑕疵。双缓冲消除了这个问题。不过我们这里做的事并不完全相同，然而你可能会看到文献里把它称为双缓冲，这同样是不正确的。我们更愿意简单地把它叫作一种离屏渲染或离屏绘制。</p><p><code>SetPixelColor</code> 函数相当直接。我们在收到 <code>WM_MOUSEMOVE</code> 事件时调用它。收到该事件时，我们在当前鼠标位置往图像里画一个红色像素。</p><h2>编译</h2><p>完整源代码和示例图像可以在 GitHub 仓库里找到。注意，自己做一张 <code>pbm</code> 图像很简单，可以用 Gimp 或 Photoshop。</p><p>要编译，打开一个 GitBash 终端并输入以下命令：</p><pre><code>
+clang++ -std=c++23 -luser32 -lgdi32 -o window.exe window.cc
+</code></pre><p>就这么简单。<code>user32</code> 和 <code>gdi32</code> 是窗口系统涉及的两个 Windows 库。如果你有兴趣，我们鼓励你自己去研究这两个库。</p><p>启动应用。你应该会看到一张柯基犬的图像。现在你可以用鼠标左键在图像上画图了。</p><h3> 评论</h3><ul><li><p><code>RegisterClassEx</code> 或 <code>CreateWindowEx</code> 这类 Windows 调用用 <code>wchar_t</code> 来定义字符串。虽然这不是一门 C++ 编程课，但值得说明：这就是为什么所有字符串都以字母 <code>L</code> 开头。这个前缀告诉编译器，字符串里的每个字符都应当用宽字符类型（<code>wchar_t</code>）而不是普通的 <code>char</code> 类型来存储。确实，<code>L</code> 前缀代表「literal」（字面量），表示「宽字符字面量」或「宽字符串字面量」。</p></li><li><p>一般来说，Scratchapixel 的编码风格尽量遵循 Google 的编码风格规则。但 Windows 有自己的风格，变量大多使用驼峰命名。考虑到你在网上找到的大多数示例都遵循这条规则，我们在自己的示例里也尽量照做，好让你在我们的示例和网上其他示例之间对照时更省力。就这样吧。</p></li></ul><h2>结论</h2><p>如你所见，Windows 其实没什么神奇的。在窗口里显示图像、处理各种事件都相当直接，只要有人给你讲清楚。谢谢 Scratchapixel。</p><p>这将构成我们下一门课的基础，那门课里我们会学如何用鼠标和键盘事件控制 3D 相机的运动，从而在场景中穿行。令人兴奋的东西！下门课再见。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/windowing/windows-winapi.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/windowing/windows-winapi.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

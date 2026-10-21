@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光栅化算法概览 - Scratchapixel 中文译本</title>
+<meta name="description" content="光栅化 · 光栅化算法概览（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光栅化算法概览</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="overview-rasterization-algorithm.html">光栅化算法概览</a></li>
+<li><a href="projection-stage.html">投影阶段</a></li>
+<li><a href="rasterization-stage.html">光栅化阶段</a></li>
+<li><a href="visibility-problem-depth-buffer-depth-interpolation.html">可见性问题、深度缓冲算法与深度插值</a></li>
+<li><a href="perspective-correct-interpolation-vertex-attributes.html">透视正确插值与顶点属性</a></li>
+<li><a href="rasterization-practical-implementation.html">光栅化：一个实际实现</a></li>
+</ol>
+</div>
+<h2>光栅化算法概览</h2><p><b>阅读时间：20 分钟。</b></p><h2>你想知道的关于光栅化算法的一切（但一直不敢问！）</h2><p><b>光栅化渲染技术</b>无疑是渲染三维场景图像最常用的技术。但它可能也是所有技术中最不为人理解、也最缺乏<b>像样</b>文档记载的一种，尤其是与光线追踪相比。</p><p>原因有多方面。首先，这是一项来自过去的技术。这倒不是说过时了——恰恰相反。用这个算法生成图像的技术，大多是在 1960 年代到 1980 年代初发展起来的。在计算机图形学领域，那段时期相当于中世纪，而那些提出这些技术的论文，相关知识往往已经散失。光栅化也正是 GPU 用来生成三维图形的技术。虽然自 GPU 问世以来硬件技术已大幅演进，但 GPU 生成图像所实现的基本技术，自 1980 年代初以来并没有多大变化。硬件变了，但图像得以形成的底层流水线没变。事实上，这些技术太过基础、与硬件架构结合得太深，以至于常常被忽略（只有设计 GPU 的人才真正理解它们在做什么，而这绝不是件轻松的事。不过，设计一块 GPU 与理解光栅化算法的原理是两回事；所以要解释后者应当没那么难！）。</p><p>无论如何，我们认为处理这种状况是紧迫而重要的。通过这一课，我们希望成为第一个把该算法讲得清楚而完整、并给出完整实践实现的资源。如果这一课提供了你苦苦寻找的答案，请考虑捐赠！这些内容是免费提供的，背后是大量的辛苦工作。</p><p>注：本课发表于 2010 年代中期某时。</p><h2>引言</h2><p>光栅化与光线追踪都旨在解决可见性或隐藏面问题，只是解决的顺序不同（可见性问题在<a href="visibility-problem.html">渲染三维场景图像概览</a>一课中介绍过）。这两个算法的共同点，是都从根本上依靠几何技术来解决这个问题。本课会简要描述光栅化算法如何工作。原理理解起来相当直接，但实现它要用上一系列技术，尤其是几何领域的技术，本课也会一并解释。</p><p>本课为演示光栅化实践而写的程序很重要，因为后续课程里我们还会用它来实现光线追踪算法。把两种算法放在同一个程序里，就能方便地比较这两种渲染技术的输出（在加上着色之前，它们应当得到相同结果），并评估它们的性能。这种比较是理解两种算法各自优劣的极好方式。</p><h2>光栅化算法</h2><p>光栅化算法有多种，但直说吧：这些不同的算法都基于同一条总体原理。换句话说，它们是同一个想法的变体。本课讨论光栅化时，指的就是这个想法或原理。</p><p>那个想法是什么？前几课我们讨论过光栅化与光线追踪的区别，也提过渲染过程基本上可以分解为两个主要任务：可见性与着色。简言之，光栅化主要是一种解决<b>可见性问题</b>的方法。可见性就是确定三维物体的哪些部分对相机可见。这些物体的某些部分可能被隐藏，因为它们要么在相机视场之外，要么被其他物体挡住。</p><figure><img src="https://scratchapixel.com/images/rasterization/raytracing-raster.png?" alt=""><figcaption><b>图 1：</b>在光线追踪中，我们发射一条穿过图像中每个像素中心的光线，然后检查这条光线是否与场景中的任何几何体相交。若找到交点，就把该像素的颜色设为所交物体的颜色。由于一条光线可能与多个物体相交，我们需要记录最近的相交距离。</figcaption></figure><p>这个问题基本上有两种解法。一种做法是穿过图像中的每个像素发射一条光线，确定相机与任何相交物体之间的距离（如果有的话）。通过该像素可见的物体，就是相交距离最小的那个（一般记作 \(t\)）。光线追踪采用的就是这种技术。在这种情况下，图像是这样生成的：遍历图像中的所有像素，为每个像素发射一条光线，判断这些光线是否与场景中的任何物体相交。本质上，这个算法需要两个主循环。外层循环遍历图像中的像素，内层循环遍历场景中的物体：</p><pre><code>
+for (each pixel in the image) { 
+    Ray R = computeRayPassingThroughPixel(x,y); 
+    float tClosest = INFINITY; 
+    Triangle triangleClosest = NULL; 
+    for (each triangle in the scene) { 
+        float tHit; 
+        if (intersect(R, object, tHit)) { 
+             if (tHit &lt; tClosest) { 
+                 tClosest = tHit;
+                 triangleClosest = triangle; 
+             } 
+        } 
+    } 
+    if (triangleClosest) { 
+        imageAtPixel(x,y) = triangleColorAtHitPoint(triangleClosest, tClosest); 
+    } 
+}
+</code></pre><p>注意在这个例子里，假定物体由三角形构成（且只有三角形）。我们不是遍历物体，而是把物体看作一堆三角形，遍历这些三角形。原因前几课已经解释过：无论在光线追踪还是光栅化中，三角形常被用作基本的渲染图元（GPU 要求几何体必须三角化）。</p><p>光线追踪是解决可见性问题的第一种做法。我们把这种技术描述为<b>以图像为中心</b>，因为光线是从相机射向场景的（从图像出发），这与光栅化采用的另一种做法相反。</p><figure><img src="https://scratchapixel.com/images/rasterization/raytracing-raster2.png?" alt=""><figcaption><b>图 2：</b>光栅化大致可以分解为两步。首先，用透视投影把构成三角形的三维顶点投影到屏幕上。然后，遍历图像中的所有像素，检查它们是否落在所得的二维三角形之内。若在，就用三角形的颜色填充该像素。</figcaption></figure><p>光栅化采取相反的思路来解决可见性问题。它把三角形「投影」到屏幕上，用透视投影把该三角形的三维表示转换成二维表示。这个变换是通过把构成三角形的顶点投影到屏幕上完成的（如所述，用透视投影）。算法接下来的步骤，是用某种技术填充该二维三角形所覆盖的所有图像像素。这两步如图 2 所示。技术上它们执行起来很直接。投影这一步只需要一次透视除法和一次把所得坐标从图像空间重映射到光栅空间，这些过程前几课已经探讨过。确定所得三角形覆盖了图像中哪些像素同样简单，后文会详细说明。</p><p>这个算法与光线追踪的做法比起来如何？首先，与先遍历图像中所有像素不同，光栅化的外层循环需要遍历场景中的所有三角形。然后在内层循环里，我们遍历图像中的所有像素，判断当前像素是否落在当前三角形的「投影图像」之内（如图 2 所示）。本质上，两个算法的内外循环是反过来的。</p><pre><code>
+// 光栅化算法
+for (each triangle in the scene) { 
+    // 第 1 步：用透视投影把三角形的顶点投影出去
+    Vec2f v0 = perspectiveProject(triangle[i].v0); 
+    Vec2f v1 = perspectiveProject(triangle[i].v1); 
+    Vec2f v2 = perspectiveProject(triangle[i].v2); 
+    for (each pixel in the image) { 
+        // 第 2 步：判断这个像素是否落在该三角形的投影图像之内
+        if (pixelContainedIn2DTriangle(v0, v1, v2, x, y)) { 
+            image(x, y) = triangle[i].color; 
+        } 
+    } 
+}
+</code></pre><p>这个算法是<b>以物体为中心</b>的，因为它从几何体出发，一路推回到图像；而光线追踪的做法是从图像出发，一路走进场景。</p><p>两个算法在原理上都很直接，但在实现和解决各自遇到的各种问题时，复杂度上略有分歧。在光线追踪中，生成光线很简单，但求光线与几何体的交点可能很难（取决于几何体类型），计算量也可能很大。不过，先把光线追踪放一边。在光栅化算法中，我们要把顶点投影到屏幕上，这既简单又快。后面会看到，第二步——判断像素是否落在三角形的二维表示之内——也有同样直接的几何解法。本质上，用光栅化方法计算一张图像，靠的是两个非常简单快速的技术：透视过程，以及判断像素是否落在二维三角形内。光栅化堪称「优雅」的算法。它用到的技术求解简单、易于实现，结果也可预期。正因如此，这个算法非常适合 GPU，也是 GPU 用来生成三维物体图像的渲染技术（它还很容易并行运行）。</p><p>总结如下：</p><ul><li><p>把几何体转换成三角形能简化流程。如果所有图元都转成三角形图元，我们就能写出快速高效的函数，把三角形投影到屏幕上，并判断像素是否落在这些二维三角形内。</p></li><li><p>光栅化是<b>以物体为中心</b>的。我们把几何体投影到屏幕上，再通过遍历图像中的所有像素来确定它们的可见性。</p></li><li><p>它主要依靠两项技术：把顶点投影到屏幕上，以及判断某个特定像素是否落在二维三角形之内。</p></li><li><p>GPU 上运行的渲染流水线基于光栅化算法。</p></li></ul><blockquote><p>「3D 深度缓冲、线性插值多边形的快速渲染，是当代工作站的基础。一般而言，问题包含两部分：1）顶点的三维变换、投影与光照计算；2）把多边形光栅化进帧缓冲。」（A Parallel Algorithm for Polygon Rasterization，Juan Pineda，1988）</p></blockquote><p><b>光栅化</b>这个术语，来源于多边形（此处即三角形）可以说被拆解成了像素，而如我们所知，由像素构成的图像称为光栅图像。这个过程在技术上称为<b>把三角形光栅化进图像或帧缓冲</b>。</p><blockquote><p>「光栅化就是确定哪些像素在三角形内部的过程，仅此而已。」（Michael Abrash，《Rasterization on Larrabee》）</p></blockquote><p>课程讲到这里，你应当已经明白用光栅化方法如何生成三维场景（由三角形构成）的图像。我们目前描述的只是算法最简单的形式。它可以大幅优化；此外，我们还没解释当两个投影到屏幕上的三角形覆盖图像中同一批像素时会发生什么。那种情况下，我们怎么决定这两个（或更多）三角形中哪个对相机可见？下面就来回答这两个问题。</p><details open><p>如果我的几何体不是由三角形构成的呢？还能用光栅化算法吗？最简单的办法是把几何体三角化。现代 GPU 只渲染三角形（以及线和点），所以无论如何你都得把几何体三角化。渲染三维几何体会带来一系列问题，而用三角形更容易解决。随着课程推进，你会明白为什么。</p></details><h2>优化光栅化过程：利用二维三角形包围盒</h2><figure><img src="https://scratchapixel.com/images/rasterization/raytracing-raster3.png?" alt=""><figcaption><b>图 3：</b>为了不必遍历图像中的所有像素，我们可以改为遍历二维三角形包围盒内包含的所有像素。</figcaption></figure><p>到目前为止讨论的这种朴素实现，问题在于内层循环必须遍历图像中的所有像素，哪怕其中只有很小一部分可能被三角形覆盖（如图 3 所示）。当然，这取决于三角形在屏幕上的大小。但考虑到我们想渲染的不只是一个三角形，而是一个可能由数百到数百万个三角形构成的物体，在典型的生产场景中，这些三角形不太可能占据图像的大片区域。</p><figure><img src="https://scratchapixel.com/images/rasterization/raytracing-raster4.png?" alt=""><figcaption><b>图 4：</b>一旦算出三角形周围的包围盒，就可以遍历包围盒内的所有像素，检查它们是否与二维三角形重叠。</figcaption></figure><p>减少待测像素数的方法有多种，但最常见的一种是计算投影三角形的二维包围盒，改为遍历这个二维包围盒内的像素，而不是整幅图像。虽然仍有些像素落在三角形之外，但这种方法平均而言能显著提升算法性能，如图 3 所示。</p><p>计算三角形的二维包围盒很直接。我们需要找出三角形各顶点在光栅空间中的最小与最大 x、y 坐标。下面的伪代码演示了这一过程：</p><pre><code>
+// 把当前三角形的顶点转换到光栅空间
+Vec2f bbmin = INFINITY, bbmax = -INFINITY;
+Vec2f vproj[3];
+for (int i = 0; i &lt; 3; ++i) {
+    vproj[i] = projectAndConvertToNDC(triangle[i].v[i]);
+    // 坐标已在光栅空间中，但仍是浮点数而非整数
+    vproj[i].x *= imageWidth;
+    vproj[i].y *= imageHeight;
+    if (vproj[i].x &lt; bbmin.x) bbmin.x = vproj[i].x;
+    if (vproj[i].y &lt; bbmin.y) bbmin.y = vproj[i].y;
+    if (vproj[i].x &gt; bbmax.x) bbmax.x = vproj[i].x;
+    if (vproj[i].y &gt; bbmax.y) bbmax.y = vproj[i].y;
+}
+</code></pre><p>算出三角形的二维包围盒（在光栅空间中）之后，我们只需遍历该包围盒所界定的那些像素。不过必须留心一点：我们代码里的光栅坐标是浮点数，它们转成整数的方式很关键。特别是一两个顶点可能被投影到画布边界之外，也就是说它们的光栅坐标可能小于 0 或超出图像尺寸。我们的处理办法是把像素坐标夹到范围内：x 坐标夹在 [0, 图像宽度 - 1]，y 坐标夹在 [0, 图像高度 - 1]。此外，还必须把包围盒的最小与最大坐标舍入到最近的整数值（这个办法在循环遍历像素时是有效的，因为我们把变量初始化为 <code>xmin</code> 或 <code>ymin</code>，并在变量 x 或 y 超过 <code>xmax</code> 或 <code>ymax</code> 时退出循环）。所有这些调整都应在循环中使用最终的定点（或整数）包围盒坐标之前完成。下面是伪代码：</p><pre><code>
+...
+uint xmin = std::max(0, std::min(imageWidth - 1, std::floor(bbmin.x)));
+uint ymin = std::max(0, std::min(imageHeight - 1, std::floor(bbmin.y)));
+uint xmax = std::max(0, std::min(imageWidth - 1, std::floor(bbmax.x)));
+uint ymax = std::max(0, std::min(imageHeight - 1, std::floor(bbmax.y)));
+for (y = ymin; y &lt;= ymax; ++y) {
+    for (x = xmin; x &lt;= xmax; ++x) {
+        // 检查当前像素是否落在三角形之内
+        if (pixelContainedIn2DTriangle(v0, v1, v2, x, y)) {
+            image(x,y) = triangle[i].color;
+        }
+    }
+}
+</code></pre><details open><p>注意，生产用的光栅化器所用的方法比在三角形包围盒内遍历像素更高效。如前面提到的，许多像素并不与三角形重叠，检测这些像素样本是否重叠是低效的。这些更优化的方法超出了本课的范围。</p></details><details open><p>如果你研究过这个算法，或了解过 GPU 如何渲染图像，可能听说或读到过：投影顶点的坐标有时会从浮点数转换成<b>定点数</b>（也就是整数）。这样转换的理由是，定点数上的基本运算（乘法、除法、加法等）执行得非常快（比用浮点数做同样运算所需的时间短）。过去确实普遍如此，GPU 在渲染流水线的光栅化阶段至今仍按整数设计，但现代 CPU 一般都带 FPU（浮点运算单元）。因此，如果你的程序跑在 CPU 上，用定点数多半没什么好处（事实上甚至可能更慢）。</p></details><h2>理解图像缓冲与帧缓冲</h2><p>我们的目标是生成场景的图像。有两种方式把程序结果显示出来：要么直接把渲染好的图像显示在屏幕上，要么把图像存到磁盘，稍后用 Photoshop 之类的程序查看。不过无论哪种，我们都需要在渲染过程中把正在渲染的图像存起来。为此我们用计算机图形学里所谓的图像缓冲或<b>帧缓冲</b>——说白了就是一个与图像尺寸相符的二维颜色数组。渲染开始前，创建帧缓冲，所有像素先置为黑色。渲染过程中，随着三角形被光栅化，如果某个像素与某个三角形重叠，就把该三角形的颜色存进帧缓冲中对应的像素位置。所有三角形都光栅化完毕后，帧缓冲里就是完整的场景图像。最后一步是把缓冲内容显示到屏幕上，或存成文件。本课我们选后者。</p><details open><p>遗憾的是，直接在屏幕上显示图像没有跨平台的方案，这点令人惋惜。因此，把图像内容存成文件、再用 Photoshop 或其他图像编辑工具这类跨平台软件查看更为实际。你用来查看图像的软件自然要支持图像的保存格式。本课我们采用简单的 PPM 图像文件格式。</p><p>不过，我们刚在本站第 2 部分发布了一课讲如何在屏幕上显示图像。目前有面向 Windows 操作系统用户的示例，对 Mac 与 Linux 的支持即将推出。所以，如果你有兴趣学习如何把程序结果直接显示在屏幕上，可以看看<a href="windows-intro.html">这一课</a>。否则，就按上面建议把结果存成文件，用 Gimp 或 Photoshop 之类的绘图程序查看。</p></details><h2>用深度缓冲解决重叠：处理每个像素上的多个三角形</h2><p>记住，光栅化算法的首要目标是解决可见性问题。要准确显示三维物体，判定哪些表面可见至关重要。在计算机图形学的早期，处理「隐藏面」问题（可见性问题的另一种说法）流行两种方法：<b>Newell 算法</b>与<b>z 缓冲</b>。我们提到 Newell 算法只是出于历史脉络，本课不会讲它，因为它已不再使用。我们只专注于 z 缓冲方法，它至今仍是 GPU 技术中的标准做法。</p><figure><img src="https://scratchapixel.com/images/rasterization/raytracing-raster5.png?" alt=""><figcaption><b>图 5：</b>当一个像素与两个三角形重叠时，像素颜色取距相机更近的那个三角形。</figcaption></figure><p>然而，要让一个基本的光栅化器运转起来，我们必须考虑到图像中同一个像素可能被不止一个三角形覆盖（如图 5 所示）。那么，如何确定哪个三角形可见？解法很直接：用一个<b>z 缓冲</b>，也叫<b>深度缓冲</b>，这个词你大概见过。z 缓冲说白了是另一个与图像尺寸相符的二维数组。与颜色数组不同，它存的是浮点数。渲染开始前，这个数组里每个像素都初始化为一个很大的数。当一个像素与某三角形重叠时，我们同时检查该像素位置上 z 缓冲里的值。这个数组为每个像素记录相机到最近重叠三角形的距离。由于初始值设为无穷大（或任何足够大的数），像素 X 首次与三角形 T1 检测到重叠时，其距离必定比 z 缓冲中的值更近。于是我们用到 T1 的距离更新该像素的值。如果同一像素 X 之后又与另一个三角形 T2 重叠，就把这个新三角形到相机的距离与 z 缓冲中存的值（此时反映的是到 T1 的距离）作比较。若 T2 更近，它就遮住 T1；否则 T1 仍是该像素遇到过的最近三角形。这样，我们要么用 T2 的距离更新 z 缓冲，要么在 T1 仍最近时保留 T1 的距离。<b>因此，z 缓冲为场景中的每个像素记录最近物体的距离</b>（不过「距离」的具体含义我们会在本课后面展开）。在图 5 中，红色三角形在三维空间中位于绿色三角形之后。如果我们先渲染红色再渲染绿色三角形，那么对同时覆盖两者的任何像素，我们先设入、再用到红色三角形的距离更新 z 缓冲，随后再用到绿色三角形的距离更新。</p><p>你可能会问，我们怎么确定相机到三角形的距离。先看这个算法的一份伪代码实现，这个问题稍后再回到（现在暂且假定函数 <code>pixelContainedIn2DTriangle</code> 替我们算出了这个距离）：</p><pre><code>
+// z 缓冲不过是一个浮点数的二维数组
+float buffer = new float[imageWidth * imageHeight]; 
+// 把每个像素的距离初始化为一个足够大的数
+for (uint32_t i = 0; i &lt; imageWidth * imageHeight; ++i) 
+    buffer[i] = INFINITY;
+ 
+for (each triangle in the scene) { 
+    // 投影顶点
+    ... 
+    // 计算投影三角形的包围盒
+    ... 
+    for (y = ymin; y &lt;= ymax; ++y) { 
+        for (x = xmin; x &lt;= xmax; ++x) { 
+            // 检查当前像素是否在三角形之内
+            float z;  // 相机到该三角形的距离 
+            if (pixelContainedIn2DTriangle(v0, v1, v2, x, y, &amp;z)) { 
+                // 如果到该三角形的距离比 z 缓冲中存储的值
+                // 更短，就用该三角形的颜色更新 z 缓冲，
+                // 以及像素 (x,y) 处的图像
+                if (z &lt; zbuffer(x, y)) { 
+                    zbuffer(x, y) = z; 
+                    image(x, y) = triangle[i].color; 
+                } 
+            } 
+        } 
+    } 
+}
+</code></pre><h2>往前看：光栅化的进一步探索</h2><p>这只是该算法非常高层面的概览（如图 6 所示），但应当能让你大致了解程序里需要哪些部件才能生成图像。我们需要：</p><ul><li><p>一个图像缓冲（二维颜色数组），</p></li><li><p>一个深度缓冲（浮点数的二维数组），</p></li><li><p>三角形（构成场景的几何体），</p></li><li><p>一个把三角形顶点投影到画布上的函数，</p></li><li><p>一个把投影后的三角形光栅化的函数，</p></li><li><p>一些把图像缓冲内容存到磁盘的代码。</p></li></ul><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-schema.png?" alt=""><figcaption><b>图 6：</b>光栅化算法的示意图。</figcaption></figure><p>下一章我们会探讨坐标如何从相机空间转换到光栅空间。虽然方法与上一课学习并介绍过的完全相同，但我们会顺带引入几个额外的技巧。第三章我们将学习如何光栅化三角形。第四章会详细考察 z 缓冲算法如何运作。照例，本课会以一个实践示例收尾。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/overview-rasterization-algorithm.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/overview-rasterization-algorithm.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

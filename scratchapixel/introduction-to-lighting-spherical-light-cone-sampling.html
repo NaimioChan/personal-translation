@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>球形面光源：使用锥体采样 - Scratchapixel 中文译本</title>
+<meta name="description" content="光照简介 · 球形面光源：使用锥体采样（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>球形面光源：使用锥体采样</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-to-lighting.html">三维渲染中的光照简介</a></li>
+<li><a href="introduction-to-lighting-punctual-lights.html">点光源与聚光灯</a></li>
+<li><a href="introduction-to-lighting-distant-lights.html">平行光源</a></li>
+<li><a href="introduction-to-lighting-area-lights-theory.html">面光源：数学基础</a></li>
+<li><a href="introduction-to-lighting-triangular-light.html">三角形面光源</a></li>
+<li><a href="introduction-to-lighting-rectangular-light.html">矩形面光源</a></li>
+<li><a href="introduction-to-lighting-spherical-light-area-sampling.html">球形面光源：使用面积采样</a></li>
+<li><a style="font-weight:700" href="introduction-to-lighting-spherical-light-cone-sampling.html">球形面光源：使用锥体采样</a></li>
+<li><a href="introduction-to-lighting-light-loop.html">直接光照：光源循环</a></li>
+</ol>
+</div>
+<h2>球形面光源：使用锥体采样</h2><p><b>阅读时间：42 分钟。</b></p><h2>前言</h2><p>因为面光源可能具有的每种形状都有各自特定的实现考虑，我们决定每种面光源形状单独用一页来讲。更具体地说，我们会依次考虑三角形、平面、圆盘，最后是球形面光源。这段前言在每一页上都会重复，以确保如果你是从外部链接落到其中某一页的，你会知道最好先从<a href="">三角形面光源</a>那一页读起。在那里我们会讨论一些在其他光源类型中还会复用的概念，并对我们用来实现这些光源的代码做总体说明。</p><p>另请注意，我们强烈建议你阅读<a href="">分布式光线追踪</a>和<a href="">随机采样与采样策略</a>这两门课程，它们是本课的推论。</p><h2>锥体/角度采样</h2><p>如上一章所提示的那样（那一章演示了如何用面积采样方法对球面均匀采样），面积采样方法完全可行。但它有个缺点：从着色点 \(x\) 看去，生成在球体背面的样本被「浪费」了（它们背离着色点，对照亮着色点没有贡献）。如果你看那个场景——其中有一个着色点 \(x\) 和一个充当面光源的球体——你会发现从 \(x\) 能看到的样本都落在一个锥体内。既然我们要找另一种对球面采样的办法，为什么不干脆在这个方向锥内选取方向呢？确实，如果我们沿这些方向追踪光线（并不完全是字面上的追踪，稍后我们会说明），每个方向都应对应球面上的一个点，而其中每个样本都应确实从 \(x\) 可见。这正是我们要的。所以现在的问题是：能不能在这个锥体内均匀地采样方向？答案是能，这就是本章要研究的内容。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-area-vs-cone-sampling.png" alt=""><figcaption><b>图 1：</b>锥体采样方法的做法是，在球体从着色点张开的那个锥体内，生成均匀分布的采样方向。由于没有样本被「浪费」，这个方法应当比面积采样方法给出更好的结果。</figcaption></figure><p>注意，这个方法与对半球采样完全类似，我们在<a href="introduction-to-lighting-area-lights-theory.html">面光源：数学基础</a>那一章研究过。我们知道那个方法同样可以用于求面光源的贡献。关键区别在于：在锥体采样的情形里，我们把采样方向的生成限制在球形面光源张开的立体角内；而在半球采样方法里，我们采的是整个方向半球。</p><p>在前一种情形（锥体采样）里，每个生成的样本都应落在球形光源上；在后一种情形（半球采样）里，我们并不知道某个生成的样本是否会命中面光源。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling2.png" alt=""><figcaption><b>图 2：</b>我们在锥体内生成的每个方向都应一一对应球面上从着色点可见的某个特定点。</figcaption></figure><p>不过在深入数学之前，先讲一点历史。在文献中，你可能会看到这项技术有不同的名字。在它首次被提出的论文（如果你知道更早的资料，请告诉我们）里，即 Peter Shirley 与 Changyaw Wang 的《Monte Carlo Techniques for Direct Lighting Calculations》（1996），它被称为<b>在方向空间中均匀采样</b>。不过你也会看到它被称为<b>锥体采样</b>，因为在这个特定情形下（对球面采样），形状是锥体。但如果考虑更一般的情形（比如说你想用这项技术对三角形采样——这可行，在专讲三角形光源采样的那一章提到过，我们会在本课将来的修订版里研究这项技术），那么说<b>角度采样</b>（或<b>立体角采样</b>）更合适。虽然相当有开创性，但我得说，《Monte Carlo Techniques for Direct Lighting Calculations》属于那种相当难读的论文，除非你有扎实的数学功底、而且头脑能同时摆弄多个抽象概念。唉，旧日好时光就是这样，这也是促成我们创办 Scratchapixel 的原因之一。我们认为我们能，更确切地说，我们应该做得更好。</p><p>说完了这些，我们来深入数学。我们将遵循的流程可以分为两步：</p><ul><li><p>第 1 步：首先，我们要学会在球形面光源张开的锥体内生成均匀分布的采样方向。这些是方向。</p></li><li><p>第 2 步：第 1 步生成的每个方向对应球面上的一个特定点。因此，我们需要根据生成的方向确定球面上的位置。你很快会发现，这件事并不像想象的那么直接。</p></li></ul><h3> 第 1 步：在球形光源张开的锥体内生成均匀分布的采样方向</h3><p>首先，我们说的这个锥体，如下图所示，就是把着色点 \(x\)（它构成锥体的顶点）与球面的切点连起来（在二维中）所画出的那个——从 \(x\) 出发、与球面相切的直线与球面相交的那些点。如下图所示，半角 \(\theta\) 就是锥体底面所张的角（除以 2）。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling-setup.png" alt=""><figcaption><b>图 3：</b>\(x\) 是着色点，\(C\) 是球心，\(r\) 是球半径。把球心连到锥体与球面相交处那个圆上的任一点，就构成一个直角三角形。由此，用三角比公式 \(\theta_{max}\) 等于 \(\sin(\theta) = {r}\) 除以 \({H}\) 就能很容易算出它，其中 \(H\) 是 \(x\) 到 \(C\) 的距离。</figcaption></figure><p>算这个角相当简单。我们知道 \(x\) 到球心的距离，也知道球半径。如图所示，按构造，如果我们从球心 \(C\) 引一条直线，与球的切线相交并使这两条线成直角，就可以用三角比 \(\sin(\theta) = \frac{\text{opposite side}}{\text{hypotenuse}}\) 求出这个角的值。我们把这个角叫作 \(\theta_{\text{max}}\)，因为它是我们在这个锥体内的任何采样方向可能具有的最大（极）角。（如果我们在这里提到「极」的原因你还没看明白，不必太在意——稍后我们会解释。）</p><p>$$
+\sin(\theta_{\text{max}}) = \dfrac{r}{||c - x||}
+$$</p><p>下面这个视频用 3D 表示帮你直观地看这个布置和它的各个部分（希望如此）。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sample-setup.mp4"></video></p></div><p>视频里我们把整个布置旋转了一下，使得从着色点 \( x \) 指向球心 \( C \) 的 Z 向量朝上。当我们用球坐标转笛卡尔坐标的公式生成样本时，得到的向量坐标定义在单位球的笛卡尔坐标系中，其中 Z 轴的坐标是 (0, 1, 0)。在这个坐标系里生成之后（即单位球的坐标系，更准确地说，是球张开的那个锥体，锥轴与向量 (0, 1, 0) 对齐），我们需要把采样方向旋转回去，使它们最终与从着色点指向球心 \( C \) 的 Z 轴对齐。本课后面我们会演示如何进行这个旋转。视频里我们还提到，这里要用 z 向量这个名称来表示朝上的向量，而不是我们此前通常用的 y 向量。别慌，这不是错误。</p><p>只是恰好一旦进入着色领域，人们往往偏好一种约定：Z 向量表示朝上的向量，而 X (1, 0, 0) 与 Y (0, 0, 1) 两轴分别是该向量的切线与副切线。考虑到几乎所有专讲着色的论文都用这套约定，我们也最好沿用。</p><p>现在我们取 \( \phi \) 作方位角，取值范围从 0 到 \( 2\pi \)；取 \( \theta \) 作极角。注意，在球面的语境下，极角通常从 0 取到 \( \pi \)。但对我们来说，只需要对立体角所覆盖的球面子空间采样，也就是说 \( \theta \) 的变化范围是 0 到 \( \theta_{\text{max}} \)。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling-setup1.png" alt=""><figcaption><b>图 4：</b>锥体内生成的任何样本，其球坐标必然被限制在极角 \([0,\theta_{max}]\) 的范围 \(\textcolor{magenta}{\theta}\) 内，以及角 \(\textcolor{cyan}{\phi}\) 的范围 \([0, 2\pi]\) 内。</figcaption></figure><p>如果你观察上图，\( \phi \) 定义了绕 z 轴的那个圆上的一个位置，该圆半径由 \( \theta \) 定义。这个方法让我们能覆盖球形光源张开的立体角内每一个可能的方向。</p><p>从约定的角度说，我们又回到了上一章理论部分所用的约定。这是物理学家常用的约定：z 轴被视为朝上的向量，笛卡尔坐标系通常采用左手坐标系。不过我们按物理学家的常用做法，把 \(\theta\) 和 \(\phi\) 分别定义为极角和方位角。在上一章里，我们用 \(\phi\) 和 \(\theta\) 作极角和方位角，那是数学家偏好的约定。</p><p><b>我们把目标说清楚</b>：我们的目标是，用两个 0 到 1 范围内均匀分布的随机数，生成一个采样方向，它相对于我们刚定义的笛卡尔坐标系的球坐标为 \(\theta\) 和 \(\phi\)。这样就能保证得到的方向（一旦从球坐标转换成笛卡尔坐标）在球体张开的锥体内均匀分布。拿到这些方向之后，我们再看如何由这些方向算出球面上的采样位置（不过我们会看到，为此并不一定需要把方向从球坐标转成笛卡尔坐标，这一点稍后再谈）。那么先说最要紧的：我们怎样对 \(\theta\) 和 \(\phi\) 采样，才能在锥体内生成这些均匀分布的方向？</p><p>注意，我们要解决的问题与均匀采样球面面积的问题非常相似。第一步是计算球体所张开的锥体的立体角。记住，一个表面张开的立体角 \(\Omega\) 由下式给出：</p><p>$$
+\Omega = \int_{\text{surface}} \sin(\theta) \, d\theta \, d\phi.
+$$</p><p>我们在上一章提到过这个公式，当时说半径为 \(r\) 的球面上的微分面积 \(dA\) 等于 \(r^2 \sin(\theta) \, d\theta \, d\phi\)。这里处理的是单位球，所以 \(r = 1\)。在这个语境下，\(\theta\) 是极角（从 z 轴量起），\(\phi\) 是方位角（在 x-y 平面内量取）。对半角为 \(\theta_{\text{max}}\) 的锥体，方位角 \(\phi\) 从 0 到 \(2\pi\)，极角 \(\theta\) 从 0 到 \(\theta_{\text{max}}\)。这个锥体张开的立体角 \(\Omega\) 是：</p><p>$$
+\Omega = \int_0^{2\pi} \int_0^{\theta_{\text{max}}} \sin(\theta) \, d\theta \, d\phi
+$$</p><p>对 \(\theta\) 积分得到：</p><p>$$
+\int_0^{\theta_{\text{max}}} \sin(\theta) \, d\theta
+$$</p><p>\(\sin(\theta)\) 的积分是 \(-\cos(\theta)\)：</p><p>$$
+\left[ -\cos(\theta) \right]_0^{\theta_{\text{max}}} = -\cos(\theta_{\text{max}}) - (-\cos(0)) = -\cos(\theta_{\text{max}}) + 1
+$$</p><p>化简：</p><p>$$
+1 - \cos(\theta_{\text{max}})
+$$</p><p>对 \(\phi\) 积分：</p><p>$$
+\int_0^{2\pi} d\phi = 2\pi
+$$</p><p>合并结果：</p><p>$$
+\Omega = 2\pi (1 - \cos(\theta_{\text{max}}))
+$$</p><details open><p>你可以在 Oleg Mazonka（2012）的论文<a href="https://arxiv.org/ftp/arxiv/papers/1205/1205.1396.pdf" target="_blank" rel="noreferrer noopener">Solid Angle of Conical Surfaces, Polyhedral Cones, and Intersecting Spherical Caps</a> 里找到立体角公式的另一个证明。不过要提醒你，那个论证在数学上相当繁复。由于这是入门课，我们在这里不展开那个证明。希望将来有时间把这篇论文改写成一个容易得多的版本。</p></details><p>如我们所知，一个在锥体内均匀分布的随机变量（本例中是相对于立体角，但与面积的情形类似）的 PDF，就是锥体所张开立体角的倒数。因此：</p><p>$$
+\text{Uniform density} = \frac{1}{\Omega} = \frac{1}{2\pi (1 - \cos(\theta_{\text{max}}))}
+$$</p><p>这实际上就是在由 \(\theta_{\text{max}}\) 定义的锥体内均匀采样方向的 PDF（我们称它为 \(p(\omega')\)）。这里 \(\omega'\) 表示立体角，这个 PDF 同时涵盖方位角 \(\phi\) 和极角 \(\theta\)。现在，类似于我们为球面面积采样方法对方位角采样的做法，可以观察到：由于绕 z 轴的对称性，方位角 \(\phi\) 在 0 到 \(2\pi\) 上均匀分布。于是 \(\phi\) 的 PDF 是：</p><p>$$
+p(\phi) = \dfrac{1}{2\pi}
+$$</p><p>接下来，我们需要求 \(\theta\) 的 PDF。要求 \(\theta\) 的 PDF，先注意上面给出的 PDF 表示的是立体角上的均匀分布。对极角 \(\theta\)，我们通常用 \(\cos(\theta)\)，因为球的三角性质使计算得以简化。要在锥体内对 \(\theta\) 均匀采样，先看 \(\cos(\theta)\) 的范围：</p><ul><li><p>当 \(\theta = 0\) 时，\(\cos(0) = 1\)</p></li><li><p>当 \(\theta = \theta_{\text{max}}\) 时，\(\cos(\theta_{\text{max}})\)</p></li></ul><p>因此 \(\cos(\theta)\) 的范围是从 \(\cos(\theta_{\text{max}})\) 到 1。在这个范围上取均匀分布，\(\cos(\theta)\) 的 PDF 为：</p><p>$$
+p(\cos(\theta)) = \frac{1}{1 - \cos(\theta_{\text{max}})}
+$$</p><details open><p>若随机变量 \(X\) 在区间 \([a, b]\) 上均匀分布，则 PDF \(p(X)\) 为：</p><p>$$
+p(X) = \dfrac{1}{b - a}
+$$</p><p>由于 \(\cos(\theta)\) 的范围是 \([\cos(\theta_{\text{max}}), 1]\)，区间长度为 \([1 - \cos(\theta_{\text{max}})]\)，所以我们要找的 PDF 是：</p><p>$$
+p(\cos(\theta)) = \dfrac{1}{1 - \cos(\theta_{\text{max}})}
+$$</p></details><p>要由 \(\cos(\theta)\) 的 PDF 得到 \(\theta\) 的 PDF，我们用<a href="https://en.wikipedia.org/wiki/Change_of_variables" target="_blank" rel="noreferrer noopener">变量替换公式</a>。若 \(u = \cos(\theta)\)，则 \(du = -\sin(\theta) \, d\theta\)。PDF 的变换式为：</p><p>$$
+p(\theta) = p(\cos(\theta)) \left| \frac{d(\cos(\theta))}{d\theta} \right|
+$$</p><p>因为 \( \frac{d(\cos(\theta))}{d\theta} = -\sin(\theta) \)：</p><p>$$
+p(\theta) = \frac{1}{1 - \cos(\theta_{\text{max}})} \left| -\sin(\theta) \right| = \frac{\sin(\theta)}{1 - \cos(\theta_{\text{max}})}
+$$</p><details open><p>变量替换公式背后的关键思想是这样的。当你有一个随机变量 \(X\)，其 PDF 为 \(p_X(x)\)，并定义一个新的随机变量 \(Y = g(X)\)，那么新随机变量 \(Y\) 的 PDF \(p_Y(y)\) 可以用下式求出：</p><p>$$
+p_Y(y) = p_X(x) \left| \frac{dx}{dy} \right|
+$$</p><p>其中 \(x = g^{-1}(y)\)，而 \(\left| \frac{dx}{dy} \right|\) 是 \(x\) 对 \(y\) 的导数的绝对值。</p><p>如果你想进一步了解这个方法（它对理解锥体采样这类概念至关重要，没有它，你可能只能盯着最终结果发呆，永远弄不懂它是怎么来的），可以搜索「transformation of PDFs」「transformations of random variables」或「change of variables for PDFs」。</p></details><p>总之，我们得到：</p><ul><li><p>\(\phi\) 的 PDF：</p><p>$$
+  p(\phi) = \frac{1}{2\pi}
+  $$</p></li><li><p>\(\theta\) 的 PDF：</p><p>$$
+  p(\theta) = \frac{\sin(\theta)}{1 - \cos(\theta_{\text{max}})}
+  $$</p></li></ul><p>这就完成了均匀采样锥体的第一步，即求出它的 CDF。下一步，如上一章（我们用这个方法推导出球面面积采样方案的那一章）所解释的，是由 PDF 算出 CDF。记住，为此我们需要把 PDF 从积分域下界积到被积随机变量 \(\theta\)，本例中下界是 \(0\)。我们来做。\(\theta\) 的 CDF 是：</p><p>$$
+\begin{aligned}
+F(\theta) &= \int_{0}^{\theta} p(\theta') \, d\theta' \\
+F(\theta) &= \int_{0}^{\theta} \frac{\sin(\theta')}{1 - \cos(\theta_{\text{max}})} \, d\theta'
+\end{aligned}
+$$</p><p>现在计算这个积分，先把常数部分移到积分号左边：</p><p>$$
+\begin{aligned}
+F(\theta) &= \frac{1}{1 - \cos(\theta_{\text{max}})} \int_{0}^{\theta} \sin(\theta') \, d\theta' \\
+F(\theta) &= \frac{1}{1 - \cos(\theta_{\text{max}})} \left[ -\cos(\theta') \right]_{0}^{\theta} \\
+F(\theta) &= \frac{1}{1 - \cos(\theta_{\text{max}})} \left( -\cos(\theta) + \cos(0) \right) \\
+F(\theta) &= \frac{1}{1 - \cos(\theta_{\text{max}})} \left( 1 - \cos(\theta) \right)
+\end{aligned}
+$$</p><p>就这样，我们有了 CDF。如果你还记得上一章，累积分布函数表示的是：你随机选取的角 \(\theta\)（0 到 \(\theta_{\text{max}}\) 之间的任意值）小于那个随机变量 \(\theta\) 的概率。还是这样想：在 1 到 6 之间随机挑一个数，然后问自己，如果我把骰子掷到桌上，得到的点数小于或等于我随机挑的那个值的概率是多少。剩下要做的（再说一次，如果你不知道这个方法，去读上一章）就是对 CDF 求反，这非常容易。要从一个均匀随机变量 \(\varepsilon_2\)（在 [0,1] 范围内均匀分布）求出 \(\theta\)：</p><p>$$\varepsilon_2 = F(\theta) = \frac{1 - \cos(\theta)}{1 - \cos(\theta_{\text{max}})}$$</p><p>解出 \(\cos(\theta)\)：</p><p>$$\cos(\theta) = 1 - \varepsilon_2 (1 - \cos(\theta_{\text{max}}))$$</p><p>最后解出 \(\theta\)：</p><p>$$\theta = \arccos\left(1 - \varepsilon_2 (1 - \cos(\theta_{\text{max}}))\right)$$</p><p>就是这样。我们把 \(\theta\) 和 \(\phi\) 的 PDF 分开处理，并推导出了对 \(\theta\) 采样所需的 CDF 反函数，使得结果采样方向在球体（面光源）张开的锥体内均匀分布。</p><p>现在我们有了对球坐标 \(\theta\) 和 \(\phi\) 方向采样所需的那两个公式。数学部分完成了，但还有一个几何问题要处理。回想一下，我们此前建立了一个规范的笛卡尔坐标系：z 轴正朝上，x 轴和 y 轴位于水平面内，如下图所示。之所以这样做，是因为当你用球坐标转笛卡尔坐标的公式生成样本时，这些公式是：</p><p>$$
+\begin{array}{l}
+x = \cos(\phi) \sin(\theta) \\
+y = \sin(\phi) \sin(\theta) \\
+z = \cos(\theta)
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling-setup2.png" alt=""><figcaption><b>图 5：</b>采样方向的笛卡尔坐标由该向量的球坐标 \(\theta\) 和 \(\phi\) 算出。注意，定义该向量的空间是单位球的空间。我们还需要把这个向量旋转到局部坐标系的空間里，该笛卡尔坐标系的 \(z\) 向量从 \(x\) 指向球心 \(C\)。</figcaption></figure><p>得到的样本就是相对于这个坐标系定义的，因为没有更好的名字，我们称它为单位球坐标系（我有时也叫它规范坐标系，以强调我指的是单位球的那个坐标系）。</p><p>然而，如果你回头看我们前面给出的那些布置图，就会发现 z 向量并不是朝上的，而是从着色点 \(x\) 指向球心 \(C\)。</p><details open><p>记住，在着色中按约定朝上的向量是 z 轴，而不是 y 轴。</p></details><p>所以，我们得想办法把在单位球内生成的样本向量<b>旋转</b>一下（在我们的情形里被限制在锥体内，因此在锥体内生成的所有采样方向的角 \(\theta\) 都被限制在 0 到 \(\theta_{\max}\) 之间），使坐标系的 z 轴与从 \(x\) 指向 \(C\) 的那条线对齐。这里我们用一个小技巧，相当顺手，在着色中用得非常频繁。我们要构建所谓的<b>局部坐标系</b>（同样是因为没有更好的说法，也为了区别于单位球那个 z 轴朝上、坐标为 (0,1,0) 的笛卡尔坐标系）。由一个向量（比如从 \(x\) 指向 \(C\) 的那个向量）构建局部坐标系的方法，在<a href="creating-an-orientation-matrix-or-local-coordinate-system.html">创建朝向矩阵或局部坐标系</a>里讲述。一旦样本在单位球的笛卡尔坐标系（z 轴为 (0,1,0)）内生成，我们就可以用下面的代码把它们旋转到局部坐标系中：</p><pre><code>
+Vec3 sample_rotate = sample.x * x + sample.y * y + sample.z * z;
+</code></pre><p>这里的 <code>x</code>、<code>y</code>、<code>z</code> 是局部笛卡尔坐标系的 x、y、z 轴，而 <code>sample.x</code>、<code>sample.y</code>、<code>sample.z</code> 是在单位球笛卡尔坐标系内生成的采样方向的坐标。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling-setup3.png" alt=""><figcaption><b>图 6：</b>最后一步是把单位球空间内生成的样本向量旋转到局部坐标系。这个过程涉及一次基本的向量-矩阵乘法，其中矩阵的系数（行主序矩阵中的各行）可以分别理解为局部坐标系 \(x\)、\(y\) 和 \(z\) 轴的系数。</figcaption></figure><p>你可能会想，这为什么成立，这个式子又是从哪儿来的。但如果你仔细看，会发现它类似于一次向量-矩阵乘法。确实，考虑这个式子：</p><p>$$
+\begin{bmatrix}
+x' & y' & z'
+\end{bmatrix}
+=
+\begin{bmatrix}
+x & y & z
+\end{bmatrix}
+\begin{bmatrix}
+\textcolor{red}{a_{11}} & \textcolor{red}{a_{12}} & \textcolor{red}{a_{13}} \\
+\textcolor{green}{a_{21}} & \textcolor{green}{a_{22}} & \textcolor{green}{a_{23}} \\
+\textcolor{blue}{a_{31}} & \textcolor{blue}{a_{32}} & \textcolor{blue}{a_{33}}
+\end{bmatrix}
+$$</p><p>如上式所示，我们给系数上了颜色，好让你更容易看出它们与局部坐标系各轴的关系。现在把这个式子展开，就得到：</p><p>$$
+\begin{aligned}
+x' = x * \textcolor{red}{a_{11}} + y * \textcolor{green}{a_{21}} + z * \textcolor{blue}{a_{31}} \\
+y' = x * \textcolor{red}{a_{12}} + y * \textcolor{green}{a_{22}} + z * \textcolor{blue}{a_{32}} \\
+z' = x * \textcolor{red}{a_{13}} + y * \textcolor{green}{a_{23}} + z * \textcolor{blue}{a_{33}}
+\end{aligned}
+$$</p><p>它实际上等价于：</p><p>$$
+v' = x * \textcolor{red}{\text{x-axis}} + y * \textcolor{green}{\text{y-axis}} + z * \textcolor{blue}{\text{z-axis}}
+$$</p><p>如果你好奇，这项技术在<a href="global-illumination-path-tracing-practical-implementation.html">全局光照与路径追踪：一个实际实现</a>那门课里也用来把在半球内生成的样本旋转到局部坐标系。在后续专讲着色器的课程中它会大量使用。我们在这里不深入讲述这项技术，因为已经给你指了可以进一步学习它的资料。</p><p>下面是用来构建那个局部坐标系（有时也叫局部标架）的代码片段，其中 <code>v1</code>（即 z 轴）如图所示是从着色点 \(x\) 指向球心的归一化向量，<code>v2</code> 与 <code>v3</code> 分别是该坐标系的 y 轴与 x 轴（即切线与副切线）：</p><pre><code>
+inline void CoordinateSystem(const Vec3f&amp; v1, Vec3f&amp; v2, Vec3f&amp; v3) {
+    if (std::fabs(v1.x) &gt; std::fabs(v1.y)) {
+        float inv_len = 1 / std::sqrt(v1.x * v1.x + v1.z * v1.z);
+        v2 = Vec3f(v1.z * inv_len, 0, -v1.x * inv_len);
+    }
+    else {
+        float inv_len = 1 / std::sqrt(v1.y * v1.y + v1.z * v1.z);
+        v2 = Vec3f(0, -v1.z * inv_len, v1.y * inv_len); 
+    }
+    v3 = v1.Cross(v2);
+}
+</code></pre><p>有一篇论文题为<a href="https://graphics.pixar.com/library/OrthonormalB/paper.pdf" target="_blank" rel="noreferrer noopener">Building an Orthonormal Basis, Revisited</a>，作者是 Tom Duff、James Burgess、Per Christensen、Christophe Hery、Andrew Kensler、Max Liani 和 Ryusuke Villemin（对，就是这么些人），提出了一个由单位向量计算正交基的更好的办法。虽然他们的论文用另一种方法作对比，即<a href="https://backend.orbit.dtu.dk/ws/portalfiles/portal/126824972/onb_frisvad_jgt2012_v2.pdf" target="_blank" rel="noreferrer noopener">Frisvad 的方法</a>，但他们表明那另一种方法在某些情况下也会失败。因此他们发展出另一种做法，据说提供了迄今为止构建这种局部坐标系最可靠的方式。谁能想到，这么一个看似琐碎的问题，竟让人投入如此多的脑力？事实上这是光线追踪中非常常用的一段关键代码，尤其是在着色的部分，而为这个问题找出数值上最稳定的解法极其重要。</p><p>总之，下面是我们要用的论文中的代码（把第一种方法也留在这里，以备将来参考）：</p><pre><code>
+inline void CoordinateSystem(const Vec3f&amp; n, Vec3f&amp; b1, Vec3f&amp; b2) {
+    float sign = std::copysign(1.0f, n.z);
+    const float a = -1.0f / (sign + n.z);
+    const float b = n.x * n.y * a;
+    b1 = Vec3f(1.0f + sign * n.x * n.x * a, sign * b, -sign * n.x);
+    b2 = Vec3f(b, sign + n.y * n.y * a, -n.y);
+}
+</code></pre><p>注意，虽然调用这个方法会显著影响计算时间，但把它内联大概是个好主意，尽管我们这么做了也没看到明显改善。有了这个坐标系之后，我们就可以继续生成采样方向了。为此我们要用 <code>UniformSampleCone</code> 函数，定义如下：</p><pre><code>
+Vec3f UniformSampleCone(float r1, float r2, float cos_theta_max, const Vec3f&amp; x, const Vec3f&amp; y, const Vec3f&amp; z) {
+    float cos_theta = std::lerp(r1, cos_theta_max, 1.f);
+    float sin_theta = std::sqrt(1.f - cos_theta * cos_theta);
+    float phi = 2 * M_PI * r2;
+    return std::cos(phi) * sin_theta * x + std::sin(phi) * sin_theta * y + cos_theta * z;
+}
+</code></pre><p>你会注意到公式 \(\cos(\theta) = 1 - \varepsilon_2 (1 - \cos(\theta_{\text{max}}))\) 被简化成了直白的 <code>std::lerp(r1, cos_theta_max, 1.f)</code>。要理解为什么，可以想到把 \(\varepsilon\) 当作 \(1 - \varepsilon\) 是同样成立的（因为它们都是随机数）。于是，如果我们把这个公式改写成线性组合 \(\cos(\theta) = a \cdot (1 - \varepsilon) + b \cdot \varepsilon\)，其中 \(a = \cos(\theta_{\text{max}})\)、\(b = 1\)，并把 \(\varepsilon\) 替换为 \(1 - \varepsilon\)，就得到：</p><p>$$
+\begin{aligned}
+\cos(\theta) &= \cos(\theta_{\text{max}}) \cdot (1 - (1 - \varepsilon)) + 1 \cdot (1 - \varepsilon) \\
+\cos(\theta) &= \cos(\theta_{\text{max}}) \cdot \varepsilon + 1 - \varepsilon \\
+\cos(\theta) &= 1 - \varepsilon \cdot (1 - \cos(\theta_{\text{max}})) \\
+\end{aligned}
+$$</p><p>在 <code>UniformSampleCone</code> 方法里，采样方向在单位球笛卡尔坐标系中定义的坐标 x、y、z，分别乘以局部坐标系的 x、y、z 轴。这起到把样本从单位球笛卡尔坐标系（z 轴坐标为 (0,1,0)）旋转到局部笛卡尔坐标系（z 轴从 \(x\) 指向 \(C\)）的作用。现在样本已落在球体张开的那个方向锥内。下面的短视频展示了这个过程。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sample-setup1.mp4"></video></p></div><h3> 第 2 步：由方向确定球形光源上的位置</h3><p>我们已经知道如何在球形面光源张开的立体角内生成均匀分布的样本。这些采样方向指向光源的「可见面」（从着色点看去），但我们真正关心的是球面上的一个点，而不只是一个方向。所以，我们要用这些方向找出它们所指的光源表面位置。大多数渲染器在这个环节选择直接调用一个光线-球体求交例程。就这么简单。我们在<a href="ray-sphere-intersection.html">一个极简光线追踪器：光线-球体求交</a>那门课里研究过两种做法，一种用几何解，另一种用解析解。两种都对，PBRT 或 Mitsuba 这类开源项目用的是后者。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling-setup4.png" alt=""><figcaption><b>图 7：</b>只在锥体范围内生成采样方向还不够。接下来还要找出这个采样方向所对应的球面上的点。思考这个问题的一个简单方式是：从 \(x\) 出发沿采样方向追踪一条光线，求出这条光线与球体的交点。交点就是我们在球形光源上的采样位置。</figcaption></figure><p>不过有个不小的差别。PBRT 的做法假定球体可能被施加了非线性缩放变换（把它变成椭球），因此需要先把光线起点与方向变换到球体的物体空间，再调用函数求球体二次型的可能根。相反，Mitsuba 的做法假定球体没有被施加这类非均匀缩放，因此不需要把光线方向和起点变换回球体物体空间。第二种方法对我们更合适，因为我们本来就没有为球形光源存世界到物体的矩阵，而且我们确实期望球形光源保持为球。所以我们采用那种做法（它仍然需要变换光线起点位置，使得球体被假定以原点为中心）。</p><p>总之，用两种做法求光线与球体交点的代码，前面提到的<a href="ray-sphere-intersection.html">一个极简光线追踪器：光线-球体求交</a>那门课里已经给过了，所以这里不再花时间细讲。从代码角度我们要做的，是给 <code>Sphere</code> 类加一个 <code>Intersect</code> 方法，返回布尔值表示光线是否与球体相交。</p><p>你可能会想，从技术上说，既然所有光线都是在球体张开的立体角内生成的，那么锥体内生成的所有光线都应该与球体相交。没错；但问题在于，<code>Intersect</code> 例程有时会对正好在边缘上的光线返回 <code>false</code>，或者当球形光源很小、和/或到球体的距离很大时，浮点精度误差会导致结果不准确。这就是为什么写代码并不总能自然而然地得到 100% 符合预期的结果。</p><p>大多数渲染器解决这个问题的做法是，在这种情况下把光线「投影」到球体上（希望这种情况很少，但比你想象的要多），因为可以假定导致求交函数失败的光线必然是那些几乎与球面相切的光线，也就是在球体边缘处只接触球面于一个点（而不是两个点）的光线。计算这个点很容易：只需把光线方向与连接着色点 \(x\) 和球心的向量做点积。我们在<a href="math-operations-on-points-and-vectors.html">几何</a>那门课的点积一节提到过，<i>两个向量的点积可以看作 A 在 B 上的投影</i>。这样做实际上算出的点在技术上应该正好位于从 \(x\) 看去球体的边缘。代码如下：</p><pre><code>
+Vec3f SphereLight::Sample(const DifferentialGeometry&amp; dg, Sample3f&amp; wi, float &amp;tmax, const Vec2f&amp; sample) const override {
+	Vec3f dz = center_ - dg.P;
+	float dz_len_2 = dz.Dot(dz);
+	float dz_len = std::sqrtf(dz_len_2);
+	dz /= dz_len;
+	Vec3f dx, dy;
+
+	CoordinateSystem(dz, dx, dy);
+
+	// 跳过对 x 是否在球内的检查
+
+	float sin_theta_max_2 = radius_ * radius_ / dz_len_2;
+	float cos_theta_max = std::sqrt(std::max(0.f, 1.f - sin_theta_max_2));
+	Vec3f sample_dir = UniformSampleCone(sample.x, sample.y, cos_theta_max, dx, dy, dz);
+
+	if (!Intersect(dg.P, sample_dir, tmax)) {
+		tmax = (center_ - dg.P).Dot(sample_dir);
+	}	
+	Vec3f p = dg.P + sample_dir * tmax;
+	Vec3f d = p - dg.P;
+	Vec3f n = (p - center_).Normalize();
+	...
+}
+
+bool SphereLight::Intersect(const Vec3f&amp; orig, const Vec3f&amp; dir, float &amp;thit) const {
+	Vec3f o = orig - center_;
+	Vec3f d = dir;
+	float a = d.Dot(d);
+	float b = 2 * o.Dot(d);
+	float c = o.Dot(o) - radius_ * radius_;
+	float t0, t1;
+	if (!Quadratic(a, b, c, t0, t1)) return false;
+	thit = t0;
+	return true;
+}
+</code></pre><details open><p>注意，如果要写健壮的代码，技术上你应该检查着色点 \(x\) 是否位于球体内，若是则应该退回面积采样方法。我们的代码不涉及这种情况（但我们为你指出来了）。这种情况很容易检测，你只需检查 \(x\) 到球面上某点的距离是否小于球半径。</p></details><p>我们知道这个方法有个问题：当光线靠近或正好在锥体边缘上时，光线-球体求交有时会失败。但愿我们能跳过光线-球体求交，改用另一种不受这个问题困扰的几何方法。这个方法最初由<a href="https://www.akalin.com/sampling-visible-sphere" target="_blank" rel="noreferrer noopener">Fred Akalin</a> 提出，做法是再算一个角 \(\alpha\)，它与 \(\theta\) 角相对，如下图所示：</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling-setup5.png" alt=""><figcaption><b>图 8：</b>角 \(\alpha\) 以及用 Akalin 方法解析计算球面采样位置所需各项的示意。</figcaption></figure><p>用 \(\alpha\)，我们就能借助简单几何毫无失败之忧地算出采样方向与球体的交点在哪里。为此我们先用余弦定理，它说：对任意三角形，三边长分别为 \(a\)、\(b\)、\(c\)，\(\alpha\) 为 \(c\) 边所对的角，则有余弦定理：</p><p>$$c^2 = a^2 + b^2 - 2ab \cos(\alpha)$$</p><p>从图中可以看出，\(a\)、\(b\) 和 \(c\) 分别由 \(d\)、\(r\)（球半径）和 \(L\)（着色点 \(x\) 与我们正在看的球面上那点之间的距离）表示。</p><p>$$L^2 = d^2 + r^2 - 2dr \cos(\alpha)$$</p><p>恰好 \(L\) 可以用我们已有的数据算出来。它等于着色点 \(x\) 与球心之间的距离 \(d\)，乘以采样方向相对于连接这两点的那条线的夹角的余弦，再减去图中用红色标出的那个小三角形的对边。我们也能算出那个三角形边的长度。我们知道直角三角形的斜边是 \(c = \sqrt{a^2 + b^2}\)。把 \(c\) 换成 \(r\)（球半径）、把 \(a\) 换成 \(d\sin\theta\)，就得到那个三角形边的长度：</p><p>$$\sqrt{r^2 - d^2 \sin^2 \theta}$$</p><p>所以我们要的长度是：</p><p>$$L = d\cos\theta - \sqrt{r^2 - d^2 \sin^2 \theta}$$</p><p>由此可以得到（想看推导步骤的话见下面的方框）：</p><p>$$\cos(\alpha) = \frac{d}{r} \sin^2 \theta + \cos \theta \sqrt{1 - \frac{d^2}{r^2} \sin^2 \theta}$$</p><p>作者指出 \( \sin(\theta_{\text{max}}) = \frac{r}{d} \)，于是我们可以把上式改写为：</p><p>$$\cos(\alpha) = \frac{\sin^2 \theta}{\sin(\theta_{\text{max}})} + \cos \theta \sqrt{1 - \frac{\sin^2 \theta}{\sin^2(\theta_{\text{max}})}}$$</p><details open><p>下面是得到这个结果的逐步推导：</p><p>根据该图，我们有这些关系：</p><p>$$ L = d \cos \theta - \sqrt{r^2 - d^2 \sin^2 \theta} $$</p><p>再由余弦定理，</p><p>$$ L^2 = d^2 + r^2 - 2dr \cos(\alpha) $$</p><p>1. <b>把第一个式子两边平方</b>：</p><p>先把 \(L\) 的式子平方：</p><p>$$ L^2 = \left( d \cos \theta - \sqrt{r^2 - d^2 \sin^2 \theta} \right)^2 $$</p><p>这给出：</p><p>$$ 
+\begin{array}{rl}
+L^2 & = (d \cos \theta)^2 + \left( \sqrt{r^2 - d^2 \sin^2 \theta} \right)^2 - 2 d \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} \\
+L^2 & = d^2 \cos^2 \theta + (r^2 - d^2 \sin^2 \theta) - 2 d \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} \\
+L^2 & = d^2 \cos^2 \theta + r^2 - d^2 \sin^2 \theta - 2 d \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} 
+\end{array}
+$$</p><p>2. <b>令 \(L^2\) 的两个表达式相等</b>：</p><p>现在把这个表达式与由余弦定理得到的那个相等同：</p><p>$$ d^2 \cos^2 \theta + r^2 - d^2 \sin^2 \theta - 2 d \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} = d^2 + r^2 - 2dr \cos(\alpha) $$</p><p>3. <b>化简式子</b>：</p><p>先把两边的 \(r^2\) 消掉：</p><p>$$ d^2 \cos^2 \theta - d^2 \sin^2 \theta - 2 d \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} = d^2 - 2dr \cos(\alpha) $$</p><p>把含 \(d^2\) 的项移项：</p><p>$$ d^2 (\cos^2 \theta - \sin^2 \theta) - 2 d \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} = d^2 - 2dr \cos(\alpha) $$</p><p>回想：</p><p>$$ \cos^2 \theta - \sin^2 \theta = 1 - 2\sin^2 \theta $$</p><p>这是众多<a href="https://en.wikipedia.org/wiki/List_of_trigonometric_identities" target="_blank" rel="noreferrer noopener">三角恒等式</a>之一。于是式子变为：</p><p>$$ d^2 (1 - 2 \sin^2 \theta) - 2d \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} = d^2 - 2dr \cos(\alpha) $$</p><p>进一步化简：</p><p>$$ d^2 - 2d^2 \sin^2 \theta - 2d \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} = d^2 - 2dr \cos(\alpha) $$</p><p>两边减去 \(d^2\)：</p><p>$$ -2d^2 \sin^2 \theta - 2d \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} = -2dr \cos(\alpha) $$</p><p>除以 \(-2d\)：</p><p>$$ d \sin^2 \theta + \cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta} = r \cos(\alpha) $$</p><p>两边除以 \(r\)：</p><p>$$ \cos(\alpha) = \frac{d \sin^2 \theta}{r} + \frac{\cos \theta \cdot \sqrt{r^2 - d^2 \sin^2 \theta}}{r} $$</p><p>最后写成比值的形式：</p><p>$$ \cos(\alpha) = \frac{d \sin^2 \theta}{r} + \cos \theta \cdot \sqrt{1 - \frac{d^2 \sin^2 \theta}{r^2}} $$</p></details><p>下面是 Fred Akalin 方法的一个「原始」实现：</p><pre><code>
+Vec3f SphereLight::Sample(const DifferentialGeometry&amp; dg, Sample3f&amp; wi, float &amp;tmax, const Vec2f&amp; sample) const override {
+	Vec3f dz = center_ - dg.P;
+	float dz_len_2 = dz.Dot(dz);
+	float dz_len = std::sqrtf(dz_len_2);
+	dz /= -dz_len;
+	Vec3f dx, dy;
+
+	CoordinateSystem(dz, dx, dy);
+
+	float sin_theta_max_2 = radius_ * radius_ / dz_len_2;
+	float sin_theta_max = std::sqrt(sin_theta_max_2);
+	float cos_theta_max = std::sqrt(std::max(0.f, 1.f - sin_theta_max_2));
+
+	float cos_theta = 1 + (cos_theta_max - 1) * sample.x;
+	float sin_theta_2 = 1.f - cos_theta * cos_theta;
+
+	float cos_alpha = sin_theta_2 / sin_theta_max + cos_theta * std::sqrt(1 - sin_theta_2 / (sin_theta_max * sin_theta_max));
+	float sin_alpha = std::sqrt(1 - cos_alpha * cos_alpha);
+	float phi = 2 * M_PI * sample.y;
+
+	Vec3f n = std::cos(phi) * sin_alpha * dx + std::sin(phi) * sin_alpha * dy + cos_alpha * dz;
+	Vec3f p = center_ + n * radius_;
+
+	Vec3f d = p - dg.P;
+	tmax = d.Length();
+	...
+}
+</code></pre><p>所谓「原始」，是指这里的代码依赖大量除法以及对余弦、正弦函数的其他使用，在某些情形下数值上不稳定。所以这段代码虽然对我们这个相当基础的场景有效，但面对存在极端情况的场景（比如球形光源非常小、非常远等）可能就不够用了。如果你要在生产中用它，就需要加上这些检查。</p><p>我们计算各个变量的方式相当直接，因为所有公式我们都给了。唯一可能有点棘手的地方是用 \(\alpha\) 和 \(\phi\) 两个角计算球面上的点。不过看看上面的图，你应该能想明白。注意这个点位于以原点为中心的单位球上（因为我们只用角度和三角函数计算位置），所以最后需要把这个点移到它在世界空间中球面上的最终位置。</p><p>就是这样。要结束本课这一部分，我们只需在 <code>Sample</code> 方法末尾，把面积采样方法用的 PDF 换成锥体采样方法的 PDF：</p><pre><code>
+Vec3f SphereLight::Sample(const DifferentialGeometry&amp; dg, Sample3f&amp; wi, float &amp;tmax, const Vec2f&amp; sample) const override {
+	...
+	float pdf = 1.f / (2.f * M_PI * (1.f - cos_theta_max));
+	wi = Sample3f(d / tmax, pdf);
+	return Le_;
+}
+</code></pre><p>下图比较了在样本数相同（64）时的面积采样与锥体采样。如你所见，改善相当惊人。这证明了在球形光源上锥体采样策略的优越性。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-vs-area-sampling.png" alt=""><figcaption><b>图 9：</b>面积采样与锥体采样的比较（两种情形各用 64 个样本）。</figcaption></figure><p>当然，你可以在三种方法之间切换：面积采样、用光线-球体求交的锥体采样，以及用 Akalin 方法的锥体采样。每种情况下你都应得到一致的结果（除了噪声——在假定样本数不变的前提下，用面积采样方法得到的那张图噪声当然会明显得多）。</p><p>本课启发了 Scratchapixel 的一位读者和支持者 Paviel Kraskoŭski，他写了一个小型实时程序，帮助可视化用锥体采样方法生成样本的过程。承蒙 Paviel 许可，我们在这里展示他程序运行时的录屏视频。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/introduction-to-lighting/cone-sampling-sphere-paviel.mp4"></video></p></div><h2>更进一步：为第二部分做准备</h2><p>锥体采样远不止本章讲到的这些。例如，如前几章所述，锥体采样也可以用于三角形和四边形光源。虽然我们不会在本课中演示这项技术的实现（考虑到本课已经是对该主题的一次透彻介绍），但我们计划将来要么单开一课、要么加一章来专门研究这个方法（在那之前我们还有更紧迫的话题要讲）。不过，我们不妨先快速讲讲为什么锥体采样对三角形和四边形光源可能更优，特别是当它们相对于着色点很大时——也就是它们覆盖了 \( x \) 上方半球相当大一部分的时候。至少给你一个直觉，说明为什么会这样。</p><p>虽然面积采样对三角形、四边形之类的形状很直接，但下图说明了它为什么可能不是最优的。图中是一个与着色表面平行的大块矩形面光源（正视图，正交视角）。很明显，当我们在这个面光源表面上取若干均匀分布的样本时，它们的贡献会被公式里的两个 Lambert 余弦项削弱：一个是光源采样方向与光源表面法线之间夹角的余弦，另一个是采样方向与着色点表面法线之间夹角的余弦。此外，离着色点越远的点由于距离平方衰减而贡献越小。图中表明，当样本均匀分布在光源表面上并投影到 \( x \) 上方的半球时，贡献较小的那些比贡献较大的那些排得更密。随着面光源向半球两侧延伸得越远，这种密度越高，尤其是靠近地平线处。这个分布显然是次优的。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling-better1.png" alt=""><figcaption><b>图 10：</b>这张图表明，用面积采样时，如果你考虑最终样本在单位球上如何分布，就会发现越靠近平面处样本排得越密。此外，品红色那条样本的距离远大于青色线代表的那个样本。更糟的是，品红线的表面或光源法线与采样方向之间夹角的余弦，也远大于青色线的对应值。</figcaption></figure><p>从技术上，或者说理想情况下，我们应该追求这样一种样本分布：其概率按 \( (\omega \cdot n')||x-c||^{-2} \) 为 \( p(x') \)，或者更好是按 \( (\omega \cdot n)(\omega \cdot n')||x-c||^{-2} \)，其中 \(\omega\) 是采样方向，\(x'\) 是面光源上的样本，而 \( n \) 与 \( n' \) 分别是表面法线与光源法线。如你所见，这个概率分布函数会同时考虑距离和渲染方程里涉及的两个余弦项。</p><p>缓解面积采样这个问题的一种（简单）做法，是改为对光源张开的立体角均匀采样，直觉上这会给出更好的结果。用这个方法，对着色点照明贡献较小的样本比面积采样方法少。这就说明了为什么即便对矩形和四边形光源，采样锥角也更好，尤其是当光源相对于着色点 \(x\) 上方半球很大时。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling-better2.png" alt=""><figcaption><b>图 11：</b>锥体采样相对于面积采样是一种改进。如图所示，如果你按规则的角度间隔把样本分布在单位球上，角度分布在单位球上是规则的，但在面光源表面上却不规则。面光源上离着色点最远的那些部位样本更少。</figcaption></figure><p>还有一种更有效但更难的做法，是对投影立体角本身均匀采样。这个方法之所以好，是因为它生成的样本在投影到立体角上之后，是按它们相对于余弦项的贡献比例分布的——即余弦加权分布。尽管有效，但由于实现复杂，这个方法用得并不那么普遍。因此很多人选择更简单的立体角采样方法。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-cone-sampling-better3.png" alt=""><figcaption><b>图 12：</b>终极方法是余弦加权的样本分布。样本投影到与半球相切的平面上时是规则排布的，而投影到球面和面光源上时则不规则。这种分布有助于生成更多对着色点照明贡献更大的样本，从而有助于降低图像中的噪声。</figcaption></figure><p>这些技术超出了光源与面光源入门课的范围。它们被认为是进阶方法，实现起来可能相当困难（至少投影立体角方法是如此），计算代价也更高。不过考虑到光源这个话题总体上还有更多内容要讲，我们已经为这一课规划了第二部分，那里会专门研究这些方法（以及更多内容）。</p><p>此外，使用 Monte Carlo 方法的主要问题是图像中产生的噪声，其根源在于相邻样本之间存在强烈的<b>方差</b>。方差指的是真实结果与 Monte Carlo 估计给出的近似值之间的差异。样本越多，方差越低，但计算代价越高。因此，虽然 Monte Carlo 方法原理上相当简单、实践上也容易实现，但主要的工作量、也是稍难的地方，在于开发在样本数不变的前提下降低那种噪声或方差的技术。这些技术涵盖范围很广的数学方法和名称，但一般统称为<b>方差缩减方法</b>，其中一个子集就是<b>重要性采样</b>。随着课程推进，我们最终会研究这些话题。</p><p>不过请耐心些，在进入这些进阶话题之前，基础部分还有一些课要讲。本课我们已经走了相当远的路，其中也包括让你意识到这些更进阶的方法，希望能让你在那之前有事可做。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-spherical-light-cone-sampling.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-spherical-light-cone-sampling.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

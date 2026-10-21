@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>双线性过滤 - Scratchapixel 中文译本</title>
+<meta name="description" content="插值 · 双线性过滤（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>双线性过滤</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="interpolation-introduction.html">简介</a></li>
+<li><a style="font-weight:700" href="bilinear-filtering.html">双线性过滤</a></li>
+<li><a href="trilinear-interpolation.html">三线性插值</a></li>
+</ol>
+</div>
+<h2>双线性过滤</h2><p><b>阅读时间：5 分钟。</b></p><h2>双线性插值</h2><figure><img src="https://scratchapixel.com/images/interpolation/bilinearfig.png" alt=""><figcaption><b>图 1：</b>双线性插值。我们先做两次线性插值算出 a 和 b，再对 a 和 b 插值求出 c。</figcaption></figure><p>当我们需要知道规则二维网格上任意位置的值时，就用双线性插值。这个网格可以是一幅图像，也可以是一张纹理贴图。在我们的例子里，我们想求绿色圆点所在位置的值（即 c，坐标为 cx、cy）。要算出 c 的值，我们先沿一个方向（x 方向）做两次线性插值，得到 a 和 b。我们用 tx（其中 tx = cx）对 c00-c10 和 c01-c11 做线性插值，得到 a 和 b。然后用 ty（其中 ty = cy）沿第二个方向（y 轴）对 a 和 b 做线性插值，得到 c。先沿 x 轴插前两个值，还是先沿 y 轴插，结果没有区别。在我们的例子里，我们先用 c00-c10 和 c01-c11 插出 a 和 b。我们本来也可以用 ty 对 c00-c01 和 c10-c11 插值，再用 tx 对结果（a 和 b）插值。为了让代码更容易调试和编写，建议按照坐标轴的顺序来（三线性插值时就是 x、y、z）。</p><p>做线性插值时，通常最好在代码里检查 t 不大于 1、也不小于 0，并确认你要求值的点没有超出网格的范围。如果网格分辨率是 NxM，你可能需要创建 (N+1)x(M+1) 个顶点，或者创建 NxM 个顶点并把网格分辨率当成 (N-1)x(M-1)。两种做法都行，纯属个人偏好。</p><p>与名字给人的印象相反，双线性插值并不是一个线性过程，而是两个线性函数的乘积。当采样点落在格子的某条边上（线段 c00-c10、c00-c01、c01-c11 或 c10-c11）时，函数是线性的。在其他所有位置，它是二次的。</p><p>在下面的例子里（完整源代码可以下载），我们为图像的每个像素对网格的值（颜色）做插值，从而生成一幅图像。图像中很多像素的坐标与网格坐标并不重合。我们用双线性插值来算出这些「像素」位置上的插值颜色。</p><pre><code>
+float bilinear(
+   const float &amp;tx, 
+   const float &amp;ty, 
+   const Vec3f &amp;c00, 
+   const Vec3f &amp;c10,
+   const Vec3f &amp;c01,
+   const Vec3f &amp;c11)
+{
+#if 1
+    float a = c00 * (1 - tx) + c10 * tx;
+    float b = c01 * (1 - tx) + c11 * tx;
+    return a * (1 - ty) + b * ty;
+#else
+    return (1 - tx) * (1 - ty) * c00 + 
+           tx * (1 - ty) * c10 +
+           (1 - tx) * ty * c01 +
+           tx * ty * c11;
+#endif
+}
+ 
+void testBilinearInterpolation()
+{
+    // 测试双线性插值
+    int imageWidth = 512;
+    int gridSizeX = 9, gridSizeY = 9;
+    Vec3f *grid2d = new Vec3f[(gridSizeX + 1) * (gridSizeY + 1)]; // 格点
+    // 用随机颜色填充网格
+    for (int j = 0, k = 0; j &lt;= gridSizeY; ++j) {
+        for (int i = 0; i &lt;= gridSizeX; ++i, ++k) {
+            grid2d[j * (gridSizeX + 1) + i] = Vec3f(drand48(), drand48(), drand48());
+        }
+    }
+    // 现在用双线性插值算出最终图像
+    Vec3f *imageData = new Vec3f[imageWidth * imageWidth], *pixel = imageData;
+    for (int j = 0; j &lt; imageWidth; ++j) {
+        for (int i = 0; i &lt; imageWidth; ++i) {
+            // 把 i、j 转成网格坐标
+            float gx = i / float(imageWidth) * gridSizeX; // 注意插值边界
+            float gy = j / float(imageWidth) * gridSizeY; // 注意插值边界
+            int gxi = int(gx);
+            int gyi = int(gy);
+            const Vec3f &amp;c00 = grid2d[gyi * (gridSizeX + 1) + gxi];
+            const Vec3f &amp;c10 = grid2d[gyi * (gridSizeX + 1) + (gxi + 1)];
+            const Vec3f &amp;c01 = grid2d[(gyi + 1) * (gridSizeX + 1) + gxi];
+            const Vec3f &amp;c11 = grid2d[(gyi + 1) * (gridSizeX + 1) + (gxi + 1)];
+            *(pixel++) = bilinear(gx - gxi, gy - gyi, c00, c10, c01, c11);
+        }
+    }
+    saveToPPM("./bilinear.ppm", imageData, imageWidth, imageWidth);
+    delete [] imageData;    
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/interpolation/inputbilinear.png" alt=""><figcaption><b>图 2：</b>第一幅图里的每个黑点代表网格上的一个顶点（网格分辨率是 10x10 个格子，也就是 11x11 个顶点）。第二幅图是对网格顶点数据做插值、算出 512x512 图像各像素颜色后的结果。</figcaption></figure><figure><img src="https://scratchapixel.com/images/interpolation/bilinear.png" alt=""></figure><p><code>bilinear</code> 函数是一个模板，因此可以对任意类型的数据（比如 float、颜色）做插值。还要注意，这个函数可以用两种不同的方式算出同样的结果。第一种方法更易读（<code>#if 1 ...</code>），但有些人偏爱第二种写法（<code>#else ...</code>），因为插值可以看作四个顶点的加权和。之所以叫加权，是因为 c00、c01、c10、c11 分别乘以了某个系数。例如 <code>(1 - tx) * (1 - ty)</code> 就是 c00 的权重系数。</p><p>双线性插值的优点是快、实现简单。不过，如果看图 2 的第二幅图，你会看到双线性插值会产生一些花纹，这些花纹是否可接受，取决于你打算拿插值结果做什么。如果你需要更好的结果，就得使用更高级的插值技术，涉及二次或更高次的插值函数（例如 <code>smoothstep</code> 函数，它被用来生成过程式噪声，见<a href="creating-simple-1D-noise.html">过程式图案与噪声：第 1 部分</a>这门课）。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/interpolation/bilinear-filtering.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/interpolation/bilinear-filtering.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

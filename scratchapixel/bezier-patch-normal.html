@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>计算贝塞尔曲面的法线 - Scratchapixel 中文译本</title>
+<meta name="description" content="贝塞尔曲线与曲面 · 计算贝塞尔曲面的法线（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>计算贝塞尔曲面的法线</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="bezier-curve.html">贝塞尔曲线</a></li>
+<li><a href="bezier-surface.html">贝塞尔曲面</a></li>
+<li><a href="fast-forward-differencing.html">前向差分法</a></li>
+<li><a style="font-weight:700" href="bezier-patch-normal.html">计算贝塞尔曲面的法线</a></li>
+<li><a href="curves-as-geometry.html">把曲线作为几何体渲染：毛发渲染</a></li>
+</ol>
+</div>
+<h2>计算贝塞尔曲面的法线</h2><p><b>阅读时间：7 分钟。</b></p><figure><img src="https://scratchapixel.com/images/bezier/bez-facenormal.png?" alt=""><figcaption><b>图 1：</b>面法线可以由一个面的两条边做叉积算出。</figcaption></figure><p>我们已经学了几种构造贝塞尔曲面片的技术，但还剩一个问题：得给这个曲面片着色。生成点的位置这件事我们已经会做，着色用得上，但还需要法线。怎么在网格每个顶点的位置上生成法线？我们可以用与 <code>TriangleMesh</code> 类里 <code>getSurfaceProperties</code> 方法类似的技术，轻松算出一个面法线：对一个面构成的两条边做叉积。但这项技术只能给出面法线。</p><pre><code>
+// 面法线
+const Vec3f &amp;v0 = P[k]; 
+const Vec3f &amp;v1 = P[k+1]; 
+const Vec3f &amp;v2 = P[k+3]; 
+faceNormal = (v1 - v0).crossProduct(v2 - v0); 
+</code></pre><figure><img src="https://scratchapixel.com/images/bezier/bez-normal.png?" alt=""><figcaption><b>图 2：</b>曲面片上任意一点的法线，可由该点处沿 \(u\) 方向与沿 \(v\) 方向的曲面切线做叉积算出。</figcaption></figure><p>我们要的是顶点法线，即构成网格的每个点处、垂直于贝塞尔曲面的法线。所幸网格是由方程算出来的，所以我们同样可以用数学在贝塞尔曲面片的任意一点上算出准确的法线。要做的是在关注点（它在曲面片上的坐标由 \(u\) 和 \(v\) 给出）上算出两条切线，一条沿 \(u\) 方向，一条沿 \(v\) 方向。把这两条切线做叉积，就得到我们要的法线。现在的问题是，这两条切线怎么算？如前面所提示的，可以把这个问题用数学语言表达出来。数学上，由函数算出的曲线切线，可以定义为该函数对某个参数的导数，例如：</p><p>$$\dfrac{\partial}{\partial x}f(x),$$</p><p>就表示函数 \(f(x)\) 对参数 \(x\) 的导数。对计算贝塞尔曲面片上点的公式，我们也可以照做。例如可以算该函数（或方程）对参数 \(u\) 或 \(v\) 的导数：</p><p>$$\dfrac{\partial}{\partial u}B(u,v), \dfrac{\partial}{\partial v}B(u,v).$$</p><p>第一个公式给出沿 \(u\) 方向的切线，第二个给出沿 \(v\) 方向的切线。现在我们知道函数 \(B(u,v)\) 本身可以写成：</p><p>$$B(u,v) = \sum_i\sum_j b_i(u) b_j(v) p_{ij}.$$</p><p>其中 \(b_i(u)\) 与 \(b_j(v)\) 是伯恩斯坦多项式，\(p_{ij}\) 是控制点。我们也知道伯恩斯坦多项式怎么算：</p><p>$$
+\begin{array}{l}
+k_1(t) = (1 - t)^3\\
+k_2(t) = 3t(1 - t)^2\\
+k_3(t) = t^23(1 - t)\\
+k_4(t) = t^3
+\end{array}
+$$</p><p>所以只需算出这些函数的导数，它们是：</p><p>$$
+\begin{array}{l}
+k'_1(t) = -3(1-t)^2\\
+k'_2(t) = 3(1-t)^2-6t(1-t)\\
+k'_3(t) = 6t(1-t)-3t^2\\
+k'_4(t) = 3t^2
+\end{array}
+$$</p><details open><p>像 \((x^2+3)^3\) 这样的复合函数的导数，可以用所谓的<b>链式法则</b>来算。</p><p>$$\dfrac{d}{dx}y = \dfrac{d}{du}y \dfrac{d}{dx}u.$$</p><p>你需要：</p><ul><li><p>认出 \(u\)（总是先挑最内层的表达式，通常是括号内或根号下的那部分）</p></li><li><p>然后用 \(u\) 把 \(y\) 重新表达出来</p></li><li><p>接着把 \(y\) 对 \(u\) 求导，再把所有东西用 \(x\) 重新表达</p></li><li><p>下一步是求出 \(\dfrac{d}{dx}u\)</p></li><li><p>再把 \(\dfrac{d}{du}y\) 与 \(\dfrac{d}{dx}u\) 相乘。</p></li></ul><p>在我们的例子里，令 \(u = x^2 + 3\)，于是 \(y = u^3\)。可以看到 \(u\) 是 \(x\) 的函数，\(y\) 是 \(u\) 的函数。用链式法则，首先要求出 \(\dfrac{d}{du}y\) 与 \(\dfrac{d}{dx}u\)。</p><p>$$\dfrac{d}{du}y = 3u^2 = 3(x^2 + 3)^2,$$</p><p>以及：</p><p>$$\dfrac{d}{dx}u = 2x.$$</p><p>于是：</p><p>$$\dfrac{d}{dx}y=\dfrac{d}{du}y \dfrac{d}{dx}u=3(x^2 + 3)^2(2x)=6x(x^2+3).$$</p><p>照这几步走，很容易求出我们那些公式的导数。</p></details><p>如果把公式 \(B(u,v) = \sum_i\sum_j b_i(u) b_j(v) p_{ij}\) 对 \(u\) 求导，就得到（这会给出参数对 \((u,v)\) 时曲面片上沿 \(u\) 方向的切线）：</p><p>$$
+\begin{array}{l}
+\dfrac{\partial}{\partial u}B(u,v) =&-3(1-u)^2 \sum_j b_j(v) p_{0j}\\
+&3(1-u)^2-6u(1-u) \sum_j b_j(v) p_{1j}\\
+&6u(1-u)-3u^2 \sum_j b_j(v) p_{1j}\\
+&3u^2 \sum_j b_j(v) p_{3j}
+\end{array}
+$$</p><p>这里的做法是算出沿 \(u\) 方向的一条贝塞尔曲线，然后有了这条曲线之后，用 \(k'_1(u)\)、\(k'_2(u)\)、\(k'_3(u)\) 与 \(k'_4(u)\) 沿它求导。要求沿 \(v\) 方向的切线也可以照做：</p><p>$$
+\begin{array}{l}
+\dfrac{\partial}{\partial v}B(u,v) =&-3(1-v)^2 \sum_i b_i(u) p_{i0}\\
+&3(1-v)^2-6v(1-v) \sum_i b_i(u) p_{i1}\\
+&6v(1-v)-3v^2 \sum_i b_i(u) p_{i2}\\
+&3v^2 \sum_i b_i(u) p_{i3}
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/bezier/bez-shading.png?" alt=""><figcaption><b>图 3：</b>着色后的 Utah 茶壶。</figcaption></figure><p>大功告成！剩下要做的，就是计算这两个公式，得到参数坐标 \((u,v)\) 处的两条切线，再把这两条切线做叉积，得到该点处的法线。这项技术的实现在下面。我们有两个函数：<code>dUBezier</code> 算沿 \(u\) 方向的切线，<code>dVBezier</code> 算沿 \(v\) 方向的另一条切线。结果令人意外。从旁边的图可以看到，结果不仅非常光滑，而且曲面片边界处的过渡完全看不出来。数学又一次表现出色，给出了完美的结果，连曲面片的边缘和角上也是如此。</p><pre><code>
+Vec3f dUBezier(const Vec3f *controlPoints, const float &amp;u, const float &amp;v) 
+{ 
+   Vec3f P[4]; 
+   Vec3f vCurve[4]; 
+   for (int i = 0; i &lt; 4; ++i) { 
+       P[0] = controlPoints[i]; 
+       P[1] = controlPoints[4 + i]; 
+       P[2] = controlPoints[8 + i]; 
+       P[3] = controlPoints[12 + i]; 
+       vCurve[i] = evalBezierCurve(P, v); 
+   } 
+ 
+   return -3 * (1 - u) * (1 - u) * vCurve[0] + 
+       (3 * (1 - u) * (1 - u) - 6 * u * (1 - u)) * vCurve[1] + 
+       (6 * u * (1 - u) - 3 * u * u) * vCurve[2] + 
+       3 * u * u * vCurve[3]; 
+} 
+ 
+Vec3f dVBezier(const Vec3f *controlPoints, const float &amp;u, const float &amp;v) 
+{ 
+   Vec3f uCurve[4]; 
+   for (int i = 0; i &lt; 4; ++i) { 
+       uCurve[i] = evalBezierCurve(controlPoints + 4 * i, u); 
+   } 
+ 
+   return -3 * (1 - v) * (1 - v) * uCurve[0] + 
+       (3 * (1 - v) * (1 - v) - 6 * v * (1 - v)) * uCurve[1] + 
+       (6 * v * (1 - v) - 3 * v * v) * uCurve[2] + 
+       3 * v * v * uCurve[3]; 
+} 
+ 
+void generatePolyTeapot(const Matrix44f&amp; o2w, std::vector&amp;ltstd::unique_ptr&amp;ltobject&gt;&gt; &amp;objects) 
+{ 
+   uint32_t divs = 8; 
+   ... 
+   Vec3f controlPoints[16]; 
+   for (int np = 0; np &lt; kTeapotNumPatches; ++np) {  //kTeapotNumPatches 
+       // 设置当前曲面片的控制点
+       for (uint32_t i = 0; i &lt; 16; ++i) 
+           controlPoints[i][0] = teapotVertices[teapotPatches[np][i] - 1][0], 
+           controlPoints[i][1] = teapotVertices[teapotPatches[np][i] - 1][1], 
+           controlPoints[i][2] = teapotVertices[teapotPatches[np][i] - 1][2]; 
+ 
+       // 生成网格
+       for (uint16_t j = 0, k = 0; j &lt;= divs; ++j) { 
+           float v = j / (float)divs; 
+           for (uint16_t i = 0; i &lt;= divs; ++i, ++k) { 
+               float u = i / (float)divs; 
+               P[k] = evalBezierPatch(controlPoints, u, v); 
+               Vec3f dU = dUBezier(controlPoints, u, v); 
+               Vec3f dV = dVBezier(controlPoints, u, v); 
+               N[k] = dU.crossProduct(dV).normalize(); 
+               st[k].x = u; 
+               st[k].y = v; 
+           } 
+       } 
+       ... 
+    } 
+}
+</code></pre><p>在这个课程的最后一章，可以找到该程序的完整源码。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/geometry/bezier-curve-rendering-utah-teapot/bezier-patch-normal.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/geometry/bezier-curve-rendering-utah-teapot/bezier-patch-normal.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

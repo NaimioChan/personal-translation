@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>可见性问题、深度缓冲算法与深度插值 - Scratchapixel 中文译本</title>
+<meta name="description" content="光栅化 · 可见性问题、深度缓冲算法与深度插值（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>可见性问题、深度缓冲算法与深度插值</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="overview-rasterization-algorithm.html">光栅化算法概览</a></li>
+<li><a href="projection-stage.html">投影阶段</a></li>
+<li><a href="rasterization-stage.html">光栅化阶段</a></li>
+<li><a style="font-weight:700" href="visibility-problem-depth-buffer-depth-interpolation.html">可见性问题、深度缓冲算法与深度插值</a></li>
+<li><a href="perspective-correct-interpolation-vertex-attributes.html">透视正确插值与顶点属性</a></li>
+<li><a href="rasterization-practical-implementation.html">光栅化：一个实际实现</a></li>
+</ol>
+</div>
+<h2>可见性问题、深度缓冲算法与深度插值</h2><p><b>阅读时间：21 分钟。</b></p><p>在<a href="projection-stage.html">本课程的第二章</a>里，我们专门讲了把点投影到屏幕上的过程，并了解到投影点的第三个坐标（即屏幕空间中的点，我们称之为 \(V_{\text{proj}}\)）保存的是原始顶点的 \(V\) z 坐标（即该点在相机空间中的 z 坐标）：</p><p>$$
+\begin{array}{l}
+P_{\text{screen}}.x = \dfrac{ \text{near} \cdot P_{\text{camera}}.x }{ -P_{\text{camera}}.z}\\
+P_{\text{screen}}.y = \dfrac{ \text{near} \cdot P_{\text{camera}}.y }{ -P_{\text{camera}}.z}\\
+P_{\text{screen}}.z = -P_{\text{camera}}.z\\
+\end{array}
+$$</p><p>当一个像素与不止一个三角形重叠时，求出三角形表面上某一点的 z 坐标就很有用。确定这个 z 坐标的方法，是用上一章讨论过的重心坐标对原始顶点的 z 坐标做插值。本质上，我们可以把三角形顶点的 z 坐标当作普通的顶点属性，用与上一章插值颜色相同的方式来插值。在深入讲这个 z 坐标如何计算之前，先说明一下为什么需要这么做。</p><h2>深度缓冲或 z 缓冲算法与隐藏面消除</h2><figure><img src="https://scratchapixel.com/images/rasterization/depth-buffer2.png?" alt=""><figcaption><b>图 1：</b>当一个像素与一个三角形重叠时，这个像素对应该三角形表面上的一个点（本图中记为 P）。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/depth-buffer1.png?" alt=""><figcaption><b>图 2：</b>当一个像素与多个三角形重叠时，我们可以用该点在三角形上的 z 坐标来判断这些三角形中哪一个离相机最近。</figcaption></figure><p>当一个像素与某个点重叠时，我们透过这个像素看到的其实是三角形表面上的一小块区域，为简化起见，我们把它归结为一个点（图 1 中记为 \(P\)）。因此，覆盖某个三角形的每个像素，都对应那个三角形表面上的一个点。当然，如果一个像素覆盖了不止一个三角形，我们就会得到若干个这样的点。麻烦就出在这里：我们需要判断这些点中哪一个可见。图 2 说明了这个概念。</p><p>一种做法是从后往前测试三角形（这种技术要求先按深度递减对三角形排序），但当三角形相互相交时，它并不总是成立（见图 2 下方）。唯一可靠的办法是：算出像素所重叠的每个三角形的深度，然后比较这些深度值，找出离相机最近的那个。在图 2 中可以看到，图像中某个像素在 \(P1\) 与 \(P2\) 处与两个三角形重叠。不过 \(P1\) 处的 z 坐标（\(Z1\)）小于 \(P2\) 处的 z 坐标（\(Z2\)），所以可以推断 \(P1\) 在 \(P2\) 前方。</p><p>这项技术之所以必要，是因为三角形的测试顺序是「随机」的。虽然我们可以按深度递减对三角形排序，但这并不总是够用。一般来说，三角形按程序里指定的顺序被测试，这就意味着离相机较近的三角形（\(T1\)）可能先于较远的三角形（\(T2\)）被测试。不比较这些三角形的深度，我们最后看到的可能就成了后测试的那个三角形（\(T2\)），而实际上应当看到的是 \(T1\)。这个问题叫作<b>可见性问题</b>或<b>隐藏面问题</b>。把物体排序、使其被正确绘制的算法，叫作可见面算法或隐藏面消除算法。下面要研究的深度缓冲或 z 缓冲算法，就属于这一类算法。</p><p>解决可见性问题的一个办法是使用<b>深度缓冲</b>或<b>z 缓冲</b>。深度缓冲不过是一个二维的 float 数组，尺寸与帧缓冲相同，用来在三角形被光栅化的过程中保存物体的深度。创建这个数组时，我们把数组中每个像素初始化为一个非常大的数。若发现某个像素与当前三角形重叠，我们按下面的步骤处理：</p><ul><li><p>首先算出像素所重叠的那个三角形上该点的 z 坐标，也就是深度。</p></li><li><p>然后把当前三角形的深度与该像素在深度缓冲中存的值作比较。</p></li><li><p>若深度缓冲中存的值大于三角形上该点的深度，说明这个新点比该像素位置上深度缓冲里存的那个点更靠近观察者或相机。于是把深度缓冲中的值替换为新深度，并用当前三角形的颜色更新帧缓冲。反之，若深度缓冲中存的值小于当前的深度采样值，那么这个像素所重叠的三角形，就被深度缓冲中当前保存着深度的那个物体遮挡了。</p></li></ul><p>注意，所有三角形处理完之后，深度缓冲里就得到了一种图像，它表示场景中物体的可见部分与相机之间的「距离」。这不是真正的距离，而是透过相机能看到的每个点的 z 坐标。深度缓冲主要是用来解决可见性问题的，但也能用于后处理，实现诸如二维景深、加雾、阴影贴图这类效果——阴影贴图是一种不依赖光线追踪的投影阴影的方法。这些效果在 3D 中做通常更准确，而在 2D 中施加往往更快，只是不够精确（这就是取舍）。</p><p>下面是深度缓冲算法的伪代码实现：</p><pre><code>
+float *depthBuffer = new float[imageWidth * imageHeight];
+// 用非常大的数初始化深度缓冲
+for (uint32_t y = 0; y &lt; imageHeight; ++y)
+    for (uint32_t x = 0; x &lt; imageWidth; ++x)
+        depthBuffer[y * imageWidth + x] = INFINITY;
+
+for (each triangle in the scene) {
+    // 投影三角形顶点
+    ...
+    // 计算二维三角形的包围盒
+    ...
+    for (uint32_t y = bbox.min.y; y &lt;= bbox.max.y; ++y) {
+        for (uint32_t x = bbox.min.x; x &lt;= bbox.max.x; ++x) {
+            if (pixelOverlapsTriangle(x + 0.5, y + 0.5)) {
+                // 计算三角形表面上该点的 z 坐标
+                float z = computeDepth(...);
+                // 当前点比深度/帧缓冲中所存的物体更近
+                if (z &lt; depthBuffer[y * imageWidth + x]) {
+                     // 用该深度更新深度缓冲
+                     depthBuffer[y * imageWidth + x] = z;
+                     frameBuffer[y * imageWidth + x] = triangleColor;
+                }
+            }
+        } 
+    } 
+}
+</code></pre><h2>用插值求 Z</h2><figure><img src="https://scratchapixel.com/images/rasterization/interpolate-depth.png?" alt=""><figcaption><b>图 3：</b>能否用重心坐标对三角形顶点的 z 坐标做插值，求出 P 的深度？</figcaption></figure><figure><img src="https://scratchapixel.com/images/rasterization/depth-interpolation1.png?" alt=""><figcaption><b>图 4：</b>用线性插值求一个点的 y 坐标。</figcaption></figure><p>深度缓冲的原理直白易懂。接下来解释深度值是怎么算出来的。再说一遍，深度值表示像素所重叠的三角形表面上某一点的 z 坐标。当一个像素与三角形重叠时，它覆盖三角形上的一小块区域，我们把它简化为一个点（图 1 中的点 \(P\)）。目标是确定这个点的 z 坐标。如前所述，如果知道三角形顶点的 z 坐标（我们确实知道，因为它们就存在投影后的点里），就可以用 \(P\) 的重心坐标对这些坐标做插值（图 4）：</p><p>$$P.z = \lambda_0 \cdot V0.z + \lambda_1 \cdot V1.z + \lambda_2 \cdot V2.z$$</p><p>这种做法在技术上看似没问题，可惜实际并不按预期工作。问题不在公式本身——公式完全成立。问题出在三角形顶点投影到画布上之后（经过透视除法之后）：这时我们要插值的 z 值，在二维三角形的表面上已经不再线性变化了。用二维的例子来说明更容易。</p><p>图 4 有助于说明问题出在哪里，也能用来检验我们后面给出的修正方案。设想我们要找一条直线的「像」，这条线在二维空间中由两个顶点 \(V0\) 与 \(V1\) 定义，画布由那条水平绿线表示，距坐标系原点一个单位（沿 z 轴）。从 \(V0\) 与 \(V1\) 向原点连线，与绿线交于两点（图中记为 \(V0'\) 与 \(V1'\)），它们落在距原点一个单位的画布上。这两个点的 x 坐标可以用透视投影算出，即把原顶点的 x 坐标分别除以各自的 z 坐标：</p><p>$$
+\begin{array}{l}
+V0'.x = \dfrac{V0.x}{V0.z} = \dfrac{-4}{2} = -2\\
+V1'.x = \dfrac{V1.x}{V1.z} = \dfrac{2}{5} = 0.4
+\end{array}
+$$</p><p>我们的任务是确定 \(P\) 的 z 坐标——它是 \(V0\) 与 \(V1\) 所定义直线上的一点——而只知道它在绿线上的投影 \(P'\) 的位置、其坐标为 \(\{0,1\}\)。你可能已经想到，推广到三维情形，\(P'\) 就代表像素中心，而 \(P\) 是三角形上恰好投影到该像素中心的那一点。不过还是回到我们的二维例子。现在我们计算 \(P'\) 相对于 \(V0'\) 与 \(V1'\) 的「重心坐标」，记为 \(\lambda\)。和三角形的重心坐标一样，\(\lambda\) 落在 [0,1] 区间内。为求 \(\lambda\)，我们量出 \(V0'\) 与 \(P'\) 之间的距离（沿 x 轴），再除以 \(V0'\) 与 \(V1'\) 之间的距离。如果用以 \(\lambda\) 对原顶点 \(V0\) 与 \(V1\) 的 z 坐标做线性插值、从而求 \(P\) 的深度这套办法成立，那么应当得到 4（从图上可以看出 \(P\) 的坐标是 \(\{0,4\}\)）。先来算 \(\lambda\)：</p><p>$$\lambda = \dfrac{P'x - V0'.x}{V1'.x - V0'.x} = \dfrac{0 - (-2)}{0.4 - (-2)}= \dfrac{2}{2.4} = 0.833$$</p><p>对 \(V0\) 与 \(V1\) 的 z 坐标做线性插值，来确定 \(P\) 的 z 坐标，得到：</p><p>$$P.z = V0.z \cdot (1-\lambda) + V1.z \cdot \lambda = 2 \cdot (1 - 0.833) + 5 \cdot 0.833 = 4.5$$</p><p>这不是预期的结果（记得吗，应该是 4）。用 \(P\) 的重心坐标（本例中是 \(\lambda\)）对原始顶点的 z 坐标做插值、以求 \(P\) 的 z 坐标，是有问题的。为什么？</p><p>简单说，<b>透视投影保持直线，但不保持距离</b>。从图 4 可以清楚看到，\(V0\) 与 \(P\) 之间的距离除以 \(V0\) 与 \(V1\) 之间的距离（0.666），与 \(V0'\) 与 \(P'\) 之间的距离除以 \(V0'\) 与 \(V1'\) 之间的距离（0.833）并不相等。如果 \(\lambda\) 的值是 0.666，插值就会是准确的，问题就在于 \(\lambda\) 是 0.833。那么，怎样才能准确求出 \(P\) 的 z 坐标？</p><p>这里想强调一点：在计算机图形学中，我们打交道的是几种不同类型的变换，各有各的性质。一类是用来在场景中移动、旋转或缩放三维物体的变换。<a href="using-4x4-matrices-transform-objects-3D.html">讲矩阵用法的课程</a>里讲过怎么用矩阵控制 3D 场景中物体的大小、旋转与位置。这类变换叫作<b>仿射变换</b>。它们保持直线，而且重要的是，保持距离。</p><p>图形学中第二重要的变换类型是<b>投影</b>，它把三维物体空间映射到二维屏幕空间。这类映射常被称为<b>透视投影映射</b>，它保持直线，但<b>不保持距离</b>。理解这些不同类型的映射很关键，更重要的是永远记住透视投影不保持距离这一性质（正交投影则保持距离——想进一步了解这两类投影，见<a href="projection-matrix-introduction.html">正交与透视投影矩阵课程</a>）。</p><p>记住这一点，本章后面和下一章我们还会回到这些概念。</p><p>解决办法是：用 \(\lambda\) 对顶点 \(V0\) 与 \(V1\) 的 z 坐标的倒数做插值，从而算出 \(P\) 的 z 坐标的倒数。具体地：</p><p>$$\dfrac{1}{P.z} = \dfrac{1}{V0.z} \cdot (1-\lambda) + \dfrac{1}{V1.z} \cdot \lambda$$</p><p>检验一下结果：</p><p>$$\dfrac{1}{P.z} = \dfrac{1}{2} \cdot (1 - \dfrac{2}{2.4}) + \dfrac{1}{5} \cdot (\dfrac{2}{2.4}) = 0.25$$</p><p>对这个结果取倒数，就得到 \(P\) 的 z 坐标值为 4，正确！如前所说，正确的做法是用重心坐标对顶点 z 坐标的倒数做线性插值，再把结果取倒数，求得 \(P\) 的深度（即它的 z 坐标）。对我们的三角形来说，公式就成了：</p><p>$$\dfrac{1}{P.z} = \dfrac{1}{V0.z} \cdot \lambda_0 + \dfrac{1}{V1.z} \cdot \lambda_1 + \dfrac{1}{V2.z} \cdot \lambda_2$$</p><figure><img src="https://scratchapixel.com/images/rasterization/perspective-correct.png?" alt=""><figcaption><b>图 5：</b>透视投影保持直线，但不保持距离。</figcaption></figure><p>我们更正式地考察这个问题。为什么必须对三角形顶点 z 坐标的倒数做插值？解释起来有些绕，你可以选择跳过。考虑相机空间中由两个顶点 \(V_0\) 与 \(V_1\) 定义的一条直线。这两个顶点在屏幕上的投影分别记为 \(S_0\) 与 \(S_1\)。本例中我们假设相机原点到画布的距离为 1，如图 5 所示。设 \(S\) 表示 \(S_0\) 与 \(S_1\) 所定义直线上的一点，它是 \(P\)（\(V_0\) 与 \(V_1\) 所定义直线上的一点）投影的结果。参数 \(t\) 与 \(q\) 定义如下：</p><p>$$
+\begin{aligned}
+P &= V_0 \cdot (1-t) + V_1 \cdot t,\\
+S &= S_0 \cdot (1-q) + S_1 \cdot q
+\end{aligned}
+$$</p><p>也可以写成：</p><p>$$
+\begin{aligned}
+P &= V_0 + t \cdot (V_1 - V_0)\\
+S &= S_0 + q \cdot (S_1 - S_0)
+\end{aligned}
+$$</p><p>于是，点 \(P\) 的 \((x, z)\) 坐标可以通过插值确定（公式 1）：</p><p>$$
+P_{x,z} = (V_0.x + t \cdot (V_1.x - V_0.x), V_0.z + t \cdot (V_1.z - V_0.z))
+$$</p><p>同理（公式 2）：</p><p>$$
+S = S_0 + q \cdot (S_1 - S_0)
+$$</p><p>\(S\) 的 x 坐标也可以这样计算：</p><p>$$
+S.x = \dfrac{P.x}{P.z}
+$$</p><p>这就是简单的透视除法，你现在应该很熟悉了。因此：</p><p>$$
+P.z = \dfrac{P.x}{S.x}
+$$</p><p>把分子换成公式 1、分母换成公式 2，得到（公式 3）：</p><p>$$
+P.z = \dfrac{V_0.x + t \cdot (V_1.x - V_0.x)}{S_0.x + q \cdot (S_1.x - S_0.x)}
+$$</p><p>另外：</p><p>$$
+\begin{aligned}
+S_0.x &= \dfrac{V_0.x}{V_0.z}\\
+S_1.x &= \dfrac{V_1.x}{V_1.z}
+\end{aligned}
+$$</p><p>因此（公式 4）：</p><p>$$
+\begin{aligned}
+V_0.x &= S_0.x \cdot V_0.z\\
+V_1.x &= S_1.x \cdot V_1.z
+\end{aligned}
+$$</p><p>把公式 3 中的 \(V_0.x\) 与 \(V_1.x\) 换成公式 4 的表达式，得到（公式 5）：</p><p>$$
+P.z = \dfrac{S_0.x \cdot V_0.z + t \cdot (S_1.x \cdot V_1.z - S_0.x \cdot V_0.z)}{S_0.x + q \cdot (S_1.x - S_0.x)}
+$$</p><p>回看公式 1（公式 6）：</p><p>$$
+P.z = V_0.z + t \cdot (V_1.z - V_0.z)
+$$</p><p>把公式 5 与公式 6 结合起来，得到：</p><p>$$
+\begin{array}{l}
+(V_0.z + t \cdot (V_1.z - V_0.z)) \cdot (S_0.x + q \cdot (S_1.x - S_0.x)) = \\
+S_0.x \cdot V_0.z + t \cdot (S_1.x \cdot V_1.z - S_0.x \cdot V_0.z)
+\end{array}
+$$</p><p>来看看这个式子怎么化简，从而用 \(q\) 表示参数 \(t\)。步骤如下：</p><p>1. 把两边各项乘开、展开：</p><p>$$
+\begin{array}{l}
+V_0.z \cdot S_0.x + V_0.z \cdot q \cdot (S_1.x - S_0.x) + t \cdot (V_1.z - V_0.z) \cdot S_0.x \\
+ + t \cdot (V_1.z - V_0.z) \cdot q \cdot (S_1.x - S_0.x) = S_0.x \cdot V_0.z + t \cdot (S_1.x \cdot V_1.z - S_0.x \cdot V_0.z)
+\end{array}
+$$</p><p>2. 把含 \(t\) 的项移到一边，解出 \(t\)：</p><p>$$
+\begin{array}{l}
+t \cdot [(V_1.z - V_0.z) \cdot S_0.x + (V_1.z - V_0.z) \cdot q \cdot (S_1.x - S_0.x) \\
+ - (S_1.x \cdot V_1.z - S_0.x \cdot V_0.z)] = -q \cdot V_0.z \cdot (S_1.x - S_0.x)
+\end{array}
+$$</p><p>3. 进一步化简得到：</p><p>$$
+\begin{array}{l}
+t \cdot [V_1.z \cdot S_0.x - V_0.z \cdot S_0.x + (V_1.z - V_0.z) \cdot q \cdot (S_1.x - S_0.x) - S_1.x \cdot V_1.z + S_0.x \cdot V_0.z] = \\
+-q \cdot V_0.z \cdot (S_1.x - S_0.x)
+\end{array}
+$$</p><p>4. 通过因式分解化简含 \(t\) 的项：</p><p>$$
+t \cdot (S_1.x - S_0.x) \cdot [V_1.z - q \cdot (V_1.z - V_0.z)] = q \cdot V_0.z \cdot (S_1.x - S_0.x)
+$$</p><p>5. 把 \(t\) 单独留下，得到：</p><p>$$
+t \cdot [q \cdot V_0.z + (1-q) \cdot V_1.z] = q \cdot V_0.z
+$$</p><p>6. 化简，用 \(q\) 表示 \(t\)：</p><p>$$
+t = \dfrac{q \cdot V_0.z}{q \cdot V_0.z + (1-q) \cdot V_1.z}
+$$</p><p>这个表达式揭示了参数 \(t\) 与 \(q\) 之间的关系：前者用来在三维空间的两点之间插值，后者用来在屏幕上的二维两点之间插值。</p><p>把 \(t\) 代入公式 6，得到：</p><p>$$
+\begin{array}{l}
+P.z &=& V_0.z + t \cdot (V_1.z - V_0.z) \\
+&=& V_0.z + \dfrac{q \cdot V_0.z \cdot (V_1.z - V_0.z)}{q \cdot V_0.z + (1-q) \cdot V_1.z} \\
+&=& \dfrac{V_0.z \cdot V_1.z}{q \cdot V_0.z + (1-q) \cdot V_1.z} \\
+&=& \dfrac{1}{\dfrac{q}{V_1.z} + \dfrac{(1-q)}{V_0.z}} \\
+&=& \dfrac{1}{\dfrac{1}{V_0.z} + q \cdot \left(\dfrac{1}{V_1.z} - \dfrac{1}{V_0.z}\right)}
+\end{array}
+$$</p><p>最终推导出：</p><p>$$
+\begin{array}{l}
+\dfrac{1}{P.z} &=& \dfrac{1}{V_0.z} + q \cdot \left(\dfrac{1}{V_1.z} - \dfrac{1}{V_0.z}\right) \\
+&=& \dfrac{1}{V_0.z} \cdot (1-q) + \dfrac{1}{V_1.z} \cdot q
+\end{array}
+$$</p><p>这个公式为我们的形式化探讨画上句号：它说明了为什么用投影点的重心坐标对三角形顶点 z 坐标的倒数做插值，才是计算「反投影」点 \(P\) 的 z 坐标的正确方法。</p><p>还记得本章前面讨论过，从三维物体空间到二维屏幕空间的投影不保持距离吗？这是透视投影的特性，也正是为什么直接用重心坐标插值顶点 z 坐标行不通。</p><p>我们之所以强调这个概念，是因为在较早的论文里（这些话题在现代论文中不那么常讨论），你可能会看到它被称为<b>有理线性插值</b>或<b>双曲插值</b>。两个说法指的是同一件事。意思是：标准线性插值只是在两个值之间沿直线插值，而有理线性插值则要考虑透视投影引入的非线性畸变。</p><p>在透视投影下，深度与距离是非线性地被感知的。离相机越远的物体，比近处物体缩小的幅度不成比例。若对深度或任何受透视影响的属性用简单的线性插值，结果就会出错。这正是使用有理线性插值或双曲插值的原因：它考虑到深度感知的非线性，从而校正透视畸变。</p><p>表达式 \( \frac{1}{z_0} \cdot (1 - t) + \frac{1}{z_1} \cdot t \) 就是透视投影中采用有理线性（或双曲）插值的一个例子。</p><p>量 \( \frac{1}{z} \) 相对于深度 \( z \) 是非线性的。这种非线性源自透视投影的性质：物体离得越远，变小所遵循的速率并不是线性的。具体来说，在透视投影下，物体离相机越远，它在屏幕上的尺寸就以与 \( \frac{1}{z} \) 成正比的方式减小，也就是说深度 \( z \) 与它在屏幕空间中的表示之间的关系是双曲型的。</p><p>之所以提到双曲线，是因为把 \( \frac{1}{z} \) 画成图就会发现，随着 \( z \) 增大，曲线逐渐向 x 轴靠拢（但永不接触）。同样，当 \( z \) 趋近 0 时，曲线向上冲向无穷。这正是双曲线的特征。</p><p>所以，下次在论文里看到「Rational-Linear Interpolation」，你就知道它是什么意思了（而且一定能让身边的人对你刮目相看）。</p><figure><img src="https://scratchapixel.com/images/rasterization/rasterization-hyperbola.png?" alt=""></figure><details open><p>解释深度插值问题的另一种做法，是把三角形（在三维空间或相机空间中）看作落在一个平面上。平面方程为（公式 1）：</p><p>$$
+AX + BY + CZ = D.
+$$</p><p>已知：</p><p>$$
+\begin{aligned}
+X_{screen} &= \dfrac{X_{camera}}{Z_{camera}},\\
+Y_{screen} &= \dfrac{Y_{camera}}{Z_{camera}},
+\end{aligned}
+$$</p><p>由此可得：</p><p>$$
+\begin{aligned}
+X_{camera} &= X_{screen} \cdot Z_{camera},\\
+Y_{camera} &= Y_{screen} \cdot Z_{camera}.
+\end{aligned}
+$$</p><p>把它们代入公式 1 并解出 \(Z_{camera}\)，得到：</p><p>$$
+\begin{aligned}
+AX_{screen} \cdot Z_{camera} + BY_{screen} \cdot Z_{camera} + CZ_{camera} &= D,\\
+Z_{camera} \cdot (AX_{screen} + BY_{screen} + C) = D,\\
+\dfrac{D}{Z_{camera}} = AX_{screen} + BY_{screen} + C,\\
+\dfrac{1}{Z_{camera}} = \dfrac{A}{D} \cdot X_{screen} + \dfrac{B}{D} \cdot Y_{screen} + \dfrac{C}{D},\\
+\dfrac{1}{Z_{camera}} = A' \cdot X_{screen} + B' \cdot Y_{screen} + C',
+\end{aligned}
+$$</p><p>其中 \(A' = \dfrac{A}{D}\)，\(B' = \dfrac{B}{D}\)，\(C' = \dfrac{C}{D}\)。</p><p>这个式子表明 \(\dfrac{1}{Z_{camera}}\) 是 \(X_{camera}\) 与 \(Y_{camera}\) 的仿射函数，因此可以在投影后三角形的表面上做线性插值。</p></details><h2>z 缓冲的局限与一段历史</h2><p>z 缓冲技术（在图像的每个像素处保存一个点的深度）是处理三维场景可见性的一种简单有效的方法。但它也有一些局限，尤其是在处理透明表面时。前面提到过，避开 z 缓冲的一种办法是把三角形从最远到最近排序，并按这个顺序处理。然而这种技术并不完全可靠，因为三角形可能相互相交。实践中 GPU 采用 z 缓冲技术，而透明表面常常从后往前排序。不过仍有一些情形，比如三角形相交，会导致结果出错。</p><p>z 缓冲由 Ed Catmull 在他 1974 年的论文《A Subdivision Algorithm for Computer Display of Curved Surfaces》中提出（没错，又是他——如果你还没读纹理那门课，一定要去看看）。</p><p>z 缓冲之外还有一种方法，这里提一下备查，即 A 缓冲（累积缓冲）。A 缓冲的思路与 z 缓冲类似，但它允许每个像素存不止一个点（更准确地说，沿用原论文的说法，不止一个片元）。如果多个透明表面投影到同一个像素上，A 缓冲就把这些点都存进一个列表（片元列表）。所有三角形处理完后，这些点（片元）被合成起来，确定该像素的最终颜色与不透明度。这种技术实现简单，进一步的内容留给读者自己探索。</p><p>顺带一提，A 缓冲方法见于 Loren Carpenter 1984 年的论文《The A-buffer, an Antialiased Hidden Surface Method》。据我们所知，这是「片元」一词最早出现的场合。如今这个词在 GPU 领域被广泛使用，指图形管线中片元着色器阶段处理的那个元素——像素或像素采样的颜色就在那里计算。在这个语境下，一个片元指的是一个保存 8x4（8 列 4 行）掩码的结构，其中每个值是 1 还是 0，取决于多边形（在我们的情形中是三角形）是否覆盖了与掩码中该位对应的采样位置上的像素。这可以看作多重采样的一种形式。随后，一个像素中包含的所有片元会被合成在一起，合成时考虑每个片元的掩码、深度（列表按深度排序）、不透明度与颜色，得出该像素最终的不透明度与 RGB 颜色。很巧妙！这个算法正是 Pixar 早期电影所用 REYES 算法的基础。</p><h2>其他可见面算法</h2><p>如引言所述，z 缓冲算法属于隐藏面消除（或可见面判定）算法这一大类。这类算法分为两组：<b>物体空间</b>与<b>图像空间算法</b>。本课程中没有讨论的<a href="http://en.wikipedia.org/wiki/Painter&#x27;s_algorithm" target="_blank" rel="noreferrer noopener">「画家算法」</a>属于物体空间一类，而 z 缓冲算法被归为图像空间算法。画家算法的原理是按从后往前的顺序渲染物体。这种方法需要对物体按深度排序。如本章前面提到的，渲染器最初是按任意顺序处理物体的。因此，当两个三角形相交时，判断哪一个在前、因而应当先渲染，就变得困难。尽管画家算法已不再使用，z 缓冲仍被广泛采用，尤其是在 GPU 实现中。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/visibility-problem-depth-buffer-depth-interpolation.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/visibility-problem-depth-buffer-depth-interpolation.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

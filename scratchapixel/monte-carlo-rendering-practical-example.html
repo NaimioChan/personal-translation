@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>渲染中的蒙特卡罗（一个实际例子） - Scratchapixel 中文译本</title>
+<meta name="description" content="蒙特卡罗方法实践 · 渲染中的蒙特卡罗（一个实际例子）（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>渲染中的蒙特卡罗（一个实际例子）</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="monte-carlo-methods.html">蒙特卡罗方法</a></li>
+<li><a href="monte-carlo-simulation.html">蒙特卡罗模拟</a></li>
+<li><a href="monte-carlo-integration.html">蒙特卡罗积分</a></li>
+<li><a style="font-weight:700" href="monte-carlo-rendering-practical-example.html">渲染中的蒙特卡罗（一个实际例子）</a></li>
+<li><a href="generating-random-numbers.html">生成随机数</a></li>
+<li><a href="variance-reduction-methods.html">方差缩减方法：重要性采样快速入门</a></li>
+<li><a href="introduction-quasi-monte-carlo.html">方差缩减方法：准蒙特卡罗快速入门</a></li>
+</ol>
+</div>
+<h2>渲染中的蒙特卡罗（一个实际例子）</h2><p><b>阅读时间：13 分钟。</b></p><h2>用蒙特卡罗积分渲染 McBeth 色卡</h2><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/SPD01.png?" alt=""><figcaption><b>图 1：</b>三种不同物体的 SPD。</figcaption></figure><p>在讲颜色与数字图像的课程里，我们解释过颜色可以表示为曲线，给出可见光谱中每个波长（用希腊字母 lambda \(\lambda\) 表示）上的光量（这些曲线称为光谱功率分布，即 SPD）。图 1 给出三种不同材料的这类曲线示例。可以看到，这些曲线可以看作波长的函数：f(\(\lambda\))。一般把可见光谱认为在 380 到 730 纳米的区间内。要把这条曲线转换回三刺激值 X、Y、Z，我们需要计算三个一维积分：</p><p>$$
+\begin{array}{l}X = \int_{\lambda1}^{\lambda2} spd(\lambda) \bar X(\lambda) d\lambda\\Y = \int_{\lambda1}^{\lambda2} spd(\lambda) \bar Y(\lambda) d\lambda\\Z = \int_{\lambda1}^{\lambda2} spd(\lambda) \bar Z(\lambda) d\lambda
+\end{array}.
+$$</p><p>其中函数 \(\bar X, \bar Y, \bar Z\) 是 CIE 标准观察者色匹配函数。得到的三刺激值 X、Y、Z 随后可以转换为 RGB。我们在讲颜色与数字图像的课程里详细解释过这个过程。</p><p>希望你已经猜到，我们要用蒙特卡罗积分来求解这些积分。我们使用的 SPD，是 McBeth 色卡上 24 种不同颜色各自的光谱数据。这些颜色的光谱数据在网上很容易找到。如果你还记得上一章我们讲过的蒙特卡罗积分，这个估计量定义为：</p><p>$$\langle F^N \rangle = (b-a) \dfrac{1}{N} \sum_{i=0}^{N-1} f(X_i).$$</p><p>在我们的例子里，区间 [a,b] 是 [380,730]，即定义可见光谱的波长范围。要为这块色卡的每种颜色近似出 XYZ 值，我们需要在这个区间内随机选一个波长，求出该随机波长处 spd 与色匹配函数的值并把两者相乘，重复这个过程 N 次（N 是样本数），把所有结果相加，把最后的数除以 N，再乘以 (b-a)。用伪代码写出来就是：</p><pre><code>
+int N = 32;
+float lambdaMin = 380, lambdaMax = 730;
+float X = 0, Y = 0, Z = 0;
+for (int i = 0; i &lt; N; ++i) { // 对每个样本
+    // 随机选一个波长
+    float lambda = lambdaMin + drand48() * (lambdaMax - lambdaMin); 
+    // 在该波长上求 spd 与色匹配函数的值，
+    // 把结果相乘，再把这些样本的贡献加到其他样本上
+    X += spd(lambda) * CIE_X(lambda);
+    Y += spd(lambda) * CIE_Y(lambda);
+    Z += spd(lambda) * CIE_Z(lambda);
+}
+// 完成积分，乘以 (b-a) 再除以 N
+X *= (lambdaMax - lambdaMin) / N;
+Y *= (lambdaMax - lambdaMin) / N;
+Z *= (lambdaMax - lambdaMin) / N;
+</code></pre><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/mcbethchart.png?" alt=""><figcaption><b>图 2：</b>一块用于电影与摄影的真实 McBeth 色卡。</figcaption></figure><p>简单吧？确实简单。为了说明什么是方差，我们会把 MacBeth 色卡上的每种颜色渲染成一个 64x64 的方块，对这个方块的每个像素都用 MC 积分（色块里的每个像素都是通过跑一次新的蒙特卡罗模拟得到的，因此每个像素很可能与其他像素「略有」不同。差多少主要取决于模拟中用的样本数 N）。我们的最终目标是复现出一块像真的 McBeth 色卡那样的东西，但由计算机生成（当然是用蒙特卡罗积分）。在第 5 课里，我们提供了一个小程序，用黎曼和计算积分来渲染 McBeth 色卡，并给了它的源码。我们将从这个程序出发，因为它已经包含 McBeth 色卡的光谱数据以及 CIE 色匹配函数。代码的核心，是做蒙特卡罗积分的那个函数。</p><pre><code>
+unsigned int N = 32;
+ 
+inline float linerp(const float *f, const short &amp;i, const float &amp;t, const int &amp;max)
+{ return f[i] * (1 - t) + f[std::min(max, i + 1)] * t; }
+ 
+void monteCarloIntegration(const short &amp;curveIndex, float &amp;X, float &amp;Y, float &amp;Z)
+{
+    float S = 0; // 和，用于归一化 XYZ 值
+    for (int i = 0; i &lt; N; ++i) {
+        float lambda = drand48() * (lambdaMax - lambdaMin);
+        float b = lambda / 10;
+        short j = (short)b;
+        float t = b - j;
+        // 插值
+        float fx = linerp(spd[curveIndex], j, t, nbins - 1);
+        b = lambda / 5;
+        j = (short)b;
+        t = b - j;
+        X += linerp(CIE_X, j, t, 2 * nbins - 1) * fx;
+        Y += linerp(CIE_Y, j, t, 2 * nbins - 1) * fx;
+        Z += linerp(CIE_Z, j, t, 2 * nbins - 1) * fx;
+        S += linerp(CIE_Y, j, t, 2 * nbins - 1);
+    }
+    // 和，归一化因子
+    S *= (lambdaMax - lambdaMin) / N;
+    // 积分 = (b-a) * 1/N * sum_{i=0}^{N-1} f(X_i)，并归一化
+    X *= (lambdaMax - lambdaMin) / N / S;
+    Y *= (lambdaMax - lambdaMin) / N / S;
+    Z *= (lambdaMax - lambdaMin) / N / S;
+}
+</code></pre><p>从这段代码可以看到，我们首先在 [380,730] 区间内随机采样一个波长值（第 10 行）。我们需要把这个随机波长转换成一个索引，以便在 CIE 色匹配函数（每 5 nm 采样一次）和 McBeth 光谱数据（每 10 nm 采样一次）这两个一维表里查找。因为波长可能落在表中两个样本之间，最好做线性插值（对最近的两个样本插值）。最后，用该波长处 CIE 色匹配函数与光谱数据的值更新 X、Y、Z（第 19-21 行）。因为这些值需要归一化（见第 5 课），我们还需要计算 Y 分量对应的 CIE 色匹配函数的积分。这里我们同样可以用蒙特卡罗积分（第 22 行）。最后，把 X、Y、Z 值乘以 (b-a)（本例中即最小与最大波长），再除以 N（第 27-29 行）。我们还必须把它们归一化，但这与 MC 积分无关（它只是把光谱数据转换为 XYZ 这一过程的一部分）。</p><pre><code>
+const double XYZ_to_RGB[][3] = {
+    { 2.3706743, -0.9000405, -0.4706338},
+    {-0.5138850,  1.4253036,  0.0885814},
+    { 0.0052982, -0.0146949,  1.0093968}
+};
+ 
+void XYZtoRGB(const float &amp;X, const float &amp;Y, const float &amp;Z, float &amp;r, float &amp;g, float &amp;b)
+{
+    r = std::max(0., X * XYZ_to_RGB[0][0] + Y * XYZ_to_RGB[0][1] + Z * XYZ_to_RGB[0][2]);
+    g = std::max(0., X * XYZ_to_RGB[1][0] + Y * XYZ_to_RGB[1][1] + Z * XYZ_to_RGB[1][2]);
+    b = std::max(0., X * XYZ_to_RGB[2][0] + Y * XYZ_to_RGB[2][1] + Z * XYZ_to_RGB[2][2]);
+}
+ 
+int main(int argc, char **argv)
+{
+    ...
+    for (int y = 0, pixIndex = 0; y &lt; height; ++y) {
+        short row = (short)(y / squareSize);
+        for (int x = 0; x &lt; width; ++x, pixIndex++) {
+            short column = (short)(x / squareSize);
+            // 计算这个方块的每个像素
+            float X = 0, Y = 0, Z = 0;
+            monteCarloIntegration(row * 6 + column, X, Y, Z);
+            float r, g, b;
+            XYZtoRGB(X, Y, Z, r, g, b);
+            buffer[pixIndex][0] += r;
+            buffer[pixIndex][1] += g;
+            buffer[pixIndex][2] += b;
+        }
+    }
+    ...
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/cgmcbethchart.png?" alt=""><figcaption><b>图 3：</b>用蒙特卡罗积分生成的 McBeth 色卡（N = 32）。</figcaption></figure><p>程序的主函数遍历帧的每个像素。对每个像素，它算出该像素对应 McBeth 色卡中的行和列（色卡的方块排成 4 行 6 列。你可以在图 2 里看到 McBeth 色卡的一个例子）。该颜色的光谱数据将用来计算 X、Y、Z 的值（第 22、23 行）。然后它们被转换为 RGB 值，这个过程我们在《光、颜色与色彩空间入门》那门课里也解释过。最后，这些 RGB 值存入一个缓冲，等所有像素处理完后把缓冲保存到磁盘（你的屏幕很可能期望图像是 sRGB 的，所以我们在把像素值存盘之前也做了伽马校正）。32 个样本的结果见图 3。可以看到结果远不算差，但图像噪声相当大！这就是我们在《蒙特卡罗方法的数学基础》那门课里一直在说的那个著名的方差。或者，你在看自己的渲染图时更常叫它噪声。</p><h2>渐进式渲染的例子</h2><p>为了演示蒙特卡罗积分另一个非常好的性质，我们会修改程序，让它通过计算任意多份这个图像（我们把这些图像称为遍）并对结果取平均，不断细化结果。某种意义上，这等同于增加样本数 N。但如果我们把 N 直接增加到比如 4096，图像渲染可能要花长得多的时间（事实上，从技术上说，比 N = 32 的图像长 128 倍）。因此，当 N 很小时，我们可以马上看到结果；如果这个快速的第一遍之后我们看到的效果还算满意，就可以让程序继续跑、多算几遍，直到最终对图像质量满意（也就是当你觉得噪声不再碍眼的时候）。这个方法称为<b>渐进式渲染</b>。设想你要在某个时间点之前交付一组图像。如果你把可用的总渲染时间除以需要渲染的图像总数，得到 X 分钟，那你就可以让程序把每一张图像渲染不超过 X 分钟。这样，你就能确定所有图像都会按期渲染完。它们可能带些噪声，但你会有一整套图像可以看，而在某些情况下，这往往比只有一套不完整、但画质好得多的图像更好。渲染时间可预测这件事，在生产环境中通常很有用。另外，如果你喜欢渲染 X 小时之后得到的那组图像，你可以重新启动这组渲染，让它再细化 X 小时。程序不必从零重新渲染每张图像，而可以直接从已有的渲染结果出发，通过增加更多的遍继续细化。因此，没有任何渲染资源被浪费！这些就是渐进式渲染的一些重要好处。</p><p>更形式地说，记住蒙特卡罗积分就像在计算一个随机变量的样本均值。在《蒙特卡罗方法的数学基础》那门课里，我们详细解释过，这些样本均值（它们本身也是随机数）也可以再取平均，得到更准确的结果。在这个例子里，一遍不过是一个样本均值。而这些遍的结果可以再取平均，得到更准确的结果（和样本均值一样）。这就是为什么蒙特卡罗积分使渐进式渲染成为可能。</p><p>我们在程序里实现了一种基础形式的渐进式渲染。这次我们不会在 OpenGL 窗口里显示结果。程序完全在 shell 里运行。它会不断渲染新的遍，把结果累加到缓冲里，直到用户终止程序（用 ctrl-c）。程序会捕获这个信号，并调用一个函数，在退出前把缓冲的结果保存到磁盘。注意，实际上在每一遍之后，我们会把缓冲的内容转换成一幅正式的图像，其中缓冲的内容被除以总遍数（缓冲就像一个累加缓冲）。保存到磁盘的是图像的内容，不是缓冲。下面是源码：</p><pre><code>
+void handler(int s)
+{
+    printf("Saving image after %d passes\n", npasses);
+    std::ofstream ofs;
+    ofs.open("./mcbeth.ppm");
+    ofs &lt;&lt; "P6\n" &lt;&lt; width &lt;&lt; " " &lt;&lt; height &lt;&lt; "\n255\n";
+    for (uint32_t i = 0; i &lt; width * height; ++i) {
+        unsigned char r, g, b;
+        r = (unsigned char)(std::min(1.f, pixels[i][0]) * 255);
+        g = (unsigned char)(std::min(1.f, pixels[i][1]) * 255);
+        b = (unsigned char)(std::min(1.f, pixels[i][2]) * 255);
+        ofs &lt;&lt; r &lt;&lt; g &lt;&lt; b;
+    }
+    ofs.close();
+    exit(0);
+}
+ 
+int main(int argc, char **argv)
+{
+    pixels = new color[width * height];
+    memset(pixels, 0x0, sizeof(color) * width * height);
+    buffer = new color [width * height];
+    memset(buffer, 0x0, sizeof(color) * width * height);
+    struct sigaction sigIntHandler;
+    sigIntHandler.sa_handler = handler;
+    sigemptyset(&amp;sigIntHandler.sa_mask);
+    sigIntHandler.sa_flags = 0;
+    sigaction(SIGINT, &amp;sigIntHandler, NULL);
+    static const float gamma = 1 / 2.2;
+    while (1) {
+        for (int y = 0, pixIndex = 0; y &lt; height; ++y) {
+            short row = (short)(y / squareSize);
+            for (int x = 0; x &lt; width; ++x, pixIndex++) {
+                short column = (short)(x / squareSize);
+                // 计算这个方块的每个像素
+                float X = 0, Y = 0, Z = 0;
+                monteCarloIntegration(row * 6 + column, X, Y, Z);
+                float r, g, b;
+                XYZtoRGB(X, Y, Z, r, g, b);
+                buffer[pixIndex][0] += r;
+                buffer[pixIndex][1] += g;
+                buffer[pixIndex][2] += b;
+            }
+        }
+        npasses++;
+        for (uint32_t i = 0; i &lt; width * height; ++i) {
+            pixels[i][0] = powf(buffer[i][0] / npasses, gamma);
+            pixels[i][1] = powf(buffer[i][1] / npasses, gamma);
+            pixels[i][2] = powf(buffer[i][2] / npasses, gamma);
+        }
+        printf("npasses %3d (num samples %5d)\n", npasses, npasses * N);
+    }
+    delete [] pixels;
+    delete [] buffer;
+    return 0;
+}
+</code></pre><p>来看看一些结果。下面这组图像显示了 1、8、16 和 32 遍之后的结果（分别对应 32、256、512 和 1024 个样本）。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/cgmcbethchart1.png?" alt=""></figure><p>很明显，正如预期，随着遍数（即样本数）增加，噪声减少了。把这些图像的一部分放大，我们能更清楚地看到噪声。记住，在蒙特卡罗里，你需要四倍的样本才能把噪声（或方差）减少一半。</p><figure><img src="https://scratchapixel.com/images/monte-carlo-methods-practice/cgmcbethchart2.png?" alt=""></figure><p>正如本课中已经提示过几次的，蒙特卡罗渲染的技艺，主要就在于找到降低这种噪声的办法。我们会在本课后面讲方差缩减技术。</p><h2>结论</h2><p>希望经过这个练习，你对蒙特卡罗积分是什么有了更好的理解——如你所见，它不只是一个简单的想法，实现起来也非常直接。你还有了一个简单的程序，演示了渐进式渲染的概念（这只因为蒙特卡罗算法本身的性质才成为可能）。希望你现在也更明白渲染图里的噪声（如果用更准确的技术术语，就是方差）从何而来。如果你在我们的 3D 渲染图里看到这种噪声，就可以肯定，生成这张图的渲染器用了某种蒙特卡罗积分。</p><h2>练习</h2><p>修改程序，让它在每次新增一遍时在 OpenGL 窗口里显示图像。</p><p>修改程序，让渲染在给定时间后停止。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/monte-carlo-rendering-practical-example.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/monte-carlo-methods-in-practice/monte-carlo-rendering-practical-example.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

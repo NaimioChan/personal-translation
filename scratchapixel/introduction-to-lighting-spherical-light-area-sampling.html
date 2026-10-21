@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>球形面光源：使用面积采样 - Scratchapixel 中文译本</title>
+<meta name="description" content="光照简介 · 球形面光源：使用面积采样（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>球形面光源：使用面积采样</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-to-lighting.html">三维渲染中的光照简介</a></li>
+<li><a href="introduction-to-lighting-punctual-lights.html">点光源与聚光灯</a></li>
+<li><a href="introduction-to-lighting-distant-lights.html">平行光源</a></li>
+<li><a href="introduction-to-lighting-area-lights-theory.html">面光源：数学基础</a></li>
+<li><a href="introduction-to-lighting-triangular-light.html">三角形面光源</a></li>
+<li><a href="introduction-to-lighting-rectangular-light.html">矩形面光源</a></li>
+<li><a style="font-weight:700" href="introduction-to-lighting-spherical-light-area-sampling.html">球形面光源：使用面积采样</a></li>
+<li><a href="introduction-to-lighting-spherical-light-cone-sampling.html">球形面光源：使用锥体采样</a></li>
+<li><a href="introduction-to-lighting-light-loop.html">直接光照：光源循环</a></li>
+</ol>
+</div>
+<h2>球形面光源：使用面积采样</h2><p><b>阅读时间：40 分钟。</b></p><h2>前言</h2><p>因为面光源可能具有的每种形状都有各自特定的实现考虑，我们决定每种面光源形状单独用一页来讲。更具体地说，我们会依次考虑三角形、平面、圆盘，最后是球形面光源。这段前言在每一页上都会重复，以确保如果你是从外部链接落到其中某一页的，你会知道最好先从<a href="">三角形面光源</a>那一页读起。在那里我们会讨论一些在其他光源类型中还会复用的概念，并对我们用来实现这些光源的代码做总体说明。</p><p>另请注意，我们强烈建议你阅读<a href="">分布式光线追踪</a>和<a href="">随机采样与采样策略</a>这两门课程，它们是本课的推论。</p><h2>本章你会学到什么？</h2><p>正如在三角形面光源那一章提到的，与四边形光源那一章不同（那一章和三角形光源差别不大），实现球形面光源会给我们一个机会，去钻研另一种求面光源贡献的方法，叫作<b>锥体采样</b>。因此，我们强烈建议你像读三角形面光源那课一样仔细地读这一章，因为这里会引入关键概念。</p><p>本章分为两大部分：</p><ul><li><p><b>用面积采样实现球形面光源：</b>第一部分，我们会学习如何用面积采样方法实现球形面光源，这个方法我们在前两章已经研究过。虽然在这一节里我们会学到光线追踪方法的一些新的关键方面，但即便你觉得前几章的概念已经熟悉，也要仔细读。</p></li><li><p><b>了解锥体采样：</b>第二部分专门讲锥体采样，这是另一种可用于对面光源采样的方法。</p></li></ul><h2>球形光源的均匀采样</h2><p>与我们实现<a href="introduction-to-lighting-rectangular-light.html">三角形面光源</a>时类似，用面积采样方法实现球形面光源，也需要找到一种对球面采样的办法。</p><blockquote><p>出于调试的需要，恒定的密度函数是有用的。（Peter Shirley, Changyaw Wang - Monte Carlo Techniques for Direct Lighting Calculations）。</p></blockquote><p>上面这句引自 Peter Shirley 和 Changyaw Wang 的论文《Monte Carlo Techniques for Direct Lighting Calculations》（见本页底部的参考文献）。这无非是说，对球形光源采样最基本的做法是使用均匀分布，类似于我们对四边形光源和三角形光源采样的方式。这包括从一个在单位正方形上均匀分布的样本出发，把它映射到球面上，并使用一个概率密度函数（PDF），在本例中即 \( \frac{1}{\text{area}} \)。如我们所知，球面的面积是 \( 4\pi r^2 \)。到目前为止，这看起来相当简单。</p><p>就像我们最初对三角形做均匀采样时用的那种朴素方法一样，我们可以问自己：你要怎样把这个单位正方形上的样本映射到球面上？</p><p>我们需要做的第一件事，是定义一个笛卡尔坐标系，以及一套用<b>球坐标</b>表示球面上点位置的约定。说到笛卡尔坐标系和球坐标系，你可能会碰到不同的约定。下面是我们本章要用的约定的定义：</p><ul><li><p><b>笛卡尔坐标系</b>：虽然这不是我们偏好的约定，我们还是决定用它。90 年代（或更早）关于球面等形状采样的论文大多采用这套约定，由于这层历史背景，很多人，尤其是数学背景出身的人，到今天还在用。所以尽管这不是我们偏好的约定，为了与页末将要引用的论文保持一致，我们还是沿用这一套。在这套约定里，\(z\) 朝上，笛卡尔坐标系的 \(x\) 轴指向左方，\(y\) 轴背离你（或者说背离屏幕，如图 1 所示）。</p></li><li><p><b>球坐标</b>：我们前面提到的那些论文所用的约定，也与我们在本站（以及更普遍地在较新的计算机图形学论文和教材中）常用的约定相反。虽然我们并不特别鼓励你采用这套约定，但目前还是先沿用它，因为你以后可能会读到用它的论文，知道不同作者可能采用不同约定是件好事。所以在本课中，角 \(\theta\)（希腊字母 theta）指的是方位角（经度角），取值范围从 0 到 \(2\pi\)。角 \(\phi\)（希腊字母 phi）则是极角或仰角（纬度角），取值范围从 0 到 \(\pi\)。注意 \(z\) 轴的正向是 \(\phi = 0\)，\(x\) 轴的正向是 \(\theta = 0\)。</p></li></ul><details open><p>维基百科上专门讲<a href="https://en.wikipedia.org/wiki/Spherical_coordinate_system#conventions" target="_blank" rel="noreferrer noopener">球坐标</a>的那篇文章是这样提到这个约定问题的：</p><blockquote><p>表示球坐标并为各符号规定命名顺序，存在好几种不同的约定。三元组数值集合（\(r, \theta, \varphi\)）分别表示径向距离、极角——即「倾角」，或者另一种叫法「仰角」——以及方位角。这是物理学约定中的常见做法。</p></blockquote><blockquote><p>然而，有些作者（包括数学家）用符号 \(\rho\)（rho）表示半径或径向距离，用 \(\phi\) 表示倾角（或仰角），用 \(\theta\) 表示方位角——而另一些人仍用 \(r\) 表示半径。</p></blockquote></details><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-spherical-coordinates.png" alt=""><figcaption><b>图 1：</b>球坐标，其中 \(\theta\) 定义球面上点的经度，\(\phi\) 定义纬度。</figcaption></figure><p>约定确定之后，下面是我们用来把球坐标中的点转换成笛卡尔坐标的公式（同样请参考图 1）。为清楚起见，我们给方位角加了下标 \(az\)，给仰角加了下标 \(el\)（仰角也就是纬度极角）：</p><p>$$
+\begin{align*}
+x &= \cos(\theta_{az}) \sin(\phi_{el}) \\
+y &= \sin(\theta_{az}) \sin(\phi_{el}) \\
+z &= \cos(\phi_{el})
+\end{align*}
+$$</p><pre><code>
+Vec3 SampleUnitSphereNaive(float r1, float r2) {
+	float theta = 2 * M_PI * r1; // 方位角
+	float phi = M_PI * r2; // 极角
+	return { 
+		std::cos(theta) * std::sin(phi), 
+		std::sin(theta) * std::sin(phi),
+		std::cos(phi) };
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-spherical-sampling-naive.png" alt=""><figcaption><b>图 2：</b>把 \(\varepsilon_1\) 和 \(\varepsilon_2\) 重映射到 \(\phi\) 和 \(\theta\)，导致样本在极点附近聚集。</figcaption></figure><p>下面的内容可能看起来有点枯燥啰嗦。但它涉及 3D 图形中一项关键的几何构造。要点在于：下面的内容是你在图形学相关论文和资料里会反复遇到的东西。如果你肯下功夫彻底弄懂这些内容——而不只是背下来——将来会为你省下大量时间。</p><p>图 2 中可见的结果清楚地表明，用这种办法，样本会向两极附近聚集。稍后我们会解释为什么会这样，但从更广的范围看，原因与把单位正方形上的样本重映射到三角形时的问题是类似的。我们说过，Jacobian 就是把一个「形状」（单位正方形）变换到另一个形状（三角形）时所施加的缩放因子。要让均匀分布的性质在变换之后仍然均匀，Jacobian 必须是常数。而我们这种把单位正方形样本重映射到球面上的基本做法，问题恰恰就在于 Jacobian 不是常数。理解这一点的一种方式，是考虑球面上用球坐标参数化的一小块微元面积。我们来看看这个公式，把它拆开：</p><p>$$dA = r^2 \sin(\phi) \, d\theta \, d\phi$$</p><p>其中上式里的 \(r\) 表示球的半径。思路是在 \(\theta\) 和 \(\phi\) 两个方向上各取一个微小的角度增量，两者相乘就得到球面上一小块的面积。在下图中你可以看到这块微小面积及其计算所用各项的示意：</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-delta-phi4.png" alt=""><figcaption><b>图 3：</b>球面上任何一块微小面积，都要考虑我们处在球面仰角方向的什么位置。越靠近两极，面积越小，这一点由 \( \sin\phi \) 这一项来体现。</figcaption></figure><p>基本上，设想我们要确定图中所示球面上 \(x\) 点处的一小块微分面积。\(x\) 是对准这块微分面积（图 3 中那块透明的黄色区域）的中心，还是位于它的一侧，如图 3 所示，都无所谓。无论哪种，概念是一样的。现在，\(x\) 在球面上的位置用球坐标表示是 \(\theta\)（方位角）和 \(\phi\)（极角）。球的半径是 \(r\)。于是我们从 \(x\) 出发向上移动一个极小量 \(\phi\)，所以有 \(d\phi\) 乘以球半径。最终这给出 \(\textcolor{magenta}{r d\phi}\)。我们对 \(\theta\) 做同样的处理，所以严格来说可以写成 \(r d\theta\)。不过要注意，对任意给定的 \(d\theta\)，相应水平线段的长度（图中用青色高亮的那一段）是随 \(\phi\) 变化的。越靠近极点，线段越短；越靠近赤道，线段越长。这一点可以在下图中看到——那是从顶部俯视球面的视图，图中我们只画出了三条这样的经线。在 \(\theta\) 的一个给定微小角度增量内，可以看出沿球面赤道的那段比靠近极点的那段更长。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-delta-phi2.png" alt=""><figcaption><b>图 4：</b>从上方看球面时，微分面积与仰角之间的关系大概能看得更清楚。图中我们画了两个纬度。外面那个是大圆（球的赤道），里面那条线表示靠近北极的一个圆。如你所见，对给定角度而言，角度在内圆上覆盖的宽度小于同一角度在外圆上张开的宽度。</figcaption></figure><p>这些线段的长度与产生这些线段的那个圆所在位置的球半径成正比，而这个半径由 \(r \sin(\phi)\) 给出。下面这张图能让你更容易理解这一点：图中内圆（灰色）的半径是 \(r \sin(\phi)\)，由此可以看出线段长度是 \(\textcolor{cyan}{r \sin(\phi) d\theta}\)。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-delta-phi3.png" alt=""><figcaption><b>图 5：</b>现在我们可以在 3D 中看这个球面，了解如何用极角 \(\phi\) 和方位角 \(\theta\) 来计算球面上的微分面积。</figcaption></figure><p>这块微小微分面积就是这两段长度之积（一段来自沿 \(\phi\) 的移动，一段来自沿 \(\theta\) 的移动），它确实等于 \(dA = \textcolor{cyan}{r \sin(\phi) d\theta} \, \textcolor{magenta}{r d\phi} = r^2 \textcolor{cyan}{\sin(\phi) d\theta}\textcolor{magenta}{d\phi}\)。</p><p>因此，看一下下面这张图就能很容易看出，靠近极点的微分面积远小于靠近球面赤道的微分面积。这就解释了我们这个重映射过程为什么行不通。我们一直在用的、把单位正方形变换到球面上的过程并不保持面积（Jacobian 不是常数）。于是，随着面积被挤压到两极附近，样本就聚集到了这些区域。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-delta-phi1.png" alt=""><figcaption><b>图 6：</b>这张图表明，对给定的微分方位角 \(\theta\)，微分立体角的大小随极角或仰角 \(\phi\) 而变化。</figcaption></figure><details open><p>如果球面上微分面积 \( dA = r^2 \sin(\phi) \, d\phi \, d\theta \) 的公式是对的，那么它在 \(\theta\) 与 \(\phi\) 的定义域上积分（两者分别是 \(0\) 到 \(2\pi\) 以及 \(0\) 到 \(\pi\)），应该给出球的表面积（如果你用便利贴把球面贴满，并知道某一张便利贴的面积，那么贴满球面所用便利贴的数量乘以单张贴纸面积，就应等于球的表面积），也就是 \(4\pi r^2\)。我们来看看。</p><p>先看对 \(\phi\) 的积分：</p><p>$$ \int_{0}^{\pi} r^2 \sin(\phi) \, d\phi $$</p><p>因为 \(r^2\) 对 \(\phi\) 来说是常数，可以提出来：</p><p>$$ r^2 \int_{0}^{\pi} \sin(\phi) \, d\phi $$</p><p>\(\sin(\phi)\) 的积分是 \(-\cos(\phi)\)：</p><p>$$ r^2 \left[ -\cos(\phi) \right]_{0}^{\pi} $$</p><p>计算定积分：</p><p>$$ r^2 \left[ -\cos(\pi) - (-\cos(0)) \right] $$</p><p>因为 \(\cos(\pi) = -1\) 且 \(\cos(0) = 1\)：</p><p>$$ r^2 \left[ -(-1) - (-1) \right] = r^2 [1 + 1] = r^2 \cdot 2 = 2r^2 $$</p><p>现在对 \(\theta\) 积分：</p><p>$$ \int_{0}^{2\pi} 2r^2 \, d\theta $$</p><p>同样，\(2r^2\) 对 \(\theta\) 来说是常数，所以可以提出来：</p><p>$$ 2r^2 \int_{0}^{2\pi} \, d\theta $$</p><p>\(d\theta\) 对 \(\theta\) 的积分是 \(\theta\)：</p><p>$$ 2r^2 \left[ \theta \right]_{0}^{2\pi} $$</p><p>计算定积分：</p><p>$$ 2r^2 \left[ 2\pi - 0 \right] = 2r^2 \cdot 2\pi = 4\pi r^2 $$</p><p>总之，球的表面积由下式给出：</p><p>$$ \text{Area} = 4\pi r^2 $$</p><p>我们这个计算球面微分面积的公式是对的。</p></details><p>我们已经弄明白它为什么不行，那么能不能让它行得通？但愿可以。要理解如何解决这个问题，我们需要深入概率论，这就是接下来要做的。请慢慢读下面的内容，因为它会引出一些你会在 3D 渲染中反复遇到的关键技术。</p><h2>对非均匀概率密度函数采样：深入概率论</h2><p><b>目标：</b>我们的目标是，用两个均匀分布的随机数 \(\varepsilon_1\) 和 \(\varepsilon_2\)，生成在球面上均匀分布的样本。这些样本的位置将由它们的球坐标 \(\theta\) 和 \(\phi\) 来定义。</p><p>我们面临的问题是：即便不知道这个函数的具体形式，直觉上也很容易理解，用一对均匀分布的随机数去采样球面，得到的是非均匀的样本分布（原因就在密度函数 \(dA\)）。样本在极点附近更密集。</p><p>我们的目标是把极点附近这种过高的样本密集度抵消掉，使最终样本在球面上的分布是均匀的。为此，我们需要借助一种最初于 1950 年代提出并使用的办法。记住，样本在球面上均匀采样的概率分布是：</p><p>$$p(x) = \dfrac{1}{4\pi r^2}$$</p><p>其中 \(x\) 标记样本，\(p(x)\) 表示该样本被选中的概率（在这本例中，如我们所知，是均匀的）。以 \(\theta\) 和 \(\phi\) 参数化的球面密度函数是：</p><p>$$dA = r^2 \sin(\phi) \, d\phi \, d\theta$$</p><p>第一个公式保证球面上单位面积的概率相等。第二个公式表明面积如何随 \(\theta\) 和 \(\phi\) 变化。请记住这两条说明。现在把两者结合起来，也就是写成：</p><p>$$
+\begin{array}{rcl}
+p(\theta, \phi) &=& \dfrac{1}{4\pi r^2} \times r^2 \sin(\phi) \, d\phi \, d\theta \\
+&=& \dfrac{1}{4\pi} \times \sin(\phi) \, d\phi \, d\theta
+\end{array}
+$$</p><p>这个函数是一个合法的概率密度函数，意思是它可以在球面上积分得到 1，代表总概率，即某个点落在球面上的确定性。我们在上面的注记中已经说明，把微分面积在 \(0 \leq \theta \leq 2\pi\) 和 \(0 \leq \phi \leq \pi\) 范围内积分得到 \(4\pi r^2\)。<b>这个合并后的密度描述了概率如何以球坐标 \(\theta\) 和 \(\phi\) 的形式分布在球面上</b>。</p><p>现在我们可以把这个公式 \(p(\theta, \phi)\) 看作本质上由两部分组成：</p><ul><li><p>\(p(\theta) = d\theta\)</p></li><li><p>\(p(\phi) = \sin(\phi)d\phi\)</p></li></ul><details open><p>我们把 \(1 / 4\pi\) 从公式中去掉了（\(r^2\) 这些项相互抵消），因为它对 \(\theta\) 和 \(\phi\) 各自的分布没有影响。我们只关心与这两个参数直接相关的项，即 \(\theta\) 和 \(\phi\)。</p></details><p>这些密度是用它们的微分元表示的。\(d\theta\) 这一项表明 \(\theta\) 在其定义域 \([0, 2\pi]\) 上是均匀分布的。\(\sin(\phi) d\phi\) 这一项则表明在 \([0, \pi]\) 上是非均匀分布。我们需要在各自的定义域 \([0, 2\pi]\) 和 \([0, \pi]\) 上对它们积分，以完成归一化。归一化保证整个空间上的总概率之和为 1。不做归一化，这些概率密度可能积分不为 1，从而导致对分布的表示不正确（很快你就会明白这一点）。</p><p>先对 \(p(\theta)\) 积分：</p><p>$$\int_0^{2\pi} d\theta = 2\pi$$</p><p>因此 \(p(\theta) = \dfrac{1}{2\pi}\)。现在对 \(\phi\) 走同样的流程。对它的微分形式积分：</p><p>$$
+\begin{array}{rcl}
+\int_0^\pi \sin(\phi) \, d\phi &=& [-\cos(\phi)]_0^\pi \\
+&=& -\cos(\pi) - (-\cos(0)) \\
+&=& -(-1) - (-1) \\
+&=& 1 - (-1) \\
+&=& 2
+\end{array}
+$$</p><p>因此 \(p(\phi) = \dfrac{\sin(\phi)}{2} \)。</p><p>重要的是要理解，\(\textcolor{cyan}{p(\theta) = d\theta}\) 与 \(\textcolor{cyan}{p(\theta) = {1}/{2\pi}}\)，或者说 \(\textcolor{magenta}{p(\phi) = \sin(\phi) d\phi}\) 与 \(\textcolor{magenta}{p(\phi) = {\sin(\phi)}/{2}}\)，实际上是同一批函数。前一种形式是后一种（归一化版本，见下文）的微分形式。它们描述概率密度如何在无穷小元 \(d\theta\)（或 \(d\phi\)）上分布。把这些微分方程在定义域上积分，可能得到不为 1 的数。然而，要把这些函数当作概率函数使用，它们在整个定义域上的积分必须为 1（概率之和须为 1）。因此，把这些方程的微分形式乘以积分结果的倒数，就得到一个积分为 1 的函数（所以需要归一化这一步）。我们来验证：</p><ul><li><p>对 \(\theta\) 而言：\(\frac{1}{2\pi} \int_0^{2\pi} \, d\theta = \frac{1}{2\pi} \times 2\pi = 1\)。</p></li><li><p>对 \(\phi\) 而言：\(\frac{1}{2} \int_0^\pi \sin(\phi) \, d\phi = \frac{1}{2} \int_0^\pi \sin(\phi) \, d\phi = \frac{1}{2} \times 2 = 1\)。</p></li></ul><p>其中 \(1/2\pi\) 和 \(1/2\) 分别是 \(p(\theta)\) 和 \(p(\phi)\) 的归一化因子。</p><p>理解这一部分真的非常重要。如果我们解释得不够清楚，请告诉我们，我们会试着换个说法，直到你弄懂为止。</p><p>我们一开始就把这两个函数拆开的原因在于，在这个特定情形下：</p><p>$$p(\theta, \phi) = p(\theta) \times p(\phi)$$</p><p>所以，抽到一个球坐标为 \(\theta\) 和 \(\phi\) 的样本（这两个数都是随机变量）的概率，等于抽到 \(\theta\) 的概率乘以抽到 \(\phi\) 的概率。在数学（以及概率论）中，这称为<b>联合概率</b>，而 \(p(\theta)\) 与 \(p(\phi)\) 称为<b>边缘概率</b>（或边缘分布）。我们说「在这个特定情形下」，是因为 \(\theta\) 和 \(\phi\) 是（在此特定情形下）相互独立的变量。如果这些随机变量不独立，就不能用这个办法。</p><p>如果知道其中一个的值不能提供关于另一个值的任何信息，那么 \(\theta\) 与 \(\phi\) 就是独立的。换句话说，\(\theta\) 的分布方式不影响 \(\phi\) 的分布方式，反之亦然。</p><p>记住我们的目标：我们能生成在 [0,1] 范围内均匀采样的随机数，而我们想用它们来得出 \(\theta\) 和 \(\phi\) 的取值，使得最终得到的样本在球面上均匀分布。还要记住，PDF 给出的是随机变量取值为 \(x\) 的可能性。PDF 描述的是一种概率密度，即概率质量在定义域中每一点上分布得有多密。</p><p>概率论中还有另一个有用的函数，叫<b>累积密度函数</b>，即 <b>CDF</b>，它可以由 PDF 构造出来。稍后我们会讲怎么构造，但先弄清 CDF 是什么。假设你有一个 CDF，\(F(x)\)，定义为：</p><p>$$F(x) = P(X \le x)$$</p><p>这个函数给出随机变量 \(X\) 小于或等于 \(x\) 的概率。说清楚一点，你以某种方式抽到一个随机数，比如 5，你想知道骰子任何可能结果小于或等于 5 的概率。这里的 \(X\) 是骰子上的点数（所有可能结果），它是随机变量，因为每次掷骰子都会得到不同的数。你再抽一个随机数 5，这就是你的 \(x\)，你想知道把骰子掷到桌上时得到小于或等于 5 的数的概率。如果你能接受这个相当简单的例子，你可能已经猜到，这个概率就是掷出 1、2、3、4 或 5 的概率之和。也就是 5 乘以 \(1/6\)，即 \(5/6\)。这个例子用的是离散随机变量，但对连续随机变量，我们可以这样形式化地表述：概率密度函数（PDF）的 CDF 就是 PDF 的积分。正如离散随机变量用求和，连续变量用积分。CDF 表示随机变量 \(X\) 取值小于或等于某个特定值 \(x\) 的概率。</p><p>在数学上，CDF \(F(x)\) 定义为：</p><p>$$ F(x) = P(X \leq x) = \int_{-\infty}^{x} f(t) \, dt $$</p><p>在这个积分里，\(t\) 是积分变量，\(x\) 是积分上限，表示我们计算累积概率所到的那个值。</p><p>对连续随机变量，CDF 就是 PDF 从随机变量取值范围的下界（上面例子里是负无穷）到所关心取值 \(x\) 的积分。这个过程把概率累积到那一点为止。这起初可能有点抽象，我们举个例子。设想我们有如下 PDF：\(\lambda e^{-\lambda x}\)。这个 PDF 的积分为 1，其证明放在下面的方框里供有兴趣者查看，所以它确实可以被视作一个合法的 PDF。</p><details open><p>我们用数学方法验证指数分布的 PDF \(p(x) = \lambda e^{-\lambda x}\) 在其定义域（0 到 \(\infty\)）上积分为 1。要对 \(\lambda e^{-\lambda x}\) 积分，我们执行以下步骤：</p><ul><li><p>把常数 \(\lambda\) 提出来：</p><p>$$ \int_0^\infty \lambda e^{-\lambda x} \, dx = \lambda \int_0^\infty e^{-\lambda x} \, dx $$</p></li><li><p>代入 \(u = \lambda x\)（其中 \(du = \lambda dx\) 或 \(dx = \frac{du}{\lambda}\)）：</p><p>$$ \lambda \int_0^\infty e^{-\lambda x} \, dx = \lambda \int_0^\infty e^{-u} \cdot \frac{du}{\lambda} $$</p></li><li><p>化简：</p><p>$$ \lambda \int_0^\infty e^{-u} \cdot \frac{du}{\lambda} = \int_0^\infty e^{-u} \, du $$</p></li><li><p>积分：</p><p>$$ \int_0^\infty e^{-u} \, du = \left[ -e^{-u} \right]_0^\infty $$</p></li><li><p>计算定积分：</p><p>$$ \left[ -e^{-u} \right]_0^\infty = \left( 0 - (-1) \right) = 1 $$</p></li></ul><p>因此：\(\int_0^\infty \lambda e^{-\lambda x} \, dx = 1\)。这证实了指数分布的 PDF 积分为 1，符合任何合法概率密度函数的要求。</p></details><p>为简单起见，我们写一个小程序，帮助画出 [0,5] 范围内的 PDF 与 CDF。做法是：以很小的 \(x\) 步长从 0 到 5 计算 PDF，并且在每一步，把 CDF 设为前面各步已算出的所有 PDF 之和，加上当前 PDF 值乘以步长（公式 \(\int_{-\infty}^{x} p(t)dt\) 中的 \(dt\)，见下文）。</p><pre><code>
+#include &amp;ltstdio.h&gt;
+#include &amp;ltmath.h&gt;
+
+double pdf(double x, double lambda) {
+    return lambda * exp(-lambda * x);
+}
+
+int main() {
+    double lambda = 1.0;  // 速率参数
+    double step = 0.1;    // 步长
+    double x, pdf_value, cdf_value = 0.0;
+
+    printf("x\tPDF\t\tCDF\n");
+
+    for (x = 0.0; x &lt;= 5.0; x += step) {
+        pdf_value = pdf(x, lambda);
+        cdf_value += pdf_value * step;  // 累加 CDF
+
+        printf("%0.6f\t%0.6f\t%0.6f\n", x, pdf_value, fmin(cdf_value, 1.0));
+    }
+
+    return 0;
+}
+</code></pre><p>下图画出了这两条曲线：左边是 \(p(x) = \lambda e^{-\lambda x}\) 的 PDF，右边是由它得到的 CDF。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-pdf-cdf.png" alt=""><figcaption><b>图 7：</b>PDF 的曲线（左）与对应的 CDF（右）。注意 CDF 最大到 1。</figcaption></figure><p>你可能会奇怪，CDF 在 \(x\) 处起步的值和 PDF 不一样，因为我们前面说 CDF 等于它在 \(x\) 处对应的 PDF 值加上此前所有概率之和（此前的 \(x\)）。这对离散随机变量成立，但对连续随机变量，在积分过程中你需要考虑 \(dt\) 这一项；如果你像我们程序里那样，用<a href="https://www.khanacademy.org/math/ap-calculus-ab/ab-integration-new/ab-6-3/a/definite-integral-as-the-limit-of-a-riemann-sum" target="_blank" rel="noreferrer noopener">黎曼和数值方法</a>来求那个积分，这一项就体现为代码里的 <code>step</code> 变量。所以每次把你当前 \(x\) 处的 CDF 加上去，都要把这个值乘以 <code>step</code>，这就是 CDF 起步低得多的原因。</p><p>话说回来，CDF 曲线更有意思的是以下几点：</p><ul><li><p>它永远不会超过 1：当然，因为 CDF 表示的是一个数小于随机变量 \( X \) 可能取的任一结果的概率，所以 CDF 能取的最大值必然在 [0,1] 范围内。</p></li><li><p>曲线不是线性的：自然，它不是线性的，因为 PDF 也不是线性的。因此它反映了其来源函数的非线性。这一点稍后再谈。</p></li><li><p>曲线是<a href="https://en.wikipedia.org/wiki/Monotonic_function" target="_blank" rel="noreferrer noopener">单调递增</a>的（或者按有些人的说法，非递减）：这个性质出于多种原因都很关键，我们马上会讨论。</p></li></ul><p>说到这里，在解释如何利用上述性质之前，我们来看看它如何用到球面均匀采样的问题上。我们想求其 CDF 的那个函数是 \( p(\phi) = {\sin(\phi)}/{2} \)。我们按配方来求 CDF，也就是把这个函数从 \(\phi\) 的下界（即 0）积分到某个值 \(\phi\)。</p><details open><p>如果你对如何积分微分方程、特别是如何用函数 \(f\) 的原函数 \(F\) 来计算它的积分感到吃力，我们强烈建议你阅读<a href="mathematics-of-shading.html">着色数学</a>那门课。</p></details><ul><li><p>给定的 PDF 是 \( p(\phi) = \dfrac{\sin(\phi)}{2} \)。</p></li><li><p>CDF，\( F(\phi) \)，定义为 PDF 从 \(\phi\) 的下界（即 0）到某个值 \(\phi\) 的积分：\( F(\phi) = \int_{0}^{\phi} \dfrac{\sin(\phi')}{2} \, d\phi' \)。</p></li><li><p>要求 CDF，我们需要对 PDF 积分：\( F(\phi) = \int_{0}^{\phi} \dfrac{\sin(\phi')}{2} \, d\phi' \)。</p></li><li><p>我们可以分步完成积分：</p><p>$$F(\phi) = \frac{1}{2} \int_{0}^{\phi} \sin(\phi') \, d\phi'$$
+  $$F(\phi) = \frac{1}{2} \left[ -\cos(\phi') \right]_{0}^{\phi}$$</p></li><li><p>代入积分限计算定积分：</p><p>$$F(\phi) = \frac{1}{2} \left( -\cos(\phi) - (-\cos(0)) \right)$$</p><p>因为 \(\cos(0) = 1\)，这简化为：</p><p>$$F(\phi) = \frac{1}{2} \left( -\cos(\phi) + 1 \right)$$</p><p>进一步化简，得到：</p><p>$$F(\phi) = \frac{1}{2} \left( 1 - \cos(\phi) \right)$$</p></li></ul><p>给定 PDF 的 CDF 是：</p><p>$$
+F(\phi) = \frac{1 - \cos(\phi)}{2}
+$$</p><p>我们在 \(\phi\) 覆盖的定义域（0 到 \(\pi\)）上画出这个公式。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-sin-phi-cdf.png" alt=""><figcaption><b>图 8：</b>用于对球面均匀采样的 CDF（红色）的曲线（以及它由之而来的 PDF，蓝色）。</figcaption></figure><p>我们关心的是那条偏红色的曲线。我们在同一范围（0 到 \(\pi\)）内加上了正弦函数的曲线，方便你对比两者，看出 CDF 与原始 PDF 的关系。不出所料，这条红曲线在开头和结尾处斜率更缓，而那正是 \(\phi\) 趋近两极的地方。斜率越缓，说明随机变量 \(X\) 落在这些区间的概率低于曲线更陡的区域。总之，这个 CDF 表明，随机变量 \(X\) 落在极点附近的概率确实低于球面上其他地方，而这正是我们要的。</p><p>这个 CDF 之所以妙，是因为它给出了随机变量 \(X\)（假定在球面上均匀分布）的角度 \(\phi\) 小于或等于你随机挑的一个值（在 0 到 \(\pi\) 范围内）的概率（即图上 y 轴的值）。注意：y 轴的值从 0 到 1，x 轴从 0 到 \(\pi\)。把这两者对应起来的这条曲线，符合样本在球面上均匀分布的方式。</p><p>那么，我们知道什么，又要找什么？我们知道能生成 0 到 1 范围内均匀分布的随机数。我们要找的是一个 0 到 \(\pi\) 范围内的数，使得当我们把第一个数映射到第二个数（角 \(\phi\)）时，得到的角 \(\phi\) 能保证样本在球面上均匀分布。中奖了！我们需要的不是 CDF \(F(x)\) 本身，而是它的<b>反</b>函数 \(F^{-1}(x)\)——它接收 [0,1] 范围内均匀分布的随机数，给出一个 \(\phi\) 的值。</p><p>哇，是不是很酷？我们生成一个 0 到 1 均匀分布的数，喂给 CDF 的反函数 \(F^{-1}(x)\)，结果得到一个角 \(\phi\)。再结合样本角 \(\theta\)，就得到一个在球面上均匀分布的样本。这之所以成立，是因为 CDF 是由 PDF 在函数定义域上积分得到的，它保证了概率分布被正确变换。这样做的结果是，<b>CDF 捕捉了在球面整个表面上生成样本的可能性，从而维持了均匀分布</b>。</p><p>这同样成立，是因为 CDF 具备我们上面提到的性质，尤其是单调递增性。这意味着当你用反函数把一个 0 到 1 的值映射到 \(\phi\) 时，这个函数有且只有一个解。否则就行不通。函数单调递增还有一个很妙的好处，本课不深入讲，因为在<a href="">采样策略</a>那门课里有详细说明。这个好处就是：分层样本经过 \(F^{-1}(x)\) 函数之后仍然是分层的。分层采样是 Monte Carlo 方法的一种降噪技术。简而言之，思路是把 0-1 区间划分成格子（需要多少样本就分多少格），并在格内抖动样本。这样你的样本就实现了分层，如下图示。分层的输入样本在用 CDF 反函数映射到 \(\phi\) 之后仍然分层，这正是我们希望重映射方法具备的性质。若非如此，分层采样带来的好处就丢了，反而会让我们用 Monte Carlo 积分得到的噪声增加而不是减少。这就是为什么用 CDF 的反函数是如此巧妙而强大的方法。</p><p>下面几张图，如果你不熟悉分层采样的概念，展示了用分层样本对反 CDF 采样的结果。分层采样的思路是把样本组织成层，也就是下图中 x 轴下方画出的小格子。每格里的十字表示格子中心。如果样本完美等距，它们就会位于格子中心。这看起来可能是个好策略，因为这样我们就能确保覆盖反 CDF 的整个区间，而不像随机采样策略那样可能留下空隙（随机性所致）。然而，使用规则等距的样本会破坏 Monte Carlo 采样背后的理论，因为该理论要求样本<b>随机</b>均匀分布。所以分层采样所做的是一种折中。我们在层内生成样本，确保覆盖函数采样空间的整个区间，但又在层内随机抖动样本的位置。这样一来，我们最终得到的样本既随机，又比纯均匀随机分布的过程更可能「更为规则」地排布。这里讲的方法叫<b>抖动</b>，还有更精细的层内样本放置方法，将在<a href="">采样策略</a>那门课中讲到。</p><p>现在你至少对分层采样有个高层次的认识了。要注意的是，使用分层样本时，把它们代入反 CDF 后得到的结果同样是分层的。如上所述，这正是这个方法如此有效的原因。我们前面提过这一点，现在又把这个概念图示出来了。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-stratified-samples.png" alt=""><figcaption><b>图 9：</b>用分层样本作为反 CDF 的输入，输出的结果同样是分层的。</figcaption></figure><p>球面采样情形下，反求 CDF 的步骤如下：</p><p>$$
+\begin{array}{c}
+\varepsilon = \dfrac{(1-\cos(\phi))}{2} \\
+\cos(\phi) = 1 - 2\varepsilon \\
+\phi = \cos^{-1}(1 - 2\varepsilon) \\
+\end{array}
+$$</p><p>就这样！是不是真的很酷？那么现在，你只需要两个 [0,1] 范围内的随机数，就能同时对 \(\theta\) 和 \(\phi\) 采样。</p><p>$$
+\begin{array}{rcl}
+\theta &=& 2 \pi \cdot \varepsilon_1 \\
+\phi &=& \cos^{-1}(1 - 2 \cdot \varepsilon_2)
+\end{array}
+$$</p><p>用这个方法生成的所有样本都会在球面上均匀分布。我们先通过观察球面上样本的分布来实现它，再把它用到我们的面光源采样方法里。</p><pre><code>
+// 约定（不推荐）：
+// - phi：极角
+// - theta：方位角
+Vec3 SampleUnitSphereGood(float r1, float r2) {
+    float phi = std::acos(1 - 2 * r2); // 极角
+    float theta = 2 * M_PI * r1; // 方位角
+    return { 
+        std::cos(theta) * std::sin(phi), 
+        std::sin(theta) * std::sin(phi),
+        std::cos(phi) 
+    };
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-spherical-sampling-good.png" alt=""></figure><p>注意，写代码时你可以直接用 <code>1 - 2 * r2</code> 代替 <code>std::cos(phi)</code>。这样能省掉一次 <code>std::acos</code> 和 <code>std::cos</code> 调用。由此我们也能很容易地预先算出 \(\sin\phi\)，因为我们知道 \(\cos^2\phi + \sin^2\phi = 1\)，所以 \(\sin\phi = \sqrt{1 - \cos^2\phi}\)。因此，用下面的写法可以让代码再快一点：</p><pre><code>
+// 约定（不推荐）：
+// - phi：极角
+// - theta：方位角
+Vec3 SampleUnitSphereGoodAndFaster(float r1, float r2) {
+    float z = 1 - 2 * r2; // 这就是 cos(phi)
+    float sin_phi = std::sqrt(1 - z * z); // 这就是 sin(phi) = sqrt(1 - cos^2(phi))
+    float theta = 2 * M_PI * r1; // 方位角
+    return { 
+        std::cos(theta) * sin_phi, 
+        std::sin(theta) * sin_phi,
+        z 
+    };
+}
+</code></pre><p>之所以决定用 \(\phi\) 和 \(\theta\) 作极角和方位角，是因为一些较早的论文有时这样用。不过在本课提供的代码里，我们又回到了图形学开发者和研究者中更常见的记法，即用 \(\theta\) 作极角、\(\phi\) 作方位角。这是 PBRT、Mitsuba 等开源项目采用的约定，我们也强烈建议你遵循这一约定。这样能省下所有人的时间。</p><pre><code>
+// 约定（推荐）：
+// - theta：极角
+// - phi：方位角
+inline Vec3f UniformSampleSphere(const float&amp; r1, const float&amp; r2) {
+	float z = 1.f - 2.f * r1; // cos(theta)
+	float sin_theta = std::sqrt(1 - z * z);
+	float phi = 2 * M_PI * r2; // 方位角
+	return {std::cos(phi) * sin_theta, std::sin(phi) * sin_theta, z};
+}
+</code></pre><p>但再说一遍，即使这可能会让你混乱，我们也是有意做这些跳跃的（至少我们并不费力气去避免它，但我们在这样做时会特意提醒你），因为它迫使你去注意正在使用哪种约定。这是你第一次看任何代码或论文时都该有的自动反应，通过有意制造这些跳跃，我们希望帮你养成这种自动反应。如果觉得有点虐待狂，抱歉，那不是本意。</p><div class="media"><p><video controls preload="none" src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-pdf-cdf.mp4"></video></p></div><p>从 PDF 到 CDF、再求 CDF 的反函数，这个过程非常需要理解和记住，因为随着课程的推进，我们会反复用到这个方法。确实，这个方法不仅是采样光源的基础，也是采样着色器的基础，而后者是后续课程的话题之一。虽然我们还会在更进阶的着色器课程中再复习这个过程，但你能先在这里接触到这个概念是很好的，希望你已经理解得足够清楚。如果没有，请试着把那一段再读一遍，或者到 Discord 上联系我们，好让我们找出哪里没讲清楚。我们会设法改进这些内容。放心，在渲染方程那门课里，我们还会详细走一遍这个过程，包括用采样函数控制物体外观，以及更进阶的光源类型，比如环境光源、探针光源或 HDR 环境光源（同一种光源，只是人们的叫法不同）。</p><h2>SphereLight 的实现</h2><p><b>提醒：此后 \(\theta\) 和 \(\phi\) 将分别表示极角和方位角。</b></p><p>要继续下去，我们需要在代码里加一个 <code>Sphere</code> 类。我们请你去看代码，了解这个类实现的具体细节。因为其中没什么特别之处，这里就省些篇幅。简单说，这个类派生自 <code>TriangleMesh</code>。创建球体实例时，Sphere 类的构造函数会调用一个私有的 <code>Triangulate</code> 方法，后者再用恰当的数据填充 <code>TriangleMesh</code> 的成员变量，把这个球体表示为三角网格。在生产级渲染器里，你大概会想实现某种基于屏幕的细分方法，让物体看起来是完美光滑的球（而不是多面体）。有这样几种做法：一种可以从<a href="https://en.wikipedia.org/wiki/Reyes_rendering" target="_blank" rel="noreferrer noopener">REYES 算法</a>获得启发，另一种是把球表示为二十面体，然后不断细分，直到构成球面的每个三角形在屏幕空间里大致只有 1 个像素大。如前所述，我们不会研究这些方法（至少目前不会）。将来修订时我们可能会回到这一部分。</p><p><code>SphereLight</code> 类的实现是这样的：</p><pre><code>
+class SphereLight : public AreaLight {
+public:
+	SphereLight(Vec3f center = 0, float radius = 1, const Vec3f&amp; Le = 1)
+		: AreaLight(Le)
+		, center_(center)
+		, radius_(radius)
+		, sphere_(new Sphere(center, radius)) {
+	}
+
+	std::shared_ptr&amp;ltLight&gt; Transform(const Matrix44f&amp; xfm) const override {
+		Vec3f xfm_center;
+		Vec3f scale;
+		ExtractScaling(xfm, scale);
+		assert(scale.x == scale.y &amp;&amp; scale.x == scale.z);
+		xfm.MultVecMatrix(center_, xfm_center);
+		return std::make_shared&amp;ltSphereLight&gt;(xfm_center, radius_ * scale.x, Le_);
+	}
+
+	std::shared_ptr&amp;ltShape&gt; GetShape() override { return sphere_; }
+
+	Vec3f Sample(const DifferentialGeometry&amp; dg, Sample3f&amp; wi, float &amp;tmax, const Vec2f&amp; sample) const override {
+		Vec3f n = UniformSampleSphere(sample.x, sample.y);
+		Vec3f p = center_ + n * radius_;
+		Vec3f d = p - dg.P;
+		tmax = d.Length();
+
+		float d_dot_n = d.Dot(n);
+		if (d_dot_n &gt;= 0) return 0;
+
+		wi = Sample3f(d / tmax, (2.f * tmax * tmax * tmax) / std::abs(d_dot_n));
+
+		return Le_;
+	}
+
+private:
+	Vec3f center_{0};
+	float radius_{1};
+	std::shared_ptr&amp;ltSphere&gt; sphere_;
+};
+</code></pre><p>这些方法与我们为 <code>TriangleLight</code> 已经介绍过的那些相同。</p><ul><li><p>创建 <code>Sphere</code> 实例时，类构造函数会把球体创建为一个三角网格实例。我们也是在这里为光源本身设定默认的球半径和球心（这两者当然与作为网格的球体相同）。默认情况下，球体创建在世界原点，半径等于 1。只有在场景构建过程中调用 <code>Transform</code> 方法时，我们才真正生成同一光源的实例，但处于它的最终位置、具有最终半径，半径可能受矩阵缩放值的影响。</p><details open><p>采用两步流程是一种设计选择，它让我们能支持某种形式的实例化：你可能想在场景中复制多次的形状，先以「默认」设置生成（比如本例中，一个以世界原点为中心、半径为 1 的球），然后每个实例在第二阶段通过生成由给定矩阵变换后的网格来得到。</p><p>这样设计背后的道理，在<a href="">从零构建光线追踪引擎的核心组件：DIY 指南</a>那门课里有解释。</p></details><p>注意，虽然我们认为矩阵可以把光源放大或缩小，但我们只接受在所有轴上均匀缩放的矩阵（即均匀缩放）。从旋转中提取缩放值（旋转不应影响我们的球形面光源）的办法，是调用 <code>ExtractScaling</code> 这个矩阵辅助方法。记住，变换矩阵可以看作一个笛卡尔坐标系，其各轴相互正交。在行主序矩阵中（这是我们在 Scratchapixel 使用的约定），前三行分别代表这个笛卡尔坐标系的 x、y、z 轴。所以 <code>ExtractScaling</code> 方法要提取变换矩阵所编码的 x、y、z 缩放值，唯一要做的就是计算这些轴的长度。就这么简单。</p><pre><code>
+template&amp;ltclass T&gt;
+void ExtractScaling(const Matrix44&amp;ltT&gt;&amp; mat, Vec3&amp;ltT&gt;&amp; scale) {
+    Vec3&amp;ltT&gt; row[3];
+
+    row[0] = Vec3&amp;ltT&gt;(mat[0][0], mat[0][1], mat[0][2]);
+    row[1] = Vec3&amp;ltT&gt;(mat[1][0], mat[1][1], mat[1][2]);
+    row[2] = Vec3&amp;ltT&gt;(mat[2][0], mat[2][1], mat[2][2]);
+
+    scale.x = row[0].Length();
+    scale.y = row[1].Length();
+    scale.z = row[2].Length();
+}
+</code></pre></li><li><p><code>Sample</code> 方法就是把 [0,1] 范围内均匀分布的两个随机值重映射到球坐标的地方。<code>UniformSampleSphere</code> 生成的是单位球面上的样本，所以我们需要把它变换到最终的世界位置，做法很简单：样本乘以球半径，再加上球心位置。由于我们忽略了球的旋转（见下文），随后就可以把单位球面上的样本位置当作法线（其长度为 1）。</p><details open><p>在本课提供的实现里，我们确实忽略了旋转。如果你的球是单一颜色，这不太要紧，因为球无论怎么旋转看起来都是球。但如果你打算对光源的 <code>Le_</code> 参数做纹理映射，那显然就需要考虑旋转。不过本课的关键，其实更在于学习如何对各种形状的面光源采样，而不是做一个生产级渲染器。所以，如果你有兴趣加入旋转支持，那就得自己实现，但会非常简单：你只需在实例化时（调用 <code>Transform</code> 时）把施加到光源上的变换矩阵连同其逆矩阵一起存为类的成员变量。之后生成样本时，你只需用变换矩阵把样本位置变换到世界位置（其中可能包含矩阵编码的旋转）。要计算法线，你需要用逆矩阵变换样本位置。这样你就有了旋转支持。再说一次，Scratchapixel 的理念是让每门课附带的示例代码尽可能小，这里不必去追究这些与面光源实现没有直接关系的细节。</p></details></li></ul><p>下面是我们示例程序对球体光源使用面积采样方法、取 512 个样本时的输出：</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-sphere-area-sampling2.png" alt=""></figure><h2>为什么面积采样对球形面光源并不理想？</h2><p>这个方法的问题在于，生成的部分样本没有被用上，因为<b>至少</b>有一半样本从着色点的视角看是看不见的。这就像在月球上插旗，然后数从地球上能看到几面旗。从地球上看得到的旗最多的那一队赢。嗯，可要是你把旗插在月球背面，或者插在视线之外，那就不是什么高明的策略了。希望你能同意：我们在这里浪费了大量样本！这就是这个方法不太好的原因。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-sphere-area-sampling.png" alt=""><figcaption><b>图 xx：</b>这张图展示了从画面/场景左上角的着色点发出的 16 条样本的路径。如你所见，其中一些样本（红色）落在从着色点看去球体的背面（即橙色线汇聚的那一侧）。</figcaption></figure><h2>来认识一下锥体/角度采样！</h2><p>这个方法的问题在于，生成的部分样本没有被用上，因为至少有一半样本从着色点的视角看是看不见的。这就像在月球上插旗，然后数从地球上能看到几面旗。从地球上看得到的旗最多的那一队赢。嗯，可要是你把旗插在月球背面，或者插在视线之外，那就不是什么高明的策略了。希望你能同意：我们在这里浪费了大量样本！这就是这个方法不太好的原因。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-wasted-samples.png" alt=""></figure><p>还好，有一种更好的球面采样方式，不会有这个问题。这个方法是：在从着色点看去由球体张开的那个方向锥内采样方向。这项技术称为锥体与立体角采样，将在下一章详述。</p><h2>参考文献</h2><p>Peter Shirley, Changyaw Wang - Monte Carlo Techniques for Direct Lighting Calculations。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-spherical-light-area-sampling.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-spherical-light-area-sampling.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

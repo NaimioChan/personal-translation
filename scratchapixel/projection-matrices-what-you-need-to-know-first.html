@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>投影矩阵：首先需要知道的事 - Scratchapixel 中文译本</title>
+<meta name="description" content="透视与正交投影矩阵 · 投影矩阵：首先需要知道的事（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>投影矩阵：首先需要知道的事</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="projection-matrix-introduction.html">投影矩阵是什么，何处、为何要使用？</a></li>
+<li><a style="font-weight:700" href="projection-matrices-what-you-need-to-know-first.html">投影矩阵：首先需要知道的事</a></li>
+<li><a href="building-basic-perspective-projection-matrix.html">构建基础的透视投影矩阵</a></li>
+<li><a href="opengl-perspective-projection-matrix.html">透视投影矩阵</a></li>
+<li><a href="perspective-matrix-in-practice.html">迷路了？用真实的制作案例回顾一遍</a></li>
+<li><a href="projection-matrix-GPU-rendering-pipeline-clipping.html">投影矩阵、GPU 渲染管线与裁剪</a></li>
+<li><a href="orthographic-projection-matrix.html">正交投影矩阵</a></li>
+</ol>
+</div>
+<h2>投影矩阵：首先需要知道的事</h2><p><b>阅读时间：17 分钟。</b></p><h2>必要的前置知识</h2><p>在开始探索如何构建一个简单的透视投影矩阵之前，有必要先重温投影矩阵所依据的基础技术。</p><h2>把透视视锥体变换为规范体积</h2><figure><img src="https://scratchapixel.com/images/perspective-matrix/perspprojmatrix2.png?" alt=""><figcaption><b>图 1：</b>P' 是 P 在画布上的投影。</figcaption></figure><p>当一个点 P 经过一个直接的透视投影矩阵变换后，会得到点 P'，其特征是：</p><ul><li><p>x' 与 y' 坐标表示 P 在图像平面上的位置，两者都位于归一化设备坐标（NDC）空间中。如前所述，透视投影矩阵把三维点的坐标映射到它在 NDC 空间（范围 [-1,1]）内的「二维」屏幕位置。通常，这个矩阵保证相机视野内（视锥体内）的点都映射到 [-1,1] 区间，与画布形状无关——这些坐标位于 NDC，而不是屏幕空间。</p></li><li><p>除了把三维点映射成二维坐标，还需要调整它的 z 坐标。我们之前讨论光栅化时没有涉及 z' 的重映射，但 GPU 确实会把 P' 的 z 坐标重映射到 [0,1] 或 [-1,1] 区间，具体取决于所用的图形 API。对于近裁剪面上的点，z' 映射为 0（或 -1）；对于远裁剪面上的点，z' 映射为 1。</p></li></ul><figure><img src="https://scratchapixel.com/images/perspective-matrix/canonical1.png?" alt=""><figcaption><b>图 2：</b>投影矩阵把观察视锥体映射为单位立方体，即规范观察体积。</figcaption></figure><p>把 P 的 x、y 坐标以及 z 坐标重映射到 [-1,1] 与 [0,1]（或 [-1,1]）区间，意味着投影矩阵变换把观察视锥体的体积变成了一个 2x2x1（或 2x2x2）大小的立方体，通常称为<b>单位立方体</b>或<b>规范观察体积</b>。这个变换可以看作是对观察视锥体的归一化。视锥体原本并不是立方体，而是一个截棱锥，但经过这一过程，它实际上被「扭曲」成了立方体。这项由投影矩阵完成的运算，是计算机图形学（CG）中的一个关键概念。它把由近、远裁剪面与屏幕尺寸共同定义的观察视锥体，转换成一种容易处理得多的几何形状，从而简化了对点的后续运算。要记住：在 CG 语境下，投影矩阵把观察视锥体所界定的空间变换为单位立方体。</p><h3>理解裁剪</h3><figure><img src="https://scratchapixel.com/images/perspective-matrix/clipping2.png?" alt=""><figcaption><b>图 3：</b>二维裁剪示意：在原始几何体与观察视锥体边界的交点处生成新的三角形。</figcaption></figure><figure><img src="https://scratchapixel.com/images/perspective-matrix/clipping4.png?" alt=""><figcaption><b>图 4：</b>相机后方的点与前方点的投影方式相同，但其坐标被镜像。</figcaption></figure><p>裁剪是把与观察视锥体边界相交的几何体裁掉的过程。说到底，它的作用是保证只保留视锥体内部的几何体部分，而把外部、相机看不见的部分丢弃（如图 3 所示）。裁剪表面上像是为了丢弃看不见的场景部分而做的优化，但它真正关键的作用在于处理物体无论相对相机处于什么位置都如何被投影。比如考察观察者后方的一个点，坐标为 (2, 5, 10)。套用透视投影规则得到：</p><p>$$
+\begin{array}{l}
+x' = \dfrac{2}{-10} = -0.2,\\
+y' = \dfrac{5}{-10} = -0.5,
+\end{array}
+$$</p><p>这说明，尽管该点投影出的坐标在数值上有效，它在画布上却两个方向都被镜像了。原始 x、y 坐标是正值，投影到屏幕空间后却都成了负值（如图 4 所示）。</p><p>后续我们会在进阶光栅化的语境中介绍 <a href="http://en.wikipedia.org/wiki/Cohen?Sutherland_algorithm" target="_blank" rel="noreferrer noopener">Cohen-Sutherland 算法</a>，这是一种常用的裁剪方法。不过下一章会深入讨论裁剪与裁剪空间的概念。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/clipping3.png?" alt=""><figcaption><b>图 5：</b>从透视视锥体到单位立方体的变换简化了裁剪运算。</figcaption></figure><ul><li><p>把形状复杂的观察视锥体（截棱锥）变换为简单的盒子（规范观察体积），便于执行裁剪之类的运算。</p></li><li><p>在规范观察体积内定义几何体，简化了把三维坐标转换为图像平面上二维坐标的过程。</p></li></ul><p>这套框架的设计模仿<b>针孔相机模型</b>，其参数包括近、远裁剪面与视场角（详见<a href="how-pinhole-camera-works-part-1.html">针孔相机模型</a>这一课）。把点从屏幕空间映射到 NDC 空间时，视场角尤为重要。</p><h2>把点投影到屏幕上</h2><p>在探索如何构建透视矩阵之前，值得重温一下把三维点投影到屏幕上的过程。这一方法在<a href="computing-pixel-coordinates-of-3d-point-perspective-projection.html">计算三维点的像素坐标</a>中已完整讲解，其做法是先把三维点变换到相机坐标系。在这个坐标系里，相机位置为原点，x、y 轴平行于图像平面，z 轴垂直于图像平面。为了简化演示，我们的设置把图像平面放在距相机原点一个单位处，不过更复杂的模型可以允许任意距离。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/camsetup.png?" alt=""></figure><details open><p>Scratchapixel 采用右手坐标系，这在 Maya 等许多商业软件中很常见。这意味着相机朝向与 z 轴相反的方向，因此在相机坐标系中定义时，可见点具有负的 z 分量。这一约定对于把点准确地投影到图像平面上至关重要。</p></details><p>要把点 P 投影到画布上并求出对应的点 P'，就从 P 出发经过眼睛画一条直线，交于图像平面。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/projection4.png?" alt=""><figcaption><b>图 6：</b>把 P 投影到图像平面上的 P'，做法是把 P 的 XY 坐标除以其 Z 坐标。</figcaption></figure><p>图 6 中，三角形 \(\Delta ABC\) 与 \(\Delta DEF\) 相似，即形状相同而大小不同。相似意味着对应边之间成固定比例，由此得到方程：</p><p>$$\dfrac{BC} {EF} = \dfrac{AB} {DE}.$$</p><p>要求 BC，即 P' 在图像平面上的位置，我们使用：</p><p>$$BC = \dfrac{AB * EF} {DE}.$$</p><p>B 位于图像平面上，且距 A 一个单位（AB = 1），于是得到：</p><p>$$BC = \dfrac{(AB=1) * EF} {DE} = \dfrac{EF} {DE}.$$</p><p>把 P 的坐标除以其 z 坐标，就得到 P' 的 x、y 坐标：</p><p>$$
+\begin{array}{l}
+P'_x=\dfrac{P_x}{-P_z},\\
+P'_y=\dfrac{P_y}{-P_z}.
+\end{array}
+$$</p><p>这里除以 \(-P_z\)，是为了顺应相机系统的约定：可见点具有负的 z 分量。这简化了 P'（即 P 在图像平面上的投影）的计算，图 6 展示的是 y 坐标的投影。把这张图旋转九十度、把 y 轴换成 x 轴，就得到投影 P 的 x 坐标时所用的俯视图。</p><h2>齐次坐标</h2><figure><img src="https://scratchapixel.com/images/perspective-matrix/homogeneous.png?" alt=""><figcaption><b>图 7：</b>要用一个 4x4 矩阵乘一个三维点，必须先把该点的笛卡尔坐标转换成齐次坐标。这个转换就是把齐次的第四个坐标设为 1，可以是隐式的。在点-矩阵乘法函数内部，我们再把变换后的坐标 x'、y'、z' 除以 w'，就能把点从齐次坐标转回笛卡尔坐标。</figcaption></figure><p>透视投影本身看起来也许很直接，但当我们想把这个过程封装进一个矩阵、让点的投影只靠一次点-矩阵乘法就能完成时，复杂性就出现了。我们先把对这一过程的理解梳理一遍。</p><p>回忆我们在<a href="transforming-points-and-vectors.html">几何</a>这一课中的讨论：只有当左矩阵的列数等于右矩阵的行数时，两个矩阵才能相乘：</p><p>$$
+\begin{array}{l} 
+{\color{red} {\text{no:}}} & [n \: m] * [q \: n] \\ 
+{\color{green} {\text{yes:}}} & [m \: n] * [n \: q] \\ 
+\end{array}
+$$</p><p>一个点通常表示为一行矩阵。但这样的 1x3 矩阵无法直接与 4x4 矩阵相乘，而 4x4 矩阵是 CG 中编码旋转、缩放与平移等变换的标准形式。解决办法是用四个而不是三个坐标来表示点，即以 1x4 矩阵的形式采用<b>齐次坐标</b>。第四个坐标 <b>w</b> 在从笛卡尔坐标转换到齐次坐标时设为 1，于是 \(P_c\)（笛卡尔坐标下的点）与 \(P_h\)（齐次坐标下）只要满足 \(w = 1\) 就可以互换。如果 \(w \neq 1\)，就需要把点的坐标 [x y z w] 除以 \(w\) 做归一化，把 \(w\) 恢复为 1，以便按笛卡尔坐标使用。</p><p>$$
+\begin{array}{l}
+[x \: y \: z] \neq [x \: y \: z \: w=1.2] \\
+x=\dfrac{x}{w}, \: y=\dfrac{y}{w}, \: z=\dfrac{z}{w}, \: w=\dfrac{w}{w}=1 \\ 
+{[x \: y \: z] = [x \: y \: z \: w = 1]}
+\end{array}
+$$</p><p>更正式的定义是：<b>齐次坐标为 [x, y, z, w] 的点，对应三维笛卡尔点 [x/w, y/w, z/w]</b>。</p><p>典型的变换矩阵结构如下，其中 [3x3] 的内层矩阵（绿色）表示旋转与缩放，底行系数（红色）处理平移：</p><p>$$
+\begin{bmatrix}
+\color{green}{m_{00}} & \color{green}{m_{01}} & \color{green}{m_{02}} & \color{blue}{0}\\
+\color{green}{m_{10}} & \color{green}{m_{11}} & \color{green}{m_{12}} & \color{blue}{0}\\
+\color{green}{m_{20}} & \color{green}{m_{21}} & \color{green}{m_{22}} & \color{blue}{0}\\
+\color{red}{T_x} & \color{red}{T_y} & \color{red}{T_z} & \color{blue}{1}\\
+\end{bmatrix}
+$$</p><p>在实际使用中，我们通过隐式地把三维点的第四个坐标 <b>w</b> 设为 1，把它们当作具有齐次坐标来处理。这样就能高效地与 4x4 矩阵相乘，而不必显式地用四个坐标定义点，从而节省内存。变换之后要转回笛卡尔坐标，需把变换后的坐标 \(x', y', z'\) 除以 \(w'\)；不过在仿射变换的情形下，第四行始终是 \([0, 0, 0, 1]\)、\(w'\) 保持为 1，因此这一步往往可以省掉。</p><details open><p>记住，4x4 变换矩阵被视为仿射变换。这类矩阵有两个关键属性：</p><ul><li><p><b>保持共线性</b>：位于同一直线上的点，变换后仍然对齐。</p></li><li><p><b>保持距离比</b>：线段的中点变换后仍保持在整条线段上的相对位置。</p></li></ul><p>这一区别很关键，因为与仿射变换不同，投影变换保持共线性，但不保持距离比。前面已经强调过这一点：透视投影保持直线不变，却改变了点与点之间的距离。</p></details><p>在变换三维点时，我们实际上是把这些点当作具有齐次坐标来处理。这种做法包含一个「隐式」假设：这些三维点带有一个设为 1 的第四坐标。需要认识到，由 {x, y, z} 定义的三维点与齐次坐标下的点 {x, y, z, w}，只要 w 等于 1 就是等价的。因此我们可以把三维点写成齐次坐标形式：</p><p>$$P = \{x, y, z, w = 1\}.$$</p><p>要记住，当一个「三维」点与 4x4 矩阵相乘时，它被（隐式地，如果在某些软件中没有显式地用四个坐标定义）视为 w 坐标为 1 的齐次点。编程时不「显式」地用四个坐标定义点，是为了节省内存，避免无谓地存储一个恒为 1 的坐标。接下来把这个 1x4 矩阵表示（也就是我们的点）与 4x4 变换矩阵相乘，我们期望得到另一个齐次坐标下的点。要把它转回三维，必须把变换后的坐标 {x', y', z'} 除以 w。不过 4x4 变换矩阵的第四行<b>始终</b>被设为 \(\color{blue}{{0, 0, 0, 1}}\)，这保证了变换后点的 w 坐标 \(\color{purple}{w'}\) 永远为 1。这个结果来自乘法的机制：</p><p>$$
+\begin{bmatrix}
+x' & y' & z' & w'
+\end{bmatrix}
+=
+\begin{bmatrix}
+x & y & z & w = 1
+\end{bmatrix}
+*
+\begin{bmatrix}
+\color{green}{m_{00}} & \color{green}{m_{01}} & \color{green}{m_{02}} & \color{blue}{0}\\
+\color{green}{m_{10}} & \color{green}{m_{11}} & \color{green}{m_{12}} & \color{blue}{0}\\
+\color{green}{m_{20}} & \color{green}{m_{21}} & \color{green}{m_{22}} & \color{blue}{0}\\
+\color{red}{T_x} & \color{red}{T_y} & \color{red}{T_z} & \color{blue}{1}\\
+\end{bmatrix}
+$$
+$$
+\begin{array}{l}
+x' = x * m_{00} + y * m_{10} + z * m_{20} + (w = 1) * T_x,\\
+y' = x * m_{01} + y * m_{11} + z * m_{21} + (w = 1) * T_y,\\
+z' = x * m_{02} + y * m_{12} + z * m_{22} + (w = 1) * T_z,\\
+\color{purple}{w' = x * 0 + y * 0 + z * 0 + (w = 1) * 1 = 1}.\\
+\end{array}
+$$</p><p>无论 3x3 矩阵里的值或平移系数取什么，\(\color{purple}{w'}\) 始终等于 1。这是因为 \(\color{purple}{w'}\) 由设为 1 的 w 与矩阵第四列的系数算出，而后者恒为 \(\color{blue}{{0, 0, 0, 1}}\)。这些系数是固定的、不变的，因此该矩阵被定义为变换矩阵而不是投影矩阵。于是，无需把 x'、y'、z' 除以 \(\color{purple}{w'}\) 转回笛卡尔坐标，因为 \(\color{purple}{w'}\) 永远为 1。</p><p>一个三维笛卡尔点 P，转换为齐次坐标 {x, y, z, w = 1} 并与 4x4 仿射变换矩阵相乘后，必然得到齐次坐标下的点 P'，其 w 坐标 \(\color{purple}{w'}\) 恒为 1。因此把 P' 转回三维笛卡尔坐标 {x'/w', y'/w', z'/w'} 时，不必显式地按 \(\color{purple}{w'}\) 做归一化，转换过程就此简化。</p><details open><p>点与 4x4 矩阵相乘的技术实现，可以用同一个函数的三个版本来展示，它们都基于齐次坐标这一假设逐级简化：</p><p>第 1 版针对显式地用齐次坐标（Vec4）定义的点，计算中纳入了 w 坐标：</p><pre><code>
+template&amp;lttypename S&gt; 
+void multVecMatrix(const Vec4&amp;ltS&gt; &amp;src, Vec3&amp;ltS&gt; &amp;dst) const 
+{ 
+    S a, b, c, w; 
+ 
+    // 注意：假设 src.w 为 1
+    a = src.x * x[0][0] + src.y * x[1][0] + src.z * x[2][0] + src.w * x[3][0]; 
+    b = src.x * x[0][1] + src.y * x[1][1] + src.z * x[2][1] + src.w * x[3][1]; 
+    c = src.x * x[0][2] + src.y * x[1][2] + src.z * x[2][2] + src.w * x[3][2]; 
+    w = src.x * x[0][3] + src.y * x[1][3] + src.z * x[2][3] + src.w * x[3][3]; 
+ 
+    dst.x = a / w; 
+    dst.y = b / w; 
+    dst.z = c / w; 
+}
+</code></pre><p>这种写法承认源点有四个坐标，因此可以与 4x4 矩阵相乘。鉴于齐次坐标系统的性质——<code>src.w</code> 始终为 1——这一版还可以优化。</p><p>第 2 版通过隐式地把源点的 w 坐标当作 1，简化了过程，无需显式定义。这一版针对以 Vec3 表示的点，以提高效率：</p><pre><code>
+template&amp;lttypename S&gt; 
+void multVecMatrix(const Vec3&amp;ltS&gt; &amp;src, Vec3&amp;ltS&gt; &amp;dst) const 
+{ 
+    S a, b, c, w; 
+ 
+    // 隐式地把 src.w 当作 1
+    a = src.x * x[0][0] + src.y * x[1][0] + src.z * x[2][0] + x[3][0]; 
+    b = src.x * x[0][1] + src.y * x[1][1] + src.z * x[2][1] + x[3][1]; 
+    c = src.x * x[0][2] + src.y * x[1][2] + src.z * x[2][2] + x[3][2]; 
+    w = src.x * x[0][3] + src.y * x[1][3] + src.z * x[2][3] + x[3][3]; 
+ 
+    dst.x = a / w; 
+    dst.y = b / w; 
+    dst.z = c / w; 
+}
+</code></pre><p>由于仿射变换矩阵保证 <code>w</code> 保持为 1，还可以进一步优化，省去除以 <code>w</code> 的操作。</p><p>第 3 版是最精简的做法，可直接用于仿射变换，无需计算 <code>w</code>，也无需随后的除法：</p><pre><code>
+template&amp;lttypename S&gt; 
+void multVecMatrix(const Vec3&amp;ltS&gt; &amp;src, Vec3&amp;ltS&gt; &amp;dst) const 
+{ 
+    S a, b, c; 
+ 
+    // 直接计算，不用显式的 w
+    a = src.x * x[0][0] + src.y * x[1][0] + src.z * x[2][0] + x[3][0]; 
+    b = src.x * x[0][1] + src.y * x[1][1] + src.z * x[2][1] + x[3][1]; 
+    c = src.x * x[0][2] + src.y * x[1][2] + src.z * x[2][2] + x[3][2]; 
+ 
+    // 仿射变换意味着 w = 1；无需除法
+    dst.x = a; 
+    dst.y = b; 
+    dst.z = c; 
+}
+</code></pre><p>最后一版常用于以仿射矩阵变换点，它利用仿射变换中 w 坐标恒定这一性质来提高效率。</p></details><p>我们为什么要谈得这么细？主要是为了加深对齐次坐标这一计算机图形学（CG）基石概念的理解。在 CG 中，我们主要处理两类矩阵：4x4 仿射变换矩阵与 4x4 投影矩阵。如我们所见，仿射变换矩阵使变换后点的 \(w\) 坐标保持为 1。而本课的重点——投影矩阵——则不同。当一个点经过投影矩阵变换后，它的 \(x'\)、\(y'\) 与 \(z'\) 坐标必须做归一化——这一步在仿射变换矩阵中并不需要。</p><p><b>仿射变换矩阵：</b></p><ul><li><p>输入的三维点被隐式转换为齐次坐标 {x, y, z, w = 1}。</p></li><li><p>元素 \(m_{30}, m_{31}, m_{32}\) 与 \(m_{33}\) 始终分别等于 {0, 0, 0, 1}。</p></li><li><p>\(w'\) 始终等于 1，因此无需计算 \(w'\)：</p><p>$$
+  \begin{array}{l}
+  w' &=& x * (m_{30} = 0) + \\ 
+  && y * (m_{31}= 0) + \\ 
+  && z * (m_{32} = 0) + \\
+  && (w = 1) * 1 \\
+  & = & 1
+  \end{array}
+  $$</p></li><li><p>从不需要归一化，可以直接使用变换后的坐标：</p><p>$$
+  \begin{array}{l}
+  P'_H = \{x', y', z', w'=1\} \\
+  P'_C = \{x', y', z'\}
+  \end{array}
+  $$</p></li></ul><p><b>投影矩阵（透视或正交）：</b></p><ul><li><p>输入的三维点被隐式转换为齐次坐标 {x, y, z, w = 1}，与仿射变换矩阵相同。</p></li><li><p>元素 \(m_{30}, m_{31}, m_{32}\) 与 \(m_{33}\) 是变化的，且取决于投影矩阵的类型，后文会详细说明。</p></li><li><p>\(w'\) 可能不等于 1，必须显式计算：</p><p>$$
+  \begin{array}{l}
+  w' & = & x * (m_{30} != 0) + \\
+  && y * (m_{31} != 0) + \\
+  && z * (m_{32} != 0) + \\
+  && (w = 1) * (m_{33} != 1) \\
+  & != & 1
+  \end{array}
+  $$</p></li><li><p>如果 \(w' \neq 1\)，就需要对点做归一化，把齐次坐标转回笛卡尔坐标：</p><p>$$
+  \begin{array}{l}
+  P'_H = \{x', y', z', w' \neq 1\} \\
+  P'_C = \{x'/w', y'/w', z'/w'\}
+  \end{array}
+  $$</p></li></ul><p>理解仿射变换矩阵与投影矩阵的区别很关键。当一个点与投影矩阵相乘时，需要使用特定版本的点-矩阵乘法函数。这个版本必须显式地计算 \(w\)，并对变换后点的坐标做归一化，类似于这种做法（第 2 版）：</p><pre><code>
+template&amp;lttypename S&gt; 
+void multVecMatrix(const Vec3&amp;ltS&gt; &amp;src, Vec3&amp;ltS&gt; &amp;dst) const 
+{ 
+    S a, b, c, w; 
+ 
+    // 隐式地把 src.w 始终当作 1
+    a = src.x * x[0][0] + src.y * x[1][0] + src.z * x[2][0] + x[3][0]; 
+    b = src.x * x[0][1] + src.y * x[1][1] + src.z * x[2][1] + x[3][1]; 
+    c = src.x * x[0][2] + src.y * x[1][2] + src.z * x[2][2] + x[3][2]; 
+    w = src.x * x[0][3] + src.y * x[1][3] + src.z * x[2][3] + x[3][3]; 
+ 
+    dst.x = a / w; 
+    dst.y = b / w; 
+    dst.z = c / w; 
+}
+</code></pre><p>用投影矩阵时跳过这一步会得到不准确的结果。不过为了效率，在处理仿射变换矩阵时并不喜欢用这种方法，因为那时 \(w'\) 无需计算，坐标也无需归一化。通常的做法也许是为每种矩阵类型各写一个函数，但这样实现的情况很少。程序员一般会选择更通用的做法，比如下面这个，它避免了对 \(w = 1\) 做无谓的除法：</p><pre><code>
+template&amp;lttypename S&gt; 
+void multVecMatrix(const Vec3&amp;ltS&gt; &amp;src, Vec3&amp;ltS&gt; &amp;dst) const 
+{ 
+    S a, b, c, w; 
+ 
+    // 为简单起见，假设 src.w 始终为 1
+    a = src.x * x[0][0] + src.y * x[1][0] + src.z * x[2][0] + x[3][0]; 
+    b = src.x * x[0][1] + src.y * x[1][1] + src.z * x[2][1] + x[3][1]; 
+    c = src.x * x[0][2] + src.y * x[1][2] + src.z * x[2][2] + x[3][2]; 
+    w = src.x * x[0][3] + src.y * x[1][3] + src.z * x[2][3] + x[3][3]; 
+ 
+    if (w != 1) { 
+        dst.x = a / w; 
+        dst.y = b / w; 
+        dst.z = c / w; 
+    } 
+    else { 
+        dst.x = a; 
+        dst.y = b; 
+        dst.z = c; 
+    } 
+}
+</code></pre><p>这段适应性强的代码既能服务仿射变换，也能服务投影矩阵。关于齐次坐标的这一长段讨论，正说明了归一化步骤在投影矩阵运算中的关键地位，下一章我们会继续深入这个话题。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/projection-matrices-what-you-need-to-know-first.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/projection-matrices-what-you-need-to-know-first.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

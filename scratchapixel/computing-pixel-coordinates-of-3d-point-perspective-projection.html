@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>透视投影 - Scratchapixel 中文译本</title>
+<meta name="description" content="计算 3D 点的像素坐标 · 透视投影（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>透视投影</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="computing-pixel-coordinates-of-3d-point-perspective-projection.html">透视投影</a></li>
+<li><a href="mathematics-computing-2d-coordinates-of-3d-points.html">计算 3D 点二维坐标的数学</a></li>
+</ol>
+</div>
+<h2>透视投影</h2><p><b>阅读时间：7 分钟。</b></p><h2>如何求一个 3D 点的 2D 像素坐标？</h2><p>「<b>如何求一个 3D 点的 2D 像素坐标？</b>」是 Web 上 3D 渲染中最常见的问题之一。这个问题很关键，因为它是生成三维场景图像的基本方法。本课中我们用<b>光栅化</b>这个词来描述求 3D 点二维像素坐标的过程。就其广义而言，光栅化指的是把三维形状转换成光栅图像。如<a href="computer-discrete-raster.html">上一课</a>所解释的，光栅图像是数字图像的技术术语，指的是像素的二维数组（或者你更喜欢说矩形网格）。</p><p>别误会：生成三维场景图像有多种渲染技术。光栅化只是其中之一，光线追踪是另一种。要注意，这些技术都依赖同一个概念来生成图像：<b>透视投影</b>的想法。因此，对给定的相机和给定的三维场景，所有渲染技术产生的视觉结果都相同，只是达成结果的途径不同。</p><p>另外，计算 3D 点的 2D 像素坐标只是生成照片级真实图像两步中的一步。另一步是着色的过程，即计算这些点的颜色以模拟物体的外观。要产出「完整」的图像，光把 3D 点转换成像素坐标是不够的。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/xtree.png" alt=""></figure><p>要理解光栅化，你首先需要熟悉本章也会介绍的一系列基本技术，例如：</p><ul><li><p>局部坐标系与全局坐标系的概念。</p></li><li><p>学会把 4x4 矩阵解读为坐标系。</p></li><li><p>把点从一个坐标系转换到另一个坐标系。</p></li></ul><p>仔细读这一课，它提供的这些基本工具，几乎是所有渲染技术的立足点。</p><p>本课会用到矩阵，如果你对坐标系和矩阵不熟悉，先读几何那一课。</p><p>我们会把本课学到的技术用来渲染一个 3D 物体的<b>线框</b>图像（见旁边的图）。和往常一样，这个程序的文件可以在 Scratchapixel 的 GitHub 仓库里找到（链接见上方目录）。</p><h2>透视投影过程速览</h2><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/perspective4.png?" alt=""><figcaption><b>图 1：</b>要生成一个立方体的图像，我们需要从物体的各个角向眼睛引线，求出这些线与一个垂直于视线的平面（画布）的交点。</figcaption></figure><p>我们已经在好几课里讨论过透视投影的过程，比如「渲染三维场景的图像：概述」这门课中<a href="visibility-problem.html">可见性问题</a>那一章。不过，还是快速回顾一下透视投影是什么。简单说，这项技术是把构成场景中物体的点（或顶点）投影到画布上，从而生成三维场景的二维图像。</p><p>这项技术与人眼感知世界的方式类似。既然我们是通过眼睛看世界的，用这项技术生成的图像往往显得自然、「真实」。可以把人眼想成空间中的一个「点」（图 2）。当然，眼睛实际上不是一个点，它是一个把光线汇聚到一小块表面——视网膜——上的光学系统。我们感知到的，是物体反射的光线射入眼睛的结果。类似地，在计算机图形学（CG）中渲染三维场景图像的一种办法，是把顶点投影到画布（或屏幕）表面上，就好像光线从顶点沿直线延伸到眼睛一样。</p><p>必须理解，透视投影只是在二维表面上表示三维几何的一种人为约定方法。它之所以最常用，是因为它模拟了人类视觉的一项基本性质——<b>透视缩短</b>：远处的物体看起来比近处的小。不过，正如维基百科关于<a href="https://en.wikipedia.org/wiki/Perspective_(graphical)" target="_blank" rel="noreferrer noopener">透视</a>的条目所指出的，必须认识到透视投影只是在平面上（比如纸上）描绘眼睛所见的一种<b>近似表示</b>。关键词是「近似」。</p><figure><img src="https://scratchapixel.com/images/perspective-matrix/raystoeye.png?" alt=""><figcaption><b>图 2：</b>物体反射出的所有光线中，有一部分射入了眼睛，我们对该物体所得的图像就是这些光线的结果。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/projection3.png?" alt=""><figcaption><b>图 3：</b>我们可以把投影过程想成把一个点沿着连接该点与眼睛的直线往下移动。当这个点落到画布所在的平面上时，我们就停止移动它。我们并不会真的让点沿这条线「滑动」，但这是一种理解投影过程的方式。</figcaption></figure><p>在前面提到的那一课里，我们还解释了如何用基于相似三角形性质的简单几何作图，来计算位于相机前方某点（并且位于相机视锥体内、因而对相机可见）的世界坐标（图 3）。本课会再复习这项技术。计算投影点坐标的公式可以很方便地写成 4x4 矩阵。这个计算包含对原点坐标的一系列操作，这就是你本课要学的内容。把计算表示成矩阵之后，这些操作可以缩减为一次点与矩阵的乘法。这种做法的主要优点是，它以紧凑、易用的形式表示了这一关键操作。正如我们会在专门讲<a href="projection-matrix-introduction.html">透视投影矩阵与正交投影矩阵</a>的课程中演示的，透视投影过程及其相关公式可以写成 4x4 矩阵的形式，称为<b>透视投影矩阵</b>。把任何以<b>相机坐标系</b>表示的坐标点与该透视投影矩阵相乘，就得到该点在画布上的位置（或坐标）。</p><details open><p>在 CG 中，变换几乎总是线性的。但要注意，透视投影属于<b>投影变换</b>这一更大的类别，它是一种非线性变换。如果你想要一个直观的说明，看看哪些变换是线性的、哪些不是，这个<a href="https://www.youtube.com/watch?v=kYB8IZa5AuE" target="_blank" rel="noreferrer noopener">YouTube 视频</a>演示得很清楚。</p></details><p>本课我们会探讨如何在不使用透视投影矩阵的情况下计算 3D 点的二维像素坐标。为此，我们需要学会用一些简单的几何规则，把 3D 点「投影」到一个可绘制的二维表面（我们称之为画布）上。一旦掌握了这一过程（以及计算这些二维坐标所涉的其他所有步骤）的数学，我们就准备好学习透视投影矩阵的构造与用法了：这个工具用来简化投影这一步（而且只简化投影这一步）。这将是下一课的主题。</p><h2>一点历史</h2><figure><img src="https://scratchapixel.com/images/perspective-matrix/duerer.png" alt=""><figcaption><b>图 4：</b>阿尔布雷希特·丢勒《画家手册》中的插图。</figcaption></figure><p>透视投影背后的数学，在十四世纪末到十五世纪初逐渐被画家们理解并掌握。这些画家通过自己撰写并绘制插图的书，在向他人传授透视绘图的数学基础方面起了重要作用。一个著名的例子是丢勒 1538 年出版的《画家手册》（上面的插图就出自这本书）。透视图大致有两个特征：</p><ul><li><p><b>尺寸缩小</b>：物体离观看者越远，看起来越小。</p></li><li><p><b>透视缩短</b>：这是物体或距离因为朝向观看者倾斜，看起来比实际更短的印象或视觉错觉。</p></li></ul><p>透视缩短的另一条原理是：垂直线保持平行，而非垂直线则向一个透视点汇聚，从而显得更短。这些效果营造出深度感，有助于判断物体与观看者的距离。今天，计算机图形学中运用同样的数学原理，来创建三维场景的透视图。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/computing-pixel-coordinates-of-3d-point/perspective-projection.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/computing-pixel-coordinates-of-3d-point/perspective-projection.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

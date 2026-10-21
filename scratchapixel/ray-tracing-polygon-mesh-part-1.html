@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光线追踪多边形网格（第 1 部分） - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪多边形网格 · 光线追踪多边形网格（第 1 部分）（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光线追踪多边形网格（第 1 部分）</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="polygon-to-triangle-mesh.html">从多边形到三角网格</a></li>
+<li><a style="font-weight:700" href="ray-tracing-polygon-mesh-part-1.html">光线追踪多边形网格（第 1 部分）</a></li>
+<li><a href="ray-tracing-polygon-mesh-part-2.html">光线追踪多边形网格（第 2 部分）</a></li>
+</ol>
+</div>
+<h2>光线追踪多边形网格（第 1 部分）</h2><p><b>阅读时间：10 分钟。</b></p><h2>光线追踪多边形网格</h2><p>如前面所建议的，对已经三角化的多边形网格做光线追踪很简单。我们已经有计算光线与三角形交点的例程。因此要测试一条光线是否与多边形网格相交，只需遍历网格中的所有三角形，逐个测试。不过一条光线可能击中网格中不止一个三角形。所以在遍历三角形时，必须记录最近的交点距离。这个问题与课程<a href="minimal-ray-tracer-rendering-spheres.html">一个最小光线追踪器</a>里描述的问题类似，那里我们要记录最近的相交物体。这里我们用同样的技术。用伪代码写，求交例程长这样（C++ 实现见最后一章）：</p><pre><code>
+// 测试光线是否与该三角网格相交                               
+bool intersect(const Vec3f &amp;orig, const Vec3f &amp;dir, float &amp;tNear, uint32_t &amp;triIndex, Vec2f &amp;uv) const 
+{ 
+    uint32_t j = 0; 
+    bool isect = false; 
+    for (uint32_t i = 0; i &lt; numTris; ++i) { 
+        const Vec3f &amp;v0 = P[trisIndex[j]]; 
+        const Vec3f &amp;v1 = P[trisIndex[j + 1]]; 
+        const Vec3f &amp;v2 = P[trisIndex[j + 2]]; 
+        float t = kInfinity, u, v; 
+        if (rayTriangleIntersect(orig, dir, v0, v1, v2, t, u, v) &amp;&amp; t &lt; tNear) { 
+          tNear = t; 
+          uv.x = u; 
+          uv.y = v; 
+          triIndex = i; 
+          isect |= true; 
+        } 
+        j += 3; 
+    } 
+ 
+    return isect; 
+}
+</code></pre><p>我们需要构成网格中每个三角形的三个顶点（第 7–9 行）。然后把这三点传给光线–三角形求交例程，若光线与该三角形相交返回 true，否则返回 false（我们用上一门课学过的 Möller-Trumbore 光线–三角形算法）。相交时，变量 \(tNear\) 被设为交点距离（从光线原点到三角形上交点处的距离）以及命中点的重心坐标（u 与 v）。我们还记录光线击中的三角形下标，以及交点在三角形上的重心坐标（第 13–15 行）。后面计算命中点的法线与纹理坐标时会用到。</p><h2>创建一个多边形球</h2><p>我们需要一个多边形网格来测试代码。一种做法是用现成模型，但那要选定一种文件格式，并写代码读取、解析导出成该格式的模型。另一种做法是过程式地即时生成一些简单几何。本章我们采用这个方案。下一章我们将渲染一个定义在外部文件中的多边形网格。过程式地构建多边形物体，也正好是把上一章所学付诸实践的机会。我们用下面的代码生成一个 3D 多边形网格的球：</p><pre><code>
+TriangleMesh* generatePolyShphere(float rad, uint32_t divs) 
+{ 
+    // 生成点                                                                                                                                                                                                  
+    uint32_t numVertices = (divs - 1) * divs + 2; 
+    std::unique_ptr&amp;ltvec3f []=""&gt; P(new Vec3f[numVertices]); 
+    std::unique_ptr&amp;ltvec3f []=""&gt; N(new Vec3f[numVertices]); 
+    std::unique_ptr&amp;ltvec2f []=""&gt; st(new Vec2f[numVertices]); 
+ 
+    float u = -M_PI_2; 
+    float v = -M_PI; 
+    float du = M_PI / divs; 
+    float dv = 2 * M_PI / divs; 
+ 
+    P[0] = N[0] = Vec3f(0, -rad, 0); 
+    uint32_t k = 1; 
+    for (uint32_t i = 0; i &lt; divs - 1; i++) { 
+        u += du; 
+        v = -M_PI; 
+        for (uint32_t j = 0; j &lt; divs; j++) { 
+            float x = rad * cos(u) * cos(v); 
+            float y = rad * sin(u); 
+            float z = rad * cos(u) * sin(v) ; 
+            P[k] = N[k] = Vec3f(x, y, z); 
+            st[k].x = u / M_PI + 0.5; 
+            st[k].y = v * 0.5 / M_PI + 0.5; 
+            v += dv, k++; 
+        } 
+    } 
+    P[k] = N[k] = Vec3f(0, rad, 0); 
+ 
+    uint32_t npolys = divs * divs; 
+    std::unique_ptr&amp;ltuint32_t []=""&gt; faceIndex(new uint32_t[npolys]); 
+    std::unique_ptr&amp;ltuint32_t []=""&gt; vertsIndex(new uint32_t[(6 + (divs - 1) * 4) * divs]); 
+ 
+    // 生成连接关系列表                                                                                                                                                                                             
+    uint32_t vid = 1, numV = 0, l = 0; 
+    k = 0; 
+    for (uint32_t i = 0; i &lt; divs; i++) { 
+        for (uint32_t j = 0; j &lt; divs; j++) { 
+            if (i == 0) { 
+                faceIndex[k++] = 3; 
+                vertsIndex[l] = 0; 
+                vertsIndex[l + 1] = j + vid; 
+                vertsIndex[l + 2] = (j == (divs - 1)) ? vid : j + vid + 1; 
+                l += 3; 
+            } 
+            else if (i == (divs - 1)) { 
+                faceIndex[k++] = 3; 
+                vertsIndex[l] = j + vid + 1 - divs; 
+                vertsIndex[l + 1] = vid + 1; 
+                vertsIndex[l + 2] = (j == (divs - 1)) ? vid + 1 - divs : j + vid + 2 - divs; 
+                l += 3; 
+            } 
+            else { 
+                faceIndex[k++] = 4; 
+                vertsIndex[l] = j + vid + 1 - divs; 
+                vertsIndex[l + 1] = j + vid + 1; 
+                vertsIndex[l + 2] = (j == (divs - 1)) ? vid + 1 : j + vid + 2; 
+                vertsIndex[l + 3] = (j == (divs - 1)) ? vid + 1 - divs : j + vid + 2 - divs; 
+                l += 4; 
+            } 
+            numV++; 
+        } 
+        vid = numV; 
+    } 
+ 
+    return new TriangleMesh(npolys, faceIndex, vertsIndex, P, N, st); 
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/ray-triangle-mesh/polysphere.png?" alt=""><figcaption><b>图 1：</b>划分为 5 份的球。左：通过连接顶点生成一个面。右：球的顶部与底部一排是三角扇（所有三角形共用一个中心顶点），其他面都是四边形。</figcaption></figure><p>划分数（division）表示沿 y 轴方向和绕 y 轴方向的层数与切片数。例如图 1 中的球用了 5 份划分数。我们先创建所有顶点。本例的点总数为 22（球顶与球底各 2 个，加上 5 乘 4 圈点）。我们用三角函数计算这些顶点的位置（第 20–22 行）。为完成网格描述，还需要提供面的连接关系信息。球顶与球底的面是三角形（顶盖与底盖构成所谓三角扇：所有三角形共用一个中心顶点）。它们由三个顶点定义（第 42–44 行与 49–51 行）。其他都是四边形（第 xx 行）。最后，面通过按特定顺序连接顶点来生成。图 1 展示了球中第六个面的顶点下标（第 56–59 行）。注意代码里还生成了顶点法线与纹理坐标。法线很好算。由于球以世界原点为中心，顶点处的法线就是归一化后的顶点位置。纹理坐标方面，我们只需把参数 u（水平角 \(\phi\)）与 v（垂直角 \(\theta\)）归一化，它们分别落在 \([-\pi,\pi]\) 与 \([-\pi/2,\pi/2]\) 范围内（第 24–25 行）。<code>intersect()</code> 方法实现了用于光线–三角形相交测试的 Möller-Trumbore 算法。图 2 的图像是通过增加多边形球的划分数得到的。</p><p>源码见 <a href="https://github.com/scratchapixel/code" target="_blank" rel="noreferrer noopener">GitHub</a>。</p><h2>性能</h2><figure><img src="https://scratchapixel.com/images/ray-triangle-mesh/rtlinear.png?" alt=""><figcaption><b>图 2：</b>渲染时间（纵轴，单位秒）随场景中的三角形数量（横轴）线性增长。</figcaption></figure><figure><img src="https://scratchapixel.com/images/ray-triangle-mesh/ray-tri-spheres.gif?" alt=""><figcaption><b>图 3：</b>增加细分数。</figcaption></figure><p>假设我们不断提高球的划分数，并测量渲染一帧所需的时间。那么从图 3 可以看出，渲染时间随场景中三角形数量线性增长（渲染时间与场景三角形数之间存在线性关系）。从简单场景得到的数字就能意识到，光线追踪是「慢」的（而今天的处理器比光线追踪早期快得不可思议）。一个含约 200 个多边形的场景，在配备 2.5 GHz 处理器的计算机上渲染约需 2.5 秒。</p><figure><img src="https://scratchapixel.com/images/ray-triangle-mesh/ray-tri-bbox.png?" alt=""><figcaption><b>图 4：</b>如果光线不与网格的包围盒相交，我们就不必测试光线是否与网格的任何三角形相交。</figcaption></figure><p>这个问题能解决吗？光线追踪永远比光栅化慢，但借助加速结构，情况可以显著改善。光线追踪的问题在于，每条光线都要与场景中每一个三角形测试。无论物体在场景中多小（见下一章），渲染一帧所需的时间都是恒定的，只取决于场景包含多少三角形。渲染一个像素所需的时间是恒定的，不论这个像素位于画面左上角还是正中央。加速结构的思路很简单。例如，我们可以先测试光线是否与物体的包围盒相交。若不相交，我们就知道光线不可能击中该物体。若相交，我们仍可测试光线是否与网格的任何三角形相交（图 4）。这个直截了当的测试已经能省下大量时间。比如画面四角的所有像素都不太可能与网格的包围盒相交。加速结构比包围盒复杂，但基于同一思路。它们可以把物体所占据的空间划分成便于快速光线追踪的简单体积。如果光线与这些子体积相交，我们就可以深入结构，对更小的子体积做测试，直到最终击中包含网格原始三角形的子体积。这时，我们再对子体积内的三角形做光线测试。关于加速结构的课程见进阶光线追踪部分。</p><pre><code>
+int main(int argc, char **argv) 
+{ 
+    // 设置选项              
+    Options options; 
+    options.cameraToWorld[3][2] = 4; 
+ 
+    for (uint32_t i = 0; i &lt; 10; ++i) { 
+        int divs = 5 + i; 
+        // 创建场景（添加物体与灯光）                                 
+        std::vector&amp;ltstd::unique_ptr&amp;ltObject&gt;&gt; objects; 
+        TriangleMesh *mesh = generatePolyShphere(2, divs); 
+        objects.push_back(std::unique_ptr&amp;ltObject&gt;(mesh)); 
+ 
+        // 最后渲染           
+        auto timeStart = std::chrono::high_resolution_clock::now(); 
+        render(options, objects); 
+        auto timeEnd = std::chrono::high_resolution_clock::now(); 
+        auto passedTime = std::chrono::duration&amp;ltdouble, std::milli&gt;(timeEnd - timeStart).count(); 
+        std::cerr &lt;&lt; mesh-&amp;gtnumTris &lt;&lt; " " &lt;&lt; passedTime &lt;&lt; std::endl; 
+    } 
+ 
+    return 0; 
+}
+</code></pre><h2>总结</h2><p>本课我们介绍了一些关于多边形几何表示的信息，并展示了如何用光线追踪器渲染这种几何。多边形（如果是凸的）可以转换成三角形，然后用高效算法（例如 Möller-Trumbore 方法）计算光线与这些三角形的交点。把所有不同的几何表示都转换成三角形，比为每一种表示都支持一套快速而稳健的光线–几何求交方法要容易。它只需要一个可以高度优化的光线–三角形求交例程。最后，本章展示了光线追踪算法的一项本质特征：计算时间与场景中的物体数或三角形数线性相关。尽管处理器进步很大，用朴素实现的光线追踪去渲染相当复杂的场景很快就会变得不实用。好在如果使用一些加速技术，把场景中每个物体与每条光线逐一测试的开销可以大幅降低。</p><h2>接下来讲什么？</h2><p>下一章我们将用光线追踪渲染在光栅化课程里生成的那幅图像。我们会从磁盘载入物体几何，把数据传给 <code>TriangleMesh</code> 构造函数，生成三角网格，遍历图像中的所有像素，生成主光线，并把每条光线与网格中的每个三角形做测试。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-polygon-mesh/ray-tracing-polygon-mesh-part-1.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-polygon-mesh/ray-tracing-polygon-mesh-part-1.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

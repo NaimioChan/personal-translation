@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Möller-Trumbore 算法 - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪：渲染三角形 · Möller-Trumbore 算法（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>Möller-Trumbore 算法</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="why-are-triangles-useful.html">三角形为什么有用？</a></li>
+<li><a href="geometry-of-a-triangle.html">三角形的几何</a></li>
+<li><a href="ray-triangle-intersection-geometric-solution.html">光线与三角形求交：几何解法</a></li>
+<li><a href="single-vs-double-sided-triangle-backface-culling.html">单面与双面三角形以及背面剔除</a></li>
+<li><a href="barycentric-coordinates.html">重心坐标</a></li>
+<li><a style="font-weight:700" href="moller-trumbore-ray-triangle-intersection.html">Möller-Trumbore 算法</a></li>
+</ol>
+</div>
+<h2>Möller-Trumbore 算法</h2><p><b>阅读时间：24 分钟。</b></p><h2>Möller-Trumbore 算法</h2><p>Möller-Trumbore 算法是一种快速的光线与三角形求交算法，由 Tomas Möller 和 Ben Trumbore 于 1997 年在一篇题为「Fast, Minimum Storage Ray/Triangle Intersection」的论文中提出。它至今仍被认为是一种快速算法，常被用作基准来比较其他方法的性能。不过，公平地比较各种光线与三角形求交算法很难，因为速度取决于很多因素，比如算法如何实现、所用测试场景的类型、数值是否预先算好等等。</p><p>Möller-Trumbore 算法利用了交点 P 的重心坐标参数化（上一章已经讨论过）。上一章我们学会了用下面这条公式计算交点 P：</p><p>$$P = wA + uB + vC$$</p><p>我们还知道 \(w=1-u-v\)，因此可以写成：</p><p>$$P = (1 - u - v)A + uB + vC$$</p><p>注意，Möller-Trumbore 的论文用的是 \( P = (1 - u - v)A + uB + vC \) 这种约定，而不是我们在重心坐标那一章一直用的 \( P = uA + vB + (1 - u - v)C \)。正如那一章所说，重心坐标与顶点怎么配对完全由你决定，只要你在计算 \( u \)、\( v \)、\( w \) 时所用的边与你选的配对约定相适应即可。 </p><p>正如那一章所解释的，Möller-Trumbore 选择的配对约定源自这样一个事实：你可以写成 \( P = A + uAB + vAC \)，它可以解读为「从原点 \( A \) 出发，沿直线 \( AB \) 走 \( u \)，再沿直线 \( AC \) 走 \( v \)，就找到 \( P \)」。如果把向量 \( AB \) 与 \( AC \) 分别展开成 \( B - A \) 与 \( C - A \)，就得到：</p><p>$$
+\begin{array}{l}
+P = A + u(B - A) + v(C - A)  \\
+P = A + uB - uA + vC - vA \\
+P = (1 - u - v)A + uB + vC
+\end{array}
+$$</p><p>这就是 Möller-Trumbore 采用的写法，这个推导也说明了它为什么会成为研究论文和教材里常用的约定，而不是我们在重心坐标那一章用的 \( uA + vB + wC \) 写法——虽然后者在代码里也很常见。</p><p>我会沿用论文里的约定，好让本课与论文保持一致。总之：要留意这个配对问题。我们继续往下推导。</p><p>展开后，我们得到（公式 1）：</p><p>$$
+\begin{equation}
+P=A - uA - vA + uB + vC = A + u(B - A) + v(C - A)
+\end{equation}
+$$</p><p>注意，\( (B - A) \) 和 \( (C - A) \) 是三角形 \( \triangle ABC \) 的边 \( AB \) 和 \( AC \)。交点 \( P \) 也可以用光线的参数方程来写（公式 2）。</p><p>$$
+\begin{equation}
+P=O+tD.
+\end{equation}
+$$</p><p>其中 \(t\) 是光线原点到交点 \(P\) 的距离。如果把公式 1 里的 \(P\) 换成光线方程，就得到（公式 3）：</p><p>$$
+\begin{equation}
+\begin{array}{l}
+O+tD & = & A + u(B - A) + v(C - A)\\
+O-A & = & -tD+u(B-A)+v(C-A)
+\end{array}
+\end{equation}
+$$</p><p>等号右边，我们有：</p><ul><li><p>\( t \)、\( u \)、\( v \) 这三个未知量，</p></li><li><p>分别乘以 \( B - A \)、\( C - A \)、\( D \) 这三个已知量。</p></li></ul><p>我们可以重新整理这些项，用下面的记号来表示公式 3（公式 4）：</p><p>$$
+\begin{equation}
+\begin{bmatrix}
+-D & (B-A) & (C-A)
+\end{bmatrix}
+\begin{bmatrix}
+t\\
+u\\
+v
+\end{bmatrix}
+=O-A
+\end{equation}
+$$</p><p>等式左边被整理成了一次行向量与列向量的乘法（1x3*3x1）。这是矩阵乘法里最简单的形式。你取行矩阵 \(-D\)、\(B-A\)、\(C-A\) 的第一个元素，乘以列向量的第一个元素（\(t\)、\(u\)、\(v\)）。再加上行矩阵的第二个元素乘以列向量的第二个元素。最后，加上行矩阵的第三个元素乘以列向量的第三个元素（这样就又得到公式 3）。</p><p>在公式 3 里，等号左边的项 \(O-A\) 是一个向量。\(B-A\)、\(C-A\)、\(D\) 也都是向量，而 \(t\)、\(u\)、\(v\)（未知量）是标量（如果你愿意按编程的思维想，就是 float 或 double）。这条公式是关于向量的。它按 \(t\)、\(u\)、\(v\) 所定义的数量把三个向量组合起来。运算的结果是另一个向量（注意，Möller 和 Trumbore 在论文里解释这条公式的几何含义时，用的是 x 轴、y 轴、z 轴的说法，而不是 \(t\)、\(u\)、\(v\)）。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/mt.png?" alt=""><figcaption><b>图 1：</b>我们可以把 P 的位置表示在 t、u、v 空间里。t 表示 P 到光线原点的距离，方向平行于 y 轴。如果 P 落在单位三角形内，就意味着 0 &lt;= u &lt;= 1、0 &lt;= v &lt;= 1，且 u+v &lt;=1。</figcaption></figure><p>假定 \( P \) 是光线与三角形 \( \triangle ABC \) 相交的位置。你（但愿）会同意：当我们把三角形和光线一起移动或旋转时，点 \( P \) 的笛卡尔坐标 (x, y, z) 会变。然而 \( P \) 的重心坐标是不变的。无论三角形被旋转、缩放、拉伸还是平移，用来定义 \( P \) 相对顶点 \( A \)、\( B \)、\( C \) 位置的坐标 \( u \) 和 \( v \) 都不会变（见图 1）。</p><p>Möller-Trumbore 算法就利用了这条性质。它不用交点处的 \(x\)、\(y\)、\(z\) 坐标去解光线与三角形求交方程，而是用三角形的重心坐标 \(u\) 和 \(v\) 来表达交点。于是，落在三角形上的一个点（如果交点存在，就是我们的交点）既可以用笛卡尔坐标 \((x, y, z)\) 表达，也可以用重心坐标 \((u, v)\) 表达。</p><p>最后，如上一章所学，让我们回顾一下：落在三角形表面上的点，其 \(u\) 和 \(v\) 坐标既不能大于一，也不能小于 0，二者之和同样不能大于一 \(u + v <= 1\)。它们表示的是<b>单位三角形</b>内部各点的坐标（这个三角形是在 \(u\)、\(v\) 空间中由图 1 所示的顶点 (0, 0)、(1, 0)、(0, 1) 定义的）。</p><p>小结一下。到目前我们有什么？我们把点 \(P\) 的三维位置 \(x\)、\(y\)、\(z\) 重新用重心坐标 \(u\) 和 \(v\) 来表达，实际上就是从一个<b>参数空间</b>换到另一个：从 xyz 空间到 uv 空间。我们还知道了，在 uv 空间里定义的点落在单位三角形之内。</p><p>公式 3（或公式 4，二者完全相同）有三个未知量：\(u\)、\(v\)、\(t\)。在几何上，我们已经解释了 \(u\) 和 \(v\) 的含义。那 \(t\) 呢？简单说，我们把 \(t\) 看作我们刚引入的 \(u\)、\(v\) 坐标系的第三个轴。现在我们有了一个由三个轴定义的坐标系：\(u\)、\(v\)、\(t\)。 </p><p>从几何上解释一下 \(t\) 代表什么。我们知道 \(t\) 表示光线原点到交点 \(P\) 的距离。看图 1 可以发现，我们建立的这个坐标系，使我们能用重心坐标以及光线原点到三角形上该点的距离，完整地描述交点 \(P\) 的位置。</p><p>Möller 和 Trumbore 解释说，公式 4 的第一部分（项 \( O - A \)）可以理解为一个变换，它把三角形从原来的世界空间位置搬到原点（使三角形的第一个顶点与原点重合）。等式的另一侧则把交点从 \(x, y, z\) 空间变换到上面所说的「tuv 空间」。</p><h2>克拉默法则</h2><p>现在要做的是解这个方程，它有三个未知量：\(t\)、\(u\)、\(v\)。为解公式 4，Möller 和 Trumbore 用了一种数学上称为<b>克拉默法则</b>的方法。克拉默法则用行列式给出线性方程组的解。它说的是：如果矩阵 \(M\)（三个数横向排成一组）乘以列向量 \(X\)（三个数纵向排成一组）等于列向量 \(C\)，那么就可以用 \(M_i\) 的<b>行列式</b>除以 \(M\) 的行列式，求出 \(X_i\)（列向量 \(X\) 的第 \(i\) 个元素）。这里 \(M_i\) 是把 \(M\) 的第 \(i\) 列换成列向量 \(C\) 后构成的矩阵。 </p><p>如果你不熟悉克拉默法则，下面的灰色框里有解释。</p><details open><p>设想我们要用下面这组线性方程解出 \(x\)、\(y\)、\(z\)：</p><p>$$
+\begin{array}{l}
+2x + 1y + 1z = 3 \\
+1x - 1y - 1z = 0 \\
+1x + 2y + 1z = 0
+\end{array}
+$$</p><p>我们可以用矩阵形式重写这些方程，左边的系数成为矩阵 \(M\) 的元素，等号右边的数成为矩阵 \(C\) 的元素：</p><p>$$
+M = \left[
+\begin{array}{rrr}
+2 & 1 & 1\\
+1 & -1 & -1\\
+1 & 2 & 1
+\end{array}
+\right]
+$$
+$$
+C = \left[
+\begin{array}{c}
+\color{red}{3}\\
+\color{red}{0}\\
+\color{red}{0}
+\end{array}
+\right]
+$$</p><p>于是，这个方程组可以表示为：</p><p>$$
+M \cdot \begin{bmatrix} x \\ y \\ z \end{bmatrix} = C
+$$</p><p>把 \(M\) 的第一列换成 \(C\)，就构造出矩阵 \(M_x\)：</p><p>$$
+M_x = \left[
+\begin{array}{rrr}
+\color{red}{3} & 1 & 1 \\
+\color{red}{0} & -1 & -1 \\
+\color{red}{0} & 2 & 1
+\end{array}
+\right]
+$$</p><p>类似地，我们可以构造出 \(M_y\) 和 \(M_z\)：</p><p>$$
+\begin{array}{l}
+M_y = \left[
+\begin{array}{rrr}
+2 & \color{red}{3} & 1 \\
+1 & \color{red}{0} & -1 \\
+1 & \color{red}{0} & 1
+\end{array}
+\right] \\
+M_z = \left[
+\begin{array}{rrr}
+2 & 1 & \color{red}{3} \\
+1 & -1 & \color{red}{0} \\
+1 & 2 & \color{red}{0}
+\end{array}
+\right]
+\end{array}
+$$</p><p>现在来算各个行列式：</p><p>$$
+\begin{array}{l}
+\left| M \right| = \left| \begin{array}{rrr}
+2 & 1 & 1\\
+1 & -1 & -1\\
+1 & 2 & 1
+\end{array} \right| = (-2) + (-1) + (2) - (-1) - (-4) - (1) = 3\\
+\left| M_x \right| = \left| \begin{array}{rrr}
+\color{red}{3} & 1 & 1 \\
+\color{red}{0} & -1 & -1 \\
+\color{red}{0} & 2 & 1
+\end{array} \right| = (-3) + (0) + (0) - (0) - (-6) - (0) = 3\\
+\left| M_y \right| = \left| \begin{array}{rrr}
+2 & \color{red}{3} & 1 \\
+1 & \color{red}{0} & -1 \\
+1 & \color{red}{0} & 1
+\end{array} \right| = (0) + (-3) + (0) - (0) - (0) - (3) = -6\\
+\left| M_z \right| = \left| \begin{array}{rrr}
+2 & 1 & \color{red}{3} \\
+1 & -1 & \color{red}{0} \\
+1 & 2 & \color{red}{0}
+\end{array} \right| = (0) + (0) + (6) - (-3) - (0) - (0) = 9
+\end{array}
+$$</p><p>记住 3x3 矩阵的行列式：</p><p>$$
+\begin{vmatrix}
+a & b & c \\
+d & e & f \\
+g & h & i
+\end{vmatrix}
+$$</p><p>的值为：</p><p>$$
+(aei + bfg + cdh) - (ceg + bdi + afh).
+$$</p><p>克拉默法则给出 \( x = \dfrac{M_x}{M} \)、\( y = \dfrac{M_y}{M} \)、\( z = \dfrac{M_z}{M} \)。于是：</p><p>$$
+\begin{array}{l}
+x = \dfrac{3}{3} = 1 \\
+y = \dfrac{-6}{3} = -2 \\
+z = \dfrac{9}{3} = 3
+\end{array}
+$$</p></details><p>在线性代数里，行列式用两根竖线表示，读作：\( \begin{vmatrix} I & J & K \end{vmatrix} \) 是以 \( I \)、\( J \)、\( K \) 为列的矩阵的行列式。沿用上面灰色框里的约定，你现在可以看出，在我们的线性方程组里，矩阵 \( M \) 就是 \( [-D, B - A, C - A] \)，\( X \) 就是 \( [t, u, v] \)，\( C \) 就是 \( O - A \)。我们想要求的是 \( t \)、\( u \)、\( v \) 的值。为了理解怎么应用克拉默法则，我们复习一下：</p><p><b>克拉默法则</b>说的是：对于线性方程组 \( MX = C \)，其中 \( M \) 是系数矩阵、\( X \) 是未知量向量、\( C \) 是结果向量，每个分量 \( X_i \) 的解，可以通过把矩阵 \( M \) 的第 \( i \) 列换成向量 \( C \)，再用所得矩阵的行列式除以 \( M \) 的行列式得到。</p><p>在这个例子里，矩阵 \( M \) 就是 \( [-D, B - A, C - A] \)，右侧向量 \( C \) 就是 \( O - A \)。所以，用克拉默法则求未知量 \( t \)、\( u \)、\( v \) 的解是：</p><p>$$
+\begin{bmatrix}
+t \\
+u \\
+v
+\end{bmatrix}
+=
+\frac{1}{\text{det}(M)}
+\begin{bmatrix}
+\text{det}(M_t) \\
+\text{det}(M_u) \\
+\text{det}(M_v)
+\end{bmatrix}
+$$</p><p>其中：</p><ul><li><p>\( M_t \) 是把矩阵 \( M \) 的第一列换成 \( O - A \) 后的矩阵，</p></li><li><p>\( M_u \) 是把矩阵 \( M \) 的第二列换成 \( O - A \) 后的矩阵，</p></li><li><p>\( M_v \) 是把矩阵 \( M \) 的第三列换成 \( O - A \) 后的矩阵。</p></li></ul><p>把这种方法用到我们的问题上，就得到（公式 5）：</p><p>$$
+\left[ \begin{array}{r} t \\ u \\ v \end{array} \right] = 
+\dfrac{1}{\left| \begin{array}{r} -D & E_1 & E_2 \end{array} \right|} 
+\left[ \begin{array}{c} 
+\left| \begin{array}{c} T & E_1 & E_2 \end{array} \right| \\  
+\left| \begin{array}{c} -D & T & E_2 \end{array} \right| \\  
+\left| \begin{array}{c} -D & E_1 & T \end{array} \right| \\  
+\end{array} \right],
+$$</p><p>为简洁起见，这里记 \( T = O - A \)、\( E_1 = B - A \)、\( E_2 = C - A \)。每个未知量（\( t \)、\( u \)、\( v \)）的公式都表示成两个行列式之比。</p><ul><li><p>\( M \) 的行列式记作 \( \left| \begin{array}{r} -D & E_1 & E_2 \end{array} \right| \)，其中 \( E_1 = B - A \)、\( E_2 = C - A \)。</p></li><li><p>\( M_t \)、\( M_u \)、\( M_v \) 是把 \( M \) 的相应列换成 \( T = O - A \) 后得到的矩阵。它们分别用来计算 \( t \)、\( u \)、\( v \) 的行列式。</p></li></ul><p>下一步是求出这四个行列式的值。在讲几何的课程里我们说过，一个 \(1 \times 3\) 矩阵 \( \begin{vmatrix} A & B & C \end{vmatrix} \) 的行列式可以这样计算（这些公式从何而来，详见下方灰色框）：</p><p>$$
+|A \ B \ C| = -(A \times C) \cdot B = -(C \times B) \cdot A.
+$$</p><p>一个 \(3 \times 3\) 矩阵的行列式就是一个<a href="https://en.wikipedia.org/wiki/Triple_product" target="_blank" rel="noreferrer noopener">标量三重积</a>，它把叉积和点积结合起来。因此，公式 5 可以改写为：</p><p>$$
+\left[\begin{array}{r}t\\u\\v\end{array}\right] = 
+\frac{1}{(D \times E_2) \cdot E_1} 
+\begin{bmatrix}
+(T \times E_1) \cdot E_2\\
+(D \times E_2) \cdot T\\
+(T \times E_1) \cdot D
+\end{bmatrix}
+= 
+\frac{1}{P \cdot E_1}
+\begin{bmatrix}
+Q \cdot E_2\\
+P \cdot T\\
+Q \cdot D
+\end{bmatrix},
+$$</p><p>其中 \( P = (D \times E_2) \)、\( Q = (T \times E_1) \)。 </p><p>现在求 \( t \)、\( u \)、\( v \) 的值就很直接了。我们可以用已知量之间的叉积和点积算出它们：已知量就是三角形的顶点、光线原点和光线方向。太好了！</p><details open><p>你可能想去维基百科的 <a href="https://en.wikipedia.org/wiki/Triple_product" target="_blank" rel="noreferrer noopener">三重积</a> 页面查更多信息，不过万一你赶时间，这里先回顾几条基本规则，有助于理解后面的公式：</p><ul><li><p>由于标量三重积具有循环置换的性质，下面这些式子都等于同一个值：</p><p>$$
+  \mathbf{a} \cdot (\mathbf{b} \times \mathbf{c}) = \mathbf{b} \cdot (\mathbf{c} \times \mathbf{a}) = \mathbf{c} \cdot (\mathbf{a} \times \mathbf{b})
+  $$</p></li><li><p>交换运算符的位置而不重排操作数，三重积不变。这由前一条性质以及点积的交换律推出：</p><p>$$
+  \mathbf{a} \cdot (\mathbf{b} \times \mathbf{c}) = (\mathbf{a} \times \mathbf{b}) \cdot \mathbf{c}
+  $$</p></li><li><p>交换三个操作数中的任意两个，三重积变号。这由叉积的反交换性质推出：</p><p>$$
+  \mathbf{a} \cdot (\mathbf{b} \times \mathbf{c}) = -\mathbf{a} \cdot (\mathbf{c} \times \mathbf{b}) = -\mathbf{b} \cdot (\mathbf{a} \times \mathbf{c}) = -\mathbf{c} \cdot (\mathbf{b} \times \mathbf{a})
+  $$</p></li></ul><p>用这些规则，当你遇到行列式 \( \left| -D \ T \ E_2 \right| \) 时，可以把它表示成三重积 \((E_2 \times -D) \cdot T\)。要消掉 \( T \) 前面的负号，可以交换 \( E_2 \) 与 \(-D\)，得到 \( (D \times E_2) \cdot T \)。其余的三重积都可以用上面给出的规则推导出来。</p><p>标量三重积也可以理解为一个 \(3 \times 3\) 矩阵的行列式，这三个向量作为该矩阵的行或列：</p><p>$$
+\mathbf{a} \cdot (\mathbf{b} \times \mathbf{c}) = \det \begin{bmatrix}
+a_1 & a_2 & a_3 \\
+b_1 & b_2 & b_3 \\
+c_1 & c_2 & c_3 \\
+\end{bmatrix}.
+$$</p></details><h2>实现</h2><p>实现 Möller-Trumbore 算法很直接。标量三重积 \( (A \times B) \cdot C \) 等价于 \( A \cdot (B \times C) \)。因此公式 5 里的分母 \( (D \times E2) \cdot E1 \) 可以写成 \( D \cdot (E1 \times E2) \)。\( E1 \) 与 \( E2 \) 的叉积给出三角形的法线。如果光线方向 \( D \) 与三角形法线的点积为零，那么三角形与光线平行，没有交点。</p><p>需要注意是否要剔除（丢弃）背面朝向的三角形（即背对相机的三角形）。如果三角形正面朝向，行列式为正；如果背面朝向，行列式为负。代码里我们先算出这个行列式。如果行列式为负且启用了背面剔除，或者行列式接近零，就没有交点。如果三角形是双面的（不剔除），我们仍须检查行列式是否接近零，这需要用带符号的数值比较。</p><pre><code>
+bool rayTriangleIntersect(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    const Vec3f &amp;v0, const Vec3f &amp;v1, const Vec3f &amp;v2,
+    float &amp;t, float &amp;u, float &amp;v)
+{
+    Vec3f v0v1 = v1 - v0;
+    Vec3f v0v2 = v2 - v0;
+    Vec3f pvec = dir.crossProduct(v0v2);
+    float det = v0v1.dotProduct(pvec);
+#ifdef CULLING
+    // 若行列式为负，三角形背面朝向。
+    // 若行列式接近零，光线错过了三角形。
+    if (det &lt; kEpsilon) return false;
+#else
+    // 若 det 接近零，光线与三角形平行。
+    if (fabs(det) &lt; kEpsilon) return false;
+#endif
+    ...
+}
+</code></pre><p>接下来，我们算出 \( u \)，若 \( u \) 小于 0 或大于 1 就排除这个三角形。如果 \( u \) 通过了这一测试，我们接着算 \( v \) 并做类似检查：若 \( v \) 小于 0、大于 1，或 \( u + v \) 超过 1，就没有交点。若这些都满足，我们就断定光线与三角形相交，可以继续计算 \( t \)。</p><pre><code>
+bool rayTriangleIntersect(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    const Vec3f &amp;v0, const Vec3f &amp;v1, const Vec3f &amp;v2,
+    float &amp;t, float &amp;u, float &amp;v)
+{
+    ...
+    float invDet = 1 / det;
+
+    Vec3f tvec = orig - v0;
+    u = tvec.dotProduct(pvec) * invDet;
+    if (u &lt; 0 || u &gt; 1) return false;
+
+    Vec3f qvec = tvec.crossProduct(v0v1);
+    v = dir.dotProduct(qvec) * invDet;
+    if (v &lt; 0 || u + v &gt; 1) return false;
+    
+    t = v0v2.dotProduct(qvec) * invDet;
+    
+    return true;
+}
+</code></pre><details open><p>当光线方向与三角形法线面对面（方向相反）时，行列式为正，如上图所示。反过来，当光线从背面击中三角形（光线方向与法线指向同一方向）时，行列式为负，如下图所示。</p><p>图中展示了这两种情形。这些数值足够简单，叉积和点积都很好算。比如 <code>edge2</code> 的坐标为 (1,0,0) 时，光线方向 (0,-1,0) 与 <code>edge2</code> 的叉积得到 <code>pvec</code>。记住，两个向量的叉积由下式给出：</p><p>$$
+\begin{aligned}
+x &= v1_y \cdot v2_z - v1_z \cdot v2_y,\\
+y &= v1_z \cdot v2_x - v1_x \cdot v2_z,\\
+z &= v1_x \cdot v2_y - v1_y \cdot v2_x.
+\end{aligned}
+$$</p><p>因此：</p><p>$$
+\begin{aligned}
+pvec_z &= dir_x \cdot edge_y - dir_y \cdot edge_x \\
+       &= 0 \cdot 0 - (-1 \cdot 1) = 1,
+\end{aligned}
+$$</p><p>得到 <code>pvec = (0, 0, 1)</code>。这个向量与 <code>edge1</code> 的点积（它决定行列式的符号）为正。如果把光线方向改成 (0,1,0)，那么：</p><p>$$
+pvec_z = 0 \cdot 0 - (1 \cdot 1) = -1,
+$$</p><p>则 <code>pvec = (0, 0, -1)</code>，行列式为负。</p><p>在原始算法（出自 Möller-Trumbore 论文）里，代码支持有条件的背面剔除。启用剔除时，从背面击中三角形的光线会被忽略。这由行列式的符号判定：若启用了剔除且行列式为负，就没有交点。禁用剔除时，不论三角形相对光线方向的朝向如何，都考虑相交。</p><pre><code>
+int intersect_triangle(...)
+{
+    ...
+    det = DOT(edge1, pvec);
+#ifdef CULLING
+    if (det &lt; kEpsilon) return 0;
+    ...
+#else
+    if (det &gt; -kEpsilon &amp;&amp; det &lt; kEpsilon) return 0;
+    ...
+#endif
+}
+</code></pre><p>当禁用背面剔除而行列式为负时，必须把 \( u \) 乘以行列式的倒数来做归一化。因为 \( u \) 稍后要被测试是否落在 [0,1] 区间内，所以一个为负的 \( u \) 值（配上负的行列式）乘以 <code>invDet</code> 后就会变成正数。</p></details><h2>源代码</h2><p>Möller-Trumbore 算法的 C++ 实现很直接，尤其是如果你有一个稳健的向量库。它也很紧凑，下面这段代码就是例证：</p><pre><code>
+bool rayTriangleIntersect(
+    const Vec3f &amp;orig, const Vec3f &amp;dir,
+    const Vec3f &amp;v0, const Vec3f &amp;v1, const Vec3f &amp;v2,
+    float &amp;t, float &amp;u, float &amp;v)
+{
+#ifdef MOLLER_TRUMBORE
+    Vec3f v0v1 = v1 - v0;
+    Vec3f v0v2 = v2 - v0;
+    Vec3f pvec = dir.crossProduct(v0v2);
+    float det = v0v1.dotProduct(pvec);
+#ifdef CULLING
+    // 若行列式为负，三角形背面朝向。
+    // 若行列式接近 0，光线错过了三角形。
+    if (det &lt; kEpsilon) return false;
+#else
+    // 若 det 接近 0，光线与三角形平行。
+    if (fabs(det) &lt; kEpsilon) return false;
+#endif
+    float invDet = 1 / det;
+
+    Vec3f tvec = orig - v0;
+    u = tvec.dotProduct(pvec) * invDet;
+    if (u &lt; 0 || u &gt; 1) return false;
+
+    Vec3f qvec = tvec.crossProduct(v0v1);
+    v = dir.dotProduct(qvec) * invDet;
+    if (v &lt; 0 || u + v &gt; 1) return false;
+    
+    t = v0v2.dotProduct(qvec) * invDet;
+    
+    return true;
+#else
+    ...
+#endif
+}
+</code></pre><p>要编译这段代码，用：</p><pre><code>
+c++ -o raytri raytri.cpp -O3 -std=c++11 -DMOLLER_TRUMBORE
+</code></pre><p>这个函数的完整实现可以在本课末尾的源代码一节找到。与上一章一样，程序渲染单个三角形，并用交点的重心坐标在三角形表面上插值三种颜色。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-tri-results.png" alt=""></figure><p><b>关于 Möller-Trumbore 算法实现的重要提示：</b>如果你编译并运行本课附带的代码，可能会发现用 Möller-Trumbore 算法得到的图像与上面展示的三角形图像不同。这可能会让人困惑，因为上面那张图是用几何方法渲染的，不是 Möller-Trumbore 算法。下图把两种算法的输出并排展示：左边是 Möller-Trumbore 的解，右边是几何解。</p><figure><img src="https://scratchapixel.com/images/ray-triangle/ray-tri-mt-vs-geometric-solution.png" alt=""></figure><p>在数学上，这两种做法是等价的。差异之所以出现，是因为两种算法计算重心坐标 \(u\)、\(v\)、\(w\) 的顺序不同（本章前面已解释过）。比如几何解里的 \(u\) 坐标，可能对应 Möller-Trumbore 解里的 \(w\)，等等。因此，尽管生成的图像看起来可能不同，两种方法都是对的。在用这些坐标做纹理映射或着色时，你可能需要交换它们。</p><h2>注记</h2><p>加速光线与三角形求交的一种做法，是把平面方程的常数 \(A\)、\(B\)、\(C\)、\(D\) 与三角形顶点一起保存。这些常数可以在网格加载时预先算好并存进内存，以便更快访问。不过，在内存中存取这些变量有时比现算更费，所以这项优化并不总能带来明显的性能收益。</p><p>另一种加速办法是把光线与三角形求交问题降到二维。做法是确定三角形法线的主导轴，再用这个信息选出投影所用的两个坐标。这个方法详见论文 *「Ray-Polygon Intersection: An Efficient Ray-Polygon Intersection」*（参见下面的参考文献）。</p><p>此外，还有一些专门针对光线与四边形（quad）求交设计的算法。</p><p>我们的代码使用单精度浮点数，通常够用。不过在特定条件下，光线与三角形求交测试可能遇到精度误差。例如算出的交点可能并不精确落在三角形所在平面上，而是略微高于或低于其表面。这些精度问题会在讲着色的课程里进一步讨论。</p><p>正如本课开头所说，还有另一种流行的光线与三角形求交函数，在现代生产级光线追踪器里用得比 Möller-Trumbore 算法更广。这个方法出自 Ingo Wald、Sven Woop 和 Carsten Benthin 的论文 *「Watertight Ray/Triangle Intersection」*。这个题目在另一课里讲。 </p><h2>参考文献</h2><p>Fast, Minimum Storage Ray/Triangle Intersection. Möller &amp; Trumbore. Journal of Graphics Tools, 1997.</p><p>Ray-Polygon Intersection. An Efficient Ray-Polygon Intersection. Didier Badouel from Graphics Gems I. 1990</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/moller-trumbore-ray-triangle-intersection.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/moller-trumbore-ray-triangle-intersection.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

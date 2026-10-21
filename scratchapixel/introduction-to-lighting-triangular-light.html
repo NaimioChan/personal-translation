@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>三角形面光源 - Scratchapixel 中文译本</title>
+<meta name="description" content="光照简介 · 三角形面光源（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>三角形面光源</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-to-lighting.html">三维渲染中的光照简介</a></li>
+<li><a href="introduction-to-lighting-punctual-lights.html">点光源与聚光灯</a></li>
+<li><a href="introduction-to-lighting-distant-lights.html">平行光源</a></li>
+<li><a href="introduction-to-lighting-area-lights-theory.html">面光源：数学基础</a></li>
+<li><a style="font-weight:700" href="introduction-to-lighting-triangular-light.html">三角形面光源</a></li>
+<li><a href="introduction-to-lighting-rectangular-light.html">矩形面光源</a></li>
+<li><a href="introduction-to-lighting-spherical-light-area-sampling.html">球形面光源：使用面积采样</a></li>
+<li><a href="introduction-to-lighting-spherical-light-cone-sampling.html">球形面光源：使用锥体采样</a></li>
+<li><a href="introduction-to-lighting-light-loop.html">直接光照：光源循环</a></li>
+</ol>
+</div>
+<h2>三角形面光源</h2><p><b>阅读时间：51 分钟。</b></p><h2>前言</h2><p>由于面光源每种形状都有各自特定的实现考虑，我们决定每种面光源形状各用一页来讲。具体来说，我们会依次讨论三角形、平面、圆盘，最后是球形面光源。这段前言在每一页都会重复，以便如果你是经由外部链接落到其中某一页，也能知道最好先读<a href="">三角形面光源</a>那一页。在那里我们会讨论一些会在其他光源类型中复用的概念，并概括说明我们将用来实现这些光源的代码。</p><p>另外请注意，我们强烈建议你阅读 <a href="">分布式光线追踪</a> 和 <a href="">随机采样与采样策略</a> 这两门课，它们是本课的推论。</p><h2>三角形面光源</h2><p>我们决定从三角形面光源开始这一节，专门讲这些面光源的实际实现。因为上一章我们已经花时间处理过矩形面光源，我们觉得探索一下「在更理论化的面光源入门里学到的东西，如何应用到另一种形状的光源上」会很有启发。希望这能让你觉得更有意思一些。矩形面光源的实现随后就到。</p><p>面光源完全可以是单个三角形的形状。顺便注意，矩形面光源也可以由两个三角形组成。而且，如果知道怎么把三角形当面光源用，那么一个三角网格也可以充当面光源，因为我们只需把本章所学应用到构成该网格的各个三角形上。不过这部分我们留到本课未来的版本再讲。</p><p>与上一章所学类似，我们将对三角形使用面采样方法。本质上我们要做的事如下：</p><ul><li><p>在三角形表面上选一个在该面上均匀分布的点。如上一章所解释，均匀分布意味着我们在三角形上选出的每个点被选中的概率与其他任何点相同。</p></li><li><p>由于我们选的是均匀分布，也从上一章知道，与这种采样方法关联的概率分布将是三角形面积分之一。</p></li><li><p>有了 PDF 和这个点之后，我们可以算出光线样本方向 \(\omega_i\)，也能算出从着色点 \(x\) 到三角形表面上样本 \(x'\) 的距离 \(r\)——如本课前面也已解释，平方反比衰减需要这个距离（它是面采样方法的一部分）。</p></li><li><p>重复上述步骤，把每个样本的贡献累加，最后用总和除以所用样本数。</p></li></ul><p>下图展示了我们的程序对某个给定着色点选出的 16 个样本。在继续之前请注意，直到本章结束，我们都会忽略阴影。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-triangular-light1.png" alt=""><figcaption><b>图 1：</b>三角形面光源的光线样本。</figcaption></figure><p>记住我们将使用的公式是：</p><p>$$E[L] = \frac{1}{\pi} \frac{1}{N}\sum_{i=1}^N \frac{L_e(x') \cos(\theta) \cos(\theta')}{r^2 p(x')}$$</p><p>从实现的角度，我们首先要做的是学会如何均匀地采样一个三角形。</p><h2>均匀采样三角形</h2><p>采样三角形虽然不算太复杂，但也不像采样矩形那么直接。大多数书没有把这里想达到的目标讲清楚，尤其是没有以一种有意义且明确的方式讲。和往常一样，Scratchapixel 会来救场，把这个问题讲明白（也许现在是考虑小额捐赠的时候了？）。</p><p>我们有随机数生成器，能产生在 [0, 1] 区间上独立同分布（在我们这里即均匀分布）的数。有些文献会把它描述为 i.i.d.（独立同分布）随机变量，数学上记为 \( X \sim U(0,1) \)。通常我们在简单的二维面（比如正方形或矩形）上生成样本。为什么是二维？因为几何里有一条性质叫<b>仿射不变性</b>。它说的是：如果某个几何性质对一种形状（正方形或三角形）成立，例如单位正方形（左下角与右上角坐标分别为 (0,0) 和 (1,1)）或「单位」三角形（由坐标 (0,0)、(1,0)、(1,1) 定义），那么它对其他任何四边形或三角形也必定成立，因为总能在它们之间找到仿射变换。记住，仿射变换是保持点、直线和平面的变换。具体来说，它通过线性性保持线段比例和平均点。</p><p>这条规则很重要，因为在二维<b>单位正方形</b>表面上生成样本，比在一般四边形上生成要简单，稍后我们就会展示。一旦在二维单位正方形或「规范」三角形上得到样本，借助仿射不变性，你就能用同样的技巧采样其他任何四边形或三角形，包括三维的——因为二维单位正方形或三角形本质上就是位于某个平面内的三维三角形。问题 1 解释完毕。</p><p>那么，单位正方形为什么好用？因为我们可以只生成两个均匀分布的独立同分布随机数来采样单位正方形：第一个随机数给出样本的 x 坐标，第二个给出 y 坐标。很好。但对本章而言，我们要的不是正方形里的点，而是三角形里的样本。所以挑战在于：把用于采样单位正方形的两个随机数<b>映射</b>到三角形里。采样形状这门学问，大多数（即便不是全部）内容至少大部分时候都是在设法把在单位正方形上生成的一些随机数映射到某个别致的形状里，不管是圆盘还是三角形等等。这是一个映射过程。而这个映射的关键是：把样本映射到最终形状（比如本例的三角形）时，要保持你用来采样单位正方形上点的那种分布（即那两个随机数）。事情可能会在这里变得棘手，后面某些映射方法就会体现出来。</p><p>下一段动画说明了这个想法，你可以看到一个正方形<i>变形</i>成三角形。注意样本（为演示方便被整齐地按固定间隔摆放）在正方形变成三角形的过程中被推到新位置。那么再说一遍，我们在这里要解决的问题是：<b>什么样的变换过程或方程，能把一个均匀分布的样本——其坐标由在 [0, 1] 上按均匀分布生成的两个随机数给出——从单位正方形映射到三角形，使得样本在正方形上的均匀分布在映射到三角形后仍然均匀？</b>问题 2 解释完毕。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-remapping-quad-tri.gif" alt=""></figure><p>注意这段动画帮助我们可视化的一个极其关键的事实：最终三角形里的样本数与初始正方形中的样本数相同。可是三角形的面积只有单位正方形的一半。这暗示了什么？<b>三角形上的样本密度是正方形的两倍</b>。这是个超级关键的观察，因为记住：正方形（矩形）的面积是 \(xy\)，其中 \(x\) 和 \(y\) 定义矩形的尺寸。好，这里处理的是正方形，但道理一样，推广一下无妨。如上一章所述，矩形的 PDF（概率密度函数）就是矩形的面积。确实，如果想让样本均匀分布在矩形表面上，可以合理认为每个样本平均覆盖矩形上一块相等的小面积，这些小面积之和就是矩形本身的面积。所以矩形的概率密度确实是 \(xy\)。<b>于是，如果三角形的样本密度是两倍，那么三角形的概率密度就是 \(2xy\)。</b>这在我们后面某些推导里会派上用场，请记住它。</p><p>还要注意，当你把单位正方形「变形」成三角形时，我们试图保持的性质是（样本的）面积。这意味着如果样本在单位正方形上均匀分布，并假定映射在进入三角形后仍保持这种均匀分布，那么三角形内的样本也应占据相等面积。这称为保面积变换。单个样本的大小不必相同（我们已经展示了映射到三角形时样本密度翻倍，所以显然任何单个样本的面积是单位正方形上等效样本的一半），但变换之后所有样本的缩放系数必须恒定。数学上，这个概念由<b>雅可比</b>一词刻画，你很可能在教科书和 Stack Overflow 之类数学家答题的论坛上见过它。变换由一个矩阵定义，而这个<a href="https://en.wikipedia.org/wiki/Jacobian_matrix_and_determinant" target="_blank" rel="noreferrer noopener">矩阵的雅可比</a>指该矩阵的行列式，它表示在某一点上面积元素被变换缩放的倍数。对保面积变换，雅可比行列式应当是常数（处处相同），表明变换保持了面积性质。雅可比这一项，终于讲完了。</p><p>没人会告诉你的那部分到此结束。既然你已经和任何工程师一样装备齐全，我们就来探索一些实现它的方法。有些方法会失败（这是故意的，好让你明白为什么会有专门讲这个主题的书——它并不像看上去那么轻松），有些则会成功。</p><h3> 把单位正方形映射到单位三角形：失败的朴素方法</h3><p>为演示方便，我们处理一个原点在三角形第一个顶点处的二维三角形。这个方法代码如下：</p><pre><code>
+Vec2f NaiveMethod(const Vec2f&amp; v1, const Vec2f&amp; v2, float r1, float r2) {
+	return /* (1 - r1) * v0 + */ r1 * (1 - r2) * v1 + r1 * r2 * v2;
+}
+
+template&amp;lttypename  SamplingMethod&gt;
+void SampleTriangle(SamplingMethod sample) {
+	std::random_device rd;
+	std::mt19937 eng(rd());
+	std::uniform_real_distribution&amp;ltfloat&gt; distr(0.f, 1.f);
+	for (size_t i = 0; i &lt; nsamples; ++i) {
+		// 我们假设 v0 = (0,0)
+		sample({2,0}, {1,2}, distr(eng), distr(eng));
+		// 绘制 x……
+	}
+}
+</code></pre><p>注意，为生成均匀分布的随机数，我们直接用 C++ 标准库里的随机数生成器。如果你有兴趣了解它如何工作：我们用 <code>u</code> 沿 v0v1 边移动样本，u 是 [0, 1] 范围内均匀分布的随机数。<code>(1.f - u)</code> 这一项根据点从 v0 到 v1 沿边走出的距离来调整 v2 的影响：走得越远，v2 的影响应越小。<code>v</code> 进一步缩放这个影响。</p><p>「朴素」方法效果不好。光看下面展示结果的图就够了：能注意到样本聚集在三角形某个顶点附近。显然，这个方法没能把样本均匀分布在三角形表面上。等我们讨论平方根优化方法时，会解释它为什么无效。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-naive-triangle-sampling.png" alt=""></figure><h3> 均匀分布的三线性坐标拾取法（也失败了）</h3><p>另一个想法是从均匀分布中抽取三角形的重心坐标，如下：</p><pre><code>
+Vec2f BarycentricCoordinatesMethodBad(const Vec2f&amp; v1, const Vec2f&amp; v2, float u, float v, float w) {
+	float sum = u + v + w; // 我们需要把重心坐标归一化
+	return /* (u / sum) * v0 + */ (v / sum) * v1 + (w / sum) * v2;
+}
+
+template&amp;lttypename SamplingMethod&gt;
+void SampleTriangle(SamplingMethod sample) {
+    std::random_device rd;
+    std::mt19937 eng(rd());
+    std::uniform_real_distribution&amp;ltfloat&gt; distr(0.f, 1.f);
+    for (size_t i = 0; i &lt; nsamples; ++i) {
+		// 我们假设 v0 = (0,0)
+        Vec2f x = sample({2, 0}, {1, 2}, distr(eng), distr(eng), distr(eng));
+        // 绘制 x……
+    }
+}
+</code></pre><p>记住，重心坐标能帮我们定义三角形上的任意点，但这些坐标之和必须为 1。我们可以在 0 到 1 范围内生成三个随机数，求和，再把它们除以这个和以归一化。然后就能直接用这些坐标算出样本在三角形上的位置。注意，由于本例假设 <code>v0</code> 在原点，我们可以跳过 <code>u</code>。结果如下：</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-barycentric-coordinates-triangle-sampling.png" alt=""></figure><p>如你现在所见，样本被推向了三角形中心。这同样没得到均匀分布。展示这些错误方法看起来也许没多大意思或价值，但它有助于强调——正如我们在后续各种形状上会反复看到的那样——均匀采样三角形并不像表面上那么简单。希望稍作调整后我们还能让这个方法工作起来。这个方法叫平方根优化方法，它同样依赖重心坐标。</p><h3> （胜出的）平方根优化方法</h3><p>我会给出公式，并解释这个方法为什么有效（因为这一个确实有效）。用平方根优化方法、以重心坐标均匀采样三角形的公式是：</p><p>$$
+\begin{align}
+X &= \sqrt{\varepsilon_1}(1 - \varepsilon_2) \\
+Y &= \sqrt{\varepsilon_1} \varepsilon_2
+\end{align}
+$$</p><p>其中 \(\varepsilon_1\) 与 \(\varepsilon_2\)（即代码中的 <code>r1</code> 和 <code>r2</code>）是两个独立同分布的随机变量。注意我们用 \(X\) 和 \(Y\) 代替 <code>u</code> 和 <code>v</code>，以符合这个主题讨论中最常见的记法。既然我们由 \(\varepsilon_1\) 和 \(\varepsilon_2\) 构造 \(X\) 和 \(Y\)，而后者是随机变量，那么 \(X\) 和 \(Y\) 本身也是随机变量。但它们彼此并不独立，因为两者都依赖于 \(\varepsilon_1\) 和 \(\varepsilon_2\)。由此可以看出 \(0 \leq X, Y \leq 1\) 和 \(X + Y \leq \sqrt{r_1} \leq 1\)。第一句是显然的，因为 \(\varepsilon_1\) 和 \(\varepsilon_2\) 都在 [0, 1] 范围内。至于第二句：</p><p>$$
+\begin{align}
+X + Y = \sqrt{r_1} (1 - r_2) + \sqrt{r_1} r_2 \\
+X + Y = \sqrt{r_1} ((1 - r_2) + r_2) \\
+X + Y = \sqrt{r_1} (1) \\
+X + Y = \sqrt{r_1}
+\end{align}
+$$</p><p>这些公式对证明「该点始终落在三角形内」至关重要。接下来我们需要证明这个点在三角形上也是均匀分布的。这个技术最初由 Greg Turk 在《Graphics Gems》一书（1990 年，第 24 页）中提出。Greg 最初的阐述有个问题：它没有给出为什么结果分布是均匀的正式解释。他的解释是非正式的，但在我们深入复杂的数学之前，它能帮我们对「为什么这有效」建立直觉。</p><p>如前所述，从单位正方形映射到三角形时，这个映射必须保面积。下面你会看到一个顶点为 \(A = (0,0)\)、\(B = (0,1)\)、\(C = (1,1)\) 的三角形。这个三角形可以看成一个单位正方形把右上顶点移到了左上。按 Turk 的记法，我们把 x、y 坐标改标为 s、t 坐标。</p><p>想象沿 t 轴从 0 到 1 每隔 0.1 单位画一条平行于 s 轴的线，这就把三角形分成 10 段。现在设想每段里放 4 个球。想想在右上顶点还没移到左上时，这些球在单位正方形里会是什么样。在单位正方形里，最上面一行的 4 个球原本占一个矩形，会被压缩成顶部一块更小的三角形区域；而最下面一行的球则占据一块右边缘倾斜的矩形区域。在单位正方形里，每一行的 4 个球都是均匀分布的，这代表着均匀分布。</p><p>然而，在三角形这种排布下（图示应该能说明这一点），球并非均匀分布，它们占据的区域大小不一。均匀分布的性质不再保持。</p><p>结论是：如果我们从 [0,1] 随机抽取均匀分布的浮点数，再用另一个随机数把它们沿 s 轴分布，那么点会更密集地集中在顶点 \(A\) 附近，而非底边附近。这是因为越靠近 \(A\)，样本就越密。这说明了朴素方法为何失败，导致 \(A\) 附近样本密度增大。</p><p>这正是 \(t\) 的平方根变得关键的地方。图的右上角那个三角形里，我们现在用 \(\sqrt{t}\) 而不是 \(t\) 来划分线的间隔，而 \(t\) 仍以 0.1 单位为增量递增。具体来说，间隔是 \(\sqrt{0.1}, \sqrt{0.2}, \sqrt{0.3}, \ldots, \sqrt{0.9}\)。你会注意到这些线不再等距，体现了平方根函数的特征。看平方根函数的图像（左下角），你能看到当 \(x\) 小于 0.5 时 \(y\) 的值增长更快，之后趋缓，更接近一条直线。如果你去算这些线划出的各区域面积，会发现它们现在都相等，在这个特定设定下每个都是 0.05。</p><p>这对我们这些不是数学家的人来说意味着什么？它意味着：如果你用「某个随机数的平方根」来分布 \(t\) 方向上的点，用另一个随机数分布 \(s\)，你就能让样本在三角形表面上均匀分布。这个效果来自拉伸三角形的「密度」，使得比如第一行的四个球与最后一行的四个球占据同样的空间。</p><p>这就是 Turk 给出的直觉（尽管书里把这段压缩成了一行）。如果你想要更正式的证明，看下面的框——但如果你对数学没那么大兴趣，跳过也无妨。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-square-root-proof.png" alt=""><figcaption><b>图 2：</b>随机数 \(t\)（代码中的 'r1'）用来把样本沿 t 轴从 \(A\) 往外移动，而随机数 \(s\)（代码中的 'r2'）把样本沿平行于 \(BC\) 的线在 s 轴方向移动。把 \(t\) 重映射为 \(\sqrt{t}\)，可以让样本沿 t 轴展开的方式使样本密度在三角形表面上保持恒定（均匀）。</figcaption></figure><details open><p>先给该给的人记功。下面的解答改写自 <a href="https://math.stackexchange.com/questions/18686/uniform-random-point-in-triangle-in-3d/432835#432835" target="_blank" rel="noreferrer noopener">Math StackExchange</a> 上一个非常优雅的解法。我把所有步骤都推导了出来，确保你完全看懂这个非常紧凑的答案。那个帖子里还提出另一个解法，通过积分证明了落在面积为 \((0,x) \times (0,y)\) 的区域内的概率是 \(2xy\)（我在本章引言里解释过为什么概率是 \(2xy\)，以及为什么那是正方形概率的两倍）。不过那比第一个解法费事得多。目前我只选择介绍第一个。想看第二种方法可以顺着链接去看。</p><p>有几种办法可以证明坐标 \((\sqrt{r_1}, \sqrt{r_1} r_2)\) 会在三角形上导出均匀分布。考虑由顶点 \(A, B, C = (0,0), (1,0), (1,1)\) 构成的三角形。我们可以说点 \((x,y)\) 在三角形内，当且仅当 \(0 < x < 1\) 且 \(0 < {y}/{x} < 1\)。你很容易通过看下面的图验证第二个条件：可以检查三角形内任何点的 x 坐标必然大于等于它的 y 坐标（如果把点取在直线 \(BC\) 上则相等），因此比值 \({y}/{x}\) 必然小于 1。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-square-root-proof1.png" alt=""></figure><p>这个证明要分别考察 \(x\) 与 \({y}/{z}\) 的分布。要理解下面的解释，关键是要认清均匀分布的这一条重要性质：</p><p>按定义，在区间 [0,1] 上均匀分布的随机变量 \(X\) 意味着该区间内每个点出现的可能性相同。\(X\) 落在任何子区间内的概率等于该子区间的长度。例如，若 \(X\) 在 0 与 1 之间均匀分布，那么 \(X\) 小于 0.9 的概率就是 0.9。这体现了均匀分布：落入任何一段的可能性与该段长度成正比。我们把它称为<b>均匀概率性质</b>。</p><p><b>步骤 1 - 目标：证明 \(x^2\) 均匀分布</b>。我们首先要证明的是：对任意点 \(x_0\)，有 \(P(0 < x < x_0) = x_0^2\)（其中 \(P(0 < x < x_0)\) 称为累积分布函数，即 CDF）。这个表达式意味着 \(x\) 大于 0 且小于 \(x_0\)（其中 \(x_0\) 在 0 到 1 之间取值）的概率等于 \(x_0^2\)。如果我们在 x 轴上取一点 \(x_0\)，那么点 \((x_0, x_0)\) 落在直线 \(y = x\) 上，由于 \(0 \leq x \leq 1\) 时 \(y \leq x\)，该点在三角形内。由这个点和 x 轴构成的三角形，底为 \(x_0\)（x 轴上从 \(0\) 到 \(x_0\)），高为 \(x_0\)（从 x 轴垂直向上到直线 \(y = x\)）。这个三角形的面积用三角形面积公式计算：</p><p>$$
+\text{Area} = \frac{1}{2} \times \text{base} \times \text{height} = \frac{1}{2} \times x_0 \times x_0 = \frac{1}{2} x_0^2
+$$</p><p>小三角形（其中 \(x \leq x_0\)）相对于大三角形（直角三角形 \(ABC\)）的面积，代表在大三角形内随机取一点、其 \(x\) 坐标小于 \(x_0\) 的概率。由于大三角形涵盖 \(x = 0\) 到 \(x = 1\) 之间的整个区域，它的总面积也是 \({1}/{2}\)（单位正方形的一半）。概率 \(P(0 < x < x_0)\) 与「小三角形面积 / 整个三角形面积」这个比值有关。如果把总面积归一化为 1（忽略 \({1}/{2}\) 这个缩放），那么小三角形的面积就直接给出「\(x\) 小于 \(x_0\)」的累积概率，即 \(x_0^2\)。</p><p>如果 \(P(0 < x < x_0) = x_0^2\)，那么令 \(x_0 = \sqrt{a}\)，就得到 \(P(0 < x < \sqrt{a}) = (\sqrt{a})^2 = a\)。这表明 \(x^2\) 小于 [0, 1] 中任何 \(a\) 的概率是 \(a\)，与均匀分布的特征相符（按上面的定义）。这里的关键洞见是：我们已证明 \(x^2\) 是均匀分布的。</p><p><b>步骤 2 - 目标：证明 \(x/y\) 均匀分布</b>：接着我们要检查 \(P(0 < {y}/{x} < k) = k\)。与上一个证明类似，我们假设 \({x}/{y}\) 也在 [0,1] 上均匀分布。我们还有 \(0 < x \leq 1\) 和 \(0 \leq y \leq x\)。比值 \({x}/{y}\) 的取值范围是 0 到 1。我们想求比值 \({x}/{y} \leq k\) 的概率，其中 \(k\) 是区间 [0,1] 中的一个数。条件 \({x}/{y} \leq k\) 可以在三角形上画出来。从原点 (0,0) 画一条斜率为 \(k\) 的直线（即 \(y = kx\)）。对 \(k \leq 1\)，这条线会在点 (1,k) 处与直线 \(x = 1\) 相交。这条线以下、x 轴以上、且在三角形内的区域，就代表满足 \({y}/{x} \leq k\) 的点。三角形内直线 \(y = kx\) 以下的面积，可以按底为 \(1\)、高为 \(k\) 的直角三角形来算。这个三角形的面积是 \({1}/{2} \times \text{base} \times \text{height} = {1}/{2} \times 1 \times k = {k}/{2}\)。</p><p>三角形 \(ABC\) 的总面积是 \({1}/{2}\)（因为它是直角三角形，在 x 轴与 y 轴上都从 \(0\) 跨到 \(1\)）。于是 \(\frac{y}{x} \leq k\) 的概率就是「直线 \(y = kx\) 以下的三角形面积」与「三角形 \(ABC\) 总面积」之比：</p><p>$$
+P\left(0 < \frac{y}{x} \leq k\right) = \frac{\text{Area below } y = kx}{\text{Total area of } ABC} = \frac{\frac{k}{2}}{\frac{1}{2}} = k
+$$</p><p>这表明累积分布函数 \(P\left({y}/{x} \leq k\right) = k\)，说明比值 \({y}/{x}\) 在 0 到 1 上均匀分布。记住这里的均匀分布性质。如果比值 \( {x}/{y} \) 符合均匀分布变量的基本性质，那么该变量落在分布范围 [0, 1] 中任何一段 [0, k] 内的可能性应当是 \(k\)。</p><p><b>步骤 3 - 目标：证明 \(x^2\) 与 \(x/y\) 相互独立</b>：最后我们需要证明 \(P(0 < x < x_0 \land 0 < {x}/{y} < k) = x_0^2k\)。表达式 \( P(0 < x < x_0 \land 0 < \frac{y}{x} < k) = x_0^2 k \) 就是我们所说的联合概率。我不打算在这里深入它是什么意思，你可以看讲概率的课程，简而言之，它是「\( x \) 落在一个特定区间 \((0, x_0)\) 内<b>并且同时</b>比值 \( {y}/{x} \) 落在另一个区间 \((0, k)\) 内」的概率。它的证明同样依赖面积计算，将用来证明 \( x^2 \) 与 \( {y}/{x} \) 是相互独立的随机变量。</p><p>我们想计算在由点 \((0,0), (1,0), (1,1)\) 定义的三角形内、两个条件同时满足的概率：</p><p>$$
+\begin{array}
+0 < x < x_0 \\ 
+0 < \frac{y}{x} < k
+\end{array}
+$$</p><p>三角形 ABC 在 \(0 \leq x \leq 1\) 与 \(0 \leq y \leq x\) 时的面积是 \( {1}/{2} \)。第一个条件 \(0 < x < x_0\) 把点限制在从 \(x = 0\) 到 \(x = x_0\) 的竖直条带内。第二个条件 \(0 < {y}/{x} < k\) 意味着对每个 \( x \)，\( y \) 必须小于 \( kx \)（见图）。在 \(0 < x < x_0\) 的条带内，若 \(k \leq 1\)，直线 \( y = kx \) 划出一个更小的三角形。给定 \(x_0 \leq 1\) 与 \(kx_0 \leq x_0\)，这个小三角形的顶点在 \((x_0, kx_0)\)。这个小三角形的面积为：</p><p>$$text{Area} = \frac{1}{2} \times \text{base} \times \text{height} = \frac{1}{2} \times x_0 \times kx_0 = \frac{1}{2} kx_0^2$$</p><p>既然我们前面已得出三角形 ABC 的总面积（若归一化）把概率与子区域面积直接关联，而整个三角形的面积是 \( {1}/{2} \)，归一化后的概率为：</p><p>$$P(0 < x < x_0 \land 0 < \frac{y}{x} < k) = \frac{\frac{1}{2} kx_0^2}{\frac{1}{2}} = kx_0^2$$</p><p>由前面可知 \(P(0 < x < x_0) = x_0^2\) 与 \(P(0 < {y}/{x} < k) = k\)。如果 \(x^2\) 与 \( {y}/{x}\) 相互独立，联合概率 \(P(A \cap B)\) 应等于 \(P(A)P(B)\)。算一下得到：</p><p>$$P(0 < x < x_0)P(0 < \frac{y}{x} < k) = x_0^2 \times k = kx_0^2$$</p><p>这与算出的联合概率相等，从而确认 \(x^2\) 与 \({y}/{x}\) 相互独立，因为它们的联合概率等于各自概率的乘积。</p><p><b>结论</b>：我们已证明，要在三角形内均匀生成一个点，可以从单位区间 [0,1] 中均匀取 \(r_1\) 和 \(r_2\) 的值，其中 \(x^2 = r_1\) 与 \(\frac{y}{x} = r_2\)。由此算出坐标 \((x, y)\) 为 \((\sqrt{r_1}, r_2\sqrt{r_1})\)。这个方法确认了 \(x^2\) 与 \(\frac{y}{x}\) 确实是均匀分布的。坐标 \((x, y)\) 对应三角形顶点 \(A\)、\(B\)、\(C\) 以权重 \(1-\sqrt{r_1}\)、\(\sqrt{r_1}(1-r_2)\)、\(\sqrt{r_1}r_2\) 的重心组合。于是点 \((x,y)\) 不仅在三角形内均匀分布，也说明了 \(x^2\) 与 \(\frac{y}{x}\) 的独立性，这正支撑了三角形内点的均匀分布。</p></details><p>既然我们已经说明这个公式能在三角形表面上给出均匀分布的点，下面来看它如何用到我们的三维三角形上。到目前为止，我们在坐标为 (0,0)、(1,0)、(1,1) 的三角形里生成了二维样本，不过借助仿射不变性，我们知道对这个三角形成立的做法对其他任何三角形也成立。接下来，我们需要把这个二维点转换成三维点。正如引言中所指出的，我们可以把二维三角形就看成一个位于平面内的三维三角形，于是剩下的问题就是找到一种方法，把二维样本的位置转换成重心坐标；把这些重心坐标作用到三维三角形的顶点上，就能得到样本在三角形上的位置，只不过是在三维空间里。</p><p>回想一下，用重心坐标计算三角形上一点 \(P\) 的方式是：\(\alpha A + \beta B + \gamma C\)，其中 \(\alpha\)、\(\beta\)、\(\gamma\) 是重心坐标，\(A\)、\(B\)、\(C\) 是三角形的顶点。我们在讲 <a href="rasterization-stage.html">光栅化</a> 的课程里已经详细讨论过重心坐标。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-convert-sample-to-3D.png" alt=""><figcaption><b>图 3：</b>把在单位正方形中生成、坐标为 \((\sqrt{r1}(1-r2), \sqrt{r1}r2)\) 的样本点转换成重心坐标后，我们就可以用这些重心坐标和三角形顶点算出该样本在三维空间中的位置。</figcaption></figure><p>注意，按重心坐标的定义，\(\alpha + \beta + \gamma = 1\)（只有两个自由度）。因此我们只需其中两个坐标就能求出第三个。现在，给定单位三角形中的一点 \((x, y)\)，我们可以把它表示成单位三角形顶点的组合：</p><p>$$
+P_{unit} = (1 - x - y) (0, 0) + x (1, 0) + y (0, 1) = (x, y)
+$$</p><p>要用重心坐标 \((\alpha, \beta, \gamma)\) 把这个点映射到三维空间中的任意三角形：</p><p>$$
+P_{3D} = \alpha v0 + \beta v1 + \gamma v2
+$$</p><p>其中 \(v0 = (0, 0)\)、\(v1 = (1, 0)\)、\(v2 = (0, 1)\)。还要记住，从 \(P_{unit}\) 到 \(P_{3D}\) 之所以可行，靠的是仿射不变性。在 \(v0\)、\(v1\)、\(v2\) 给出的坐标里，我们没有指定 z 坐标，但记住三维三角形可以看成位于某个平面内的二维三角形。所以单位三角形中的重心坐标 \((\alpha, \beta, \gamma)\) 与笛卡尔坐标直接对应：</p><p>$$
+\begin{array}{rl}
+\alpha & = 1 - x - y = 1 - \sqrt{r_1}(1 - r_2) - \sqrt{r_1} r_2 = 1 - \sqrt{r_1} \\
+\beta & = x = \sqrt{r_1}(1 - r_2) \\
+\gamma & = y = \sqrt{r_1} r_2 \\
+\end{array}
+$$</p><p>计算点在三角形上位置的公式是：</p><p>$$
+P = (1 - \sqrt{r_1})v0 + (\sqrt{r_1}(1 - r_2))v1 + (\sqrt{r_1} r_2)v2
+$$</p><details open><p>关于笛卡尔坐标与重心坐标之间关系更正式的定义，见 <a href="https://en.wikipedia.org/wiki/Barycentric_coordinate_system" target="_blank" rel="noreferrer noopener">维基百科上专讲重心坐标系的页面</a>。你可以在那个页面上找到证明，说明可以从下式出发：</p><p>$$P = m_B \overrightarrow{AB} + m_C \overrightarrow{AC}$$</p><p>其中 \(m_B\) 与 \(m_C\) 确实可以看作我们的点用笛卡尔坐标表示的坐标。思路是证明 \(m_B\) 与 \(m_C\) 也可以表示成由 \(P\) 与三角形顶点 \(\triangle ABC\) 构成的各子三角形的面积，而这些面积正是重心坐标的一种解释。如果你需要更深入理解这个过程，来我们的 Discord 服务器联系我们。</p></details><p>下面是绘制该方法生成样本的代码：</p><pre><code>
+Vec2f BarycentricCoordinatesMethodGood(const Vec2f&amp; v1, const Vec2f&amp; v2, float r1, float r2) {
+	float q = std::sqrt(r1);
+	// v0 = (0,0)，所以跳过计算
+	return /* (1 - q) * v0 + */ q * (1 - r2) * v1 + q * r2 * v2;
+}
+
+template&amp;lttypename  SamplingMethod&gt;
+void SampleTriangle(SamplingMethod sample) {
+	std::random_device rd;
+	std::mt19937 eng(rd());
+	std::uniform_real_distribution&amp;ltfloat&gt; distr(0.f, 1.f);
+	for (size_t i = 0; i &lt; nsamples; ++i) {
+		// 我们假设 v0 = (0,0)
+		Vec2f x = sample({2,0}, {1,2}, distr(eng), distr(eng));
+		// 绘制 x……
+	}
+}
+
+int main() {
+	SampleTriangle(BarycentricCoordinatesMethodGood);
+};
+</code></pre><p>下一张图画出了结果样本。如你所见，三角形上没有任何特定区域出现样本聚集。虽然还留有一些簇（这是选用随机均匀数的结果），但分布已经比我们此前产出的都要均匀。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-barycentric-coordinates-good-triangle-sampling.png" alt=""></figure><p>这很好，因为这实际上就是我们在三角形面光源上生成样本要用的技术。虽然我们可以直接跳到那一部分，但为了完整起见，先再介绍几种均匀生成样本的技术。</p><h3> （另一种）Kraemer 方法</h3><p>Kraemer 方法相当有意思。它正式的数学定义可能有点繁琐，所以我就在我们需要的语境里解释它——即三个点（三角形三个顶点）的加权平均。思路是在 [0, 1] 范围内生成两个随机数。不过要让 Kraemer 方法有效工作，我们需要保证第一个随机数 \( \varepsilon_1 \) 小于第二个数 \( \varepsilon_2 \)。如果一开始生成时不满足，可能就得交换它们的顺序。把这两个数按升序排好后，我们算出三个坐标（你可以看作一种重心坐标），<code>u</code>、<code>v</code> 和 <code>w</code>。代码如下：</p><pre><code>
+Vec2f KraemerMethod(const Vec2f&amp; v1, const Vec2f&amp; v2, float r1, float r2) {
+    if (r1 &gt; r2) std::swap(r1, r2);
+    float u = r1, v = r2 - r1, w = 1 - r2;
+    return /* u * v0 + */ v * v1 + w * v2;
+}
+</code></pre><p>这样一来，你可以看到 <code>u</code>、<code>v</code>、<code>w</code> 代表三段线段的长度，三者之和等于 1（如下图所绘）。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-kraemer-triangle-sampling2.png" alt=""><figcaption><b>图 4：</b>Kraemer 方法依赖生成两个随机数并按升序排序。它们隐含地定义了三段线段，其长度可用作重心坐标。</figcaption></figure><p>用这些归一化坐标对三角形顶点加权求和，就得到均匀分布在三角形表面上的点。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-kraemer-triangle-sampling.png" alt=""></figure><p>排序这一步可以省掉：</p><pre><code>
+Vec2f KraemerMethod(const Vec2f&amp; v1, const Vec2f&amp; v2, float r1, float r2) {
+    float q = std::abs(r1 - r2);
+    float u = q, v = 0.5f * (r1 + r2 - q), w = 1 - 0.5 * (q + r1 + r2); // 更简单地可以写成 w = 1 - u - v;
+    return /* u * v0 + */ v * v1 + w * v2;
+}
+</code></pre><h3> （另一种）拒绝法与平行四边形法</h3><p>拒绝法是挑选随机均匀分布点的经典做法。它有效是因为几乎对任何形状都适用。用到我们的三角形问题上，它就是不断生成随机点，直到找到一个落在三角形内的点。</p><pre><code>
+float r1, r2;
+do {
+	r1 = distr(gen);
+	r2 = distr(gen);
+} while (r1 + r2 &gt; 1);
+// 现在 r1 和 r2 位于三角形内。用这些坐标进行采样。
+...
+</code></pre><p>这个方法也许与手头的问题没有直接关系，但值得了解，因为你可能在其他情境中遇到它，而它在那里相当有用。另一种方法叫平行四边形法，做法是生成一个由两个在 [0,1] 上均匀分布的随机浮点数确定的样本。如果点落在三角形内就原样使用；若不在，就关于平行四边形中心把这一个点反射过去。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-parallelogram-method.png" alt=""></figure><pre><code>
+Vec2f RejectionMethod(const Vec2f&amp; v1, const Vec2f&amp; v2, float r1, float r2) {
+	if (r1 + r2 &gt; 1) {
+		r1 = 1 - r1;
+		r2 = 1 - r2;
+	}
+	return /* (1 - r1 - r2) * v0 + */ r1 * v1 + r2 * v2;
+}
+</code></pre><h3> （另一种、可能更好的）低畸变映射法</h3><p>Eric Heitz 在 2019 年的论文《A Low-Distortion Map Between Triangle and Square》中提出了一种把样本从单位正方形映射到三角形的方法。这个方法简单、快速，并且避免了平方根优化方法的主要问题——后者为保持均匀分布而拉伸映射空间，导致不理想的畸变。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-tri-mapping-comp.png" alt=""><figcaption><b>图 5：</b>平方根优化方法的映射过程虽然保面积，但与低畸变方法相比，它产生的畸变更强、更不均匀。</figcaption></figure><p>本章开头那段 GIF 动画里，你可以看到一个正方形变形成一个立方体，它实际上展示的就是 Eric Heitz 提出的映射技术。做法是让单位正方形上的每个点沿一条平行于 (0,0) 到 (1,1) 对角线的直线移动，移动距离是「该点到正方形边缘的距离」的一半，如下图所示。用简单的数学就能算出样本在三角形上的新位置。你只需确定那条平行于对角线的直线方程，即 \((t-s) + x\)，其中 \((s,t)\) 是样本点在单位正方形中的坐标（两个随机均匀分布数的输出）。考虑两种情形：</p><ul><li><p>当 \(t > s\) 时：单位正方形上的样本在我们的三角形之外。于是按构造（\((s',t')\) 为重映射后样本在三角形上的位置）：</p><p>$$
+  \begin{array}{rl}
+  s' = \frac{s}{2}, \\
+  t' = (t-s) + s' = (t-s) + \frac{s}{2}, \\
+  t' = t - \frac{s}{2}
+  \end{array}
+  $$</p></li><li><p>当 \(t < s\) 时：</p><p>$$
+  \begin{array}{rl}
+  t' = \frac{t}{2}, \\
+  s' = t' - (t-s) = \frac{t}{2} - (t-s), \\
+  s' = s - \frac{t}{2}
+  \end{array}
+  $$</p></li></ul><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-low-distortion-proof1.png" alt=""></figure><p>写成代码就是：</p><pre><code>
+Vec2f LowDistortionMethod(const Vec2f&amp; v1, const Vec2f&amp; v2, float r1, float r2) {
+	if (r2 &gt; r1) {
+		r1 *= 0.5f;
+		r2 -= r1;
+	} else {
+		r2 *= 0.5f ;
+		r1 -= r2;
+	}
+	return /* (1 - r1 - r2) * v0 + */ r1 * v1 + r2 * v2;
+}
+</code></pre><p>这个方法高效地映射点，在三角形区域内保持更准确的表示，显著降低了畸变。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-heitz-triangle-sampling.png" alt=""></figure><h3> 各方法的优缺点</h3><p>实际上，我们考察过的所有渲染引擎都用平方根优化方法，实现上各有变化，结果相近。这个方法在把算法推广到更高维度时特别有效。另一个重要考虑是使用<a href="https://en.wikipedia.org/wiki/Low-discrepancy_sequence" target="_blank" rel="noreferrer noopener">低差异序列</a>（LDS）或准随机数。这些数优于纯随机数，因为它们更均匀地散布在关注的域（比如 [0:1] 区间）上，同时仍保留随机性。不过，把平行四边形法与之结合时，准随机数生成器可能破坏低差异序列的某些性质，这是不希望的。因此，最好不要把这二者组合使用。虽然这是更进阶课程的话题，但坚持用平方根优化方法、或者避开准随机序列，一般都能保证结果令人满意。</p><p>总之，Eric Heitz 提出的低畸变映射法已被证明运行更快（在他们的 GPU 实现中快 20%），而且有可能完全没有平方根优化方法常见的畸变。因此，理想情况下应当使用这个方法。</p><h2>实现：把各部分拼起来</h2><p>现在我们有了在三角形表面生成样本的方法，实现三角形面光源所需的要素几乎都齐了。我们的代码将使用课程 <a href="">从零构建光线追踪引擎的核心组件：一份 DIY 指南</a> 中概述的框架。</p><p>首先，我们往场景里加一盏三角形光源：</p><pre><code>
+std::shared_ptr&amp;ltTriangleLight&gt; light = std::make_shared&amp;ltTriangleLight&gt;(
+    Vec3f(-1, -1, 0), 
+    Vec3f(1, -1, 0), 
+    Vec3f(0, 1, 0), 
+    Vec3f(5.f));
+
+Matrix44&amp;ltfloat&gt; xfm_light(0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, -1, 0, -4, 1);
+prims.push_back(std::make_unique&amp;ltPrimitive&gt;(light, xfm_light));
+</code></pre><p>三角形光源将实现为一个派生自 <code>AreaLight</code> 类的类。</p><pre><code>
+class TriangleLight : public AreaLight {
+public:
+    TriangleLight(const Vec3f&amp; v0, const Vec3f&amp; v1, const Vec3f&amp; v2, const Vec3f&amp; Le)
+        : v0_(v0), v1_(v1), v2_(v2), e1_(v1 - v0), e2_(v2 - v0), Ng_(e1_.Cross(e2_)), Le_(Le),
+          tri_(new Triangle(v0, v1, v2)) {}
+
+    std::shared_ptr&amp;ltLight&gt; Transform(const Matrix44f&amp; xfm) const override {
+        Vec3f v0, v1, v2;
+        xfm.MultVecMatrix(v0_, v0);
+        xfm.MultVecMatrix(v1_, v1);
+        xfm.MultVecMatrix(v2_, v2);
+        return std::make_shared&amp;ltTriangleLight&gt;(v0, v1, v2, Le_);
+    }
+
+    std::shared_ptr&amp;ltShape&gt; GetShape() override { return tri_; }
+
+    Vec3f Sample(const DifferentialGeometry&amp; dg, Sample3f&amp; wi, float &amp;tmax, const Vec2f&amp; sample, bool debug) const override {
+        ...
+    }
+	
+	Vec3f Le() const override { 
+		return Le_; 
+	}
+
+private:
+    Vec3f v0_;
+    Vec3f v1_;
+    Vec3f v2_;
+    Vec3f e1_;
+    Vec3f e2_;
+    Vec3f Ng_;
+    Vec3f Le_;
+    stda::shared_ptr&amp;ltTriangle&gt; tri_;
+};
+</code></pre><p>我把 <code>Sample</code> 方法留作未完成，因为后面会深入它。现在只需注意三角形面光源是如何构造的。构造函数接收三个顶点，它们定义光源在物体空间中的形状（它的默认形状）。构建场景时，我们调用 <code>Transform</code> 方法，取得经其变换矩阵变换后的三角形（若指定了单位矩阵以外的矩阵）。这会把三角形的形状变换到世界空间。注意，虽然各引擎的实现可能不同，但一般来说你会希望面光源在图像中可见。因此，大多数实现倾向于给光源关联一个网格。在本例中，构造三角形面光源时，这个光源实例也会构建一个 <code>Triangle</code> 实例，而它不过是一个 <code>Shape</code>（可渲染的几何体）。下面是 <code>Triangle</code> 类的实现：</p><pre><code>
+class Triangle : public Shape {
+public:
+    Triangle(const Vec3f&amp; v0, const Vec3f&amp; v1, const Vec3f&amp; v2)
+        : v0_(v0), v1_(v1), v2_(v2), Ng_((v1 - v0).Cross(v2 - v0).Normalize()) {}
+
+    std::shared_ptr&amp;ltShape&gt; Transform(const Matrix44&amp;ltfloat&gt;&amp; m) const override {
+        Vec3f v0, v1, v2;
+        m.MultVecMatrix(v0_, v0);
+        m.MultVecMatrix(v1_, v1);
+        m.MultVecMatrix(v2_, v2);
+        return stda::make_shared&amp;ltTriangle&gt;(v0, v1, v2);
+    }
+
+    size_t GetNumTriangles() const override { return 1; }
+    size_t GetNumVertices() const override { return 3; }
+    Box3f Extract(size_t id, BuildTriangle* triangles, size_t&amp; num_triangles, Vec3f* vertices, size_t&amp; num_vertices) const override {
+        Box3f bounds;
+        triangles[num_triangles++] = {(int)(num_vertices), (int)(num_vertices + 1), (int)(num_vertices + 2), (int)id};
+        vertices[num_vertices++] = v0_;
+        vertices[num_vertices++] = v1_;
+        vertices[num_vertices++] = v2_;
+        bounds.ExtendBy(v0_);
+        bounds.ExtendBy(v1_);
+        bounds.ExtendBy(v2_);
+        return bounds;
+    }
+
+    void PostIntersect(const Ray&amp; ray, DifferentialGeometry&amp; dg) const override {
+        dg.P = ray.orig + dg.t * ray.dir;
+        dg.Ng = Ng_;
+        dg.Ns = Ng_;
+        dg.st = Vec2f(dg.u, dg.v);
+        dg.error = stda::max(std::abs(dg.t), dg.P.Max());
+    }
+
+    Vec3f v0_;
+    Vec3f v1_;
+    Vec3f v2_;
+    Vec3f Ng_;
+};
+</code></pre><p>构成面光源的三角形几何体会与场景中所有其他网格一起被渲染。下面就是具体做法，以及加入我们三角形面光源贡献的魔法。记住本课只关注直接光照。<code>Integrator</code> 类的 <code>Li()</code> 方法会针对构成图像的每个像素射出的每条主光线被调用。它的职责是：</p><ul><li><p>判断主光线是否击中场景中的任何几何体（包括可能构成面光源的几何体）。</p></li><li><p>如果什么都没击中，返回背景色。</p></li><li><p>如果击中了，就依据被击中点的材质和场景中的光源，算出交点的颜色。记住，目前我们假定表面都是纯漫反射的（或者按你的说法，哑光的）。</p></li></ul><p>在我们的框架里，每次求交后调用场景的 <code>PostIntersect</code> 方法至关重要。这个方法会触发被相交形状的 <code>PostIntersect</code> 方法。这些过程对于设置着色交点所需的变量（比如法线和位置）很关键，详见课程 <a href="">从零构建光线追踪引擎的核心组件：一份 DIY 指南</a>。</p><pre><code>
+Vec3f Li(const Ray&amp; ray, const std::unique_ptr&amp;ltScene&gt;&amp; scene) {
+    const BuildTriangle* tris = scene-&amp;gttriangles_.get();
+    const Vec3f* vertices = scene-&amp;gtvertices_.get();
+    DifferentialGeometry dg;
+    for (size_t i = 0; i &lt; scene-&amp;gtnum_triangles_; ++i) {
+        Intersect(ray, dg, tris[i], vertices); 
+    }
+
+    scene-&amp;gtPostIntersect(ray, dg);
+
+    // 无交点，返回背景色（这里是中灰）。
+    if (!dg) {
+        return Vec3f(0.18);
+    }
+    
+    // 计算直接光照（光源循环）
+    ...
+    
+    return L;
+}
+</code></pre><p>为了尽可能保持本课简单扼要，我们不会使用加速结构。因此需要遍历场景中的每个三角形。Scratchapixel 的目标不是把一套完整的生产级渲染器源码逐段解剖，而是让每门课给出一个自包含的单文件程序，直接实现本课研究的技术，让你立刻看到结果。这种做法有它的局限，但能避免读者被庞杂的代码压垮。</p><p>还要注意，光源循环本身——即计算场景中每盏光源对被主光线击中的那一点所作贡献的部分——在<a href="introduction-to-lighting-light-loop.html">本课最后一章</a>里讲解。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-triangular-area-light-var-names.png" alt=""><figcaption><b>图 6：</b>可视化样本对 \(x\) 照明的贡献中涉及的各个几何量。\(\theta\) 与 \(\theta'\) 分别是「表面法线与样本光线方向」以及「光源法线与样本光线方向」之间的夹角。注意样本光线方向 \(\omega_i\) 是归一化后的向量 \(x' - x\)。</figcaption></figure><p>现在我们来看光源循环本身，在这里我们会累加每盏光源对着色点 \(x\) 亮度的贡献。这里只计入直接光照。</p><pre><code>
+Vec3f Li(const Ray&amp; ray, const std::unique_ptr&amp;ltScene&gt;&amp; scene, bool debug = false) {
+	...
+	Vec3f L = 0;
+
+	if (dg.light)
+		L += dg.light-&amp;gtLe();
+
+	size_t num_samples = 16;
+	for (size_t i = 0; i &lt; scene-&amp;gtlights_.size(); ++i) {
+		Vec3f L_light = 0;
+		for (size_t n = 0; n &lt; num_samples; ++n) {
+			LightSample ls;
+			ls.L = scene-&amp;gtlights_[i]-&amp;gtSample(dg, ls.wi, ls.tmax, distr(eng), distr(eng));
+			if (ls.L == 0 || ls.wi.pdf == 0 || dg.Ng.Dot(Vec3f(ls.wi)) &lt;= 0.f) continue;
+			L_light += 1 / M_PI * ls.L * dg.Ng.Dot(Vec3f(ls.wi)) / ls.wi.pdf;
+		}
+		L += L_light / num_samples;
+	}
+
+	return L;
+}
+</code></pre><p>首先，如果与主光线相交的物体是一盏三角形光源，我们就把它贡献（<code>dg.light-&gt;Le()</code>）加到主光线返回的颜色 <code>L</code> 上（我们把它初始化为 0）。然后，对场景中的每盏光源（外层循环），我们在给定数量的样本上循环（内层循环，上面代码里是 16 个）。对每个样本，我们调用当前光源的 <code>Sample()</code> 方法——正是在这里选出光源表面上的样本位置，从而算出光线样本方向 <code>wi</code>。要算这个样本位置需要两个随机数，目前由 C++ 标准库提供的一个简单随机数生成器产生。你应该知道，生成这些数的方法有比纯随机数好得多的选择，但作为我们朴素的第一版暴力做法，先用均匀分布的随机生成器。学习如何生成更好的这类数字序列，请看课程 <a href="">采样策略</a>。</p><p><code>tmax</code> 是从着色点 \(x\) 到样本位置 \(x'\) 的距离，如下图所示。它将用来限制阴影光线的范围。注意这里用到了 <code>LightSample</code> 结构：</p><pre><code>
+template&amp;lttypename T&gt; 
+struct Sample {
+	operator const T&amp;() const { return value; }
+	operator T&amp;() { return value; }
+	T value;
+	float pdf;
+};
+
+using Sample3f = Sample&amp;ltVec3f&gt;
+
+struct LightSample {
+	Sample3f wi;
+	float tmax;
+	Vec3f L;
+};
+</code></pre><p>除了一个 <code>Sample3f</code> 类型的实例（这个结构本身保存了样本方向 \(\omega_i\)，在上面代码里存于 <code>value</code>，以及 pdf，存于 <code>pdf</code> 变量），它还保存了 <code>tmax</code> 和 <code>LightSample::L</code>（光源的辐射出射值）的数据。等我们看到光源 <code>Sample</code> 方法的代码时，就会了解这些变量是如何设置的。注意，在把样本贡献加到 <code>L_light</code>（当前光源贡献）之前，我们会检查是否确实需要加入该样本的贡献，方法是看以下任一条件是否成立：</p><ul><li><p>光源辐射出射值 <code>LightSample::L</code> 是否大于 0？</p></li><li><p>样本 pdf 是否大于 0？若不是，该样本没有贡献。</p></li><li><p>表面法线与光线样本方向是否指向相反（此时两向量点积会小于 0）？若成立，说明表面背对光源，该光源不会对着色点的照明有贡献。注意按构造，光源采样方向是从 \(x\) 指向光源采样位置 \(x'\)。所以要让表面朝向光源，表面法线与光线样本方向的点积必须大于 0。</p></li></ul><p>如果这些条件都不成立，我们就把样本贡献累加到当前光源贡献上。这里正是运用上一章所学公式的地方：物体的 BRDF（这里是漫反射 BRDF，即物体反照率，本例中为 1，除以 \(\pi\)），乘以光源辐射出射值（如果你愿意，可理解为按单位面积计的光能），再乘以 Lambert 余弦项（表面法线与光线方向夹角的余弦），整体除以样本 pdf。</p><pre><code>
+L_light += 1 / M_PI * ls.L * dg.Ng.Dot(Vec3f(ls.wi)) / ls.wi.pdf;
+</code></pre><p>我们还没看到 pdf 里包含什么，但你可以猜到，它会包含平方衰减、\(r^2\) 项，以及光线样本方向与 \(x'\) 处光源法线夹角的余弦（因为这里处理的是三角形面光源，该法线在整个三角形表面上都是常量）。最后，所有样本处理完后，我们把总和除以光源样本数，把这盏光源的贡献 <code>L_light</code> 加到总结果（存在变量 <code>L</code> 里）。</p><p>现在看光源 <code>Sample</code> 方法的代码：</p><pre><code>
+Vec3f Sample(const DifferentialGeometry&amp; dg, Sample3f&amp; wi, float &amp;tmax, const Vec2f&amp; sample) const override {
+	Vec3f d = UniformSampleTriangle(sample.x, sample.y, tri_-&amp;gtv0_, tri_-&amp;gtv1_, tri_-&amp;gtv2_) - dg.P;
+	tmax = d.Length();
+	float d_dot_Ng = d.Dot(Ng_);
+	if (d_dot_Ng &gt;= 0) return 0;
+	wi = Sample3f(d / tmax, (2.f * tmax * tmax * tmax) / std::abs(d_dot_Ng));
+	return Le_;
+}
+</code></pre><p>现在，敏锐的读者可能会问：「好吧，你在上一章一直念叨光源的 pdf 是光源面积分之一。那代码里哪儿体现了光源面积？为什么 pdf 跟 <code>tmax</code> 和 <code>std::abs(d_dot_Ng)</code> 这些值有关系，这个 <code>2</code> 因子又是怎么回事？」问得好，虽然我能感到你有点不耐烦了；我这就解释。</p><p>1）为什么 PDF 变量里塞了这么多「杂物」？嗯，严格说，不，理想情况下，至少为了教学考虑，PDF 变量里确实只该放 PDF 的值，也就是你直觉上正确猜到的「面积分之一」。但开发者也是人，总倾向于走最短的路，所以我们决定把凡是与样本贡献最终计算相关的、能塞的东西都塞进那个 PDF 变量里。也就是下面公式里所有红色的部分。这是因为很多变量都是在 <code>Sample</code> 方法里算的，那为什么不干脆在那里把它们的贡献合并，把结果赋给 PDF 变量呢？确实为什么不呢，代价是把你彻底搞晕。</p><p>$$
+E[L] = \frac{1}{\pi} \frac{1}{N}\sum_{i=1}^N \frac{L_e(x') \cos(\theta) \textcolor{red}{\cos(\theta')}}{\textcolor{red}{r^2 p(x')}}
+$$</p><p>所以，如你所见，我们 <code>LightSample::Sample3f</code> 实例里的 <code>pdf</code> 变量会保存光源法线与光线样本方向夹角的余弦、分母中由 \(r^2\) 项表示的平方反比衰减，以及 \(p(x')\)，也就是那个 PDF。所有这些在我们的代码里打包在一起，存进 <code>LightSample::Sample3f::pdf</code>。何乐而不为。</p><p>2）PDF 确实是（或本应是）光源面积分之一。不过注意，在光源的构造函数里，我们是用三角形两条边 <code>e1_</code> 与 <code>e2_</code> 的叉积算出光源法线的。</p><pre><code>
+TriangleLight(const Vec3f&amp; v0, const Vec3f&amp; v1, const Vec3f&amp; v2, const Vec3f&amp; Le)
+	: v0_(v0), v1_(v1), v2_(v2), e1_(v1 - v0), e2_(v2 - v0), 
+	, Ng_(e1_.Cross(e2_)) // 不归一化，以便隐式地存下光源面积
+	, Le_(Le)
+	, tri_(new Triangle(v0, v1, v2)) {}
+</code></pre><p>我们没有把这个向量归一化，这意味着——如讲几何的课程中所解释——<code>Ng_</code> 的长度实际上给出了 <code>e1_</code> 与 <code>e2_</code> 张成的平行四边形的面积（见下图）。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-area-parallelogram.png" alt=""><figcaption><b>图 7：</b>\(e1\) 与 \(e2\) 叉积的长度，就是由这两个向量作边的平行四边形的面积。</figcaption></figure><p>所以事情是这样的：在 <code>Sample</code> 方法里计算样本方向 <code>d</code> 与光源法线的点积时，光源法线里其实已经「内嵌」了光源面积。也就是说，如果你愿意，面积实际上藏在光源法线的长度里，而这个长度又体现在「光线样本方向 · 光源法线」点积的结果 <code>d_dot_Ng</code> 中。又因为 <code>e1_</code> 与 <code>e2_</code> 的叉积长度对应的是平行四边形而非三角形，我们只需要其中一半面积，所以 PDF 计算里有个 <code>2</code> 因子。这就解释了为什么面积没有显式出现，以及代码里的 <code>2</code> 是怎么回事。</p><p>那么 <code>tmax</code> 呢？由于平方反比定律，样本需要按 \(x\) 与 \(x'\) 之间距离的平方来衰减。这是其中两个 <code>tmax</code> 所对应的。那为什么还有第三个？因为我们在代码里<b>没有</b>把方向 <code>d</code> 归一化。所以 <code>d_dot_Ng</code> 变量不仅隐含了光源法线向量 <code>Ng_</code> 的长度，也隐含了向量 <code>d</code> 的长度。于是我们在分母里多加一个 <code>tmax</code>，它实际上对应向量 <code>d</code> 的归一化。好，我承认这里本可以换种做法，毕竟我们在调用 <code>Sample3f</code> 构造函数时还是把 <code>d</code> 归一化了（<code>wi = Sample3f(d / tmax, ...)</code>），但算了，在 Embree 这类项目里你看到的就是这样，他们的选择不归我负责。最后一项是光源法线与样本方向夹角的点积（见下）。我的陈述完毕。</p><p>如果你想从整体看，我们可以这样表达：</p><p>$$
+\begin{array}{rcl}
+L_{\text{light}} &+=& \dfrac{1}{\pi} L_e \dfrac{\hat{N} \cdot \hat{wi} \times {\hat{Nl} \cdot \hat{wi}}}{r^2 \cdot \text{pdf}} \\
+                 &+=& \dfrac{1}{\pi} L_e \dfrac{\hat{N} \cdot \hat{wi}}{\dfrac{r^2 \times \text{pdf}}{\hat{Nl} \cdot \hat{wi}}} \\
+                 &+=& \dfrac{1}{\pi} L_e \dfrac{\hat{N} \cdot \hat{wi}}{\dfrac{r^2 \times \dfrac{1}{\text{Area}}}{\hat{Nl} \cdot \hat{wi}}} \\
+\end{array}
+$$</p><p>其中：</p><p>$$\dfrac {1}{Area} = \dfrac {1}{\dfrac{|Nl|}{2}} = \dfrac{2}{|Nl|} $$</p><p>代入（第二行起把公式变量名 \(N_l\)（光源法线）和 \(w_i\)（光线样本方向）分别换成代码变量名 <code>Ng</code> 和 <code>d</code>）：</p><p>$$
+\begin{array}{rcl}
+L_{\text{light}} &+=& \dfrac{1}{\pi} L_e \dfrac{\hat{N} \cdot \hat{wi}}{\dfrac{{r^2 \times {\dfrac{2}{|{Nl}|}}}} {\hat{Nl} \cdot \hat{wi}}} \\
+                 &+=& \dfrac{1}{\pi} L_e \dfrac{\hat{N} \cdot \hat{d}}{\dfrac{{|d| \times |d| \times {\dfrac{2}{|{Ng}|}}}} {\dfrac{Ng \cdot d}{|d| \times |Ng|}}} \\
+				 &+=& \dfrac{1}{\pi} L_e \dfrac{\hat{N} \cdot \hat{d}}{\dfrac{|d| \times |d| \times |d| \times 2}{Ng \cdot d}} \\
+\end{array}
+$$</p><p>其中 \(|a|\) 是向量 \(a\) 的长度（模），\(\hat{a}\) 是 \(a\) 的单位（归一化）向量。所以如果向量名上没有那个 \(\hat{}\)（帽子）符号，就说明这个向量未归一化。希望这段推导把代码讲清楚了。哇！恭喜你，像素朋友们。你做到了。编译、渲染，这就是你会得到的结果（作为你全部努力的回报）。下图我们用了 2048 个样本。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-triangular-area-light-result.png" alt=""></figure><p>商用渲染器的噪声比我们的渲染少，但这很可能是它用了更好的「随机」数生成方案——正如我们前面多次提到的，那正是课程 <a href="">采样策略</a> 专门讲的内容。所以总的来说，这个结果我们没什么好羞愧的。剩下要做的就是把阴影光线的代码插进去，得到最终结果。这很简单：我们只需调用 <code>Occluded</code> 方法，看看光源样本是否被遮挡。</p><pre><code>
+Vec3f Li(const Ray&amp; ray, const std::unique_ptr&amp;ltScene&gt;&amp; scene, bool debug = false) {
+	...
+	size_t num_samples = 2048;
+	for (size_t i = 0; i &lt; scene-&amp;gtlights_.size(); ++i) {
+		Vec3f L_light = 0;
+		for (size_t n = 0; n &lt; num_samples; ++n) {
+			LightSample ls;
+			ls.L = scene-&amp;gtlights_[i]-&amp;gtSample(dg, ls.wi, ls.tmax, Vec2f(rand() / (float)RAND_MAX, rand() / (float)RAND_MAX), debug);
+			if (ls.L == 0 || ls.wi.pdf == 0 || dg.Ng.Dot(Vec3f(ls.wi)) &lt;= 0.f) continue;
+			bool in_shadow = [&amp;]() -&gt; bool {
+				for (size_t i = 0; i &lt; scene-&amp;gtnum_triangles_; ++i) {
+					if (Occluded(Ray(dg.P, ls.wi, dg.error * espsilon_, ls.tmax - dg.error * espsilon_), tris[i], vertices))
+						return true;
+				}
+				return false;
+			}();
+			if (in_shadow) continue;
+			L_light += 1 / M_PI * ls.L * dg.Ng.Dot(Vec3f(ls.wi)) / ls.wi.pdf;
+		}
+		L += L_light / num_samples;
+	}
+
+	return L;
+}
+</code></pre><p>如前所述，这个例子我们没有使用加速结构，而是选择遍历场景中的所有三角形。这种做法在生产代码里并不典型；我们一般不会用 <a href="https://en.cppreference.com/w/cpp/language/lambda" target="_blank" rel="noreferrer noopener">C++ lambda 函数</a> 来算阴影，也不会逐个遍历每个三角形。但在这个例子里，它正好满足我们要写一个简明单文件实现的目的，结果还相当优雅——lambda 确实很赞。</p><p>另外，不用操心代码里用到的 <code>epsilon_</code> 和 <code>df.error</code> 这些项。如果你好奇它们的作用——尤其是在避免自相交方面——可以看 <a href="#">避免自相交</a> 那门课。这里的关键点是：我们把阴影光线的范围限制在接近零（实际上就是 <code>epsilon</code> 的值）到 <code>tmax</code> 之间，也就是光线的最大距离。你大概也能想到，光源之外没有必要再检查遮挡。结果如下。</p><figure><img src="https://scratchapixel.com/images/introduction-to-lighting/intro-lighting-triangular-area-light-result-shadow.png" alt=""></figure><h2>这不是故事的终点：锥体采样与更好的采样</h2><p>本章一直用的技术依赖对三角形面积采样。在进入下一章之前，我们只想告诉你还有另一种可能的技术：对三角形张成的锥体采样。我们不会在这里研究它，因为本章已经够长了，但我们计划在本课未来的修订版里处理这个主题。虽然它不会专门用在三角形上，你仍可以在讲<a href="introduction-to-lighting-spherical-light-cone-sampling.html">球形面光源</a>那一章学到均匀锥体采样。</p><p>正如上面实现部分提到的，要注意除了直接用两个普通随机数，还有其他选择。这些替代方案在课程 <a href="">采样策略</a> 中介绍。</p><h2>参考文献</h2><p>Graphics Gems - 《在三角形中生成随机点》（Generating Random Points in Triangles），第 24 页，Greg Turk，Andrew S. Glassner，1990。</p><p>《三角形与正方形之间的低畸变映射》（A Low-Distortion Map Between Triangle and Square），Eric Heitz，2019。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-triangular-light.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-lighting/introduction-to-lighting-triangular-light.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>简介 - Scratchapixel 中文译本</title>
+<meta name="description" content="加速结构简介 · 简介（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>简介</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a style="font-weight:700" href="introduction-acceleration-structure-introduction.html">简介</a></li>
+<li><a href="bounding-volume.html">包围体</a></li>
+<li><a href="bounding-volume-hierarchy-BVH-part1.html">包围体层次结构：BVH（第 1 部分）</a></li>
+<li><a href="bounding-volume-hierarchy-BVH-part2.html">包围体层次结构：BVH（第 2 部分）</a></li>
+<li><a href="grid.html">网格</a></li>
+<li><a href="what-else.html">还有什么？</a></li>
+</ol>
+</div>
+<h2>简介</h2><p><b>阅读时间：7 分钟。</b></p><p><i>说明：本课程只是对光线追踪加速结构这一题目的浅显入门。最快、最高效的加速结构会在单独的课程里介绍。</i></p><h2>简介</h2><p>渲染茶壶对这一系列基础课程来说并非必需，通常它更该被算作进阶题目。不过，除了让我们了解到曲线与曲面可以用被某些基函数加权的控制点以极其紧凑的方式定义（这一原理被许多高级渲染或着色技术沿用），它还很有用地演示了一点：随着场景中多边形/三角形和物体数量增加，光线追踪是很慢的。茶壶的好处是它生成了 32 个多边形网格，我们可以把它们看作 32 个不同的物体，而这是在不支持读取几何文件的解析器的情况下做不到的（这个我们暂时宁愿绕开）。由于复杂度提高，这个场景现在渲染起来要花相当长的时间。光线追踪器以慢著称，不过好在针对这个问题也已经做了大量研究。多数加速渲染的技术都基于加速结构。光线追踪器里最昂贵的任务是求交测试。这是一项代价高昂的操作，而且可能被重复非常多次（对帧的每个像素，我们都要测试场景中所有三角形）。Fujimoto 在《Accelerated Ray Tracing》（1983）中写道：</p><blockquote><p>光线追踪方法的计算速度无疑是必须处理的基本问题之一。为什么光线追踪在计算上如此昂贵？光线追踪刚进入计算机图形学领域的那一刻，主要原因就已经被明确指认出来了。按 Whitted 的说法，对简单场景，总时间的 75% 花在计算光线与物体的交点上。对更复杂的场景，这个比例高达 95%。花在计算交点上的时间与场景所涉物体的数量直接相关。</p></blockquote><p>所以要省时间，我们得想办法尽可能减少求交测试的次数。加速结构的原理，是帮助尽快判断某个特定光线可能撞上场景里哪些物体，并把那些我们确定光线绝不会撞上的大批物体排除掉。如果借助这样的结构，我们能比如把一条光线需要测试的物体数量减少 50%，那么理论上渲染时间也应该大致减半。</p><h2>给光线追踪器加上统计</h2><p>为了衡量本课程中将要测试的各种加速方法的效率，我们需要能够比较同一帧在有无加速时的渲染时间。收集一些额外统计也很有意思，比如场景中投射的光线总数（通常与总渲染时间直接相关）、光线与三角形求交测试执行的次数、以及光线与三角形命中的次数：例如加速方案表现如何，渲染过程中哪一部分最费时间。改动代码以支持基本的统计收集非常直接。我们这里不实现什么花哨的东西，只加几个全局变量，用来统计光线数量、光线与三角形求交例程被调用的次数、以及光线与三角形命中的次数。应用是多线程时用全局变量会有问题，不过我们的代码目前还不是。为了预防这种可能，我们会用原子操作来修改这些变量的内容。</p><details open><figure><img src="https://scratchapixel.com/images/acceleration-structure/racecondition.png" alt=""></figure><p>当多个处理器试图同时更新同一个变量的内容时，就可能出现竞态条件。比如自增一个变量，需要先从内存读出变量、把值加一、再把结果写回内存。如果两个处理器「同时」试图自增变量 v，可能出现下面这样的时序：</p><ul><li><p>处理器 1 从内存读出变量 v（假定 v = 0），然后停住了。</p></li><li><p>处理器 2 从内存读出变量 v = 0，把值加一，再把结果写回内存。v 的值现在是 1。</p></li><li><p>处理器 1 醒来，对处理器 1 来说 v 是 0，把它加一，再把结果写入内存。v 的值仍然是 1，而它本该是 2。</p></li></ul></details><p>至于计算总渲染时间，我们只需在渲染开始前记下时间，帧结束后再与当前时间取差。在我们当前的实现里，用的是 clock() 函数，它给出的是 CPU 时间而非实际时间。我们用 <code>__sync_fetch_and_add</code> 函数来做原子加法（第 10 行和第 14 行）。</p><details open><p>下面这段代码虽然仍然有效，但你现在应该改用 <a href="http://en.cppreference.com/w/cpp/atomic/atomic" target="_blank" rel="noreferrer noopener">STL C++ <b>atomic</b> 库</a>，它在 C++11 中引入。这个题目的较新信息见并行渲染那一课。基础部分完成后这段代码会修订（2014 年 7 月）。</p></details><pre><code>
+static uint64_t numRayTrianglesTests = 0;
+static uint64_t numRayTrianglesIsect = 0;
+static uint64_t numPrimaryRays = 0;
+ 
+bool intersectTriangle(
+    const Ray&amp;ltfloat&gt; &amp;r,
+    const Vec3f &amp;v0, const Vec3f &amp;v1, const Vec3f &amp;v2,
+    float &amp;t, float &amp;u, float &amp;v) const
+{
+    __sync_fetch_and_add(&amp;numRayTrianglesTests, 1);
+    Vec3f edge1 = v1 - v0;
+    ...
+    t = dot(edge2, qvec) * invDet;
+    __sync_fetch_and_add(&amp;numRayTrianglesIsect, 1);
+    return true;
+}
+ 
+int main(int argc, char **argv)
+{
+    clock_t timeStart = clock();
+    ...
+    render(rc, filename);
+    ...
+    clock_t timeEnd = clock();
+    printf("Render time                                 : %04.2f (sec)\n", (float)(timeEnd - timeStart) / CLOCKS_PER_SEC);
+    printf("Total number of triangles                   : %d\n", totalNumTris);
+    printf("Total number of primary rays                : %lu\n", numPrimaryRays);
+    printf("Total number of ray-triangles tests         : %lu\n", numRayTrianglesTests);
+    printf("Total number of ray-triangles intersections : %lu\n", numRayTrianglesIsect);
+    return 0;
+}
+</code></pre><p>现在我们有了些工具，可以衡量这些加速结构的效率如何（也能互相比较，只是这种比较并不总是很公平。后面会看到，一种加速方法的性能往往取决于场景：在某个特定配置下表现很好的结构，换个场景可能很差）。用这些新增内容跑我们的光线追踪，渲染结束时应该打印出下面这样的统计：</p><pre><code>
+Render time                                 : 138.75 (sec)
+Total number of triangles                   : 16384
+Total number of primary rays                : 307200
+Total number of ray-triangles tests         : 5033164800
+Total number of ray-triangles intersections : 111889
+</code></pre><p>如预期的那样，光线与三角形求交测试的次数与实际命中次数之比非常低：0.002%！下面看看用几处非常简单的改动，我们能怎样让运行速度快很多。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/introduction.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/introduction.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

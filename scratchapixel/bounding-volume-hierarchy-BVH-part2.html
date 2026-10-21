@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>包围体层次结构：BVH（第 2 部分） - Scratchapixel 中文译本</title>
+<meta name="description" content="加速结构简介 · 包围体层次结构：BVH（第 2 部分）（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>包围体层次结构：BVH（第 2 部分）</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-acceleration-structure-introduction.html">简介</a></li>
+<li><a href="bounding-volume.html">包围体</a></li>
+<li><a href="bounding-volume-hierarchy-BVH-part1.html">包围体层次结构：BVH（第 1 部分）</a></li>
+<li><a style="font-weight:700" href="bounding-volume-hierarchy-BVH-part2.html">包围体层次结构：BVH（第 2 部分）</a></li>
+<li><a href="grid.html">网格</a></li>
+<li><a href="what-else.html">还有什么？</a></li>
+</ol>
+</div>
+<h2>包围体层次结构：BVH（第 2 部分）</h2><p><b>阅读时间：20 分钟。</b></p><figure><img src="https://scratchapixel.com/images/acceleration-structure/groupedvol.png?" alt=""><figcaption><b>图 1：</b>把包围体分组。</figcaption></figure><p>论文的其余部分，重点在于改进他们的技术：把上一章介绍的包围体按层次组织起来。这项技术叫作<b>包围体层次结构</b>，也就是 <b>BVH</b>。与其他可能的加速结构相比，它通常能给出很好的结果。基于这一原理的变体有很多。本章我们来看 Kay 和 Kajiya 所使用并描述的方法。把包围体归并成更大的包围体、再把这些更大的包围体继续归并，这个想法非常简单，也很容易理解。图 2 中，我们展示了一组物体及其各自的包围体（为简单起见这里用盒子）。把这些包围盒合并起来（通常按邻近程度），就得到代表物体组的更大包围体。很容易看出：如果一条光线不与任何这些更大的组相交，我们就可以跳过对组内所包包围体的测试，从而一次排除许多物体。这显然能省下大量渲染时间。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/bvhfig.gif?" alt=""><figcaption><b>图 2：</b>包围体层次结构的例子。包围盒 C 中包含的物体不需要测试。</figcaption></figure><p>原理非常简单，但要想高效，物体和包围体必须按邻近程度分组。如果不按邻近程度分组会有什么问题，图 3 作了说明。两只红色茶壶的包围盒被归到了一组，尽管它们彼此离得很远。在图 3 中，光线与这两个包围体都相交，于是有四只茶壶需要做与光线的求交测试。而在图 1 中，这些茶壶里只有两只（D 和 E）需要测试相交。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/bvhfig2.png?" alt=""><figcaption><b>图 3：</b>空间被划分成更小的区域。</figcaption></figure><p>为了按邻近程度对物体分组，Kay 和 Kajiya 建议把它们插入一个<b>空间划分数据结构</b>。这种结构把空间划分成子区域，物体通常按位置被插入这些子区域。这一过程在图 3 中演示。如果我们创建一个包住场景中所有物体的盒子，就可以把这个盒子划分成八个等大的子盒（图 4 和图 5 中，这一过程以二维方式演示）。然后场景中的每个物体都可以按它们加入场景的顺序，插入与它重叠的子盒里。于是我们可以假定，某个子体素中包含的所有物体彼此都相当接近（至少比位于其他子盒中的物体更接近）。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/octree1.png?" alt=""><figcaption><b>图 4：</b>二维的八叉树就是四叉树。节点被分成四个单元，物体被插入与它重叠的单元。划分单元的过程可以按需要重复任意多次，例如直到每个单元里只剩一个物体，或者达到用户定义的最大深度。</figcaption></figure><p>如图 4 所示，一个物体可能同时与多个子盒或单元重叠。这种情况下，Kay 和 Kajiya 随意地把物体插入其中一个重叠的单元。我们选择插入物体包围盒质心所在的那个单元（质心在图中用每只茶壶中心的小点表示）。论文中提出了两种空间数据结构：<b>中位数切分</b>与<b>八叉树</b>。前者与你可能听说过的 k-d tree 空间划分数据结构有些关联。本课程不介绍这些结构。后者，也就是八叉树，将用于我们对 Kay 和 Kajiya 论文的实现。如前所述，它把一个立方体划分成八个单元，这些单元再继续划分，依此类推。递归过程在所有物体都插入八叉树之后停止，或者在达到用户定义的最大深度时停止。</p><h2>构建层次结构</h2><p>八叉树数据结构在另一门课程中有详细介绍。不过简而言之，创建和插入物体的过程如下。首先我们计算场景中所有物体的包围体，在此过程中把算出的这些包围体合并，得到场景的整体包围体。从这个整体包围体可以确定八叉树的尺寸（一个位于整体包围体中心的立方体，其边长取该包围体沿 x、y、z 轴范围中的最大值）。这个立方体代表八叉树的顶层节点，也就是它的<b>根</b>。随后插入物体时，我们以<b>自顶向下</b>的方式遍历这棵树。如果要插入物体的节点是叶节点，且该叶节点尚未包含任何物体，我们就把物体插入这个<b>节点</b>。如果该节点已经包含物体（并且尚未达到用户定义的最大深度），就把当前节点划分成八个单元，把节点原有的物体和新物体都插入它们各自重叠的单元（注意物体可能与不止一个单元重叠）。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/octree3.gif?" alt=""><figcaption><b>图 5：</b>插入四叉树中的物体。</figcaption></figure><p>这个过程一直重复，直到所有物体都插入八叉树。第二步，这次以<b>自底向上</b>的方式遍历八叉树。我们从叶节点开始，计算它们所含物体的整体包围盒（一个叶节点可以有一个或多个物体）。叶节点之上的那个节点，其整体包围盒则由它的子节点的包围体合并得到。这个过程一直重复到根节点（此时它应当与我们先前算出的整个场景范围一致）。这两个过程结束后，我们得到场景的一种表示：<b>包围体层次结构</b>，其中的包围体按邻近程度分组（某个节点叶节点中包含的物体被归到一起，等等）。注意，八叉树在这里其实并没有被当作加速结构使用（不要把这项技术与用作加速结构的八叉树混淆——我们以后会专门写一门课讲那种技术）。八叉树对光线求交测试其实没有真正的好处，它只是用来计算并构建这套包围体层次结构。 ## 与层次结构求交</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/octree2.gif?" alt=""><figcaption><b>图 6：</b>与四叉树求交。如果一个单元被相交，就测试该单元的子单元是否相交。这个过程一直持续到某个叶节点被相交，然后再测试这个叶节点中包含的几何体。</figcaption></figure><p>BVH 的求交相当简单。我们从根节点开始，测试光线是否与该节点的包围体相交。一般来说，如果某个节点的包围体被光线相交，我们就往树下一层，测试与该节点各个子节点包围体的相交。如果该节点是叶节点，就测试光线是否与它包含的任一物体相交。这个做法实现起来很简单，但还可以进一步优化。当我们测试光线与某节点各子节点包围体的相交时，假定不止一个这类单元的包围体被相交，我们应当先探查相交距离最小的那个子节点，因为可见物体最可能就包含在这些单元里。图 6 说明了这个想法（我们把光线与某单元包围体的相交，用光线与单元边界的交点处的一个点来表示。请记住现实中我们是与单元的包围体相交，图中用球体表示，而不是与单元本身相交）。如你所见，光线与根节点（黑色）相交，于是要测试根节点的子节点（红色）。这些单元按它们被创建的顺序测试：0、1、2、3。光线与单元 0 和单元 1 的包围体相交，因此接下来测试这两个节点的子节点。问题在于，尽管与单元 1 的包围体的相交距离（\(t_1\)）小于与单元 0 的包围体的相交距离（\(t_0\)），单元 0 的子节点却会先于单元 1 的子节点被测试。先测单元 1 的子节点会更高效，因为这样能更早找到与茶壶 A 的相交。Kay 和 Kajiya 建议使用一个列表：把被光线穿透的节点子节点插入其中，并按相交距离排序（从小到大）。然后我们从这个列表中取出第一个节点，测试它的子节点。如果其中某些子节点被光线相交，它们自己也会被插入列表。它们会插到列表中已有元素的前面，因为它们的相交距离必然小于已插入的任何节点的相交距离。</p><details open><p>在编程中，这类列表叫作<b>优先队列</b>。它们像普通队列，只是每个元素都带一个「优先级」。在优先队列中，优先级高的元素先被取出；如果两个元素优先级相同，则按它们在队列中的顺序取出。在我们的具体情形里，用与包围体的相交距离来定义队列中各包围体的优先级：相交距离最小的包围体就是队列中优先级最高的元素。在 C++ 中我们可以使用 <code>priority_queue</code> 类，它属于 C++ 标准库 STL（更多细节见源代码一节）。</p></details><p>按这个过程，我们就能确保总是先测试层次结构中离光线起点最近的节点。如果这些节点都不包含可见物体，我们就继续测试离光线起点更远的节点，如此反复，直到列表为空。</p><pre><code>
+while (priority_queue is not empty) { 
+    Node node = get node from the priority_queue with highest priority (and remove it) 
+    if node is a leaf 
+        for each object contained in node 
+            if object is intersected by ray 
+                 keep this object as potential visible object 
+        if an object was intersected 
+            return 
+    else 
+        // 沿该节点的子节点向下继续遍历层次结构
+        for each children in node 
+            if node's children is intersected by ray at distance t 
+                insert node into priority_queue (use intersection distance t to define priority of the node in the list) 
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/acceleration-structure/twointersections.gif?" alt=""><figcaption><b>图 7：</b>最先被相交的包围体不一定包含最近的相交物体。</figcaption></figure><p>还有最后一个细节需要注意。看图 7 你会发现，我们不能用与包围体的相交距离来确定哪些包围体包含可见物体。尽管到 B 的包围体的距离 \(t_{VB}\) 小于到 C 的包围体的距离 \(t_{VC}\)，光线最终相交的物体却是 C 而不是 B。我们只能确定一点：当与已相交物体的距离小于与列表中下一个节点包围体的相交距离时，就可以停止层次结构的遍历。如图 7 所示，优先列表中的节点顺序应当是 VB、VC、VA（因为 \(t_{VB}\) &lt; \(t_{VC}\) &lt; \(t_{VA}\)）。当我们与 VB（B 的包围体）所包含的物体求交时，得到物体 B 的相交距离 \(t_B\)。但 \(t_B\) 并不小于 \(t_{VC}\)，因此我们还要测试与物体 C 的相交，结果发现 \(t_C\) 小于 \(t_B\)，于是 C 取代 B 成为潜在的相交物体。但由于 \(t_C\) 小于 \(t_{VA}\)，我们既不需要测试与 A 的相交，也不需要测试列表中 VA 之后可能存在的任何节点。因此我们可以停止层次遍历，返回 B 作为可见物体。如果在光线追踪器里用上所有这些技术，我们现在得到如下结果：</p><pre><code>
+Render time                                 : 1.61 (sec)
+Total number of triangles                   : 16384
+Total number of primary rays                : 307200
+Total number of ray-triangles tests         : 41341952
+Total number of ray-triangles intersections : 59017
+Total number of ray-volume tests            : 1531064
+</code></pre><p>现在的渲染速度是原来的 1.8 倍（与上一章的渲染相比）。光线-包围体测试的次数减少了 6.4 倍（说明包围体层次结构非常高效），光线-三角形测试次数减少了 1.95 倍，光线-三角形相交次数减少了 1.89 倍。</p><h2>源代码</h2><p>完整源代码在本课程的最后一章。</p><p>BVH 类变得更复杂了。我们给这个类加了一个 <code>OctreeNode</code> 和一个 <code>Octree</code> 类。想了解八叉树的读者可以参阅后面几节，那里有专门讲这个主题的课程。八叉树节点持有八个指向其他八叉树节点的指针，也就是它的子节点。构造函数把场景范围作为输入参数（第 38 行）。这个范围用来计算并设置根节点的尺寸与位置（它的质心，第 40-49 行）。新物体（更准确地说是它们的包围体，但请记住 <code>Extents</code> 类持有指向被包围物体的指针）从根节点开始插入（第 52-53 行）。如果当前节点是空的叶节点（还没有物体插入过这个叶节点），我们就把物体插入这个叶节点并返回。如果节点是叶节点，已包含一个或多个物体，但我们已经达到八叉树的最大深度，那么我们仍然把物体插入这个节点（第 73 行）。而如果还没达到最大深度，我们就把该节点标记为「内部」，并把节点原先持有的物体和新物体一起重新插入八叉树（第 77-82 行）。如果节点不是叶节点，我们检查物体应当插入该节点的哪个子节点（第 86-93 行）。如果该子节点还不存在就创建它（第 97-98 行），最后把物体插入这个子节点（第 99 行）。构建包围体层次结构的函数很简单。我们从根开始，沿树往下直到叶节点。这个节点的包围体由它持有指针的所有物体的包围体合并得到。然后我们在往回走的过程中，用其子节点的包围体合并得到当前节点的包围体（第 130 行）。</p><pre><code>
+class BVH : public AccelerationStructure
+{
+    static const uint8_t kNumPlaneSetNormals = 7;
+    static const Vec3f planeSetNormals[kNumPlaneSetNormals];
+    struct Extents
+    {
+        Extents()
+        {
+            for (uint8_t i = 0; i &lt; kNumPlaneSetNormals; ++i)
+                d[i][0] = kInfinity, d[i][1] = -kInfinity;
+        }
+        void extendBy(const Extents &amp;extents)
+        {
+            for (uint8_t i = 0; i &lt; kNumPlaneSetNormals; ++i) {
+                if (extents.d[i][0] &lt; d[i][0]) d[i][0] = extents.d[i][0];
+                if (extents.d[i][1] &gt; d[i][1]) d[i][1] = extents.d[i][1];
+            }
+        }
+        bool intersect(
+            const float *precomputedNumerator, const float *precomputeDenominator, 
+            float &amp;tNear, float &amp;tFar, uint8_t &amp;planeIndex);
+        float d[kNumPlaneSetNormals][2]; // 每一组平面法线对应的 d 值
+        const Object *object; // 该包围体所包含的指针（供八叉树使用）
+    };
+    Extents *extents;
+    struct OctreeNode
+    {
+        OctreeNode *child[8];
+        std::vector&amp;ltconst Extents *&gt; data;
+        Extents extents;
+        bool isLeaf;
+        uint8_t depth; // 仅用于调试
+        OctreeNode() : isLeaf(true) { memset(child, 0x0, sizeof(OctreeNode *) * 8); }
+        ~OctreeNode() { for (uint8_t i = 0; i &lt; 8; ++i) if (child[i] != NULL) delete child[i]; }
+    };
+    struct Octree
+    {
+        Octree(const Extents &amp;extents) : root(NULL)
+        {
+            float xdiff = extents.d[0][1] - extents.d[0][0];
+            float ydiff = extents.d[1][1] - extents.d[1][0];
+            float zdiff = extents.d[2][1] - extents.d[2][0];
+            float dim = std::max(xdiff, std::max(ydiff, zdiff));
+            Vec3f centroid(
+                (extents.d[0][0] + extents.d[0][1]),
+                (extents.d[1][0] + extents.d[1][1]),
+                (extents.d[2][0] + extents.d[2][1]));
+            bounds[0] = (Vec3f(centroid) - Vec3f(dim)) * 0.5f;
+            bounds[1] = (Vec3f(centroid) + Vec3f(dim)) * 0.5f;
+            root = new OctreeNode;
+        }
+        void insert(const Extents *extents)
+        { insert(root, extents, bounds[0], bounds[1], 0); }
+        void build()
+        { build(root, bounds[0], bounds[1]); }
+        ~Octree() { delete root; }
+        struct QueueElement
+        {
+            const OctreeNode *node; // 树中由该节点持有的八叉树节点
+            float t; // 用作键值
+            QueueElement(const OctreeNode *n, float thit) : node(n), t(thit) {}
+            // 比较符用 &gt; 而不是 &lt;，这样 priority_queue 的行为就像最小堆
+            friend bool operator &lt; (const QueueElement &amp;a, const QueueElement &amp;b) { return a.t &gt; b.t; }
+        };
+        Vec3f bounds[2];
+        OctreeNode *root;
+    private:
+        void insert(
+            OctreeNode *node, const Extents *extents, 
+            Vec3f boundMin, Vec3f boundMax, int depth)
+        {
+            if (node-&amp;gtisLeaf) {
+                if (node-&amp;gtdata.size() == 0 || depth == 16) {
+                    node-&amp;gtdata.push_back(extents);
+                }
+                else {
+                    node-&amp;gtisLeaf = false;
+                    while (node-&amp;gtdata.size()) {
+                        insert(node, node-&amp;gtdata.back(), boundMin, boundMax, depth);
+                        node-&amp;gtdata.pop_back();
+                    }
+                    insert(node, extents, boundMin, boundMax, depth);
+                }
+            } else {
+                // 把包围体插入正确的八叉树单元
+                Vec3f extentsCentroid = (
+                    Vec3f(extents-&amp;gtd[0][0], extents-&amp;gtd[1][0], extents-&amp;gtd[2][0]) +
+                    Vec3f(extents-&amp;gtd[0][1], extents-&amp;gtd[1][1], extents-&amp;gtd[2][1])) * 0.5;
+                Vec3f nodeCentroid = (boundMax + boundMin) * 0.5f;
+                uint8_t childIndex = 0;
+                if (extentsCentroid[0] &gt; nodeCentroid[0]) childIndex += 4;
+                if (extentsCentroid[1] &gt; nodeCentroid[1]) childIndex += 2;
+                if (extentsCentroid[2] &gt; nodeCentroid[2]) childIndex += 1;
+                Vec3f childBoundMin, childBoundMax;
+                Vec3f boundCentroid = (boundMin + boundMax) * 0.5;
+                computeChildBound(childIndex, boundCentroid, boundMin, boundMax, childBoundMin, childBoundMax);
+                if (node-&amp;gtchild[childIndex] == NULL)
+                      node-&amp;gtchild[childIndex] = new OctreeNode, node-&amp;gtchild[childIndex]-&amp;gtdepth = depth;
+                insert(node-&amp;gtchild[childIndex], extents, childBoundMin, childBoundMax, depth + 1);
+            }
+        }
+        void computeChildBound(
+            const uint8_t &amp;i, const Vec3f &amp;boundCentroid,
+            const Vec3f &amp;boundMin, const Vec3f &amp;boundMax,
+            Vec3f &amp;pMin, Vec3f &amp;pMax) const
+        {
+            pMin[0] = (i &amp; 4) ? boundCentroid[0] : boundMin[0];
+            pMax[0] = (i &amp; 4) ? boundMax[0] : boundCentroid[0];
+            pMin[1] = (i &amp; 2) ? boundCentroid[1] : boundMin[1];
+            pMax[1] = (i &amp; 2) ? boundMax[1] : boundCentroid[1];
+            pMin[2] = (i &amp; 1) ? boundCentroid[2] : boundMin[2];
+            pMax[2] = (i &amp; 1) ? boundMax[2] : boundCentroid[2];    
+        }
+        // 自底向上构建
+        void build(OctreeNode *node, const Vec3f &amp;boundMin, const Vec3f &amp;boundMax)
+        {
+            if (node-&amp;gtisLeaf) {
+                // 计算叶节点的包围体
+                for (uint32_t i = 0; i &lt; node-&amp;gtdata.size(); ++i) {
+                    node-&amp;gtextents.extendBy(*node-&amp;gtdata[i]);
+                }
+            }
+            else {
+                for (uint8_t i = 0; i &lt; 8; ++i)
+                    if (node-&amp;gtchild[i]) {
+                        Vec3f childBoundMin, childBoundMax;
+                        Vec3f boundCentroid = (boundMin + boundMax) * 0.5;
+                        computeChildBound(i, boundCentroid, boundMin, boundMax, childBoundMin, childBoundMax);
+                        build(node-&amp;gtchild[i], childBoundMin, childBoundMax);
+                        node-&amp;gtextents.extendBy(node-&amp;gtchild[i]-&amp;gtextents);
+                    }
+                }
+            }
+        }
+    };
+    Octree *octree;
+public:
+    BVH(const RenderContext *rcx);
+    const Object* intersect(const Ray&amp;ltfloat&gt; &amp;ray, IsectData &amp;isectData) const;
+    ~BVH();
+};
+</code></pre><p>在 <code>BVH</code> 类的 intersect 方法里（第 37 行），我们首先测试光线是否与整个场景的包围体（八叉树根节点的范围）相交。如果相交，就用这个节点以及光线起点到其包围体的相交距离初始化一个 <code>priority_queue</code> 列表。我们重载了 operator &lt;（上面第 63 行），让它表现得像<b>最小堆</b>（默认行为是最大堆，键值最大的元素优先级最高，而我们想要的正好相反）。其余代码与上面给出的伪代码类似。我们取出列表顶部的第一个节点（同时把它从列表中移除，第 72-73 行）。如果这个节点是叶节点，就测试光线是否与节点包含的任一物体相交，并记录最小的相交距离（第 79 行）。如果它是内部节点，就测试光线是否与该节点各子节点的包围体相交，一旦相交就把子节点加入列表（用相交距离作为键来设定元素在列表中的优先级，第 93 行）。这个过程反复进行直到列表为空，但也可以提前停止：只要列表中第一个节点的相交距离大于到已相交物体的距离（第 71 行）。</p><pre><code>
+BVH::BVH(const RenderContext *rcx) : AccelerationStructure(rcx), extents(NULL), octree(NULL) 
+{ 
+    Extents sceneExtents; 
+    extents = new Extents[rcx-&amp;gtobjects.size()]; 
+    for (uint32_t i = 0; i &lt; rcx-&amp;gtobjects.size(); ++i) { 
+        for (uint8_t j = 0; j &lt; kNumPlaneSetNormals; ++j) { 
+            rcx-&amp;gtobjects[i]-&amp;gtcomputeBounds(planeSetNormals[j], extents[i].d[j][0], extents[i].d[j][1]); 
+        } 
+        extents[i].object = rcx-&amp;gtobjects[i]; 
+        sceneExtents.extendBy(extents[i]); 
+    } 
+    // 创建层次结构                                                                                                                                                                                     
+    octree = new Octree(sceneExtents); 
+    for (uint32_t i = 0; i &lt; rcx-&amp;gtobjects.size(); ++i) { 
+        octree-&amp;gtinsert(extents + i); 
+    } 
+    octree-&amp;gtbuild(); 
+} 
+ 
+inline bool BVH::Extents::intersect( 
+    const float *precomputedNumerator, const float *precomputeDenominator, 
+    float &amp;tNear, float &amp;tFar, uint8_t &amp;planeIndex) 
+{ 
+    __sync_fetch_and_add(&amp;numRayVolumeTests, 1); 
+    for (uint8_t i = 0; i &lt; kNumPlaneSetNormals; ++i) { 
+        float tn = (d[i][0] - precomputedNumerator[i]) / precomputeDenominator[i]; 
+        float tf = (d[i][1] - precomputedNumerator[i]) / precomputeDenominator[i]; 
+        if (precomputeDenominator[i] &lt; 0) std::swap(tn, tf); 
+        if (tn &gt; tNear) tNear = tn, planeIndex = i; 
+        if (tf &lt; tFar) tFar = tf; 
+        if (tNear &gt; tFar) return false;  //测试是否可以提前退出 
+    } 
+
+    return true; 
+} 
+ 
+const Object* BVH::intersect(const Ray&amp;ltfloat&gt; &amp;ray, IsectData &amp;isectData) const 
+{ 
+    const Object *hitObject = NULL; 
+    float precomputedNumerator[BVH::kNumPlaneSetNormals], precomputeDenominator[BVH::kNumPlaneSetNormals]; 
+    for (uint8_t i = 0; i &lt; kNumPlaneSetNormals; ++i) { 
+        precomputedNumerator[i] = dot(planeSetNormals[i], ray.orig); 
+        precomputeDenominator[i] = dot(planeSetNormals[i], ray.dir);; 
+    } 
+#if 0 
+    float tClosest = ray.tmax; 
+    for (uint32_t i = 0; i &lt; rc-&amp;gtobjects.size(); ++i) { 
+        __sync_fetch_and_add(&amp;numRayVolumeTests, 1); 
+        float tNear = -kInfinity, tFar = kInfinity; 
+        uint8_t planeIndex; 
+        if (extents[i].intersect(precomputedNumerator, precomputeDenominator, tNear, tFar, planeIndex)) { 
+            IsectData isectDataCurrent; 
+            if (rc-&amp;gtobjects[i]-&amp;gtintersect(ray, isectDataCurrent)) { 
+                if (isectDataCurrent.t &lt; tClosest &amp;&amp; isectDataCurrent.t &gt; ray.tmin) { 
+                    isectData = isectDataCurrent; 
+                    hitObject = rc-&amp;gtobjects[i]; 
+                    tClosest = isectDataCurrent.t; 
+                } 
+            } 
+        } 
+    } 
+#else 
+    uint8_t planeIndex = 0; 
+    float tNear = 0, tFar = ray.tmax; 
+    if (!octree-&amp;gtroot-&amp;gtextents.intersect(precomputedNumerator, precomputeDenominator, tNear, tFar, planeIndex) 
+        || tFar &lt; 0 || tNear &gt; ray.tmax) 
+        return NULL; 
+    float tMin = tFar; 
+    std::priority_queue&amp;ltBVH::Octree::QueueElement&gt; queue; 
+    queue.push(BVH::Octree::QueueElement(octree-&amp;gtroot, 0)); 
+    while(!queue.empty() &amp;&amp; queue.top().t &lt; tMin) { 
+        const OctreeNode *node = queue.top().node; 
+        queue.pop(); 
+        if (node-&amp;gtisLeaf) { 
+            for (uint32_t i = 0; i &lt; node-&amp;gtdata.size(); ++i) { 
+                IsectData isectDataCurrent; 
+                if (node-&amp;gtdata[i]-&amp;gtobject-&amp;gtintersect(ray, isectDataCurrent)) { 
+                    if (isectDataCurrent.t &lt; tMin) { 
+                        tMin = isectDataCurrent.t; 
+                        hitObject = node-&amp;gtdata[i]-&amp;gtobject 
+                        isectData = isectDataCurrent; 
+                    } 
+                } 
+            } 
+        } 
+        else { 
+            for (uint8_t i = 0; i &lt; 8; ++i) { 
+                if (node-&amp;gtchild[i] != NULL) { 
+                    float tNearChild = 0, tFarChild = tFar; 
+                    if (node-&amp;gtchild[i]-&amp;gtextents.intersect(precomputedNumerator, precomputeDenominator, 
+                        tNearChild, tFarChild, planeIndex)) { 
+                        float t = (tNearChild &lt; 0 &amp;&amp; tFarChild &gt;= 0) ? tFarChild : tNearChild; 
+                        queue.push(BVH::Octree::QueueElement(node-&amp;gtchild[i], t)); 
+                    } 
+                } 
+            } 
+        } 
+    } 
+#endif 
+
+    return hitObject; 
+}
+</code></pre><details open><p>正常情况下，我们插入 BVH 的应当是<b>三角形</b>而不是网格。为了尽快完成基础部分，我们会在本课程将来的版本里说明怎么做到这一点。不过下一章我们会演示如何把三角形插入网格加速结构。作为练习，你可以仿照网格的实现，试着修改本课程中 BVH 的代码，让它支持三角形的插入。</p></details><h2>接下来是什么？</h2><p>Kay 和 Kajiya 的技术在茶壶场景上效果很好。总体而言 BVH 方法表现良好，有时在生产渲染器中被选作所支持的加速结构（通常与另一种结构配合使用，原因会在下一章末尾变得清楚）。思路是把这些模型以某种方式拆成更小的片段，插入简单三维网格的体素里。我们会在下一章说明，对网格做光线追踪既简单又快。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/bounding-volume-hierarchy-BVH-part2.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/bounding-volume-hierarchy-BVH-part2.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

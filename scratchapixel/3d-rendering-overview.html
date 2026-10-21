@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>渲染过程概览：可见性与着色 - Scratchapixel 中文译本</title>
+<meta name="description" content="渲染 3D 场景的图像 · 渲染过程概览：可见性与着色（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>渲染过程概览：可见性与着色</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="computer-discrete-raster.html">一切从计算机和显示器开始</a></li>
+<li><a href="rendering-3d-scene.html">接下来是一个 3D 场景</a></li>
+<li><a style="font-weight:700" href="3d-rendering-overview.html">渲染过程概览：可见性与着色</a></li>
+<li><a href="rendering-3d-scene-overview-perspective-projection.html">透视投影</a></li>
+<li><a href="visibility-problem.html">可见性问题</a></li>
+<li><a href="light-simulator.html">一个光模拟器</a></li>
+<li><a href="introduction-light-transport.html">光传输</a></li>
+<li><a href="introduction-shading.html">着色</a></li>
+<li><a href="summary-rendering.html">小结与关于渲染的其他考量</a></li>
+</ol>
+</div>
+<h2>渲染过程概览：可见性与着色</h2><p><b>阅读时间：11 分钟。</b></p><p>一幅三维场景的图像可以用多种方式生成，当然，无论选哪种方法，对同一个场景都应该产生同一幅图像。多数情况下，渲染的目标是做出照片级真实的图像，尽管非真实感渲染（NPR）也是可行的。但「照片级真实」究竟是什么意思，又该如何做到？从本质上说，照片级真实要求生成的图像「真」到像一张照片，或者——假如摄影术不曾存在——它会如实映照出我们眼睛所感知的现实，就像世界映在镜面上的倒影。要做到这一点，就得理解并模拟决定物体在我们眼中呈现何种样貌的物理定律。塑造我们世界的定律很多，但只有一部分直接影响世界的外观。例如重力——刚体模拟中不可或缺的一种力——对决定一个橙子长什么样几乎不起作用。因此在渲染中，我们关心的是模拟光在空间中传播并与物质相互作用的行为，这才是物体外观的根本。</p><h2>透视投影与可见性问题</h2><p>首先，我们必须理解并复现我们的眼睛感知物体的方式，重点不在物体的外观，而在其形状和大小相对于离眼睛远近的关系。人眼是一个光学系统，它把（从物体反射来的）光线汇聚到一个焦点上。</p><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/perspective1.png" alt=""><figcaption><b>图 1：</b>人眼是一个光学系统，它把（从物体反射来的）光线汇聚到一个焦点上。因此在几何构造上，离我们眼睛较远的物体看起来比近处的物体小。</figcaption></figure><p>由于几何构造，在假定所有物体大小相同的前提下，离眼睛较远的物体看起来比近处的物体小。换句话说，物体的表观尺寸随它离我们的距离增大而减小。这是我们眼睛构造的直接结果。然而，既然我们习惯以这种方式感知世界，用同样的效果来生成图像就是合乎逻辑的，这就是所谓的<b>透视缩短效应</b>。相机与摄影镜头正是为复现这一现象而设计的。所以照片级真实渲染不仅要模拟光相互作用的物理定律，还要模仿我们的视觉系统如何解读这些相互作用。我们的目标是在一个平面上生成图像，模仿图像在我们眼睛中形成的方式——这主要源于眼睛的构造（大脑对这些图像的处理，对我们的目的而言并不那么关键）。</p><p>这是怎么做到的？一种基本做法是：从物体的各个角向眼睛画线，找出这些线与一块想象中的画布——一个像纸面或屏幕那样、与视线垂直放置的平面——相交的位置（见图 2）。</p><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/perspective2.png" alt=""><figcaption><b>图 2：</b>要为这个盒子成像，我们从物体的各个角向眼睛画线。这些线与一个想象平面（画布）的交点随后被连接起来，重建出物体的棱。这就是透视投影的一个例子。</figcaption></figure><p>把这些交点连接起来，我们就能重建出物体的棱。刚才描述的、把三维点投影到画布表面上的过程，称为<b>透视投影</b>。图 3（此处未显示）本应说明用这种技术把盒子的像「描」到平面上（画布上）之后，盒子看起来是什么样。</p><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/perspective3.png?" alt=""><figcaption><b>图 3：</b>用透视投影生成立方体的图像。</figcaption></figure><p>这种渲染在计算机图形学中叫作线框，因为只画出了物体的棱。然而这幅图像并不是照片级真实的。如果盒子是不透明的，盒子的正面（最多三个面）应该遮挡或挡住背面，而在这幅图里并非如此。此外，如果场景里有更多物体，它们还可能彼此遮挡。因此，渲染中需要解决的挑战之一，不仅是如何把几何体投影到场景上，还包括如何判定几何体的哪一部分可见、哪一部分被挡住，这个概念称为可见性问题。它涉及确定哪些表面以及表面的哪些部分从某个视点看不见。这个过程在图形学里有很多名字：<b>隐面消除</b>、<b>隐面判定</b>（也叫隐面移除）、<b>遮挡剔除</b>，以及<b>可见面判定</b>。为什么有这么多名字？因为这是渲染中最早的重大挑战之一，在图形学早期引发了大量研究，产生了各种算法，也就有了不同的叫法。</p><p>可见性问题可以用许多不同的方法解决，大体上分为两大类：</p><ul><li><p>光栅化</p></li><li><p>光线追踪</p></li></ul><p>光栅化可能不是个常见的名字，但熟悉隐面消除算法的人会知道，这一类里包括 z 缓冲算法和画家算法等等。几乎所有显卡（GPU）都使用这一类中的某个算法，很可能就是 z 缓冲。两种方法都会在下一章详细讲。</p><h2>着色</h2><p>尽管我们还没有细讲可见性问题怎么解决，先假定我们已经知道如何用透视投影把三维场景压平到一个平面上，并判定几何体的哪一部分从某个视点可见。这是走向照片级真实图像的一大步，但还需要什么？物体不只由形状定义，也由外观定义。这不只是指它们在场景里看起来多大，还包括它们的样子、颜色、纹理以及有多亮。更进一步说，物体之所以被人眼看见，是因为光从它们表面弹开。那么如何定义物体的外观？外观可以由物体材质与光的相互作用方式来定义。光由光源（例如太阳、灯泡或烛火）发出，沿直线传播，直到碰到某个物体。在这里，它要么被物体吸收，要么被反射到环境中。光从物体表面反射出去后，会继续传播（方向可能不同），直到碰到另一个物体（重复这一过程），或者到达我们的眼睛（在那里被转换成送往大脑的电信号）。</p><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/lemon.png?" alt=""><figcaption><b>图 4：</b>物体在白光下呈黄色，是因为它吸收了大部分蓝光，反射了绿光和红光，两者混合形成黄色。</figcaption></figure><ul><li><p><b>吸收</b>赋予物体各自独特的颜色。白光由可见光谱中的所有颜色组成。白光打到物体上时，一些颜色被吸收，另一些被反射。这些被反射的颜色混合起来，就定义了物体的颜色。例如在阳光下，如果一个物体看起来是黄色的，说明它吸收了蓝光，反射了红光与绿光的组合，从而形成黄色。黑色物体吸收所有颜色的光，白色物体则反射所有颜色的光。物体的颜色是它所由构成的材质所特有的。</p></li><li><p><b>反射</b>：众所周知，物体会反射它不吸收的那些颜色的光，但这些光被反射的方向既简单又复杂。在物体层面，光的行为类似网球从坚硬表面弹开，沿一个绕撞击点处垂直于表面的向量翻转后的方向传播。在计算机图形学中，这个向量称为<b>法线</b>：出射方向是入射方向关于法线的<b>反射</b>。在原子层面，光子与原子相互作用时，可能被吸收，也可能沿一个新的随机方向被重新发射。这种重新发射称为<b>散射</b>。</p></li></ul><p>在计算机图形学（CG）中，我们通常不去模拟光与原子的相互作用，而是在物体层面模拟。然而这并不简单。计算网球弹起后新方向的数学或许简单，但现实是，微观层面上的表面通常并不平坦，导致光几乎沿随机方向弹开。在我们观察日常物体（如汽车、枕头或水果）的距离上，我们看不到它们的微观结构，尽管这种结构显著影响它们如何反射光，从而影响它们的外观。由于所需的几何量实在太大，在微观层面上表示物体并不现实。解决方案是建立一个数学模型，用来模拟微观层面上光与材质的相互作用，在 CG 中这体现为我们所说的<b>着色器</b>。着色器实现的就是一个旨在模拟微观层面光与物质相互作用的模型。</p><h2>光传输</h2><p>渲染主要是模拟光在空间中传播的方式。光从光源发出，在物体表面反射，其中一部分最终到达我们的眼睛。我们就是这样、也因此看见周围的物体。正如光线追踪入门中提到的，从光源向眼睛追踪光的路径效率很低。光子打到物体上后，经表面反射会走哪个方向是无法预测的。它可能朝眼睛飞去，但鉴于眼睛很小，更可能错过。模拟光按自然方式传输并非不可能（这种方法叫<b>正向追踪</b>），但由于效率低下，实践中很少这么做。</p><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/lighttransport.png?" alt=""><figcaption><b>图 5：</b>在现实世界里，光从光源（太阳、灯泡、烛火等）传到眼睛。这称为正向追踪（左）。然而在计算机图形学与渲染中，反过来模拟光的路径——从眼睛到物体再到光源——效率更高。这称为反向追踪。</figcaption></figure><p>更高效的解法是反向追踪光的路径，从眼睛追到光源。这种方法称为<b>反向追踪</b>，它沿光的自然路径反向前进。</p><p>正向追踪与反向追踪这两个术语在 CG 文献中有时会被互换使用。多数渲染器从眼睛向发光源追踪光。由于这是计算机图形学里的「默认」实现，有些人把它称为正向追踪。不过在 Scratchapixel 上，我们用「正向」表示光从光源到眼睛，用「反向」表示我们反向追踪它的路径。</p><p>渲染的精髓在于模拟光如何在空间中传播。这并非一个简单的挑战，原因不是我们缺乏理解，而是模拟自然的真实行为需要追踪的光子数量太多，生成一幅图像要花上不切实际的时间。因此在实践中，我们只追踪少得多的光子路径，把渲染时间控制在合理范围，尽管这意味着最终图像不如更彻底的模拟所能达到的那样精确。在照片级真实与渲染时间之间找到恰当的平衡，是有效渲染的关键。光传输算法就是为模拟光在空间中传播的方式而设计的，用来生成一幅尽可能贴近现实的三维场景图像。</p><p>光从漫反射表面弹开、照亮周围物体，这种效果称为<b>间接漫反射</b>。光也能从光滑物体上反射，形成焦散（迪斯科球效应）。不幸的是，设计一个能同时模拟所有这些效果的算法很有难度。通常必须分别模拟这些效果。</p><p>光传输是渲染的基石，也是一个研究领域很广的方向。</p><h2>小结</h2><p>本章我们学到，渲染基本上可以看作两步过程：</p><ul><li><p>一方面是透视投影与可见性问题，</p></li><li><p>另一方面是光的模拟（光传输）以及物体外观的模拟（着色）。</p></li></ul><details open><summary>你有没有听过 **图形或渲染管线** 这个术语？</summary><p>这个术语常在实时渲染 API（如 OpenGL、DirectX 或 Metal）的语境中使用。本章所讲的渲染过程至少可以分解为两个主要步骤：可见性与着色。然而其中每一步又都可以拆成更小的阶段（这才是更常见的说法）。这些阶段通常按顺序执行，每个阶段的输入都依赖前一个阶段的输出。这一连串阶段构成了所谓的渲染管线。</p></details><p>始终记住这个区分。学习某种具体技术时，试着判断它属于哪一个方面。本节（以及高级渲染部分）的大多数课程都落在其中某一类里。</p><h3> 投影/可见性问题：</h3><ul><li><p>透视投影矩阵</p></li><li><p>光线与相机</p></li><li><p>用光线追踪渲染三角形</p></li><li><p>用光线追踪渲染简单形状</p></li><li><p>用光线追踪渲染网格</p></li><li><p>用矩阵变换物体</p></li><li><p>渲染 Utah Teapot</p></li><li><p>光栅化算法</p></li><li><p>...</p></li></ul><h3> 光传输/着色：</h3><ul><li><p>渲染方程</p></li><li><p>光传输算法：例如路径追踪</p></li><li><p>面光源</p></li><li><p>纹理映射</p></li><li><p>运动模糊</p></li><li><p>景深</p></li><li><p>...</p></li></ul><p>这两个步骤我们会在接下来的几章里简要展开。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/rendering-3d-scene-overview/3d-rendering-overview.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/rendering-3d-scene-overview/3d-rendering-overview.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

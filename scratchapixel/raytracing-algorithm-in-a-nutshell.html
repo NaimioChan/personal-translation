@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光线追踪算法简述 - Scratchapixel 中文译本</title>
+<meta name="description" content="3D 计算机图形学入门：以光线追踪为例 · 光线追踪算法简述（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>光线追踪算法简述</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="how-does-it-work.html">它如何工作</a></li>
+<li><a style="font-weight:700" href="raytracing-algorithm-in-a-nutshell.html">光线追踪算法简述</a></li>
+<li><a href="implementing-the-raytracing-algorithm.html">实现光线追踪算法</a></li>
+<li><a href="adding-reflection-and-refraction.html">添加反射与折射</a></li>
+<li><a href="ray-tracing-practical-example.html">编写一个基础光线追踪器</a></li>
+</ol>
+</div>
+<h2>光线追踪算法简述</h2><p><b>阅读时间：8 分钟。</b></p><p>Ibn al-Haytham 的工作揭示了我们在视觉上看见物体的基本原理。从他的研究里可以得出两个关键观察：第一，没有光，什么都看不见；第二，没有可与之相互作用的物体，光本身对我们也是不可见的。在星系际空间穿行这类情形里，这一点很明显：那里没有物质，于是只有黑暗，尽管虚空中可能正有光子穿行（假使有光子，它们必然来自某个源头，而要看见它们，得有它们与我们的眼睛直接作用，从而把反射或发射它们的那个源头暴露出来）。</p><h2>正向追踪</h2><figure><img src="https://scratchapixel.com/images/introduction-to-ray-tracing/lighttoeyebounce.png" alt=""><figcaption><b>图 1：</b>光源发出的无数光子击中绿色球体，但只有一个会到达眼睛表面。</figcaption></figure><p>在图形学中模拟光与物体的相互作用时，还有一个物理概念需要弄清。物体反射出的无数条光线里，真正被人眼感知的只是极小一部分。设想一个假想光源，被设计成每次只发出一个光子。光子发出后沿直线行进，直到撞上某个物体的表面。假定没有吸收，光子随后朝一个看似随机的方向反射出去。如果这个光子到达了我们的眼睛，我们就能辨认出它在物体上的反射点（如图 1 所示）。</p><details open><p><i>你前面说过「被照亮的物体上每一点都向各个方向散出光线」。这跟反射是「随机」的说法怎么统一？</i></p><p>光从表面向各个方向反射的完整解释超出本课程的范围（详细讨论见讲光与物质相互作用的课程）。简答你的问题：既对也不对。光子在表面上的反射自然有确定的方向，由表面的微观结构和光子的入射角决定。物体表面在肉眼下可能显得平整均匀，放大到微观尺度却是一副复杂的地形。配图展示了纸在不同放大倍数下的样子，把这种微观结构显现出来。光子的尺度极小，因此是被表面上无数微观特征反射的。一束光打在漫反射物体上时，光子碰到的是这个微观结构的不同部位，朝众多方向散开——多到足以模拟出朝「一切可能方向」的反射。在模拟光子与表面的相互作用时，我们朝随机方向投射光线，这在统计意义上对应了全向反射的效果。</p><p>有些材质具有有组织的宏观结构，会把光的反射导向特定方向，这种现象叫作各向异性反射。它与蝴蝶翅膀上那种虹彩之类的特殊光学效果一样，源自材质的宏观结构，我们会在讲光与物质相互作用的课程里详细讨论。</p><figure><img src="https://scratchapixel.com/images/introduction-to-ray-tracing/paperstruct.png" alt=""></figure></details><p>在计算机图形学中，我们用一块由像素组成的图像平面取代眼睛。这里，光源发出的光子击中这块平面上的像素，把它们的亮度一点点加高。这个过程持续到所有像素都被调整到合适为止，最终生成一张计算机图像。这种方法叫作<b>正向光线追踪</b>，它追踪光子从源头到观察者的路径。</p><p>然而这种做法带来一个严重问题：</p><p>在我们的设想里，假定每个被反射的光子都会与眼睛表面相交。但既然光线朝一切可能方向散开，每一个真正到达眼睛的机会都极小。要让一个光子击中眼睛，就得从光源发出天文数字般多的光子。这与自然界的实情一致：无数光子以光速朝各个方向运动。从计算上看，在场景中模拟如此大规模的光子与物体相互作用是不现实的，这一点我们很快会展开。</p><p>有人会想：「既然知道眼睛在哪里，为什么不把光子直接朝眼睛送，看它们落在哪个像素上？」对某些类型的材质，这可以作为优化。后面我们会看到，在接触点法线周围的半球内朝各个方向反射光子的漫反射表面，并不需要方向上的精确性。但对于像镜面那样沿精确的镜像方向反射光线的表面（具体计算我们后面再讲），随意改变光子方向是行不通的，所以这个方案并不理想。</p><details open><p><i>眼睛只是一个点状接收器，还是有一定面积？即使很小，接收面也大于一个点，因此能从数不清的光线里捕获不止一条。</i></p><p>确实，眼睛的作用更像一个有面积的接收器，类似于相机里的胶片或 CCD，而不只是一个点状接收器。这篇光线追踪算法的入门不深入这一点。相机与眼睛一样，都用透镜把反射光聚焦到某个面上。如果透镜极小（现实并非如此），物体反射来的光就会被限制在一个方向上，这有点像针孔相机的工作方式，那是后面的话题。</p></details><p>即使只处理由漫反射物体构成的场景，用这种办法也有困难。想象把光源的光子投进场景，就像把颜料颗粒喷到物体表面上。喷洒的密度不够，照出来的结果就不均匀。</p><p>可以类比这样一个过程：拿一支白色马克笔在一张黑纸上点点，想把一个茶壶画出来，每个点代表一个光子。起初只有稀疏的几个光子打到茶壶上，大片区域还是空白的。点子越加越多，空隙被渐渐填满，茶壶也就越来越容易辨认。</p><figure><img src="https://scratchapixel.com/images/introduction-to-ray-tracing/teapotracing.gif" alt=""></figure><p>可是哪怕投出成千上万个光子，也无法保证把物体表面完全覆盖。这种方法固有的缺陷，使得我们只能让程序一直跑，直到主观上认为已经投够了光子、把物体描绘准确为止。这样一个需要不断盯着渲染过程的做法，在制作环境里是不现实的。光线追踪里的主要开销在于求光线与几何体的交点，不在于生成光子本身——而在于找出它们在场景中的全部交点，这极其耗费资源。</p><p>结论：<b>正向光线追踪</b>或者说<b>光追踪</b>，从光源投射光线，理论上能在计算机上复现自然的光照行为。但如前所述，这门技术既不高效，也不适合实际使用。图形学研究先驱 Turner Whitted 在 1980 年那篇奠基性论文《An Improved Illumination Model for Shaded Display》里批评了这种做法，他写道：</p><blockquote><p>一种显而易见的做法是从光源发出光线，追踪它们的路径直到击中观察者。由于只有少数光线会到达观察者，这种做法不够好。Appel 提出的第二种做法把光线朝相反方向追踪，从观察者投向场景中的物体。</p></blockquote><p>我们来看看 Whitted 提到的这条替代路线。</p><h2>反向追踪</h2><figure><img src="https://scratchapixel.com/images/introduction-to-ray-tracing/tracefromeyetolight.gif" alt=""><figcaption><b>图 2：</b>反向光线追踪。我们从眼睛向球体上的一点投射一条光线，再从该点向光源投射一条光线。</figcaption></figure><p>自然过程里光线从光源射向接收器（比如我们的眼睛），反向追踪则把这一流向倒过来，从接收器朝物体投射光线。这门技术叫<b>反向光线追踪</b>或<b>眼睛追踪</b>，因为光线从眼睛所在的位置出发（如图 2 所示），它有效解决了正向光线追踪的局限。既然无法在模拟中复现自然的效率与完美，我们折中处理：从眼睛向场景投射一条光线。光线击中物体后，我们再从接触点朝光源射出一条光线——称为光照光线或阴影光线——来评估该点接收到的光。如果这条「光照光线」被别的物体挡住，说明最初的接触点处在阴影里，接收不到光。所以这类光线更贴切的叫法是<b>阴影光线</b>。从眼睛（或相机）射进场景的第一条光线，在图形学文献里叫作<b>主光线</b>、<b>可见性光线</b>或<b>相机光线</b>。</p><details open><p>本课程里，正向追踪指从光源投射光线的方法，与之相对的是从相机投射光线的反向追踪。不过有些作者把这套术语反着用，因为路径追踪技术在 CG 里更常见，他们用正向追踪来指从相机发出的光线。为避免混淆，可以改用更明确的说法：光追踪与眼睛追踪，在讨论双向路径追踪时尤其如此（详见光传输一节）。</p></details><h2>小结</h2><p>在图形学里，从光源还是从眼睛投射光线这类技术，统称为<b>路径追踪</b>。光线追踪是同义的术语，但路径追踪强调的是方法上的实质：通过追踪光从源头到相机（或反向）的旅程来生成计算机图像。这种做法便于真实地模拟焦散、间接光照这类光学现象，也就是光在场景内部表面之间反射的情形。这些题目留待后续课程展开。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-ray-tracing/raytracing-algorithm-in-a-nutshell.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-to-ray-tracing/raytracing-algorithm-in-a-nutshell.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>透视投影 - Scratchapixel 中文译本</title>
+<meta name="description" content="渲染 3D 场景的图像 · 透视投影（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>透视投影</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="computer-discrete-raster.html">一切从计算机和显示器开始</a></li>
+<li><a href="rendering-3d-scene.html">接下来是一个 3D 场景</a></li>
+<li><a href="3d-rendering-overview.html">渲染过程概览：可见性与着色</a></li>
+<li><a style="font-weight:700" href="rendering-3d-scene-overview-perspective-projection.html">透视投影</a></li>
+<li><a href="visibility-problem.html">可见性问题</a></li>
+<li><a href="light-simulator.html">一个光模拟器</a></li>
+<li><a href="introduction-light-transport.html">光传输</a></li>
+<li><a href="introduction-shading.html">着色</a></li>
+<li><a href="summary-rendering.html">小结与关于渲染的其他考量</a></li>
+</ol>
+</div>
+<h2>透视投影</h2><p><b>阅读时间：9 分钟。</b></p><p>上一章我们说过，渲染过程可以看作两步：</p><ul><li><p>把三维形状投影到画布表面上，并确定这些表面中哪些部分从给定视点可见。</p></li><li><p>模拟光在空间中传播的方式；再结合对光如何与构成物体的材质相互作用的描述，就决定了这些物体最终的外观（颜色、亮度、纹理等等）。</p></li></ul><p>本章我们只专注于第一步，更详细地解释这两个问题（把物体的形状投影到画布表面上、以及可见性问题）各自通常是怎么解决的。解法可能有很多，我们只探讨最常见的那几种。这里只是一个概览。每种方法都会在单独的课程里研究，并给出这些算法的实现（放在一个自包含的 C++ 程序里）。</p><h2>从 3D 到 2D：投影矩阵</h2><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/perspective4.png?" alt=""><figcaption><b>图 1：</b>要为立方体成像，我们只需从物体的各个角向眼睛延长直线，并求出这些线与一个垂直于视线的平面（画布）的交点。</figcaption></figure><p>图像本质上就是三维场景在一个平面上的表示：画布或屏幕的表面。如上一章所述，要生成一幅在我们大脑看来真实的图像，就需要模拟世界的图像在我们的眼睛中是如何形成的。原理相当直接。我们只需从物体的各个角向眼睛延长直线，找出这些线与一个垂直于视线的平面的交点。把这些点连起来画出物体的棱，就得到场景的<b>线框</b>表示。</p><details open><summary>值得注意的是，这种构建图像的方法，某种意义上完全是一种把三维世界压平到二维表面上的任意做法。刚才描述的技术在绘画中称为单点透视投影，这也是 CG 中普遍采用的做法，因为它模仿了眼睛与相机的运作方式（相机本就是为生成与眼睛所成图像相似的画面而设计的）。不过在艺术世界里，创造力没有限制。例如，你可以创作多点透视（两点、三点、四点等）的图像。</summary></details><p>这类投影的一个关键视觉特征是：物体离眼睛越远，看起来就越小（盒子的后侧棱比前侧棱显得小）。这种效果称为<b>透视缩短</b>。</p><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/frustum2.png?" alt=""><figcaption><b>图 2：</b>视线穿过画布的中心。</figcaption></figure><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/frustum1.png?" alt=""><figcaption><b>图 3：</b>画布的大小可以改变，而它会影响视场角；把画布变小就减小了视场角。</figcaption></figure><p>关于这类投影，有两点值得注意。第一，眼睛位于画布的中心，也就是说视线总是穿过图像的中部（图 2）。同样关键的是要理解我们可以改变画布的大小。借助视锥体来说明，这个变化就更好理解了（图 3）。<b>视锥体</b>是从画布每个角向眼睛画线、并把这些线继续延伸进场景所构成的棱锥。它也叫观察视锥体或观察体。显然，只有处在这个棱锥体积内的物体才对相机可见。调整画布大小可以扩大或减小这个体积。体积越大，我们捕捉到的场景就越多。这一效果类似于改变摄影镜头的焦距。换个说法：改变画布大小就是改变视场角。</p><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/ortho.png?" alt=""><figcaption><b>图 4：</b>当画布变得无限小时，视锥体的各条线彼此平行，于是得到正交投影。游戏 SimCity 就采用了某种正交视图，这赋予了它独特的外观。</figcaption></figure><p>当画布缩小到无限小时会出现一个有趣的现象：构成视锥体的各条线变得平行（垂直于画布）。这在物理上不可能，但在计算的虚拟世界里是可行的。在这种情况下，得到的就是所谓的<b>正交投影</b>。值得注意的是，正交投影是透视投影的一种，只是画布大小实际上为零。这有效地消除了<b>透视缩短效应</b>，使物体各条棱投影到屏幕上时尺寸保持不变。</p><figure><img src="https://scratchapixel.com/images/rendering-3d-scene-overview/projection.png?" alt=""><figcaption><b>图 5：</b>P' 是 P 在画布上的投影。利用相似三角形的性质可以很容易地算出 P' 的坐标。</figcaption></figure><p>从几何上看，确定这些线与屏幕的交点非常直接。观察旁边的图（其中 P 是要投影到画布上的点，P' 是它的投影点），显然角 \\(\\angle ABC\\) 与 \\(\\angle AB'C'\\) 相等。这里 A 代表眼睛，AB 是到点 P 的沿 z 轴距离（P 的 z 坐标），BC 是到点 P 的沿 y 轴距离（P 的 y 坐标）。B'C' 表示 P' 的 y 坐标，AB' 表示 P' 的 z 坐标（也就是眼睛到画布的距离）。两个三角形若共有一个角，就称为<b>相似</b>。相似三角形有一个有趣的性质：对应边长度之比保持不变。应用这条原理，可以写出：</p><p>$${ BC \over AB } = { B'C' \over AB' }$$</p><p>假定画布位于离眼睛一个单位处（为简单起见，AB' 等于 1），并把 AB、BC、AB'、B'C' 换成各自的坐标，就得到：</p><p>$${ BC \over AB } = { B'C' \over 1 } \rightarrow P'.y = { P.y \over P.z }.$$</p><p>本质上，要确定投影点的 y 坐标，只需把该点的 y 坐标除以它的 z 坐标。同理，要确定 P' 的 x 坐标：</p><p>$$P'.x = { P.x \over P.z }.$$</p><p>这个关系称为<b>透视除法</b>或 z 除法，是计算机图形学的基础。如果你被困在荒岛上，只准记住一条计算机图形学原理，那大概就是这条公式。</p><p>在计算机图形学中，这个运算通常用一个所谓的<b>透视投影矩阵</b>来完成。这个矩阵作用在点上时，会把它们投影到屏幕上。下一课我们会深入这个矩阵的运作方式，解释它的机制以及如何构造和使用它。</p><p>不过，是否需要透视投影，取决于解决可见性问题所用的技术。正如我们会在本章第二部分看到的，处理可见性问题的算法分为两大类：</p><ul><li><p>光栅化</p></li><li><p>光线追踪</p></li></ul><p>第一类算法依靠把 \(P\) 投影到屏幕上来算出 \(P'\)。因此这类算法需要透视投影矩阵。在光线追踪中，我们不把几何体投影到屏幕上，而是追踪一条穿过 \(P'\) 的光线，去寻找 \(P\)。用这种办法不必投影 \(P\)，因为 \(P'\) 已知；所以严格说来，光线追踪并不需要透视投影（因此也从不用它）。</p><details open><summary>这两种算法我们会在接下来的章节和课程里详细研究。但现在就理解它们的区别以及各自如何工作是重要的。如前所述，要把几何体投影到画布表面，就是让 \(P\) 沿一条「隐式」直线（说隐式，是因为像在光线追踪里那样，我们其实从不需要真正构造这条线）投影，这条线连接 \(P\) 与眼睛。你可以把这个过程想象成让一个点沿那条线从 \(P\) 移向眼睛，直到它落在画布上。这个点就是 \(P'\)。在这种做法里，你知道 \(P\)，而 \(P'\) 未知，它由投影方法算出来。反过来，你也可以从另一个角度看这个问题。对画布上的任意一点（比如 \(P'\)——默认我们会假定它位于像素中心），几何体表面上可能存在一个点 \(P\) 投影到 \(P'\) 上。这个问题的解法是显式地从眼睛向 \(P'\) 构造一条光线，把这条光线延伸或投影进场景，再判断它是否与任何三维几何体相交。若发生相交，交点就是 \(P\)。这番解释应该有助于弄清光栅化（已知 \(P\)，算出 \(P'\)）与光线追踪（已知 \(P'\)，寻找 \(P\)）之间的区别。</summary></details><p>光栅化相对于光线追踪的优势主要在于速度。计算光线与几何体的交点是计算量很大的操作。这个求交时间还会随场景中几何体数量线性增长，我们会在后续一课中讨论。反过来，投影过程极其直接，只基于基本数学运算（乘法、除法等），可以大幅优化（尤其在 GPU 这类专用硬件上）。显卡主要使用基于光栅化思路的算法（这也是它们能如此快速地以交互帧率渲染三维场景的原因之一）。使用 OpenGL 或 DirectX 这类实时渲染 API 时，就必须处理投影矩阵。即便你只对光线追踪感兴趣，理解投影矩阵也是有价值的，出于历史原因：它是渲染中的一项关键技术，也是生成实时三维计算机图形最常见的方法。此外，你很可能要与 GPU 和实时渲染 API 打交道，而它们不会替你算这个矩阵，所以你得自己算。</p><details open><summary>光栅化的概念在渲染中至关重要。正如本章所学，把 \(P\) 投影到屏幕上，就是把该点的 \(x\) 和 \(y\) 坐标除以它的 \(z\) 坐标。一开始所有坐标都是实数——比如浮点数——也就是说 \(P'\) 坐标也是实数。但像素坐标必须是整数。因此，要把 \(P'\) 的颜色存进图像，就得把它的坐标转换成像素坐标——从浮点数变成整数。这个过程叫作把点的坐标从屏幕空间转换到光栅空间。关于这一过程的更多信息，会在讲光线与相机的课程里给出。</summary></details><p>接下来的课程将专门研究正交矩阵与透视矩阵的构造，以及如何在 OpenGL 中用它们显示图像和三维几何体。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/rendering-3d-scene-overview/perspective-projection.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/rendering-3d-scene-overview/perspective-projection.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

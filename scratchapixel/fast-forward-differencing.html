@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>前向差分法 - Scratchapixel 中文译本</title>
+<meta name="description" content="贝塞尔曲线与曲面 · 前向差分法（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>前向差分法</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="bezier-curve.html">贝塞尔曲线</a></li>
+<li><a href="bezier-surface.html">贝塞尔曲面</a></li>
+<li><a style="font-weight:700" href="fast-forward-differencing.html">前向差分法</a></li>
+<li><a href="bezier-patch-normal.html">计算贝塞尔曲面的法线</a></li>
+<li><a href="curves-as-geometry.html">把曲线作为几何体渲染：毛发渲染</a></li>
+</ol>
+</div>
+<h2>前向差分法</h2><p><b>阅读时间：27 分钟。</b></p><h2>引言</h2><p>这一章涉及的数学概念比其他各章更进阶，通常会被放进进阶部分。如果你不感兴趣，完全可以跳过。不过我们希望初学者能从中看到几件威力强大的数学工具与技术的极佳入门，这些在计算机图形学里会经常见到。</p><h2>泰勒级数</h2><p>回忆第 1 章：贝塞尔曲线可以看成若干多项式之和。把这个想法推广，可以写出下面的公式（公式 1）：</p><p>$$f(x) = a_0 + a_1x + a_2x^2 + a_3x^3 + a_4x^4 + ... = \sum_{n=0}^\infty c_n x^n$$</p><p>其中 n 定义函数的次数。对三次贝塞尔曲线而言 n = 3。不过我们不必过多纠缠它与贝塞尔例子的关系，尽量让这一推导保持一般性。数学上，这个求和称为关于一个变量 x 的<b>幂级数</b>。</p><p>f(x) 的幂级数展开可以逐项求导，得到的级数是 f′( x) 的一个有效表示（公式 2）：</p><p>$$f'(x) = a_1 + 2a_2x + 3a_3x^2+ 4a_4x^3 + ... = \sum_{n=1}^\infty nc_n x^{n-1}$$</p><details open><p>快速重温一下本章会用到的记号。n! 表示 n 的阶乘，\(f^{(n)}(x)\) 表示 f 在点 x 处求值的 n 阶导数。零阶导数 f 就是 f 本身，且 \((x − a)^0\) 与 0! 都约定为 1。</p></details><p>再求一次导，得到（公式 3）：</p><p>$$f''(x) = 2a_2 + 6a_3x+ 12a_4x^2 + ... = \sum_{n=2}^\infty n(n-1)c_n x^{n-2}$$</p><p>依此类推。现在设想把 f(x)、f'(x) 与 f''(x) 中的 x 换成 0：</p><p>$$\begin{array}{l}x=0 \text{ in equation 1 yields } a_0 = f(0) \\x=0 \text{ in equation 2 yields } a_1 = f'(0)\\x=0 \text{ in equation 3 yields } a_2 = {f''(0) \over 2}\end{array}$$</p><p>一般地，在 f 的 n 阶导数的幂级数展开中令 x = 0，得到：</p><p>$$c_n = {{f^{(n)}(0)} \over {n!}}$$</p><p>这些称为 f 的<b>泰勒系数</b>，而由此得到的幂级数：</p><p>$$\sum_{n=0}^\infty {{f^{(n)}(0)} \over {n!}}x^n,$$</p><p>称为函数 f 的<b>泰勒级数</b>。这能怎么帮到我们？对某些函数来说，这个泰勒级数有一个了不起的性质：它收敛到原函数 f(x)。也就是：</p><p>$$f(x) = \sum_{n=0}^\infty {{f^{(n)}(0)} \over {n!}}x^n$$</p><p>如果这个等式对 0 的某个邻域（某个区间）内的所有 x 都成立，就说函数 f 在 0 处解析。更一般地，如果把 f 在点 x = x0 处展开成泰勒级数：</p><p>$$\sum_{n=0}^\infty {{f^{(n)}(x_0)} \over {n!}}(x-x_0)^n$$</p><p>且这个级数在 x0 的某个邻域内对所有 x 都收敛到 f(x)，就说 f 在 x0 处解析。</p><h2>向前推进</h2><p>这一章叫前向差分法。那么「前向差分」这个词从哪来，它与泰勒级数又是什么关系？这里不展开太多细节，先回忆一下：函数在 x 处的导数，可以通过在函数图像上取两个点——一个在 x，一个在 x + h——再作一条过这两点的直线来算。这只是对这个叫做<b>前向差分近似</b>的数学概念的一种图解式理解，它可以推广成下面的公式（公式 4）：</p><p>$$f'(x) = \lim_{h \to 0}{ { F(x + h) - F(x) } \over h }$$</p><p>值 h（通常很小）表示两个采样点在 x 上的差（在我们的例子里就是图 1 中的情形）。</p><figure><img src="https://scratchapixel.com/images/bezier/derivative.gif?" alt=""><figcaption><b>图 1：</b>可以把导数理解为切线的斜率。用前向差分可以近似这个导数。h 减小时，对导数的估计变得更准确。这个例子里，黑线是 f(x) 真正的切线，蓝线是用前向差分在两个不同的 h 值下得到的近似切线。</figcaption></figure><p>这到底意味着什么？如图 1 所示，用这种方法得到的直线近似于 x 处期望的导数。这个近似的误差取决于 h：随着 h 减小（趋向极限 0），对导数的近似会越来越接近期望的解（图 1）。不过在进一步讨论这个近似与期望解之间差值的大小之前，先提一下：把前一个公式的项移项整理，就能算出曲线上下一个位置 f(x + h)：</p><p>$$f(x + h) \approx f(x) + hf'(x)$$</p><p>这是一个关键公式，它说的是：曲线上 x + h 处的点，可以用「函数在 x 处的值」加上「f 在 x 处的一阶导数乘以 h」来近似。</p><p>现在回到这个近似问题。公式 4 可以写成：</p><p>$$f'(x) = { { f(x + h) - f(x) } \over h } + \text{ term which goes to 0 as } h \rightarrow 0$$</p><p>换句话说，函数 f 导数的期望解可以看成一个近似值加一个可视为该近似误差的值。当 h 趋于 0 时，近似收敛到期望解，误差项也趋于 0。于是我们可以在 h 的大小与这个误差的大小之间建立直接联系。可以写成：</p><p>$$O(h) \equiv \text{ terms of the form } h \times \text{ something. }$$</p><p>其中 \(O(h)\) 是表示近似误差的记号。所以：</p><p>$$f'(x) = { { f(x + h) - f(x) } \over h } + O(h)$$</p><p>把这个公式乘以 h，得到：</p><p>$$hf'(x) = { f(x + h) - f(x) }+ O(h^2)$$</p><p>再整理各项，得到：</p><p>$$f(x+h) = f(x) + hf'(x) + O(h^2)$$</p><p>// 解释为什么 O(h) 的符号不变</p><p>这就是二阶泰勒展开。注意当 \(h\) 很小时（例如 \(h = 0.1\)），\(h^2\) 更小（\(h^2 = 0.01\)）。这个展开可以取任意多项（公式 5）：</p><p>$$f(a + h) = f(a) + f'(a)h + f''(a) { {h^2} \over {2!} } + ... + f^{ (n) }(a){ {h^n} \over {n!}} + O(h^{n+1})$$</p><p>其中 \(f^{(k)}\) 是 f 的 k 阶导数。当 a = 0 时，这个展开也叫<b>麦克劳林展开</b>（n + 1 的值定义这个泰勒级数的阶）。用的项越多，误差越小。</p><details open><p>为完整起见，再提两种计算这个近似的方法：后向近似与中心近似（本章只用前向差分近似）。它们分别是：</p><p>$$
+\begin{array}{l} 
+f'(x) = \dfrac{F(x) - F(x - h)}{h} + O(h) \\
+f'(x) = \dfrac{F(x + h) - F(x - h)}{2h} + O(h^2)
+\end{array}
+$$</p></details><p>到这里，希望你已经明白我们要往哪走，以及这些技术如何用来计算贝塞尔曲线上的位置。公式 5 说，函数 f 在 a + h 处的值可以用泰勒级数近似（我们会用这个思路，在参数值 t 递增时求贝塞尔曲线上的位置），而这个近似的误差取决于级数里用到的项数。项数增加，误差减小；h 增大，误差增大。理论部分就是这些。接下来我们会说明，用于计算贝塞尔曲线上位置的公式属于这样一类函数：其泰勒级数收敛到函数 f 本身。换句话说（这里用 a = 0 的麦克劳林展开）：</p><p>$$f(x) = \sum_{n=0}^\infty {{f^{(n)}(0)} \over {n!}}x^n,$$</p><p>对贝塞尔曲线计算中用的多项式成立。更进一步，我们会说明用于计算这些多项式的泰勒级数项数是有限的（即 \(O(h^n) = 0\) 项）。实际意义是：用泰勒级数计算贝塞尔曲线上的位置，得到的不是近似值，而是期望的解本身。</p><h2>把贝塞尔曲线看作泰勒级数</h2><p>如前面所说，用于计算贝塞尔曲线与曲面的那些多项式处处解析（这正是能用泰勒级数代替函数 f 的条件）。我们可以用泰勒级数而不是直接计算伯恩斯坦多项式，来求贝塞尔曲线上点的位置。回忆一下用来计算这些位置的公式：</p><p>$$B(x) = P_0(1-x)^3 + P_13(1-x)^2x + P_23(1-x)x^2 + P_3x^3$$</p><p>把它推广（公式 6）：</p><p>$$B(x) = P_0 * B_0(x) + P_1 * B_1(x) + P_2 * B_2(x) + P_3 * B_3(x)$$</p><p>其中 \(P_0, P_1, P_2, P_3\) 是曲线的控制点，\(B_0, B_1, B_2, B_3\) 是伯恩斯坦多项式：</p><p>$$B_{i,n}(x) = \left( \begin{array}{c}n \\ i \end{array} \right)x^i(1-x)^{n-i}, \; i=0,...,n.$$</p><p>对三次贝塞尔曲线，n = 3，四个系数是：</p><p>$$\begin{array}{l} B_{0,3}=(1-x)^3,\\ B_{1,3}=3x(1-x)^2,\\ B_{2,3}=3x^2(1-x)x,\\ B_{3,3}= x^3\end{array}$$</p><p>如果试着把公式 6 改写成类似公式 1 的形式，就有：</p><p>$$\begin{split}B(x) = &a_0 B_{0,3}(x) + a_1 B_{1,3}(x) + a_2 B_{2,3}(x) + a_3 B_{3,3}(x) = \\& \sum_{i=0}^{n=3}a_i B_{i,n}\end{split}$$</p><p>因此用于贝塞尔曲线的公式可以看作一个幂级数；又因为 \(B_{i,3}\) 这些项是多项式，我们可以用泰勒级数来计算它：</p><p>$$B(x) \rightarrow \sum_{i=0}^{n=3} { {a_iB^ {(i)} (0) } \over {i!} }(x)^i$$</p><p>泰勒级数建立在函数 f(x)（这里即 \(f(x)=B_{i,3}(x)\)）的一阶、二阶……导数之上，因此要用这个方法，我们接下来需要学会计算伯恩斯坦多项式的导数。</p><h2>伯恩斯坦多项式的导数</h2><p>n 次伯恩斯坦多项式的导数是 n − 1 次多项式。这个导数可以写成伯恩斯坦多项式的线性组合。具体地（公式 7）：</p><p>$${ d \over dx } B_{i,n}= n(B_{i-1, n-1}(x) - B_{i, n-1}(x))dx$$</p><p>可以这样读：伯恩斯坦多项式的导数，等于该多项式的次数（n）乘以两个 n−1 次伯恩斯坦多项式之差。</p><details open><p>函数 \((1-x)^n\) 的导数是 \(-n(1-x)^{n-1}\)，而伯恩斯坦多项式（这里先略去二项式系数）\(B_{i,n}=x^i(1-x)^{n-i}\) 可以看成两个函数之积：\(x^i\) 与 \((1-x)^{n-1}\)。要求两个（或更多）函数之积的导数，需要用乘积法则。法则说：</p><p>$$(f.g)' = f'.g + f.g'$$</p><p>因此伯恩斯坦多项式的导数可以写成：</p><p>$${B'}_{i,n} = (x^i . (1-x)^{n-i})'=ix^{i-1}.(1-x)^{n-i} + (-n(1-x)^{n-i-1}x^i)$$</p><p>把二项式系数放回去：</p><p>$${B'}_{i,n} = \left(\begin{array}{c}n\\i \end{array}\right) (ix^{i-1}.(1-x)^{n-i} - n(1-x)^{n-i-1}x^i)$$</p><p>展开这个式子并整理各项，就得到公式 7。</p></details><p>用公式 7 计算这些导数很轻松。为方便起见，再把前几个伯恩斯坦基多项式写一遍：</p><p>$$
+\begin{array}{l} B_{0,0}(x) = 1, \\
+B_{0,1}(x) = 1 - x, & B_{1,1}(x) = x \\
+B_{0,2}(x) = (1 - x)^2, & B_{1,2}(x) = 2x(1 - x), & B_{2,2}(x) = x^2 \\
+B_{0,3}(x) = (1 - x)^3, & B_{1,3}(x) = 3x(1 - x)^2, & \rightarrow \\ \rightarrow B_{2,3}(x) = 3x^2(1 - x), & B_{3,3}(x) = x^3  \\
+\end{array}
+$$</p><p>例如 \(B_{i=0,n=3}\) 的导数是：</p><p>$${B'}_{i=0,n=3} = 3({B_{-1,2}} - B_{0, 2}) = 3(0 - (1-x)^2) = 3(1-x)^2$$</p><p>现在数学工具都齐了，可以用这些技术来计算贝塞尔曲线。</p><h2>应用到贝塞尔曲面</h2><p>现在可以把这些技术用来求贝塞尔曲线或曲面的值。回忆第 1 章：这些曲线可以用下面的公式算出来：</p><p>$$B(x) = P_0 (1-x)^3 + P_1 3 (1-x)^2x + P_2 3(1-x)x^2 + P_3 x^3$$</p><p>其中 \(P_0, P_1, P_2, P_3\) 是曲线的控制点，其余各项是伯恩斯坦多项式。可以把这些公式改写成：</p><p>$$B(x) = P_0 B_{0,3} + P_1 B_{1,3} + P_2 B_{2,3} + P_3 B_{3,3}$$</p><p>而本章开头我们已说明，它也可以表达成泰勒级数：</p><p>$$\begin{split}B(x) \rightarrow &\sum_{i=0}^{n=3} { {B^ {(i)} (0) } \over {i!}}(x)^i = \\&B'(0) + B''(0)x + {B'''(0) \over 2}x^2 + {B'''(0) \over 6}x^3 \end{split}$$</p><p>要用泰勒级数计算 B(x)，需要算出 B(x) 的一阶、二阶与三阶导数。所幸我们算的是三次曲线，四阶导数（以及之后所有导数）都是 0（若 f(x)=x^3，则 f'(x)=3x^2，f''(x)=6x，f'''(x)=6，f''''(x) = 0）。因此我们只关心这个函数的前三阶导数：B'(0)、B''(0) 与 B'''(0)，泰勒级数里用的就是它们。记得本章前面提过：用泰勒级数求贝塞尔曲线上的位置，得到的不是近似值，而是精确解。为什么？因为正如刚才所说，泰勒级数可以展开成有限项 B'(0)、B''(0) 与 P'''(0)，这使级数里的误差项 \(O(h^n)\) 降为 0。这个细节很关键。利用已学到的伯恩斯坦多项式导数的算法，我们可以写出：</p><p>$$
+\begin{array}{l} B(0) = P_0\\B'(0) = 3P_1 - 3P_0 \\ B''(0) = 6P_0 - 12P_1 + 6P_2 \\ B'''(0) = -6P_0 + 18P_1 - 18P_2 + 6P_3\end{array}
+$$</p><details open><p>若 \(B(x) = a_0 B_{0,3} +  a_1 B_{1,3} +  a_2 B_{2,3} +  a_3 B_{3,3}\)，则（用我们学到的伯恩斯坦多项式导数的知识）：</p><p>$$\begin{split} B'(x) &=  a_0 3(-(1-x)^2) + a_1 3((1-x)^2 - 2x(1-x)) +\\&a_2 3(2x(1-x) - x^2) + a_33(x^2)\end{split}$$</p><p>以及</p><p>$$B'(0) = a_0 -3 + a_1 3 + 0 + 0 = 3 a_1 -3 a_0$$</p><p>从 B'(x) 很容易求出 B''(x)（记得 (f.g)' = f'g + g'f，因此若 \(g(x)= 2x(1-x)\)，则 \(g'(x)=2(1-x) + 2x*-1\)：</p><p>$$\begin{split} B''(x) &=  a_0 3(- -2(1-x)) + \\&a_1 3(-2(1-x) - (2(1-x) + 2x*-1)) +\\&a_2 3 ((2(1-x) + 2x*-1) - 2x) + a_33(2x)\end{split}$$</p><p>以及</p><p>$$\begin{split}B''(0) &= a_0 3(2) + a_13(-2 -2) + a_2 3(2) + a_3 3(0) = \\&6 a_0 - 12 a_1 + 6 a_2\end{split}$$</p><p>最后，从 B''(x) 求 B'''(x)：</p><p>$$\begin{split}  B'''(x) &= \\&a_0 3(2*-1) + a_13(2 - (-2 - 2)) + a_23((-2 - 2) -2) + a_3 3(2) \\&= -6a_0 + 18a_1 - 18a_2 + 6 a_3\end{split}$$</p></details><p>剩下要做的，就是把这些导数代进泰勒级数公式（公式 8）：</p><p>$$B(x) = B(0) + B'(0) x + {{B''(0) x^2} \over 2} + {{B'''(0) x^3} \over 6}$$</p><p>这里那个 x 就是我们一直用来计算曲线上位置的参数值 t。这个公式可以用下面的伪代码实现：</p><pre><code>
+point P[4] = { ... }; // 控制点
+point b0 = P[0]; // 初始化 p0、pd0、pdd0 与 pddd0
+point bd0 = 3 * P[1] - 3 * P[0]; 
+point bdd0 = 6 * P[0] - 12 * P[1] + 6 * P[2];
+point bddd0 = -6 * P[0] + 18 * P[1] - 18 * P[2] + 6 * P[3];
+int nsegs = 10; // 我们要在曲线上计算的点数
+float x = 0;
+float dx = 1 / nsegs;
+for (int i = 0; i &lt;= nsegs; ++i) {
+   P_on_curve = b0 + bd0 * x + bdd0 * x * x / 2 + bddd0 * x * x * x / 6;
+   x += dx;
+}
+</code></pre><p>你可能仍会疑惑：既然直接算伯恩斯坦多项式看起来更简单，为什么还要用公式 8 算 B(x)？不过从计算的角度看，公式 8 有一个有意思的特点，正如上面的伪代码所示：一旦算出 P(0)、P'(0)、P''(0) 与 P'''(0)（代码第 2-5 行），这些值就可以复用来算出曲线上任意多个点，只需让 t 从 0 递增到 1（第 10 行）。如果一次要算很多点，这项技术可能比直接算伯恩斯坦多项式更高效。</p><p>不过，公式目前的形式仍然需要乘以 x。我们可以改写公式 8，把这步乘法藏掉（公式 9）：</p><p>$$B(x) = B(0) + Bd + { Bdd \over 2 } + { Bddd \over 6 },$$</p><p>其中</p><p>$$
+\left\{
+\begin{array}{l}
+Bd  &=& B'(0)x,\\
+Bdd &=& {{B''(0) x^2} },\\
+Bdd &=& {{B'''(0) x^3} }
+\end{array}
+\right.
+$$</p><p>这是一个技巧，但如果能只用加法与除法算出 B(x)，代码会跑得更快。怎么让这个技巧奏效？首先必须理解：前一种技术（上面的伪代码）可以算曲线在 [0,1] 区间内任意 x（或者沿用上一章的记号，\(t\)）处的点。曲线上的值是用函数在 x = 0 处的值、以及它一阶、二阶、三阶导数的值算出来的（记得我们用的是麦克劳林级数）。凭直觉，你可以把它看成围绕 f(0) 为大于 0 的 x 求点。用公式 8，我们不一定非得按顺序求曲线上的点。可以在 [0,1] 区间内随便取一个 x，都能算。而公式 9 虽有解，但前提是 t 从 0 到 1 均匀变化（换个说法：与公式 8 相反，我们没法用公式 9 去算 x 不连续、间隔不均匀时曲线上的点）。这个约束，就是为了得到比公式 8 直白实现更快的解法所付出的代价。这次我们用泰勒级数的一般形式（公式 10）：</p><p>$$f(x + h) = f(x) + f'(x)h + {{f''(x)h^2} \over 2} + {{f'''(x)h^3} \over 6} $$</p><p>与麦克劳林级数的差别在于，f(x+h) 的计算现在依赖 f(x)。我们可以先算出曲线在 f(0) 处的点；例如把 x 递增 \(\Delta x\)，把 f(0+\(\Delta x\)) 算成 f(0) 加泰勒展开的其余各项。这个过程可以在循环里重复，从而按 x 单调递增的顺序算出一系列点：</p><pre><code>
+f(x) = f(0);
+h = 1 / niter; // 本例中 x 从 0 到 1，但并非必须如此
+for (int i = 0; i &lt; niter; ++i) {
+    // 计算 f(x) 附近的一个点
+    f(x + h) = f(x) + f'(x) * h + f''(x) * h^2 / 2 + f'''(x) * h^3 / 6;
+    // 新的点成为 f(x)
+    f(x) = f(x + h);
+    x += h; // 更新 x 的当前值
+}
+</code></pre><p>为了让后面的推导更容易理解，设想你要用泰勒级数方法计算函数 f(x) = 2x + 1 的一系列值：</p><p>$$f(x + h) = f(x) + f'(x)h = f(x) + 2 * h$$</p><p>这个函数可以用下面的伪代码实现：</p><pre><code>
+float h = 1 / niter;
+float fd = 2;
+for (int i = 0; i &lt;= niter; ++i) {
+    f(x + h) = f(x) + fd * h;
+    f(x) = f(x + h);
+    x += h;
+}
+</code></pre><p>不过，计算 f(x + h) 要一次加法加一次乘法（fd * h）。要去掉这次乘法，可以把 2h 的结果存进一个变量，再把该变量加到 f(x) 上：</p><pre><code>
+float h = 1 / niter;
+float fdh = 2 * h;
+f(x) = 0; // 第一个值
+for (int i = 1; i &lt;= niter; ++i) {
+    f(x + h) = f(x) + fdh;
+    f(x) = f(x + h);
+    x += h;
+}
+</code></pre><p>然而这个技巧之所以成立，只是因为 h 是常数；换句话说，因为 x 是按固定步长递增的。如果这个限制不成问题，那么这样算 f(x+h) 比含乘法的做法更快。</p><p>把这些技术用到贝塞尔曲线上。我们要在循环里计算公式 10，沿贝塞尔曲线算出一系列点，其中 x（也就是参数值 t）以固定步长从 0 递增到 1。再把公式 10 写一遍。</p><p>$$f(x + h) = f(x) + f'(x)h + {{f''(x)h^2} \over 2} + {{f'''(x)h^3} \over 6}$$</p><p>这个步长的大小由曲线上需要的点总数决定（点总数也决定了循环迭代的次数）：</p><p>$$h = { 1 \over npoints} $$</p><p>先看公式 10 里函数 f 的一阶导数：</p><p>$$f(x + h) = f(x) + \color{ \red }{ f'(x)h } + {{f''(x)h^2} \over 2} + {{f'''(x)h^3} \over 6} $$</p><p>务必记住：循环迭代时 x 在增大。因此 f'(x) 的值随 x 增大而变化，每次迭代都要为 f' 算出下一个点 x + h。对 f 成立的做法对 f' 同样成立，因为两者都是多项式。所以也可以像对 f 那样，用泰勒级数来计算 f'（公式 11）：</p><p>$$\color{\red}{f'(x + h) = f'(x) } + \color{\green}{f''(x)h + {f''(x) h^2\over 2}}$$</p><p>这个公式里你要看到的是：f'(x + h) 只依赖 f'(x)（红色文字）。当然公式里还有 f'' 与 f'''（绿色文字），它们都与 h 相乘，但先不管它们。只要能给 f' 在 x = 0 处找到一个初值，循环里的下一个点 f'(x=0 + h) 就可以用 f'(0) 加另外一些项算出来。再下一个点可以算成 f'(x=h + h) = f'(x=h) 加另外一些项，依此类推。注意计算 f'(x+h) 只需要加法。最后的障碍是公式 10 里 f'(x) 与 h 的相乘。但注意如果：</p><p>$$f'(x + h) = f'(x) + ...$$</p><p>那么同样地：</p><p>$$f'(x + h) h = f'(x) h + ( ... ) h$$</p><p>两边同乘 h 不改变等式的成立。因此可以在循环里把 f'(x+h)h 算成 f'(x)h 的累加。写点伪代码说明这个思路：</p><pre><code>
+float h = 1 / niter;
+// 计算 f' * h 的初值
+fph = fp(0) * h; // f'(0) 乘以 h 
+for (int i = 1; i &lt;= niter; ++i) {
+    // 计算 f'(x + h)h = f'(x)h + ( ... )h
+    fph = fph + ( ... ) * h;
+}
+</code></pre><p>把我们在公式 10 里学到的关于 f'(x)h 的计算加进来，现在就可以只用加法在循环里算出 f(x + h) 与 f'(x + h)h（如果忽略用 ... 表示的项）：</p><pre><code>
+float h = 1 / niter;
+// 计算 f 的初值
+f = f(0);
+// 计算 f' * h 的初值
+fph = fp(0) * h; // f'(0) 乘以 h 
+for (int i = 1; i &lt;= niter; ++i) {
+    // 计算 f(x + h) = f(x) + f'(x)h + ...
+    f = f + fph + ...;
+ 
+    // 接着计算 f'(x + h)h = f'(x)h + ( ... )h
+    fph = fph + ( ... ) * h;
+}
+</code></pre><p>同样的方法可以用到 f 与 f' 的泰勒级数中 f'' 的计算上。f''(x + h) 可以用另一个泰勒级数算出（公式 12）：</p><p>$$f''(x + h) = f''(x) + f'''(x) h$$</p><p>在公式 10 里，f''(x) 乘以 \(h^2\)，但如果：</p><p>$$f''(x + h) = f''(x) + f'''(x) h$$</p><p>那么</p><p>$$f''(x + h) h^2 = f''(x) h^2 + ( f'''(x) h ) h^2$$</p><p>记住 f'' 用于计算 f（公式 10）与 f'（公式 11）。在公式 10 里 f'' 要除以二。加上 f'' 之后的伪代码是：</p><pre><code>
+float h = 1 / niter;
+// 计算 f 的初值
+f = f(0);
+// 计算 f' * h 的初值
+fph = fp(0) * h; // f'(0) 乘以 h 
+// 计算 f'' * h * h 的初值
+fpphh = fpp(0) * h * h;
+for (int i = 1; i &lt;= niter; ++i) {
+    // 计算 f(x + h) = f(x) + f'(x)h + f''(x)h^2 / 2 + ...
+    f = f + fph + fpphh / 2 + ...;
+ 
+    // 计算 f'(x + h)h = f'(x)h + (f''(x)h + ... )h
+    fph = fph + fpphh + ...;
+ 
+    // 计算 f''(x + h)h^2 = f''(x)h^2 + ( f'''(x)h ) h^2
+    fpphh = fpphh + ...;
+}
+</code></pre><p>循环里最后一个要更新的项是 f'''（在公式 10 里乘以 h^3），它出现在 f、f' 与 f'' 的泰勒级数中。但它是一个常数（三次函数的三阶导数是常数项），因此它的值不随 x 增大而变化。F''' 在公式 10（f）里除以 6，在公式 11（f'）里除以 2，公式 12（f''）里也用到。下面是伪代码的最终版本：</p><pre><code>
+float h = 1 / niter;
+// 计算 f 的初值
+f = f(0);
+// 计算 f' * h 的初值
+fph = fp(0) * h; // f'(0) 乘以 h 
+// 计算 f'' * h * h 的初值
+fpphh = fpp(0) * h * h;
+// 计算 f''' * h * h * h 的初值
+fppphhh = fppp(0) * h * h * h;
+for (int i = 1; i &lt;= niter; ++i) {
+    // 计算 f(x + h) = f(x) + f'(x)h + f''(x)h^2 / 2 + f'''(x)h^3 / 6;
+    f = f + fph + fpphh / 2 + fppphhh / 6;
+ 
+    // 计算 f'(x + h)h = f'(x)h + (f''(x)h/2 + ... )h
+    fph = fph + fpphh + fppphhh / 2;
+ 
+    // 计算 f''(x + h)h^2 = f''(x)h^2 + (f'''(x)h/2)h^2;
+    fpphh = fpphh + fppphhh;
+}
+</code></pre><p>把这项技术用到贝塞尔曲线，就需要用 \(B(0)\)、\(B'(0)\)、\(B''(0)\) 与 \(B'''(0)\) 的值算出 f、fph、fpphh 与 fppphhh 的初值，并把 \(B'(0)\) 乘以 \(h\)、\(B''(0)\) 乘以 \(h^2\)、\(B'''(0)\) 乘以 \(h^3\)：</p><pre><code>
+float h = 1 / nsegs; // 固定步长
+point P[4] = { ... }; // 控制点
+// 计算 f、fph、fpphh 与 fppphhh 的初值
+point f = P[0]; // B(0)
+point fph = (3 * P[1] - 3 * P[0]) * h; // B'(0)h
+point fpphh = (6 * P[0] - 12 * P[1] + 6 * P[2]) * h * h; // B''(0)h^2
+point fppphhh = (-6 * P[0] + 18 * P[1] - 18 * P[2] + 6 * P[3]) * h * h * h; // B'''(0)h^3
+int nsegs = 10; // 我们要在曲线上计算的点数
+point b = b0; // 曲线上的第一个位置
+for (int i = 1; i &lt;= nsegs; ++i) {
+    // 计算 f(x+h)，即 x = h * i 处的下一个点
+    f = f + fph + fpphh / 2 + fppphhh / 6;
+ 
+    // 计算 f'(x+h) 与 f''(x+h)
+    fph = fph + fpphh + fppphhh / 2;
+    fpphh = fpphh + fppphhh;
+}
+</code></pre><p>总之，我们刚刚说明了：从一组初值出发，只用加法与除法就能算出贝塞尔曲线上的点（公式 9）。如有需要，还可以把循环里的除法去掉来进一步优化这段代码，代价是代码变长（留作练习）。</p><h2>源代码</h2><p>下面给出用前向差分算法计算贝塞尔曲线与曲面的 C++ 实现。在 main 函数里（第 28 行），我们先沿 V 方向算出一系列点（第 32-35 行），构造出沿 U 方向的辅助曲线，再由这些曲线算出落在贝塞尔曲面上的那一系列点。曲线上的点用本章描述的算法计算（第 1-15 行）。作为参照，你也可以实现麦克劳林方法（第 17-24 行）。附注：这段代码是为清晰而写，不为效率。</p><pre><code>
+void evalBezierCurveFFD(const uint32_t &amp;divs, const Vec3f &amp;P0, const Vec3f &amp;P1, const Vec3f &amp;P2, const Vec3f &amp;P3, Vec3f *B) 
+{ 
+#if 1 
+    float h = 1.f / divs; 
+    Vec3f b0 = P0; 
+    Vec3f fph = 3 * (P1 - P0) * h; 
+    Vec3f fpphh = (6 * P0 - 12 * P1 + 6 * P2) * h * h; 
+    Vec3f fppphhh = (-6 * P0 + 18 * P1 - 18 * P2 + 6 * P3) * h * h * h; 
+    B[0] = b0; 
+    for (uint32_t i = 1; i &lt;= divs; ++i) { 
+        B[i] = B[i - 1] + fph + fpphh / 2 + fppphhh / 6; 
+        // 更新 bd、bdd
+        fph = fph + fpphh + fppphhh / 2; 
+        fpphh = fpphh + fppphhh; 
+    } 
+#else 
+    Vec3f b0 = P0; 
+    Vec3f bd0 = 3 * (P1 - P0); 
+    Vec3f bdd0 = (6 * P0 - 12 * P1 + 6 * P2); 
+    Vec3f bddd0 = (-6 * P0 + 18 * P1 - 18 * P2 + 6 * P3); 
+    for (uint32_t i = 0; i &lt;= divs; ++i) { 
+        float x = i / (float)divs; 
+        B[i] = b0 + bd0 * x + bdd0 * x * x / 2 + bddd0 * x * x * x / 6; 
+    } 
+#endif 
+} 
+ 
+void evalBezierPatchFFD(const uint32_t &amp;divs, const Vec3f *controlPoints, Vec3f *&amp;P) 
+{ 
+    // 生成网格
+    Vec3f controlPointsV[4][divs + 1]; 
+    for (uint16_t i = 0; i &lt; 4; ++i) { 
+        evalBezierCurveFFD(divs, controlPoints[i], controlPoints[4 + i], 
+            controlPoints[8 + i], controlPoints[12 + i], controlPointsV[i]); 
+    } 
+    for (uint16_t i = 0; i &lt;= divs; ++i) { 
+        evalBezierCurveFFD(divs, controlPointsV[0][i], controlPointsV[1][i], 
+            controlPointsV[2][i], controlPointsV[3][i], P + i * (divs + 1)); 
+    } 
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/bezier/teapotpatches.png?" alt=""><figcaption><b>图 2：</b>Newell 茶壶的一次渲染（32 个贝塞尔曲面片各用一种颜色）。</figcaption></figure><p>更新后光线追踪器的源码可以在下载区拿到。你还需要第 8 课的文件。编译程序请按第 8 课的说明操作。</p><p>坏消息是：在现代处理器与编译器上，这段代码与第 2 章用的代码几乎没有差别（就执行时间而言）。不过在计算机图形学的早期，任何能省下几个 CPU 周期的做法都被认为值得，前向差分技术之所以流行也正因如此。今天情况已大不相同，但能在本章借它把贝塞尔曲面片转成多边形网格，正好是一个绝佳机会：既看到这项技术如何用在一个实际案例上，也顺便了解泰勒级数——它在许多其他标准图形学算法里都有用到。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/geometry/bezier-curve-rendering-utah-teapot/fast-forward-differencing.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/geometry/bezier-curve-rendering-utah-teapot/fast-forward-differencing.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

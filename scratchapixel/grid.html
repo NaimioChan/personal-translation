@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网格 - Scratchapixel 中文译本</title>
+<meta name="description" content="加速结构简介 · 网格（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>网格</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="introduction-acceleration-structure-introduction.html">简介</a></li>
+<li><a href="bounding-volume.html">包围体</a></li>
+<li><a href="bounding-volume-hierarchy-BVH-part1.html">包围体层次结构：BVH（第 1 部分）</a></li>
+<li><a href="bounding-volume-hierarchy-BVH-part2.html">包围体层次结构：BVH（第 2 部分）</a></li>
+<li><a style="font-weight:700" href="grid.html">网格</a></li>
+<li><a href="what-else.html">还有什么？</a></li>
+</ol>
+</div>
+<h2>网格</h2><p><b>阅读时间：37 分钟。</b></p><p>本章介绍 Akira Fujimoto 在 1986 年提出的一项技术（论文标题为「ARTS: Accelerated Ray Tracing Systems」）。思路是把空间划分成子区域，光线经过这些子区域时，检查其中是否含有需要做光线追踪的几何体（这个算法属于被称为<b>空间划分</b>的一类方法，也叫<b>空间连贯性</b>或<b>空间追踪</b>）。这类方法不是拿光线去测场景中所有物体、或者测物体的包围体近似，而是用来判断光线经过的这个区域是否被物体占据。下图说明了这个想法。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/grid1.gif?" alt=""><figcaption><b>图 1：</b>一条光线穿过网格。只有单元中包含的几何体会被测试相交。</figcaption></figure><p>原理非常简单。我们把包含物体的那块空间划分成一个规则的三维网格（图 1 中这项技术以二维方式演示）。网格的尺寸和分辨率怎么定，我们稍后说明。然后把模型的三角形插入与它们重叠的网格单元。有些单元是空的，另一些则含有模型几何体的一部分（可以看作把模型切成规整的小块）。这一步的细节稍后再看。算法的预处理部分到此结束。测试光线是否与模型几何体相交很简单。我们沿光线方向逐个单元遍历网格。如果当前单元被某些几何体占据，就检查光线是否与该几何体相交。如果相交，就可以停止遍历网格；否则就前往光线穿过的下一个单元。这个过程一直重复，直到光线击中物体或者离开网格。顺带一提，Fujimoto 把这种网格称作<b>空间枚举辅助数据结构</b>（缩写 <b>SEADS</b>）。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/fujimoto.png?" alt=""></figure><p>网格方法的好处在于，它自动把物体划分成更小的块，测试这些小块比测试整个模型要快。此外，如果用参数距离 \(t\) 来描述光线的遍历过程，我们可以说 \(t\) 从一个单元走到下一个单元时是单调递增的。最后，Fujimoto 还提出了一个叫作<b>三维数字微分分析器</b>（<b>DDA</b>）的算法，使网格遍历既简单又快速。我们先研究这个算法，再说明模型的几何体如何插入网格单元。下面这张图是 Fujimito 和他的团队用他们的算法生成的。</p><h2>三维数字微分分析器</h2><figure><img src="https://scratchapixel.com/images/acceleration-structure/similartriangles.png?" alt=""><figcaption><b>图 2：</b>三个相似的三角形。向量 AC 的长度为一。</figcaption></figure><p>为了更好地理解 DDA 算法如何工作，我们先复习一下相似三角形的几个事实。相似三角形是有两个角相同（也就是所有角都相同）的三角形。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/dda1.gif?" alt=""><figcaption><b>图 3：</b>光线在 Ix 处与 x 轴相交，在 Iy 处与 y 轴相交。</figcaption></figure><p>图 2 中我们画了三个这样的三角形。它们也可以看作彼此的放大或缩小副本。这类三角形的一个重要性质是边长之比相同。例如我们可以写成（公式 1）：</p><p>$${ {{AB} \over {DE}} = {{BC} \over {EF}} = {{AC} \over {DF}}}$$</p><p>复习完这一点，我们来说说要解决的问题。我们需要找出光线穿过的一个网格中的所有单元。关于光线，我们知道它的原点 \(O\) 和方向 \(R\)。为了简化演示，我们先在二维中讨论（之后再推广到三维），并假定网格单元的尺寸为 1。图 3 演示了这个问题：一条光线从原点出发，方向由蓝色箭头表示。如你所见，光线只要跨过竖直方向（在 \(I_x\) 处）或水平方向（在 \(I_y\) 处）的一条线，就进入了另一个单元。我们还知道参数值 \(t\) 表示从光线原点到光线上任意一点的距离（光线方程是 \(P = O + Rt\)）。问题是：我们能否计算出光线与单元竖直、水平边界相交处的 \(t\) 值？本例中前两个交点分别记作 \(t_x\) 和 \(t_y\)。答案很简单。如图 3 所示，利用光线方向（蓝色箭头）我们可以定义直角三角形 \(\Delta ABC\)。注意因为光线方向是归一化的，所以 \(||AC||\) 等于一（也就是向量 AC 的长度）。我们还知道 Rx 和 Ry，它们分别对应 B 和 C。我们想求的是 \(t_x\)，在我们的图里它也等于直角三角形 \(\Delta DEF\) 的斜边。关于 \(\Delta DEF\) 我们还知道 \(||DE||\) 等于一。三角形 \(\Delta ABC\) 与 \(\Delta DEF\) 相似，因此我们可以写出（用公式 1）：</p><p>$${{AB} \over {DE}} = {{AC} \over {DF}} = {R_x \over 1} = {1 \over t_x}$$</p><p>因此：</p><p>$$t_x = { 1 \over R_x } $$</p><p>对 \(t_y\) 可以做同样的推理，只是这次我们要用三角形 \(\Delta GHI\) 的对边：</p><p>$${{BC} \over {HI}} = {{AC} \over {GI}} = {R_y \over 1} = {1 \over t_y}$$</p><p>所以：</p><p>$$t_y = { 1 \over R_y } $$</p><p>不出所料，在三维中：</p><p>$$t_z = { 1 \over R_z }$$</p><p>现在我们可以计算 \(t_x\)、\(t_y\)（以及 \(t_z\)）了。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/dda2.png?" alt=""><figcaption><b>图 4：</b>沿同一轴的两个相邻交点之间的距离保持不变。</figcaption></figure><p>图 4 与图 3 相同，只是我们现在把光线接下来的两个交点也画了出来。从图上一眼就能看出，沿光线从交点 \(I_x\) 到下一个交点 \(I_{x1}\) 的距离，等于从原点到 \(I_x\) 的距离。对 \(I_y\) 和 \(I_{y1}\) 也是同样的道理：\(I_y\) 与 \(I_{y1}\) 之间的距离，等于从光线原点到 \(I_y\) 的距离。如果 \(t_x\) 和 \(t_y\) 分别是沿光线到当前与 x 轴、y 轴交点的参数距离，而 \(\Delta t_x\) 和 \(\Delta t_y\) 分别是沿 x 轴、y 轴两个相邻交点之间的距离，那么沿这两个轴中任一个的下一个交点可以用下面的公式算出：</p><p>$$t_{x+1} = t_x + {\Delta t_x} \text{ and } t_{y+1} = t_y + {\Delta t_y}$$</p><p>算法的目标是找出光线经过的每一个单元。只要我们能算出光线与单元边界的交点（在我们的例子里定义为沿 x 轴和 y 轴的直线），这很容易做到。过程开始时，我们初始化 \(t\)、\(t_x\) 和 \(t_y\)，并计算 \(\Delta_x\) 和 \(\Delta_y\)：</p><p>$$t = 0, t_x = 0, t_y = 0, \Delta t_x = { 1 \over R_x}, \Delta t_y = { 1 \over R_y }$$</p><p>要计算沿 x 轴和 y 轴的下一个交点，我们这样做：</p><p>$$
+\begin{array}{l}
+t_x += \Delta t_x,\\
+t_y += \Delta t_y
+\end{array}
+$$</p><p>这样就得到了到接下来两个与单元交点的距离，也就是沿 x 轴的下一个交点和沿 y 轴的下一个交点。但光线先与哪条边界相交呢？答案很简单：距离更近的那条。换句话说，如果 \(t_x < t_y\)，光线就沿 x 轴与该单元相交，否则就沿 y 轴相交。如果光线沿 x 轴与单元相交，我们就用沿 x 轴到下一个交点的新距离更新 \(t_x\)：</p><p>$$t_x += \Delta t_x$$</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/gridtraversal2.png?" alt=""><figcaption><b>图 5：</b>沿 x 轴与单元的交点用红色标出，沿 y 轴的用绿色标出。</figcaption></figure><p>然后我们再次提出这个问题：\(t_x\) 和 \(t_y\) 哪个更小。如果 \(t_x\) 更小，我们就沿 x 轴方向进入另一个单元，否则就沿 y 方向进入新单元。对图 4 中的光线，我们会得到这样的序列：跨 x、跨 y、跨 x、跨 y。而在右边那个例子（图 5）里，交点序列会是 x、x、x、y、x、x、x、y、x、x、x、x。把目前学到的东西合起来，就可以写出一个非常简单的二维 DDA 伪代码算法：</p><pre><code>
+Vec2f RayDirection = { ..., ... }; // assumed normalized
+Vec2f deltaT = { 1 / RayDirection[0], 1 / RayDirection[1] };
+foat t_x = deltaT[0], t_y = deltaT[1], t = 0;
+while (1) {
+	if (t_x &lt; t_y) {
+        t = t_x; // 当前 t，沿光线与单元的下一个交点
+        t_x += deltaT[0]; // 递增，沿 x 的下一次跨越
+    }
+    else {
+        t = t_y;
+        t_y += deltaT[1]; // 递增，沿 y 的下一次跨越
+    }
+    // 如果满足某个条件就跳出循环
+    if (...) break;
+}
+</code></pre><p>这基本上就是 DDA 算法的工作原理，它可以用于很多事情。但要真正有用，我们还需要记录光线正在遍历哪些单元，这样之后才能测试光线与单元所含几何体的相交。这很简单。我们知道起点是单元 (0, 0)，每次跨过一条竖直线就把 x 方向的单元索引加一，每次跨过一条水平线就把 y 方向的单元索引加一。图 5 中遍历的单元序列是：(0,0)、(1,0)、(2,0)、(3,0)、(3,1)、(4,1)、(5,1)、(6,1)、(6,2)，等等。来更新一下我们的伪代码：</p><pre><code>
+Vec2f rayDirection = { ..., ... }; // assumed normalized
+Vec2f deltaT = { 1 / rayDirection[0], 1 / rayDirection[1] };
+float t_x = deltaT[0], t_y = deltaT[1], t = 0;
+Vec2i cellIndex = {0, 0};
+while (1) {
+    if (t_x &lt; t_y) {
+        t = t_x; // 当前 t，沿光线与单元的下一个交点
+        t_x += deltaT[0]; // 递增，沿 x 的下一次跨越
+        cellIndex[0] += 1;
+    }
+    else {
+        t = t_y;
+        t_y += deltaT[1]; // 递增，沿 y 的下一次跨越
+        cellIndex[1] += 1;
+    }
+    // 如果满足某个条件就跳出循环
+    if (...) break;
+}
+</code></pre><figure><img src="https://scratchapixel.com/images/acceleration-structure/dda3.gif?" alt=""><figcaption><b>图 6：</b>光线原点不影响沿同一轴两个相邻交点之间的距离。</figcaption></figure><p>不过要让算法稳健，还需要考虑更多问题。首先，光线不一定从原点出发；光线方向不总是正的（例如 \(Rx > 0\) 和 \(Ry > 0\)）；网格也不总是单位网格（即单元尺寸等于一）；最后，光线离开网格时我们要停止遍历过程。</p><p>看看光线不从原点出发会发生什么。注意在 x 或 y 方向改变光线位置并不会改变 \(\Delta_x\) 或 \(\Delta_y\) 的值（图 6），所以算法中计算这些值的部分保持不变。如图 7 所示，唯一变化的是 \(t_x\) 和 \(t_y\) 的初始值。它们现在需要用下面的公式计算：</p><p>$$
+\begin{array}{l}
+t_{x0} = \dfrac{1 - O_x}{R_x },\\
+t_{y0} = \dfrac{1 - O_y}{R_y }
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/dda4.png?" alt=""><figcaption><b>图 7：</b>对第一个交点，要计算与 x 轴和 y 轴的距离，我们需要计算 (1-Ox) 和 (1-Oy)。</figcaption></figure><p>前面用相似三角形的方法可以再用一次。只是现在图 3 中的 DE 换成了 \((1-Ox)\)，HI 换成了 \((1-Oy)\)。</p><p>第二个要考虑的问题是单元尺寸不一定为一。作为加速结构使用的网格，其整体尺寸与场景的整体包围盒相同。然后我们把这个包围盒划分成若干单元（这个数量怎么定稍后讨论）。因此在几乎所有情况下，不仅单元尺寸不为一，单元也不是立方体。各维度的值通常互不相同。图 8 说明了这种情况。单元在 x 方向的尺寸大于一，在 y 方向的尺寸小于一。不过，如果画出三角形 \(\Delta ABC\) 和 \(\Delta DEF\)，就能看到我们仍然可以用相似三角形的方法计算 \(\Delta t_x\)：</p><p>$$
+\begin{array}{l}
+\dfrac{AB}{DE} = \dfrac{AC}{DF} = \dfrac{R_x}{cell\:size_x} = \dfrac{1}{\Delta t_x}\\
+\Delta t_x = \dfrac{cell\:size_x}{R_x}
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/dda5.png?" alt=""><figcaption><b>图 8：</b>单元尺寸不为一时的交点距离计算。</figcaption></figure><p>同样的推理可以用来求 \(\Delta t_y\)。在计算 \(t_x\) 和 \(t_y\) 的初始值时，我们也需要把单元尺寸考虑进去：</p><p>$$
+\begin{array}
+{l} t_{x0} = \dfrac{{cell\:size_x} - O_x}{R_x }\\ 
+t_{y0} = \dfrac{{cell\:size_y } - O_y}{R_y }
+\end{array}
+$$</p><p>现在看看光线方向不为正时会发生什么。比如设想 \(R_x\) 和 \(R_y\) 小于零。那么 \(\Delta t_x\) 和 \(\Delta t_y\) 的值会是负的，因此需要把它们的符号反过来（这些值用于沿光线方向推进，所以必须是正的）：</p><p>$$
+\begin{array}{l} 
+\Delta t_x = - {\dfrac{cell\:size_x }{R_x}} \text{, if } R_x < 0 \\ 
+\Delta t_y = - {\dfrac{cell\:size_y }{R_y}} \text{, if } R_y < 0
+\end{array}
+$$</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/gridtraversal4.png?" alt=""><figcaption><b>图 9：</b>在网格中行走时更新单元坐标。</figcaption></figure><p>此外，每次沿 x 轴或 y 轴跨过单元边界时，我们需要递减单元索引（而不是递增）。图 9 说明了这一点。</p><p>最后一个要解决的问题是光线离开网格时停止遍历。这很简单。我们知道网格的尺寸，遍历单元时我们也一直记录着单元位置（单元索引）。因此，只要 x 或 y 方向的索引之一大于网格尺寸，就可以跳出循环。这里同样要注意光线的方向。如果光线往回走（在 x 或 y 方向的方向为负），那么当我们到达某个在 x 或 y 方向索引小于零的单元时，光线就离开了网格（图 9）。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/gridtraversal5.png?" alt=""><figcaption><b>图 10：</b>为在网格内部或其边界上起始的光线计算初始交点距离。需要考虑光线的方向。</figcaption></figure><p>最后，我们还需要修正 \(t_{x0}\) 和 \(t_{y0}\) 初始值的计算方式。如图 10 所示，光线不一定从网格左下角的单元出发。首先，我们需要把光线原点的位置换算成相对于网格左下角的位置，这只要用光线原点减去网格的最小边界即可。最终我们需要的是一个 B 值，以便计算图 10 中用问号表示的距离（光线 1）。这个距离可以用相对于网格原点（图中的 Ogrid）的光线原点减去 B 得到。问题是怎么算 B？我们先把 Ogrid 用单元尺寸做一次「归一化」。得到的结果就是光线原点以单元数表示的位置。在我们的例子里，把值 2.35（Ogrid 的 x 坐标值）除以 1.5（单元在 x 方向的尺寸），等于 1.567。把这个值向下取整，就得到光线起始所在的 x 方向单元索引（1）。给这个值加一（1+1=2），再乘以 x 方向的单元尺寸（2 * 1.5），就得到 B 的位置（3）。下面是计算任意光线原点下 \(t_{x0}\) 和 \(t_{y0}\) 的公式：</p><p>$$
+\begin{array}{l}
+Ogrid = O - GridMin\\
+Ocell = \dfrac{Ogrid}{cell\:size}\\
+t_{x0} = \dfrac{(floor(Ocell_x) + 1) * cell\:size_x - Ogrid_x}{R_x} \\
+t_{y0} = \dfrac{(floor(Ocell_y) + 1) * cell\:size_y - Ogrid_y}{R_y}
+\end{array}
+$$</p><p>不过我们还得注意光线方向。如果光线沿 x 轴或 y 轴的方向为负，公式会有细微不同。图 10 用第二条光线（光线 2）说明了这种情况，它的方向为负。问号所表示的距离可以用 Ogrid 减去 A 得到，而不是像第一个例子那样用 B 减去 Ogrid。但由于光线方向为负，而我们希望 \(t_{x0}\) 和 \(t_{y0}\) 为正，所以我们会用 A 减去 Ogrid，其结果为负（而不是用 Ogrid 减去 A——那样结果为正）。分子和分母上的两个负数相互抵消，得到正数：</p><p>$$
+\begin{array}{l} 
+t_{x0} = \dfrac{floor(Ocell_x) * cell\:size_x - Ogrid_x}{R_x} \\
+t_{y0} = \dfrac{floor(Ocell_y) * cell\:size_y - Ogrid_y}{R_y }
+\end{array}
+$$</p><p>下面是一个更稳健的 DDA 算法伪代码：</p><pre><code>
+Vec2f rayDirection = { ..., ... }; // assumed normalized
+Vec2f rayOrigin = { ..., ... };
+Vec2f gridResolution = { ..., ... };
+Vec2f cellDimension = (gridMax - gridMin) / gridResolution;
+Vec2f deltaT, nextCrossingT;
+Vec2f rayOrigGrid = rayOrigin - gridMin;
+if (rayDirection[0] &lt; 0) {
+    deltaT[0] = -gridDimension[0] / RayDirection[0]
+    t_x = (floor(rayOrigGrid[0] / cellDimension[0]) * cellDimension[0] 
+        - rayOrigGrid[0]) / rayDirection[0];
+}
+else {
+    deltaT[0] = gridDimension[0] / RayDirection[0];
+    t_x = ((floor(rayOrigGrid[0] / cellDimension[0]) + 1) * cellDimension[0]
+        - rayOrigGrid[0]) / rayDirection[0];
+}
+if (rayDirection[1] &lt; 0) {
+    deltaT[1] = -gridDimension[1] / RayDirection[1]
+    t_y = (floor(rayOrigGrid[1] / cellDimension[1]) * cellDimension[1]
+        - rayOrigGrid[1]) / rayDirection[1];
+}
+else {
+    deltaT[1] = gridDimension[1] / RayDirection[1]
+    t_y = ((floor(rayOrigGrid[1] / cellDimension[1]) + 1) * cellDimension[1]
+        - rayOrigGrid[1]) / rayDirection[1];
+}
+float t = 0;
+Vec2i cellIndex = { .., ... }; // 光线的原点（单元索引）
+while (1) {
+    if (t_x &lt; t_y) {
+        t = t_x; // 当前 t，沿光线与单元的下一个交点
+        t_x += deltaT[0]; // 递增，沿 x 的下一次跨越
+        if (rayDirection[0] &lt; 0)
+            cellIndex[0] -= 1;
+        else
+            cellIndex[0] += 1;
+    }
+    else {
+        t = t_y;
+        t_y += deltaT[1]; // 递增，沿 y 的下一次跨越
+        if (rayDirection[1] &lt; 0)
+            cellIndex[1] -= 1;
+        else
+            cellIndex[1] += 1;
+    }
+	// 如果满足某个条件就跳出循环
+    if (cellIndex[0] &lt; 0 || cellIndex[1] &lt; 0 || 
+        cellIndex[0] &gt; gridDimension[0] - 1 || cellIndex[1] &gt; gridDimension[1] - 1) 
+        break;
+}
+</code></pre><h2>创建网格与插入物体</h2><figure><img src="https://scratchapixel.com/images/acceleration-structure/triangleoverlap2.png?" alt=""><figcaption><b>图 11：</b>绿色三角形的包围盒与两个单元（灰色）重叠，三角形被插入这两个单元。</figcaption></figure><p>上一节我们说明了如何用 DDA 算法高效遍历网格。现在说明如何创建网格，尤其是如何把几何体插入网格单元。网格的用途并不限于三角化物体，不过本课程只举这一个例子（这也正是把不同几何体都转换成同一种三角网格表示的好处）。首先，我们需要算出网格的整体包围盒，也就是场景包围盒。只要遍历场景中所有物体并合并它们的包围盒即可。得到网格尺寸后，下一件事是选择分辨率（每个维度上的单元数）。遗憾的是，没有哪个公式能证明对所有场景、甚至对某个给定场景都是最优的。已经发展出一些度量方法，但大多数时候仍要依靠用户自定义参数来细调方案的性能。这可以说是网格方法的一个缺点。计算网格分辨率所用的方法，多数时候基于 Cleary 在 1983 年一篇题为「A Parallel Ray Tracing Computer」的论文中提出的度量。公式是（公式 1）：</p><p>$$
+\begin{array}{l}
+N_x = d_x \sqrt[3]{\dfrac{\lambda  N}{V}}\\ N_y = d_y \sqrt[3]{\dfrac{\lambda  N}{V}} \\ N_z = d_z \sqrt[3]{\dfrac{\lambda  N}{V}}
+\end{array}
+$$</p><p>其中 \(N_x\)、\(N_y\)、\(N_z\) 定义各维度的网格分辨率，\(d_x\)、\(d_y\)、\(d_z\) 定义网格的尺寸（场景包围盒），\(N\) 是网格中包含的三角形数量，\(V\) 是场景包围盒的体积。不必深究细节，你也能看出这个公式试图在场景的尺寸、其中图元的数量与场景总体积之间建立某种关系。参数 \(\lambda\) 是用户自定义参数，用来细调算法的性能。如果分辨过高，用三维 DDA 算法遍历场景所花的时间会超过加速结构带来的收益。反过来，如果分辨率过低，单元里装了很多三角形，逐一遍历单元内三角形所花的时间会让网格方法相比更简单的加速方法（比如包围盒）好不了多少。已有研究表明，当 \(\lambda\) 取 3 到 5 之间时，网格加速结构能给出最优结果（「Ray Tracing Animated Scenes using Coherent Grid Traversal」，Wald 等，2006）。</p><p>现在有了网格的尺寸和分辨率，就可以把三角形插入单元了。我们遍历场景中所有三角化物体，对每个物体再遍历当前网格的所有三角形。先计算每个三角形的包围盒，然后用包围盒的范围除以单元尺寸，换算成单元坐标：</p><p>$$
+\begin{array}{l}
+cell\:size = \frac{grid\:size}{grid\:resolution}\
+min\:cell=\frac{triangle\:BBox\:min}{cell\:size}\\
+max\:cell=\frac{triangle\:BBox\:max}{cell\:size}
+\end{array}
+$$</p><p>得到的结果是一个盒子，它与网格中该三角形可能重叠的单元重叠（如图 11 所示）。接下来的工作就是遍历这个盒子覆盖的单元，把三角形插入这些单元。</p><pre><code>
+for (int z = cellMin.z; z &lt;= cellmax.z; ++z)
+    for (int y = cellMin.y; y &lt;= cellmax.y; ++y)
+        for (int x = cellMin.x; x &lt;= cellmax.x; ++x)
+            cell[x][y][z].insert(triangle);
+</code></pre><p>这里（更多是编码上而非算法上的）难处在于，要避免重复存储网格中已经存过的三角形信息。如果必须在每个重叠单元里把三角形存成三个顶点，最好的情形下也会让存储几何数据的内存翻倍。要访问三角形数据，我们需要的只是一个指向该三角形所属网格的指针，以及顶点数组数据中的一个偏移量，用它就能取出构成该三角形的三个顶点。这种引用机制在源代码一节中有更详细的说明。当所有网格的所有三角形都插入单元后，网格创建过程就结束了（注意一个单元可以包含不止一个三角形）。实现细节见源代码一节。</p><h2>与网格求交</h2><figure><img src="https://scratchapixel.com/images/acceleration-structure/gridtraversal6.png?" alt=""><figcaption><b>图 12：</b>光线可能从网格内部出发。若不是，则它可能错过网格，也可能与网格相交。</figcaption></figure><p>最后剩下光线与网格求交的过程。遍历网格之前，我们可以先检查光线是否击中网格，这用一个简单的光线-盒求交测试即可完成。如果光线与网格相交，就可以算出光线进入网格处那个单元的坐标（图 12）。一旦知道光线在网格中的起始位置（这需要把命中点、或者光线在网格内部时的原点换算成单元坐标），我们就直接用 DDA 算法沿光线方向高效地在网格中行走，并测试光线与经过的每个单元所含几何体的相交。</p><figure><img src="https://scratchapixel.com/images/acceleration-structure/triangleoverlap1.png?" alt=""><figcaption><b>图 13：</b>光线可能多次与同一个三角形相交。如果与三角形的交点距离小于到下一个单元的距离，就可以停止网格遍历（光线 B）。</figcaption></figure><p>图 13 中我们看到，光线可能穿过包含同一个三角形（绿色）的多个单元。这个三角形可能被多次相交，在效率上是个潜在问题，不过我们稍后再谈。光线 A 与绿色三角形相交，但交点距离比到下一个跨越单元的距离（tNextCrossing）更远。尽管发生了相交，此时停止遍历并不安全（如果只算阴影光线则可以，但对主光线我们要找出可见物体。这在着色相关的课程里会说清楚）。下一个单元（单元 2）里有一个蓝色三角形，光线 A 在绿色三角形之前先与它相交。可见物体是蓝色三角形而不是绿色的，在单元 1 就停止遍历就不会返回这条光线真正看到的几何体。对光线 B，与绿色三角形的交点距离小于到下一个单元的距离。这种情况下不会有别的三角形比绿色三角形离光线更近，我们可以在单元 1 停止网格遍历。</p><pre><code>
+bool intersect = false;
+float tHit;
+while (1) {
+    intersect |= cell[cellIndex[0]][cellIndex[1]]-&gt;intersect(ray, tHit);
+    if (t_x &lt; t_y) {
+        tNextCrossing = t_x; // 当前 t，沿光线与单元的下一个交点
+        t_x += deltaT[0]; // 递增，沿 x 的下一次跨越
+        if (rayDirection[0] &lt; 0)
+            cellIndex[0] -= 1;
+        else
+            cellIndex[0] += 1;
+    }
+    else {
+        tNextCrossing = t_y;
+        t_y += deltaT[1]; // 递增，沿 y 的下一次跨越
+        if (rayDirection[1] &lt; 0)
+            cellIndex[1] -= 1;
+        else
+            cellIndex[1] += 1;
+    }
+    // 如果已与几何体相交且 tHit &lt; tNextCrossing，则跳出
+    if (intersect &amp;&amp; tHit &lt; tNextCrossing) break;
+    // 如果满足某个条件就跳出循环
+    if (cellIndex[0] &lt; 0 || cellIndex[1] &lt; 0 || 
+        cellIndex[0] &gt; gridDimension[0] - 1 || cellIndex[1] &gt; gridDimension[1] - 1) 
+        break;
+}
+</code></pre><h2>邮箱法</h2><p>前面提到，当三角形的包围盒跨越单元边界时，它可能被插入不止一个单元。图 12 展示了这种情况下会发生什么。绿色三角形与光线 A 的相交被测试了两次（一条光线穿过某个单元时，很可能也会穿过相邻单元，而那些单元多半引用同一份几何体）。加速结构的目标是尽可能减少求交测试的次数，而把光线与同一个三角形的相交反复计算会降低网格加速方法的性能。解决这个问题的一个可能办法是使用一种叫作邮箱法的技术。我们先给每条光线分配一个唯一的 ID 号。某个三角形第一次被一条光线相交时，三角形记下这条光线的 ID。下次这条光线再来测试与该三角形的相交时，如果光线的 ID 与三角形上记录的 ID 相同，就可以跳过对光线-三角形求交例程的调用。这项技术在单线程渲染器中实现起来非常简单（多线程情况下多条光线可能同时与同一个三角形相交，更复杂的情形会在另一门课程中研究）。我们渲染了两帧，一帧不用邮箱法，一帧用，可以看到差别极小（原因我们稍后解释）：</p><pre><code>
+without mail boxing
+Render time                                 : 0.26 (sec)
+Total number of triangles                   : 4096
+Total number of primary rays                : 307200
+Total number of ray-triangles tests         : 3008953
+Total number of ray-triangles intersections : 89545
+Total number of ray-volume tests            : 0
+with mailboxing
+Render time                                 : 0.24 (sec)
+Total number of triangles                   : 4096
+Total number of primary rays                : 307200
+Total number of ray-triangles tests         : 2345778
+Total number of ray-triangles intersections : 57266
+Total number of ray-volume tests            : 0
+</code></pre><p>尽管简单，这项技术是有代价的。首先需要更多内存，因为我们要为场景中每个三角形创建一个变量来记录光线 ID。此外，把光线 ID 与每个三角形的 ID 做比对，涉及一条 if 语句和两个数之间的比较，重复次数太多时（比如单元里装了很多三角形），就会超过邮箱法带来的收益。在实践中，对三角形这类简单图元，邮箱法带来的增益似乎很小。关于邮箱法的更多信息见「A Fast Voxel Traversal Algorithm for Ray Tracing」（Amanatides，1983）、「Improved Ray Tagging for Voxel-Based Ray Tracing」（Dirk 和 Arvo，1991），以及「Ray Tracing Animated Scenes using Coherent Grid Traversal」（Wald 等，2006），这三篇论文信息量都很足，建议你读一读。</p><h2>更多优化</h2><p>本课程给出的网格加速结构实现是最小化的。我们为提升性能额外加的唯一特性就是邮箱法。不过还有很多技术可以让它更快。这些改进从小的改动（比如创建单元时使用内存池）到更复杂的算法（比如多级（嵌套）网格，或 Wald 等人（2006）提出的基于切片的包遍历技术）都有。我们会在本课程将来的修订版中再回到这些技术。</p><h2>源代码</h2><details open><p>完整源代码见本课程最后一章</p></details><p>现在我们给出网格加速结构的代码。和 BVH 一样，Grid 类派生自 <code>AccelerationStructure</code> 基类。网格单元被定义为一维的单元指针数组（第 30 行）。为了在单元中存储三角形，我们用 <code>TriangleDesc</code> 的 vector（第 15 行）。这个结构持有指向三角形所属网格的指针，以及该三角形在三角网格列表中的索引。有了这些信息，我们很容易取出构成三角形的三个顶点。</p><pre><code>
+class Grid : public AccelerationStructure 
+{ 
+	struct Cell 
+    { 
+        Cell() { color = Vec3f((float)drand48(), (float)drand48(), (float)drand48()); } 
+        struct TriangleDesc 
+        { 
+            TriangleDesc(const PolygonMesh *m, const uint32_t &amp;t) : mesh(m), tri(t) {} 
+            const PolygonMesh *mesh; 
+            uint32_t tri; 
+        }; 
+        void insert(const PolygonMesh *mesh, const uint32_t &amp;t) 
+        { triangles.push_back(Grid::Cell::TriangleDesc(mesh, t)); } 
+        bool intersect(const Ray&amp;ltfloat&gt; &amp;ray, const Object **) const; 
+        std::vector&amp;lttriangledesc&gt; triangles; 
+        Vec3f color; 
+    }; 
+public: 
+    Grid(const RenderContext *rcx); 
+    ~Grid() 
+    { 
+        for (uint32_t i = 0; i &lt; resolution[0] * resolution[1] * resolution[2]; ++i) 
+            if (cells[i] != NULL) delete cells[i]; 
+        delete [] cells; 
+    } 
+    const Object* intersect(const Ray&amp;ltfloat&gt; &amp;ray, IsectData &amp;isectData) const; 
+    uint32_t resolution[3]; 
+    Vec3f cellDimension; 
+    Box3f bbox; 
+    Cell **cells; 
+};
+</code></pre><p>Grid 加速结构的构造函数很直接。首先计算场景包围盒（合并场景中所有物体的包围盒）。在同一个循环里，我们还统计要插入网格的图元总数（第 10 行）。接着用场景中包含的图元总数和网格尺寸计算网格分辨率（公式 1）。公式 1 中的参数 \(\lambda\) 设为 5（第 15-19 行）。然后为单元指针的一维数组分配内存（第 24-26 行），并把所有指针设为 0（空指针，第 27 行）。最后是一系列嵌套循环，遍历场景中所有网格以及每个网格中的每个三角形。计算 meshmesh 的包围盒（第 37-47 行）并换算成单元坐标（第 50-57 行）。然后遍历该三角形重叠的所有单元。如果当前单元的指针为空，我们先分配一个单元（第 63 行），最后把三角形插入其中（第 64 行）。如前所述，要取回那个三角形，我们需要指向三角形所属网格的指针，以及该三角形在该网格三角形列表中的索引。</p><pre><code>
+Grid::Grid(const RenderContext *rcx) : AccelerationStructure(rcx), cells(NULL) 
+{ 
+    // 计算场景的包围范围                                                                                                                                                                           
+    uint32_t totalNumTriangles = 0; 
+    for (uint32_t i = 0; i &lt; rcx-&amp;gtobjects.size(); ++i) { 
+        bbox.extendBy(rcx-&amp;gtobjects[i]-&amp;gtbbox[0]); 
+        bbox.extendBy(rcx-&amp;gtobjects[i]-&amp;gtbbox[1]); 
+        if (typeid(*rcx-&amp;gtobjects[i]) != typeid(PolygonMesh)) continue; 
+        const PolygonMesh *mesh = (PolygonMesh*)rc-&amp;gtobjects[i]; 
+        totalNumTriangles += mesh-&amp;gtntris 
+    } 
+    // 创建网格                                                                                                                                                                                     
+    Vec3f size = bbox[1] - bbox[0]; 
+ 
+    float cubeRoot = powf(5 * totalNumTriangles / (size[0] * size[1] * size[2]), 1 / 3.f); 
+    for (uint8_t i = 0; i &lt; 3; ++i) { 
+        resolution[i] = std::floor(size[i] * cubeRoot); 
+        resolution[i] = std::max(uint32_t(1), std::min(resolution[i], uint32_t(128))); 
+    } 
+ 
+    cellDimension = size / Vec3f(resolution[0], resolution[1], resolution[2]); 
+ 
+    // 分配内存                                                                                                                                                                                     
+    uint32_t nc = resolution[0] * resolution[1] * resolution[2]; 
+    cells = new Grid::Cell* [nc]; 
+    // 把所有指针设为 NULL                                                                                                                                                                           
+    memset(cells, 0x0, sizeof(Grid::Cell*) * nc); 
+ 
+    // 把所有三角形插入单元                                                                                                                                                               
+    for (uint32_t i = 0; i &lt; rcx-&amp;gtobjects.size(); ++i) { 
+        // xx 检查它是不是网格                                                                                                                                                                        
+        if (typeid(*rcx-&amp;gtobjects[i]) != typeid(PolygonMesh)) continue; 
+        const PolygonMesh *mesh = (PolygonMesh*)rc-&amp;gtobjects[i]; 
+        const Vec3f* P = mesh-&amp;gtP 
+        const uint32_t* tris = mesh-&amp;gttris 
+        for (uint32_t j = 0, off = 0; j &lt; mesh-&amp;gtntris ++j, off += 3) { 
+            Vec3f min(kInfinity), max(-kInfinity); 
+            const Vec3f &amp;v0 = P[tris[off]]; 
+            const Vec3f &amp;v1 = P[tris[off + 1]]; 
+            const Vec3f &amp;v2 = P[tris[off + 2]]; 
+            for (uint8_t k = 0; k &lt; 3; ++k) { 
+                if (v0[k] &lt; min[k]) min[k] = v0[k]; 
+                if (v1[k] &lt; min[k]) min[k] = v1[k]; 
+                if (v2[k] &lt; min[k]) min[k] = v2[k]; 
+                if (v0[k] &gt; max[k]) max[k] = v0[k]; 
+                if (v1[k] &gt; max[k]) max[k] = v1[k]; 
+                if (v2[k] &gt; max[k]) max[k] = v2[k]; 
+            } 
+            // 换算成单元坐标                                                                                                                                                                  
+            min = (min - bbox[0]) / cellDimension; 
+            max = (max - bbox[0]) / cellDimension; 
+            uint32_t zmin = clamp&amp;ltuint32_t&gt;(std::floor(min[2]), 0, resolution[2] - 1); 
+            uint32_t zmax = clamp&amp;ltuint32_t&gt;(std::floor(max[2]), 0, resolution[2] - 1); 
+            uint32_t ymin = clamp&amp;ltuint32_t&gt;(std::floor(min[1]), 0, resolution[1] - 1); 
+            uint32_t ymax = clamp&amp;ltuint32_t&gt;(std::floor(max[1]), 0, resolution[1] - 1); 
+            uint32_t xmin = clamp&amp;ltuint32_t&gt;(std::floor(min[0]), 0, resolution[0] - 1); 
+            uint32_t xmax = clamp&amp;ltuint32_t&gt;(std::floor(max[0]), 0, resolution[0] - 1); 
+            // 遍历该三角形重叠的所有单元并插入
+            for (uint32_t z = zmin; z &lt;= zmax; ++z) { 
+                for (uint32_t y = ymin; y &lt;= ymax; ++y) { 
+                    for (uint32_t x = xmin; x &lt;= xmax; ++x) { 
+                        uint32_t o = z * resolution[0] * resolution[1] + y * resolution[0] + x; 
+                        if (cells[o] == NULL) cells[o] = new Cell; 
+                        cells[o]-&amp;gtinsert(mesh, j); 
+                    } 
+                } 
+            } 
+        } 
+    } 
+}
+</code></pre><p>Grid 的 intersect 方法实现了本章描述的三维 DDA 算法。如果光线原点就在网格内，我们可以跳过光线-盒求交测试（第 5 行）。DDA 测试所需的所有变量都做了初始化。我们计算光线与网格交点在网格坐标系中的位置（第 11 行），并把这个位置换算成单元坐标（第 12 行）。其他变量则根据光线方向的符号来初始化。注意为了效率，我们把光线的退出值和步进方向存在两个变量里（第 16-17 行、第 22-23 行）。其余代码就是三维 DDA 本身。我们先检查光线是否与当前单元中的三角形相交（第 31-33 行）。然后计算到下一个单元的相交距离。与其用一连串「if」语句（相当慢）来判断光线先与哪个轴相交，我们可以用一个基于位移的技巧。如果到 y 方向下一个单元的相交距离大于到 x 方向下一个单元的相交距离，比较结果为真（1），否则为假（0）。把这个测试结果左移两位，得到的整数值在测试为真时是 4，为假时是 0（如果对这种技巧不熟悉，可以在网上查一下位移运算）。如果用同样的技巧比较 x 方向距离与 z 方向距离，但把测试结果（1 或 0）只左移一位，得到的整数就是 2 或 0。最后，如果用 y 方向距离与 z 方向距离比较，得到的值是 1 或 0。把这些数相加（4 或 0、2 或 0、1 或 0），得到的可能是 0、1、2、3（2 + 1）、4、5（4+1）、6（4+1）或 7（4+2+1）。这个数字表明光线接下来与哪个轴相交。例如数字为 7，意味着 z 大于 x（得到 4）、y 大于 x（得到 2），并且 z 大于 y。于是 x 方向的距离最小，光线沿 x 轴方向进入下一个单元。对其他数字也可以做同样的推理，从而发现每个数字都对应一个特定的轴：</p><p>$$
+\begin{array}{r}
+number: & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 \\ axis: & 2 & 1 & 2 & 1 & 2 & 2 & 0 & 0
+\end{array}
+$$</p><p>在代码里，我们可以把这个表存成一个数组，用这个 0 到 7 的数字作为数组索引（第 36-41 行）。如果光线与某个三角形相交，且到该三角形的交点距离小于到下一个最近单元的相交距离，我们就可以退出循环（第 42 行）。否则，把当前单元坐标更新为下一个单元的坐标（第 43 行）。如果步进后到了网格之外，就退出循环（光线已离开网格，第 44 行）；否则更新沿刚刚跨过的那个轴到下一个交点的距离（第 45 行）。如果成功相交，方法返回指向被相交物体的指针（否则返回空指针）。</p><pre><code>
+const Object* Grid::intersect(const Ray &amp;ltfloat&gt; &amp;ray, IsectData &amp;isectData) const 
+{ 
+    // 如果光线不与网格相交则返回                                                                                                                                                        
+    Ray&amp;ltfloat&gt; r(ray); 
+    if (!bbox.intersect(r)) return false; 
+    // 初始化步骤                                                                                                                                                                                
+    Vec3i exit, step, cell; 
+    Vec3f deltaT, nextCrossingT; 
+    for (uint8_t i = 0; i &lt; 3; ++i) { 
+        // 把光线起点换算成单元坐标                                                                                                                                                 
+        float rayOrigCell = ((r.orig[i] + r.dir[i] * r.tmin) -  bbox[0][i]); 
+        cell[i] = clamp&amp;ltuint32_t&gt;(std::floor(rayOrigCell / cellDimension[i]), 0, resolution[i] - 1); 
+        if (r.dir[i] &lt; 0) { 
+            deltaT[i] = -cellDimension[i] * r.invdir[i]; 
+            nextCrossingT[i] = r.tmin + (cell[i] * cellDimension[i] - rayOrigCell) * r.invdir[i]; 
+            exit[i] = -1; 
+            step[i] = -1; 
+        } 
+        else { 
+            deltaT[i] = cellDimension[i] * r.invdir[i]; 
+            nextCrossingT[i] = r.tmin + ((cell[i] + 1)  * cellDimension[i] - rayOrigCell) * r.invdir[i]; 
+            exit[i] = resolution[i]; 
+            step[i] = 1; 
+        } 
+    } 
+ 
+    // 逐个走过网格的每个单元，若                                                                                                                                 
+    // 当前单元包含几何体则测试相交                                                                                                                                                                     
+    const Object *hitObject = NULL; 
+    while (1) { 
+        uint32_t o = cell[2] * resolution[0] * resolution[1] + cell[1] * resolution[0] + cell[0]; 
+        if (cells[o] != NULL) { 
+            cells[o]-&amp;gtintersect(ray, &amp;hitObject); 
+            if (hitObject != NULL) { ray.color = cells[o]-&amp;gtcolor } 
+        } 
+        uint8_t k = 
+            ((nextCrossingT[0] &lt; nextCrossingT[1]) &lt;&lt; 2) + 
+            ((nextCrossingT[0] &lt; nextCrossingT[2]) &lt;&lt; 1) + 
+            ((nextCrossingT[1] &lt; nextCrossingT[2])); 
+        static const uint8_t map[8] = {2, 1, 2, 1, 2, 2, 0, 0}; 
+        uint8_t axis = map[k]; 
+        if (ray.tmax &lt; nextCrossingT[axis]) break; 
+        cell[axis] += step[axis]; 
+        if (cell[axis] == exit[axis]) break; 
+        nextCrossingT[axis] += deltaT[axis]; 
+    } 
+ 
+    return hitObject; 
+}
+</code></pre><p>单元的求交方法也很直接（这里给出了邮箱法的一个基本实现）。我们遍历场景中存储的所有三角形（第 4 行）。如果光线的 ID 与三角形上记录的编号相同，说明这个三角形已被这条光线测试过，可以跳过求交测试（第 5 行）。否则就记录它（第 6 行）。三角形的顶点从 <code>TriangleDesc</code> 结构中存储的数据取出（第 7-11 行）。其余代码包含光线-三角形求交测试，以及记录最近交点的常规流程。</p><pre><code>
+bool Grid::Cell::intersect(const Ray&amp;ltfloat&gt; &amp;ray, const Object **hitObject) const 
+{ 
+    float uhit, vhit; 
+    for (uint32_t i = 0; i &lt; triangles.size(); ++i) { 
+        if (ray.id != triangles[i].mesh-&amp;gtmailbox[triangles[i].tri]) { 
+            triangles[i].mesh-&amp;gtmailbox[triangles[i].tri] = ray.id; 
+            const PolygonMesh *mesh = triangles[i].mesh; 
+            uint32_t j = triangles[i].tri * 3; 
+            const Vec3f &amp;v0 = mesh-&amp;gtP[mesh-&amp;gttris[j]]; 
+            const Vec3f &amp;v1 = mesh-&amp;gtP[mesh-&amp;gttris[j + 1]]; 
+            const Vec3f &amp;v2 = mesh-&amp;gtP[mesh-&amp;gttris[j + 2]]; 
+            float t, u, v; 
+            if (intersectTriangle(ray, v0, v1, v2, t, u, v)) { 
+                if (t &lt; ray.tmax) { 
+                    ray.tmax = t; 
+                    uhit = u; 
+                    vhit = v; 
+                    *hitObject = triangles[i].mesh; 
+                } 
+            } 
+        } 
+    } 
+ 
+    return (hitObject != NULL); 
+} 
+</code></pre><p>为支持邮箱法，我们更新了 <code>PolygonMesh</code> 类。每个三角形需要一个额外的变量来记录光线 ID。这些信息以整数数组的形式存在网格上（第 17 行），在知道网格包含多少三角形之后分配并初始化（第 11-12 行）。</p><pre><code>
+class PolygonMesh : public Object 
+{ 
+public: 
+    PolygonMesh( 
+        const Matrix44f &amp;o2w, 
+        const uint32_t &amp;np, const uint32_t *nv, const uint32_t *v, 
+        const Vec3f *pts, const Vec3f *nors = NULL) : 
+        Object(o2w), ntris(0), tris(NULL), P(NULL), N(NULL), maxVertIndex(0), mailbox(NULL) 
+    { 
+        ... 
+        mailbox = new uint32_t [ntris]; 
+        memset(mailbox, 0xFF, sizeof(uint32_t) * ntris); 
+        ... 
+    } 
+    ... 
+ 
+    mutable uint32_t *mailbox; 
+}; 
+</code></pre><h2>结果与结论</h2><figure><img src="https://scratchapixel.com/images/acceleration-structure/teapotstadium.png?" alt=""><figcaption><b>图 14：</b>体育场里的茶壶（这里是寺庙里的茶壶）问题。所有茶壶几何体都落在一个单元里。如果场景里有很多小物体，网格加速结构的性能会急剧下降。</figcaption></figure><p>本章介绍了 Fujimoto 在 1986 年提出的网格加速结构。统计数据证明，使用它可以大幅缩短渲染时间。但大多数基于网格的算法都受所谓<b>体育场里的茶壶</b>问题困扰。如果场景中的所有物体大小大致相同，网格结构能给出不错的结果；但如果场景里既有非常大的物体又有非常小的物体，小物体的几何体就会被完全包在单个单元里。设想一个场景，其中体育场由 5,000 个三角形组成，茶壶也由 5,000 个三角形组成。如果我们把镜头拉近到茶壶（图 14），大多数光线都会穿过包含茶壶的那个单元，于是每条光线都要测试 5,000 个三角形。网格加速结构对三角形分布均匀的场景最理想，否则性能就很差。而一个好的加速方法应当对各种场景都表现良好。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/grid.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/introduction-acceleration-structure/grid.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

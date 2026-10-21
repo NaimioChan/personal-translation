@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>单面与双面三角形以及背面剔除 - Scratchapixel 中文译本</title>
+<meta name="description" content="光线追踪：渲染三角形 · 单面与双面三角形以及背面剔除（Scratchapixel 中文译本）">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$']], packages: {'[+]': ['ams', 'color']} },
+  svg: { fontCache: 'global' }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+figcaption { font-style: italic; font-size: .92em; color: var(--fg-muted); margin-top: .4em; }
+figure { margin: 1.2em 0; }
+.media { margin: 1.2em 0; }
+video { max-width: 100%; }
+details { border-left: 3px solid var(--border); padding: .2em 1em; margin: 1em 0; }
+details summary { cursor: pointer; color: var(--fg-muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>单面与双面三角形以及背面剔除</h1>
+<p>按 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank" rel="noreferrer noopener">CC BY-NC-ND 4.0</a> 许可协议分发。</p>
+<div class="toc">
+<ol>
+<li><a href="why-are-triangles-useful.html">三角形为什么有用？</a></li>
+<li><a href="geometry-of-a-triangle.html">三角形的几何</a></li>
+<li><a href="ray-triangle-intersection-geometric-solution.html">光线与三角形求交：几何解法</a></li>
+<li><a style="font-weight:700" href="single-vs-double-sided-triangle-backface-culling.html">单面与双面三角形以及背面剔除</a></li>
+<li><a href="barycentric-coordinates.html">重心坐标</a></li>
+<li><a href="moller-trumbore-ray-triangle-intersection.html">Möller-Trumbore 算法</a></li>
+</ol>
+</div>
+<h2>单面与双面三角形以及背面剔除</h2><p><b>阅读时间：6 分钟。</b></p><h2>单面与双面三角形</h2><figure><img src="https://scratchapixel.com/images/ray-triangle/frontback.png?" alt=""><figcaption><b>图 1：</b>图元的外表面是法线朝外的那一侧；内表面是相反的那一侧。</figcaption></figure><p>我们在讲光栅化的课程里已经讨论过<b>背面剔除</b>这个说法，这里再回顾一下。想象你要写一个计算光线与三角形求交的函数。我们用一个右手坐标系搭建场景，三角形的顶点按逆时针顺序定义。三角形放在距光线原点五个单位远处，光线原点位于世界坐标系的原点 \((0, 0, 0)\)。光线沿 z 轴负方向。我们已经知道怎么计算三角形法线：按这种构造，如果三角形的所有顶点都落在 x-y 平面或与其平行的平面内，法线就与 z 轴正方向一致。记住，法线的朝向取决于坐标系的左右手性以及三角形顶点的定义顺序（也叫<b>绕序</b>）。如图 1 所示，光线方向与三角形法线面对面。</p><p>法线朝外的那个图元表面定义为<b>外表面</b>，相反的一侧则称为<b>内表面</b>。改变坐标系的左右手性或顶点的顺序，会翻转法线方向，实际上就是把内表面和外表面互换。这种表面朝向会影响表面的可见性与着色。着色不是我们眼下关注的重点，先来看可见性的问题。</p><p>在 CG 场景里，外表面朝向相机的图元称为<b>正面朝向</b>。反过来，图元的外表面背对相机时，则称为<b>背面朝向</b>。渲染程序通常允许在渲染过程的可见性阶段丢弃所有背面朝向的图元，只让外表面朝向相机（正面朝向）的图元可见。比如 OpenGL 就提供了这类控制。这类图元称为<b>单面</b>图元（只有外表面朝向观看者时才可见）。要让一个图元无论表面朝向还是背向相机都可见，可以把它声明为<b>双面</b>。有些渲染程序不提供把图元指定为单面或双面的选项，而是要么一律丢弃所有背面朝向的图元（使它们在最终画面中不可见），要么默认把它们全设为双面。RenderMan 规范允许你逐个图元指定某个物体应按单面还是双面处理（使用 <code>RiSide</code> 调用）。此外，RenderMan 规范还提供了选项来定义场景坐标系的左右手性（用 <code>RiOrientation</code> 过程），以及按需相对于坐标系手性反转图元表面朝向（用 <code>RiReverseOrientation</code> 调用）。</p><p>Vulkan、Metal、DirectX 这类实时 API 也提供了控制能力：既可以指定定义三角形的顶点按逆时针还是顺时针顺序给出，也可以控制是否丢弃背面朝向的三角形。这项配置通常在定义图形管线的图元装配状态时完成。</p><pre><code>
+// Using Vulkan API
+rasterization_state.polygonMode = VK_POLYGON_MODE_FILL;
+rasterization_state.cullMode = VK_CULL_MODE_BACK_BIT ;
+rasterization_state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+</code></pre><details open><figure><img src="https://scratchapixel.com/images/ray-triangle/culling.png?" alt=""><figcaption><b>图：</b>受背面剔除影响的面</figcaption></figure><p><b>背面剔除</b>（如果你喜欢，也可以简单叫「移除」）这个说法是指：法线背对视线的物体不会被画到屏幕上。启用背面剔除后，法线不朝向视线的多边形、三角形、曲面等等都不会被渲染。最终图像里只有法线朝向相机的几何体才可见。 </p><p>在 z 缓冲风格的渲染器里，这项技术可能大幅减少需要渲染的面数，从而显著提升渲染速度、降低内存占用。举例来说，理论上多边形球体有 50% 的面可以被剔除。 </p><p>在光线追踪里，这个特性的好处没那么大，因为一般来说我们希望场景里所有几何体都能投射阴影，不管物体表面相对于光线方向的朝向如何。不过背面剔除对<b>主光线</b>仍然有用。如果一个多边形的表面法线与视线向量的夹角超过 90 度（如图所示），就可以把它排除在求交测试之外。只要在法线与视线方向之间做一次简单的点积测试，就足以判断这个面是否该被剔除。 </p><p>当然，如果物体声明为<b>双面</b>，我们就不剔除这个面。此外，对<b>透明</b>物体来说，剔除背面朝向的表面可能并不可取。</p><p>上图展示了在物体不透明、按单面物体渲染、并启用背面剔除时，渲染阶段会被剔除的那些面（橙色）。</p></details><h2>综合起来</h2><p>开发渲染程序时，务必让它能应付所有可能出现的情形。让用户可以选择坐标系的左右手性、按需反转表面朝向、并指定图元是单面还是双面，这些都会显著影响一帧画面里看得见什么，即便几何体完全相同。</p><p>举例来说，<b>坐标系手性</b>的选择会影响法线的方向，而法线是由三角形的顶点 \(v_0, v_1, v_2\) 定义的。在<b>右手坐标系</b>里，法线（由三角形顶点算出）指向你（背向屏幕，假定 x 轴指向右侧）。在这种情形下，光线与三角形求交函数会返回 <code>false</code>，只要启用了<b>背面剔除</b>，即便光线确实与三角形相交。反过来，换成<b>左手坐标系</b>就会反转法线朝向（法线将背向你，沿你的视线方向），求交测试就能成功。第一种情形下三角形不可见，第二种情形下它可见——尽管是同一个三角形。</p><p>下面是单面/双面特性的实现。在函数开头，计算三角形法线与光线方向的点积。如果点积为负，两个向量方向相反，说明这是正面朝向的表面。如果点积为正，两个向量方向相同，说明我们看到的是表面的内侧（或背面），也就是背面朝向。如果图元声明为单面，这种情形下它就不该可见，函数应返回 <code>false</code>。</p><pre><code>
+bool intersectTriangle(point v0, ..., const bool &amp;isSingleSided)
+{
+    Vec3f v0v1 = v1 - v0;
+    Vec3f v0v2 = v2 - v0;
+    Vec3f N = crossProduct(v0v1, v0v2);
+    normalize(N);
+    ...
+    // 实现单面/双面特性
+    if (dotProduct(dir, N) &gt; 0 &amp;&amp; isSingleSided)
+        return false; // 该表面背面朝向
+    ...
+    return true;
+}
+</code></pre>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/single-vs-double-sided-triangle-backface-culling.html" rel="noreferrer noopener">https://scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/single-vs-double-sided-triangle-backface-culling.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
