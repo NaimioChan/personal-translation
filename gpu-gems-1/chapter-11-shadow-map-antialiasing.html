@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 11 章　阴影贴图抗锯齿 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 11 章　阴影贴图抗锯齿」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 11 章　阴影贴图抗锯齿</h1>
+<p><em>Michael Bunnell<br> NVIDIA</em></p><p><em>Fabio Pellacini<br> Pixar Animation Studios</em></p><h2>11.1 引言</h2><p>阴影贴图是电影和电视高端渲染中制作阴影的首选方法。然而在电子游戏等实时应用中使用阴影贴图一直很成问题，原因是放大会带来以 <em>jaggies</em> 形式出现的走样问题。本章展示如何在着色器中显著减少阴影贴图走样。本章描述了如何实现简化版的百分比邻近过滤，充分利用 GPU 的阴影贴图硬件，以实时帧率渲染软边、抗锯齿的阴影。</p><p>阴影贴图的做法是把阴影贴图投影到几何体上，并在每个像素处把阴影贴图的值与光源视角的深度作比较。如果投影导致阴影贴图被放大，阴影边界就会出现大块难看的锯齿走样。通常可以通过使用更高分辨率的阴影贴图、提高阴影贴图分辨率来减轻走样，例如使用 <em>perspective shadow maps</em>（Stamminger and Drettakis 2002）。然而，当光线几乎平行于受影表面传播时，使用透视阴影贴图技术并提高阴影贴图分辨率都不管用，因为放大率趋于无穷。</p><p>高端渲染软件用一种叫 <em>percentage-closer filtering</em> 的技术解决走样问题。</p><h2>11.2 百分比邻近过滤</h2><p>与普通纹理不同，阴影贴图纹理无法通过预滤波来消除走样。取而代之的是对每个像素做多次阴影贴图比较再取平均。这种技术叫百分比邻近过滤（PCF），因为它计算的是表面中更靠近光源、因而不在阴影中的那部分百分比。</p><p>Reeves 等 1987 描述的原始 PCF 算法，要求把 <em>待着色的区域</em> 映射到阴影贴图空间，并对该区域做随机采样（也就是随机地）。该算法最初在 REYES 渲染引擎上实现，所以 <em>待着色的区域</em> 指的是一个四边微多边形。图 11-1 展示了该实现的一个例子。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig11-01.jpg" alt="fig11-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig11-01.jpg" rel="noreferrer noopener">图 11-1</a> 百分比邻近过滤</figcaption></figure><p>在我们的实现中，我们对 PCF 算法做了小幅改动，使其易于高效应用。我们不去在阴影贴图空间中计算待着色区域，而是直接在处处使用 4x4 纹素的采样区域。这个区域足够大，能显著减轻走样，又不至于大到需要海量采样或随机采样技术才能得到好结果。注意采样区域并不与纹素边界对齐。对齐的区域反而得不到我们想要的抗锯齿效果。</p><p>硬件着色器作用于像素而非微多边形，所以要完全照搬原始实现，就得把代表一个屏幕像素的四边多边形变换到阴影贴图空间，以计算采样区域。我们的实现改用固定大小的采样区域。固定大小的区域让我们跳过复杂的变换，并允许算出精确的阴影百分比，而不必用随机采样得到近似值。见图 11-2。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig11-02.jpg" alt="fig11-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig11-02.jpg" rel="noreferrer noopener">图 11-2</a> 对 4x4 纹素的区域采样</figcaption></figure><h2>11.3 暴力实现</h2><p>NVIDIA GPU 在阴影贴图采样上内置了百分比邻近过滤。硬件做四次深度比较，并用纹理坐标的小数部分对阴影值做双线性插值。阴影结果就是一个纹素大小的采样区域处于阴影中的百分比。见图 11-3。单个纹素大小的采样区域不足以有效消除走样，但把区域扩大到 4x4 纹素、对 16 个阴影比较值取平均就可以了。间隔一个纹素单位的采样，其 <em>x</em> 和 <em>y</em> 偏移分别为 -1.5、-0.5、0.5 和 1.5。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig11-03.jpg" alt="fig11-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig11-03.jpg" rel="noreferrer noopener">图 11-3</a> 使用硬件</figcaption></figure><p>下面的函数可用于在给定以纹素为单位的偏移时做投影纹理读取。变量 <code>texmapscale</code> 是一个 <code>float2</code>，包含阴影贴图的 1/宽度 和 1/高度。</p><pre><code>float3 offset_lookup(sampler2D map, float4 loc, float2 offset)
+{
+  return tex2Dproj(map,
+                   float4(loc.xy + offset * texmapscale * loc.w, loc.z, loc.w));
+}</code></pre><p>我们可以在片元程序中这样实现 16 次采样的版本：</p><pre><code>float sum = 0;
+float x, y;
+for (y = -1.5; y &lt; = 1.5; y += 1.0)
+  for (x = -1.5; x &lt; = 1.5; x += 1.0)
+    sum += offset_lookup(shadowmap, shadowCoord, float2(x, y));
+shadowCoeff = sum / 16.0;</code></pre><h2>11.4 使用更少的采样</h2><p>暴力方法的性能比预想的好。许多纹理取数都在纹理缓存中命中，因为它们保证彼此相邻。不过，如果我们逐像素改变采样模式，只用四次采样就能得到类似的结果。</p><p>四次采样技术的结果，类似于把黑白数据抖动成灰度图像。采样区域大小不变，但每个像素只使用 16 个采样中的 4 个。这 4 个采样的集合随屏幕位置而变。图 11-4 展示了着色器四次采样版本使用的采样模式，即每像素从 16 个可能采样位置中取 4 个。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig11-04.jpg" alt="fig11-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig11-04.jpg" rel="noreferrer noopener">图 11-4</a> 着色器四次采样版本使用的采样模式</figcaption></figure><p>我们可以这样实现四次采样版本：</p><pre><code>offset = (float)(frac(position.xy * 0.5) > 0.25);
+// mod offset.y += offset.x;
+// 在浮点运算下即 y ^= x
+if (offset.y > 1.1)
+  offset.y = 0;
+shadowCoeff = (offset_lookup(shadowmap, sCoord, offset + float2(-1.5, 0.5)) +
+               offset_lookup(shadowmap, sCoord, offset + float2(0.5, 0.5)) +
+               offset_lookup(shadowmap, sCoord, offset + float2(-1.5, -1.5)) +
+               offset_lookup(shadowmap, sCoord, offset + float2(0.5, -1.5))) *
+              0.25;</code></pre><h2>11.5 为什么有效</h2><p>既然纹理投影会大幅放大阴影贴图，固定大小的采样区域怎么能抗锯齿？答案很简单：纹理被放大时，相邻像素的纹理采样彼此靠得很近。如果采样彼此靠近、采样区域又相对较大，那么由于采样区域大量重叠，阴影值之间只可能有很小的差异。图 11-5 展示了阴影贴图被放大时相邻像素采样区域的重叠情况。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig11-05.jpg" alt="fig11-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig11-05.jpg" rel="noreferrer noopener">图 11-5</a> 相邻像素的重叠采样区域</figcaption></figure><p>阴影贴图放大得越多，相邻像素之间的差异就越小，阴影区与非阴影区之间的过渡就越平滑。硬件以 8 位精度计算该阴影百分比，所以即使在极度放大、阴影对比强烈的情况下，也总会有平滑的阴影过渡，不会出现色带。如果阴影区域彼此非常接近，那么在每分量 8 位输出下，阴影值只会相差最低有效位。图 11-6、11-7 和 11-8 分别展示了忍者模型在 1、4、16 次采样下的阴影。图 11-9 展示这三种情况下忍者拇指阴影的放大图。注意 16 次采样情形下阴影质量大幅改善。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig11-06.jpg" alt="fig11-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig11-06.jpg" rel="noreferrer noopener">图 11-6</a> 每像素一次采样的忍者阴影</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig11-07.jpg" alt="fig11-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig11-07.jpg" rel="noreferrer noopener">图 11-7</a> 每像素四次抖动采样的忍者阴影</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig11-08.jpg" alt="fig11-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig11-08.jpg" rel="noreferrer noopener">图 11-8</a> 每像素十六次采样的忍者阴影</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig11-09a.jpg" alt="fig11-09a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig11-09a.jpg" rel="noreferrer noopener">图 11-9</a> 放大后的阴影</figcaption></figure><h2>11.6 结论</h2><p>阴影贴图是渲染阴影的常用方法，但受走样瑕疵困扰。通过对多个阴影贴图值取平均，可以大幅减轻阴影贴图走样。如果能利用 GPU 的阴影贴图硬件并采用巧妙的采样技术，我们就能以高帧率渲染软边、抗锯齿的阴影。</p><h2>11.7 参考文献</h2><p><a id="ch11bib01_01"></a>Fernando, Randima, and Mark Kilgard. 2003. <em>The Cg Tutorial</em>. Addison-Wesley. 这本 Cg 语言入门书有一节很好地讲了阴影贴图。</p><p><a id="ch11bib01_02"></a>Reeves, W. T., D. H. Salesin, and P. L. Cook. 1987. "Rendering Antialiased Shadows with Depth Maps." <em>Computer Graphics</em> 21(4)（SIGGRAPH 87 会议论文集）。</p><p><a id="ch11bib01_03"></a>Stamminger, Marc, and George Drettakis. 2002. "Perspective Shadow Maps." 载 <em>Proceedings of SIGGRAPH 2002</em>，pp. 557–562。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-11-shadow-map-antialiasing" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-11-shadow-map-antialiasing</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

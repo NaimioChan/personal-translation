@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 17 章　用像素着色器分支实现高效的软边阴影 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 17 章　用像素着色器分支实现高效的软边阴影」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 17 章　基于像素着色器分支的高效软边阴影</h1>
+<p><em>Yury Uralsky</em><br> <em>NVIDIA Corporation</em></p><p>渲染真实的阴影一直是计算机图形中的难题。即使不要求实时性能，软阴影对开发者也是更大的挑战。然而阴影是重要的视觉线索，帮助我们建立场景中物体之间的空间关系。过去，美术理解阴影的重要性，并善加利用来强调某些物体、为画面增加纵深感。</p><p>现实世界的阴影边缘总带有一定程度的模糊，从不显得严格地硬。即使在晴朗的太阳天、阴影最锐利的时候，这也是可察觉的效果。就连太阳，尽管离地球极其遥远，也不能视为点光源。此外，空气散射会使入射光扩散，进一步模糊阳光投下的阴影。</p><p>图形硬件功能与性能的近期进展终于让我们能实时渲染软阴影。本章讨论一种在交互帧率下渲染高质量近似真实软阴影的方法。该方法基于在片元着色器中用一项称为<em>百分比邻近滤波</em>（PCF）的技术自适应地取多个阴影贴图采样。借助片元着色器的分支能力，这种自适应采样方式相比始终取固定数量的采样，能在保持高性能的同时提升画质。</p><h2>17.1 现有阴影技术</h2><p>最有名、最稳健的阴影渲染技术是模板阴影体和阴影贴图。两种方法各有优缺点。</p><p>模板阴影体的工作方式是：用若干视锥对场景表面上的点做分类，这些视锥涵盖被遮挡物挡住光线的空间。视锥的侧面由包含光源位置和物体轮廓边的平面构成，轮廓边从光源视角观察得到。阴影体的侧面被渲染到一个专门的离屏缓冲，为处于阴影中的像素「打上标记」。之后常规的场景渲染就可以按标记值为像素着色。</p><p>这种方法简单优雅，所需硬件支持极少。它对平行光源和点光源都适用，而且能很方便地集成到任何基于多边形的渲染系统中，使每个表面都能得到正确的阴影。</p><p>另一方面，模板阴影体严重依赖投影物体的几何复杂度，并且消耗大量填充率。目前多数模板阴影体实现都需要在 CPU 侧做相当多的工作，不过这种情况将来可能会改变。模板阴影体的另一个缺点是该方法本质上要多遍渲染，这进一步限制了可用场景的多边形数量。</p><p>阴影贴图本质上是从光源视角渲染的 z 缓冲。整个场景在单独一遍中渲染进阴影贴图。渲染场景本身时，把每个像素的位置变换到光源空间，再把它的 z 值与阴影贴图中存的值比较。比较结果用于判断当前像素是否处于阴影中。阴影贴图是一种图像空间算法，会因有限的阴影贴图分辨率和重采样问题而出现走样。设想我们正看着一个大三角形，它相对光源是侧向的，阴影横跨其上。可以想见，它的投影在阴影贴图中只覆盖少量纹素，无法以像样的分辨率重现阴影边界。阴影贴图的另一个缺点是对全向光源效果不好，需要多遍渲染来生成多张阴影贴图，覆盖整个方向球。</p><p>当缺点能被避免或减轻时，阴影贴图非常好用。阴影贴图与渲染管线的其余部分完全正交：凡是能渲染、能产生 z 值的东西都能投射阴影。阴影贴图随三角形数量增加而扩展得很好，甚至能处理带部分透明纹理的物体。这些特性使它成为离线渲染的首选算法。</p><p>这两种算法都无法「开箱即用」地产生软边阴影。存在一些扩展可以让它们渲染软边阴影，但这些扩展依赖对区域光源表面采样，并针对每个采样位置执行多遍阴影渲染再累加结果。这使阴影开销急剧增加，而且如果遍数不够多，还会在阴影的半影中产生可见的色带。</p><p>不过，通过修改原来的阴影贴图算法，可以高效地近似软阴影。Reeves 等人（1987）描述的百分比邻近滤波技术，在当前着色点周围取大量阴影贴图采样，再对结果滤波，从而产生有说服力的软阴影。</p><h2>17.2 用单张阴影贴图实现软阴影</h2><p>用 PCF，我们不必对光源采样并在每个采样位置渲染阴影贴图，只需<em>一张</em>阴影贴图，在投影点周围区域多次采样它，再把结果组合起来。这种方法不产生物理正确的软阴影，但视觉效果与现实中所见的相似。</p><h4>17.2.1 模糊硬边阴影</h4><p>实际上，我们要模糊硬边阴影，让它看起来边缘更柔和。直接的做法是用偏移后的纹理坐标多次执行阴影贴图比较，然后对结果取平均。直观地说，偏移量决定最终阴影的模糊程度。</p><p>注意我们不能模糊阴影贴图的实际内容，因为其中存的是深度值。我们必须模糊渲染场景时阴影贴图查找的<em>结果</em>，这需要执行多次查找，每次的位置都相对像素真实位置略微偏移。</p><p>这种做法类似通过渲染多张阴影贴图来生成软阴影的传统方法。我们只是「把问题旋转 90 度」，用便宜得多的对单张阴影贴图的多重查找，取代昂贵的多遍阴影贴图生成。</p><p>代码清单 17-1 中的 GLSL 代码演示了这一想法。</p><p>可惜这种朴素做法只在半影区域很小时才效果好。否则条带瑕疵会非常刺眼，如图 17-1 所示。当阴影贴图采样数相对半影尺寸太少时，我们的「软」阴影看起来就像几层硬边阴影叠在一起。要消除这些条带瑕疵，我们得把阴影贴图采样数增加到算法因性能问题而变得不实用的程度。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/17_softedged_01.jpg" alt="17_softedged_01.jpg"><figcaption>图 17-1 模糊阴影的朴素做法</figcaption></figure><h4>示例 17-1. 实现 PCF 的基本算法</h4><pre><code>#define SAMPLES_COUNT 32
+#define INV_SAMPLES_COUNT (1.0f / SAMPLES_COUNT)
+uniform sampler2D decal;
+// 贴花纹理
+uniform sampler2D spot;
+// 投影聚光灯图像
+uniform sampler2DShadow shadowMap;
+// 阴影贴图
+uniform float fwidth;
+uniform vec2 offsets[SAMPLES_COUNT];
+// 这些由顶点着色器传下来
+varying vec4 shadowMapPos;
+varying vec3 normal;
+varying vec2 texCoord;
+varying vec3 lightVec;
+varying vec3 view;
+void main(void)
+{
+  float shadow = 0;
+  float fsize = shadowMapPos.w * fwidth;
+  vec4 smCoord = shadowMapPos;
+  for (int i = 0; i < SAMPLES_COUNT; i++)
+  {
+    smCoord.xy = offsets[i] * fsize + shadowMapPos;
+    shadow += texture2DProj(shadowMap, smCoord) * INV_SAMPLES_COUNT;
+  }
+  vec3 N = normalize(normal);
+  vec3 L = normalize(lightVec);
+  vec3 V = normalize(view);
+  vec3 R = reflect(-V, N);
+  // 计算漫反射点积
+  float NdotL = max(dot(N, L), 0);
+  // 用算出的阴影值调制光照
+  vec3 color = texture2D(decal, texCoord).xyz;
+  gl_FragColor.xyz = (color * NdotL + pow(max(dot(R, L), 0), 64)) * shadow *
+                         texture2DProj(spot, shadowMapPos) +
+                     color * 0.1;
+}</code></pre><p>下面看看如何在不使用太多阴影贴图采样的前提下更有效地实现这种模糊。为此我们采用蒙特卡洛方法，它基于概率计算：对一个函数取若干<em>随机放置</em>的采样并求平均。在我们的语境中，这意味着需要<em>随机</em>采样阴影贴图。这种随机放置采样的做法很明智。关键在于：每次计算遮蔽值时，阴影贴图采样位置的序列都略有不同，因此不同像素上的近似误差也不同。这就有效地用高频噪声取代了条带，而人眼视觉系统恰好很擅长把这种瑕疵滤掉。注意误差依然存在，只是对人眼隐藏得好得多。</p><p>如果我们精心构造偏移序列，使它只带有一定程度的随机性，得到的结果会比完全随机偏移更好；这种做法叫<em>分层</em>或<em>抖动</em>采样。为构造这种分布，我们把定义域划分为若干面积相等的子区域，也称为<em>层</em>，并在每个子区域内随机选取一个采样位置。这种细分使定义域得到均匀覆盖，同时每个采样仍随机落在自己的单元内。</p><p>如果假定采样域是一个圆盘，分层就会有些麻烦。一种可能的解法是对一个方形区域分层，再把它变换成圆盘形状，同时保持各子区域的面积。生成方形采样网格再做抖动很直接，而保面积的方形到圆盘变换，我们用下面两个公式：</p><p><img alt="0274equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0274equ01.jpg"/></p><p>其中 <em>u</em>, <em>v</em> ∊ [0..1]，表示方形域内抖动后的采样位置；<em>x</em>, <em>y</em> 是圆盘域内对应的采样位置。图 17-2 说明了这一过程。这样 <em>u</em> 维映射到角度位置，<em>v</em> 维映射到距圆盘中心的径向距离。平方根补偿了从圆盘中心向外移动时单元面积的变化，减小了单元的径向尺寸。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/17_softedged_02.jpg" alt="17_softedged_02.jpg"><figcaption>图 17-2 抖动规则网格并变换到圆盘</figcaption></figure><h4>17.2.2 提升效率</h4><p>要获得好的阴影质量，我们仍需取相当多的采样。要有好看的、半影平滑的阴影，可能需要多达 64 个采样。</p><p>想想看：我们需要<em>逐像素</em>采样阴影贴图 64 次。这给纹理内存带宽和着色器处理带来很大压力。</p><p>好在现实中的多数阴影并没有很大的半影区域。半影区域是阴影的柔和部分，也是最需要多采样的地方。其余像素要么完全在阴影中，要么完全在阴影外，对这些像素来说，取一个采样和取几千个采样结果相同。</p><h4>像树一样分支</h4><p>当然，我们希望尽可能多的像素跳过不必要的计算。但怎么知道哪些像素在半影中、哪些不在？可以想见，实现这一点需要我们在片元层面做判断。</p><p>GeForce 6 系列 GPU 终于在片元程序中实现了真正的动态分支。这基本上意味着，现在可以完全跳过那些无需执行的大块代码，省下大量计算。</p><p>理想情况下，分支指令不应有任何开销，用它们跳过代码只会提升性能。可惜事实并非如此。现代 GPU 是高度并行、深度流水线的架构，会同时计算许多像素。流水线让 GPU 达到很高的性能，而并行化对计算机图形也很自然，因为许多像素执行相似的计算。使用流水线和并行执行的后果是：在任一时刻，GPU 处理数千个像素，但它们全都运行<em>同样的</em>计算。</p><p>你说这和分支有什么关系？嗯，动态分支本质上是让像素各自选择执行路径。如果两个像素在片元程序中走不同分支，你就不能再把它们放在一起处理。因此分支在一定程度上<em>损害</em>了并行性。</p><p>正因如此，你要确保分支尽可能<em>一致</em>。这里的「一致」是指：某个局部邻域内的像素应总走同一分支——这样它们才能一起处理。分支越不一致，用分支跳过代码得到的收益就越小。</p><h4>预测与预报</h4><p>现在我们试着预测能从分支中得到多少收益。基本上，我们需要检测一个像素是否在半影中，并决定它需要多少个阴影贴图采样。如果我们能想出一个廉价的「估算器」函数，告诉我们当前像素是否需要更多采样，就能把它用作分支条件。</p><p>不实际采样阴影贴图，就不可能得知某个像素处阴影贴图的任何信息。同样显然的是，一个采样不足以判断当前像素是否只是部分处于阴影中。所以我们需要一种用少量采样作出判断的方法。</p><p>因此我们取少量阴影贴图采样做比较。如果它们恰好都取相同的值（也就是全为 1 或全为 0），那么同一区域内其余的采样很可能也取相同的值。这之所以成立，是因为大多数阴影都「规矩」：与半影尺寸相比，受光区与阴影区之间的变化相当稀疏。用于判断的采样数越少，我们从分支中得到的好处就越大。</p><p>接下来的问题是如何摆放估计采样点，使半影预测尽可能精确。如果这些采样点在采样域内的位置固定，我们又会遇到条带。但我们已经知道怎么对付条带：再抖动一次采样就是了！</p><p>结果表明，最好的做法是把抖动后的采样点分布在圆盘边缘附近的一圈上，那里最有可能捕捉到从受光到阴影的过渡，如图 17-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/17_softedged_03.jpg" alt="17_softedged_03.jpg"><figcaption>图 17-3　估计采样点（绿色所示）</figcaption></figure><p>当然，这种采样点摆放方式对某些像素会漏掉半影。但多亏了抖动，下一个像素的估计采样点位置会略有不同，很可能就判断正确了。这样我们又通过相邻像素间的高频噪声把预测误差散掉了。</p><h4>17.2.3 实现细节</h4><p>阴影贴图本身，我们使用深度纹理以及 OpenGL 1.4 中标准的「compare」纹理应用模式。要注意，阴影贴图用浮点格式通常是大材小用，还会带来必须在片元着色器中手工做比较的额外负担。额外的好处是，NVIDIA 硬件对深度纹理免费提供四采样的双线性百分比邻近过滤，这让半影更加平滑。</p><p>算法的主要工作都围绕抖动采样。生成抖动偏移并非易事，最好预先算好并存入一张纹理（抖动贴图）。</p><p>为避免颜色条带问题，彼此靠近的像素需要使用不同的抖动偏移集合。偏移因抖动贴图的平铺而重复并不要紧，只要噪声频率足够高，效果就不会被察觉。</p><p>实现这一点最自然的方式是用三维纹理存储抖动偏移。我们把互不相同的抖动偏移序列存放在沿 <em>r</em> 纹理维度的纹素「列」中，并在屏幕空间中沿 <em>s</em> 和 <em>t</em> 维度平铺该纹理。<em>s</em>、<em>t</em> 维度的纹理尺寸决定了序列互不相同的区域大小，<em>r</em> 维度的尺寸则取决于我们打算取的最大采样数。方便的是，GLSL 提供了一个内建变量 <code>gl_FragCoord</code>，其中存有当前像素在屏幕空间的位置。这正是我们在 <em>s</em>、<em>t</em> 维度上寻址这张三维纹理所需要的。</p><p>由于偏移是二维的，而纹素最多可有四个通道，我们还能用另一个优化来降低这张三维纹理的存储需求。每个纹素存一对偏移，第一个偏移占用纹素的 <em>r</em>、<em>g</em> 分量，第二个放在 <em>b</em>、<em>a</em> 分量。这样纹理在纹素上的「深度」就是每像素阴影贴图采样数的一半。额外的好处是省下一些纹理内存带宽，因为每两个阴影贴图采样只需查一次纹理。</p><p>偏移以归一化形式存储：如果把采样分布在半径为 1 的圆盘内，那么相对于圆心的偏移总在 [-1..1] 范围内。在片元程序中，我们把每个偏移乘以一个模糊系数，以控制阴影的柔和程度。偏移不需要高精度，所以这张纹理用带符号的四分量、每分量 8 位的格式就够了。</p><p>由于估计采样点也需要抖动，我们可以用三维纹理中存的部分偏移来做这件事。这些偏移应位于采样圆盘的外圈。我们填充三维纹理时，让估计采样点的偏移从每列的 <em>r</em> = 0 开始，其余偏移随后排列。这在片元程序里让寻址稍微简单一点。</p><p>想更好地理解抖动贴图的构建过程，请看随书光盘源码中的函数 <code>create_jitter_lookup()</code>。</p><h4>性能说明</h4><p>阴影贴图还有一个众所周知的与采样和精度有关的问题。这个问题通常称为「阴影痤疮」，表现为物体受光一侧出现阴影「泄漏」，类似 z 冲突。通常的规避办法是渲染物体的背面而非正面到阴影贴图。这把问题转移到了背对光源的三角形上，而这些三角形不被该光源照亮，强度与处于阴影中的表面相同，因此看不出来。</p><p>这个技巧对我们的软阴影算法有性能影响。虽然「痤疮」看不见，却会显著影响分支的一致性。为补救这一点，我们用函数 <code>(dot(N, L) &lt;= 0 ? 0 : 1)</code> 调制半影估计结果。也就是说，如果某像素恰好属于物体背阴的一侧，函数取 0，从而废掉可能不正确的半影估计，强制它返回「完全在阴影中」的结果。</p><p>另一个可行的改进是用中点阴影贴图代替普通阴影贴图。中点阴影贴图的作法是存储从光源看去的正面与背面之间的平均深度。当投影物体是闭合的且有合理厚度时，这也能减轻阴影走样瑕疵，代价是阴影贴图的构建更复杂。</p><p>代码清单 17-2 中的 GLSL 片元着色器代码展示了本章所述的自适应采样方法。</p><h4>示例 17-2. 为阴影贴图的 PCF 实现自适应采样</h4><pre><code>#define SAMPLES_COUNT 64
+#define SAMPLES_COUNT_DIV_2 32
+#define INV_SAMPLES_COUNT (1.0f / SAMPLES_COUNT)
+uniform sampler2D decal;
+// 贴花纹理
+uniform sampler3D jitter;
+// 抖动贴图
+uniform sampler2D spot;
+// 投影聚光灯图像
+uniform sampler2DShadow shadowMap;
+// 阴影贴图
+uniform float fwidth;
+uniform vec2 jxyscale;
+// 这些由顶点着色器传下来
+varying vec4 shadowMapPos;
+varying vec3 normal;
+varying vec2 texCoord;
+varying vec3 lightVec;
+varying vec3 view;
+void main(void)
+{
+  float shadow = 0;
+  float fsize = shadowMapPos.w * fwidth;
+  vec3 jcoord = vec3(gl_FragCoord.xy * jxyscale, 0);
+  vec4 smCoord = shadowMapPos;
+  // 先取几个开销低的“测试”采样
+  for (int i = 0; i < 4; i++)
+  {
+    vec4 offset = texture3D(jitter, jcoord);
+    jcoord.z += 1.0f / SAMPLES_COUNT_DIV_2;
+    smCoord.xy = offset.xy * fsize + shadowMapPos;
+    shadow += texture2DProj(shadowMap, smCoord) / 8;
+    smCoord.xy = offset.zw * fsize + shadowMapPos;
+    shadow += texture2DProj(shadowMap, smCoord) / 8;
+  }
+  vec3 N = normalize(normal);
+  vec3 L = normalize(lightVec);
+  vec3 V = normalize(view);
+  vec3 R = reflect(-V, N);
+  // 计算漫反射点积
+  float NdotL = max(dot(N, L), 0);
+  // 如果所有测试采样全为零或全为一，或者漫反射点
+  // 积为零，就跳过开销高的阴影贴图滤波
+  if ((shadow - 1) * shadow * NdotL != 0)
+  {
+    // 多半是落在半影里
+    shadow *= 1.0f / 8; // 调整累加值
+    // 细化我们的阴影估计
+    for (int i = 0; i < SAMPLES_COUNT_DIV_2 - 4; i++)
+    {
+      vec4 offset = texture3D(jitter, jcoord);
+      jcoord.z += 1.0f / SAMPLES_COUNT_DIV_2;
+      smCoord.xy = offset.xy * fsize + shadowMapPos;
+      shadow += texture2DProj(shadowMap, smCoord) * INV_SAMPLES_COUNT;
+      smCoord.xy = offset.zw * fsize + shadowMapPos;
+      shadow += texture2DProj(shadowMap, smCoord) * INV_SAMPLES_COUNT;
+    }
+  }
+  // 全部完成——用算出的阴影值调制光照
+  vec3 color = texture2D(decal, texCoord).xyz;
+  gl_FragColor.xyz = (color * NdotL + pow(max(dot(R, L), 0), 64)) * shadow *
+                         texture2DProj(spot, shadowMapPos) +
+                     color * 0.1;
+}</code></pre><h2>17.3 结论</h2><p>我们描述了一种在片元着色器中基于百分比邻近过滤、实时渲染软边阴影的高效方法。图 17-4 给出了示例结果。该方法与其他渲染技术完全正交；例如模板缓冲仍可用于额外效果。由于大部分工作在 GPU 上完成，随着新的、更强大的 GPU 架构出现，这一方法会表现出更高的性能。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/17_softedged_04.jpg" alt="17_softedged_04.jpg"><figcaption>图 17-4　实时渲染的逼真软边阴影</figcaption></figure><p>注意，这里所述的做法在特殊的阴影贴图投影（如透视阴影贴图）下可能效果不佳。这类情况下，需要做更多工作才能逐像素调整半影大小。</p><p>如果使用得当，分支能让 GPU 逐片元跳过不必要的计算，从而显著提升性能。在 GeForce 6800 GT 上，我们的自适应阴影贴图采样测试实现相比常规阴影贴图采样，帧率提升了一倍多。用分支获得高性能的关键是尽量保持一致。对未来的硬件架构而言，这一点会更加重要——我们可以期待更高的并行度和更深的流水线。</p><h2>17.4 参考文献</h2><p><a id="biblio17_01"></a>Akenine-Möller, Tomas, and Ulf Assarsson. 2002. "Approximate Soft Shadows on Arbitrary Surfaces Using Penumbra Wedges."，载 <em>Thirteenth Eurographics Workshop on Rendering</em>，第 297–306 页。</p><p><a id="biblio17_02"></a>Assarsson, Ulf, Michael Dougherty, Michael Mounier, and Tomas Akenine-Möller. 2003. "An Optimized Soft Shadow Volume Algorithm with Real-Time Performance."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，第 33–40 页。</p><p><a id="biblio17_03"></a>Brabec, Stefan, and Hans-Peter Seidel. 2002. "Single Sample Soft Shadows Using Depth Maps."，载 <em>Proceedings of Graphics Interface 2002</em>，第 219–228 页。</p><p><a id="biblio17_04"></a>Cook, Robert L. 1986. "Stochastic Sampling in Computer Graphics." <em>ACM Transactions on Graphics</em> 5(1)，第 51–72 页。</p><p><a id="biblio17_05"></a>Kirsch, Florian, and Jurgen Dollner. 2003. "Real-Time Soft Shadows Using a Single Light Sample." <em>WSCG</em> 11(1)，第 255–262 页。</p><p><a id="biblio17_06"></a>Reeves, William T., David H. Salesin, and Robert L. Cook. 1987. "Rendering Antialiased Shadows with Depth Maps." <em>Computer Graphics</em> 21(4)，第 283–291 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-17-efficient-soft-edged-shadows-using" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-17-efficient-soft-edged-shadows-using</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

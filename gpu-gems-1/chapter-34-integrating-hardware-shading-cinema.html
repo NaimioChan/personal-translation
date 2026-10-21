@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 34 章　把硬件着色集成进 Cinema 4D - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 34 章　把硬件着色集成进 Cinema 4D」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 34 章　把硬件着色集成进 Cinema 4D</h1>
+<p><em>Jörn Loviscach<br> Hochschule Bremen</em></p><p>大多数 3D 图形设计软件都利用图形硬件来加速建模过程中显示的交互式预览。鉴于当前 3D 芯片强大的计算能力，如何利用这些硬件做高质量渲染，有许多有趣的问题待解决。目标既是加速离线渲染，也是提供更高质量的交互显示，从而给设计师更好的反馈。本章概述如何用 CgFX 工具包把这些能力带入 Maxon Cinema 4D，并讨论在此过程中必须解决的问题。所用的做法可以很容易地推广到类似的 3D 图形设计软件。</p><h2>34.1 引言</h2><p>为了研究基于硬件的渲染，不必从零开发新的 3D 图形设计软件。更可行的做法是给现成产品增加这类功能，用图形硬件模拟内置的最终渲染器。本章描述把这种做法实现为 Maxon Cinema 4D 插件 C4Dfx 的过程。这项开发的大部分工作并不取决于我们选择哪款宿主软件；我们的关注点在着色器编程、几何计算和对象导向上。因此，我们的技术可以直接应用于许多其他仍缺乏可编程硬件着色支持的 3D 图形方案。</p><p>Cinema 4D 提供建模、动画与渲染环境，功能上可与 Alias Maya 和 discreet 3ds max 相提并论。不过到目前为止，Cinema 4D 对当前图形硬件特殊特性的支持相当有限。鉴于它可通过插件扩展，这款软件是检验如何应用 CgFX 的好案例。</p><p>Cinema 4D 的预览窗口（图 34-1 左上）使用基于 Gouraud 插值的标准 OpenGL 渲染。硬件加速渲染器 C4Dfx（图右上）显示平滑的 Phong 插值高光、凹凸贴图、阴影和环境贴图。除软阴影外，这种渲染的质量已接近 Cinema 4D 离线渲染器的质量（图左下）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig34-01.jpg" alt="fig34-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig34-01.jpg" rel="noreferrer noopener">图 34-1</a> 渲染器比较</figcaption></figure><p>这个硬件加速渲染插件既提供接近交互帧率更新的显示，也提供生成 .avi 文件的离线渲染器。尽管该插件并不能完全重现 Cinema 4D 离线渲染器的结果，它快速而相当准确的预览很有帮助。插件离线渲染器的结果可用于快速预演，甚至直接作为最终结果。</p><p>该插件基于 OpenGL 与 CgFX 工具包构建。3D 软件的表面材质由 CgFX 着色器透明地模拟，包括凹凸贴图、环境贴图和阴影等效果。也可以从 .fx 文件载入 CgFX 着色器。这时会即时生成图形用户界面，让设计师控制着色器可调的参数。这种做法使得越来越多的 .fx 着色器不仅能用于游戏开发，也能作为常规材质用于高质量渲染。它们还能把阴影投射到携带所模拟 Cinema 4D 材质的对象上。图 34-2 展示了 NVIDIA 为 Maya 提供的 CgFX 插件中七个 .fx 着色器的结果。图中也显示各种类型的 3D 对象都能以同样方式处理。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig34-02.jpg" alt="fig34-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig34-02.jpg" rel="noreferrer noopener">图 34-2</a> CgFX 着色器与带阴影的模拟 Cinema 4D 材质</figcaption></figure><h2>34.2 把 Cinema 4D 连接到 CgFX</h2><p>当试图把 Win32、OpenGL 和 CgFX 调用与 Cinema 4D 的 C++ API 一起使用时，会遇到一个小障碍：相应的头文件因类型重定义而冲突，无法同时包含。这个问题通过引入包装函数与包装类干净地解决。它们封装了所用到的 API 函数与类。</p><p>对第三方程序员，Cinema 4D 只允许有限地访问其窗口。为了完全控制设备上下文，该插件建立自己的 Win32 线程。它的高质量预览与离线渲染器与 Cinema 4D 并发运行；它们使用离屏缓冲，并通过位图把结果送到 Cinema 4D 的对话框显示。这种设计使得例如在运行中切换不同的抗锯齿（多重采样）模式成为可能。此外，如果用户调整某个窗口的大小，只需重新缩放所显示的位图，从而得到即时的视觉反馈。若在调整尺寸事件中重渲染场景，就做不到这一点。</p><p>得益于多线程，用户可以在建模窗口中工作而无需等待交互渲染器或离线渲染器完成。不过这种并发运行意味着插件必须收到场景的一份克隆副本。否则插件可能试图访问用户刚刚删除的对象。</p><p>该插件用 CgFX 框架构建着色器，并用它们渲染场景。每当为某一帧调用交互渲染器，或为某个帧序列调用离线渲染器时，对全部材质都会从 .fx 文件构建 <code>ICgFXEffect</code> 实例，或通过模拟标准 Cinema 4D 材质来构建（详见下文）。渲染期间，每个对象都会调用相应的 <code>ICgFXEffect</code>。CgFX 框架的每个渲染通道都会调用一个 OpenGL 索引顶点数组，其中包含法线与（多重）纹理坐标数组。</p><p>这些数组的准备方式如下。Cinema 4D 使用样条曲面、metaball 等，而它 API 中的 <code>Hierarchy</code> 类让插件开发者能轻松遍历场景数据结构，收集所有对象剖分并变形后的版本及其全局变换矩阵。顶点与多边形结构可以直接在 OpenGL 中用作四边形的索引顶点数组。注意 Cinema 4D 不支持任意多边形，只支持四边形和三角形；后者被当作退化的四边形处理。</p><p>除空间坐标外，典型的 .fx 着色器还需要每个顶点的许多额外数据：法线向量、切线向量、副法线向量以及 u-v 纹理坐标。如果我们要求对象是内置参数化类型（例如球体或人体模型），或者要求用户为对象指定 u-v 坐标，那么后一项就能直接获取。</p><p>借助 Cinema 4D 提供的邻接信息，可以容易地确定面法线，并通过在顶点周围平均面法线向量得到顶点法线向量。要计算顶点处的切线与副法线向量，需要指向纹理坐标 <em>u</em> 与 <em>v</em> 方向的向量。对基于样条的对象来说这很容易：取偏导数即可。但这里我们要处理的是已被剖分或从一开始就是多面体的几何体。在这种情况下，<em>u</em> 与 <em>v</em> 方向没有良好定义。它们或许可以按每个顶点推断：考虑该顶点自身及其相邻顶点的 <em>u</em> 与 <em>v</em> 坐标，尝试找到最佳线性近似。</p><p>做法的出发点是位置 <strong>x</strong> <em><sub>i</sub></em> 与纹理坐标 <em>u<sub>i</sub></em> 、<em>v<sub>i</sub></em> ，它们取自与顶点 0 相邻的顶点 <em>i</em>；由此计算辅助量 <em>a</em>、<em>b</em>、<em>c</em>、<strong>d</strong>、<strong>e</strong>（粗体为向量）：</p><p><img alt="571equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/571equ01.jpg"/></p><p>由此确定 <strong>u</strong>、<strong>v</strong> 两个向量，它们指向 <em>u</em> 与 <em>v</em> 方向，未做归一化，可能尚未与中心顶点 0 处的法线 <strong>n</strong> 正交：</p><blockquote><p><strong>U</strong> = <em>c</em> <strong>d</strong> - <em>b</em> <strong>e</strong>, <strong>v</strong> = <em>a</em> <strong>e</strong> - <em>b</em> <strong>d.</strong></p></blockquote><p>要构造正交标架（法线、切线、副法线），先计算 <strong>u</strong> 的切向分量：</p><p><strong>u</strong> <em><sub>t</sub></em> = <strong>u</strong> - (<strong>u · n</strong>) <strong>n</strong></p><p>然后使用下面这组向量：<strong>n</strong>、<a href="https://developer.download.nvidia.com/books/gpugems/571equ03.jpg" rel="noreferrer noopener"><img alt="571equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems/571equ03.jpg"/></a> 、<a href="https://developer.download.nvidia.com/books/gpugems/571equ04.jpg" rel="noreferrer noopener"><img alt="571equ04.jpg" src="https://developer.download.nvidia.com/books/gpugems/571equ04.jpg"/></a> ，其中 <a href="https://developer.download.nvidia.com/books/gpugems/571equ03.jpg" rel="noreferrer noopener"><img alt="571equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems/571equ03.jpg"/></a> 表示对 <strong>u</strong> <em><sub>t</sub></em> 作归一化，x 表示向量积。对于从凹凸贴图生成的法线贴图，切线与副法线向量可以替换为 <a href="https://developer.download.nvidia.com/books/gpugems/571equ03.jpg" rel="noreferrer noopener"><img alt="571equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems/571equ03.jpg"/></a> 和 <a href="https://developer.download.nvidia.com/books/gpugems/571equ05.jpg" rel="noreferrer noopener"><img alt="571equ05.jpg" src="https://developer.download.nvidia.com/books/gpugems/571equ05.jpg"/></a> ，或替换为向量 (<strong>v</strong> x <strong>n</strong>)<sup>0</sup> 与 (<strong>n</strong> x <strong>u</strong>)<sup>0</sup>，后者更接近凹凸贴图的原始形式，对局部不正交的 u-v 坐标效果更好。其他选择见 Kilgard 2000。</p><h2>34.3 着色器与参数管理</h2><p>得益于 CgFX 工具包，载入 .fx 文件并把它用作着色器很容易，如上所述。但参数方面还有些工作：用户需要访问可调的参数（包括它们的动画），而不可调的参数必须从场景中计算出来。</p><p>为处理 .fx 文件，该插件给 Cinema 4D 增加了一种专有材质类型，可以像往常一样附着到对象上。这种材质的一个实例保存 .fx 文件的名称，以及其可调参数的值与动画。当用户重新载入 .fx 文件或选择新文件时，插件用 <code>ICgFXEffect</code> 的实例来载入并解析该文件。</p><p>对每个参数都会构建一个专门对象，由它管理该参数的 GUI、它的值等等。这个对象属于一个新定义的 C++ 基类 <code>ParamWrapper</code> 的某个子类；该基类的各个子类用于不同类型的参数，例如三元色或纹理文件名。每个 <code>ParamWrapper</code> 子类都含有供下列目的调用的虚方法：</p><ul><li>当该参数类型可调时，构建并初始化 GUI</li><li>从 GUI 获取动画后的值</li><li>开始渲染一帧时分配资源并初始化设置（例如载入纹理）</li><li>开始渲染一个对象时分配资源并初始化设置（例如把其世界矩阵交给 CgFX）</li><li>对象渲染完成后释放资源</li><li>一帧渲染完成后释放资源</li></ul><p>此外，可以要求每个 <code>ParamWrapper</code> 子类尝试为 <code>ICgFXEffect</code> 的某个给定参数实例化自身。构造函数随后读取参数的类型与注解，并报告是否成功。解析 .fx 文件时，插件会对每个参数调用这个方法，直到找到合适的子类。这种做法能把关于某个参数类型的全部知识封装在对应的子类中。</p><p>通过各子类，一些可调参数获得了 Cinema 4D 提供的特殊 GUI 元素。对纹理，保存的是 .dds 文件的名称。位置与方向则链接到其他对象（最好是光源）的位置或 <em>z</em> 轴；这些可以拖放到 GUI 的输入框上。不可调、因而没有 GUI 的矩阵参数受到特殊处理。世界矩阵由 API 在遍历场景时作为副产品提供。视图矩阵与投影矩阵由摄像机设置计算得出。如果着色器需要，还会计算这些矩阵的乘积，可能是求逆或转置后的。</p><p>为方便起见，该插件提供在用户指定的编辑器中打开 .fx 文件的功能。重新载入被编辑过的 .fx 文件时，如果已有参数值类型正确且在允许范围内，就会被保留。如果 CgFX 工具包在载入 .fx 文件时报错，该文件会在编辑器中打开，光标置于出错行。所有关于错误的消息，以及未知参数类型之类的问题，都会写到 Cinema 4D 的文本控制台。</p><h2>34.4 模拟离线渲染器</h2><p>用户也可以不载入 .fx 文件，而直接使用标准 Cinema 4D 表面材质。插件会在内部把这些材质透明地转换为基于内存的 .fx 着色器，正好融入前面描述的外部着色器文件流程。插件使用字符串流来构建内部的 .fx 着色器。</p><p>Cinema 4D 材质可以包含位图文件、影片文件或过程化着色器作为贴图。插件按用户可选的分辨率逐像素读取它们（通常为 256x256 纹素），并构建相应的纹理。转换三类贴图：漫反射贴图、凹凸贴图和环境贴图。后者在光线追踪器中以球面映射使用；插件会从它们计算出立方体贴图以优化分辨率。凹凸贴图是灰度高度场。对它们，用凹凸贴图逐像素的水平与垂直差分构成法线贴图，并按贴图尺寸缩放，以补偿较小分辨率下更陡的梯度。</p><p>阴影生成方面，我们采用与 Everitt 等 2002 类似的一种阴影贴图方法。与硬件加速的阴影体算法（Everitt 与 Kilgard 2002）相比，这种做法日后可以相当容易地扩展，以处理被置换贴图或顶点着色器变形的对象。</p><p>对场景中每个标记为投射阴影的锥形光源，生成一张用户可控尺寸的深度贴图（通常为 256x256 纹素）。为此，场景中所有对象无论携带何种表面材质，都在不使用纹理和着色器的情况下渲染到一个离屏缓冲中。这需要像前面描述的最终渲染那样遍历场景，只是这一通道中不计算纹理坐标，也不计算法线、切线或副法线向量。事实上，阴影贴图的渲染完全不使用 CgFX。要用离屏缓冲作为深度贴图纹理，需借助 OpenGL 扩展 <code>WGL_NV_render_depth_texture</code> 来构建它。</p><p>还用另一张纹理存储 Cinema 4D 专有的镜面高光形状。它涉及若干超越函数，例如幂函数和反余弦。这个复杂关系每帧预先计算为一张 1024 纹素的 1D 纹理。</p><p>为支持不限数量的光源，一种可能是为每个光源使用单个渲染通道，可能再加上一个自发光通道。但这会造成大量重复计算，例如插值向量的归一化。然而，合并若干通道是有代价的。由于当前显卡只支持固定数量的纹理，能投射阴影的光源数量受到严格限制。</p><p>所生成 CgFX 着色器的顶点着色器部分相当简单：</p><ol type="1"><li>用 <code>WorldViewProjection</code> 矩阵把位置变换到归一化屏幕坐标。</li><li>切线与副法线向量通过 <code>World</code> 矩阵变换到世界坐标。</li><li>为保持正交性，法线向量通过求逆转置后的 <code>World</code> 矩阵变换到世界坐标。</li><li>世界坐标中的位置用 <code>World</code> 矩阵计算。</li><li>最后，在世界坐标中确定一个从观察者位置（可从求逆转置后的 <code>View</code> 矩阵读出）指向该顶点的单位向量。</li></ol><p>代码清单 34-1 显示了存在一个带阴影的锥形光源时生成的像素着色器。当光源更多时，会加入 <code>depthSampler1</code> 之类的参数，并相应重复花括号 <code>{...}</code> 之间的块。清单的开头部分是标准的；但每光源所做的计算值得解释。<code>Ld</code> 是从顶点指向光源的世界空间向量。<code>baseCol</code> 累加该光源的贡献：先是漫反射部分，然后是镜面反射部分。后者用 <code>specShadeSampler</code> 读取预先计算好的高光形状。如果反射光线指向背离观察者的方向，<code>specShadeSampler</code> 的纹理坐标会变成负值并被钳制到零，而该处纹理也为零。</p><h4>示例 34-1　为含单个投射阴影锥形光源的场景中某材质生成的像素着色器</h4><pre><code>pixelOutput mainPS(vertexOutput IN, uniform sampler2D diffuseSampler,
+                   uniform sampler1D specShapeSampler,
+                   uniform sampler2D normalSampler,
+                   uniform samplerCUBE enviSampler,
+                   uniform sampler2D depthSampler0, uniform float4 lumiCol,
+                   uniform float4 diffCol, uniform float bumpHeight,
+                   uniform float4 enviCol, uniform float4 specCol,
+                   uniform float4 lightPos0, uniform float4 lightCol0,
+                   uniform float4 lightParams0, uniform float4 lightUp0,
+                   uniform float4 lightDir0, uniform float4 lightSide0)
+{
+  pixelOutput OUT;
+  float3 Vn = normalize(IN.view);
+  float3 Nn = normalize(IN.norm);
+  float3 tangn = normalize(IN.tang);
+  float3 binormn = normalize(IN.binorm);
+  float3 bumps = bumpHeight * (tex2D(normalSampler, IN.uv.xy).xyz * 2.0 -
+                               float3(1.0, 1.0, 2.0));
+  float3 Nb =
+      normalize(bumps.x * tangn + bumps.y * binormn + (1.0 + bumps.z) * Nn);
+  float3 env = texCUBE(enviSampler, reflect(Vn, Nb)).rgb;
+  float3 colorSum = lumiCol.rgb + env * enviCol.rgb;
+  float3 baseDiffCol = diffCol.rgb + tex2D(diffuseSampler, IN.uv.xy).rgb;
+  {
+    float3 Ld = lightPos0.xyz - IN.wPos;
+    float3 Ln = normalize(Ld);
+    float3 baseCol = max(0.0, dot(Ln, Nb)) * baseDiffCol;
+    float spec = tex1D(specShapeSampler, dot(Vn, reflect(Ln, Nb))).r;
+    baseCol += specCol.rgb * spec;
+    float3 L1 = (Ln / dot(Ln, lightDir0.xyz) - lightDir0.xyz) * lightParams0.z;
+    float shadowFactor =
+        max(lightParams0.x, smoothstep(1.0, lightParams0.w, length(L1)));
+    float d = dot(Ld, lightDir0.xyz);
+    float z = 10.1010101 / d + 1.01010101;
+    float2 depthUV = float2(0.5, 0.5) + 0.5 * float2(dot(L1, lightSide0.xyz),
+                                                     dot(L1, lightUp0.xyz));
+    shadowFactor *= max(
+        lightParams0.y,
+        tex2Dproj(depthSampler0, float4(depthUV.x, depthUV.y, z - 0.00005, 1.0))
+            .x);
+    colorSum += shadowFactor * baseCol * lightCol0.rgb;
+  }
+  OUT.col = colorSum;
+  return OUT;
+}</code></pre><p>其余计算处理柔和锥形与阴影，合并到变量 <code>shadowFactor</code> 中。<code>L1</code> 度量顶点离光源光轴有多远；如果顶点恰好在锥的边缘上，该向量长度为 1，如图 34-3 所示。为此，<code>lightParams0.z</code> 必须设为锥半张角正切的倒数。要做出柔和的锥形，<code>lightParams0.w</code> 设为锥内部完全受光部分的半张角正切除以前一个正切所得的商。由此，<code>smoothstep</code> 函数产生柔和的过渡。<code>lightParams0.x</code> 对全向光设为 1.0，对锥形光设为 0.0，这样只有后者被限制在锥内。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig34-03.jpg" alt="fig34-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig34-03.jpg" rel="noreferrer noopener">图 34-3</a> 锥形光源的几何关系</figcaption></figure><p>为生成阴影，<code>d</code> 度量顶点在光源坐标系中的 <code>z</code> 坐标。随后它被转换成深度贴图所用的深度坐标，再与该贴图中实际找到的值比较。注意要让 <code>tex2Dproj</code> 正常工作，纹理必须用 <code>glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_SGIX, GL_TRUE)</code> 定义。</p><h2>34.5 结果与性能</h2><p>图 34-1 显示渲染出的图像经得起与原始离线渲染器的比较。透明与反射效果等复杂特性仍然缺失，但可以在后续版本中加入——例如通过即时渲染的环境贴图和分层渲染（Everitt 2001）。其他可能的改进包括软阴影（Hasenfratz 等 2003）、基于物理的光照模型以及间接光照（Kautz 2003）。</p><p>当然，主要问题在于硬件加速方案能提供多快的速度。就原始每秒百万像素计，显卡可以渐近地比离线渲染器快将近九倍。这可以从图 34-4 中渲染时间随帧尺寸增长的情况看出。但如图 34-4 所示，即时编译 CgFX 着色器，尤其是从 Cinema 4D 纹理贴图和过程化着色器构建 OpenGL 纹理，会在渲染任何帧之前带来一些启动开销。因此硬件加速方案只在大帧尺寸和帧序列上占优，而不适用于单帧。要改进这一点，需要在纹理上采取聪明的做法。纹理应尽可能久地保留，而不是每帧重建。这需要对动画做自动的深入分析。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig34-04.jpg" alt="fig34-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig34-04.jpg" rel="noreferrer noopener">图 34-4</a> 基准测试结果比较</figcaption></figure><p>所做的基准测试使用约 33,000 个多边形（几乎全是四边形）的基础场景，以及 640x480 像素（31 万像素）、无抗锯齿的 10 帧动画。所用系统为 2.5 GHz 的 Pentium 4 PC，配 GeForce FX 5900，运行 Cinema 4D 8.207 版。图 34-4 的每一部分各改变三个参数之一：帧尺寸、序列长度和复杂度。</p><p>随着场景几何复杂度增长，Cinema 4D 的离线渲染器显然从某些优化技术中受益。硬件加速方案也需要类似的改进。最容易实现的是视锥剔除，以及基于硬件的逐对象遮挡剔除。</p><h2>34.6 经验教训</h2><p>CgFX 工具包使为现有软件同时加入硬件加速的高质量显示与硬件加速的离线渲染器成为可行。这里给出的方案约占 150 KB 的 C++ 源码。</p><p>CgFX 让程序员能通过 .fx 文件中定义的一组技术来支持不同厂商的广泛显卡。不过为获得最佳性能，最好事先仔细算清同时需要多少参数和纹理。即使是较新的显卡，在这方面能提供的能力也可能有限。</p><p>着色器通常只占程序的一小部分。软件的其余部分对硬件的需求往往变得相当具体。这里介绍的项目起初受益于 CgFX 本身提供的广泛硬件兼容性。但一旦加入任何稍微高级的特性，例如渲染到离屏缓冲、多重采样或阴影生成，目标范围就会缩小。有些 OpenGL 扩展在某些显卡上可能缺失或行为不同，甚至其实现可能含有严重缺陷。</p><p>尽管 Cinema 4D 同时提供 Windows 与 Mac OS 版本，我们的插件却只能在 Windows 上运行。CgFX 在 Windows 之外平台上不可用（在开发当时）只解释了问题的一部分。像 Cinema 4D 这样的跨平台 API 可能隐藏了窗口、事件和线程处理上的许多差异。但这种设计与另一个目标相冲突：提供足够的功能、授予足够的底层结构访问权，以完整支持复杂的基于 OpenGL 的软件。</p><p>图形设计软件的用户可能创建任意复杂的场景，但仍期望软件有像样的响应时间。在开发 C4Dfx 插件的过程中，我们体会到理解并规划线程之间精细的相互协作、以及数据与事件如何在它们之间共享和传递是多么关键。</p><p>另一个从一开始就需要深入设计考虑的方面，是纹理与着色器的管理。基准测试表明，创建纹理、把它们载入显卡以及编译着色器，几乎要不惜一切代价避免。这一限制要求极其聪明的设计。当然，这样的设计很难作为现有软件的附加组件来实现。</p><p>实时光照着色器能相当贴近地模拟许多通常仍在 CPU 上计算的功能。例如，这里所述插件的光锥柔和边缘与镜面高光，看起来与软件渲染器的完全相同。但这种完美复现需要访问原始算法，或者做大量逆向工程。即便是凹凸贴图这样的标准特性，也能以几十种方式实现，结果都略有不同。你如何构造切线与副法线？如何按凹凸强度参数把凹凸后的法线向量与原始法线混合？如何从凹凸贴图计算法线贴图？你用的是原始的（可能非 2 的幂）凹凸贴图图像，还是某个 mipmap 层级？在这方面以及许多其他方面，Cg 都已证明是实验计算机图形算法的理想工具。</p><h2>34.7 参考文献</h2><p><a id="ch34bib01_01"></a>Everitt, C. 2001. "Order-Independent Transparency." 在线获取于 <strong><a href="http://developer.nvidia.com/view.asp?IO=order_independent_transparency" rel="noreferrer noopener">http://developer.nvidia.com/view.asp?IO=order_independent_transparency</a></strong></p><p><a id="ch34bib01_02"></a>Everitt, C., and M. J. Kilgard. 2002. "Practical and Robust Stenciled Shadow Volumes for Hardware-Accelerated Rendering." 在线获取于 <strong><a href="http://developer.nvidia.com/object/robust_shadow_volumes.html" rel="noreferrer noopener">http://developer.nvidia.com/object/robust_shadow_volumes.html</a></strong></p><p><a id="ch34bib01_03"></a>Everitt, C., A. Rege, and C. Cebenoyan. 2002. "Hardware Shadow Mapping." 在线获取于 <strong><a href="http://developer.nvidia.com" rel="noreferrer noopener">http://developer.nvidia.com</a></strong></p><p><a id="ch34bib01_04"></a>Hasenfratz, J.-M., M. Lapierre, N. Holzschuch, and F. X. Sillion. 2003. "A Survey of Real-time Soft Shadow Algorithms." <em>Eurographics 2003 State of the Art Reports</em>，第 1–20 页。</p><p><a id="ch34bib01_05"></a>Kautz, J. 2003. "Hardware Lighting and Shading." <em>Eurographics 2003 State of the Art Reports</em>，第 33–57 页。</p><p><a id="ch34bib01_06"></a>Kilgard, M. J. 2000. "A Practical and Robust Bump-Mapping Technique for Today's GPUs." 在线获取于 <strong><a href="http://developer.nvidia.com" rel="noreferrer noopener">http://developer.nvidia.com</a></strong></p><p>Maxon. Cinema4D. <strong><a href="http://www.maxon.net" rel="noreferrer noopener">http://www.maxon.net</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-v-performance-and-practicalities/chapter-34-integrating-hardware-shading-cinema" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-v-performance-and-practicalities/chapter-34-integrating-hardware-shading-cinema</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 45 章　GPU 上的期权定价 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 45 章　GPU 上的期权定价」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 45 章　GPU 上的期权定价</h1>
+<p><em>Craig Kolb</em><br> <em>NVIDIA Corporation</em></p><p><em>Matt Pharr</em><br> <em>NVIDIA Corporation</em></p><p>过去三十年间，期权及其他衍生品已成为越来越重要的金融工具。期权常用于对冲投资证券的风险，也用于通过套利利用市场上的定价异常。</p><p>使用期权的关键前提是算出它们的公允价值。三十多年来，寻找高效求解这一期权定价问题的方法一直是活跃的研究领域，如今仍是现代金融工程的重点。随着越来越多的计算被用于金融相关问题，在现代架构上高效实现这些算法也变得越来越重要。</p><p>本章介绍如何用 GPU 高效地为期权定价。我们用两种不同的定价模型进行评估：Black-Scholes 模型和格点模型。这两种方法都能很好地映射到 GPU，且在 GPU 上都比在现代 CPU 上快得多。虽然两者到 GPU 的映射都很直接，但格点模型由于计算之间存在依赖关系，实现起来需要额外的工作。</p><h2>45.1 什么是期权？</h2><p>期权属于被称为<em>衍生品</em>的一类投资工具。传统投资工具，如房地产或股票，具有内在价值。而期权则从另一种投资工具<em>派生</em>出其价值，后者称为<em>标的资产</em>。标的资产通常是股票或其他形式的证券。</p><p>期权有若干种类。<em>看涨期权</em>合约赋予买方（或称<em>持有者</em>）在未来某个日期以某个事先约定的价格买入标的资产的权利，<em>但并非义务</em>。事先约定的价格称为<em>行权价</em>，那个未来日期称为<em>到期日</em>。类似地，<em>看跌期权</em>赋予持有者在到期日以约定价格卖出标的资产的权利。</p><p>举例来说，考虑一份以 XYZ 公司股票为标的的看涨期权。设想该合约保证你可以在六个月后以 100 美元的价格买入 100 股 XYZ 股票。如果到期日该股票的交易价格低于 100 美元，行权就没有什么意义——毕竟你可以在公开市场上用更少的钱买到。这种情况下你干脆让期权到期作废。反过来，如果到期日 XYZ 每股价格是 120 美元，你就会行权，以每股 100 美元买入。若随即卖出，每股可赚 20 美元，再减去你为这份期权付出的成本。</p><p>如上例所示，行权价 <em>X</em> 与标的资产在到期日的价格都强烈影响期权的未来价值，从而决定你今天应该为它付多少钱。在某些简化假设下，我们可以用资产的当前价格 <em>S</em> 及其波动率 <em>v</em>（描述价格随时间变化的幅度）来统计建模资产未来的价格波动。</p><p>还有一些因素会影响你愿意为期权支付的价格：</p><ul><li><strong>距到期日的时间 <em>T</em>。</strong>期限越长，意味着到期日标的资产可能取值的范围越宽，因而期权到期时价值的不确定性越大。</li><li><strong>无风险收益率 <em>r</em>。</strong>即使期权在六个月后给你带来 <em>P</em> 美元的收益，这 <em>P</em> 美元今天对你的价值也低于 <em>P</em>。如果债券或其他「无风险」投资以连续复利年利率 <em>r</em> 付息，你只需今天把 <em>P</em> x <em>e</em> <sup><em>-r</em>(6/12)</sup> 美元投入该债券，就能保证六个月后得到同样的 <em>P</em> 美元。因此，未来某时刻 0 &lt; <em>t</em> ≤<em>T</em> 的资产价值必须<em>折现</em>，即乘以 <em>e</em> <sup>-<em>rt</em></sup>，才能确定它今天的实际价值。</li><li><strong>行权限制。</strong>到目前为止，我们只讨论了所谓的<em>欧式</em>期权，它只能在期权到期日当天行权。也存在行权限制不同的其他类型期权。特别是，<em>美式</em>期权可以在到期日之前（含到期日）的任何时候行权。这种额外的灵活性意味着美式期权的定价至少与相应的欧式期权一样高。</li></ul><p>其他因素，例如股息派发，也可能牵涉进来。不过本章我们只限于上述考虑。</p><p>本章余下部分介绍两种标准的期权定价方法，以及它们传统上如何在 CPU 上实现。我们展示这些方法如何能在 GPU 上以更高的吞吐量实现，吞吐量以每秒定价的期权数量衡量。</p><p>下文的讨论中我们省略了大部分数学细节。背景材料可参见 Hull 2002，其中包括这些定价模型所用到的支撑理论、推导和假设。</p><h2>45.2 Black-Scholes 模型</h2><p>1973 年，Fischer Black 与 Myron Scholes 出色地推导出计算欧式期权价格的分析方法（Black and Scholes 1973）。Scholes 因这项工作获得 1997 年诺贝尔经济学奖。（Black 在获奖前已经去世。）</p><p>Black-Scholes 方程是一个微分方程，它描述在一组特定假设下，期权价值如何随标的资产价格变化而变化。更准确地说，它是一个<em>随机</em>微分方程；除确定性项之外，还包含一个随机游走项——用以建模标的资产价格随时间的随机波动。这个随机项使得我们必须使用与通常求解微分方程略有不同的数学工具；细节见参考文献。</p><p>Black-Scholes 方程表明，欧式看涨期权的价值 <em>V</em> 可按下式计算：</p><table><tbody><tr><td><p><em>V</em> = <em>S</em> x <em>CND</em>(<em>d<sub>1</sub></em> ) - <em>Xe<sup>-rT</sup></em> x <em>CND</em>(<em>d<sub>2</sub></em> ),</p></td></tr></tbody></table><p>其中</p><p><img alt="ch45_eqn002.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch45_eqn002.jpg"/></p><p>（看跌期权的公式类似。）累积正态分布函数 <em>CND</em>(<em>x</em>) 给出一个服从正态分布的随机变量取值小于 <em>x</em> 的概率。该函数没有闭式表达，因此必须数值求解。通常用多项式函数近似，我们这里也是这样做的。</p><p>我们用本书第 31 章「把计算概念映射到 GPU」中描述的 GPGPU 框架，结合代码清单 45-1 中的 Cg 代码，在 GPU 上并行地为期权定价。首先我们用每个期权对应的行权价、资产价格、距到期时间和资产波动率初始化四个二维数据数组，某个期权的输入数据存放在各数组中的同一位置。之后只要在每个像素上运行片元程序，就能并行地为所有期权定价。在测试中，我们假定所有期权的无风险收益率都是常数，因此可以通过 uniform 参数传给 Cg 程序。对某些应用来说，改变这个值也可能有用，这对程序只是一处直接的改动。累积正态分布函数 <code>CND()</code> 的实现见后面的代码清单 45-2。</p><h4>示例 45-1. 用 Cg 实现 Black-Scholes 模型</h4><pre><code>float BlackScholesCall(float S, float X, float T, float r, float v)
+{
+  float d1 = (log(S / X) + (r + v * v * .5f) * T) / (v * sqrt(T));
+  float d2 = d1 - v * sqrt(T);
+  return S * CND(d1) - X * exp(-r * T) * CND(d2);
+}</code></pre><p>因此，用这种方法为一个给定期权定价依赖五个输入参数，需要相当多的浮点计算，并产生一个浮点值。结果是一项算术强度很高的计算，非常适合在 GPU 上运行，见图 45-1。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/45_finance_01.jpg" alt="45_finance_01.jpg"><figcaption>图 45-1 Black-Scholes 期权定价的 GPU 与 CPU 性能对比</figcaption></figure><p>代码清单 45-2 表明，与其直接求值多项式——例如用霍纳法则——在 GPU 上更高效的做法是利用它的四路向量硬件，预计算 <em>K</em> 的各次幂，并用 <code>dot()</code> 函数与适当的常数快速求内积。</p><p>有趣的是，PCI Express 总线有可能成为该模型 GPU 实现的瓶颈：假定 PCI Express 达到 4 GB/秒带宽的理想性能，每秒可向 GPU 传入并传出 10 亿个 4 字节浮点值。在我们的测试程序中，有 4 个输入参数在变化，这意味着每秒可以向 GPU 送入足够的数据完成约 2.5 亿次 Black-Scholes 计算（4 GB/秒 除以 4 个值，再乘以每个浮点值的 4 字节）。这里的 Black-Scholes 实现编译后约 50 次浮点运算。因此，任何算术计算能力超过 10 Gflops 的 GPU 都会受限于数据送入 GPU 的速率（回想一下，当前的 GPU 具备数百 Gflops 的计算能力）。</p><h4>示例 45-2. 实现累积正态分布函数</h4><pre><code>float CND(float X)
+{
+  float L = abs(X);
+  // 构造 float4，使 K.x = K、K.y = K^2、K.z = K^3、K.w = K^4
+  float4 K;
+  K.x = 1.0 / (1.0 + 0.2316419 * L);
+  K.y = K.x * K.x;
+  K.zw = K.xy * K.yy;
+  // 计算 K、K^2、K^3、K^4 各项，并重排以获得高效的
+  // 向量化。上面我们预先算好了 K 的各次幂；
+  // 这里则把每一项乘上对应的缩放系数，再用 dot()
+  // 例程把这些项高效地求和。
+  //
+  // dot(float4(a, b, c, d), float4(e, f, g, h)) 会高效地
+  // 计算内积 a*e + b*f + c*g + d*h，
+  // 相比直白的实现，它能更好地利用
+  // 4 路向量浮点硬件。
+  float w =
+      dot(float4(0.31938153f, -0.356563782f, 1.781477937f, -1.821255978f), K);
+  // 再把 K^5 这一项单独加上
+  w += 1.330274429f * K.w * K.x;
+  w *= rsqrt(2.f * PI) * exp(-L * L * .5f); // rsqrt() == 1/sqrt()
+  if (X > 0)
+    w = 1.0 - w;
+  return w;
+}</code></pre><p>尽管存在这一潜在瓶颈，在 GPU 仍比 CPU 快得多：它实际上能以其峰值计算速率运行，只是受 PCI Express 的限制。对于需要计算期权价格的完整应用，很可能还要在 GPU 上用 Black-Scholes 的结果做额外计算，这也会减轻 PCI Express 带宽的影响。（一般来说，GPU 上做的计算越多、与 CPU 的通信越少，GPU 表现越好。PCI Express 带宽限制只是一种表现，说明当计算与带宽之比提高时 GPU 尤为出色，参见本书第 29 章「流式架构与技术趋势」。）</p><h2>45.3 格点模型</h2><p>Black-Scholes 方程为计算欧式期权价格提供了方便的分析方法。但它不适用于美式期权，后者可在到期日之前的任何时候行权。事实上，在 Black-Scholes 方程所用的同一组假设下，目前还没有已知的闭式表达能给出美式期权的公平价格。</p><p>另一类期权定价模型是<em>格点模型</em>。这类模型用动态规划的方法，从时刻 <em>T</em>（即到期日）出发，在 <em>N</em> 个离散时间步中逐步「倒推」到 <em>t</em> = 0，从而求出期权在时刻 0（即现在）的价值。这种方法通用且实现简单，但由于其迭代性质，计算开销可能很大。本节讨论二项格点模型在 GPU 上的实现，以及如何用它计算欧式与美式期权的价格。</p><h4>45.3.1 二项模型</h4><p>最常用的格点模型是二项模型。二项模型之所以得名，是因为它假设标的资产在某个时间步的价格为 <em>S<sub>k</sub></em>（<em>k</em> 即该时间步）时，其在第 <em>k</em> + 1 步的价格只能取两个值：<em>uS<sub>k</sub></em> 和 <em>dS</em> <sub>k</sub>，分别对应股票价格的「上涨」或「下跌」。通常 <em>u</em> 的计算方式是假设在一段很短的时长 <em>dt</em> 内，资产价值的变化服从正态分布，标准差等于 <em>S</em> <sub>k</sub> <em>v</em> <a href="https://developer.download.nvidia.com/books/gpugems2/iv.jpg" rel="noreferrer noopener"><img alt="iv.jpg" src="https://developer.download.nvidia.com/books/gpugems2/iv.jpg"/></a> 。</p><p>如果选取 <em>d</em> 使 <em>u</em> x <em>d</em> = 1，则期权存续期内可能的资产价格构成一棵树，如图 45-2 所示。从树的根节点到某个叶节点的每条路径，对应标的资产价格随时间的一次「游走」。距根节点深度为 <em>k</em> 的那组节点，代表时刻 <em>t</em> = <em>k</em> x <em>dt</em> 时可能的资产价格范围，其中 <em>dt</em> = <em>T</em>/<em>N</em>。深度为 <em>k</em> = <em>N</em> 的叶节点，代表期权到期时资产可能具有的价格范围。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/45_finance_02.jpg" alt="45_finance_02.jpg"><figcaption>图 45-2 步数为 3 的二项树及对应的资产价格</figcaption></figure><p>要用二项树为期权定价，我们还要计算资产价格在任意时刻「上涨」的<em>伪概率 P<sub>u</sub></em>。下跌的伪概率就是 1 - <em>P<sub>u</sub></em> 。为计算 <em>Pu</em> 的值，我们假设一个风险中性世界，这意味着标的资产的期望收益率等于 <em>r</em>：</p><p><img alt="ch45_eqn004.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch45_eqn004.jpg"/></p><p>虽然 <em>Pu</em> 并不是真正的概率（也就是说，它不是资产价格上涨的实际概率），但把它当作概率来处理很有用，如下文所述。</p><h4>45.3.2 为欧式期权定价</h4><p>给定一棵随时间变化的资产价值树，如图 45-2 所示，我们可以计算树上每个节点的期权价值。深度为 <em>k</em> 的节点所算出的价值，是在假定标的资产未来取该节点子节点对应的一组价格的前提下，期权在时刻 <em>t</em> = <em>k</em> x <em>dt</em> 的期望价值。于是我们的问题是算出树根处的期权价值。做法是从叶节点出发，向根节点倒推。</p><p>计算每个叶节点 <em>i</em> 处的期权价值很简单。首先我们算出每个叶节点对应的资产价格 <em>S<sub>i</sub></em>：直接把 <em>u</em> 取相应的幂次（回想 <em>d</em> = <em>u</em> <sup>-1</sup>）再乘以 <em>S</em>。接着计算每个叶节点处相应的期权价值 <em>V</em> <sub><em>i</em></sub> 。在到期日，若 <em>Si</em> &gt; <em>X</em>，看涨期权一文不值；否则其价值为 <em>X</em> - <em>S<sub>i</sub></em> 。看跌期权的计算类似。用这些初值，我们就可以算出上一层时间步各节点的期权价值：用价格「上涨」的「概率」 <em>Pu</em> 与「上」「下」两个方向节点对应的期权价值 <em>V<sub>i,up</sub></em> 和 <em>V<sub>i,down</sub></em> 求出期权的期望未来价值，再用 <em>e<sup>-r dt</sup></em> 对这个期望未来价值折现，得到该节点对应的期权价值：</p><p><img alt="ch45_eqn005.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch45_eqn005.jpg"/></p><p>我们对树中某一层的所有节点做这项计算，然后迭代重复到上一层，直到抵达树的根。根处的值就是期权在 <em>t</em> = 0（即「现在」）的价值。该算法的伪代码（假定为欧式看涨期权）见代码清单 45-3。用一个一维数组 <code>V</code> 迭代计算期权价值。结束时 <code>V[0]</code> 保存的就是期权当前的价值。</p><h4>示例 45-3. 用二项方法为欧式看跌期权定价的伪代码</h4><pre><code> dt = T/N
+u = exp(v * sqrt(dt))
+d = 1/u
+disc = exp(r * dt)
+Pu = (disc - d) / (u - d)
+// 用到期日的价值初始化期权价值数组
+for i = 0 to N
+Si = S * pow(u, 2 * i - N)
+V[i] = max(0, X - Si)
+// 对每个时间步
+for j = N-1 to 0
+// 对当前时间步的每个节点
+for i = 0 to j
+// 计算期权的贴现期望价值
+V[i] = ((1 - Pu) * V[i] + Pu * V[i + 1])/disc</code></pre><p>要让二项模型在 GPU 上运行，我们需要处理一个事实：与 Black-Scholes 不同，这项计算是迭代的，需要使用中间计算值——即 <code>V[i]</code> 的各个值。为 GPU 并行化这项任务的一种做法是一次只处理二项树的一个时间步（一列）：为一列中的每个节点启动一个线程，由它计算该节点的期权价值。从最右边一列开始，先算出到期时的期权价值。随后对每个更早时间步对应的列，按前面描述的方式用两个子节点已算出的值计算期权价值。这一策略如图 45-3 所示。每个线程算出结果后，这些值会作为输入传给新启动的一组线程，用于计算左边下一列的值。（这一过程的总体思路与 GPU 上归约的计算方式有关，参见本书第 31 章。）</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/45_finance_03.jpg" alt="45_finance_03.jpg"><figcaption>图 45-3 计算策略与数据布局</figcaption></figure><p>为提高 GPU 可用的并行度，我们的实现同时对一千个左右的独立期权运行该算法进行定价。因此在任一时刻，GPU 上运行的线程总数等于正在定价的期权数乘以当前处理的那一列中的树节点数。这种额外的并行很容易加入，并且比每次只并行化单个期权定价计算能获得更好的 GPU 性能。</p><p>我们用两个片元程序为这批期权定价。第一个程序算出最初的 <em>N</em> + 1 个叶节点期权价值（<code>V[0] . . . V[N]</code>），对应代码清单 45-3 中的第一个 for 循环。第二个程序运行多次，迭代计算内部节点的 <code>V[i]</code>。应用调用该程序 <em>N</em> 次，每个时间步一次（对应代码清单 45-3 中的第二个 for 循环），每次迭代都用先前算出的 <code>V[i]</code> 计算当前时间步的值。每次调用该程序对应代码清单 45-3 最内层的 for 循环；如清单所示，每次迭代计算出的节点数减一，最后只剩一个结果值，对应 <code>V[0]</code>。</p><p>运行第二个程序需要把一次迭代的输出作为下一次迭代的输入。为高效做到这一点，我们使用双缓冲的 pbuffer，避免上下文切换和纹理拷贝的开销。这些程序的 Cg 代码见代码清单 45-4，驱动它们的伪代码见代码清单 45-5。</p><h4>示例 45-4. 计算格点模型的期权定价</h4><pre><code>void init(Stream stockPrice, Stream strikePrice, Stream yearsToMaturity,
+          Stream volatility, uniform float riskFreeRate, uniform float numSteps,
+          float2 offset
+          : DOMAIN0, out float4 result
+          : RANGE0)
+{
+  float deltaT = yearsToMaturity.value(offset.x) / numSteps;
+  float u = exp(volatility.value(offset.x) * sqrt(deltaT));
+  float price =
+      stockPrice.value(offset.x) * pow(u, 2 * (offset.y - 0.5) - numSteps);
+  float value = max(strikePrice.value(offset.x) - price, 0);
+  result = value;
+}
+void iterate(Stream Pu, Stream Pd, Stream optval, float2 offset
+             : DOMAIN0, float2 offsetplus1
+             : DOMAIN1, out float4 result
+             : RANGE0)
+{
+  float val = (Pu.value(offset.x) * optval.value(offsetplus1) +
+               Pd.value(offset.x) * optval.value(offset));
+  result = val;
+}</code></pre><h4>示例 45-5. 格点模型应用的伪代码</h4><pre><code> domain = [0, nproblems, 0, N + 1]
+Varray[N % 2] = init(Range, S, X, T, v, r, N, domain)
+for j = N - 1 to 0
+offset = [0, nproblems, 0, j + 1]
+offsetplus1 = [0, nproblems, 1, j + 2]
+Varray[(j % 2)] = iterate(Pu, Pd, Varray[((j + 1) % 2)], offset,
+offsetplus1)</code></pre><p>随着时间步数 <em>N</em> 增加，用二项方法算出的值收敛到 Black-Scholes 方法算出的值。二项方法的计算开销远大于 Black-Scholes 方法；例如其渐近时间复杂度为 <em>O</em>(<em>N</em> <sup>2</sup>)，而 Black-Scholes 是 <em>O</em>(1)。不过这份计算开销也带来一个好处：与 Black-Scholes 不同，格点方法可以改造成适用于多种期权定价问题。</p><p>例如，我们可以修改前面的算法来为美式期权定价。在计算每个节点持有期权的期望价值时，我们也可以同时计算立即行权的价值。若行权比继续持有更值钱，就把该节点处的期权价值设为行权价值，而不是持有的期望价值。对看涨期权而言，行权价值是 <em>X</em> - <em>S<sub>i</sub></em> ，其中 <em>Si</em> 是节点 <em>i</em> 处算出的资产价格。完整实现见本书附赠光盘。</p><p>与 Black-Scholes 一样，用二项方法为美式期权定价时 GPU 也胜过 CPU，如图 45-4 所示。与图 45-1 相同，GPU 测试使用 GeForce 6800，CPU 测试使用 AMD Athlon 64 3200+。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/45_finance_04.jpg" alt="45_finance_04.jpg"><figcaption>图 45-4 步数为 1024 的二项格点模型的 GPU 与 CPU 性能对比</figcaption></figure><h2>45.4 结论</h2><p>期权定价的 Black-Scholes 模型和格点模型都是计算金融的基本构件。本章展示了如何用 GPU 借助这些模型为期权定价，效率远高于 CPU。随着 GPU 持续比 CPU 更快地提升速度，这项应用中两者的差距很可能会继续拉大。</p><p>另一种广泛使用的期权定价做法是实现基于蒙特卡罗或准蒙特卡罗仿真的算法。这类算法也很适合 GPU，因为它们依赖运行大量独立试验，再基于所有试验一起算出总体估计。独立试验天然可以并行，而得出最终估计只是做归约。美式期权附带提前行权权利，这使得用蒙特卡罗方法计算其公平价格颇具挑战。寻找高效做到这一点的方法是一个活跃的研究领域。</p><p>使这类算法稍难映射到 GPU 的一个细节是缺少原生整数指令，而整数指令是蒙特卡罗所需的伪随机数生成器以及准蒙特卡罗所用的低差异序列的基础。在当前 GPU 上可以绕开这一限制：在 CPU 上生成这些数，再下载到 GPU。只要每个随机或准随机样本都伴随相当数量的计算，这一步就不会成为瓶颈。</p><h2>45.5 参考文献</h2><p><a id="biblio45_01"></a>Black, Fischer, and Myron Scholes. 1973. "The Pricing of Options and Corporate Liabilities."，载 <em>Journal of Political Economy</em> 81(3)，pp. 637–654。</p><p><a id="biblio45_02"></a>Hull, John C. 2002. <em>Options, Futures, and Other Derivatives</em>，第 5 版，Prentice Hall 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-vi-simulation-and-numerical-algorithms/chapter-45-options-pricing-gpu" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-vi-simulation-and-numerical-algorithms/chapter-45-options-pricing-gpu</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

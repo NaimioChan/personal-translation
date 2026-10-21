@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 27 章　作为后处理效果的运动模糊 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 27 章　作为后处理效果的运动模糊」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 27 章　作为后处理效果的运动模糊</h1>
+<p><em>Gilberto Rosado<br> Rainbow Studios</em></p><h2>27.1 引言</h2><p>在电子游戏里模拟速度感，最好的办法之一是用运动模糊。运动模糊可以是游戏中最值得加入的效果之一，尤其是赛车游戏，因为它增强真实感和速度感。运动模糊还能让游戏画面更平滑，对以每秒 30 帧或更低帧率渲染的游戏尤其如此。不过，为已有引擎加入运动模糊支持可能很有挑战，因为多数运动模糊技术都需要把场景单独渲染一遍，以生成逐像素的速度缓冲。这种多遍做法有局限：许多应用无法承受把场景再送过整个图形管线一遍，同时还要达到目标帧率。</p><p>生成逐像素速度图的其他办法包括使用多渲染目标，把速度信息输出到其中一个渲染目标。这个策略的一大缺点是需要改动场景的所有着色器，加上计算速度并把它输出到第二个渲染目标的代码。另一个缺点是，在某些平台上渲染到多个渲染目标可能降低性能。此外，一些平台渲染内存有限，在 1280x720 或更大的帧缓冲上使用多渲染目标需要瓦片机制。</p><p>本章介绍一种技术：把深度缓冲作为纹理输入送入像素着色器程序，以生成场景的速度图。像素着色器程序利用深度缓冲中存储的深度值，结合当前帧的视图投影矩阵，算出每个像素的世界空间位置。确定该像素处的世界空间位置之后，我们可以用上一帧的视图投影矩阵对它做变换，再计算当前帧与上一帧在视口位置上的差，从而得到逐像素的速度值。然后以该速度向量为方向，在帧缓冲上多次采样，一路求平均，就能得到运动模糊效果。</p><p>我们这个技术的优点是可以作为后处理步骤执行。因此它很容易集成到已有引擎中，只要硬件支持把深度缓冲当作纹理采样。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/27fig01.jpg" rel="noreferrer noopener">图 27-1</a> 和 <a href="https://developer.download.nvidia.com/books/gpugems3/27fig02.jpg" rel="noreferrer noopener">图 27-2</a> 展示了同一场景有、无运动模糊时的差别。注意 <a href="https://developer.download.nvidia.com/books/gpugems3/27fig01.jpg" rel="noreferrer noopener">图 27-1</a> 给出的运动错觉多么强烈。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/27fig01.jpg" alt="27fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/27fig01.jpg" rel="noreferrer noopener">图 27-1</a> 带运动模糊的场景</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/27fig02.jpg" alt="27fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/27fig02.jpg" rel="noreferrer noopener">图 27-2</a> 不带运动模糊的场景</figcaption></figure><h2>27.2 从深度缓冲提取物体位置</h2><p>渲染物体并把深度值写入深度缓冲时，三角形三个顶点经世界-视图-投影矩阵变换后，深度缓冲中存储的值是三角形插值后的 <em>z</em> 坐标除以插值后的 <em>w</em> 坐标。把深度缓冲当作纹理，用当前视图投影矩阵的逆变换该像素处的视口位置，再把结果乘以 <em>w</em> 分量，就能提取出已渲染到深度缓冲的物体的世界空间位置。我们把视口位置定义为像素在视口空间中的位置，即 <em>x</em>、<em>y</em> 分量在 -1 到 1 范围内，原点 (0, 0) 位于屏幕中心；该像素在深度缓冲中存储的深度成为 <em>z</em> 分量，<em>w</em> 分量置为 1。</p><p>把给定像素处的视口空间位置记为 <em>H</em>，就可以说明这一做法如何实现。设 <em>M</em> 为世界-视图-投影矩阵，<em>W</em> 为该像素处的世界空间位置。</p><p><img alt="576eq01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/576eq01.jpg"/></p><p></p><p>代码清单 27-1 中的 HLSL/Cg 代码在全屏后处理像素着色器中使用前面的公式，借助深度缓冲和当前视图投影矩阵的逆，计算给定像素处已渲染物体的世界空间位置。</p><h4>示例 27-1. 提取已渲染到深度缓冲的物体逐像素世界空间位置的着色器代码</h4><pre><code>
+// 取此像素处的深度缓冲值。
+float zOverW = tex2D(
+    depthTexture,
+    texCoord); // H 是该像素处的视口位置，范围 -1 到 1。
+float4 H = float4(texCoord.x * 2 - 1, (1 - texCoord.y) * 2 - 1, zOverW,
+                  1); // 用视图投影矩阵的逆进行变换。
+float4 D = mul(
+    H, g_ViewProjectionInverseMatrix); // 除以 w 得到世界位置。
+float4 worldPos = D / D.w;</code></pre><p>确定世界空间位置后，我们可以用上一帧的视图投影矩阵对它做变换，求屏幕位置的差，从而计算像素速度，如代码清单 27-2 所示。</p><h4>示例 27-2. 计算决定图像模糊方向的逐像素速度向量的着色器代码</h4><pre><code>
+// 当前视口位置
+float4 currentPos =
+    H; // 用世界位置，并以上一帧的视图投影
+// 矩阵进行变换。
+float4 previousPos =
+    mul(worldPos,
+        g_previousViewProjectionMatrix); // 转换为非齐次点
+// [-1,1]：除以 w。previousPos
+// /= previousPos.w; 用当前帧
+// 的位置和上一帧的位置
+// 来计算像素
+// 速度。
+float2 velocity = (currentPos - previousPos) / 2.f;</code></pre><p>获取深度缓冲作为纹理使用的方法因平台而异，也取决于所用的图形 API。Gilham 2006 讨论了一些把深度缓冲作为纹理访问的细节。如果目标硬件不支持把深度缓冲当纹理采样，可以用多渲染目标生成深度纹理，把深度输出到单独的渲染目标，或把深度值输出到颜色缓冲的 alpha 通道。</p><h2>27.3 执行运动模糊</h2><p>拿到像素速度之后，我们就可以沿该方向在颜色缓冲中采样，累积颜色值得到运动模糊后的值，如代码清单 27-3 所示。</p><h4>示例 27-3. 用当前像素的速度向量多次采样颜色缓冲以实现运动模糊效果的着色器代码</h4><pre><code>
+// 取此像素处的初始颜色。
+float4 color = tex2D(sceneSampler, texCoord);
+texCoord += velocity;
+for (int i = 1; i < g_numSamples; ++i, texCoord += velocity)
+{
+  // 沿速度向量对颜色缓冲采样。
+  float4 currentColor = tex2D(sceneSampler, texCoord);
+  // 把当前颜色累加到颜色和中。
+  color += currentColor;
+} // 对所有采样取平均，得到最终的模糊颜色。
+float4 finalColor = color / numSamples;</code></pre><p>该技术的实际效果见 <a href="https://developer.download.nvidia.com/books/gpugems3/27fig03.jpg" rel="noreferrer noopener">图 27-3</a>。注意靠近观察者的地形比远处的地形模糊得多。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/27fig03.jpg" alt="27fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/27fig03.jpg" rel="noreferrer noopener">图 27-3</a> 应用我们全屏运动模糊效果的地形</figcaption></figure><h2>27.4 处理动态物体</h2><p>该技术对静态物体效果完美，因为它只考虑相机的移动。不过，如果需要更准确地记录场景中动态物体的速度，我们可以另外生成一张速度纹理。</p><p>要为刚体动态物体生成速度纹理，用当前帧和上一帧的视图投影矩阵分别对物体做变换，再像后处理那一遍那样计算视口位置的差。这个速度应当逐像素计算：把两个变换后的位置都传入像素着色器，在那里求速度。DirectX 9 SDK 的运动模糊示例描述了该技术（Microsoft 2006）。</p><h2>27.5 遮掉物体</h2><p>视应用而定，你可能想遮掉场景的某些部分，使它们不接收运动模糊。例如在赛车游戏中，你可能希望所有赛车都保持清晰细致而不是模糊。一个简便做法是把掩码渲染到单独的纹理或颜色缓冲的 alpha 通道，再用该掩码决定哪些像素应当模糊。</p><h2>27.6 后续工作</h2><p>这种基于场景深度缓冲计算场景中物体世界空间位置的技术非常有用。我们可以用它实现其他图形效果：景深就是一个很适合该技术效果，Gilham 2006 中有描述；场景雾也可以借助深度缓冲作为后处理步骤实现。</p><h2>27.7 结论</h2><p>本章讨论了利用深度缓冲中存储的深度值获取物体世界空间位置的方法，并展示了如何以该信息为基础在游戏引擎中实现运动模糊。把运动模糊主要实现为后处理效果，使它容易集成到已有的渲染引擎中，同时性能优于传统的多遍方案。</p><h2>27.8 参考文献</h2><p>Gilham, David. 2006. "Real-Time Depth-of-Field Implemented with a Post-Processing Only Technique."，载 <em>Shader X5</em>，Wolfgang Engel 编，第 163–175 页。Charles River Media 出版。</p><p>Microsoft Corporation. 2006. "DirectX 9.0 Programmer's Reference."。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-27-motion-blur-post-processing-effect" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-27-motion-blur-post-processing-effect</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

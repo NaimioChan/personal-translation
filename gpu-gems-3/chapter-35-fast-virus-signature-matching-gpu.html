@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 35 章　GPU 上的快速病毒特征码匹配 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 35 章　GPU 上的快速病毒特征码匹配」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 35 章　在 GPU 上快速匹配病毒签名</h1>
+<p><em>Elizabeth Seamans<br> Juniper Networks</em></p><p><em>Thomas Alexander<br> Polytime</em></p><h2>35.1 引言</h2><p>互联网的数据通信基础设施不断改善，每秒搬运海量数据。为了以低延迟、高吞吐处理数据，网络设备厂商使用专用硬件。在 4 Gb/s 到 40 Gb/s 这一层级，处理由昂贵的、专门定制的专用集成电路完成。在 100 Mb/s 到 4 Gb/s 这一层级，处理通常由通用 CPU、网络处理器和现场可编程门阵列（FPGA）组合完成。100 Mb/s 以下的处理吞吐由 x86 CPU 或嵌入式处理器完成。</p><p>专用网络处理器和 FPGA 都很灵活，新算法和新服务可以部署在用其中任一技术构建的边缘路由器或安全设备上。然而出货量小，迫使厂商把这些设备定价为生产成本的许多倍，以收回 R&amp;D 投入。</p><p>本章我们探讨把平价图形处理器的并行能力用作网络协处理器的潜力。尽管 GPU 主要用于实时三维图形，网络处理与图形处理其实有很多共同点。</p><p>网络处理与图形处理共有这些重要特征：</p><ul><li>它们都涉及高度数据并行的算法，都需要一个小而极高速的存储子系统。</li><li>它们都能用大量多线程处理器来隐藏 DRAM 延迟。</li><li>它们都提供快速互连总线，用于流式传输大量数据。</li></ul><p>为说明这一比较，<a href="https://developer.download.nvidia.com/books/gpugems3/35fig01.jpg" rel="noreferrer noopener">图 35-1</a> 和 <a href="https://developer.download.nvidia.com/books/gpugems3/35fig02.jpg" rel="noreferrer noopener">35-2</a> 展示了 Intel 的一款高端网络处理器（IXP2800）和 NVIDIA 的一款高端 GPU 的主要特性。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/35fig01.jpg" alt="35fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/35fig01.jpg" rel="noreferrer noopener">图 35-1</a> 一块 Intel IXP2800 网络处理器</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/35fig02.jpg" alt="35fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/35fig02.jpg" rel="noreferrer noopener">图 35-2</a> 一块高端 NVIDIA GPU</figcaption></figure><p>这项工作的动机是看 GPU 是否具备足够的功能来充当网络处理器；如果具备，就利用它的平价优势，构建具有颠覆性性价比的路由与安全设备。网络安全大概是数据包处理中要求最高的操作。每一个字节、以及可能是相邻字节的组合，都必须被多次处理。处理涉及位操作，以及对若干个数兆字节数据库的大量查找。例如病毒检测需要以数千兆比特的速率做模式匹配，才能达到可接受的吞吐。</p><p>为满足这一性能要求，我们提出一个部分在现代图形处理器上实现的病毒扫描原型系统。得到的结果表明，GPU 如今已具备必要的计算、存储和接口功能，可以成为有吸引力的网络卸载引擎。</p><h2>35.2 模式匹配</h2><p>用于病毒检测的网络安全处理大量依赖模式匹配，以判断数据包中的数据是否有害、以及该如何处理这些信息。模式匹配算法分析网络数据流的片段，把数据模式（<em>签名</em>）与已知病毒数据库比对。这些签名的模式可以相当复杂，由不同长度的字符串、通配字符、范围约束，有时还有递归形式组成。</p><p>网络处理引擎中，典型的处理与存储瓶颈是在数千兆比特速率下、对几万条签名做模式匹配计算的性能。签名长度不同、通配字符和范围约束，要求每个输入字节被读取和处理多次。此外，匹配过程中还要在飞行中保留许多字节的状态。<a href="https://developer.download.nvidia.com/books/gpugems3/35fig03.jpg" rel="noreferrer noopener">图 35-3</a> 给出了把输入数据与一条病毒签名比较的例子。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/35fig03.jpg" alt="35fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/35fig03.jpg" rel="noreferrer noopener">图 35-3</a> 把病毒签名与数据包数据作匹配</figcaption></figure><p>要为高性能网络取得足够的处理吞吐，数据流必须并行分析，可以用<em>包内扫描</em>（一个包内的字节并行处理），也可以用<em>包间</em>方式（多个包同时处理）。这些方法各有好处与局限，我们的 GPU 病毒检测系统对两类并行都做了实验。</p><h4>35.2.1 数据扫描库</h4><p>我们开发了一个库，用来支持应用处理大小与要求各异的数据对象（例如包或文件）。库从应用接收一个数据缓冲区和一份数据对象描述。它检查数据缓冲区，与一个由固定字符（即<em>精确匹配</em>）签名字符串构成的静态数据库比对，这是通向支持完整正则表达式签名的第一步。库把检测到的任何匹配信息返回给应用。</p><p>我们用开源杀毒软件 ClamAV 及其病毒签名数据库作为演示应用。ClamAV 在各种类型和大小的文件中检测病毒签名。它的签名数据库约有 30,000 条精确匹配病毒签名，长度从几个字节到几百个字节不等。在原始算法中，ClamAV 处理完一个文件才开始下一个，步骤如下：</p><ol><li>确定文件类型。</li><li>执行任何必要的预处理（例如解压缩）。</li><li>把文件数据读入数据缓冲区，直到缓冲区满或到达文件末尾。</li><li>查找固定字符签名字符串的匹配。</li><li>重复步骤 3 和 4，直到到达文件末尾。</li><li>报告该文件的结果。</li></ol><p>这些步骤对任何病毒检测库都提出了具体要求，其中一条是库须使用 GPU 加速。此外库必须能处理远小于数据缓冲区的文件，或内存占用跨越多个数据缓冲区的文件。它还必须正确识别不同文件类型的签名匹配。</p><h2>35.3 GPU 实现</h2><p>作为数据并行处理器，GPU 擅长输入输出数据集规整、尺寸固定的算法任务。因此要把 GPU 最好地用于病毒检测，我们需要聚焦管线中高度并行的部分，把更多变化和串行执行的任务留给 CPU。这样，我们把 GPU 当作高速过滤器，之后再由 CPU 完成签名匹配工作。GPU 用少量字节判断数据中是否有与数据库中某条签名很可能匹配的位置，CPU 再验证任何可能的匹配。</p><p>GPU 维护一份签名数据库的副本，用它来检测输入数据中可能的签名匹配。我们构建 GPU 数据库的方式是：从每条签名中取出 2 个连续字节，把它们用作一个 64,000 项数组的索引，每个索引至多映射到一条签名。数组存储该签名中紧邻这 2 字节键之前的 4 个字节。GPU 上的一个线程从输入数据中读取一个 2 字节值，用作数据库数组的索引。它取出 4 字节标签，并把该标签与输入数据中紧邻这 2 字节值之前的 4 个字节比较。这样，输入数据中每一个连续的 2 字节值都被读取并与签名数据库比对。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/35fig04.jpg" rel="noreferrer noopener">图 35-4</a> 显示 GPU 线程如何执行包过滤操作。代码清单 35-1 给出从输入缓冲区读取 2 字节值并生成用于比对数据库数组的 4 字节标签的 Cg 代码。代码清单 35-2 给出在 GPU 上做签名模式匹配的 Cg 代码，其中若有匹配，就把对应字节写入输出缓冲区。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/35fig04.jpg" alt="35fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/35fig04.jpg" rel="noreferrer noopener">图 35-4</a> 在 GPU 上过滤数据包数据</figcaption></figure><h4>示例 35-1. 从包缓冲区读取字节并生成标签的 Cg 代码</h4><pre><code>
+void get_words(in float4 in_pos,
+  out float4 w0,
+  out float4 w1,
+  out float4 tag0,
+  out float4 tag1,
+  const uniform samplerRECT pkt_buffer)
+{
+  // 从包缓冲读取数据。
+   float4 p =  texRECT(pkt_buffer, pos.xy);
+  float4 p_p, n_p;
+  float2 pindex = float2(pos.x-1, pos.y);
+  float2 nindex = float2(pos.x+1, pos.y);
+  // 检查边界情况，必要时进行地址回绕。
+   // PKT_MAP_X_SZ 是包缓冲的大小。
+   if (pos.x == 0)
+    pindex = float2(PKT_MAP_X_SZ-1, pos.y-1);
+  if (pos.x == PKT_MAP_X_SZ-1)
+    nindex = float2(0, pos.y+1);
+  // 从包缓冲读取第二个字。
+   float4 p_p = texRECT(pkt_buf, pindex);
+  float4 n_p = texRECT(pkt_buf, nindex);
+  // 打包数据并检查是否为 2 字对齐。
+   if (floor(fmod(in_pos.x, 2.0))) {
+    w0 = float4(p.w, p.x, 0, 0);
+    tag0 = float4(p.z, p_p.w, p_p.x, p.y);
+    w1 = float4(n_p. z, p.w, 0, 0);
+    tag1 = float4(p.y, p.z, p_p.w, p.x);
+  } else {
+    w0 = float4(p.y, p.z, 0, 0);
+    tag0 = float4(p_p.x, p_p.y, p_p.z, p_p.w);
+    w1 = float4(p.x, p.y, 0, 0);
+    tag1 = float4(p_p.w, p_p.x, p_p.y, p.z);
+  }
+}</code></pre><h4>示例 35-2. 在 GPU 上做病毒签名匹配的 Cg 代码</h4><pre><code>
+void signature_match(in float4 fragid : WPOS,
+  out float4 output_value : COLOR0,
+  const uniform samplerRECT pkt_buffer,
+  const uniform samplerRECT g_table)
+{
+  float4 word0, word1, tag0, tag1;
+  // 从包缓冲读取 2 个字并生成标签。
+  get_words(fragid, word0, word1, tag0, tag1, pkt_buffer);
+  // 用这些字值索引病毒模式表。
+   float4 h0 = texRECT(g_table, word0.xy * 256);
+  float4 h1 = texRECT(g_table, word1.xy * 256);
+  // 检查 4 个字节是否全部匹配。
+   float all_match0 = all(h0 == tag0);
+  float all_match1 = all(h1 == tag1);
+  output_value = float4(0, 0, 0, 0);
+  // 若没有匹配项，就丢弃这个输出。
+   if (!(all_match0 || all_match1))
+    discard;
+  output_value.xy = all_match0 * word0.xy;
+  output_value.zw = all_match1 * word1.xy;
+}</code></pre><p>我们绘制一个四边形图元来执行 GPU 线程，并给出正确的输入地址，以便从输入缓冲区读取连续的 2 字节对。例如，线程 A 读取字节 [<em>i</em>, <em>j</em>]，则线程 B 读取字节 [<em>j</em>, <em>k</em>]，依此类推，直到整个缓冲区处理完毕。如果某个线程检测到匹配，它就把 2 字节的签名标识符写入写缓冲区中该输入片段对应的相对偏移处。由于标识符长 2 字节，写缓冲区是输入缓冲区的两倍大，输入位置 <em>i</em> 的结果写在偏移 2<em>i</em> 处。这样的 GPU 工作负载给每个线程一条简短、规整的执行路径，从而利用 GPU 的单指令多数据特性。</p><p>GPU 线程对数据缓冲区中的数据对象一无所知。这使线程可以独立运行，不必对数据缓冲区中的对象边界做任何判断。CPU 只是把输入数据传输给 GPU，再收回一个整数值，表示缓冲区中可能的签名匹配数量。之后由 CPU 负责完成每个结果的签名匹配验证，并把它对应到某个具体数据对象。</p><p>我们改动了 ClamAV 应用，让它在开始扫描前把数据缓冲区完全填满。在我们的版本中，ClamAV 执行 35.2.1 节的步骤 1 到 3，直到数据缓冲区填满，然后把整个缓冲区和相关对象描述交给我们的库。应用在提交给库之前先填满输入数据缓冲区，因此缓冲区可以容纳多个文件、一个完整文件、一个文件的一部分，或这些的某种组合。ClamAV 给库足够的信息以跟踪多段文件，并在文件之间复制足够的数据（与最长签名等长的字节），以确保跨越两个缓冲区的签名数据能被准确匹配。</p><p>我们在 CPU 与 GPU 之间分工，因此库需要把它收到的每个数据缓冲区传给 GPU，并等待处理完成才能使用结果。由于应用和库在同一个软件线程的上下文中执行，数据传输和 GPU 处理期间 CPU 可能闲置。为让 CPU 保持忙碌，我们把工作管线化，在多个数据缓冲区之间轮转。这样 CPU 上几乎所有执行都能与 GPU 处理并行，反之亦然。唯一无法并行处理的部分——有匹配时把结果缓冲区从 GPU 传回——之所以被串行化，只是我们实现方式的结果。</p><h2>35.4 结果</h2><p>我们把开源杀毒软件 ClamAV 在 CPU 上执行自身精确匹配算法的表现，与同一应用调用我们的扫描库时的表现做了比较。</p><p>需要指出，原始 ClamAV 应用还执行两个额外步骤：检测与其约 2,000 条正则表达式签名的匹配，以及为每个文件计算 MD5 散列并与约 8,000 个散列值的数据库比对。这些功能超出了我们此处所述算法的范围，在比较性能之前我们已把它们从 ClamAV 应用中去掉。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/35fig05.jpg" rel="noreferrer noopener">图 35-5</a> 的曲线显示，在一个 8 MB 数据文件中，对一系列签名标签匹配率，我们的 GPU 方法获得的加速比。比较所用硬件是 3 GHz Intel Pentium 4 加 NVIDIA GeForce 7800 GTX。如果没有任何签名标签匹配（曲线上的第一个数据点），GPU 实现比 CPU 快 27 倍。当 GPU 在输入数据中找到匹配的标签时，性能急剧下降，因为把结果缓冲区复制回 CPU 带来了开销。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/35fig05.jpg" alt="35fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/35fig05.jpg" rel="noreferrer noopener">图 35-5</a> ClamAV（GPU）在一系列签名标签匹配率下的加速比</figcaption></figure><p>匹配率指输入数据中含有有效签名标签的 64 字节片段所占的百分比。随着匹配率上升，加速比从 17 倍降到 11 倍，因为 CPU 必须做额外的验证工作。两条曲线比较的是匹配到的单条签名数量的影响。随着匹配数量上升<em>并且</em>识别出的单条签名数量增长，性能明显退化，因为成千上万条随机顺序的单条签名字符串被取入 CPU 缓存做比较。</p><p>在实际环境中，真实系统的大多数输入数据即便有签名匹配也极少，因此 GPU 带来的加速很显著。不过，设法减轻签名标签匹配对性能的影响会很有用，不仅针对完整病毒签名被匹配到的少见情形，也针对 GPU 报告误报的情形——即数据含有签名标签但不含完整签名。</p><p>当 CPU 必须验证 GPU 结果时，会产生三类开销：把 GPU 结果缓冲区复制回 CPU 的时间、遍历结果缓冲区的处理时间，以及验证每个阳性结果的时间。<a href="https://developer.download.nvidia.com/books/gpugems3/35fig05.jpg" rel="noreferrer noopener">图 35-5</a> 报告的结果把三类开销的影响混在一起，而 <a href="https://developer.download.nvidia.com/books/gpugems3/35fig06.jpg" rel="noreferrer noopener">图 35-6</a> 的柱状图有助于把它们区分开。「无标签匹配」几组柱子把原始的零匹配情形与有无结果缓冲区复制到 CPU 的情形作了比较。对低匹配率，几乎全部额外开销都来自缓冲区传输。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/35fig06.jpg" alt="35fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/35fig06.jpg" rel="noreferrer noopener">图 35-6</a> 在 50% 标签匹配率和 31,995 条签名标签匹配下的性能管理</figcaption></figure><p>「标签匹配，CPU 介入」几组柱子比较了两种在高匹配率下减少 CPU 处理时间的技术，所用的是 <a href="https://developer.download.nvidia.com/books/gpugems3/35fig05.jpg" rel="noreferrer noopener">图 35-5</a> 中的最坏情形（50% 匹配率和 31,995 条签名标签）。第一种做法中，CPU 把写入缓冲区的结果总数与一个阈值比较。若结果超过阈值，CPU 选择在未验证匹配的情况下把整块输入数据判为有害（或可疑），从而避免结果复制与处理。这个选项适用于由单个对象或一组相关对象（例如一个流中的包）构成的输入块。第二种做法中，CPU 复制结果缓冲区并处理它，同时统计缓冲区中每个对象返回的结果。一旦某个对象超过阈值，CPU 就标记该对象并跳过它剩余的结果；到下一个对象开始时，CPU 重新开始处理。</p><p>我们此处给出的结果中，每 512 字节的输入数据片段被指定为一个单独对象。尽管结果复制仍把收益从 27 倍降到 17 倍，但签名验证所需的结果缓冲区读取次数减少后，性能不再退化。这一结论与我们的观察一致：虽然 CPU 与 GPU 并行执行，在零匹配情形下 GPU 的工作量远大于 CPU，CPU 经常闲置。</p><p>我们的实现没有把写缓冲区传输管线化，这段时间里 CPU 和 GPU 都无法工作。多线程系统可以让 CPU 在传输进行时继续执行，从而避免一部分开销。高匹配率下会拖累性能的 CPU 处理开销，可以通过在某个数据对象或一组相关对象上停止工作来削减，前提是可以接受报告一定数量的误报。</p><h2>35.5 结论与未来工作</h2><p>我们实现的快速数据扫描库表明，GPU 可以被有效地用于在真实网络上加速病毒签名检测。尽管我们成功发挥了 GPU 作为模式过滤器的作用，这个简单算法在三个关键方面可扩展性不足。例如它至多支持 64,000 条签名（即 GPU 签名数组的大小），对更大的病毒数据库就成了问题。此外，它要求每条签名都有唯一的 6 字节字符序列（含唯一的 2 字节数组索引），这一要求显然限制了我们能检测的病毒空间。最后，它只支持固定字符签名。</p><p>如果把 GPU 签名数据结构改成容纳更多签名，它会占用更大的内存足迹，遍历该结构可能需要更多内存读取。这两项改动都可能降低内存性能。另一种做法是让 GPU 过滤器更粗，把单个 GPU 数组项映射到多条签名。在这种方案中由 CPU 在各签名之间消歧；不过这种做法把一部分签名匹配工作交回 CPU，可能降低 CPU 缓存性能和吞吐，某些情况下还会拖慢整个系统的性能。</p><p>我们的算法可以轻松扩展到支持 ClamAV 数据库中的简单正则表达式签名，但大部分工作量会落在 CPU 上。ClamAV 的正则表达式签名由固定字符片段组成，片段之间隔着数量不定的通配字符，但不含递归。我们可以像现在这样用 GPU 找出固定字符片段的可能匹配。之后可以用 CPU 完成剩余工作：验证签名中每个片段都有可能的匹配，且每个片段匹配都是真阳性。验证完这些匹配后，CPU 运行一个粗粒度状态机来判断签名是否被完全匹配。这样，GPU 就不必推测性地读取大量输入数据字节，也不必跨多个数据缓冲区保存状态。</p><h2>35.6 参考文献</h2><p>我们使用的 Clam AV 软件可在 <a href="http://www.clamav.org" rel="noreferrer noopener">http://www.clamav.org</a> 获取。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-35-fast-virus-signature-matching-gpu" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-35-fast-virus-signature-matching-gpu</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

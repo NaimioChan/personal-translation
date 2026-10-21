@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 8 章　模拟衍射 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 8 章　模拟衍射」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 8 章　模拟衍射</h1>
+<p><em>Jos Stam<br> Alias Systems</em></p><h2>8.1 什么是衍射？</h2><p>计算机图形学中大多数表面反射模型都忽略自然光的波动效应。只要表面细节远大于光的波长（大约一微米），这没有问题。然而对表面细节很小的情况，比如光盘，波动效应就不能忽略。小尺度的表面细节使反射波互相干涉。这一现象称为<em>衍射</em>。</p><p>衍射使这些表面的反射光呈现许多彩色图案，从光盘上微妙的反射即可看出。其他会产生衍射的表面如今很常见，并被大量生产，用来做花哨的包装纸、彩色玩具和精致的防伪水印等等。</p><p>本章展示如何在任意表面上实时建模衍射效果。这得益于当今显卡上的可编程硬件。我们特别给出用 Cg 语言编写的完整着色器实现。我们的着色器是我们 SIGGRAPH 1999 论文（Stam 1999）中所述更一般模型的简化版本。</p><h4>8.1.1 光的波动理论</h4><p>从根本层面看，光表现为波。事实上，计算机图形学所用的光线理论就是这种波动理论的近似。波出现在许多关于自然现象的物理理论中。这并不奇怪，因为自然界在空间和时间上都充满重复的图案。</p><p>图 8-1 中简单的一维波完全由波长 <em></em> 和振幅 <em>A</em> 描述。波长刻画振荡的图案，振幅决定波的强度。可见光由这些波叠加而成，波长范围从 0.5 微米（紫外线）到 1 微米（红外线）。光源的颜色由它所发出各波的振幅分布决定。例如，偏红的光源主要由波长峰值在 1 微米范围的波组成，而阳光在各波长上的波的分布是均等的。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig08-01.jpg" alt="fig08-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig08-01.jpg" rel="noreferrer noopener">图 8-1</a>　光波从紫外线到红外线</figcaption></figure><h4>8.1.2 衍射的物理原理</h4><p>我们这个简单的衍射着色器建模的是光从通常称为<em>衍射光栅</em>的表面上的反射。衍射光栅由一组平行的窄反射带组成，带间相隔距离 <em>d</em> <strong>。</strong>图 8-2a 展示该表面的一个截面。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig08-02.jpg" alt="fig08-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig08-02.jpg" rel="noreferrer noopener">图 8-2</a>　衍射光栅</figcaption></figure><p>从光源发出的光波通常用平面波近似。画出对应波峰的各条线，即可描绘这种波的截面。与简单的一维波不同，平面波除了波长和振幅之外还需要指定方向。图 8-2a 描绘了入射到我们衍射光栅上的平面波。注意线之间的间距对应波长 <em></em>。这类平面波打到衍射光栅上时，会在每条带处产生一个球面波，如图 8-2b 所示。球面波的波长与入射平面波相同，其波峰也同样描绘。唯一的区别是波峰位于同心圆上，而非平行线上。离开表面的任意接收点处的反射波，等于该位置上各球面波之和。</p><p>波动理论与常用光线理论的主要区别在于，振幅并非简单相加。波会干涉。我们在图 8-3 中说明这一现象，其中展示了两种极端情形。第一种（a）中两个波「同相」，振幅相加，与光线理论一致。第二种（b）中波相互抵消，得到振幅为零的波。这两种情形说明波可以相长干涉，也可以相消干涉。一般而言，得到的波介于这两个极端之间。不过我们最关心的是第一种：当波同相干涉时，产生可能的最大强度，最终会在接收端被观察到。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig08-03.jpg" alt="fig08-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig08-03.jpg" rel="noreferrer noopener">图 8-3</a>　波的干涉</figcaption></figure><p>现在我们更详细地解释波同相的概念。与这种情况下的惯例一样，我们假定光源和接收器相对表面细节的尺寸而言离表面「很远」。这是合理的，因为表面细节宽仅几微米，而我们常从 1 米外观察表面。那是六个数量级的差距。这种情形下，我们可以假定从表面发出、最终到达接收器的所有波都是平行的。因此，当不同带从光源到接收器的路径只相差波长 <em></em> 的整数倍时，到达接收器的波恰好同相。设 <em></em> <sub>1</sub> 为入射平面波方向的角度，<em></em> <sub>2</sub> 为到接收器的角度。</p><p>于是，由图 8-4 并用一些基本三角函数，我们得出波同相的条件为：</p><p><img alt="126equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/126equ01.jpg"/></p><p>其中 <em>n</em> 为任意正整数，<em>u</em> = sin <em></em> <sub>1</sub> - sin <em></em> <sub>2</sub>。这个关系恰好给出在接收器处干涉形成最大强度的那些波长。这些波长是：</p><p><img alt="126equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems/126equ02.jpg"/></p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig08-04.jpg" alt="fig08-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig08-04.jpg" rel="noreferrer noopener">图 8-4</a>　计算反射波相位差所用的角度</figcaption></figure><p>由于 <em>n</em> 任意，这给出无穷多个波长。然而只有 [0.5, 1] 微米范围内的波长对应可见光。于是这给出 <em>n</em> 的可能取值范围，用 |<em>u</em>| 和间距 <em>d</em> 表示：</p><p><img alt="127equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/127equ01.jpg"/></p><p>因此，接收器处光的颜色等于所有波长由上式给出的波的颜色的总和。</p><p>给定波长对应什么颜色？如前所述，颜色以彩虹的方式从红到紫分布。虽然特定波长的确切颜色可以从理论上确定，我们改用一种简单的近似。我们需要的只是一张<em>彩虹映射表</em>，颜色从紫到红，模拟彩虹。设 <em>C</em>(<em></em>) = (<em>R</em>(<em></em>), <em>G</em>(<em></em>), <em>B</em>(<em></em>)) 为这样一张表，对 [0.5, 1] 微米区间内每个波长 <em></em> 返回一个 RGB 值。那么到达观察者的光的颜色，就是对每个有效 <em>n</em> 的颜色 <em>C</em>(|<em>u</em>|<em>d</em>/<em>n</em>) 求和。注意当 <em>u</em> = 0（精确反射）时，所有波长都对反射有贡献。这个情形我们会在着色器实现中单独处理。</p><h2>8.2 实现</h2><p>现在我们描述把该理论实现为 Cg 顶点程序的做法。当然，我们本可以用片元程序实现。只要为每个顶点提供「切线向量」以及法线和位置，我们的实现就应对任意网格有效。切线向量给出表面上窄带的局部方向。对光盘而言，它们沿轨道方向，如图 8-5 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig08-05.jpg" alt="fig08-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig08-05.jpg" rel="noreferrer noopener">图 8-5</a>　光盘的切线向量</figcaption></figure><p>我们顶点程序的完整实现见代码清单 8-1。</p><h4>示例 8-1　衍射着色器顶点程序</h4><pre><code>float3 blend3(float3 x)
+{
+  float3 y = 1 - x * x;
+  y = max(y, float3(0, 0, 0));
+  return (y);
+}
+void vp_Diffraction(in float4 position
+                    : POSITION, in float3 normal
+                    : NORMAL, in float3 tangent
+                    : TEXCOORD0, out float4 positionO
+                    : POSITION, out float4 colorO
+                    : COLOR, uniform float4x4 ModelViewProjectionMatrix,
+                      uniform float4x4 ModelViewMatrix,
+                      uniform float4x4 ModelViewMatrixIT, uniform float r,
+                      uniform float d, uniform float4 hiliteColor,
+                      uniform float3 lightPosition, uniform float3 eyePosition)
+{
+  float3 P = mul(ModelViewMatrix, position).xyz;
+  float3 L = normalize(lightPosition - P);
+  float3 V = normalize(eyePosition - P);
+  float3 H = L + V;
+  float3 N = mul((float3x3)ModelViewMatrixIT, normal);
+  float3 T = mul((float3x3)ModelViewMatrixIT, tangent);
+  float u = dot(T, H) * d;
+  float w = dot(N, H);
+  float e = r * u / w;
+  float c = exp(-e * e);
+  float4 anis = hiliteColor * float4(c.x, c.y, c.z, 1);
+  if (u &lt; 0)
+    u = -u;
+  float4 cdiff = float4(0, 0, 0, 1);
+  for (int n = 1; n &lt; 8; n++)
+  {
+    float y = 2 * u / n - 1;
+    cdiff.xyz += blend3(float3(4 * (y - 0.75), 4 * (y - 0.5), 4 * (y - 0.25)));
+  }
+  positionO = mul(ModelViewProjectionMatrix, position);
+  colorO = cdiff + anis;
+}</code></pre><p>代码计算彩色衍射图案，以及对应 <em>u</em> = 0 情形的主要各向异性高光。</p><p>先描述衍射图案的计算。由光源与接收器之间的半程向量（未归一化），我们把它投影到局部切线向量上求出 <em>u</em> 值。再由此值和间距 <em>d</em> 算出同相干涉的波长。若波长计算正确，我们应当先确定有效的 <em>n</em> 值范围，再对相应颜色求和。然而目前 Cg 编译器会展开 <code>for</code> 循环，因此循环长度受顶点程序允许大小的限制。所以我们决定在实现中使用固定的 <em>n</em> 个数，目前取 8。在着色器的后续版本中，我们可能希望允许可变的 <code>for</code> 循环，依 |<em>u</em>| 和 <em>d</em> 而定，如 8.1.2 节所述。</p><p>为确定给定波长对应的颜色，我们使用彩虹映射表的简单近似。基本上，映射应从紫到红，并产生彩虹中的大部分颜色。我们发现把三个相同的凸起函数（分别在蓝、绿、红区域达到峰值）简单混合效果不错，如图 8-6 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig08-06.jpg" alt="fig08-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig08-06.jpg" rel="noreferrer noopener">图 8-6</a>　着色器中所用的彩虹颜色映射</figcaption></figure><p>更确切地说，我们的凸起函数等于：</p><p><img alt="129equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/129equ01.jpg"/></p><p>然后，利用这个函数，我们可以把彩虹映射的 RGB 分量定义为：</p><p><img alt="ch08_eqn008.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch08_eqn008.jpg"/></p><p>其中 <em>y</em> = 2<em></em> - 1 把波长映射到 [0, 1] 微米范围，<em>C</em> 是控制彩虹映射外观的形状参数。在实现中我们发现 <em>C</em> = 4.0 给出可接受的结果。这只是一种可能的彩虹映射。事实上，更好的方案可能是用一维纹理映射或查表。</p><p><em>u</em> = 0 的情形用一个简单的各向异性着色器处理。理论上它应只对应一个无限细的白色高光。然而衍射光栅各条带上凸起的凹凸不平（例如在光盘上）会造成可见的高光扩散。因此我们决定用 Greg Ward（Ward 1992）的简单各向异性着色器来建模这一贡献。高光的扩散用粗糙度参数 <em>r</em> 建模，颜色由 <em>hiliteColor</em> 参数给出。该贡献的表达式为：</p><p><img alt="ch08_eqn009.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch08_eqn009.jpg"/></p><p>其中 <em>w</em> 是半程向量在法线方向上的分量。</p><p>最终颜色就是彩色衍射图案与各向异性高光之和。</p><h2>8.3 结果</h2><p>我们写了一个程序，用该衍射顶点着色器来可视化光盘的反射。光盘建模为一组薄的四边形。当然，我们的着色器并不局限于光盘的几何形状：只需为每个顶点提供切线方向即可。</p><p>此外，我们在光盘上叠加了一层薄透明层，用类似菲涅尔的反射着色器。这层在掠射角下更强地反射环境。图 8-7 是我们实时演示在光盘三个不同位置下的三张快照。图 8-8 是我们的衍射着色器应用于一个对主各向异性方向做了纹理映射的表面的效果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig08-07.jpg" alt="fig08-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig08-07.jpg" rel="noreferrer noopener">图 8-7</a>　我们的光盘实时演示的三张快照</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig08-08.jpg" alt="fig08-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig08-08.jpg" rel="noreferrer noopener">图 8-8</a>　对主各向异性方向做纹理映射的表面的三张快照</figcaption></figure><h2>8.4 结论</h2><p>我们展示了如何实现一个简单的衍射着色器，演示自然光的一些波动特征。更复杂表面细节的推导可在我们 SIGGRAPH 1999 的论文（Stam 1999）中找到。想进一步了解光的波动理论的读者可以查阅经典著作 <em>Principles of Optics</em>（Born and Wolf 1999），我们发现它很有用。未来的工作方向可能包括比简单衍射光栅更复杂的表面。例如，对金属漆的反射建模会很有挑战性，这类漆由若干散射层组成。漆中的微小颜料造成许多可见的波动效应。开发这样的模型在新漆的制造中会有很多应用。</p><h2>8.5 参考文献</h2><p><a id="ch08bib01_01"></a>Born, Max, and Emil Wolf. 1999. <em>Principles of Optics: Electromagnetic Theory of Propagation, Interference and Diffraction to Light</em>，第 7 版，Cambridge University Press 出版。</p><p><a id="ch08bib01_02"></a>Stam, Jos, 1999. "Diffraction Shaders."，载 <em>Proceedings of SIGGRAPH 99</em>，第 101–110 页。</p><p><a id="ch08bib01_03"></a>Ward, Greg. 1992. "Measuring and Modeling Anisotropic Reflection."，载 <em>Proceedings of SIGGRAPH 92</em>，第 265–272 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-8-simulating-diffraction" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-8-simulating-diffraction</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

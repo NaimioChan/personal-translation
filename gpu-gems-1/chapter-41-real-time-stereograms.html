@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 41 章　实时立体图 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 41 章　实时立体图」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 41 章　实时立体图</h1>
+<p><em>Fabio Policarpo<br> Paralelo Computação Ltda.</em></p><h2>41.1 什么是立体图？</h2><p>立体图是一幅二维图像，其中编码了立体信息，只要以正确的方式观看，就会显现出一个隐藏的三维场景。这始于 20 世纪 60 年代，当时在 (AT&amp;T) Bell Labs 研究人类视觉——尤其是深度知觉和模式识别——的 Bela Julesz 创造了<em>随机点立体图</em>（RDS）。立体图由立体摄影演化而来，后者从略有差异的两个相机位置拍摄两张照片（代表我们双眼之间的位移）。</p><h4>41.1.1 立体摄影</h4><p>立体摄影非常古老，可追溯到 1838 年，但一些老式立体相机和立体照片观看器，例如图 41-1a 所示的那个，仍能在古董店找到。立体摄影的思路是拍摄两张相似的照片，但相机位置在水平方向上有位移（就像我们的双眼）。我们的双眼相距约 65 mm，这种视差使呈现给大脑的两幅图像略有不同。这些差异让我们产生深度感。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-01a.jpg" alt="fig41-01a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-01a.jpg" rel="noreferrer noopener">图 41-1</a> 立体摄影</figcaption></figure><p>在图 41-1a 中，两幅图像（立体像对）并排放在透镜前方。透镜便于观看，把每幅图像分别呈现给一只眼睛。观看立体像对时必须让左眼看到左边的照片，如图 41-1b 所示，右眼看到右边的照片，如图 41-1c 所示。若把两幅图像对调（左图给右眼看，反之亦然），深度知觉就会反转。</p><h4>41.1.2 随机点立体图</h4><p>要生成随机点立体图（RDS），先创建一幅由随机点构成的图像，如图 41-2a 所示。然后复制这幅图像，在其中选出一块区域并水平位移，如图 41-2b（位移越大，看起来越深）。位移区域留下的空隙再用随机生成的点填满，如图 41-2c，然后……就完成了！</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-02.jpg" alt="fig41-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-02.jpg" rel="noreferrer noopener">图 41-2</a> 生成随机点立体图</figcaption></figure><p>现在我们有了两幅图像：原始版本与复制并位移后的版本。把每幅图像分别呈现给一只眼睛，就能产生深度知觉，隐藏的三维场景随之显现。</p><p>你可以像看普通立体照片那样观看随机点立体图。要只靠双眼、不借助任何器具看到随机点立体图（或普通立体照片），只需看着两幅图像，例如图 41-3 中的那两幅，把双眼的交汇点放在图像平面前方。这样你会看到四幅而不是两幅图像，因为每幅图像都复制了一份（就像盯着自己的鼻子看）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-03.jpg" alt="fig41-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-03.jpg" rel="noreferrer noopener">图 41-3</a> 一对可供观看的随机点立体图</figcaption></figure><p>改变聚焦点会让复制出的图像相对移动，当中间的图像重合时，就能看到隐藏的三维场景。聚焦点正确时只会看到三幅图像：中间一幅是三维的，两侧两幅是二维的。图 41-4 详细说明了其中的原理。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-04.jpg" alt="fig41-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-04.jpg" rel="noreferrer noopener">图 41-4</a> 观看立体像对</figcaption></figure><h4>41.1.3 单幅图像立体图</h4><p>单幅图像立体图（SIS）是标准随机点立体图的演进，只需要一幅图像。其思路是让图像中相邻的竖直切片图案相匹配，从而产生深度知觉，见图 41-5（上）。在单幅图像立体图中，我们把图像切成竖条，从而减小观看所需的位移。例如把图像切成八条，观看所需的位移就只有原来的八分之一。这样双眼交汇点可以更靠近图像平面，观看起来更舒适。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-05.jpg" alt="fig41-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-05.jpg" rel="noreferrer noopener">图 41-5</a> 观看由四条构成的立体图</figcaption></figure><p>对随机点立体图来说，双眼交汇点必须比单幅图像立体图更靠图像平面前方（也就是更靠近观看者），使看到的图像位移等于图像本身的尺寸。实际上，一对随机点立体图的效果就相当于只有两条的立体图。</p><p>观看立体摄影和经典随机点立体图时，观看者必须始终把双眼交汇在图像平面<em>前方</em>。但在单幅图像立体图中，由于各条之间的间隔小于双眼间距，还有另一种更舒适的观看方式：把双眼交汇在图像平面<em>后方</em>。这样深度知觉会反转，但看到的仍是三维图像。见图 41-5（下）。市面上流行的单幅图像立体图大多是按这种方式生成的。</p><h2>41.2 创建单幅图像立体图</h2><p>单幅图像立体图由给定的深度图（即带深度信息的灰度图）和一块平铺图案（通常是彩色的平铺图像）生成，如图 41-6 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-06.jpg" alt="fig41-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-06.jpg" rel="noreferrer noopener">图 41-6</a> 输入图像</figcaption></figure><p>注意图 41-7 中，平铺图案按深度图重复并变形。若用随机点图像作平铺图案，得到的立体图就是<em>单幅图像随机点立体图</em>（SIRDS）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-07.jpg" alt="fig41-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-07.jpg" rel="noreferrer noopener">图 41-7</a> 生成的立体图</figcaption></figure><h4>41.2.1 参数</h4><p>创建新的单幅图像立体图时需要考虑几个参数：使用的条数；深度因子，它可增强或减弱深度知觉（进而控制施加到图案块上的变形量）；以及是否反转深度值（白色既可视为深度 0，也可视为满深度 1）。</p><p>下面列出其中一些参数：</p><ul><li>条数（<code>num_strips</code>）：整数值，通常为 8 到 24</li><li>深度因子：0.0 到 1.0 之间的浮点值，1.0 表示满深度</li><li>反转深度：布尔值，表示是否反转深度值（1 – depth）</li></ul><h4>41.2.2 渲染</h4><p>渲染单幅图像立体图时，先按竖条切分深度图和结果图像。为简化示例，这里用四条（<code>num_strips = 4</code>），真正的单幅图像立体图会用更多条。然后把图 41-8 所示的深度图切成四条（<code>num_strips</code>），把结果图分成五条（<code>num_strips + 1</code>），因为需要一条起始的参考条。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-08.jpg" alt="fig41-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-08.jpg" rel="noreferrer noopener">图 41-8</a> 渲染图像</figcaption></figure><p>下面是单幅图像立体图渲染的伪代码：</p><pre><code>select_pattern_texture();
+draw_strip(0);
+read_strip_to_result_texture(0);
+enable_fragment_program();
+select_depth_texture();
+select_result_texture();
+for (i = 0; i &lt; num_strips; i++)
+{
+  draw_strip(i + 1);
+  read_strip_to_texture(i + 1);
+}
+disable_fragment_program();
+draw_result_texture();</code></pre><p>伪代码开头只绘制第一条，用平铺图案做纹理映射，如图 41-8a（不需要片元程序，普通纹理映射即可）。随后把该条的像素复制到结果纹理图中（用 <code>glCopyTexSubImage2D</code> 复制刚刚修改的区域），于是得到图 41-8b 所示的结果图像。</p><p>接着启用片元程序，把深度图、结果图和深度因子作为参数传入。然后循环，从结果图像中绘制余下的四条。每画一条，都必须把它的像素复制到结果纹理图，因为每一条新条都以相邻的上一条为参考。</p><p>绘制图 41-8b 中缺失的各条时，我们从相邻的上一条复制内容，并按当前像素的深度在水平方向位移像素。例如某像素深度为 0，就原样复制上一条中同一位置的颜色；对其他深度值，则在同一扫描线上按深度成比例位移后取色。</p><p>设深度图与结果图的坐标范围都是 [0, 0] 到 [1, 1]。给定坐标为 [<em>x</em>, <em>y</em>] 的片元，用下面的计算求出应当从结果图中上一条的哪个坐标取色：</p><p><img alt="717equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/717equ01.jpg"/></p><h4>41.2.3 创建动画单幅图像立体图</h4><p>由于可以借助 GPU 的片元程序能力实时生成单幅图像立体图，我们还能做出<em>动画单幅图像立体图</em>（ASIS）。做法是用一个普通的三角形三维场景，把它的 z 缓冲当作单幅图像立体图的深度图，也就是从给定视点渲染三维场景，再把 z 缓冲的内容读入深度图纹理。见图 41-9。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-09a.jpg" alt="fig41-09a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-09a.jpg" rel="noreferrer noopener">图 41-9</a> 制作动画单幅图像立体图</figcaption></figure><p>以实时渲染场景的 z 缓冲作为深度图来源后，我们可以交互地移动三维场景（或使用预先设定的相机动画路径），让立体图每帧更新以反映这些变化。这就产生了实时动画立体图（动画中的一帧见图 41-10）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-10.jpg" alt="fig41-10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-10.jpg" rel="noreferrer noopener">图 41-10</a> 动画立体图中的一帧</figcaption></figure><p>动画立体图不容易看出来，所以先看不带动画的版本，看清之后再打开动画。因为要看出动画立体图，必须在图像动起来的同时把双眼交汇点固定在正确距离上。不熟悉立体图的人，用静态图像寻找正确的交汇距离会更容易。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig41-11.jpg" alt="fig41-11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig41-11.jpg" rel="noreferrer noopener">图 41-11</a> 换用不同颜色平铺图案的另一个视图</figcaption></figure><h4>41.2.4 片元程序</h4><p>代码清单 41-1 给出了生成上述立体图所用的片元程序。</p><h4>示例 41-1. 用于生成立体图的片元程序</h4><pre><code>struct vert2frag
+{
+  float4 pos : POSITION;
+  float4 texcoord : TEXCOORD0;
+};
+struct frag2screen
+{
+  float4 color : COLOR;
+};
+frag2screen main_frag(vert2frag IN, uniform sampler2D resmap,
+                      // 结果图
+                      uniform sampler2D depthmap, // 深度图
+                      [ 1.0 / num_strips,
+                        1.0 / (num_strips + 1) ] uniform float2 strips_info,
+                      // 深度因子（若为负，则反转深度）
+                      uniform float depth_factor)
+{
+  frag2screen OUT;
+  // 取自结果图的纹理坐标
+  float2 uv = IN.texcoord.xy;
+  // 把纹理坐标变换到深度图空间
+  // （去掉第一条带）并取出深度值
+  uv.x = (IN.texcoord.x / strips_info.y - 1.0) * strips_info.x;
+  float4 tex = tex2D(depthmap, uv);
+  // 若因子为负，则反转深度
+  if (depth_factor < 0.0)
+    tex = 1.0 - tex.x;
+  // 计算位移因子
+  // （depthmap_value * factor * strip_width）
+  float displace = tex.x * abs(depth_factor) * strips_info.y;
+  // 把结果图的纹理坐标变换到
+  // 按位移因子平移后的上一条带中
+  uv.x = IN.texcoord.x - strips_info.y + displace;
+  // 从结果图的上一条带取输出颜色
+  OUT.color = tex2D(resmap, uv);
+  return OUT;
+}</code></pre><h2>41.3 示例程序</h2><p>示例程序用 OpenGL 和 Cg 支持片元程序。它是一个简单的 Win32 程序，源码很短。运行程序只需启动 pStereogram.exe；浏览源码可用 Microsoft Visual C++ 打开 pStereogram.dsw。程序使用 <code>GL_ARB_fragment</code> 程序扩展，凡支持该扩展的环境都应能运行；即便是靠模拟器提供的片元程序支持也能跑——慢，但能用。</p><h4>41.3.1 程序选项</h4><p>程序提供若干选项，可生成新的自定义立体图。可以载入新的深度图（Ctrl+D）、新的平铺图案（Ctrl+T）和新的三维几何体（Ctrl+M）。支持的图像格式为 JPG 和 TGA，支持的三维几何体格式为 3DS 和 P3D。</p><p>在 View 菜单中可以选择下列选项：</p><ul><li><strong>纹理滤波（Ctrl+F）：</strong>该选项让深度变化保持平滑。关闭时深度值不连续，能明显看到深度层级之间的断层（像深度的台阶）。</li><li><strong>反转深度（Ctrl+I）：</strong>该选项反转深度值（1 – depth）。做法是反转深度图像的取值（白色变黑色，反之亦然）。有人习惯把双眼交汇点放在图像平面前方，有人放在后方（仿佛在看显示器内部的东西）。如果你看到三维图像陷进图像平面里，用这个选项就能得到正确的图像。</li><li><strong>深度因子（&lt;、&gt;）：</strong>该选项选择深度值的乘数。因子小，图像显得浅；因子大，图像显得很深。深度因子不应大于 1.0，否则当深度图用满整个取值范围（0.0 到 1.0）时会产生瑕疵。</li><li><strong>条数（–、+）：</strong>该选项指定使用的条数。值小则条数少而每条更宽，值大则生成许多窄条。这会改变要看到三维图像时双眼交汇点需离图像平面多近。</li><li><strong>生成立体图：</strong>选中时片元程序启用，可以看到立体图。取消选中则片元程序停用，屏幕上只剩当前选中的深度图。</li><li><strong>由三维网格得到深度：</strong>该选项使动画立体图成为可能。启用后，程序使用的深度图取自当前选中三维网格对象渲染结果的 z 缓冲。在此模式下可以一边观看生成的立体图一边浏览三维场景。有些三维场景可能包含多个相机，有些相机可能带动画，可按数字键「1」「2」……「9」切换相机。可用「S」「X」和方向键在场景中交互移动，也可以按住鼠标左键拖动旋转视图、按住右键平移视图。</li></ul><h2>41.4 参考文献</h2><p><a id="ch41bib01_01"></a>SIRDS FAQ。<strong><a href="http://www.cs.waikato.ac.nz/~singlis/sirds.html" rel="noreferrer noopener">http://www.cs.waikato.ac.nz/~singlis/sirds.html</a></strong></p><p><a id="ch41bib01_02"></a>Magic Eye 网站。<strong><a href="http://www.magiceye.com" rel="noreferrer noopener">http://www.magiceye.com</a></strong></p><p><a id="ch41bib01_03"></a>Thimbleby, Harold W., Stuart Inglis, and Ian H. Witten. 1994. "Displaying 3D Images: Algorithms for Single Image Random Dot Stereograms." <em>Journal Computer</em> 27(10), pp. 38–48. 可在线获取：<strong><a href="http://archive.museophile.sbu.ac.uk/3d/pub/SIRDS-paper.pdf" rel="noreferrer noopener">http://archive.museophile.sbu.ac.uk/3d/pub/SIRDS-paper.pdf</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-41-real-time-stereograms" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-41-real-time-stereograms</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

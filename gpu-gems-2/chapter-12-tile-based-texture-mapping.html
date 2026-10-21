@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 12 章　基于瓦片的纹理映射 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 12 章　基于瓦片的纹理映射」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 12 章　基于瓦片的纹理映射</h1>
+<p><em>Li-Yi Wei</em><br> <em>NVIDIA Corporation</em></p><p>游戏、仿真等许多图形应用经常为墙面、地面或地形使用大纹理。大纹理有几个问题。第一，它们可能占用大量存储，无论是磁盘空间、系统内存还是显存。第二，它们可能占用大量带宽，无论是初始纹理加载还是渲染时。第三，多数显卡对单张纹理尺寸有上限。例如 GeForce 6800 对 RGBA8 纹理的上限分辨率为 4,096x4,096，还有许多 GPU 的限制更严。</p><p>解决这些问题的一个可能办法是纹理压缩。然而 DXT 等现有的 GPU 纹理压缩技术压缩比有限。此外，纹理压缩无法解决纹理尺寸上限的问题。</p><p>另一种做法是纹理平铺，如图 12-1 所示。例如，若有一大片由重复瓦片构成的墙或地面，显然不必把所有瓦片都存下来。我们可以只保留一块瓦片，在墙上重复它。对更复杂的图案，可以把墙或地面切成较小的多边形，为每个多边形施加不同的纹理瓦片或纹理坐标变换。这种做法的优点是理论上能达到无穷大的压缩比，因为可以从几块瓦片生成任意大的输出。缺点在于应用代码与数据变得复杂。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/12_tilebased_01a.jpg" alt="12_tilebased_01a.jpg"><figcaption>图 12-1　一张基于瓦片的纹理贴图</figcaption></figure><p>我们的目标是提出一种对应用透明的基于瓦片的纹理映射方案。具体来说，我们不需要为使用纹理瓦片而改动原有几何或纹理坐标；而是把纹理平铺实现为一个片元程序，由它处理访问与滤波瓦片纹理的细节。</p><h2>12.1 我们的做法</h2><p>我们把一张大纹理表示为一小组瓦片，并在需要响应纹理请求时即时把这些瓦片拼成一张大的虚拟纹理。为减小视觉上的重复感，我们以非周期方式拼接瓦片。关于非周期平铺有大量文献，但我们选择了 Wang 瓦片，因为其简单（Cohen 等 2003）。Wang 瓦片是方形瓦片，每条边用颜色编码。合法平铺要求瓦片之间所有共享边的颜色匹配。若一组 Wang 瓦片填入在匹配边处连续的纹理图案，则由该组瓦片构成的合法平铺能生成任意大而没有图案不连续的纹理。图 12-2 是一个 Wang 平铺示例。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/12_tilebased_02a.jpg" alt="12_tilebased_02a.jpg"><figcaption>图 12-2　用 Wang 瓦片做纹理平铺</figcaption></figure><p>我们把 Wang 平铺的做法扩展成适合 GPU 的实现。给定一个纹理请求 (<em>s</em>, <em>t</em>)，我们先根据 (<em>s</em>, <em>t</em>) 位置判断它落在哪块瓦片上，再从该输入纹理瓦片中取相应纹素。图 12-3 说明了这一过程。我们小心地把纹理瓦片打包进一张纹理图，以便通过纹理硬件在这张单一纹理上完成纹理取数与滤波。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/12_tilebased_03.jpg" alt="12_tilebased_03.jpg"><figcaption>图 12-3　基于瓦片的纹理映射概览</figcaption></figure><h2>12.2 纹理瓦片的构建</h2><p>构建 Wang 瓦片集有几种方法。一种可能是手工绘制瓦片；只需保证绘制在瓦片边界处连续，同时产生足够有趣的平铺结果。本章稍后的图 12-5 和图 12-6 分别给出了我绘制的一套瓦片及其平铺结果。这种手工做法只适用于线条画。</p><p>对照片这类自然纹理图案，有算法化的办法来构建瓦片集，如 Cohen 等 2003 第 3.2 节所述。我们发现这种做法对许多自然纹理图案效果良好，源代码在随书 CD 上。前面图 12-1 中展示的示例瓦片就是用这种做法生成的。</p><p>构建瓦片还有其他方法；读者可参阅 Cohen 等 2003 了解详情。</p><h2>12.3 纹理瓦片的打包</h2><p>以往纹理平铺或图集做法的一个常见问题是滤波。具体来说，给定一组瓦片，如何为输出的虚拟纹理做滤波，尤其是当采样点位于瓦片边界、双线性或三线性滤波需要来自多块瓦片的纹素时？</p><p>有几种可能的解决办法，其中之一是在片元程序中做纹理滤波，或者把所有瓦片打包进一张纹理并在瓦片之间加上边界填充，使双线性滤波正确。第一种做法计算开销大，第二种消耗大量纹理内存。</p><p>在我们的做法中，把所有纹理瓦片打包进一张不带任何边界填充的纹理图，方式使得可以直接通过纹理硬件做纹理滤波，而无需片元程序模拟。我们做到这一点的方法是：把一组 Wang 瓦片打包进一张纹理图，并确保两块瓦片之间共享的任何边具有完全相同的边颜色编码。由于瓦片在相同边颜色处图案连续，跨相邻瓦片直接做双线性滤波就能得到正确结果。可以证明，对完整的瓦片集（即包含所有可能的边颜色组合），总能这样打包。此外，每块瓦片只用一次，所以不浪费纹理内存。</p><p>这里说明打包可以怎么做，不深入数学证明的细节，证明见 Wei 2004。为清楚起见，我们先从一维打包讲起。假设有一组瓦片，只有一种水平边颜色，我们想沿水平方向把它们打包。打包可以用下面的公式实现：</p><p><a id="ch12equ01"></a><strong>公式 1</strong></p><p><a><img alt="ch12_eqn001.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_eqn001.jpg"/></a></p><p>基本上，给定一块左边为 <em>e</em> <sub>1</sub>、右边为 <em>e</em> <sub>2</sub> 的瓦片，其中 <em>e</em> <sub>1</sub> 与 <em>e</em> <sub>2</sub> 是从 0 开始的整数索引，该函数算出这块瓦片在打包中的水平位置。三种垂直边颜色下的一维打包示例见图 12-4a。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/12_tilebased_04.jpg" alt="12_tilebased_04.jpg"><figcaption>图 12-4　瓦片打包的示例</figcaption></figure><p>二维打包可以分别用公式 1 计算垂直与水平索引。也就是说，瓦片的水平位置只由左右边决定，垂直位置只由上下边决定。三种垂直与水平边颜色下的二维打包示例见图 12-4b。这一计算可以用类似 Cg 的代码表达，见代码清单 12-1。</p><h4>示例 12-1　瓦片打包的代码</h4><pre><code>float TileIndex1D(const float e1, const float e2)
+{
+  float result;
+  if (e1 < e2)
+    result = (2 * e1 + e2 * e2);
+  else if (e1 == e2)
+    if (e1 > 0)
+      result = ((e1 + 1) * (e1 + 1) - 2);
+    else
+      result = 0;
+  else if (e2 > 0)
+    result = (e1 * e1 + 2 * e2 - 1);
+  else
+    result = ((e1 + 1) * (e1 + 1) - 1);
+  return result;
+}
+float2 TileIndex2D(const float4 e)
+{
+  float2 result;
+  // 正交地计算水平与垂直方向的位置
+  // e 的 x、y、z、w 分量分别存放
+  // 南、东、北、西四边的编码
+  result.x = TileIndex1D(e.w, e.y);
+  result.y = TileIndex1D(e.x, e.z);
+  return result;
+}</code></pre><h2>12.4 纹理瓦片的映射</h2><p>既然输出的虚拟纹理由瓦片集构成，我们就需要知道纹理的每个区域用的是哪块瓦片。具体来说，对每个纹理坐标 (<em>s</em>, <em>t</em>)，我们要能高效地判断它落在哪块瓦片上。</p><p>把瓦片映射到输出纹理有两种可能的做法。第一种是直接预计算映射，把结果存进一张索引纹理图。例如，若输出由 128x128 块瓦片构成，就用一张 128x128 的索引纹理，按输入打包中的位置存储每块瓦片的 (<em>row</em>, <em>column</em>) 位置。由于索引纹理图尺寸有限，这种做法无法处理任意大的纹理。不过对多数应用而言已足够，而且非常高效。注意这张索引图不需要 mipmap 金字塔，因为我们不需要对 (<em>row</em>, <em>column</em>) 位置做 mipmap 滤波。</p><p>第二种做法完全不需要索引纹理；每个输出区域对应的瓦片可以用一个带哈希的特殊片元程序即时算出。这种做法的优点是不额外消耗一张纹理图，也不像第一种那样受索引纹理图尺寸的限制。不过在我们当前的实现中，第二种做法对实时应用来说太慢；所以本章余下部分只讨论第一种做法。但在未来的 GPU 上第二种做法可能更快，有兴趣的读者可参阅 Wei 2004。</p><p>既然有了预计算的索引纹理，我们基于瓦片的纹理映射过程其实相当简单，最好用实际的 Cg 程序来说明，见代码清单 12-2。给定输入坐标，我们先按输出中的瓦片数对它做缩放。然后用这个缩放后的值去取索引纹理，它会告诉我们该用哪块输入瓦片。最后，用缩放后纹理坐标的小数部分从选定的输入瓦片中取最终纹素。注意在最后的纹理取数中，我们需要指定导数 <code>ddx</code> 与 <code>ddy</code>，以确保细节层次计算正确。</p><h4>示例 12-2　瓦片映射的代码</h4><pre><code>struct FragmentInput
+{
+  float4 tex : TEX0;
+  float4 col : COL0;
+};
+struct FragmentOutput
+{
+  float4 col : COL;
+};
+float2 mod(const float2 a, const float2 b)
+{
+  // 在只有浮点的环境中模拟整数取模运算
+  return floor(frac(a / b) * b);
+}
+FragmentOutput fragment(FragmentInput input, uniform sampler2D tilesTexture,
+                        uniform samplerRECT indexTexture)
+{
+  FragmentOutput output;
+  // osizeh 与 osizev 是输出瓦片数
+  // 它们是编译期常量
+  float2 mappingScale = float2(osizeh, osizev);
+  // 该缩放对 RECT 纹理是必需的
+  // 在最后的纹理读取中我们还需要它的小数部分
+  float2 mappingAddress = input.tex.xy * mappingScale;
+  // 确定该用哪个输入瓦片
+  float4 whichTile = texRECT(indexTexture, mod(mappingAddress, mappingScale));
+  // isizeh 与 isizev 是输入瓦片数
+  // 它们是编译期常量
+  float2 tileScale = float2(isizeh, isizev);
+  // 这是为了确保访问到正确的输入 mipmap 层级
+  float2 tileScaledTex =
+      input.tex.xy * float2(osizeh / isizeh, osizev / isizev);
+  // 取出最终的纹素颜色
+  // 注意需要显式指定 ddx/ddy
+  output.col =
+      tex2D(tilesTexture, (whichTile.xy + frac(mappingAddress)) / tileScale,
+            ddx(tileScaledTex), ddy(tileScaledTex));
+  return output;
+}</code></pre><h2>12.5 mipmap 的问题</h2><p>任何基于瓦片的纹理系统都有固有的局限：低分辨率下的 mipmap 是不正确的。mipmap 的问题实际上有好几个。</p><p>第一，mipmap 层数的上限受输入瓦片约束，而输入瓦片的尺寸远小于输出。例如假设把 4x4 块、每块 32x32 像素的瓦片打包进一张 128x128 的纹理图，则 mipmap 层数最多为 8。显然，对任何大于 128x128 的输出纹理，我们无法访问更粗的分辨率。按我们的经验，这通常不是问题，因为在较低分辨率下瓦片本来就会退化为均匀的一片。</p><p>为打包后的输入构建 mipmap 纹理时也需要小心。如果只用自动 mipmap 生成，瓦片在较低 mipmap 分辨率下很可能不再是合法的 Wang 瓦片。跨瓦片边界滤波时会产生恼人的走样瑕疵。图 12-5 展示了这样一种情况。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/12_tilebased_05.jpg" alt="12_tilebased_05.jpg"><figcaption>图 12-5　滤波造成的瑕疵</figcaption></figure><p>如<a href="https://developer.download.nvidia.com/books/gpugems2/12_tilebased_05.jpg" rel="noreferrer noopener">图 12-5</a> 所示，输出中有两块瓦片 <img alt="ch12_tile01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile01.jpg"/> 与 <img alt="ch12_tile02.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile02.jpg"/> ，彼此相邻。若有一个请求 (<em>s</em>, <em>t</em>) 落在 <img alt="ch12_tile01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile01.jpg"/> 的右边缘上，并假设滤波核足够大（在较低分辨率的 mipmap 层级上可能如此），那么正确的滤波应当主要涉及瓦片 <img alt="ch12_tile02.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile02.jpg"/> 。遗憾的是，由于我们总是在输入打包中做滤波，滤波反而会主要涉及 <img alt="ch12_tile03.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile03.jpg"/> ，这显然不正确。更严重的问题出现在滤波足迹刚好跨过 <img alt="ch12_tile01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile01.jpg"/> 与 <img alt="ch12_tile02.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile02.jpg"/> 之间的边界时。这种情况下，滤波结果会在输入中不连续地变化，从对瓦片 <img alt="ch12_tile01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile01.jpg"/> 与 <img alt="ch12_tile03.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile03.jpg"/> 的滤波突然切到 <img alt="ch12_tile04.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile04.jpg"/> 与 <img alt="ch12_tile02.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch12_tile02.jpg"/> 。而且这种瑕疵可能在空间上和时间上都表现出来。</p><p>为消除这些瑕疵，我们必须在所有较低分辨率的 mipmap 层级上净化瓦片，确保它们是合法的 Wang 瓦片。做法是把所有瓦片中颜色 ID 相同的边取平均。这不会得到理论上正确的结果（除非你把输出的全部低分辨率 mipmap 层级都存下来），但至少消除了突跳的视觉瑕疵。该算法的一个实现在随书 CD 上。</p><p>图 12-6 展示了净化对渲染效果的影响。不做瓦片修正时，渲染会出现明显的不连续，如情形 (a) 所示。修正瓦片边缘后，结果好得多，如情形 (b) 所示。更正确的做法是同时净化边与角，但我们发现这通常会产生过度模糊的结果，如情形 (c) 所示。按我们的经验，由于多数纹理在较低 mipmap 分辨率下是均匀的，通常只净化边就够了。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/12_tilebased_06a.jpg" alt="12_tilebased_06a.jpg"><figcaption>图 12-6　较低分辨率 mipmap 层级下的滤波结果</figcaption></figure><h2>12.6 结论</h2><p>我们提出了一个基于瓦片的纹理映射系统，可从一小组瓦片生成一张大的虚拟纹理。我们描述了 Cg 程序的实现，它不需要在应用中改动几何或纹理坐标。我们的实现需要两次纹理读取来模拟一张大的虚拟纹理，比单纹理程序大约慢 25% 到 50%（在 GeForce 6800 GT 上测量，取决于滤波模式和原程序复杂度等多种因素）。但速度对多数应用仍足够快，纹理内存的节省则相当可观。我们的做法在较低分辨率的 mipmap 层级上存在质量局限，但只要瓦片集构建正确，结果尽管在理论上不正确，看起来仍算合理。</p><h2>12.7 参考文献</h2><p><a id="biblio12_01"></a>Cohen, Michael F., Jonathan Shade, Stefan Hiller, and Oliver Deussen. 2003. "Wang Tiles for Image and Texture Generation." <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2003)</em> 22(3)，第 287–294 页。</p><p><a id="biblio12_02"></a>Glanville, R. Steven. 2004. "Texture Bombing."，载 <em>GPU Gems</em>，Randima Fernando 编，第 323–338 页。Addison-Wesley。</p><p><a id="biblio12_03"></a>Lefebvre, Sylvain, and Fabrice Neyret. 2003. "Pattern Based Procedural Textures."，载 <em>Proceedings of SIGGRAPH 2003 Symposium on Interactive 3D Graphics</em>，第 203–212 页。</p><p><a id="biblio12_04"></a>Losasso, Frank, and Hugues Hoppe. 2004. "Geometry Clipmaps: Terrain Rendering Using Nested Regular Grids." <em>ACM Transactions on Graphics (Proceedings of ACM SIGGRAPH 2004)</em> 23(3)，第 769–776 页。</p><p><a id="biblio12_05"></a>Tanner, Christopher, Christopher Migdal, and Michael Jones. 1998. "The Clipmap: A Virtual Mipmap."，载 <em>Proceedings of SIGGRAPH 98</em>，第 151–158 页。</p><p><a id="biblio12_06"></a>Wei, Li-Yi. 2004. "Tile-Based Texture Mapping on Graphics Hardware."，载 <em>Proceedings of Graphics Hardware 2004</em>，第 55–63 页。</p><p><em>感谢在我最初那篇论文（Wei 2004）中帮助过我的人，感谢 Hugues Hoppe 指出 mipmap 问题，感谢 Shaun Ho 建议把这项技术投稿到本书，也感谢 NVIDIA 同事们的帮助与支持。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-12-tile-based-texture-mapping" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-12-tile-based-texture-mapping</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

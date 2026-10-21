@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 章　动画人群渲染 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 2 章　动画人群渲染」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 2 章　动画人群渲染</h1>
+<p><em>Bryan Dudash<br> NVIDIA Corporation</em></p><p>随着游戏渲染在视觉与计算上变得越来越复杂，高效利用 GPU 硬件变得很重要。借助实例化，你可以通过减少绘制调用、状态变更和缓冲区更新的次数来降低 CPU 开销。本章展示如何用 DirectX 10 的实例化配合顶点纹理取数，实现实例化的硬件调色板蒙皮角色。示例还使用了常量缓冲与 <code>SV_InstanceID</code> 系统变量来高效实现该技术。用这项技术，我们在一台 Intel Core 2 Duo GeForce 8800 GTX 系统上，能以 30 帧/秒实现近 10,000 个角色各自用不同的动画、不同的网格独立播放动画，如<a href="https://developer.download.nvidia.com/books/gpugems3/02fig01.jpg" rel="noreferrer noopener">图 2-1</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/02fig02.jpg" rel="noreferrer noopener">2-2</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/02fig01.jpg" alt="02fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/02fig01.jpg" rel="noreferrer noopener">图 2-1</a> 用蒙皮实例化播放动画的人群</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/02fig02.jpg" alt="02fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/02fig02.jpg" rel="noreferrer noopener">图 2-2</a> 动画人群的特写</figcaption></figure><h2>2.1 动机</h2><p>这项技术的目标，是高效利用 DirectX 10 来实现动画角色的大规模渲染。我们可以把这一方法用于人群、观众，以及一般意义上任何需要绘制大量角色、每个角色各有不同动画与不同网格变体的场合。在这类场景中，有些角色比其他角色更近，因此细节层次（LOD）系统很重要。借助实例化，游戏设计师可以实现大规模的动态场景，而不必预渲染，也不必严重限制场景中角色的独特性。</p><h2>2.2 实例化简述</h2><p>本章假设你已对实例化有基本了解，不过我们还是复习一下基础。「实例化」一词指的是在不同位置、用不同参数多次渲染同一个网格。传统上，实例化用于静态网格物体，例如树叶、草，或场景中大量出现的其他小片网格几何。做法是绑定一个次级顶点缓冲，其中存放自定义的逐实例参数化。渲染时，主顶点缓冲每处理一个实例就循环一遍，次级缓冲则递增，为每一次遍历网格提供参数。示意见<a href="https://developer.download.nvidia.com/books/gpugems3/02fig03.jpg" rel="noreferrer noopener">图 2-3</a>。实际上，这相当于得到一个大得多的合并顶点缓冲，而不必手工创建或传输这个缓冲。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/02fig03.jpg" alt="02fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/02fig03.jpg" rel="noreferrer noopener">图 2-3</a> 实例化基础</figcaption></figure><p>在 DirectX 9 API 下使用实例化有点麻烦，因为该 API 要求调用重载的 <code>SetStreamSourceFrequency()</code> 函数。此外，DirectX 9 下我们无法根据当前实例对常量内存做索引，因此必须把所有逐实例数据编码进顶点流。这既对缓存不友好，也更难整合进已有的渲染引擎。</p><p>在 DirectX 10 API 中，实例化已被移到 API 的核心。新增了绘制函数 <code>DrawInstanced()</code> 与 <code>DrawIndexedInstanced()</code>，支持绘制一个网格的多份副本；顶点声明现在也包含一种特殊类型，用来标识属于逐实例数据的属性（<code>D3D10_INPUT_PER_INSTANCE_DATA</code>）。</p><h2>2.3 技术细节</h2><p>传统上用实例化无法高效渲染动画物体。随着 DirectX 10 的出现，高效的蒙皮动画实例化成为可能。</p><p><em>蒙皮实例化</em>是常规实例化的扩展。它用硬件调色板蒙皮渲染每个角色。我们不用把动画帧存进着色器常量的标准做法，而是把所有动画的所有帧编码进一张纹理，在顶点着色器中从该纹理查找骨骼矩阵。这样我们就能有多个动画，每个角色也可以处在自己动画的不同帧上。</p><p>我们把逐实例参数编码进一个常量缓冲，并用 <code>SV_InstanceID</code> 对该数组做索引。</p><p>为了实现逐实例的网格变化，我们把角色拆成若干子网格，分别做实例化。例如，这些子网格可以是不同的头部。</p><p>最后，为了避免为远处的角色做动画，我们实现了一个带低分辨率多边形网格分块的 LOD 系统。使用哪个 LOD 由逐实例、逐帧决定。</p><p>下面是一个简单的渲染流程。每一步的细节见本章相应小节。</p><h4>CPU</h4><ol type="1"><li>执行游戏逻辑（动画时间、AI 等）。</li><li>为每个实例确定 LOD 组，并填充 LOD 列表。</li><li>对每个 LOD：<ol type="a"><li>对每个子网格：<ol type="i"><li>为每个实例化绘制调用填充实例数据缓冲。</li><li>对每个缓冲：<dl><dd>- 对子网格调用 <code>DrawInstanced()</code>。</dd></dl></li></ol></li></ol></li></ol><h4>GPU</h4><p><strong>顶点着色器</strong></p><ol type="1"><li>用 <code>SV_InstanceID</code> 从常量中读取逐实例数据。</li><li>读取对应动画与帧的骨骼矩阵。</li><li>执行调色板蒙皮。</li></ol><p><strong>像素着色器</strong></p><ol type="1"><li>应用从顶点着色器传下来的逐实例颜色。</li><li>（<em>可选</em>）从纹理数组读取每个实例的自定义纹理。</li></ol><h4>2.3.1 基于常量的实例化</h4><p>这项技术没有采用把逐实例数据编码进单独顶点流的传统做法。在测试中我们发现，用一个逐实例索引从常量缓冲读取逐实例数据更快，因为顶点的缓存利用率更好。用传统做法，顶点属性会随逐实例数据属性的数量而增加。我们选择改为把低频数据放进常量内存。</p><h4><code>SV_InstanceID</code></h4><p>在 DirectX 10 下，有许多有用的变量可以由 GPU 自动生成并传入着色器代码。这些变量称为<em>系统变量</em>。所有系统变量的语义都以「<code>SV_</code>」开头。<code>SV_InstanceID</code> 是一个 GPU 生成的值，所有顶点着色器都可以使用。把一个着色器输入绑定到这个语义上，该变量就会得到对应当前实例的整数值。第一个索引得到 0，后续实例的值单调递增。于是经过渲染管线的每个实例都得到一个唯一值，而某个实例的所有顶点共享同一个 <code>SV_InstanceID</code> 值。</p><p>这个自动的系统值让我们可以把实例信息数组存进常量缓冲，并用该 ID 对数组做索引。由于我们把逐实例数据注入常量缓冲，每次绘制调用能渲染的实例数受常量内存大小的限制。DirectX 10 中每个常量缓冲上限为 4,096 个 <code>float4</code> 向量。用这个大小能画多少实例，取决于逐实例数据结构的大小。在本示例中，逐实例数据如代码清单 2-1 所示。</p><p>可以看到，在本示例中每个实例占用五个 <code>float4</code> 向量的常量内存，这意味着最多能存 819 个实例。于是我们把每组实例化网格拆成 <em>N</em> 个缓冲，其中 <em>N</em> = <em>总实例数</em>/819。这是个完全可以接受的数字，也意味着如果要画 10,000 个网格，只需 13 次绘制调用。每帧 1 次与 13 次绘制调用之间的 CPU 开销有差别，但 13 次与 819 次之间的差别要大得多。每去掉一次绘制调用，就少一份 CPU 开销，也可能带来性能提升。因此，1 次与 13 次绘制调用在最终帧率上往往几乎没有实质差别。</p><h4>示例 2-1. 实例数据结构与常量缓冲</h4><pre><code>struct PerInstanceData
+{
+  float4 world1;
+  float4 world2;
+  float4 world3;
+  float4 color;
+  uint4 animationData;
+};
+cbuffer cInstanceData { PerInstanceData g_Instances[MAX_INSTANCE_CONSTANTS]; }</code></pre><p>在 CPU 一侧，数据如代码清单 2-2 所示。</p><h4>示例 2-2. C++ 实例数据结构</h4><pre><code>struct InstanceDataElement
+{
+  D3DXVECTOR4 world1;
+  D3DXVECTOR4 world2;
+  D3DXVECTOR4 world3;
+  D3DXCOLOR color;
+  // 在整个数据流中的偏移量（以向量即纹素为单位），
+  // 指向当前播放动画的起始位置。
+  UINT animationIndex;
+  // 在动画数据流中的偏移量（以向量即纹素为单位）
+  //
+for
+  the start of the frame playing UINT frameOffset;
+UINT unused1;
+// pad
+UINT unused2;
+// pad
+};</code></pre><h4>2.3.2 用动画纹理做调色板蒙皮</h4><p>在传统的矩阵调色板蒙皮中，你把变换矩阵编码进顶点着色器常量。而我们的情况是每个角色姿势不同，动画也可能不同。我们用一张纹理存放动画数据，因为所有动画帧所需的数据量太大，放不进常量内存。所有 DirectX 10 级别的硬件都应有足够的顶点纹理取数能力，使这一操作足够快。</p><p>如<a href="https://developer.download.nvidia.com/books/gpugems3/02fig04.jpg" rel="noreferrer noopener">图 2-4</a> 所示，我们把每个动画的每一帧的每个骨骼矩阵按线性顺序存入一张纹理，从而能在顶点着色器中读出来。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/02fig04.jpg" alt="02fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/02fig04.jpg" rel="noreferrer noopener">图 2-4</a> 动画纹理的构成</figcaption></figure><h4>从纹理解码矩阵</h4><p>代码清单 2-3 给出了 HLSL 中按纹素计的动画偏移与骨骼偏移从动画纹理加载矩阵的函数。可以看到，我们用除法和取模把线性偏移换算成 UV。然后对矩阵的三行做点采样，构造一个 <code>float4x4</code>（平移量编码在每一行的 <em>w</em> 分量中）。从动画纹理取数使用 HLSL 的 <code>Load()</code> 方法，它返回未经过滤的纹素，输入是精确的像素位置，从而简化了查找过程。</p><h4>按权重做条件分支</h4><p>与常规调色板蒙皮一样，顶点最多可以有四个骨骼权重，但并非所有顶点都用到四根骨骼。因此我们在顶点着色器中使用条件分支，避免为用不到的矩阵做多余的纹理取数。代码清单 2-4 展示了这一技术。</p><h4>示例 2-3. HLSL 函数 <code>loadBoneMatrix()</code></h4><p>把 <code>g_InstanceMatricesWidth</code> 限制为 2 的幂，可以显著降低寻址逻辑的计算开销。这一限制允许着色器用位运算代替整数除法与取模。与 CPU 一样，GPU 上整数除法也比其他运算代价更高。</p><pre><code>
+// 从存放动画数据的纹理中读取一个矩阵
+// （3 次纹理读取）。
+float4x4 loadBoneMatrix(uint3 animationData, float bone)
+{
+  float4x4 rval = g_Identity;
+  // 如果这张纹理是 1D 的，偏移量会是多少？
+  uint baseIndex = animationData.x + animationData.y;
+  // 我们用 4 * bone，因为每根骨骼占 4 个纹素，构成一个 float4x4。
+  baseIndex += (4 * bone);
+  // 现在把它转成 2D 坐标
+  uint baseU = baseIndex % g_InstanceMatricesWidth;
+  uint baseV = baseIndex / g_InstanceMatricesWidth;
+  // 注意，我们假定纹理宽度
+  // 是每根骨骼纹素数的偶数倍；
+  // 否则每次查找都得重新计算 V 分量。
+  float4 mat1 = g_txAnimations.Load(uint3(baseU, baseV, 0));
+  float4 mat2 = g_txAnimations.Load(uint3(baseU + 1, baseV, 0));
+  float4 mat3 = g_txAnimations.Load(uint3(baseU + 2, baseV, 0));
+  // 只读取 3 个值（共 4 个），再从中解码出矩阵。
+  rval = decodeMatrix(float3x4(mat1, mat2, mat3));
+  return rval;
+}</code></pre><h4>示例 2-4. 顶点着色器中的条件分支</h4><pre><code>
+VS_to_PS CharacterAnimatedInstancedVS(A_to_VS input)
+{
+  VS_to_PS output;
+  uint4 animationData = g_Instances[input.InstanceId].animationData;
+  // 我们的每实例数据存放在常量里
+  float4 worldMatrix1 = g_Instances[input.InstanceId].world1;
+  float4 worldMatrix2 = g_Instances[input.InstanceId].world2;
+  float4 worldMatrix3 = g_Instances[input.InstanceId].world3;
+  float4 instanceColor = g_Instances[input.InstanceId].color;
+  float4 finalMatrix;
+  // 读取第一个也是影响最大的骨骼权重。
+  finalMatrix =
+      input.vWeights.x * loadBoneMatrix(animationData, input.vBones.x);
+  // 若权重 > 0，则按条件施加后续的骨骼矩阵。
+  if (input.vWeights.y > 0)
+  {
+    finalMatrix +=
+        input.vWeights.y * loadBoneMatrix(animationData, input.vBones.y);
+    if (input.vWeights.z > 0)
+    {
+      finalMatrix +=
+          input.vWeights.z * loadBoneMatrix(animationData, input.vBones.z);
+      if (input.vWeights.w > 0)
+        finalMatrix +=
+            input.vWeights.w * loadBoneMatrix(animationData, input.vBones.w);
+    }
+  }
+}</code></pre><h4>几个要点</h4><ul><li>动画纹理必须是 4 的倍数。这样我们就能在顶点着色器中只计算一次行号，然后沿 U 方向偏移即可得到每个矩阵的四行。</li><li>为省一次纹理取数，我们实际只把矩阵编码成三行，但为避免非 2 的幂纹理带来的问题，额外补一个填充纹素。</li><li>到当前动画的线性纹素偏移，以及在动画内到当前帧的线性偏移，都按实例指定。</li><li>骨骼索引与骨骼权重信息按常规做法逐顶点存储，供矩阵调色板蒙皮使用。</li></ul><h4>2.3.3 几何变化</h4><p>如果渲染的所有角色网格几何完全相同，用户立刻就会察觉场景的同质化，无法再信以为真。为了让角色网格有更多变化，我们把角色拆成多个部件，并提供可替换的网格。在本示例中，我们有穿戴不同护甲部件、持不同武器的战士。角色网格被拆成这些独立部件，每个部件单独实例化。</p><p>基本做法是先弄清每个角色实例包含哪些部件。然后，我们建立一个列表，记录使用某个给定部件的所有角色。绘制时，我们只需遍历各部件，把相应的位置信息注入逐实例常量缓冲，并绘制适当数量的实例。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/02fig05.jpg" rel="noreferrer noopener">图 2-5</a> 来自 Autodesk 的 3ds Max 9，从中可以看到源网格包含了每个角色的所有网格排列组合。注意所有武器都放在同一个文件里。它们被导出为独立的网格物体，但都绑定到同一副骨架上。因此我们可以把角色的动画复用到所有子部件上。加载时，系统会为各子部件生成随机组合，让每个角色外观不同。这项技术支持的网格变体数量，取决于你的美术能做出多少。对真正的游戏，你可能希望让美术对此有更精细的控制（而不是随机生成），那就需要在工具或导出流程上做一些工作。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/02fig05.jpg" alt="02fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/02fig05.jpg" rel="noreferrer noopener">图 2-5</a> 3ds Max 9 中的角色网格，展示了所有网格变体</figcaption></figure><h4>2.3.4 细节层次系统</h4><p>由于远处的角色在屏幕上占用的像素更少，没有必要像近处角色那样精细剖分。此外，远处角色也不需要采样法线贴图，或计算复杂的光照。因此我们实现了一个 LOD 系统来提升性能。实例化技术把每个角色拆成一组部件，分别做实例化。只要往实例化系统里加入更多部件，就能轻松建立 LOD 系统。每帧，每个角色实例根据自己的相机距离确定所属的 LOD 组。这一步在 CPU 上完成。渲染时，再绘制每个 LOD 组中各部件的集合。遍历每个 LOD 网格部件时，我们查出哪些实例属于该 LOD 组并使用该部件。这样我们就能正确更新实例数据缓冲，按正确的 LOD 级别渲染每个角色。见<a href="https://developer.download.nvidia.com/books/gpugems3/02fig06.jpg" rel="noreferrer noopener">图 2-6</a>。我们还在 CPU 上做了简单的视锥剔除，避免把相机后方成千上万个角色送给 GPU。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/02fig06.jpg" alt="02fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/02fig06.jpg" rel="noreferrer noopener">图 2-6</a> LOD 数据的组织方式</figcaption></figure><p>LOD 系统还有一个好处，是减少几何走样——如果不分层次地把一个高度剖分的物体画在很远处，顶点会在同一个像素上重叠，从而产生走样。</p><h2>2.4 其他考量</h2><h4>2.4.1 颜色变化</h4><p>每个实例有一个不同的「基础」颜色，依据颜色贴图的 alpha 通道有选择地应用到网格上。美术绘制了 alpha 通道，用来表示要混入多少自定义颜色。在像素着色器中，我们按这个混合因子在实例自定义颜色与白色之间做线性插值。这带来了更大的变化空间，也可以为不同网格部件定义多个实例颜色。</p><h4>2.4.2 性能</h4><p>与任何类型的实例化一样，性能收益体现在 CPU 一侧。使用实例化可以把 CPU 处理时间腾出来做其他事，例如 AI 或物理。因此这项技术的重要性取决于你游戏的 CPU 负载。</p><p>一般来说，任何实例化技术都会把负载从 CPU 转移到 GPU，这是好事，因为 CPU 总能再多处理一些游戏数据。</p><p>性能还取决于你把 LOD 级别设在哪里。如果所有角色都按最高 LOD 渲染，能渲染的角色数就少得多。但当你把远处 LOD 的分界线拉近相机时，可能会看到瑕疵。这需要图形程序员自己判断。</p><p>在实例化的情形下，我们的示例在 Intel Core 2 Duo 2.93 GHz、2GB 内存、NVIDIA 8800 GTX、分辨率 1280x1024 的系统上，9,547 个角色约为 34 帧/秒。此时 LOD 分界线分别设在 20、60、100 个角色半径处。该设置产生 160 次实例化绘制调用，而如果用更传统的方式（虽然低效）绘制同样的角色网格，则要 59,726 次单独绘制调用。</p><p>性能还取决于网格数据与变化程度。更激进地使用 LOD 可以提升性能，更保守地使用 LOD 可以提升质量。本示例角色如此之多，实际上受限于像素/填充率；不过两者已很接近，GPU 处于满负荷状态。分辨率降低后，瓶颈会转到顶点处理，因为 GPU 蒙皮的角色数量极大。</p><h4>2.4.3 集成</h4><p>集成这项技术类似于集成一种新的渲染类型。你多半会定义一个「人群」类，或一组作为背景的动画角色。角色在组内的摆放可以由美术指定，用来填充实例数据缓冲。摆放也可以由更复杂的 AI 决定。</p><p>网格数据与动画数据与常规硬件调色板蒙皮实现完全相同。唯一的区别是你需要把动画曲线预处理成逐帧的骨骼矩阵集合。这多半应当是一个预处理步骤。</p><h2>2.5 结论</h2><p>蒙皮实例化是一种适合实时渲染大量独立播放动画的角色的技术。它用到了 DirectX 10 API 的许多关键特性。它用顶点纹理取数读取存放在单张纹理中的动画数据。它还使用 <code>SV_InstanceID</code> 对包含实例信息（位置、动画时间）的常量缓冲做索引。最后，该系统支持易于实现的 LOD 系统，让多边形/光照细节在合适时更高、在远处更低。</p><h2>2.6 参考文献</h2><p>Carucci, Francesco. 2005. "Inside Geometry Instancing."，载 <em>GPU Gems 2</em>，Matt Pharr 编，pp 47–67，Addison-Wesley 出版。</p><p>Dudash, Bryan. 2005 "Technical Report: Instancing."，载 NVIDIA SDK 9.5。可在以下地址获取：<a href="http://developer.nvidia.com" rel="noreferrer noopener">http://developer.nvidia.com</a>。</p><p>Dudash, Bryan. 2007. "Skinned Instancing."，载 NVIDIA SDK 10。可在以下地址获取：<a href="http://developer.nvidia.com" rel="noreferrer noopener">http://developer.nvidia.com</a>。</p><p>Microsoft. 2007. "DirectX Documentation for C++."，载 Microsoft DirectX SDK（2007 年 2 月）。可在以下地址获取：<a href="http://msdn.microsoft.com/directx" rel="noreferrer noopener">http://msdn.microsoft.com/directx</a>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-i-geometry/chapter-2-animated-crowd-rendering" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-i-geometry/chapter-2-animated-crowd-rendering</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

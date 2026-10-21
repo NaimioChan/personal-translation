@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 42 章　保守光栅化 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 42 章　保守光栅化」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 42 章　保守光栅化</h1>
+<p><em>Jon Hasselgren</em><br> <em>隆德大学</em></p><p><em>Tomas Akenine-Möller</em><br> <em>隆德大学</em></p><p><em>Lennart Ohlsson</em><br> <em>隆德大学</em></p><p>过去几年，用 GPU 做通用计算在研究界受到很多关注。基于流的光栅化架构所提供的性能增长速度远快于 CPU，这正是把算法实现在 GPU 上的吸引力所在：如果不是现在，那么在某个时刻，你的算法很可能会在 GPU 上比在 CPU 上跑得更快。</p><p>然而，有些算法把连续问题域离散化，在使用 GPU 的标准光栅化时并不能得到精确结果。例子包括碰撞检测（Myzskowski 等 1995，Govindaraju 等 2003）、遮挡剔除（Koltun 等 2001）以及为加速阴影而做的可见性测试（Lloyd 等 2004）的算法。这些算法的精度可以通过提高渲染分辨率来改善。但人们永远无法保证结果完全正确。这与抗锯齿问题类似：仅靠增加采样数永远无法避免采样瑕疵，只能以性能为代价减轻问题。</p><p>图 42-1a 给出了一个简单例子，说明<em>标准光栅化</em>无法算出期望结果：一个绿色三角形与一个蓝色三角形被光栅化。这两个三角形在几何上重叠，但标准光栅化过程检测不到这一点。使用<em>保守光栅化</em>时，无论分辨率如何，重叠总会被正确检测到。这一性质可以在 CPU 与 GPU 之间实现负载均衡。例如在碰撞检测中，降低分辨率会让 GPU 的工作减少，而让执行精确相交测试的 CPU 承担更多工作。使用保守光栅化的结果见图 42-1b。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/42_conservative_01.jpg" alt="42_conservative_01.jpg"><figcaption>图 42-1 标准光栅化与保守光栅化的比较</figcaption></figure><p>已经存在一种简单的保守光栅化算法（Akenine-Möller 与 Aila，即将发表）。不过该算法是为硬件实现而设计的。本章给出另一种方案，它适合用 GPU 上的顶点着色器与片元着色器实现。</p><h2>42.1 问题定义</h2><p>本节说明多边形<em>保守光栅化</em>的含义。首先把<em>像素单元</em>定义为像素网格中某个像素周围的矩形区域。保守光栅化有两种变体，即<em>高估</em>与<em>低估</em>（Akenine-Möller 与 Aila，即将发表）：</p><ul><li>多边形的高估保守光栅化包含所有这样的像素：像素单元与该多边形的交集非空。</li><li>多边形的低估保守光栅化只包含其像素单元完全落在多边形内部的像素。</li></ul><p>这里我们主要关注高估变体，因为它通常最有用。下文若不特别说明，「保守光栅化」都指高估变体。</p><p>可以看到，这些定义只基于像素单元，因此与像素的采样点数无关。出于这一点，我们选择不考虑使用多重采样的渲染目标，因为那只是浪费资源，还会进一步增加实现的复杂度。</p><p>这两个问题的解法都可以看作在光栅化过程之前对多边形做一次修改。高估保守光栅化可以看作以像素单元对多边形做<em>膨胀</em>这一图像处理操作。类似地，低估保守光栅化是以像素单元对多边形做<em>腐蚀</em>。因此，我们把保守光栅化中的「矩形与多边形相交」测试转化为「点在区域内」测试。</p><p>膨胀的做法是：把一个像素单元大小的矩形的中心锁在多边形边上，沿边扫过，把它接触到的所有像素单元都加入膨胀后的三角形。另一种做法是，对凸多边形，膨胀可以计算为一组像素单元的凸包，这些像素单元位于多边形的各个顶点处。这等价于把多边形的顶点从像素单元中心向四个可能方向中的每一个移动到角点，然后求凸包。由于从像素单元中心到各角点的四个向量在任何保守光栅化算法中都很重要，我们称它们为<em>半对角线</em>。这种顶点移动方式如图 42-2a 中的绿线所示，该图还显示了三角形的<em>包围多边形</em>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/42_conservative_02.jpg" alt="42_conservative_02.jpg"><figcaption>图 42-2 高估与低估光栅化</figcaption></figure><p>腐蚀的做法是：以与膨胀相同的方式扫过像素单元大小的矩形，但改为擦除它接触到的所有像素单元。我们注意到，对一般的凸多边形，这一操作可能减少顶点数量。对三角形而言，结果总是一个更小的三角形或一个「空」多边形。三角形的腐蚀如图 42-2b 所示。</p><h2>42.2 两种保守算法</h2><p>我们给出两种保守光栅化算法，它们的性能特性不同。第一种算法在顶点程序中计算最优包围多边形。因此它在填充率方面最优，但在几何处理与数据准备方面代价较高，因为每个顶点都必须复制。第二种算法在顶点程序中计算一个包围三角形——一种显式限定为只有三个顶点的包围多边形——然后在片元程序中裁剪它。这使它在几何处理方面代价较低，因为构造包围三角形可以看作重新定位输入三角形的每个顶点。然而包围三角形对带锐角的三角形贴合很差，因此该算法在填充率方面代价更高。</p><p>为简化两种算法的实现，我们假定由近、远裁剪平面裁剪所产生的边都不落在视锥内部。这类裁剪操作产生的边难以检测，而且在此语境下极少用于任何重要目的。</p><h4>42.2.1 裁剪空间</h4><p>为清晰起见，我们用<em>窗口空间</em>描述这两种算法，但在实践中不可能在窗口空间中工作，因为顶点程序是在裁剪与透视投影之前执行的。幸运的是，我们的推理可以非常简单地映射到<em>裁剪空间</em>。眼下先忽略顶点的 <em>z</em> 分量（它只用于插值出深度缓冲值）。这样就能把穿过输入三角形每条边的直线，描述为齐次 (<em>x</em> <sub><em>c</em></sub> , <em>y <sub><em>c</em></sub></em> , <em>w <sub><em>c</em></sub></em> ) 空间中的一个平面。该平面由输入三角形该边上的两个顶点以及观察者的位置（即原点 (0, 0, 0)）确定。由于所有平面都经过原点，我们得到如下形式的平面方程</p><table><tbody><tr><td><p>即 <em>ax</em> <sub><em>c</em></sub> + <em>by</em> <sub><em>c</em></sub> + <em>cw</em> <sub><em>c</em></sub> = 0 ⇔ <em>a</em>(<em>xw</em> <sub><em>c</em></sub> ) + <em>b</em> (<em>yw</em> <sub><em>c</em></sub> ) + <em>cw</em> <sub><em>c</em></sub> ) + <em>cw</em> <sub><em>c</em></sub> = 0 ⇒ <em>ax</em> + <em>by</em> + <em>c</em> = 0</p></td></tr></tbody></table><p>这些平面等价于二维中的直线。在我们的许多计算中用到边的法线，它由平面方程中的 (<em>a</em>, <em>b</em>) 定义。</p><h4>42.2.2 第一种算法</h4><p>本算法计算用于保守光栅化的最优包围多边形，如图 42-2a 所示。按问题定义一节的说明计算凸包，听起来像是一项在顶点程序中很难完成的任务。但它其实归结为三种简单情形，如图 42-3 所示。给定两条边 <em>e</em> <sub>1</sub> 与 <em>e</em> <sub>2</sub> 在一个顶点 <em>v</em> 处相连，三种情形如下：</p><ul><li>若 <em>e</em> <sub>1</sub> 与 <em>e</em> <sub>2</sub> 的法线位于同一象限，凸包由把顶点 <em>v</em> 沿该象限的半对角线移动所得到的点确定（图 42-3a）。</li><li>若 <em>e</em> <sub>1</sub> 与 <em>e</em> <sub>2</sub> 的法线位于相邻象限，凸包由两个点确定。这两个点由把 <em>v</em> 沿这些象限的半对角线移动得到（图 42-3b）。</li><li>若 <em>e</em> <sub>1</sub> 与 <em>e</em> <sub>2</sub> 的法线位于相对象限，凸包由三个点确定。其中两个点按上一情形求得，最后一个点由把 <em>v</em> 沿位于这两个相对象限之间（按绕序）的那个象限的半对角线移动得到（图 42-3c）。</li></ul><figure><img src="https://developer.download.nvidia.com/books/gpugems2/42_conservative_03.jpg" alt="42_conservative_03.jpg"><figcaption>图 42-3 计算最优包围多边形</figcaption></figure><h4>实现</h4><p>我们把该算法实现为一个顶点程序，它按三种情形产生输出顶点。由于在顶点程序中无法创建顶点，我们必须按图 42-3c 的最坏情形来准备。要从一个三角形生成多边形，必须把输入三角形的每个顶点发送三个实例给硬件，然后把包围多边形作为一个共九个顶点的三角扇绘制。图 42-3 中较简单的情形只产生一或两个顶点，处理方式是把一个顶点的两或三个实例折叠到同一位置，从而生成退化三角形。对每个顶点的每个实例，我们还必须发送输入三角形中前一个与后一个顶点的位置，以及一个 [0,2] 范围内的局部索引。计算新顶点位置时需要用这些位置与索引判断采用哪种情形、哪条半对角线。</p><p>顶点程序的核心由选择三种情形之一并生成相应输出顶点的代码构成，如代码清单 42-1 所示。</p><h4>示例 42-1. 实现第一种算法的顶点程序</h4><pre><code>// semiDiagonal[0,1] = 归一化半对角线，它们与边的法线
+// 位于同一象限。
+// vtxPos = 当前顶点的位置。
+// hPixel = 半个像素单元的大小
+float dp = dot(semiDiagonal[0], semiDiagonal[1]);
+float2 diag;
+if (dp > 0)
+{
+  // 法线在同一象限 -> 一个顶点
+  diag = semiDiagonal[0];
+}
+else if (dp < 0)
+{
+  // 法线在相邻象限 -> 两个顶点
+  diag = (In.index == 0 ? semiDiagonal[0] : semiDiagonal[1]);
+}
+else
+{
+  // 法线在相对象限 -> 三个顶点
+  if (In.index == 1)
+  {
+    // 特殊的“两个象限之间的象限”情形
+    diag = float2(semiDiagonal[0].x * semiDiagonal[0].y * semiDiagonal[1].x,
+                  semiDiagonal[0].y * semiDiagonal[1].x * semiDiagonal[1].y);
+  }
+  else
+    diag = (In.index == 0 ? semiDiagonal[0] : semiDiagonal[1]);
+}
+vtxPos.xy += hPixel.xy * diag * vtxPos.w;</code></pre><p>当输入三角形的顶点位于眼睛背后时，会出现投影问题，把剖分产生的边挤出包围多边形在其可见区域内的范围。为解决这个问题，我们对当前边做基本的近平面裁剪。如果使用正交投影，或者没有多边形会与近裁剪平面相交，我们就跳过这一操作。</p><h4>42.2.3 第二种算法</h4><p>第一种算法的弱点在于每个输入顶点需要多个输出顶点。一种避开该问题的做法是为每个输入三角形计算一个包围三角形，而不是计算最优包围多边形（后者可能有多达九个顶点）。然而包围三角形对带锐角的三角形是很差的近似。结果我们得到过度保守的光栅化，如图 42-4 所示。贴合太差使包围三角形实际上无法使用。为绕过这个问题，我们采用对保守光栅化一个简单测试的另一种解释（Akenine-Möller 与 Aila，即将发表）。包围多边形（如 42.2.2 节所用）可以计算为包围三角形与其自身的轴对齐包围盒（AABB）的交集。包围多边形的 AABB 可以方便地由输入三角形算出。图 42-5 说明了这一过程。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/42_conservative_04a.jpg" alt="42_conservative_04a.jpg"><figcaption>图 42-4 用不同方式光栅化的物体</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/42_conservative_05.jpg" alt="42_conservative_05.jpg"><figcaption>图 42-5 一个输入三角形及其最优包围多边形</figcaption></figure><p>在我们的第二种算法中，在顶点程序里计算包围三角形，然后用片元程序丢弃所有不与 AABB 重叠的片元。</p><p>要找出包围三角形的三条边，可以计算穿过输入三角形每条边的直线的法线，然后把该直线按最坏情形的半对角线平移。最坏情形的半对角线总是与直线法线处于同一象限的那一条。</p><p>算出平移后的直线后，我们求相邻边的交点，得到包围三角形的顶点。此时可以充分利用裁剪空间表示。由于每条直线都表示为过原点的平面，我们可以把法线为 <strong>n</strong> <sub>1</sub>= (<em>x</em> <sub>1,</sub> <em>y</em> <sub>1</sub>, <em>w</em> <sub>1</sub>) 与 <strong>n</strong> <sub>2</sub>= (<em>x</em> <sub>2</sub>, <em>y</em> <sub>2</sub>, <em>w</em> <sub>2</sub>) 的两个平面的交计算为叉积 <strong>n</strong> <sub>1</sub> x <strong>n</strong> <sub>2</sub>。</p><p>注意结果是方向而非点，但该方向上的所有点都会投影到窗口空间中的同一点。这也保证了所算顶点的 <em>w</em> 分量得到正确的符号。</p><h4>实现</h4><p>由于包围三角形把输入三角形的每个顶点都移到新位置，每个输入三角形只需发送三个顶点。不过，每个顶点还要附带发送前一个与后一个顶点的位置，作为纹理坐标，以便计算边。对边我们使用平面而非直线。以点与方向形式给出的直线参数表示会简化平移直线的操作，但在计算交点时带来更多麻烦。由于我们把直线表示成形如下的方程：</p><table><tbody><tr><td><p>(<em>a</em>, <em>b</em>) · <strong>x</strong> + <em>c</em> = 0,</p></td></tr></tbody></table><p>我们必须推导如何修改直线方程以表示按向量 <strong>v</strong> 的平移。做法是修改直线方程的 <em>c</em> 分量：</p><table><tbody><tr><td><p><em>c</em> <sub>moved</sub> = <em>c</em> – <strong>v</strong> · (<em>a</em>, <em>b</em> ).</p></td></tr></tbody></table><p>如果再注意到求半对角线的问题对 90 度旋转是对称的，我们就可以固定使用第一象限的半对角线，配合直线法线的各分量绝对值来平移直线。代码清单 42-2 中的代码展示了包围三角形计算的核心。</p><h4>示例 42-2. 计算包围三角形的 Cg 代码</h4><pre><code>// hPixel = 半个像素单元的大小
+// 计算过这两条边的平面方程
+float3 plane[2];
+plane[0] = cross(currentPos.xyw - prevPos.xyw, prevPos.xyw);
+plane[1] = cross(nextPos.xyw - currentPos.xyw, currentPos.xyw);
+// 按相应的半对角线平移这两个平面
+plane[0].z -= dot(hPixel.xy, abs(plane[0].xy));
+plane[1].z -= dot(hPixel.xy, abs(plane[1].xy));
+// 计算这两个平面的交点。
+float4 finalPos;
+finalPos.xyw = cross(plane[0], plane[1]);</code></pre><p>我们在顶点程序中计算最优包围多边形的屏幕空间 AABB。我们遍历输入三角形的各条边，不断把当前边纳入 AABB 候选范围。结果得到输入三角形的 AABB。把它的尺寸扩大一个像素单元，就得到最优包围多边形的 AABB。为保证结果正确，必须用近裁剪平面对输入三角形做裁剪，以避免反向投影。在与前一算法相同的条件下，可以省去这次裁剪。</p><p>我们把包围多边形的 AABB 与裁剪空间位置送入片元程序，在其中对裁剪空间位置做透视除法，若片元落在 AABB 之外则丢弃。该片元程序由下面这段代码实现：</p><pre><code>// 计算当前像素的设备坐标
+float2 pos = In.clipSpace.xy / In.clipSpace.w;
+// 若在 AABB 之外就丢弃片元。In.AABB 的 xy 分量
+// 存放最小值，zw 分量存放最大值
+discard(pos.xy<In.AABB.xy || pos.xy> In.AABB.zw);</code></pre><h4>低估保守光栅化</h4><p>到目前为止，我们只讨论了高估保守光栅化的算法。不过我们已简略提到，低估光栅化的最优包围多边形是一个三角形或一个「空」多边形。低估光栅化的包围三角形可以像高估光栅化那样计算：在计算直线的新 <em>c</em> 分量时，把减号换成加号即可。空多边形的情形会自动得到处理，因为包围三角形会改变绕序，从而被图形硬件剔除。</p><h2>42.3 稳健性问题</h2><p>我们的两种算法都有问题，虽然问题并不相同，但指向同一类解法。第一种算法在浮点误差方面是稳健的，但在包围多边形被剖分时可能生成正面朝向的三角形，即使输入图元是背面朝向的。第二种算法生成的包围三角形朝向正确，但当输入三角形接近退化时，其交点计算会受到精度问题的影响。注意退化三角形可能是投影造成的（视线方向与多边形之间夹角非常大），而不一定是输入有问题。</p><p>为解决这些问题，我们首先假定输入数据中不含退化三角形。我们引入一个值 <em>e</em>，它足够小，使我们把所有由 <em>e</em> 引起的误差都归入其他浮点精度误差一类。若从三角形平面到视点的有符号距离小于 <em>e</em>，我们就认为该输入三角形是背面朝向的，并输出标准光栅化所期望的顶点。这样就把问题隐藏起来，因为 GPU 的剔除单元会移除背面朝向的多边形。</p><h2>42.4 保守深度</h2><p>做保守光栅化时，往往也想计算保守的深度值。所谓<em>保守深度</em>，指每个像素单元内的最大或最小深度值 <em>z</em> <sub>max</sub> 与 <em>z</em> <sub>min</sub>。例如考虑一个简单的碰撞检测场景（Govindaraju 等 2003），有两个物体 <em>A</em> 与 <em>B</em>。若物体 <em>A</em> 的任何部分被物体 <em>B</em> 遮挡，且物体 <em>B</em> 的任何部分被物体 <em>A</em> 遮挡，我们就说这两个物体可能相撞。要用我们的高估保守光栅化器完成这个测试的前一半，我们先把物体 <em>B</em> 以算出的 <em>z</em> <sub>min</sub> 作为深度渲染到深度缓冲。然后关闭深度写入、开启遮挡查询，把物体 <em>A</em> 以算出的 <em>z</em> <sub>max</sub> 作为深度渲染。若物体 <em>A</em> 有任何片元在光栅化过程中被丢弃，则两物体可能相撞。这个结果可用来在 CPU 上启动精确的交点计算。</p><p>当一个属性在覆盖整个像素单元的平面上插值时，极值总落在该单元的某个角上。因此我们基于三角形平面而非精确的三角形表示来计算 <em>z</em> <sub>max</sub> 与 <em>z</em> <sub>min</sub>。虽然这只是近似，但它在保守意义上是正确的。它算出的 <em>z</em> <sub>max</sub> 总大于等于精确解，<em>z</em> <sub>min</sub> 总小于等于精确解。图 42-6 说明了这一点。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/42_conservative_06.jpg" alt="42_conservative_06.jpg"><figcaption>图 42-6 求最远深度值</figcaption></figure><p>深度计算在我们的片元程序中实现。从眼睛出发，经当前像素单元的某个角发出一条射线。若需要 <em>z</em> <sub>max</sub>，我们让射线穿过沿三角形法线方向的那个角；<em>z</em> <sub>min</sub> 深度值则可在相反的角上求得。我们计算射线与三角形平面的交点，用其坐标得到深度值。在某些情况下射线可能不与平面相交（或交点位于观察者背后）。这时我们直接返回最大深度值。</p><p>由交点计算深度值有两种方式。我们可以在顶点程序中计算输入三角形的插值参数，然后用交点坐标插值出 <em>z</em>（深度）分量。这样可行，但计算代价高，而且需要许多插值属性把（恒定的）插值基准从顶点程序传到片元程序。如果投影矩阵很简单，例如由 <code>glFrustum</code> 产生的矩阵，它的形式将是：</p><p><img alt="0688equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0688equ01.jpg"/></p><p>这种情况下可以用第二种更简单的方式计算深度值。假定输入是 <em>w</em> <sub><em>e</em></sub> = 1 的普通点（眼空间的 <em>w</em> 分量），我们就可以算出交点的 <em>z</em> <sub><em>w</em></sub>（窗口深度）分量，只用到它的 <em>wc</em>（裁剪空间 <em>w</em>）分量。对深度范围 [<em>n, f</em>]，<em>zw</em> 计算为：</p><p><img alt="0689equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0689equ01.jpg"/></p><h2>42.5 结果与结论</h2><p>我们实现了两种 GPU 加速的保守光栅化算法。两种算法各有强项与弱点，因此很难明确说哪个更好。如前所述，第一种算法在几何处理方面代价高，第二种算法需要更多填充率。不过这种区分并没有那么简单。第二种算法的过度绘制复杂度既取决于网格中三角形的锐度，也取决于渲染分辨率（后者决定了边被移动多远）。因此第二种算法造成的额外过度绘制与网格剖分成比例，且与渲染分辨率相关。图 42-7 中我们的初步基准测试显示，第一种算法在高端硬件（例如 GeForce 6800 系列 GPU）上似乎更高效。较老的 GPU（例如 GeForce FX 5600）很快会受顶点性能限制，因此这种情况下第二种算法可能更合适。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/42_conservative_07.jpg" alt="42_conservative_07.jpg"><figcaption>图 42-7 两种算法的相对性能</figcaption></figure><p>将来第一种算法很可能会是更好的选择。目前图形硬件的顶点处理能力增长快于片元处理能力。而且借助「几何着色器」这类未来可能出现的特性，我们可以把第一种算法实现得更好。</p><p>我们或许可以通过在 CPU 上做轮廓边检测，只为轮廓边或至少含一条轮廓边的三角形计算包围多边形，来提升两种算法的性能。这会减轻两种算法的 GPU 负载，代价是更多 CPU 工作。</p><p>与标准光栅化相比，我们的算法总会带来性能损失。不过由于我们总能保证结果在保守意义上正确，工作分辨率有可能大幅降低。相比之下，标准光栅化有时会生成不正确的结果，这对许多应用来说完全不可接受。</p><h2>42.6 参考文献</h2><p><a id="biblio42_01"></a>Akenine-Möller, Tomas, and Timo Aila. Forthcoming. "Conservative and Tiled Rasterization Using a Modified Triangle Setup."，载 <em>Journal of Graphics Tools</em>。</p><p><a id="biblio42_02"></a>Govindaraju, Naga K., Stephane Redon, Ming C. Lin, and Dinesh Manocha. 2003. "CULLIDE: Interactive Collision Detection Between Complex Models in Large Environments Using Graphics Hardware."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 25–32。</p><p><a id="biblio42_03"></a>Koltun, Vladlen, Daniel Cohen-Or, and Yiorgos Chrysanthou. 2001. "Hardware-Accelerated From-Region Visibility Using a Dual Ray Space."，载 <em>12th Eurographics Workshop on Rendering</em>，pp. 204–214。</p><p><a id="biblio42_04"></a>Lloyd, Brandon, Jeremy Wendt, Naga Govindaraju, and Dinesh Manocha. 2004. "CC Shadow Volumes."，载 <em>Eurographics Symposium on Rendering 2004</em>，pp. 197–205。</p><p><a id="biblio42_05"></a>McCormack, Joel, and Robert McNamara. 2000. "Tiled Polygon Traversal Using Half-Plane Edge Functions."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2000</em>，pp. 15–21。</p><p><a id="biblio42_06"></a>Myzskowski, Karol, Oleg G. Okunev, and Tosiyasu L. Kunii. 1995. "Fast Collision Detection Between Complex Solids Using Rasterizing Graphics Hardware."，载 <em>The Visual Computer</em> 11(9)，pp. 497–512。</p><p><a id="biblio42_07"></a>Seitz, Chris. 2004. "Evolution of NV40." 在 NVIDIA GPU BBQ 2004 上的演讲。可在线获取：<strong><a href="http://developer.nvidia.com/object/gpu_bbq_2004_presentations.html" rel="noreferrer noopener">http://developer.nvidia.com/object/gpu_bbq_2004_presentations.html</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-42-conservative-rasterization" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-42-conservative-rasterization</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

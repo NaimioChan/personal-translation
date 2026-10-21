@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 37 章　GPU 上的八叉树纹理 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 37 章　GPU 上的八叉树纹理」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 37 章　GPU 上的八叉树纹理</h1>
+<p><em>Sylvain Lefebvre</em><br> <em>GRAVIR/IMAG – INRIA</em></p><p><em>Samuel Hornus</em><br> <em>GRAVIR/IMAG – INRIA</em></p><p><em>Fabrice Neyret</em><br> <em>GRAVIR/IMAG – INRIA</em></p><p>纹理映射是一种非常有效且高效的技术，用细节丰富多边形模型的外观。纹理不仅存储颜色信息，还存储用于凹凸贴图的法线以及各种着色属性，以创造悦目的表面效果。然而纹理映射通常需要把 2D 纹理坐标与每个网格顶点关联起来，从而对网格参数化。这个困难的过程常常引入扭曲和接缝，在复杂网格上尤其如此。</p><p>把纹理定义在包围物体的一个体内，可以避免 2D 参数化。Debry 等（2002）以及 Benson 与 Davis（2002）展示了如何用称为<em>八叉树纹理</em>的 3D 层次数据结构，在<em>没有</em>纹理坐标的情况下高效地沿网格表面存储颜色信息。这种做法有两个好处。第一，颜色只存储在表面与体相交的地方，因而减少内存需求。图 37-1 和图 37-2 说明了这一思路。第二，表面被规则采样，得到的纹理不受任何扭曲影响。除了网格绘制，任何需要在复杂表面上存储信息的应用都能从这种做法中受益。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_01.jpg" alt="37_octree_01.jpg"><figcaption>图 37-1 环绕 3D 模型的八叉树纹理</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_02.jpg" alt="37_octree_02.jpg"><figcaption>图 37-2 借助八叉树纹理为未参数化的网格贴图</figcaption></figure><p>本章详述如何在当今的 GPU 上实现八叉树纹理。八叉树直接存储在纹理内存中，由片元程序访问。我们讨论性能、存储效率与渲染质量之间的权衡。在 37.1 节解释我们的实现之后，我们在两个不同的交互式应用上演示它：</p><ul><li>一个表面绘制应用（37.2 节）。我们特别讨论了过滤所得纹理的不同可能做法（37.2.3 节）。我们还展示了如何把定义在八叉树中的纹理转换成标准纹理，并可在运行时进行（37.2.4 节）。</li><li>一个沿表面流动的液体的非物理仿真（37.3 节）。仿真完全在 GPU 上运行。</li></ul><h2>37.1 一种 GPU 加速的层次结构：N<sup>3</sup>-树</h2><h4>37.1.1 定义</h4><p>八叉树是一种规则的层次数据结构。树的第一个节点，即<em>根节点</em>，是一个立方体。每个节点要么有八个子节点，要么没有子节点。八个子节点构成父节点的 2x2x2 规则剖分。有子节点的节点称为<em>内部节点</em>。没有子节点的节点称为<em>叶节点</em>。图 37-3 显示一棵环绕 3D 模型的八叉树，其中内部含有兔子表面的节点被细化，空节点留作叶节点。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_03.jpg" alt="37_octree_03.jpg"><figcaption>图 37-3 环绕 3D 模型的八叉树</figcaption></figure><p>在八叉树中，每个剖分层级上每个维度的分辨率都翻倍。因此要达到 256x256x256 的分辨率需要八个层级（2<sup>8</sup>= 256）。取决于应用，你可能更愿意把每条边除以任意数 <em>N</em> 而不是 2。因此我们定义一个更通用的结构，称为 <em>N<sup>3</sup></em>-<em>树</em>。在 N<sup>3</sup>-树中，每个节点有 <em>N</em> <sup>3</sup> 个子节点。八叉树就是 N<sup>3</sup>-树，其中 <em>N</em> = 2。<em>N</em> 取更大值可以减少达到给定分辨率所需的树深，但往往浪费内存，因为树对表面的贴合程度更低。</p><h4>37.1.2 实现</h4><p>要在 GPU 上实现层次树，我们需要定义如何在纹理内存中存储该结构，以及如何在片元程序中访问它。</p><p>在 CPU 上实现八叉树的一种简单做法是用指针把树节点链接起来。每个内部节点含有一个指向其子节点的指针数组。子节点可以是另一个内部节点或一个叶节点。叶节点只含一个数据字段。</p><p>我们在 GPU 上的实现遵循类似做法。指针直接变成纹理内的索引，编码为 RGB 值。叶节点的内容直接作为 RGB 值存放在父节点的指针数组中。我们用 alpha 通道区分指向子节点的指针与叶节点的内容。我们的做法依赖依赖纹理查询（即<em>纹理间接寻址</em>）。这要求硬件支持任意数量的依赖纹理查询，GeForce FX 与 GeForce 6 系列 GPU 属于这种情况。</p><p>以下各节详述我们对 N3 树的 GPU 实现。为清晰起见，插图展示八叉树的 2D 等价物（即<em>四叉树</em>）。</p><h4>存储</h4><p>我们把树存储在称为<em>间接池</em>的 8 位 RGBA 3D 纹理中。间接池的每个「像素」称为一个<em>单元</em>。</p><p>间接池被细分为<em>间接网格</em>。一个间接网格是一个 <em>N</em>x<em>N</em>x<em>N</em> 单元的立方体（八叉树为 2x2x2 网格）。树的每个节点由一个间接网格表示。它对应前面所述 CPU 实现中的指针数组。</p><p>间接网格的一个单元可以为空，也可以含有以下之一：</p><ul><li>数据，如果对应的子节点是叶节点</li><li>某个间接网格的索引，如果对应的子节点是另一个内部节点</li></ul><p>图 37-4 说明了我们的树存储表示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_04.jpg" alt="37_octree_04.jpg"><figcaption>图 37-4 纹理内存中的存储（2D 情况）</figcaption></figure><p>我们记 <strong>S</strong> = <em>S<sub>u</sub></em> x <em>S<sub>v</sub></em> x <em>S<sub>w</sub></em> 为间接池中存储的间接网格数量，<em>R</em>= (<em>N</em> x <em>S<sub>u</sub></em> ) x (<em>N</em> x <em>S<sub>v</sub></em> ) x (<em>N</em> x <em>S<sub>w</sub></em> ) 为间接池以单元计的分辨率。</p><p>数据值与子节点索引都以 RGB 三元组存储。alpha 通道用作判断单元内容的标志（alpha = 1 表示数据；alpha = 0.5 表示索引；alpha = 0 表示空单元）。树的根节点总是存储在间接池的 (0, 0, 0) 处。</p><h4>访问结构：树查询</h4><p>一旦树存储在纹理内存中，我们就需要在片元程序中访问它。与标准 3D 纹理一样，树定义了单位立方体内的一个纹理。我们要取回树中某点 <em>M</em> ∊ [0, 1]<sup>3</sup> 处存储的值。树查询从根节点开始，依次访问包含点 <em>M</em> 的节点，直到抵达叶节点。</p><p>设 <em>I</em> <sub><em>D</em></sub> 为在深度 <em>D</em> 处访问的节点的间接网格索引。树查询以 <em>I</em> <sub>0</sub>= (0, 0, 0) 初始化，它对应树根。当我们在深度 <em>D</em> 时，我们知道当前节点间接网格的索引 <em>I</em> <sub><em>D</em></sub>。下面解释如何取回 <em>I</em> <sub>D+1</sub>，它由 <em>I</em> <sub><em>D</em></sub> 得出。</p><p>查询点 <em>M</em> 位于深度 <em>D</em> 处访问的节点内部。为决定下一步，我们需要从间接网格 <em>ID</em> 中读取与 <em>M</em> 对应位置上存储的值。为此需要计算 <em>M 在该节点内</em>的坐标。</p><p>在深度 <em>D</em>，一棵完整的树在单位立方体内产生分辨率为 <em>N</em> <sup><em>D</em></sup> x <em>N</em> <sup><em>D</em></sup> x <em>N</em> <sup><em>D</em></sup> 的规则网格。我们称这个网格为 <em>深度 D 网格</em>。深度 <em>D</em> 处树的每个节点对应该网格的一个单元。特别地，<em>M</em> 位于深度 <em>D</em> 处访问的节点所对应的单元内。<em>M 在该单元内</em>的坐标由 <em>frac</em>(<em>M</em> x <em>N</em> <sup><em>D</em></sup> ) 给出。我们用这些坐标从间接网格 <em>I</em> <sub><em>D</em></sub> 中读取值。于是间接池内的查询坐标计算如下：</p><p><img alt="0599equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0599equ01.jpg"/></p><p>接着取回间接池中 <em>P</em> 处存储的 RGBA 值。根据 alpha 值，如果子节点是叶节点，我们返回 RGB 颜色；否则把 RGB 值解释为子节点间接网格的索引（<em>I</em> <sub><em>D</em>+1</sub>），并继续到下一树深。图 37-5 以 2D 情况（四叉树）总结了整个过程。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_05.jpg" alt="37_octree_05.jpg"><figcaption>图 37-5 树查询示例</figcaption></figure><p>查询在抵达叶节点时结束。实践中，我们的片元程序也会在固定次数的纹理查询之后停止：在大多数硬件上，只能用固定迭代次数实现循环语句（不过在 GeForce 6 系列 GPU 上可以提前退出）。应用负责根据片元程序内执行的最大纹理查询次数限制树深。完整的树查询代码见代码清单 37-1。</p><h4>示例 37-1. 树查询的 Cg 代码</h4><pre><code>float4 tree_lookup(uniform sampler3D IndirPool, // 间接寻址池
+                   uniform float3 invS,
+                   // 1 / S
+                   uniform float N,
+                   float3 M) // 查找坐标
+{
+  float4 I = float4(0.0, 0.0, 0.0, 0.0);
+  float3 MND = M;
+  for (float i = 0; i < HRDWTREE_MAX_DEPTH; i++)
+  { // 固定迭代次数
+    float3 P;
+    // 在当前节点内计算查找坐标
+    P = (MND + floor(0.5 + I.xyz * 255.0)) * invS;
+    // 访问间接寻址池
+    if (I.w < 0.9)
+      // 已经在叶节点里？
+      I = (float4)tex3D(IndirPool, P); // 否，继续到下一层
+#ifdef DYN_BRANCHING // early exit if hardware supports dynamic branching
+    if (I.w > 0.9)
+      // 已到达叶节点
+      break;
+#endif
+    if (I.w < 0.1) // 空格子
+      discard;
+    // 计算在下一层网格中的位置
+    MND = MND * N;
+  }
+  return (I);
+}</code></pre><h4>进一步优化</h4><p>如前所述，在我们的树查询算法中，计算 <em>P</em> 需要一条 <code>frac</code> 指令。不过在我们的实现中，如代码清单 37-1 所示，我们实际上通过依赖纹理单元的循环行为（repeat 模式）回避了 <code>frac</code> 的计算。详细解释作为附录放在本书附带的 CD 上。</p><p>我们把 <em>P</em> 计算为</p><p><img alt="0602equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0602equ01.jpg"/></p><p>其中 <sub><em>D</em></sub> 是范围 [0, <em>S</em>[ 内的整数。</p><p>我们存储 <sub><em>D</em></sub>，而不是直接存储 <em>I</em> <sub><em>D</em></sub> 的值。计算 <sub><em>D</em></sub> 的代码请参阅 CD 上的附录。</p><h4>索引编码</h4><p>间接池是一张 8 位 3D RGBA 纹理。这意味着每个通道只能编码 256 个不同的值。这给我们 24 位的寻址空间（3 个 8 位索引），足以编码大多数应用所需规模的八叉树。</p><p>在片元程序内，对 8 位纹理做纹理查询返回映射到 [0,1] 的值。然而我们需要编码整数。用浮点纹理来做会占用更多内存并降低性能。于是我们把 [0,1] 的值以 1/255 的固定精度映射，然后简单地把浮点值乘以 255 得到整数。注意在没有定点精度寄存器的硬件上，需要计算 <code>floor(0.5 + 255 * v)</code> 以避免舍入误差。</p><h2>37.2 应用一：在网格上绘制</h2><p>本节我们用上一节介绍的 GPU 加速八叉树结构创建一个表面绘制应用。得益于八叉树，网格无需参数化。这对树、长毛怪物或角色这类复杂网格尤其有用。</p><p>用户可以用 3D 画笔在网格上绘制，类似 2D 绘画应用中所用的画笔。在这个例子中，绘制分辨率沿表面是均匀的，不过如果需要，多分辨率绘制也是很容易的扩展。</p><h4>37.2.1 创建八叉树</h4><p>我们先计算待绘制物体的包围盒。然后把物体重新缩放，使其最大维度映射到 [0,1]。三个维度施加相同的缩放，因为我们希望每个维度上的绘制分辨率相同。经过这一过程，网格完全落在单位盒内。</p><p>用户指定所需的绘制分辨率。这决定了含有颜色的八叉树叶节点的深度。例如，如果用户选择 512<sup>3</sup> 的分辨率，含有颜色的叶节点将位于深度 9。</p><p>树的创建方法是：对与表面相交的节点不断细分，直到所有叶节点要么为空，要么处于所选深度（颜色叶节点）。为检查某个树节点是否与几何体相交，我们依赖界定该节点边界的盒。这一过程如图 37-6 所示。我们使用代码清单 37-2 所示的算法。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_06a.jpg" alt="37_octree_06a.jpg"><figcaption>图 37-6 围绕网格表面构建八叉树</figcaption></figure><p>该算法使用我们的 GPU 八叉树纹理 API。节点之间的链接（间接网格中的索引）由 <code>createChild()</code> 调用建立。树叶节点中存储的值通过调用 <code>setChildAsEmpty()</code> 与 <code>setChildColor()</code> 建立，它们也设置合适的 alpha 值。</p><h4>示例 37-2. 八叉树创建的递归算法</h4><pre><code> void createNode(depth, polygons, box)
+for all children (i, j, k) within (N, N, N)
+if (depth + 1 == painting depth)
+// 已达到绘制深度？
+setChildColor(i, j, k, white)
+// 子节点在 depth+1 层
+else
+childbox = computeSubBox(i, j, k, box)
+if (childbox intersect polygons)
+child = createChild(i, j, k)
+// 递归
+createNode(depth + 1, polygons, childbox)
+else
+setChildAsEmpty(i, j, k)</code></pre><h4>37.2.2 绘制</h4><p>在我们的应用中，绘制工具被画成沿网格表面移动的小球。这个球由绘制中心 <em>P</em> <sub>center</sub> 和绘制半径 <em>P</em> <sub>radius</sub> 定义。画笔的行为类似 2D 绘画工具中的画笔。</p><p>用户绘制时，与绘制工具相交的叶节点被更新。新颜色是原颜色与绘制颜色的加权和。权重使绘制不透明度随距 <em>P</em> center 的距离增加而降低。</p><p>为尽量减少绘制过程中发往 GPU 的数据量，只在纹理内存中更新被修改的叶节点。这相当于对间接池纹理做部分更新（在 OpenGL 下我们用 <code>glTexSubImage3D</code>）。修改在 CPU 内存中保存的树副本上跟踪。</p><h4>37.2.3 渲染</h4><p>要渲染带纹理的网格，我们需要在片元程序中用 37.1.2 节定义的树查询访问八叉树。</p><p>顶点的未变换坐标被存储为 3D 纹理坐标。这些 3D 纹理坐标在三角形光栅化过程中被插值。因此在片元程序内，我们知道该片元所投影的网格表面 3D 点。把这些坐标用作树查询的纹理坐标，就能取回八叉树纹理中存储的颜色。</p><p>不过这样得到的结果相当于「最近」模式下的标准纹理查询。线性插值与 mipmapping 往往是获得高质量结果的必要条件。下一节我们讨论如何为八叉树纹理实现这些技术。</p><h4>线性插值</h4><p>纹理的线性插值可以通过扩展标准 2D 线性插值得到。由于八叉树纹理是体纹理，线性插值需要八个采样，如图 37-7 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_07.jpg" alt="37_octree_07.jpg"><figcaption>图 37-7 用八个采样做线性插值</figcaption></figure><p>然而我们只在表面与体相交的地方存储信息。3D 线性插值涉及的某些采样不在表面上，没有关联的颜色信息。考虑最大深度网格中坐标为 (<em>i</em>, <em>j</em>, <em>k</em>) 的一个采样（回忆一下，深度 <em>D</em> 网格是完整八叉树在深度 <em>D</em> 处产生的规则网格）。3D 线性插值涉及的另外七个采样位于坐标 (<em>i</em>+1, <em>j</em>, <em>k</em>)、(<em>i</em>, <em>j</em>+1, <em>k</em>)、(<em>i</em>, <em>j</em>, <em>k</em>+1)、(<em>i</em>, <em>j</em>+1, <em>k</em>+1)、(<em>i</em>+1, <em>j</em>, <em>k</em>+1)、(<em>i</em>+1, <em>j</em>+1, <em>k</em>) 和 (<em>i</em>+1, <em>j</em>+1, <em>k</em>+1)。然而其中一些采样可能因离表面太远而不在树中。这会导致渲染瑕疵，如图 37-8 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_08.jpg" alt="37_octree_08.jpg"><figcaption>图 37-8 修复直接线性插值造成的瑕疵</figcaption></figure><p>我们通过修改树创建过程来消除这些瑕疵。我们确保线性插值所需的所有采样都被包含在树中。这很容易做到：放大用于检查树节点是否与几何体相交的盒即可。盒的构造使其在每个维度上都包含<em>前面</em>的采样。确实，如果前面的某个采样（例如 (<em>i</em>-1, <em>j</em>-1, <em>k</em>-1) 处的采样）在树中，那么 (<em>i</em>, <em>j</em>, <em>k</em>) 处的采样也必须被加入。图 37-9 说明了这一点。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_09.jpg" alt="37_octree_09.jpg"><figcaption>图 37-9 修改树创建过程以消除线性插值瑕疵</figcaption></figure><p>在我们的演示中，所有颜色叶节点使用相同深度。当然，八叉树结构使得在不同深度存储颜色信息成为可能。但这样做会使线性插值复杂化。更多细节请参阅 Benson 与 Davis 2002。</p><h4>mipmapping</h4><p>当带纹理的网格在屏幕上变小时，多个纹理采样会落入同一像素。没有合适的过滤算法就会产生走样。大多数 GPU 在标准 2D 纹理上实现 mipmapping 算法。我们把该算法扩展到 GPU 八叉树纹理。</p><p>我们这样定义 mipmap 层级。最精细的层级（第 0 层）对应初始八叉树的叶节点。较粗的层级由前一层把叶节点合并进其父节点构造而成。节点颜色设为其叶节点的平均颜色，叶节点被删除，如图 37-10 所示。因此每个 mipmapping 层级上八叉树的深度减一。最粗的层级只有一个根节点，含有初始树所有叶节点的平均颜色。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_10.jpg" alt="37_octree_10.jpg"><figcaption>图 37-10 带 mipmapping 的树示例</figcaption></figure><p>为每个 mipmapping 层级存储一棵树代价太高。取而代之，我们创建第二张 3D 纹理，称为 <em>LOD 池</em>。LOD 池为间接池的每个间接网格准备一个单元（见图 37-10 底行）。因此其分辨率为 <em>S</em> <sub><em>u</em></sub> x <em>S</em> <sub><em>v</em></sub> x <em>S</em> <sub><em>w</em></sub>（见 37.1.2 节「存储」）。初始树的每个节点在某个 mipmapping 层级上成为叶节点。LOD 池存储节点在某个 mipmapping 层级被用作叶节点时所取的颜色。</p><p>要在特定 mipmapping 层级上为网格贴图，我们在相应深度处停止树查询，并在 LOD 池中查询该节点的平均颜色。合适的 mipmapping 层级可以在片元程序内用偏导数指令计算。</p><h4>37.2.4 把八叉树纹理转换为标准 2D 纹理</h4><p>我们的最终目标是用八叉树纹理取代 2D 纹理，从而完全取消 2D 参数化的需要。然而八叉树纹理需要显式编写纹理过滤程序。这导致片元程序很长。在较新的 GPU 上，对于只显示单个物体的纹理制作类应用，性能仍然足够高。但对于显示复杂场景的应用，例如游戏或模拟器，渲染性能可能太低。此外，GPU 在显示经过过滤的标准 2D 纹理贴图方面极为高效。</p><p>因此，能把八叉树纹理转换为标准 2D 纹理很重要。我们希望动态完成这一转换：这样就可能在运行时选择最佳表示。例如，靠近视点的物体使用线性插值的八叉树纹理，当它移到更远处时切换到对应的过滤后标准 2D 纹理。好处是 2D 纹理的过滤由 GPU 原生处理。这样八叉树纹理的额外开销只在细节可见时才产生。</p><p>以下讨论中，我们假定网格已经参数化。我们描述如何从八叉树纹理创建 2D 纹理贴图。</p><p>要生成 2D 纹理贴图，我们用三角形的 2D (<em>u</em>, <em>v</em>) 坐标而不是 3D (<em>x</em>, <em>y</em>, <em>z</em>) 坐标渲染这些三角形。三角形用八叉树纹理贴图，以网格顶点的 3D 坐标作为树查询的纹理坐标。结果如图 37-11 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37fig11.jpg" alt="37fig11.jpg"><figcaption>图 37-11 把八叉树转换为标准 2D 纹理</figcaption></figure><p>然而这种做法会产生瑕疵。当 2D 纹理带过滤地应用到网格上时，背景颜色会渗入纹理内部。原因是纹理过滤的线性插值会用到 2D 三角形之外的采样。只添加几个边界像素并不够：更粗的 mipmapping 层级会用到越来越多三角形之外的像素。这些瑕疵如图 37-12 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_12.jpg" alt="37_octree_12.jpg"><figcaption>图 37-12 直接转换造成的瑕疵</figcaption></figure><p>为抑制这些瑕疵，我们计算一张新纹理，把颜色外推到 2D 三角形之外。为此我们使用称为 <em>push-pull</em> 的外推方法的一个简化 GPU 变体。该方法在 Sander 等 2001 中被用于同一目的。</p><p>我们先按前述方式渲染 2D 纹理贴图。背景设为 alpha 值 0。三角形以 alpha 值 1 渲染。然后让 GPU 自动生成该纹理的 mipmapping 层级。接着把所有 mipmapping 层级坍缩成一张纹理，把 alpha 值解释为透明度系数。这由代码清单 37-3 中的 Cg 代码完成。</p><p>最后，GPU 从这张新纹理生成新的 mipmapping 层级。图 37-13 和图 37-14 展示了这一过程的结果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_13.jpg" alt="37_octree_13.jpg"><figcaption>图 37-13 颜色外推</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_14.jpg" alt="37_octree_14.jpg"><figcaption>图 37-14 因颜色外推而消除瑕疵</figcaption></figure><h4>示例 37-3. 颜色外推的 Cg 代码</h4><pre><code>PixelOut main(V2FI IN,
+              uniform sampler2D Tex) // 带 mipmap 层级的纹理
+{
+  PixelOut OUT;
+  float4 res = float4(0.0, 0.0, 0.0, 0.0);
+  float alpha = 0.0;
+  // 从最粗糙的层级开始
+  float sz = TEX_SIZE;
+  // 遍历所有 mipmap 层级
+  for (float i = 0.0; i < = TEX_SIZE_LOG2; i += 1.0)
+  {
+    // 在本层级做纹理查找
+    float2 MIP = float2(sz / TEX_SIZE, 0.0);
+    float4 c = (float4)tex2D(Tex, IN.TCoord0, MIP.xy, MIP.yx);
+    // 与上一层混合
+    res = c + res * (1.0 - c.w);
+    // 转到更精细的层级
+    sz /= 2.0;
+  }
+  // 完成——返回归一化颜色（alpha == 1）
+  OUT.COL = float4(res.xyz / res.w, 1);
+  return OUT;
+}</code></pre><h2>37.3 应用二：表面仿真</h2><p>从上一个应用可以看到，八叉树结构适合沿网格表面存储颜色信息。但 GPU 上的八叉树结构对仿真也很有用。本节介绍如何用 GPU 上的八叉树结构仿真沿网格流动的液体。</p><p>我们不讨论仿真本身的细节，因为这超出本章范围。我们转而关注如何用八叉树提供仿真所需的一切信息。</p><p>仿真由驻留在物体表面的元胞自动机完成。为执行仿真，我们需要把一张 2D 密度图附着到网格表面。下一步仿真通过依据邻居密度更新每个像素的值来计算。做法是以原密度图和邻居信息为输入，渲染到新的密度图。</p><p>由于物理仿真对扭曲非常敏感，用标准 2D 参数化把网格表面与密度图关联起来通常不会产生好结果。此外，如果 2D 密度图的某些部分未被使用，计算能力就会被浪费。因此我们用八叉树来避免参数化。</p><p>第一步是围绕网格表面创建八叉树（见 37.2.1 节）。我们不把密度直接存储在八叉树中：仿真过程中密度需要用渲染到纹理操作更新，因此应存储在 2D 纹理贴图中。八叉树的每个叶节点不存密度，而是存 2D 密度图内某个像素的索引。回忆一下，八叉树的叶节点存储三个 8 位值（在 RGB 通道中）。为了能使用大于 256x256 的密度图，我们把蓝色与绿色通道的值组合成一个 16 位索引。</p><p>仿真过程中，我们还需要访问邻居的密度。一组称为<em>邻居纹理</em>的 2D RGB 纹理用于编码邻居信息。设 <em>I</em> 为八叉树叶节点 <em>L</em> 中存储的索引，<em>D<sub>map</sub></em> 为密度图，<em>N</em> 为一张邻居纹理。Cg 调用 <code>tex2D(Dmap,I)</code> 返回与叶节点 <em>L</em> 关联的密度。调用 <code>tex2D(N,I)</code> 给出叶节点 <em>L</em> 的某个邻居（在 3D 空间中）在密度图中对应的索引。因此 <code>tex2D(Dmap, tex2D(N,I))</code> 给出了 <em>L</em> 的邻居的密度。</p><p>要编码完整的 3D 邻域信息需要 26 张纹理（树的叶节点在 3D 中最多可有 26 个邻居）。不过实践中需要的邻居更少。由于八叉树围绕 2D 表面构建，邻居的平均数量可能更接近 9。</p><p>这些纹理创建好之后，仿真就可以在密度图上运行。渲染时用密度图为网格贴图。八叉树用于取回网格表面某个位置存储的密度。仿真结果如图 37-15 所示。用户可以交互地在表面上添加液体。视频见本书附带的 CD。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/37_octree_15.jpg" alt="37_octree_15.jpg"><figcaption>图 37-15 沿网格表面流动的液体</figcaption></figure><h2>37.4 结论</h2><p>我们给出了八叉树纹理的完整 GPU 实现。这些结构提供了一种高效便捷的方式，沿网格表面存储无扭曲的数据。这些数据可以是颜色，如网格绘制应用中那样；也可以是动态纹理仿真的数据，如流动液体仿真中那样。在现代硬件上渲染可以高效完成，我们也提供了过滤方案以避免纹理走样。不过，由于在某些情形下 2D 纹理贴图更可取，我们展示了如何把八叉树纹理动态转换为无瑕疵的 2D 纹理。</p><p>八叉树是非常通用的数据结构，在计算机科学中被广泛使用。它们是存储未参数化网格信息、乃至更一般地存储空间信息的一种便捷方式。许多其他应用，例如体渲染，都能从它们的硬件实现中受益。</p><p>希望你能发现本章技术更多的用途与改进之处！源码更新与补充信息请见 <a href="http://www.aracknea.net/octreetextures" rel="noreferrer noopener">http://www.aracknea.net/octreetextures</a>。</p><h2>37.5 参考文献</h2><p><a id="biblio37_01"></a>Benson, D., and J. Davis. 2002. "Octree Textures."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)，pp. 785–790。</p><p><a id="biblio37_02"></a>Debry, D., J. Gibbs, D. Petty, and N. Robins. 2002. "Painting and Rendering Textures on Unparameterized Models."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)，pp. 763–768。</p><p><a id="biblio37_03"></a>Sander, P., J. Snyder, S. Gortler, and H. Hoppe. 2001. "Texture Mapping Progressive Meshes."，载 <em>Proceedings of SIGGRAPH 2001</em>，pp. 409–416。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-37-octree-textures-gpu" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-37-octree-textures-gpu</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

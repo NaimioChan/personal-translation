@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 18 章　用顶点纹理置换渲染逼真的水 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 18 章　用顶点纹理置换渲染逼真的水」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 18 章　用顶点纹理位移渲染逼真水面</h1>
+<p><em>Yuri Kryachko</em><br> <em>1C:Maddox Games</em></p><p>水面在计算机图形中很常见，在游戏中尤其如此。它们是能显著提升场景真实感的关键元素。但要逼真地描绘水面很难，因为水面运动带来的视觉复杂度很高，光与水相互作用的方式也很复杂。本章介绍为游戏 <em>Pacific Fighters</em> 渲染逼真海面所开发的技术。</p><p>现代图形硬件通过 DirectX 着色器模型 3.0 提供了许多有用的特性，可用于辅助渲染水面。本章讨论其中一个特性——顶点纹理——如何用于提高所渲染水面的真实感。图 18-1 给出了一些示例结果。此外我们还使用分支来提升顶点程序的性能。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/18_vertex_texture_01a.jpg" alt="18_vertex_texture_01a.jpg"><figcaption>图 18-1　置换贴图的好处</figcaption></figure><h2>18.1 水面模型</h2><p>水面动画与渲染方面已经发展出许多方法。其中最出色、看起来最逼真的是基于流体动力学和快速傅里叶变换（FFT）的方法（如 Tessendorf 2001）。这些方法给出非常逼真的结果，但不幸的是计算量很大，不适合交互式应用。</p><p>在另一个极端，目前大多数游戏使用非常简单的水面模型，其中多数用做法线贴图来制造视觉细节。可惜这些做法无法提供足够的真实感，也不能忠实再现水面上的波浪。</p><p>我们要找的技术，既要有简单法线贴图水面渲染方法的速度，又要有类 FFT 方法的视觉质量。</p><h2>18.2 实现</h2><p>我们的实现建立在用做法线贴图做光照计算的渲染算法之上。由于法线贴图能忠实再现高频波浪的细节，我们用它们做光照计算。不过在此之外，我们还用振幅较大的低频波浪对水面网格做几何扰动。</p><h4>18.2.1 水面模型</h4><p>我们的水面模型基于若干高度图的叠加，这些高度图在空间和时间上都做了平铺。每张纹理代表频谱的一个「谐波」或「倍频程」，纹理按傅里叶合成的方式相加。这些纹理之所以称为<em>高度图</em>，是因为每个值代表对应点高于水平面的高度。</p><p>高度图对美术很友好：创建它就像画一张灰度图一样简单。见图 18-2。有了高度图，美术只要画出波形，就能轻易控制水面动画的参数，细到单个波浪。高度图也很适合做顶点纹理：用它们沿垂直方向位移顶点位置非常直接。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/18_vertex_texture_02.jpg" alt="18_vertex_texture_02.jpg"><figcaption>图 18-2　用于水面位移的高度图</figcaption></figure><p>把若干具有不同空间尺度和时间尺度的高度图组合起来，我们就能得到复杂且视觉上精细的动画：</p><p><img alt="0285equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0285equ01.jpg"/></p><p>系数 <em>A</em> 与 <em>B</em> 以及求和项数都是凭经验选定的，以在尽量减轻重复图案瑕疵的同时取得最好看的结果。在 <em>Pacific Fighters</em> 中，我们用四张高度图求和做光照计算，其中尺度最大的两张用于置换贴图。这足以模拟从 10 cm 到 40 km 尺度上运动的洋面。</p><h4>18.2.2 实现细节</h4><p>我们需要做的全部计算可以分成两类：几何位移计算和光照计算。由于水面剖分得很细，在片元程序层面做光照计算是合理的，把置换贴图交给顶点阶段。另外，在顶点阶段做光照计算会产生视觉瑕疵，在远处尤其明显。</p><p>撰写本书时，唯一能做顶点纹理的硬件是 GeForce 6 系列 GPU 和最新的 NVIDIA Quadro FX GPU。这些硬件上的顶点纹理实现有一些限制；特别是顶点纹理必须是每分量 32 位、浮点的纹理，而且不能用最近邻之外的任何滤波模式。尽管如此，它们对本章所述的技术非常有用。</p><h4>18.2.3 采样高度图</h4><p>我们的实现逐顶点采样高度图，并在顶点程序中算出位移值。采样时我们使用以相机位置为中心的径向网格。这个网格的剖分方式使它离观察者越近细节越多，如图 18-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/18_vertex_texture_03.jpg" alt="18_vertex_texture_03.jpg"><figcaption>图 18-3　用于采样顶点纹理的径向网格</figcaption></figure><p>下面的公式给出径向网格顶点位置的计算方式。</p><table><tbody><tr><td><p>半径 <em>r</em> = <em>a</em> <sub>0</sub> + <em>a</em> <sub>1</sub> <em>i</em> <sup>4</sup></p></td></tr><tr><td><p><em>x<sub>i,j</sub></em> = <em>r</em> cos (2<em>j</em>/<em>M</em>)</p></td></tr><tr><td><p><em>y<sub>i,j</sub></em> = <em>r</em> sin (2<em>j</em>/<em>M</em>)，</p></td></tr></tbody></table><p>其中 <em>i</em> = [0..<em>N</em> - 1]，<em>j</em> = [0..<em>M</em> - 1]。我们选择 <em>a</em> <sub>0</sub>、<em>a</em> <sub>1</sub> 使得</p><table><tbody><tr><td><p><em>r</em> <sub>0</sub> = <em>a</em> <sub>0</sub> = 10 cm</p></td></tr><tr><td><p>半径 <em>r</em> <sub>N-1</sub> = <em>a</em> <sub>0</sub> + <em>a</em> <sub>1</sub> (N-1)<sup>4</sup> = 40 km。</p></td></tr></tbody></table><p>用这种方法，我们自然得到基于距离的剖分，也就是一个简单的细节层次（LOD）方案。这里本可以用其他做法，例如 ROAM 或 SOAR 地形渲染算法，但它们需要在 CPU 侧做大量工作，会抵消使用顶点纹理的全部好处。另见本书第 2 章「使用基于 GPU 的几何 Clipmap 渲染地形」，其中给出另一种在 GPU 上以自适应剖分渲染高度场的方法。</p><p>代码清单 18-1 给出用径向网格从单张高度图采样的简单顶点着色器。</p><h4>示例 18-1. 用径向网格几何从高度图采样的顶点着色器</h4><pre><code>float4 main(float4 position
+            : POSITION, uniform sampler2D tex0, uniform float4x4 ModelViewProj,
+              uniform float4 DMParameters, // 置换贴图参数
+              uniform float4 VOfs)
+    : POSITION
+{
+  // 读取打包为 (cos(), sin(), j) 的顶点
+  float4 INP = position;
+  // 变换为径向网格顶点
+  INP.xy = INP.xy * (pow(INP.z, 4) * VOfs.z);
+  // 求置换贴图的纹理坐标
+  // VOfs.xy、DMParameters.x — 高度纹理的偏移与缩放
+  float2 t = (INP.xy + VOfs.xy) * DMParameters.x;
+  // 从纹理中取置换值（lod 0）
+  float vDisp = tex2D(tex0, t).x;
+  // 把取到的值从 0..1 缩放到：
+  // DMParameters.y — 水面高度
+  // DMParameters.z — 波浪振幅
+  INP.z = DMParameters.y + (vDisp - 0.5) * DMParameters.z;
+  // 用水面高度置换当前位置
+  // 并将其投影
+  return mul(ModelViewProj, INP);
+}</code></pre><h4>18.2.4 质量改进与优化</h4><h4>为双线性滤波打包高度值</h4><p>顶点纹理取数可能相当昂贵。在 GeForce 6 系列硬件上，一次顶点纹理取数就能在顶点程序中引入明显的延迟。所以我们想尽量减少顶点程序里的纹理取数次数。另一方面，对纹理值做某种滤波又非常必要，否则视觉质量会明显下降。</p><p>传统上熟知的滤波方法是双线性与三线性滤波。双线性滤波计算离纹理取数坐标最近的四个纹素的加权平均。三线性滤波则对相邻 mip 层中的双线性查询结果取平均，每层按其对应的 LOD 小数部分加权。</p><p>由于当前这一代图形硬件不支持对顶点纹理值做任何形式的滤波，我们只能在着色器中用显式的数学指令模拟滤波。照直实现的话，即使最简单的双线性滤波也要四次纹理取数才能算出一个滤波值。三线性滤波则需要两倍的纹理取数。</p><p>为减少滤波所需的纹理取数次数，我们以特殊方式构建纹理，使每个纹素都包含单次双线性纹理查询所需的全部数据。这之所以可行，是因为我们的高度图本质上都是单分量纹理，我们可以把四个高度值打包进一张四分量纹理的单个纹素：</p><p><img alt="0288equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0288equ01.jpg"/></p><p>其中 <em>i</em> = 0..<em>N</em> - 1，<em>j</em> = 0..M - 1。<em>H</em> 是高度图的值，<em>F</em> 是滤波函数，<em>A</em> 是打包后的输出纹理。</p><p>代码清单 18-2 实现了按前述方式打包的、对顶点纹理的双线性纹理查询。</p><h4>示例 18-2. 顶点着色器中的高效双线性纹理插值</h4><pre><code>float tex2D_bilinear4x(uniform sampler2D tex, float4 t, float2 Scales)
+{
+  float size = Scales.x;
+  float scale = Scales.y;
+  float4 tAB0 = tex2Dbias(tex, t);
+  float2 f = frac(t.xy * size);
+  float2 tAB = lerp(tAB0.xz, tAB0.yw, f.x);
+  return lerp(tAB.x, tAB.y, f.y);
+}</code></pre><p>我们可以把这一做法推广到三线性滤波。由于三线性滤波需要小数的 LOD 值，我们可以用离相机的距离作为 LOD 的良好近似。代码清单 18-3 中的代码实现了对打包顶点纹理的三线性纹理查询。</p><h4>示例 18-3. 把双线性滤波技术扩展到三线性滤波</h4><pre><code>float tex2D_trilinear(uniform sampler2D tex, float4 t, float2 Scales)
+{
+  float fr = frac(t.z);
+  t.z -= fr;
+  // floor(t.zw);
+  float Res;
+  if (fr < 0.30)
+    Res = tex2D_bilinear4x(tex, t.xyzz, Scales);
+  else if (fr > 0.70)
+    Res = tex2D_bilinear4x(tex, t.xyzz + float4(0, 0, 1, 1),
+                           Scales * float2(0.5, 2));
+  else
+  {
+    Res = tex2D_bilinear4x(tex, t.xyzz, Scales);
+    float Res1 = tex2D_bilinear4x(tex, t.xyzz + float4(0, 0, 1, 1),
+                                  Scales * float2(0.5, 2));
+    fr = saturate((fr - 0.30) * (1 / (0.70 - 0.30)));
+    Res = Res1 * fr + Res * (1 - fr);
+  }
+  return Res;
+}</code></pre><p>注意，我们进一步优化了三线性纹理取数：只在两层 mip 的影响都显著的区域内做两次纹理取数。在其他区域，我们把 LOD 值「吸附」到最近的 mip 层，从而省下纹理带宽。</p><h4>用分支避免不必要的计算</h4><p>即使做了纹理滤波优化，水面渲染时的纹理取数次数仍可能很高，显著影响性能。我们可以减少渲染的顶点总数，但那会降低整体视觉细节并加重走样。</p><p>由于我们用大批几何体渲染水面，有些三角形最终完全在屏幕之外。注意即便对这类三角形，顶点程序仍会执行，白白浪费宝贵的计算资源。如果能跳过落在相机视锥之外的三角形的计算，我们就能省下大量逐顶点工作。</p><p>顶点程序一次只处理一个顶点，拿不到拓扑信息，所以我们只能在逐顶点层面而不能在逐三角形层面做判断。如果某个三角形内有些顶点跳过了顶点纹理、有些没跳过，就会产生瑕疵。实践表明我们的三角形和顶点纹理位移都足够小，这个瑕疵看不出来。</p><p>下面的伪代码说明了这个思路：</p><pre><code>float4 ClipPos = mul(ModelViewProj, INP);
+float3 b0 = abs(ClipPos.xyz) < (ClipPos.www * C0 + C1);
+if (all(b0))
+{
+  // 顶点属于可见三角形，
+  // 进行纹理采样并相应地置换顶点
+}</code></pre><p>在上面的代码中，我们用裁剪空间的顶点位置判断当前顶点是否在视锥内，只在需要时才做昂贵的计算。</p><p><code>C0</code> 与 <code>C1</code> 是特殊的「凑数」常量，控制三角形要多超出相机视锥多少才触发裁剪。这样我们避免了因跳过对视锥外但仍可见三角形上的顶点做纹理化而产生的瑕疵。实际上我们把「裁剪」视锥略微加宽了，在屏幕边缘留出一定量的「保护带」空间。由于水面细剖分得足够细、顶点纹理位移也合理，这个简单方法在实践中效果很好。</p><h4>渲染到纹理</h4><p>我们还可以先用单独一遍把各张高度图纹理合并成一张浮点纹理，以提升速度。这样就不必在顶点着色器里做多次昂贵的滤波操作。此外，我们现在可以用更紧凑的纹理格式——16 位浮点——来存储原始高度图。我们还可以把一系列动画高度图存为三维纹理的切片，让动画更平滑。</p><p>有了这个优化，我们的渲染循环变成两遍：</p><ol type="1"><li>用一个特殊的像素着色器渲染单个四边形到 fp32 纹理，把各张高度图合并起来。这张纹理中的纹素对应径向网格的顶点。</li><li>把生成的高度图作为顶点纹理，按前述方式位移径向网格的顶点。</li></ol><h4>波浪的背面</h4><p>由于我们的光照计算是在像素着色器中、假定水面平坦的前提下进行的，这个近似在某些情况下会造成视觉瑕疵。</p><p>在图 18-4 所示的情形中，我们看到的是波浪的背面，尽管由于几何位移它朝外对着观察者、现实里本不该可见。这导致浪尖出现令人不适的亮区。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/18_vertex_texture_04.jpg" alt="18_vertex_texture_04.jpg"><figcaption>图 18-4　渲染瑕疵的一个来源</figcaption></figure><p>为尽量减轻这些瑕疵，我们把用于光照计算的法线朝观察者方向「倾斜」一点，使它们更接近波浪的正面。这一技术的源码见随书光盘。图 18-5 显示用本章所述方法生成的场景。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/18_vertex_texture_05.jpg" alt="18_vertex_texture_05.jpg"><figcaption>图 18-5　用本章技术渲染出的极为逼真的水面</figcaption></figure><h4>18.2.5 渲染局部扰动</h4><p>有时需要渲染由浮力物体或落入水中的物体引起的局部碎浪。这对游戏尤其重要，因为游戏里需要产生爆炸、船只尾迹之类的东西。由于很难把物理上正确的方法融入我们基于高度图的水面模型，我们讨论几种基于经验的更简单方法。</p><h4>解析形变模型</h4><p>实现局部碎浪最简单的办法是解析地扰动已位移的顶点位置，在顶点着色器中把它们与算出的顶点位置合成。对爆炸，我们可用下面的公式：</p><p><img alt="0292equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0292equ01.jpg"/></p><p>其中 <em>r</em> 是水面内到爆炸中心的距离，<em>b</em> 是衰减常数。<em>I</em> <sub>0</sub>、、和 <em>k</em> 的取值依据给定的爆炸及其参数选定。</p><p>渲染时可以使用与常规水面渲染相同的径向网格，只是以爆炸位置为中心。</p><h4>动态置换贴图</h4><p>另一种做法是把所有局部生成的位移直接渲染进顶点纹理，本质上就是采用 GPU 通用计算（GPGPU）式的思路。这样我们在第一遍生成顶点纹理，在随后的一遍里用它做真正的水面渲染。额外的好处是，我们可以把过滤基础高度图和求和「倍频程」的工作放到像素着色器里，减轻顶点着色器的负担。</p><p>计算位移时，我们可以采用上述解析模型，也可以尝试元胞自动机式的方法，让局部位移逐帧演化。风的影响也可以通过沿适当方向模糊纹理来考虑。</p><p>不过，要以 50 cm 的分辨率覆盖 1 km 的水面，需要一张约 2048x2048 的纹理，这会给纹理内存和着色器执行速度带来额外压力。而且视点快速切换也会成问题。</p><p>尽管如此，我们仍鼓励读者尝试这些做法。</p><h4>泡沫生成</h4><p>当碎浪足够强烈时，我们可以生成泡沫来进一步提升真实感。最简单的做法是在位移高于某个高度 <em>H</em> <sub>0</sub> 的顶点上混入一张预先制作好的泡沫纹理。泡沫纹理的透明度按下面的公式计算：</p><p><img alt="0293equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0293equ01.jpg"/></p><p>其中 <em>H</em> <sub>max</sub> 是泡沫达到最大值的高度，<em>H</em> <sub>0</sub> 是基准高度，<em>H</em> 是当前高度。</p><p>泡沫纹理可以做动画，以表现泡沫生成与消散的过程。动画序列既可以由美术手工制作，也可以程序化生成。</p><h2>18.3 结论</h2><p>把顶点纹理取数的灵活性与动态分支的省性能特性结合起来，我们得以开发出一种在交互速度下渲染逼真水面的实用方法。这里所述的做法已成功应用于 <em>Pacific Fighters</em>，让我们能在从 10 cm 到 40 km 的相当大距离范围内生成逼真的水面。这对现代飞行模拟器来说是可以接受的。我们得以消除整个可见水面区域上的平铺瑕疵。</p><p>未来的硬件很可能让这一技术有更稳健的实现，尤其是消除手工对纹理值做滤波的需要，并提供更高的顶点着色器性能。</p><p>采用视差贴图之类的高级着色技术，还能进一步提高我们方法的质量，为水面提供细粒度的细节与凹凸。这类做法之一见第 8 章「用距离函数做逐像素置换贴图」。</p><p>最后，光照计算可以从高动态范围技术中大大受益，因为高反射的水面会出现极大的亮度变化。</p><h2>18.4 参考文献</h2><p><a id="biblio18_01"></a>Fournier, Alain, and William T. Reeves. 1986. "A Simple Model of Ocean Waves."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 86)</em>，第 75-84 页。</p><p><a id="biblio18_02"></a>Kryachko, Yuri. 2004. "Modelling Sea and River Water with Pixel Shader 2.0." 演讲。在线获取于 <strong><a href="http://www.kriconf.ru/2004/rec/KRI-2004.Programming_20.ppt" rel="noreferrer noopener">http://www.kriconf.ru/2004/rec/KRI-2004.Programming_20.ppt</a></strong></p><p><a id="biblio18_03"></a>Tessendorf, Jerry. 2001. "Simulating Ocean Water."，载 "Simulating Nature: Realistic and Interactive Techniques," <em>SIGGRAPH 2001</em> 课程讲义，课程 47。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-18-using-vertex-texture-displacement" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-18-using-vertex-texture-displacement</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

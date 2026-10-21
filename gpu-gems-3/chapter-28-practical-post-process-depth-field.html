@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 28 章　实用的后处理景深 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 28 章　实用的后处理景深」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 28 章　实用的后处理景深</h1>
+<p><em>Earl Hammon, Jr.<br> Infinity Ward</em></p><h2>28.1 引言</h2><p>本章介绍一种特别适合第一人称游戏的景深（DoF）算法。在 Infinity Ward，我们以让玩家沉浸在丰富的电影化体验中为傲。为达成这一目标，我们为 <em>Call of Duty 4: Modern Warfare</em> 开发了一种技术，能在前景和背景中都呈现出景深的关键定性特征，而对系统整体性能或引擎架构的影响极小。我们的技术需要 Shader Model 2.0 硬件。</p><h2>28.2 相关工作</h2><h4>28.2.1 概述</h4><p>为计算机生成图像加入景深的研究成果十分丰富，最早可追溯到 Potmesil 与 Chakravarty 1981。Demers（2004）在最早的 <em>GPU Gems</em> 一书中把景深技术分为以下五类：</p><ul><li><em>光线追踪技术</em>，从整个透镜区域投射光线</li><li><em>累积缓冲技术</em>，混合来自多个针孔相机的图像</li><li><em>合成技术</em>，合并多个具有不同对焦程度的图层</li><li><em>正向映射 z 缓冲技术</em>，把像素颜色散布到相邻像素</li><li><em>反向映射 z 缓冲技术</em>，从相邻像素聚集颜色采样</li></ul><p>光线追踪、累积缓冲和合成可以归为「合成」类技术。与 Demers 一样，我们更偏好 z 缓冲技术（正向映射或反向映射）。作为基于图像的算法，它们特别适合图形硬件。此外，z 缓冲信息在软粒子等其他渲染效果中也很有用，因为它摊薄了生成深度图像的开销。另一方面，合成类技术有局限，因为它们不容易加到已有的图形引擎中。</p><p>z 缓冲技术常被扩展为在一组独立图层上操作，而不是在单张图像上操作。这样做可以减少错误渗色造成的瑕疵，并正确处理近处物体被模糊到半透明后其背后的可见性。</p><h4>28.2.2 具体技术</h4><p>Mulder 与 van Liere 2000 给出了一种快速的景深技术，把原始图像分成焦平面之前和之后的像素。他们用这两组各构建一组模糊图像，每次把分辨率减半。最后，他们在离相机适当距离处绘制一个带纹理的平面并开启深度测试，把各级模糊图像与原始场景合成。我们的技术也把模糊图像与帧缓冲混合，但生成所需的遍数更少，并用一个全屏着色四边形一次性施加到最终图像上。我们接受更多跨深度的模糊瑕疵，以此换来更高的效率。</p><p>Demers（2004）描述了一种聚集式 z 缓冲技术，用每个像素的弥散圆（CoC）在原始图像的若干降采样版本之间做混合。我们的技术与它最为接近，但我们在计算像素 CoC 时也考虑邻域像素，因此我们的技术也能模糊前景物体。</p><p>Scheuermann（2004）描述了另一种聚集式 z 缓冲技术，用泊松滤波按像素自身的 CoC 采样其邻域。他还用邻域像素的深度来防止前景物体渗到未对焦的背景物体上。该技术对模糊远处物体效果很好，但难以扩展到模糊前景。</p><p>Křivánek 等（2003）提出一种散射式 z 缓冲技术，使用由点精灵组成的物体，点精灵按该点的 CoC 缩放。他们对越失焦的物体使用越低的细节层次，以此提升性能。这对点精灵模型是很好的技术。把屏幕的每个像素当作点精灵，就可以把它扩展为后处理，但那样计算上不现实。</p><p>Kass 等（2006）把景深中看到的模糊建模为热扩散，其中弥散圆的大小对应像素的「热量」。他们还把场景分层，以便绘制不透明前景物体背后的物体——该前景物体因相对相机光圈很小而变得透明。他们的技术在预渲染场景中以交互式性能达到高质量，让美术调整景深参数，之后用于离线渲染。不过该技术计算量太大，不适合必须每帧渲染的动态场景。</p><h2>28.3 景深</h2><p>作为技术的理论基础，我们从把入射光聚焦到成像平面上的虚拟透镜出发。透镜由焦距和光圈刻画。焦距是平行光映射到单点时成像平面需要距透镜的距离。光圈就是透镜接收光的直径。薄透镜方程把物体到透镜的距离 <em>u</em>、成像清晰时成像平面到透镜的距离 <em>v</em> 以及透镜焦距 <em>f</em> 联系起来：</p><p><img alt="585equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/585equ01.jpg"/></p><p>简单透镜的几何关系见 <a href="https://developer.download.nvidia.com/books/gpugems3/28fig01.jpg" rel="noreferrer noopener">图 28-1</a>。透镜的光圈半径为 <em>d</em>。点 <em>u<sub>o</sub></em> 在位于 <em>v<sub>o</sub></em> 的成像平面上是清晰的。位于 <em>u<sub>n</sub></em> 或 <em>u<sub>f</sub></em> 的点，若成像平面分别在 <em>v<sub>f</sub></em> 或 <em>v<sub>n</sub></em> 处就会清晰，但二者都映射为直径 <em>c</em> 的圆，此时成像平面在 <em>v<sub>o</sub></em> 处。这个圆称为<em>弥散圆</em>。相机的景深就是使 CoC 足够小的取值区间。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/28fig01.jpg" alt="28fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/28fig01.jpg" rel="noreferrer noopener">图 28-1</a> 薄透镜的弥散圆</figcaption></figure><p>利用相似三角形，可以得到</p><p><img alt="585equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/585equ02.jpg"/></p><p>因此，对空间中任意一点 <em>p</em>，若它聚焦于 <em>v<sub>p</sub></em>，则其弥散圆可以表示为</p><p><img alt="585equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems3/585equ03.jpg"/></p><p>我们可以从薄透镜近似中解出 <em>v</em> 并代入该式，从而把空间中任意一点的弥散圆直径表示为相机物理属性的函数，见公式 1：</p><p><strong>公式 1</strong></p><p><a><img alt="equ28-1.jpg" src="https://developer.download.nvidia.com/books/gpugems3/equ28-1.jpg"/></a></p><p>我们主要关心该式的定性性质，用它们来传达有限景深的感觉。具体来说，我们注意到以下几点：</p><ul><li>「针孔」相机模型令 <em>d</em> 为 0。此时 <em>c</em> 恒为 0，空间中每个点总是清晰的。任何更大的 <em>d</em> 都会使图像部分失焦。所有真实透镜，包括人眼，<em>d</em> 都大于 0。</li><li>对焦点之外的物体，弥散圆直径存在上界。</li><li>比焦点更近处，弥散圆没有上界。</li><li>前景中弥散圆增长得比背景快得多。</li></ul><h2>28.4 算法的演进</h2><p>显然，模糊靠近相机的物体对任何有说服力的景深算法都至关重要。我们的算法正是在多次尝试令人信服地模糊近处物体的过程中逐步成形的。</p><h4>28.4.1 最初的随机采样做法</h4><p>我们从 Scheuermann 2004 描述的技术出发。我们独立计算每个像素的弥散圆，再用它缩放从原始图像采样的圆形泊松分布。与 Scheuermann 一样，我们也读取每个采样点的深度，剔除离相机太近的样本。</p><p>这能为焦平面之外的物体提供很有说服力的模糊。可惜焦平面之前的物体轮廓仍然锐利。近处物体看起来并不失焦，只是纹理质量很差。这种糟糕的纹理损害玩家体验，所以与其用这个技术模糊前景，不如只模糊远处物体。</p><p>这种模糊前景物体的技术体现在 <a href="https://developer.download.nvidia.com/books/gpugems3/28fig02.jpg" rel="noreferrer noopener">图 28-2</a> 右上角的图像中。注意角色的轮廓与参考图像相比没有变化。该截图每像素使用 33 个采样位置、共 66 次纹理查找，但仍然有振铃瑕疵，尤其在下巴带、衣领和眼睛周围。可与右下角图像柔和的轮廓和平滑的模糊对比。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/28fig02.jpg" alt="28fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/28fig02.jpg" rel="noreferrer noopener">图 28-2</a> 用不同景深技术渲染的角色</figcaption></figure><h4>28.4.2 以聚集实现散射</h4><p>此时我们认为背景模糊的问题已经解决，于是把精力转向让模糊的前景物体渗到其轮廓之外。我们的第一个算法从邻域像素做聚集，实际上假设每个邻域像素的 CoC 与当前像素相同。从逻辑上说，我们更希望每个像素按自身的弥散圆把自己涂抹到邻域像素上。</p><p>这种按各自尺寸进行的涂抹是散射操作，与现代 GPU 的映射并不契合。我们把散射操作反转为聚集操作：在每个像素的邻域中寻找散布到它上面的像素。我们仍然用泊松分布采样，但因为是在找渗到中心像素上的邻域像素，总得用最大的弥散圆。</p><p>我们求出每个邻域样本的 CoC，只对与该像素重叠的样本计算加权和。每个样本的权重与其面积成反比。最后把最终颜色值除以所有已用权重之和做归一化。</p><p>可惜该技术在计算和视觉上都不够好。我们发现，在可能的最大弥散圆内，取样点少于像素总数的约四分之一时，会出现难看的振铃瑕疵。这折算过来是 24 个采样点、每个 2 次纹理读取，而最大弥散圆半径才 5 像素（算上中心点直径 11 像素）。这一开销或许可以通过利用已知邻域信息智能剔除样本来缓解。</p><p>不过我们放弃了这个做法，因为它在近处未对焦像素与更远处已对焦像素之间留下了难以接受的不连续。要理解缘由，可以设想一条边，一侧是 CoC 很大的红色源像素，另一侧是已对焦的蓝色源像素。在目标图像中，红色像素会影响蓝色像素，反过来却不会。未对焦的红色物体将在紫色背景上呈现锐利轮廓，紫色再渐变为蓝色，而不是我们期望的红色经紫色到蓝色的连续过渡。</p><p>该方法还有两个问题导致这种难看的表现。第一，每个像素的权重应在圆周边界处平滑降到零；没有这一点，输出图像在模糊半径变化处总会不连续。第二，这些像素不能简单用归一化权重和来合并。要得到期望的表现，需要把贡献像素由后向前迭代，每次迭代的输出颜色是在上一次输出颜色与当前源像素颜色之间、按当前源像素的贡献权重做线性插值。这两处改动使该技术等价于为每个像素渲染按深度排序、直径等于该像素 CoC 的精灵，本质上就是 Křivánek 等 2003 的后处理版本。可惜它们也让像素着色器昂贵到几乎不可接受。即便有这些修正，着色器仍无法正确绘制被模糊到透明的任何前景物体背后的场景。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/28fig02.jpg" rel="noreferrer noopener">图 28-2</a> 左下角的图像就是用该技术生成的，使用 64 个采样点、半径 12 像素。多出的采样使它比随机做法在角色内部模糊得更好。但对这个模糊半径来说，64 个采样点仍然太少，于是出现了天线、脖子和头盔上可见的振铃瑕疵。注意轮廓与背景之间仍是生硬的边缘，再加采样也消除不了。</p><h4>28.4.3 模糊做法</h4><p>在 Infinity Ward，我们优先考虑优质的用户体验而不是精确的模拟。这就是为什么在以连续方式为近处物体施加弥散圆时，我们放弃了基于物理的做法。我们改用蛮力，干脆把它们模糊到不存在，从而消除已对焦物体与未对焦前景之间的所有不连续。<a href="https://developer.download.nvidia.com/books/gpugems3/28fig02.jpg" rel="noreferrer noopener">图 28-2</a> 右下角的图像把这一技术与之前几种做法做了比较。模糊做法显然画质最好，而且也是最快的。</p><p>我们用一个全屏遍把每个前景像素的弥散圆半径算进一个渲染目标。已对焦或位于背景的像素 CoC 取零。然后我们对 CoC 图像做模糊以消除边缘。我们用高斯模糊，因为计算高效且结果令人满意。作为优化，我们还把 CoC 图像沿每个轴降采样到四分之一分辨率，这样高斯模糊只影响全帧总像素的十六分之一。</p><p>单这样做还达不到未对焦物体轮廓所需的效果。如果前景物体被最大程度模糊，而其背后的物体完全没被模糊，那么两者在边界处都大约模糊 50%。前景物体沿这条边应当 100% 模糊。这看起来不像之前的不连续那么糟，但当前景物体某条边的模糊程度取决于它背后的物体时，仍然显得古怪。</p><p>为解决这一点，我们对某些像素——位于 CoC 尺寸不同的两个区域交界两侧的像素——强制取两个直径中较大者。不过一个像素有很多邻域像素，我们宁愿避免搜索所有邻域像素。我们只计算每个像素的 CoC，然后用模糊后的 CoC 图像去估计其邻域像素的 CoC。</p><p>考虑两个物体之间的边界，二者各自具有均匀但不同的弥散圆，直径为 <em>D</em> <sub>0</sub> 和 <em>D</em> <sub>1</sub>。显然，此时模糊后的直径 <em>D<sub>B</sub></em> 为</p><table><tbody><tr><td><p><em>D<sub>B</sub></em> = <a href="https://developer.download.nvidia.com/books/gpugems3/1bar2.jpg" rel="noreferrer noopener"><img alt="1bar2.jpg" src="https://developer.download.nvidia.com/books/gpugems3/1bar2.jpg"/></a> (<em>D</em> <sub>0</sub> + <em>D</em> <sub>1</sub>)。</p></td></tr></tbody></table><p>当直径在边界两侧梯度相同，以及某些巧合情形下，该式也能准确给出模糊后的直径。我们可以用两次纹理查找得到当前像素的原始直径 <em>D</em> <sub>0</sub> 和模糊后直径 <em>D<sub>B</sub></em>。据此解上式即可估计 <em>D</em> <sub>1</sub>：</p><table><tbody><tr><td><p><em>D</em> <sub>1</sub> ≈ 2<em>D<sub>B</sub></em> - <em>D</em> <sub>0</sub></p></td></tr></tbody></table><p>于是我们用下式定义弥散圆的新直径 <em>D</em>：</p><table><tbody><tr><td><p><em>D</em> = max(<em>D</em> <sub>0</sub>, 2<em>D<sub>B</sub></em> - <em>D</em> <sub>0</sub>) = 2 max(<em>D</em> <sub>0</sub>, <em>D<sub>B</sub></em> ) - <em>D</em> <sub>0</sub>。</p></td></tr></tbody></table><p>设 <em>D</em> <sub>1</sub> 为较大的弥散圆。该式将从两区域边界处的直径 <em>D</em> <sub>1</sub> 平滑过渡到区域 0 内部模糊半径极限处的 <em>D</em> <sub>0</sub>。这正是我们想要的。</p><p>max 函数在其输入连续时是连续的。<em>D</em> <sub>0</sub> 这个输入实际上并不连续，因为它是该像素弥散圆的未模糊直径。选择这个函数是为了让它沿某些直边保持连续。大多数直边边界在模糊半径内都相当符合这些假设。不过仍有一些难以接受的不连续，在 90 度拐角处尤其明显，所以我们最后再做一次小模糊来修正。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/28fig03.jpg" rel="noreferrer noopener">图 28-3</a> 和 <a href="https://developer.download.nvidia.com/books/gpugems3/28fig04.jpg" rel="noreferrer noopener">图 28-4</a> 展示了该过程应用于示例图像的结果。每一行是一张示例图像。第一列是未处理的图像，第二列是施加滤镜但未做最后一次模糊的图像，第三列是最终模糊结果。输入图像中的纯白表示最大弥散圆；黑色像素是清晰的。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/28fig03.jpg" alt="28fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/28fig03.jpg" rel="noreferrer noopener">图 28-3</a> 对若干测试图像计算前景弥散圆半径</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/28fig04.jpg" alt="28fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/28fig04.jpg" rel="noreferrer noopener">图 28-4</a> 对「W」左上角的放大</figcaption></figure><p>第一张图像是简单的黑白场景。视觉上这些字母像是悬浮在离相机很近的空间中。滤镜整体效果不错，但字母拐角处仍有一些锐利边缘，大写「I」尤其明显。模糊图像消除了硬边。它仍留下比理想更陡的梯度，但对我们来说已经够用。</p><p>第二行先对第一行的示例图像做一次小高斯模糊，再施加滤镜。这对应于以掠射角观察物体。结果是过滤后的图像周围出现清晰的轮廓。最后的模糊显著压制了这一瑕疵，但没有完全消除。</p><p>最后一行对原始图像施加了梯度。这对应于物体逐渐远去的一般情形。弥散圆半径在「谷」处被高估、在「峰」处被低估，但它是连续的，没有第二行那些真正难以接受的瑕疵。最后的模糊同样压制了这一瑕疵。注意文字内部的梯度得以保留。</p><h2>28.5 完整算法</h2><p>我们的完整算法包含四个阶段：</p><ol><li>对前景物体降采样 CoC。</li><li>模糊近处 CoC 图像。</li><li>由模糊和未模糊的图像算出实际的前景 CoC。</li><li>在最后一个全屏遍中施加前景与背景 CoC 图像，做变宽度模糊。</li></ol><h4>28.5.1 深度信息</h4><p>我们的算法用 DirectX 9 硬件实现，它不允许把深度缓冲当纹理读取。为绕过这一限制，我们在深度预遍中绑定一个 32 位浮点颜色缓冲。虽然我们不需要完整的 32 位精度，但选这个格式是因为它是所有目标硬件上的最小公分母。</p><p>深度预遍中的像素着色器只是把顶点着色器算出的世界空间距离传到渲染目标。在像素着色器中，我们用 HLSL 内建函数 <code>clip()</code> 剔除 1 位 alpha 纹理的透明像素。</p><p>当我们把该技术称为「可以轻松插入已有引擎的纯后处理」时，我们假设引擎已经生成了这些信息。性能影响分析也同样假设这些信息已经可用。如果该假设不成立，我们的技术就不只是给渲染引擎加一些后处理改动。</p><h4>28.5.2 变宽度模糊</h4><p>我们需要一种快速的变宽度模糊，把弥散圆施加到场景上。可以像最初基于 Scheuermann 2004 的随机做法那样使用泊松盘。不过我们换一种思路生成模糊。我们认为每个像素都有一个函数，按 CoC 直径给出它的颜色。然后用一条分段线性曲线，在三个不同的模糊半径与未模糊的原始采样之间近似这个函数。</p><p>两个较大的模糊半径在 RGB 通道中算出的同时，降采样后的 CoC 在 alpha 通道中算出。最小的模糊半径用五次纹理查找求解，平均 5x5 网格中的 17 个像素，图样见 <a href="https://developer.download.nvidia.com/books/gpugems3/28fig05.jpg" rel="noreferrer noopener">图 28-5</a>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/28fig05.jpg" alt="28fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/28fig05.jpg" rel="noreferrer noopener">图 28-5</a> 小模糊的采样位置</figcaption></figure><p>注意该图样的中心采样复用了未模糊原始像素颜色的纹理查找。</p><p>这个小模糊对贴近实际模糊颜色至关重要。没有它，图像看起来不是连续模糊，而是与自身的一个模糊版本交叉淡化。我们还发现简单的线性插值比更高次的多项式样条效果更好，因为样条倾向于对某些像素做颜色外推。</p><h4>28.5.3 弥散圆半径</h4><p>深度纹理给出了每个像素到相机的距离。由公式 1 可知，用一次倒数和一次乘加指令即可由它算出准确的弥散圆半径模型，缩放与偏置常数由引擎提供。</p><p>不过我们再次利用计算机模拟的自由度，放弃物理上的合理性而换取艺术上的控制。从美术角度，我们希望某段深度范围清晰，其前后各有一定量的模糊。很难把这一点换算成物理相机参数。最直观的编辑方式是使用分段线性曲线，如 <a href="https://developer.download.nvidia.com/books/gpugems3/28fig06.jpg" rel="noreferrer noopener">图 28-6</a> 所示。美术指定近、远模糊半径以及三个区域各自的起止距离。对取值退化的区域我们关闭模糊，这样美术可以选择只模糊前景或只模糊背景。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/28fig06.jpg" alt="28fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/28fig06.jpg" rel="noreferrer noopener">图 28-6</a> 弥散圆的曲线图</figcaption></figure><p>实践中我们选取<em>世界近端距离</em>和<em>世界远端起始距离</em>，把玩家可能感兴趣的东西都包在里面。然后根据世界近端距离确定<em>世界近端起始距离</em>。同样，根据世界远端起始距离确定<em>世界远端距离</em>。</p><h4>28.5.4 第一人称武器的考量</h4><p>Infinity Ward 开发第一人称射击游戏。玩家的武器（视图模型）在这类游戏中非常重要，因为它始终在画面中，也是玩家与环境交互的主要途径。在视图模型上看起来合适的景深设置，对环境却似乎没有效果；而在近处环境上看起来合适的景深设置，又把玩家的武器模糊得过分。</p><p>我们的解决方案是为世界和玩家视图模型的模糊分别提供设置。这在物理上说不通，但给玩家更好的体验——也许是因为无论玩家专注于武器的重要部位还是环境中的动态，它都能恰当传达景深效果。每把武器配置自己的近、远距离，射击时瞄准和腰间持握时使用不同的取值。</p><p>要让该技术成立，我们必须知道每个像素属于视图模型还是属于世界。我们的深度信息存放在 32 位浮点渲染目标中。使用负深度被证明是携带这一位信息最方便的办法。常规的查找只需一个不占开销的取绝对值修饰符。这也让近处弥散圆的选取得到高效实现。我们可以用一条 <code>mad_sat</code> 指令同时算出 4 个像素的近处 CoC。我们按这种方式分别算出视图模型和世界的近处 CoC，再用一条 <code>min</code> 指令为这 4 个像素挑出合适的 CoC。</p><h4>28.5.5 完整着色器清单</h4><p>代码清单 28-1 中我们算法的大部分遍都用于生成近处弥散圆，使其连续并为前景物体提供柔和边缘。我们还希望有较大的高斯模糊半径，因此共享 GPU 计算，同时算出场景的模糊版本和近处弥散圆。</p><p>我们以归一化的 480p 分辨率、按像素指定大模糊半径，使其与实际屏幕分辨率无关。而两个小模糊基于实际屏幕分辨率。我们通过实验确定，17 次采样的小模糊相当于原生分辨率下 1.4 像素的高斯模糊，中模糊相当于原生分辨率下 3.6 像素的高斯模糊。</p><h4>示例 28-1. 对场景降采样并初始化近处 CoC 的着色器</h4><pre><code>
+// 这些由游戏引擎设置。
+// 渲染目标的尺寸是场景渲染尺寸的四分之一。
+sampler colorSampler;
+sampler depthSampler;
+const float2 dofEqWorld;
+const float2 dofEqWeapon;
+const float2 dofRowDelta;
+// float2( 0, 0.25 / renderTargetHeight )
+const float2 invRenderTargetSize;
+const float4x4 worldViewProj;
+struct PixelInput
+{
+  float4 position : POSITION;
+  float2 tcColor0 : TEXCOORD0;
+  float2 tcColor1 : TEXCOORD1;
+  float2 tcDepth0 : TEXCOORD2;
+  float2 tcDepth1 : TEXCOORD3;
+  float2 tcDepth2 : TEXCOORD4;
+  float2 tcDepth3 : TEXCOORD5;
+};
+PixelInput DofDownVS(float4 pos : POSITION, float2 tc : TEXCOORD0)
+{
+  PixelInput pixel;
+  pixel.position = mul(pos, worldViewProj);
+  pixel.tcColor0 = tc + float2(-1.0, -1.0) * invRenderTargetSize;
+  pixel.tcColor1 = tc + float2(+1.0, -1.0) * invRenderTargetSize;
+  pixel.tcDepth0 = tc + float2(-1.5, -1.5) * invRenderTargetSize;
+  pixel.tcDepth1 = tc + float2(-0.5, -1.5) * invRenderTargetSize;
+  pixel.tcDepth2 = tc + float2(+0.5, -1.5) * invRenderTargetSize;
+  pixel.tcDepth3 = tc + float2(+1.5, -1.5) * invRenderTargetSize;
+  return pixel;
+}
+half4 DofDownPS(const PixelInput pixel) : COLOR
+{
+  half3 color;
+  half maxCoc;
+  float4 depth;
+  half4 viewCoc;
+  half4 sceneCoc;
+  half4 curCoc;
+  half4 coc;
+  float2 rowOfs[4];
+  // "rowOfs" 可减少 PS2.0 模拟重排所需的移动次数。
+  rowOfs[0] = 0;
+  rowOfs[1] = dofRowDelta.xy;
+  rowOfs[2] = dofRowDelta.xy * 2;
+  rowOfs[3] = dofRowDelta.xy * 3;
+  // 用双线性滤波免费平均 4 个颜色采样。
+  color = 0;
+  color += tex2D(colorSampler, pixel.tcColor0.xy + rowOfs[0]).rgb;
+  color += tex2D(colorSampler, pixel.tcColor1.xy + rowOfs[0]).rgb;
+  color += tex2D(colorSampler, pixel.tcColor0.xy + rowOfs[2]).rgb;
+  color += tex2D(colorSampler, pixel.tcColor1.xy + rowOfs[2]).rgb;
+  color /= 4;
+  // 每次处理 4 个采样，以高效利用向量硬件。
+  // 若深度为负，CoC 为 1，所以用 "min" 来在
+  // "sceneCoc" 与 "viewCoc" 之间取值。
+  depth[0] = tex2D(depthSampler, pixel.tcDepth0.xy + rowOfs[0]).r;
+  depth[1] = tex2D(depthSampler, pixel.tcDepth1.xy + rowOfs[0]).r;
+  depth[2] = tex2D(depthSampler, pixel.tcDepth2.xy + rowOfs[0]).r;
+  depth[3] = tex2D(depthSampler, pixel.tcDepth3.xy + rowOfs[0]).r;
+  viewCoc = saturate(dofEqWeapon.x * -depth + dofEqWeapon.y);
+  sceneCoc = saturate(dofEqWorld.x * depth + dofEqWorld.y);
+  curCoc = min(viewCoc, sceneCoc);
+  coc = curCoc;
+  depth[0] = tex2D(depthSampler, pixel.tcDepth0.xy + rowOfs[1]).r;
+  depth[1] = tex2D(depthSampler, pixel.tcDepth1.xy + rowOfs[1]).r;
+  depth[2] = tex2D(depthSampler, pixel.tcDepth2.xy + rowOfs[1]).r;
+  depth[3] = tex2D(depthSampler, pixel.tcDepth3.xy + rowOfs[1]).r;
+  viewCoc = saturate(dofEqWeapon.x * -depth + dofEqWeapon.y);
+  sceneCoc = saturate(dofEqWorld.x * depth + dofEqWorld.y);
+  curCoc = min(viewCoc, sceneCoc);
+  coc = max(coc, curCoc);
+  depth[0] = tex2D(depthSampler, pixel.tcDepth0.xy + rowOfs[2]).r;
+  depth[1] = tex2D(depthSampler, pixel.tcDepth1.xy + rowOfs[2]).r;
+  depth[2] = tex2D(depthSampler, pixel.tcDepth2.xy + rowOfs[2]).r;
+  depth[3] = tex2D(depthSampler, pixel.tcDepth3.xy + rowOfs[2]).r;
+  viewCoc = saturate(dofEqWeapon.x * -depth + dofEqWeapon.y);
+  sceneCoc = saturate(dofEqWorld.x * depth + dofEqWorld.y);
+  curCoc = min(viewCoc, sceneCoc);
+  coc = max(coc, curCoc);
+  depth[0] = tex2D(depthSampler, pixel.tcDepth0.xy + rowOfs[3]).r;
+  depth[1] = tex2D(depthSampler, pixel.tcDepth1.xy + rowOfs[3]).r;
+  depth[2] = tex2D(depthSampler, pixel.tcDepth2.xy + rowOfs[3]).r;
+  depth[3] = tex2D(depthSampler, pixel.tcDepth3.xy + rowOfs[3]).r;
+  viewCoc = saturate(dofEqWeapon.x * -depth + dofEqWeapon.y);
+  sceneCoc = saturate(dofEqWorld.x * depth + dofEqWorld.y);
+  curCoc = min(viewCoc, sceneCoc);
+  coc = max(coc, curCoc);
+  maxCoc = max(max(coc[0], coc[1]), max(coc[2], coc[3]));
+  return half4(color, maxCoc);
+}</code></pre><p>我们对 <code>DofDownsample()</code> 生成的图像施加高斯模糊。所用代码会自动把模糊半径分解为一系列最优的水平与垂直滤波，并利用双线性滤波一次读取两个样本。此外，当一个不分离的 2D 遍所需的纹理查找次数不多于两个分离的 1D 遍时，我们就采用这个 2D 遍。在 2D 情形中，每次纹理查找取四个样本。代码清单 28-2 给出了代码。</p><h4>示例 28-2. 计算实际近处 CoC 的像素着色器</h4><pre><code>
+// 这些由游戏引擎设置。
+sampler shrunkSampler;
+// DofDownsample() 的输出
+sampler blurredSampler; // 缩小后采样器的模糊版本
+// 这是像素着色器函数，它计算用于
+// 近处弥散圆的实际取值。
+// "texCoords" 在左下角像素为 0，在右上角为 1。
+float4 DofNearCoc(const float2 texCoords)
+{
+  float3 color;
+  float coc;
+  half4 blurred;
+  half4 shrunk;
+  shrunk = tex2D(shrunkSampler, texCoords);
+  blurred = tex2D(blurredSampler, texCoords);
+  color = shrunk.rgb;
+  coc = 2 * max(blurred.a, shrunk.a) - shrunk.a;
+  return float4(color, coc);
+}</code></pre><p>在代码清单 28-3 中，我们对 <code>DofNearCoc()</code> 的结果施加一次 3x3 小模糊，以抹平它引入的任何不连续。</p><h4>示例 28-3. 该着色器对近处 CoC 与降采样的彩色图像各模糊一次</h4><pre><code>
+// 这个顶点与像素着色器对 colorMapSampler
+// 中的图像施加 3 x 3 的模糊，该图像与
+// 渲染目标同样大小。采样权重在角上为
+// 1/16，在边上为 2/16，在中心为 4/16。
+sampler colorSampler;
+// DofNearCoc() 的输出
+float2 invRenderTargetSize;
+struct PixelInput
+{
+  float4 position : POSITION;
+  float4 texCoords : TEXCOORD0;
+};
+PixelInput SmallBlurVS(float4 position, float2 texCoords)
+{
+  PixelInput pixel;
+  const float4 halfPixel = {-0.5, 0.5, -0.5, 0.5};
+  pixel.position = Transform_ObjectToClip(position);
+  pixel.texCoords = texCoords.xxyy + halfPixel * invRenderTargetSize;
+  return pixel;
+}
+float4 SmallBlurPS(const PixelInput pixel)
+{
+  float4 color;
+  color = 0;
+  color += tex2D(colorSampler, pixel.texCoords.xz);
+  color += tex2D(colorSampler, pixel.texCoords.yz);
+  color += tex2D(colorSampler, pixel.texCoords.xw);
+  color += tex2D(colorSampler, pixel.texCoords.yw);
+  return color / 4;
+}</code></pre><p>我们最后一个着色器在代码清单 28-4 中，它把变宽度模糊施加到屏幕。我们用与帧缓冲的预乘 alpha 混合，以避免真正去查当前像素下方的颜色采样。在着色器中，我们把实际读取的所有颜色采样都视为 alpha 等于 1。把未读取的中心采样在着色器内部视为颜色等于 0、alpha 等于 0，就能在屏幕上得到正确结果。</p><h4>示例 28-4. 该像素着色器把远处 CoC 与近处 CoC 合并并施加到屏幕</h4><pre><code>
+sampler colorSampler;
+// 原始源图像
+sampler smallBlurSampler;
+// SmallBlurPS() 的输出
+sampler largeBlurSampler;
+// DofDownsample() 的模糊输出
+float2 invRenderTargetSize;
+float4 dofLerpScale;
+float4 dofLerpBias;
+float3 dofEqFar;
+float4 tex2Doffset(sampler s, float2 tc, float2 offset)
+{
+  return tex2D(s, tc + offset * invRenderTargetSize);
+}
+half3 GetSmallBlurSample(float2 texCoords)
+{
+  half3 sum;
+  const half weight = 4.0 / 17;
+  sum = 0;
+  // 通过 alpha 混合得到的不模糊采样
+  sum += weight * tex2Doffset(colorSampler, tc, +0.5, -1.5).rgb;
+  sum += weight * tex2Doffset(colorSampler, tc, -1.5, -0.5).rgb;
+  sum += weight * tex2Doffset(colorSampler, tc, -0.5, +1.5).rgb;
+  sum += weight * tex2Doffset(colorSampler, tc, +1.5, +0.5).rgb;
+  return sum;
+}
+half4 InterpolateDof(half3 small, half3 med, half3 large, half t)
+{
+  half4 weights;
+  half3 color;
+  half alpha;
+  // 高效地计算每个采样的交叉混合权重。
+  // 设从无模糊采样到小模糊的过渡发生在距离
+  // d0 内，小模糊到中模糊在距离 d1 内，中模糊到
+  // 大模糊在距离 d2 内，其中 d0 + d1 + d2 = 1。
+  // dofLerpScale = float4( -1 / d0, -1 / d1, -1 / d2, 1 / d2 );
+  // dofLerpBias = float4( 1, (1 – d2) / d1, 1 / d2, (d2 – 1) / d2 );
+  weights = saturate(t * dofLerpScale + dofLerpBias);
+  weights.yz = min(weights.yz, 1 - weights.xy);
+  // 权重为 "weights.x"、通过 alpha 混合得到的不模糊采样
+  color = weights.y * small + weights.z * med + weights.w * large;
+  alpha = dot(weights.yzw, half3(16.0 / 17, 1.0, 1.0));
+  return half4(color, alpha);
+}
+half4 ApplyDepthOfField(const float2 texCoords)
+{
+  half3 small;
+  half4 med;
+  half3 large;
+  half depth;
+  half nearCoc;
+  half farCoc;
+  half coc;
+  small = GetSmallBlurSample(texCoords);
+  med = tex2D(smallBlurSampler, texCoords);
+  large = tex2D(largeBlurSampler, texCoords).rgb;
+  nearCoc = med.a;
+  depth = tex2D(depthSampler, texCoords).r;
+  if (depth > 1.0e6)
+  {
+    coc = nearCoc; // 我们不想模糊天空。
+  }
+  else
+  {
+    // dofEqFar.x 与 dofEqFar.y 指定用于转换为
+    // 远处失焦区域深度的线性斜坡。
+    // dofEqFar.z 是远处与近处模糊半径之比。
+    farCoc = saturate(dofEqFar.x * depth + dofEqFar.y);
+    coc = max(nearCoc, farCoc * dofEqFar.z);
+  }
+  return InterpolateDof(small, med.rgb, large, coc);
+}</code></pre><p></p><h2>28.6 结论</h2><p>这些着色器里算术运算不多，因此开销主要是纹理查找。</p><ul><li>生成四分之一分辨率图像时，对四分之一分辨率图像中的每个目标像素使用四次颜色查找和 16 次深度查找，折合原始图像每像素 1.25 次查找。</li><li>小半径模糊每像素再加四次查找。</li><li>施加变宽度模糊需要读取一次深度和两个预先算好的模糊级别，这又是每像素三次查找。</li><li>取得调整后的弥散圆，在四分之一分辨率图像中每像素需要两次纹理查找，折合原始图像每像素 0.125 个采样。</li><li>对近处 CoC 图像施加的小模糊再用四次纹理查找，折合原始图像每像素 0.25 个采样。</li></ul><p>合计为每像素 8.625 个采样，还不算施加大高斯模糊所需的可变采样数。实现为可分离滤波时，模糊通常不超过两遍、每遍八次纹理查找，配合双线性滤波即 17 次采样。平均下来相当于原始图像每像素一个采样。每像素纹理查找的期望次数约为 9.6 次。</p><p>帧缓冲带宽是另一个考量。该技术最先为原始降采样写四分之一分辨率图像一次，然后（通常）为大高斯模糊再写两次。之后还有两遍对四分之一分辨率图像的操作——施加公式 1，以及对其结果做轻微模糊。最后，原始图像的每个像素写一次以得到最终输出。合计为原始图像每像素 1.3125 次写入。</p><p>同样，该技术中有六次渲染目标切换，这里仍然假设大高斯模糊只做两遍。</p><p>在 Radeon X1900 和 GeForce 7900 上，1024x768 分辨率下实测性能开销为 1 到 1.5 毫秒。在次世代主机上性能损失类似。这实际上比基于 Scheuermann 2004 的原实现更快，大概是因为它的纹理读取次数不到一半。</p><h2>28.7 局限与未来工作</h2><p>采用我们的方法时，已对焦物体会渗到未对焦的背景物体上。这是该技术以及后处理景深技术普遍最难避免的瑕疵。为该 17 次采样的模糊多取一些深度采样可以减轻这些瑕疵。这应该够用，因为如我们所见，背景所需的模糊半径比前景小。</p><p>第二个瑕疵是该技术固有的：你不能把近处物体的模糊半径增大到让人明显看出这实际上是对屏幕做模糊，而不是对未对焦物体做模糊。<a href="https://developer.download.nvidia.com/books/gpugems3/28fig07.jpg" rel="noreferrer noopener">图 28-7</a> 是这个问题的最坏情形，而 <a href="https://developer.download.nvidia.com/books/gpugems3/28fig08.jpg" rel="noreferrer noopener">图 28-8</a> 展示的是更典型的情形。<a href="https://developer.download.nvidia.com/books/gpugems3/28fig08.jpg" rel="noreferrer noopener">图 28-8</a> 中间的图像是典型的模糊半径。右侧图像的模糊半径是它的两倍，连背景中相对较大的岩石都被抹得不见了。随着相机移动，这会变得尤其难以接受，表现为前景物体周围的一团雾。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/28fig07.jpg" alt="28fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/28fig07.jpg" rel="noreferrer noopener">图 28-7</a> 我们算法的最坏情形</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/28fig08.jpg" alt="28fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/28fig08.jpg" rel="noreferrer noopener">图 28-8</a> 模糊半径过大时效果崩坏</figcaption></figure><p>出现这种问题的半径取决于未对焦物体的尺寸，以及本应对焦的几何中有多少细节。较小的未对焦物体、以及含更高频细节的对焦物体，需要更小的最大模糊半径。要克服这一点，可以把前景物体渲染到单独的缓冲，使被模糊的颜色信息只来自前景物体。这需要仔细处理缺失的像素，也会让技术对渲染管线的侵入更强。</p><p>最后，我们没有显式处理透明。透明表面使用其背后第一个不透明物体的 CoC。要修正这一点，可以在对所有不透明几何施加景深之后再绘制透明物体。可以令其纹理查找偏向更低的 mipmap 层级，从而给它们一种景深的感觉。粒子效果也可以从「随失焦程度略微增大粒子尺寸」中受益。与不透明物体共享边缘的透明物体（例如窗户）在边界处仍可能有些难以接受的瑕疵。这同样会让技术更具侵入性。我们发现，在多数情况下完全忽略透明已经足够好。</p><h2>28.8 参考文献</h2><p>Demers, Joe. 2004. "Depth of Field: A Survey of Techniques."，载 <em>GPU Gems</em>，Randima Fernando 编，第 375–390 页。Addison-Wesley 出版。</p><p>Kass, Michael, Aaron Lefohn, and John Owens. 2006. "Interactive Depth of Field Using Simulated Diffusion on a GPU."，技术报告，Pixar Animation Studios。可在线获取：<a href="http://graphics.pixar.com/DepthOfField/paper.pdf" rel="noreferrer noopener">http://graphics.pixar.com/DepthOfField/paper.pdf</a>。</p><p>Kosloff, Todd Jerome, and Brian A. Barsky. 2007. "An Algorithm for Rendering Generalized Depth of Field Effects Based On Simulated Heat Diffusion."，技术报告第 UCB/EECS-2007-19 号。可在线获取：<a href="http://www.eecs.berkeley.edu/Pubs/TechRpts/2007/EECS-2007-19.pdf" rel="noreferrer noopener">http://www.eecs.berkeley.edu/Pubs/TechRpts/2007/EECS-2007-19.pdf</a>。</p><p>Křivánek, Jaroslav, Jiří Žára, and Kadi Bouatouch. 2003. "Fast Depth of Field Rendering with Surface Splatting."，发表于 Computer Graphics International 2003。可在线获取：<a href="http://www.cgg.cvut.cz/~xkrivanj/papers/cgi2003/9-3_krivanek_j.pdf" rel="noreferrer noopener"></a>http://www.cgg.cvut.cz/~xkrivanj/papers/cgi2003/9-3_krivanek_j.pdf。</p><p>Mulder, Jurriaan, and Robert van Liere. 2000. "Fast Perception-Based Depth of Field Rendering."，可在线获取：<a href="http://www.cwi.nl/~robertl/papers/2000/vrst/paper.pdf" rel="noreferrer noopener">http://www.cwi.nl/~robertl/papers/2000/vrst/paper.pdf</a>。</p><p>Potmesil, Michael, and Indranil Chakravarty. 1981. "A Lens and Aperture Camera Model for Synthetic Image Generation."，载 <em>Proceedings of the 8th Annual Conference on Computer Graphics and Interactive Techniques</em>，第 297–305 页。</p><p>Scheuermann, Thorsten. 2004. "Advanced Depth of Field."，发表于 Game Developers Conference 2004。可在线获取：<a href="http://ati.amd.com/developer/gdc/Scheuermann_DepthOfField.pdf" rel="noreferrer noopener">http://ati.amd.com/developer/gdc/Scheuermann_DepthOfField.pdf</a>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-28-practical-post-process-depth-field" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-28-practical-post-process-depth-field</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

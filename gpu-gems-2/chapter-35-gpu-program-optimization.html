@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 35 章　GPU 程序优化 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 35 章　GPU 程序优化」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 35 章　GPU 程序优化</h1>
+<p><em>Cliff Woolley</em><br> <em>University of Virginia</em></p><p>随着 GPU 可编程性日益普及、GPU 性能变得几乎令人难以抗拒，越来越多的程序员开始改写各种各样的应用以利用 GPU。但一路走来出现了一个有意思的趋势：许多程序员在 GPU 程序中犯的性能错误似乎都一样，不论他们有多少 CPU 编程经验。本章的目标是帮助刚开始做 GPU 编程的 CPU 程序员避开其中一些常见错误，从而既拿到 GPU 性能的好处，又不必忍受 GPU 程序员学习曲线上的种种头痛。</p><h2>35.1 数据并行计算</h2><p>初次给 GPU 编程时最大的难关之一，是学会如何在数据并行计算环境中发挥最大效能。如本书第 29 章「流式架构与技术趋势」所述，这种并行性在 GPU 上存在于多个层次。第一，在多个数据元素上并行执行，是现代 GPU 的关键设计特征。顶点处理器与片元处理器作用于四分量向量，在单个周期内完成加法、乘法、乘加或点积这类四分量指令。每条管线每周期可以调度不止一条这类指令。这为在 GPU 程序中提取指令级并行提供了充足机会。例如，一串顺序但独立的标量乘法可以合并为一次四分量向量乘法。此外，往往还能通过重新安排数据本身来提取并行性。例如，对一大片标量数据的操作天生就是标量的。若能以某种方式打包数据，使多个相同的标量操作同时发生，就多了一种利用 GPU 固有并行性的手段。（本书第 44 章「求解线性方程组的 GPU 框架」给出了这一想法在实践中的例子。）</p><h4>35.1.1 指令级并行</h4><p>现代 CPU 确实有 MMX 或 SSE 这类 SIMD 处理扩展，但大多数 CPU 程序员从不尝试亲自使用这些能力。有些人指望编译器在可能时利用 SIMD 扩展，有些人则完全忽略这些扩展。结果是，新手 GPU 程序员写出未能有效利用向量运算的代码，并不罕见。</p><p>我们看一位初次做 GPU 编程的人写的真实应用中的例子。下面这段代码里有一个纹理坐标 <code>center</code> 和一个名为 <code>params</code> 的 uniform 值。由它们算出一个新坐标 <code>offset</code>，用来从纹理 <code>Operator</code> 中查值：</p><pre><code>float2 offset = float2(params.x * center.x - 0.5f * (params.x - 1.0f),
+                       params.x *center.y - 0.5f * (params.x - 1.0f));
+float4 O = f4texRECT(Operator, offset);</code></pre><p>这段代码的第二行（真正的纹理查表）已经尽可能简洁，第一行却大有改进余地。每次乘法、加法或减法都在对标量值而非四分量向量运算，浪费了计算资源。GPU 程序的编译器在识别这类情形上不断进步，但最好还是尽可能主动用向量形式表达算术运算。这既有助于编译器做好工作，更重要的是有助于程序员养成用向量运算来<em>思考</em>的习惯。</p><p>再看同一个片元程序接下来的代码，这个习惯的重要性就更清楚了。这里我们用 <code>center</code> 纹理坐标算出与 <code>center</code> 相邻的四个纹素的坐标。</p><pre><code>float4 neighbor =
+    float4(center.x - 1.0f, center.x + 1.0f, center.y - 1.0f, center.y + 1.0f);
+float output = (-O.x * f1texRECT(Source, float2(neighbor.x, center.y)) +
+                -O.x * f1texRECT(Source, float2(neighbor.y, center.y)) +
+                -O.y * f1texRECT(Source, float2(center.x, neighbor.z)) +
+                -O.z * f1texRECT(Source, float2(center.x, neighbor.w))) /
+               O.w;</code></pre><p>现在我们不仅把加减法写成了标量形式，还用四个独立的标量结果拼出了一个四分量向量 <code>neighbor</code>，而它甚至并不正好是我们要的东西。要得到我们<em>真正</em>想要的四个纹理坐标，还得逐个把它们装配起来。这需要若干条移动指令。更好的做法是让四分量加法运算替我们装配纹理坐标。<em>重排</em>（swizzle）运算符（35.2.4 节将讨论）在这里能帮上忙：它让我们把加法得到的四分量按需要重新排布成多个二分量纹理坐标。</p><p>在做了必要的调整以改进向量化之后，下面是前述程序的改进版本：</p><pre><code>float2 offset = center.xy - 0.5f;
+offset = offset * params.xx + 0.5f; // 乘加
+float4 x_neighbor = center.xyxy + float4(-1.0f, 0.0f, 1.0f, 0.0f);
+float4 y_neighbor = center.xyxy + float4(0.0f, -1.0f, 0.0f, 1.0f);
+float4 O = f4texRECT(Operator, offset);
+float output = (-O.x * f1texRECT(Source, x_neighbor.xy) +
+                -O.x * f1texRECT(Source, x_neighbor.zw) +
+                -O.y * f1texRECT(Source, y_neighbor.xy) +
+                -O.z * f1texRECT(Source, y_neighbor.zw)) /
+               O.w;</code></pre><p>这里还有一个值得注意的点：表达式 <code>offset * params.xx + 0.5f</code> 是一次乘加运算，可以表示为一条 GPU 汇编指令，因此能在单周期内执行。这让我们在同样的时间内完成两倍的浮点运算。</p><p>最后注意，<code>output</code> 值本可以用四分量点积算出。可惜两个输入向量中，<code>O</code> 已经现成，另一个却必须由四次独立标量纹理查表的结果拼装。所幸在这个例子里乘加运算又一次救了场。但一般来说，为了得到一次向量运算的好处而用标量值拼装四分量向量，似乎有些浪费。这正是数据级并行发挥作用的地方。</p><h4>35.1.2 数据级并行</h4><p>有些问题本质上就是标量的，若能同时处理多个数据元素，可以更有效地并行化。这种数据级并行在 GPGPU 应用中尤其常见，其中纹理和渲染目标被用来存储大片二维的标量源数据与输出值数组。在这类情形下更高效地打包数据，就能把数据级并行暴露出来。当然，判断哪种打包方式最有效需要一点创造力，且因应用而异。两种常见做法如下：</p><ul><li>把数据网格划分成四个象限，将对应的标量值打包进单个 RGBA 纹素，从而把四个象限叠放在一起，如图 35-1 所示。<figure><img src="https://developer.download.nvidia.com/books/gpugems2/35_gpuforcpu_01.jpg" alt="35_gpuforcpu_01.jpg"><figcaption>图 35-1 通过堆叠网格象限来打包数据</figcaption></figure></li><li>取每四个相邻纹素组成的一组，把它们打包压进单个 RGBA 纹素，如图 35-2 所示。<figure><img src="https://developer.download.nvidia.com/books/gpugems2/35_gpuforcpu_02.jpg" alt="35_gpuforcpu_02.jpg"><figcaption>图 35-2 通过堆叠相邻纹素来打包数据</figcaption></figure></li></ul><p>这两种做法各有优劣。理论上把处理的片元总数减为四分之一可获得 4 倍加速，但在某些情况下打包数据的额外开销相当可观，尤其是当应用需要在处理结束时再把数据解包时。</p><p>在某些情形下，可以用针对应用定制的数据排布，在不用打包/解包开销的前提下获得向量处理的速度。例如，Goodnight et al.（2003a）使用一种为其应用量身定制的数据布局，加速了 GPU 上任意尺寸的可分离卷积。他们的做法是拿空间换计算时间：把标量数据复制四份放进 RGBA 纹理的四个通道，每个通道相对前一通道在给定维度上偏移一个纹素，如图 35-3 所示。这样做虽然没有减少处理的片元数，但仍利用了数据级并行：把将一起使用的数据按更易高效访问的方式排布，从而获得整体加速。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/35_gpuforcpu_03.jpg" alt="35_gpuforcpu_03.jpg"><figcaption>图 35-3 为可分离卷积定制的数据打包</figcaption></figure><h2>35.2 计算频率</h2><p>学会高效编写 GPU 程序的下一步，是学会利用这样一个事实：GPU 由若干不同的处理器组成。想想典型的光栅化管线。在硬件实现中，管线由一串并行工作、能力不同、可编程程度不同、各有强弱的处理器组成。管线每个阶段之间都有一个工作队列。只要某阶段输出的工作队列没满，该阶段就能与其他阶段并行工作。当 CPU 忙于把几何体和状态信息交给 GPU 时，GPU 的顶点处理器可以处理到达的每个顶点，对它做变换等等。与此同时，光栅化器可以把成组的已变换顶点转成片元（可能是很多片元），排入队列等待片元处理器处理。</p><p>注意，管线各阶段的相对工作量通常是递增的：少量顶点就能生成大量片元，而每个片元的处理都可能很贵。鉴于各阶段工作量逐级增加，把这些阶段在概念上看成一串嵌套循环会很有帮助（尽管如上所述，各循环实际上是并行运行的）。这些概念上的嵌套循环如代码清单 35-1 的伪代码所示。</p><h4>示例 35-1. 标准光栅化管线作为一串嵌套循环</h4><pre><code>foreach
+  tri in triangles
+  {
+    // 对每个顶点运行顶点程序
+    v1 = process_vertex(tri.vertex1);
+    v2 = process_vertex(tri.vertex2);
+    v3 = process_vertex(tri.vertex2);
+    // 把顶点组装成三角形
+    assembledtriangle = setup_tri(v1, v2, v3);
+    // 把组装好的三角形光栅化成 [0..many] 个片元
+    fragments = rasterize(assembledtriangle);
+    // 对每个片元运行片元程序
+    foreach
+      frag in fragments { outbuffer[frag.position] = process_fragment(frag); }
+  }</code></pre><p>对我们执行的每一项操作，都必须留意它的计算代价有多高、执行得有多频繁。在普通的 CPU 程序里，这相当直观。面对真正的嵌套循环（而非这里只是概念上的嵌套循环），很容易看出内层循环里的某个表达式是循环不变的，可以提到外层循环去、以更低的频率计算。CPU 程序中内层循环的分支也常因类似原因被避免：分支很贵，若出现在内层循环里，那它就出现得很频繁。</p><p>编写 GPU 程序时，把冗余工作降到最低尤其关键。自然，前面讨论过的那些在 CPU 程序中降低计算频率的技术，同样适用于 GPU 程序。但考虑到 GPU 编程的性质，代码清单 35-1 中每个概念性嵌套循环实际上是运行在不同硬件上的<em>独立</em>程序，甚至可能用不同的编程语言写成。正是这种分离，使人容易忽视这类优化。</p><h4>35.2.1 循环不变量的预计算</h4><p>新手 GPU 程序员容易犯的第一个错误，是在片元程序里对在几何图元上线性变化或取值一致的量做无谓的重复计算。纹理坐标就是一个典型例子。它们在所绘制的图元上线性变化，光栅化器会自动对它们插值。但当用到多个相关的纹理坐标时（例如 35.1.1 节例子中的 <code>offset</code> 与 <code>neighbor</code> 坐标），常见的错误是在片元程序里计算这些相关值。这就使一项可能很贵的计算被极其频繁地执行。</p><p>更好的做法是把相关纹理坐标的计算移到顶点程序里。虽然这只是把负载挪了个位置，光栅化器中的插值仍然按片元进行，但问题在于管线每个阶段做了<em>多少</em>工作、这些工作必须做得多<em>频繁</em>。无论用哪种做法，结果都是一组在所绘制图元上线性变化的纹理坐标。但插值在计算上往往比逐片元重新计算某个值便宜得多。只要片元数远多于顶点数，把大部分计算挪到逐顶点而非逐片元执行就是合理的。</p><p>不过仍值得再强调一次：<em>任何</em>在所处理域上线性变化的值都可以这样计算，无论它最终是否用于对纹理做索引。这里就藏着理解 GPU 编程的钥匙之一：只要你明白「专用」GPU 功能对应哪些通用概念，这些名字本身大多是无关紧要的。想深入了解这些对应关系，可看本书第 31 章「把计算概念映射到 GPU」。</p><p>把「提出循环不变代码」这一想法再推进一步：有些值最好在 CPU 而非 GPU 上预先算好。凡是在所绘制几何体上恒定的值，都可以一路提到 CPU 上算，再作为 uniform 参数传给 GPU 程序。这有时会导致语义上不那么优雅的参数；例如，假设我们给顶点程序或片元程序传一个 uniform 参数 <code>size</code>，但程序只用到 <code>size * size * 100</code> 这个值。虽然 <em>size</em> 乃至 <em>size 的平方</em>都有语义含义，<em>size 的平方乘以 100</em> 却几乎没什么含义。但话说回来，如果把 GPU 程序等同于一串嵌套循环、目标就是去掉冗余的循环不变计算，那多半还是更愿意在 CPU 上算好 <code>size * size * 100</code>，再把它作为 uniform 参数值传给 GPU。</p><h4>35.2.2 用查找表预计算</h4><p>在更经典的意义上，「预计算」指事先离线完成的计算——经典的存储与计算之间的权衡。这一概念也很容易映射到 GPU 上：定义域与值域尺寸固定、且在算法多次运行间保持不变（哪怕它们随输入以复杂方式变化）的函数，都可以预先算好并存进纹理贴图。</p><p>纹理贴图可用来把一、二、三个变量的函数在有限域上存为一维、二维或三维纹理。纹理通常用 0 到 1 之间的浮点纹理坐标索引。取值范围由所用纹理格式决定；8 位纹理格式只能存 [0, 1] 范围内的值，而浮点纹理能提供大得多的取值范围。纹理最多可存四个通道，因此可以在同一张纹理中编码多达四个独立的函数。纹理查表还提供滤波（插值），可用它在表项之间得到分段线性近似。</p><p>举个例子，假设有个片元程序我们想应用到棋盘格上：一个大四边形上一半的片元（「红」格）在第一遍处理，另一半（「黑」格）在第二遍处理。但片元程序怎么判断当前处理的片元是红还是黑？一种办法是对片元位置做取模运算：</p><pre><code>// 计算红黑（奇偶）掩码
+float2 intpart;
+float2 place = floor(1.0f - modf(round(position + 0.5f) / 2.0f, intpart));
+float2 mask = float2((1.0f - place.x) * (1.0f - place.y), place.x *place.y);
+if (((mask.x + mask.y) && do_red) || (!(mask.x + mask.y) && !do_red))
+{
+  // ...
+}</code></pre><p>这里粗略地说，<code>place</code> 是片元位置对 2 取模的结果，<code>mask.x</code> 与 <code>mask.y</code> 是布尔值，合起来告诉我们该片元是红格还是黑格。若想处理黑格片元，就把 uniform 参数 <code>do_red</code> 设为 0；若想处理红格片元，则设为 1。</p><p>但很显然，对这么一件看似简单的任务来说，这一大堆运算实在荒唐。更简单的做法是预先做一张棋盘格纹理，黑格纹素存 0，红格纹素存 1。这样就能跳过前面所有算术，只留一次纹理查表，获得可观的加速。剩下的代码如下：</p><pre><code>half4 mask = f4texRECT(RedBlack, IN.redblack);
+/*
+*
+mask.x and mask.w tell whether IN.position.x and IN.position.y
+*
+are both odd or both even, respectively. Either of these two
+*
+conditions indicates that the fragment is red. params.x==1
+*
+selects red; params.y==1 selects black.
+*/
+if (dot(mask, params.xyyx))
+{
+  ...
+}</code></pre><p>不过，尽管这个例子里查表在性能上是赚的，情况并非总是如此。许多 GPU 应用——尤其是那些大量使用四分量浮点纹理查表的应用——受内存带宽限制，所以为省下一点计算而引入一次额外的纹理读取，实际上可能是亏而不是赚。此外，纹理缓存的连续性至关重要；若查找表以不一致的方式被访问，就会抖动缓存，反而拖累性能。但如果能把足够多的计算「预先烘焙」进去，或者所涉 GPU 程序本来就受计算限制，并且烘焙结果能以空间一致的方式从纹理中读出，查表就能显著提升性能。关于基准测试与 GPU 应用剖析的更多内容，见本章后面 35.3 节。</p><h4>35.2.3 避免内层循环中的分支</h4><p>在 CPU 编程中，通常希望避免在内层循环里分支。这往往意味着把循环复制若干份，每份作用于数据的一个子集，走该子集特有的执行路径。这项技术有时称为<em>静态分支解析</em>或<em>子流化</em>。</p><p>同一概念也适用于 GPU。由于片元程序在概念上代表内层循环，应用这项技术就需要把含分支的片元程序拆成多个不含分支的片元程序。拆出的每个程序对应原单体程序中的一条代码执行路径。这项技术还要求应用把数据细分，对 GPU 来说就是光栅化多个图元而不是一个。详见本书第 34 章「GPU 流控惯用法」。</p><p>典型例子是二维网格，其中位于网格边界上的数据元素需要特殊处理，而内部元素不需要。此时更可取的做法是写两个独立的片元程序——一个短的不管边界条件，一个长的管边界条件——并在内部元素上绘制一个填充的四边形，在边界元素上绘制一个线框四边形。</p><h4>35.2.4 重排运算符</h4><p>GPU 编程中一个容易被人忽视或利用不足的特性是<em>重排</em>（swizzle）运算符。由于 GPU 上的寄存器都是四分量向量，而并非所有指令都以四分量向量为参数，就需要某种机制从这些四分量寄存器中造出其他尺寸的向量。重排运算符提供了这一功能。它在语法上类似 C 语言的结构体成员访问，但另有一个有趣的特性：数据成员可以按任意组合重排、重复或省略，如下例所示：</p><pre><code>float4 f = float4(1.0f, 2.0f, 3.0f, 4.0f);
+float4 g = float4(5.0f, 6.0f, 7.0f, 8.0f);
+float4 h = float4(0.1f, 0.2f, 0.3f, 0.4f);
+// 注意 h.w 在语法上等价于 h.wwww
+float4 out = f.xyyz * g.wyxz + h.w; // 这是一条指令！
+                                    // 又是乘加。
+// 结果：out 为 (8.4f, 12.4f, 10.4f, 21.4f)</code></pre><p>重排运算符在计算频率这一层面上也有用武之地。例如，考虑片元程序从三个相邻纹素读取的常见情形：(<em>x</em>, <em>y</em>)、(<em>x</em> - 1, <em>y</em>) 和 (<em>x</em> + 1, <em>y</em>)。由第一个纹理坐标算出第二、第三个，这活儿最好交给顶点程序和光栅化器，前面已经讨论过。但光栅化器插值四分量与插值二分量一样容易，所以没有理由让这三个纹理坐标占用三个独立的插值量。事实上只有四个不同的值被用到：<em>x</em>、<em>x</em> - 1、<em>x</em> + 1 和 <em>y</em>。因此三个纹理坐标其实都能打包进单个四分量并被一起插值。在片元程序中，用重排运算符就能（免费地）从这一个四分量插值量中取出三个不同的二分量纹理坐标，如下所示：</p><pre><code>struct vertdata
+{
+  float4 position : POSITION;
+  float4 texcoord : TEXCOORD0;
+} vertdata vertexprog(vertdata IN)
+{
+  vertdata OUT;
+  OUT.position = IN.position;
+  OUT.texcoord = float4(IN.texcoord.x, IN.texcoord.y, IN.texcoord.x - 1,
+                        IN.texcoord.x + 1);
+  return vertdata;
+}
+frag2frame fragmentprog(vertdata IN, uniform samplerRECT texmap)
+{
+  ... float4 center = f4texRECT(texmap, IN.texcoord.xy);
+  float4 left = f4texRECT(texmap, IN.texcoord.zy);
+  float4 right = f4texRECT(texmap, IN.texcoord.wy);
+  ...
+}</code></pre><p>这不仅省下了顶点处理器中的算术，也省下了插值量。此外，它还避免了在片元程序中构造向量：重排是免费的（在 NVIDIA GeForce FX 与 GeForce 6 系列 GPU 上），而一次构造一个通道所需的移动指令不是免费的。我们在 35.1.1 节见过同样的问题。</p><p>还有一点值得提：重排运算符在语法上的近亲<em>写掩码</em>运算符。写掩码指定目标变量的哪一部分分量应由当前指令修改。这可以作为提示告诉编译器：某些不必要的工作可以省掉。例如，若对一次纹理查表施加写掩码，就可能省下内存带宽，因为那些永远不会被用到的通道的纹理数据不必从纹理内存中读出。注意，写掩码在语法上虽与重排相似，但重排中「重排或复制通道」的概念并不适用于写掩码。</p><pre><code>float4 out;
+out = float4(1.0f, 2.0f, 3.0f, 4.0f);
+out.xz = float4(5.0f, 6.0f, 7.0f, 8.0f);
+// result: out is (5.0f, 2.0f, 7.0f, 4.0f)</code></pre><h2>35.3 剖析与负载均衡</h2><p>与 CPU 编程一样，写出高效 GPU 代码的最好办法是先写一个直白能跑的版本，然后按需迭代优化。可惜就 GPU 代码而言，这个过程目前还没那么轻松，因为可用的辅助工具较少。但只要程序员多下一点功夫，即使没有专门工具，也能有效地完成优化。</p><p>关键在于频繁地测量时间。事实上，<em>每一项</em>实施的优化都应通过计时单独验证。即便是看起来显而易见、<em>必定</em>能提速的优化，实际也可能毫无收益，甚至更糟，导致变慢。出现这种情况，可能意味着图形管线中存在负载不均衡，但这类问题也可能源于最后一步优化发生在图形驱动内部，使程序员难以确切知道真正执行的到底是哪些代码。源码上一处看似有益的变换，可能恰恰禁用了驱动所做的另一项优化，造成净性能损失。这类问题若在每次优化后都做基准测试，就很容易发现；事后回头排查、隔离出有问题的优化，既浪费时间又浪费精力。</p><p>一旦把显而易见的优化都做完了，深入了解硬件的底层能力就有用了，特别是在超标量指令发射方面。你对哪些指令能同时执行知道得越细，就越可能认出额外的代码变换与改进机会。NVShaderPerf 工具在这方面有帮助：它能确切显示你的片元程序如何调度到 GPU 的算术单元上，省去片元程序优化中的大量猜测。（关于 NVShaderPerf 的更多信息，见本章末尾的「参考文献」。）</p><p>即便片元程序已经调到你能想象的最优，GPU 应用<em>仍</em>有可能跑得更快。到了这一步，事情就变成找出应用中的主要瓶颈，并尽可能把负载从那里移走。第一步是用一个 CPU 应用剖析工具，例如 Rational Quantify、Intel VTune 或 AMD CodeAnalyst。这有助于定位驱动开销之类的问题（比如上下文切换中的开销）。这类剖析工具给出的信息并非<em>全部</em>可靠；许多图形 API 调用是非阻塞的，以便 CPU 与 GPU 并行工作。到某个时刻，GPU 的工作队列会填满，CPU 侧某个随机的 API 调用就会阻塞，等待 GPU 跟上。这个被阻塞的调用会被 CPU 剖析工具记为耗时很长，尽管那段时间所做的工作更应归到更早那个未阻塞的 API 调用上。不过，只要记住这个注意点，CPU 剖析工具仍能提供有价值的洞见。</p><p>把 CPU 开销降到最低之后，剩下的唯一问题就是确定 GPU 的瓶颈在哪里。市面上已开始出现专门监控 GPU 性能的工具，NVPerfHUD 就是一个好例子（关于 NVPerfHUD 的更多内容见「参考文献」）。若这些工具还提供不了详细信息，或对某个应用不适用（例如 NVPerfHUD 目前只支持 Direct3D，不太适合 GPGPU 应用），可以用其他技术来补足。每种技术都涉及一系列实验。一种办法是测试：往 GPU 管线的某个部分增加工作，总执行时间是否增加；或减少工作，执行时间是否减少。若是，那多半就是主要瓶颈所在。例如，若一个片元程序受计算限制，那么插入额外的计算指令会让程序执行时间增加；但若程序受内存带宽限制，额外计算很可能是白送的。另一种办法是把显卡的计算核心或内存系统降频。如果内存系统降频后性能不下降，那内存带宽就不是限制因素。这些技术以及更多方法在 <em>NVIDIA GPU Programming Guide</em>（NVIDIA 2004）中都有详述。</p><p>归根到底，<em>理解</em>瓶颈是知道如何让它们消失的关键。把前面这些技术结合起来，再加上一点经验，会有助于这种理解。</p><h2>35.4 结论</h2><p>如我们所见，GPU 程序优化与 CPU 程序优化有许多共同主题。为 GPGPU 提供统一流编程模型（因而有望为 GPU 应用的整体优化带来更多机会）的高层语言正在涌现（McCool et al. 2002, Buck et al. 2004），GPU 代码的自动优化也在不断进步。但在这些技术成熟之前，GPU 程序员仍须自己负责高层优化，并理解所用硬件的细节，才能从底层优化中榨出最大收益。希望本章给了你所需的工具，去学会如何最好地从 GPU 应用中挖掘出 GPU 能提供的一切性能。</p><h2>35.5 参考文献</h2><p><a id="biblio35_01"></a>Buck, Ian, Tim Foley, Daniel Horn, Jeremy Sugerman, Kayvon Fatahalian, Mike Houston, and Pat Hanrahan. 2004. "Brook for GPUs: Stream Computing on Graphics Hardware." <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2004)</em> 23(3)，pp. 777–786。可在线获取：<strong><a href="http://graphics.stanford.edu/projects/brookgpu/" rel="noreferrer noopener">http://graphics.stanford.edu/projects/brookgpu/</a></strong></p><p><a id="biblio35_02"></a>Goodnight, Nolan, Rui Wang, Cliff Woolley, and Greg Humphreys. 2003a. "Interactive Time-Dependent Tone Mapping Using Programmable Graphics Hardware."，载 <em>Eurographics Symposium on Rendering: 14th Eurographics Workshop on Rendering</em>，pp. 26–37。</p><p><a id="biblio35_03"></a>Goodnight, Nolan, Cliff Woolley, Gregory Lewin, David Luebke, and Greg Humphreys. 2003b. "A Multigrid Solver for Boundary Value Problems Using Programmable Graphics Hardware."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 102–111。</p><p><a id="biblio35_04"></a>McCool, Michael D., Zheng Qin, and Tiberiu S. Popa. 2002. "Shader Metaprogramming."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2002</em>，pp. 57–68。修订版文章可在线获取：<strong><a href="http://www.cgl.uwaterloo.ca/Projects/rendering/Papers/index.html#metaprog" rel="noreferrer noopener">http://www.cgl.uwaterloo.ca/Projects/rendering/Papers/index.html#metaprog</a></strong></p><p><a id="biblio35_05"></a>NVIDIA. 2004. <em>NVIDIA GPU Programming Guide</em>。可在线获取：<strong><a href="http://developer.nvidia.com/object/gpu_programming_guide.html" rel="noreferrer noopener">http://developer.nvidia.com/object/gpu_programming_guide.html</a></strong></p><p><a id="biblio35_06"></a>NVPerfHUD。可在线获取：<strong><a href="http://developer.nvidia.com/object/nvperfhud_home.html" rel="noreferrer noopener">http://developer.nvidia.com/object/nvperfhud_home.html</a></strong></p><p><a id="biblio35_07"></a>NVShaderPerf。可在线获取：<strong><a href="http://developer.nvidia.com/object/nvshaderperf_home.html" rel="noreferrer noopener">http://developer.nvidia.com/object/nvshaderperf_home.html</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-iv-general-purpose-computation-gpus-primer/chapter-35-gpu-program-optimization" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-iv-general-purpose-computation-gpus-primer/chapter-35-gpu-program-optimization</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

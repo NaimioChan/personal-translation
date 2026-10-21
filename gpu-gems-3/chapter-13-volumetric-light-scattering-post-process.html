@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 13 章　作为后处理的体积光散射 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 13 章　作为后处理的体积光散射」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 13 章　作为后处理的体积光散射</h1>
+<p><em>Kenny Mitchell<br> Electronic Arts</em></p><p>本章介绍一种简单的后处理（post-process）方法，用于产生大气中阴影造成的体积光散射效果。我们改进了一个现有的日光散射解析模型，把体积遮蔽的影响纳入其中，并给出了它在像素着色器中的实现。随书 DVD 中的演示表明，这项技术可以应用于任意场景复杂度、任意动画化的图像。演示的截图见 <a href="https://developer.download.nvidia.com/books/gpugems3/13fig01.jpg" rel="noreferrer noopener">图 13-1</a>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/13fig01.jpg" alt="13fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/13fig01.jpg" rel="noreferrer noopener">图 13-1</a>　高度动画化场景上的实时体积光散射</figcaption></figure><h2>13.1 引言</h2><p>在现实世界中，我们很少在真空中观察事物，即物体与观察者之间空无一物。在实时渲染中，参与介质对光传输的影响常常被简化为低复杂度的均匀假设。这是因为在复杂的交互式动画环境中，要考虑发射、吸收与散射的辐射传输方程（Jensen and Christensen 1998）难以求解。本章我们考虑大气中体积阴影对光散射的影响，并说明如何用一个 GPU 像素着色器后处理，对一个或多个图像光源实时计算这一效果。</p><h2>13.10 参考文献</h2><p>Dobashi, Y., T. Yamamoto, and T. Nishita. 2002. "Interactive Rendering of Atmospheric Scattering Effects Using Graphics Hardware." 载 <em>Graphics Hardware</em>。</p><p>Hoffman, N., and K. Mitchell. 2002. "Methods for Dynamic, Photorealistic Terrain Lighting."，载 <em>Game Programming Gems 3</em>，D. Treglia 编，第 433–443 页。Charles River Media。</p><p>Hoffman, N., and A. Preetham. 2003. "Real-Time Light-Atmosphere Interactions for Outdoor Scenes."，载 <em>Graphics Programming Methods</em>，Jeff Lander 编，第 337–352 页。Charles River Media。</p><p>James, R. 2003. "True Volumetric Shadows."，载 <em>Graphics Programming Methods</em>，Jeff Lander 编，第 353–366 页。Charles River Media。</p><p>Jensen, H. W., and P. H. Christensen. 1998. "Efficient Simulation of Light Transport in Scenes with Participating Media Using Photon Maps."，载 <em>Proceedings of SIGGRAPH 98</em>，第 311–320 页。</p><p>Karras, T. 1997. Drain by Vista. <em>Abduction'97</em>。可在线获取：<a href="http://www.pouet.net/prod.php?which=418&amp;page=0" rel="noreferrer noopener">http://www.pouet.net/prod.php?which=418&amp;page=0</a>。</p><p>Max, N. 1986. "Atmospheric Illumination and Shadows."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 86)</em> 20(4)，第 117–124 页。</p><p>Mech, R. 2001. "Hardware-Accelerated Real-Time Rendering of Gaseous Phenomena." <em>Journal of Graphics Tools</em> 6(3)，第 1–16 页。</p><p>Mitchell, J. 2004. "Light Shafts: Rendering Shadows in Participating Media." 2004 年游戏开发者大会演讲。</p><p>Nishita, T., Y. Miyawaki, and E. Nakamae. 1987. "A Shading Model for Atmospheric Scattering Considering Luminous Intensity Distribution of Light Sources."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 87)</em> 21(4)，第 303–310 页。</p><h2>13.2 曙暮光条</h2><p>在合适的条件下，当空间中充满足够稠密的散射介质混合物（例如气体分子和气溶胶）时，遮挡光的物体会投出体积阴影，看上去就像从光源辐射出的光条。这类现象有各种名称：曙暮光条、太阳光束、日冕光、星芒、耶稣光或光轴。在阳光中，这些体积实际上是平行的，但在透视下看起来像从太阳处散开。</p><p>渲染曙暮光条最早是在非实时渲染中用改进的阴影体算法解决的（Max 1986），不久之后又发展了针对多光源的方法（Nishita et al. 1987）。这个话题后来在实时渲染中重新被研究，采用了基于切片的体渲染技术（Dobashi et al. 2002），最近又用硬件阴影贴图实现（Mitchell 2004）。不过基于切片的体渲染方法可能出现采样瑕疵、要求高填充率，还需要额外的场景设置。阴影贴图方法虽然提高了效率，但在这里同样有基于切片方法的缺点，并且需要更多显存资源和渲染同步。另一种实时方法基于 Radomir Mech（2001）的工作，使用多边形体积（James 2003），其中重叠的体积用帧缓冲混合配合深度剥离累加。一个类似的方法（James 2004）利用累积的体积厚度，免去了深度剥离的需要。在我们的做法中，我们施加逐像素的后处理操作，不需要预处理或其他场景设置，并且能在任意复杂度的动画场景中生成细致的光轴。</p><p>在先前的工作（Hoffman and Preetham 2003）中，实现了一个用于均匀介质光散射的 GPU 着色器。我们在此之上扩展了一个后处理步骤，以计入体积阴影。这个后处理的基本形态可以追溯到一种图像处理操作——<em>径向模糊</em>，它出现在许多 CG 演示作品中（Karras 1997）。虽然这类演示用软件光栅化来施加后处理效果，我们则用硬件加速的着色器后处理，以便基于日光解析模型进行更复杂的采样。</p><h2>13.3 体积光散射</h2><p>要计算每个像素处的光照，我们必须考虑从光源到该像素的散射，以及散射介质是否被遮挡。就阳光而言，我们从日光散射的解析模型出发（Hoffman and Preetham 2003）。回顾如下：</p><p><strong>公式 1</strong></p><p><a><img alt="equ277-01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/equ277-01.jpg"/></a></p><p>其中 <em>s</em> 是在介质中穿行的距离，<em></em> 是光线与太阳之间的夹角。<em>E</em> <sub>sun</sub> 是来自太阳的光源照明，<em></em> <sub>ex</sub> 是由光吸收与外散射特性组成的消光常数，<em></em> <sub>sc</sub> 是由瑞利散射与米氏散射特性组成的角散射项。这个公式的关键在于：第一项计算从发射点到视点之间被吸收的光量，第二项计算光散射进视线路径所增加的量。与 Hoffman and Mitchell 2002 一样，云、建筑和其他物体这类遮挡物质造成的效果在这里简单地建模为对光源照明的衰减，</p><p><strong>公式 2</strong></p><p><a><img alt="equ277-02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/equ277-02.jpg"/></a></p><p>其中 <em>D</em>(<em></em>) 是视点位置 <em></em> 处遮挡阳光的物体合并后的衰减不透明度。</p><p>这一考虑带来了新的麻烦：要为图像中的每个点确定光源是否被遮挡。在屏幕空间中，我们没有完整的体积信息来确定遮蔽。不过，我们可以通过在图像空间中沿指向光源的射线累加采样，估计每个像素处被遮挡的概率。命中发光区域与命中遮挡物的采样比例，就给出我们想要的遮蔽百分比 <em>D</em>(<em></em>)。在发光区域比遮挡物体更亮的地方，这一估计效果最好。13.5 节介绍处理不存在这种对比的场景的方法。</p><p>如果把采样照明除以采样数 <em>n</em>，后处理就归结为对图像的加性采样：</p><p><strong>公式 3</strong></p><p><a><img alt="equ278-01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/equ278-01.jpg"/></a></p><h4>13.3.1 控制求和</h4><p>此外，我们引入衰减系数来参数化控制求和：</p><p><strong>公式 4</strong></p><p><a><img alt="equ278-02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/equ278-02.jpg"/></a></p><p>其中 <em>exposure</em> 控制后处理的整体强度，<em>weight</em> 控制每次采样的强度，<em>decay<sup>i</sup></em>（取值范围 [0, 1]）在光线远离光源的过程中逐次削弱每次采样的贡献。这个指数衰减因子实际上让每条光轴在远离光源时平滑减弱。</p><p>曝光与权重这两个因子只是缩放系数。增大其中任何一个都会提高结果的整体亮度。在演示中，采样权重用细粒度控制调整，曝光用粗粒度控制调整。</p><p>由于采样完全来自源图像，半透明物体无需额外工作就能处理。多个光源可以通过对每个投射光线的光源依次施加加性的屏幕空间渲染遍来实现。虽然这里的解释中我们用的是自己的日光解析模型，但实际上任何图像光源都可以使用。</p><p>对于太阳位置 <em></em> 与每个屏幕空间图像位置 <em></em>，我们沿射线向量以等间隔从源图像连续采样来实现求和，其中 <em></em> = (<em></em>-)/<em>n</em>(<em>density</em>)。这里引入 <em>density</em> 是为了控制采样之间的间距，用于我们想减少总的采样迭代次数、同时保持足够无走样的采样密度的情形。增大密度因子会减小采样间距，结果光轴更亮但覆盖范围更短。</p><p>在 <a href="https://developer.download.nvidia.com/books/gpugems3/13fig02.jpg" rel="noreferrer noopener">图 13-2</a> 中，来自 <em></em> <sub>1</sub> 的采样都没有被遮挡，按常规方式求 <em>L</em>(<em>s</em>,<em></em>) 得到最大的散射照明。在 <em></em> <sub>2</sub> 处，射线上有部分采样打到建筑，因此累积到的散射照明较少。通过对图像中每个像素投射的射线求和，我们生成了包含被遮挡光散射的体积。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/13fig02.jpg" alt="13fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/13fig02.jpg" rel="noreferrer noopener">图 13-2</a>　屏幕空间中的光线投射</figcaption></figure><p>我们可以对源图像降采样来降低带宽需求。配合滤波，这会减少采样瑕疵，同时因滤波核而通过邻域采样引入一份局部散射贡献。在演示中，一个基本的双线性滤波就足够了。</p><h2>13.4 后处理像素着色器</h2><p>这项技术的核心是代码清单 13-1 给出的后处理像素着色器，它实现公式 4 的简单求和。</p><p>给定初始图像，沿从像素位置射向屏幕空间光源位置的射线生成采样坐标。<sup><a href="https://developer.download.nvidia.com/books/gpugems3/ch13fn01.html" rel="noreferrer noopener">[1]</a></sup> 屏幕空间中的光源位置由标准的 world-view-project 变换算出，再经缩放与偏移得到 [-1, 1] 范围内的坐标。公式 4 求和中的连续采样 <em>L</em>(<em>s</em>, <em></em>, <em><sub>i</sub></em> ) 会同时乘以 <em>weight</em> 常数与指数 <em>decay</em> 衰减系数，以便参数化地控制效果。采样之间的间距，即 <em>density</em>，可以调整；作为最后一项控制因子，合并后的颜色再乘以一个常数衰减系数 <em>exposure</em>。</p><h4>示例 13-1. 加性采样的后处理着色器实现</h4><pre><code>
+float4 main(float2 texCoord : TEXCOORD0) : COLOR0
+{
+  // 在屏幕空间中计算从像素指向光源的向量。
+  half2 deltaTexCoord = (texCoord - ScreenLightPos.xy);
+  // 除以采样数，再乘以控制系数。
+  deltaTexCoord *= 1.0f / NUM_SAMPLES * Density;
+  // 保存初始采样。
+  half3 color = tex2D(frameSampler, texCoord);
+  // 设置光照衰减因子。
+  half illuminationDecay = 1.0f;
+  // 按公式 3 做 NUM_SAMPLES 次迭代求和。
+  for (int i = 0; i < NUM_SAMPLES; i++)
+  {
+    // 沿射线推进采样位置。
+    texCoord -= deltaTexCoord;
+    // 在新位置取出采样值。
+    half3 sample = tex2D(frameSampler, texCoord);
+    // 应用采样的衰减缩放/衰减因子。
+    sample *= illuminationDecay * Weight;
+    // 累加合成颜色。
+    color += sample;
+    // 更新指数衰减因子。
+    illuminationDecay *= Decay;
+  }
+  // 输出最终颜色，再乘上一个控制缩放系数。
+  return float4(color * Exposure, 1);
+}</code></pre><h2>13.5 屏幕空间遮蔽方法</h2><p>如前所述，屏幕空间中的采样并不是纯粹的遮蔽采样。表面纹理的变化可能导致不理想的条纹。所幸我们可以用以下措施来处理这些不良效果。</p><h4>13.5.1 遮蔽预渲染遍方法</h4><p>如果我们把遮挡物体以黑色、无纹理的方式渲染进源帧缓冲，那么生成光线条的图像处理就在这张图上进行。之后用常规着色渲染场景中的遮挡物体，再把后处理结果以加性方式混合进场景。这种做法与常见的先渲染一遍无着色深度预渲染遍、以限制完整着色像素的深度复杂度的手法相辅相成。<a href="https://developer.download.nvidia.com/books/gpugems3/13fig03.jpg" rel="noreferrer noopener">图 13-3</a> 展示了所涉及的步骤。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/13fig03.jpg" alt="13fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/13fig03.jpg" rel="noreferrer noopener">图 13-3</a>　遮蔽预渲染遍的效果</figcaption></figure><h4>13.5.2 遮蔽模板方法</h4><p>在较早的图形硬件上，不用预渲染遍也能达到同样效果：使用模板缓冲或 alpha 缓冲。图像中的主要发光元素（例如天空）照常渲染，同时置一个模板位。然后渲染场景中的遮挡物体，不置模板位。施加后处理时，只有置了模板位的那些采样才参与加性混合。</p><h4>13.5.3 遮蔽对比度方法</h4><p>同样地，这个问题也可以通过降低纹理对比度来管理：借助纹理内容、雾、空气透视，或者朝光源方向时效果强度增大所对应的光适应。任何降低遮挡物体照明频率与对比度的做法都会减轻条纹瑕疵。</p><h2>13.6 注意事项</h2><p>虽然能取得有说服力的结果，但这个方法并非没有局限。在处理相对较近的光源时，来自背景物体的光轴可能出现在前景物体之前，如 <a href="https://developer.download.nvidia.com/books/gpugems3/13fig04.jpg" rel="noreferrer noopener">图 13-4</a> 所示。在完整的辐射传输解中，前景物体会正确地遮住背景的光轴。这一现象没有想象中那么显眼，原因之一是它可以被感知为相机镜头效果的表现——光散射发生在场景之前的一层里。存在高频纹理物体时，这个瑕疵也能减轻。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/13fig04.jpg" alt="13fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/13fig04.jpg" rel="noreferrer noopener">图 13-4</a>　处理一项局限</figcaption></figure><p>当遮挡物体越过图像边界时，光轴会闪烁，因为它们超出了可见采样的范围。要减轻这个瑕疵，可以在屏幕周围渲染一个扩展区域，以增大可寻址采样的范围。</p><p>最后，当视线垂直于光源方向时，光源的屏幕空间位置可能趋于无穷远，从而导致采样间距过大。这可以通过把屏幕空间位置钳制到合适的保护带区域来减轻。另一种做法是让效果随接近垂直而淡出，使用遮蔽方法时还会进一步减弱。</p><h2>13.7 演示</h2><p>本书 DVD 上的演示用 Shader Model 3.0 施加后处理，因为所需的纹理采样数超出了 Shader Model 2.0 的限制。不过，这项效果在较早的图形硬件上也能用几乎同样的效率实现：在固定功能硬件上用加性帧缓冲混合，配合模板遮蔽方法分多遍完成，如 <a href="https://developer.download.nvidia.com/books/gpugems3/13fig05.jpg" rel="noreferrer noopener">图 13-5</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/13fig05.jpg" alt="13fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/13fig05.jpg" rel="noreferrer noopener">图 13-5</a>　在固定功能硬件上用多个加性帧缓冲渲染遍生成曙暮光条</figcaption></figure><h2>13.8 扩展</h2><p>可以在较低分辨率上采样，以降低纹理带宽需求。进一步的改进是用随机采样改变采样模式，从而在采样密度降低的地方减少规则图案瑕疵。</p><p>我们的方法在一次着色器执行中完成整个后处理。在一项多遍做法中，像素着色器的求和可以在这样的方式下进行：把从光源发出的同心矩形环带的结果累加到相邻的外层环带中，即 <em>L</em>(<em>s</em>, <em></em>, <em></em>) = <em>L<sub>i</sub></em> <sub>-</sub> <sub>1</sub>(<em>s</em>, <em></em>, <em></em>) + <em>L<sub>i</sub></em> (<em>s</em>, <em></em>, <em></em>)。虽然这未必最适合当前的硬件设计，但这样做所需的采样与计算量已经是最低限度。</p><p>在光轴强度与避免过饱和之间取得平衡，需要调整衰减系数。一个执行光适应、使图像影调保持一致的解析公式，或许能提供一种自动获得一致观感图像的方法。例如，我们也许可以评估图像整体的平均、最小与最大照明的组合，然后施加一条校正色阶，从而避免图像过度泛光或过于阴郁。</p><h2>13.9 小结</h2><p>我们展示了一种简单的后处理方法，用于产生大气中阴影造成的体积光散射效果。我们扩展了一个现有的日光散射解析模型，纳入体积遮蔽的贡献，并描述了它在像素着色器中的实现。演示表明这是一种实用技术，可以应用于任意场景复杂度、任意动画化的图像。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-13-volumetric-light-scattering-post-process" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-13-volumetric-light-scattering-post-process</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

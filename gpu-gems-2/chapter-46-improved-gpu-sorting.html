@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 46 章　改进的 GPU 排序 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 46 章　改进的 GPU 排序」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 46 章　改进的 GPU 排序</h1>
+<p><em>Peter Kipfer</em><br> <em>Technische Universität München</em></p><p><em>Rüdiger Westermann</em><br> <em>Technische Universität München</em></p><p>排序是计算机科学中最重要的算法构件之一。能高效排序海量数据是一项关键操作。虽然排序算法在 CPU 上的实现相对直接——多数情况下只是选用某个特定的排序算法——但在 GPU 上就不那么容易实现，因为 GPU 实际上是一种高度并行的单指令多数据（SIMD）架构。鉴于 GPU 在访存受限和计算受限的算法上都能胜过 CPU，找到在 GPU 上高效排序的办法很重要。此外，把数据从 GPU 读回 CPU 再执行排序之类的操作效率很低，因此在 GPU 上排序数据更为可取。</p><p>Buck 和 Purcell 2004 展示了如何用并行双调归并排序算法在 GPU 上排序数据。本章展示如何充分利用 GPU 的计算资源来提高 GPU 排序的效率。我们还演示了一种在算法中间步骤不会破坏近似有序数组次序的排序算法。这对粒子系统之类的效果很有用：几何对象需要按观察者距离排序，而暂时容忍小的排序误差可以换来更好的应用响应性。</p><h2>46.1 排序算法</h2><p>排序算法几乎是每个程序最重要的构件之一。计算机图形应用需要可见性排序，以正确渲染透明对象，并高效利用 early-z 测试之类的加速特性。在物理仿真中，排序是把参与对象插入空间结构以进行碰撞检测的必要步骤。</p><p>排序算法可分为两类：数据驱动的和数据无关的。实践中最快的算法是数据驱动的，也就是说算法采取的步骤取决于当前考察的键值。如果待排序序列本来就有序，这可能导致意外的糟糕性能。著名的 Quicksort 算法就是一例。排序 <em>n</em> 个元素时，它的平均复杂度为 <em>O</em>(<em>n</em> log(<em>n</em>))，这是可证明最优的。但在最坏情况下，Quicksort 的复杂度为 <em>O</em>(<em>n</em> <sup>2</sup>)，这是不可接受的。还有其他排序算法如 Heapsort 没有这个问题，但它们的数据访问模式更难处理，或者需要更多比较操作。Heapsort 在你只需要部分有序的列表（例如优先队列）时最有用。</p><p>第二类算法，即数据无关的算法，不存在这种差异。由于算法不根据当前键值改变处理方式，它们总是走同样的处理路径。这使其操作序列完全固定，我们可以利用这一点在多个处理器上实现它们，因为需要通信的位置是事先已知的。在考虑 GPU 上的排序实现时，这一特性至关重要，因为排序程序将运行在片元处理器上，而片元处理器无法根据输入数据值改变输出的内存位置。</p><h2>46.2 一个简单的初步做法</h2><p>数据无关的排序算法可以表示为排序网络，如图 46-1 所示。为研究总体做法，我们看一个简单的例子。为简便起见，假定我们在排序一个一维的键数组。在排序网络中，每一列是一系列并行执行的比较操作。我们称之为排序网络的<em>一趟</em>。输入键从左到右穿过网络时被逐步排序。在这个称为<em>奇偶转置排序</em>的简单例子中，如果比较操作是<em>小于</em>（由箭头方向指示），则较小的键每次迭代向上移动一行，较大的键向下移动。最坏情况下，如果最小的键起始位于位置 <em>n</em>，就需要 <em>n</em> 次迭代才能把它一路移到位置 0。因此该排序算法的复杂度为 <em>O</em>(<em>n</em> <sup>2</sup>)，并非最优。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/46_sorting_01.jpg" alt="46_sorting_01.jpg"><figcaption>图 46-1 键的奇偶转置排序网络</figcaption></figure><p>该算法的实现很简单，本质上也很容易并行化。我们在双缓冲模式下渲染到两个纹理缓冲。每一趟我们绘制一个全屏大小的四边形，执行一个片元程序：取本片元位置处的键，从源缓冲取相邻位置的键，比较两个键，把结果写入目标缓冲。注意，因为一次只能写入一个片元，比较两个键就涉及处理两个片元；我们在第一个上做<em>小于</em>比较，在第二个上做<em>大于等于</em>比较。执行哪种操作可以根据当前行号做取模运算来确定。这也意味着两个片元都要做两次数据（纹理）取数。因此这种做法的带宽需求是 CPU 实现的两倍——后者只取一次数据，然后按比较结果交换写入。</p><h2>46.3 快速排序</h2><p>虽然简单网络的每一趟都很便宜，但完成一次完整排序所需的趟数在多数（实时）场合都高得不可接受。假设我们在粒子引擎里用这个排序器，让粒子保持从后到前的顺序，以便在开启深度测试时正确渲染透明效果。这种做法会遇到严重的性能问题，因为我们会想用大量粒子（多达一百万）。即使排序更快，我们可能也想把工作量分摊到若干显示帧上，甚至可以接受局部次序不精确，只要它能在很短时间内收敛到完整排序。</p><p>对这类应用，我们希望输入的过渡既快又平滑，逐步变成有序序列。这样我们就能利用算法收敛到正确序列过程中的中间结果，同时增量地多做几趟（Kolb et al. 2004）。图 46-2 展示了一个具有所需性质的排序网络：<em>奇偶归并排序</em>（Sedgewick 1998）。思路是分别排序所有奇数键和偶数键，然后归并。这样每一步称为排序算法的一个<em>阶段</em>。这些阶段随后按 2 的各次幂缩放并重复，直到整个字段被归并。要排序一个阶段的 <em>m</em> 个键，需要 log(<em>m</em>) 趟。因此排序全部 <em>n</em> 个键需要 log(<em>n</em>) 个阶段，总趟数为 <em>O</em>(<em>n</em> log<sup>2</sup>(<em>n</em>) + log(<em>n</em>))。这比 Quicksort 的 <em>O</em>(<em>n</em> log(<em>n</em>)) 多，但在极限情形下仍是最优的，这也是奇偶归并排序也被称为最优算法的原因。因此排序一百万个键需要 210 趟，而简单的初步做法需要一百万趟。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/46_sorting_02.jpg" alt="46_sorting_02.jpg"><figcaption>图 46-2 键的奇偶归并排序网络</figcaption></figure><h4>46.3.1 实现奇偶归并排序</h4><p>我们采用与前面简单奇偶转置排序示例相同的做法。排序算法在片元程序中实现，由 CPU 上的两层嵌套循环驱动，这两层循环只是在绘制四边形前通过 uniform 参数把阶段、趟号和一些派生值传给着色器。若要排序许多元素，就必须把它们存放在二维纹理中。为排序整个二维字段，片元程序必须把一维数组索引转换为二维纹理坐标。代码清单 46-1 是奇偶归并排序片元着色器的 GLSL 代码。</p><h4>示例 46-1. 实现奇偶归并排序的 GLSL 片元程序</h4><pre><code>uniform vec3 Param1;
+uniform vec3 Param2;
+uniform sampler2D Data;
+#define OwnPos gl_TexCoord[0]
+// uniform 数据字段的内容
+#define TwoStage Param1.x
+#define Pass_mod_Stage Param1.y
+#define TwoStage_PmS_1 Param1.z
+#define Width Param2.x
+#define Height Param2.y
+#define Pass Param2.z
+void main(void)
+{
+  // 取自身
+  vec4 self = texture2D(Data, OwnPos.xy);
+  float i = floor(OwnPos.x * Width) + floor(OwnPos.y * Height) * Width;
+  // 本项在待归并区间中的位置
+  float j = floor(mod(i, TwoStage));
+  float compare;
+  if ((j < Pass_mod_Stage) || (j > TwoStage_PmS_1))
+    // 必须复制 -> 与自身比较
+    compare = 0.0;
+  else
+    // 必须排序
+    if (mod((j + Pass_mod_Stage) / Pass, 2.0) < 1.0)
+      // 在左侧 -> 与右侧的伙伴比较
+      compare = 1.0;
+    else
+      // 在右侧 -> 与左侧的伙伴比较
+      compare = -1.0;
+  // 取伙伴
+  float adr = i + compare * Pass;
+  vec4 partner = texture2D(
+      Data, vec2(floor(mod(adr, Width)) / Width, floor(adr / Width) / Height));
+  // 左侧是 < 运算；右侧是 >= 运算
+  gl_FragColor = (self.x * compare < partner.x * compare) ? self : partner;
+}</code></pre><p>现在我们有了一个算法上高效的排序器。然而，仔细审视代码及其使用 GPU 资源的方式，会发现一些把算法搬到 GPU 时常见的不足。第一，我们的数据取数次数仍是 CPU 的两倍。第二，代码似乎对 uniform 参数做了许多操作。能否把它们提到片元着色器之外，省掉不必要的重复计算？第三，着色器使用了分支，因此即使对那些只需拷贝的值也可能不必要地执行许多操作。另外，顶点单元和光栅化器一直在做什么？几乎什么也没做。我们能做得更好吗？</p><h2>46.4 充分利用 GPU 的全部资源</h2><p>GPU 针对非常规整的高度并行访问模式做了优化。在奇偶归并排序中，有些值被比较，另一些只是被拷贝。我们希望避免这种情况，因为两种情形执行所需的时间相同。如果去掉拷贝，我们就能在不付出代价的情况下每趟做更多比较。总体而言这会让程序更快，因为判断是拷贝还是比较这一步可以省掉。之所以如此，是因为该网络执行交替的奇偶访问。总之，我们需要一个不同的排序网络。</p><p>图 46-3 展示了<em>双调归并排序</em>算法（Batcher 1968）的排序网络，它同时构建键的升序和降序子序列（即双调序列），然后归并这两个子序列。从 <em>n</em>/2 个二元素序列开始，一直进行到剩下一个完全升序排列的序列。这意味着我们要构建 log(<em>n</em>) 个双调序列并归并它们。排序网络反映了这一模式，显示 log(<em>n</em>) 个排序阶段，其中第 <em>i</em> 个阶段要执行 <em>i</em> 趟。总复杂度为 <em>O</em>(<em>n</em> log<sup>2</sup>(<em>n</em>) + log(<em>n</em>))，与奇偶归并排序相同。这仍不如 Quicksort 快，但请记住这里没有糟糕的最坏情况复杂度。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/46_sorting_03.jpg" alt="46_sorting_03.jpg"><figcaption>图 46-3 键的双调归并排序网络</figcaption></figure><p>最直接的实现是把阶段号和趟号编码进纹理坐标，让片元着色器执行排序过程的「内层循环」（即网络的一列），正如其他工作所展示的（Purcell et al. 2003）。然而从图 46-3 可以看到，这样只用到整数运算来计算比较距离和比较操作的切换。而且这些切换总是发生在 2 的幂位置，不会跨越某些 2 的幂边界。不幸的是，当前 GPU 不支持能高效检测这些情况的整数运算，因此只能用适当的浮点运算来模拟。具体来说，排序过程需要的取模、位运算等操作，在 GPU 上只能借助浮点算术实现。因此在片元着色器里直接实现该算法，效率不会达到最优。</p><p>我们需要一个更聪明的方案，减少片元单元里做的工作，并利用顶点处理器和光栅化器（Kipfer et al. 2004）。把图 46-3 向右旋转 90 度，得到图 46-4，用于排序一维的 <em>n</em> 个键。注意每一趟中总有一些成组的元素受到相同处理（黄色或绿色框），也就是说它们的排序参数相同。此外，相邻的组之间有很强的对应关系：它们的参数有时取相反的值。这些变化取决于阶段和趟号，可以表示成简单的取模关系。在有多于一个组的排序趟中，我们不再绘制单个大四边形并在片元着色器里计算相应参数，而是每趟绘制若干四边形，每个恰好覆盖一对组（一个黄框和一个绿框），合起来覆盖整个缓冲。每个四边形右侧执行与左侧相反的操作。为算出这一翻转，我们注意到顶点程序中指定的纹理参数会被光栅化器在片元上线性插值。只要在四边形左侧指定标志值 +1、右侧指定 -1，片元程序就能通过看标志的符号确定当前片元在四边形中的位置。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/46_sorting_04.jpg" alt="46_sorting_04.jpg"><figcaption>图 46-4 为双调归并排序对键分组</figcaption></figure><p>剩下要计算的两件事是决定用哪种比较操作，以及定位要比较的配对元素。这两件事同样可以用插值技术来表达。我们先把比较操作固定为<em>小于</em>。把两个键值乘以顶点着色器插值得到的标志值，操作就会在四边形中间隐式地翻转为<em>大于等于</em>，这正是我们想要的。比较距离也同样处理：它的绝对值在四边形内是常数，我们取出另一个插值标志的符号与绝对值相乘，以便不对距离做缩放。当前所有 GPU 上插值器的数值精度都足够高，可以避免亚像素舍入问题。</p><p>若要排序许多元素，就必须把它们存放在二维纹理中。为排序整个二维字段，我们把字段的每一行看作整个字段的一个双调序列，因此对每一行执行同样的排序操作。前面引入的四边形只需纵向延伸以覆盖所有行。图 46-5 展示了所执行的比较操作以及对应的底层四边形。如果现在再按行号对比较操作施加一种调制，就能轻易得到各行完全排序且按升序/降序交替的结果。剩下的只是两两归并，然后是每 4 行、每 8 行、每 16 行一组，直到整个字段处理完毕。注意这与沿行排序用的是同一套排序过程。对列我们采用与行相同的做法，只需把构成每一趟的四边形转置，从而使用垂直（而非水平）的比较距离。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/46_sorting_05.jpg" alt="46_sorting_05.jpg"><figcaption>图 46-5 对二维字段各行做双调归并排序</figcaption></figure><p>我们做的最后一项优化是把排序器推广到处理键/索引对。由于 GPU 处理四元向量，我们可以把两个键/索引对打包进一个片元。由于每个排序阶段的最后一趟只比较相邻元素（见图 46-3），这一步可以发生在片元内部，省掉第二次纹理取数。打包两个相邻元素还能把行宽减半，从而减少要处理的片元总数。现在我们的数据取数次数与 CPU 实现相同。注意打包这一思路也可用于奇偶转置排序着色器，不过在那里显然只能让每隔一趟避免第二次数据取数。</p><h4>46.4.1 实现双调归并排序</h4><p>对按相机距离排序粒子这个示例应用，我们实现了一个小的片元程序来计算排序键（距离）和索引（粒子编号），并把其中的两个打包进一个 RGBA 纹理值。由于无论如何都要访问每个待排序元素，我们顺便在写入打包表示时完成第一趟排序。第一趟只需产生交替的升序/降序键对——这一操作在每个片元内部完成（见图 46-3）。</p><p>一趟排序的所有四边形都记录在一个显示列表中。要排序整个字段，我们只需调用下一个列表并交换缓冲，直到完成。显示列表记录四边形的顶点和两个纹理坐标。第一个纹理坐标存放每个四边形各不相同的所有数据（即片元位置、搜索方向和要插值的比较操作标志）。第二个纹理坐标存放四边形内恒定的数据。由于我们把两个相邻元素打包进一个片元，在每个阶段的最后一趟，片元着色器访问的元素与上一趟相同（对比图 46-4）。为此我们把两趟合并为一趟，针对这种情形使用专门的着色器。注意片元程序不需要做一维索引到二维纹理坐标的转换，因为这由四边形的纹理坐标隐式完成。代码清单 46-2 给出了这个专门程序的 GLSL 代码。</p><p>沿行排序、趟号大于 1 的程序跳过代码清单 46-2 中的最后一次比较操作，直接返回 <code>result</code> 变量。沿列排序的程序不同之处仅在于构造 <code>adr</code> 变量：这里 <code>x</code> 为 0，<code>y</code> 按搜索方向计算。</p><p>总之，我们需要四个程序来完成排序：第一个计算键/索引对并完成第一趟排序。第二个同时完成每个阶段第 0 趟和第 1 趟的行排序。第三个完成每个阶段趟号大于 1 的所有行排序，第四个执行列排序。</p><p>排序完成后，我们得到键/索引对的一个排列。应用现在可以通过简单的索引查找，按排序准则重排任意数据缓冲。</p><h4>示例 46-2. 把双调归并排序行排序的第 1 趟与第 0 趟合并实现的 GLSL 片元程序</h4><pre><code>uniform sampler2D PackedData;
+// texcoord 数据的内容
+#define OwnPos gl_TexCoord[0].xy
+#define SearchDir gl_TexCoord[0].z
+#define CompOp gl_TexCoord[0].w
+#define Distance gl_TexCoord[1].x
+#define Stride gl_TexCoord[1].y
+#define Height gl_TexCoord[1].z
+#define HalfStrideMHalf gl_TexCoord[1].w
+void main(void)
+{
+  // 取自身
+  vec4 self = texture2D(PackedData, OwnPos);
+  // 恢复搜索方向的符号，并组装指向伙伴的向量
+  vec2 adr = vec2((SearchDir < 0.0) ? -Distance : Distance, 0.0);
+  // 取伙伴
+  vec4 partner = texture2D(PackedData, OwnPos + adr);
+  // 每隔一行切换升序/降序排序
+  // 通过修改比较标志实现
+  float compare = CompOp * -(mod(floor(gl_TexCoord[0].y * Height), Stride) -
+                             HalfStrideMHalf);
+  // x 和 y 是这两个数据项的键
+  // --> 乘以比较标志
+  vec4 keys = compare * vec4(self.x, self.y, partner.x, partner.y);
+  // 比较两个键并按结果存放
+  // z 和 w 是索引
+  // --> 照此复制即可
+  vec4 result;
+  result.xz = (keys.x < keys.z) ? self.xz : partner.xz;
+  result.yw = (keys.y < keys.w) ? self.yw : partner.yw;
+  // 执行第 0 遍
+  compare *= adr.x;
+  gl_FragColor =
+      (result.x * compare < result.y * compare) ? result : result.yxwz;
+}</code></pre><h2>46.5 结论</h2><p>我们在 GPU 上非常高效地实现了双调归并排序。表 46-1 列出了排序各种字段大小所需的趟数，以及在 425 MHz 的 NVIDIA GeForce 6800 Ultra GPU 上得到的排序性能。CPU 和 GPU 排序的都是 16 位键/16 位索引对。<sup><a href="https://developer.download.nvidia.com/books/gpugems2/ch46fn01.html" rel="noreferrer noopener">[1]</a></sup> 更多性能信息见 Kipfer et al. 2004。注意 CPU 的计时不包括上传所需的时间。双调归并排序的一个局限是，我们无法把排序趟分摊到多个显示帧上以让系统更具响应性，因为排序的中间阶段并不保持全局有序的序列。由于它们总是产生一对双调序列（一段升序、一段降序的部分序列），每个阶段至少有半个字段会被完全重排。</p><h4>表 46-1. CPU 与 GPU 排序算法的性能</h4><table><tbody><tr><td><p><strong><code>std::sort:</code> 16 位数据，Pentium 4 3.0 GHz</strong></p></td></tr><tr><td><p><strong><em>N</em></strong></p></td><td></td><td><p><strong>每秒完整排序次数</strong></p></td><td><p><strong>每秒排序键数</strong></p></td></tr><tr><td><p>256<sup>2</sup></p></td><td></td><td><p>82.5</p></td><td><p>5.4 M</p></td></tr><tr><td><p>512<sup>2</sup></p></td><td></td><td><p>20.6</p></td><td><p>5.4 M</p></td></tr><tr><td><p>1024<sup>2</sup></p></td><td></td><td><p>4.7</p></td><td><p>5.0 M</p></td></tr><tr><td><p><strong>奇偶归并排序：16 位数据，NVIDIA GeForce 6800 Ultra</strong></p></td></tr><tr><td><p><strong><em>N</em></strong></p></td><td><p><strong>趟数</strong></p></td><td><p><strong>每秒完整排序次数</strong></p></td><td><p><strong>每秒排序键数</strong></p></td></tr><tr><td><p>256<sup>2</sup></p></td><td><p>136</p></td><td><p>36.0</p></td><td><p>2.4 M</p></td></tr><tr><td><p>512<sup>2</sup></p></td><td><p>171</p></td><td><p>7.8</p></td><td><p>2.0 M</p></td></tr><tr><td><p>1024<sup>2</sup></p></td><td><p>210</p></td><td><p>1.25</p></td><td><p>1.3 M</p></td></tr><tr><td><p><strong>双调归并排序：16 位浮点数据，NVIDIA GeForce 6800 Ultra</strong></p></td></tr><tr><td><p><strong><em>N</em></strong></p></td><td><p><strong>趟数</strong></p></td><td><p><strong>每秒完整排序次数</strong></p></td><td><p><strong>每秒排序键数</strong></p></td></tr><tr><td><p>256<sup>2</sup></p></td><td><p>120</p></td><td><p>90.07</p></td><td><p>6.1 M</p></td></tr><tr><td><p>512<sup>2</sup></p></td><td><p>153</p></td><td><p>18.3</p></td><td><p>4.8 M</p></td></tr><tr><td><p>1024<sup>2</sup></p></td><td><p>190</p></td><td><p>3.6</p></td><td><p>3.8 M</p></td></tr></tbody></table><p>奇偶归并排序保持了边绘制边排序的特性，但每个阶段的最后一趟要对奇数项和偶数项做归并。这对我们所做的打包不是好的访问模式。因此对这种排序算法来说，像我们把双调归并排序那样把每个阶段最后两趟合并成一个专门程序并不合理。所以该实现比双调归并排序多执行 log(<em>n</em>) 趟。虽然总体上性能较差，但工作量可以分摊到多个显示帧上。</p><p>现在你有了两种最优的排序算法，各有优缺点，但都能在 GPU 上非常高效地执行。所以如果你的新 GPU 算法需要排序，就不必再回到 CPU 了。在本书附带光盘上，你会找到一个用 C++、OpenGL 和 GLSL 实现的小演示程序，演示本章讨论的 GPU 排序技术。</p><h2>46.6 参考文献</h2><p><a id="biblio46_01"></a>Batcher, Kenneth E. 1968. 「Sorting Networks and Their Applications.」，载 <em>Proceedings of AFIPS Spring Joint Computer Conference</em> 32，pp. 307–314。</p><p><a id="biblio46_02"></a>Buck, Ian, and Tim Purcell. 2004. "A Toolkit for Computation on GPUs."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 621–636，Addison-Wesley 出版。</p><p><a id="biblio46_03"></a>Kipfer, Peter, Mark Segal, and Rüdiger Westermann. 2004. "UberFlow: A GPU-Based Particle Engine."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2004</em>，pp. 115–122。</p><p><a id="biblio46_04"></a>Kolb, A., L. Latta, and C. Rezk-Salama. 2004. "Hardware-Based Simulation and Collision Detection for Large Particle Systems."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2004</em>，pp. 123–131。</p><p><a id="biblio46_05"></a>Purcell, Tim, Craig Donner, Mike Cammarano, Henrik Wann Jensen, and Pat Hanrahan. 2003. "Photon Mapping on Programmable Graphics Hardware."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 41–50。</p><p><a id="biblio46_06"></a>Sedgewick, Robert. 1998. <em>Algorithms in C++</em>，第 3 版，第 1–4 部分，Addison-Wesley 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-vi-simulation-and-numerical-algorithms/chapter-46-improved-gpu-sorting" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-vi-simulation-and-numerical-algorithms/chapter-46-improved-gpu-sorting</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

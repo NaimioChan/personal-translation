@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 11 章　用层次遮挡剔除与几何着色器实现高效稳健的阴影体 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 11 章　用层次遮挡剔除与几何着色器实现高效稳健的阴影体」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 11 章　用层次遮挡剔除与几何着色器实现高效稳健的阴影体</h1>
+<p><em>Martin Stich<br> mental images</em></p><p><em>Carsten Wächter<br> Ulm University</em></p><p><em>Alexander Keller<br> Ulm University</em></p><h2>11.1 引言</h2><p>RealityServer 是 mental images 用于创建和部署三维 Web 服务及其他应用的平台（mental images 2007）。RealityServer 中的硬件渲染器必须能高性能、高质量地显示各种各样的场景。获得这类有说服力的图像，一个重要方面就是真实的阴影渲染。</p><p>RealityServer 支持两种最常见的阴影渲染技术：<em>阴影贴图</em>与<em>阴影体。</em>两种方法各有优缺点。用阴影贴图时，生成软阴影相对容易，但阴影受走样问题困扰，在大场景中尤其明显。阴影体则是以像素精度渲染的，但处理非理想点光源或平行光源的光源时更困难。</p><p>本章我们说明 RealityServer 中如何实现稳健的模板阴影渲染，以及如何利用最先进的硬件特性来加速这项技术。</p><h2>11.2 阴影体概览</h2><p>用阴影体渲染阴影的想法已存在相当长时间，但随着稳健算法的发展和图形硬件的增强支持，它到最近才真正实用。这里我们简要说明这种方法的基本原理；更详细的描述请参见 McGuire et al. 2003、McGuire 2004 以及 Everitt and Kilgard 2002。</p><h4>11.2.1 z-pass 与 z-fail</h4><p><a href="https://developer.download.nvidia.com/books/gpugems3/11fig01.jpg" rel="noreferrer noopener">图 11-1</a> 展示了阴影体背后的主要思想。实际的阴影体对应绿色区域（遮挡体之后、从光源看不见的所有点）。显然，我们希望所有与阴影体相交的几何体都按无光照（或只有环境光）渲染，而阴影体之外的一切都获得光源的完整贡献。考虑一条从相机出发射向场景几何体的光线，如 <a href="https://developer.download.nvidia.com/books/gpugems3/11fig01.jpg" rel="noreferrer noopener">图 11-1a</a> 所示。我们统计光线与阴影体的交点数：每次进入阴影体，计数器加一；每次离开，计数器减一。对于处于阴影中的几何体部分（也只有这些部分），结果不为零。这个简单事实就是阴影体背后最重要的原理。如果每个像素都能得到计数器的值，我们就把阴影区与非阴影区分开了，并且可以很容易地用多遍渲染利用这一信息。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/11fig01.jpg" alt="11fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/11fig01.jpg" rel="noreferrer noopener">图 11-1</a>　z-pass 与 z-fail 的区别</figcaption></figure><p>要得到计数器值，我们不必做「真正的」光线追踪，而可以依靠任何现代图形硬件中的模板功能。首先，我们把模板缓冲清零。然后，我们把阴影体的边界渲染进模板缓冲（不写入颜色与深度缓冲）。我们把硬件设为：正面多边形的模板值增加，背面多边形的模板值减少。增加与减少两种操作都设为「回绕」，这样从零再减、或从模板最大值再加，都不会饱和。</p><p>这一遍渲染之后，模板缓冲中就会保存每个像素的交点计数值（所有非阴影像素的值都是零）。在当前显卡上，利用双面模板写入可以在一遍渲染中完成体渲染，在 OpenGL 中由 <code>glStencilOpSeparate()</code> 函数控制。在绘制阴影体之前，z 缓冲必须填好场景的深度值，这通常已经具备，因为总归要渲染一遍环境光。</p><p>注意，模板写入必须对每个深度测试<em>通过</em>的片元执行。因此，刚才描述的方法称为 <em>z-pass</em>。</p><p>z-pass 很简单，但有个问题。请看 <a href="https://developer.download.nvidia.com/books/gpugems3/11fig01.jpg" rel="noreferrer noopener">图 11-1b</a>。当相机位于阴影体内部时，算法会给出错误结果。所幸有简单的解法：把统计对象从实际几何体<em>前方</em>的光线与阴影体交点改为其<em>后方</em>的交点，如 <a href="https://developer.download.nvidia.com/books/gpugems3/11fig01.jpg" rel="noreferrer noopener">图 11-1c</a> 所示。我们只需把图形硬件设为在深度测试<em>失败</em>时写模板缓冲，并把增加与减少操作对调。这个方法由 John Carmack（2000）发现，通常称为 <em>z-fail</em>（或<em>卡马克反转</em>）。z-fail 适用于任何情形，但与 z-pass 不同，必须保证阴影体的封盖被正确渲染，也就是说，阴影体在前端和后端都必须封闭。从 <a href="https://developer.download.nvidia.com/books/gpugems3/11fig01.jpg" rel="noreferrer noopener">图 11-1c</a> 中可以看到，缺了后盖就会得到错误结果。对于 z-pass，前盖不必绘制，因为深度测试会失败，本来就不会写模板。后盖可以省略，因为它位于所有物体之后的无穷远处，任何深度测试都会失败。</p><h4>11.2.2 阴影体生成</h4><p>下面的做法是生成阴影体最常见的方式。但要注意，它只对封闭的二流形多边形网格正确，也就是说，物体不能有孔洞、裂缝或自交。11.3 节给出一个消除这些限制的方法。</p><h4>渲染步骤</h4><p>阴影体的实际渲染分为以下三步：</p><ol><li>渲染前盖</li><li>渲染后盖</li><li>渲染物体外推的轮廓（阴影体的<em>侧面</em>）</li></ol><p>对于前盖，我们遍历模型中的所有多边形，渲染朝向光源的那些。某个多边形是否朝向光源，可以通过测试面法线与指向光源方向的点积符号来高效判断。对于后盖，我们再次渲染同样的多边形，但把所有顶点沿光源方向投影到无穷远。这种投影方法也用于阴影体侧面：我们把可能的轮廓边外推到无穷远，形成四边形。可能的轮廓边（可能属于实际遮挡体轮廓的边）是通过比较该面与相邻面上表面法线与指向光源方向点积的符号找出的。若符号不同，就外推这条边。对于非凸物体，这样的外推会产生嵌套的轮廓，这不会破坏阴影渲染。但无论如何，生成的面的朝向都必须使其法线指向阴影体外部，否则模板缓冲中的值就会失衡。</p><h4>在无穷远处渲染</h4><p>这些位于无穷远的顶点到底是怎么处理的？<em>在无穷远处渲染</em>是 OpenGL（以及 Direct3D）中齐次坐标的固有特性。只要传入方向而不是位置，顶点就会被当作投影到一个无限大的球面上来渲染。在我们的情形中，这个方向就是从光源位置指向该顶点的向量。在齐次坐标中，把 w 分量设为零即表示方向，而位置通常把 w 设为一。</p><p>在无穷远处渲染时，会遇到图元被远平面裁剪的问题。应对这种裁剪的一个简便办法是使用<em>深度钳制</em>（depth clamping），OpenGL 的 <code>NV_depth_clamp</code> 扩展支持这一功能。启用后，几何体即使在远平面之后也会被渲染，并在那里产生最大可能的深度值。如果没有该扩展，可以用一个特殊的投影矩阵达到同样效果，如 Everitt and Kilgard 2002 所述。</p><h4>11.2.3 性能与优化</h4><p>对于复杂度合理的场景，阴影体可能耗费大量性能。因此人们开发了许多优化方法，这里简要讨论其中一些。第一个重要观察是 z-pass 通常比 z-fail 快，主要因为不必渲染阴影体的封盖。此外，阴影体被遮挡的部分在屏幕上通常比未被遮挡的部分大，这使 z-fail 消耗更多填充率。因此，只要可能就应使用 z-pass，只在必要时（相机位于阴影体内部时）才切换到 z-fail。</p><p>z-pass 与 z-fail 可以在同一渲染遍中同时使用，在两者之间动态切换是值得的，代价只是一个（保守的）测试：判断相机是否在某个阴影体内部。填充率常常是阴影体的主要瓶颈，所以人们还提出了其他优化，包括阴影体裁剪、用剪裁测试限制阴影体范围，以及深度边界（这些方法的更多信息见 McGuire et al. 2003）。</p><h2>11.3 我们的实现</h2><p>既然已经讨论了阴影体的基础，下面来看看一些提高稳健性与性能的方法。本节介绍我们在 mental images 采取的一些做法，使阴影体满足 RealityServer 的要求。</p><h4>11.3.1 针对低质量网格的稳健阴影</h4><p>传统上，阴影体算法用于游戏这类应用，其中的网格由美术完全掌控，游戏引擎只需处理这些网格。因此，通常可以把遮挡体限制为二流形网格，从而简化阴影体生成。但 RealityServer 必须能正确处理低质量网格，例如未封闭的网格或存在相交几何体的网格。这类网格常由 CAD 软件或转换工具生成。因此，我们希望在不过多牺牲性能的前提下，放宽对能渲染出无瑕疵阴影的网格的限制。</p><h4>改进的阴影体生成算法</h4><p>我们实现的方法是对 11.2.2 节所述阴影体生成算法的小改动。在那种做法中，除了绘制封盖，我们只在朝向光源的多边形的相邻多边形不朝向光源时，才外推该多边形的一条边。</p><p>现在，要使算法对非二流形稳健工作，需要从两方面扩展：</p><ul><li>第一，我们还要外推完全没有相邻多边形的边。这是非封闭网格明显需要的扩展（例如，设想用一个孤立的三角形作为遮挡体）。</li><li>第二，我们考虑网格中的所有多边形，而不只是朝向光源的那些，来外推可能的轮廓边并绘制封盖。这意味着，所有有相邻多边形的轮廓边实际上都会被外推<em>两次</em>，每个相连的多边形一次。</li></ul><p>为什么这说得通？请看 <a href="https://developer.download.nvidia.com/books/gpugems3/11fig02.jpg" rel="noreferrer noopener">图 11-2</a>。这个开放网格的阴影体被正确渲染了，因为两条高亮的边被外推了两次。由此得到的侧面把朝向光源与背向光源两组多边形的阴影体都封闭起来。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/11fig02.jpg" alt="11fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/11fig02.jpg" rel="noreferrer noopener">图 11-2</a>　把一个物体划分成多个部分</figcaption></figure><p>事实上，这个算法现在可以看作一种把物体划分成多个部分的方法，每个部分只包含相对于光源的正面或背面多边形。然后对每个部分渲染相应的阴影体，就像多个彼此前后独立的物体一样。这项技术甚至对自交物体也有效。与之前一样，我们必须格外注意所有阴影体几何体的朝向正确（法线指向阴影体外部）。既然现在也考虑背向光源的多边形，我们就必须把这些多边形上生成的所有阴影体面反向。</p><h4>性能代价</h4><p>新方法简单有效，但有代价。例如，渲染二流形网格时，我们的工作量是非稳健算法的两倍。对 z-fail 而言，封盖要渲染两次而不是一次（正面与背面各一次），所有可能的轮廓边也要外推两次。不过封盖不算大问题，因为在多数场景中只有少数遮挡体需要用 z-fail 处理。记住，对 z-pass 我们根本不必绘制任何封盖。</p><p>更大的问题是外推的轮廓边数量翻倍。一个简单的解法是：对连接两个面的边只外推并渲染一次，把模板缓冲的值增减 2 而不是 1。对 z-pass，这能把算法的代价降到与非稳健方法相同！但图形硬件不支持这一功能，所以我们无法避免把这些边渲染两次。为把不可避免的性能损失降到最低，我们的实现在预处理阶段检测网格是否为二流形，只在必要时才采用稳健的阴影体生成。</p><p>另外要注意，仍有一些情形我们的实现没有处理：特别是多条（多于两条）多边形共享一条边，以及共享一条边但顶点绕序不同的多边形。这些同样在预处理阶段处理，把这类情形转换成单个互不相连的多边形。</p><p>处理难缠的网格再加上阴影体，乍听起来很棘手，但把这里给出的方法集成到任何现有的模板阴影系统中都应当极其容易。对 RealityServer 而言，稳健阴影是必需的——即使要付出一些性能代价——因为应用必须处理的那些网格通常无法修正。</p><h4>11.3.2 用几何着色器动态生成阴影体</h4><p>NVIDIA GeForce 8 级硬件在一个称为<em>几何着色器</em>（GS）的新管线阶段上，实现了在 GPU 上可编程地创建图元。几何着色器对图元进行操作，逻辑上位于顶点着色器（VS）与片元着色器（FS）之间。整个图元的顶点都可以作为输入参数使用。详细描述见 NVIDIA Corporation 2007。</p><p>显然，这一新能力非常适合动态创建阴影体。轮廓判定不是廉价的任务，而且对动画场景必须每帧重做，所以把计算负载从 CPU 转移到 GPU 更可取。以往完全在 GPU 上创建阴影体的做法，需要借助顶点与片元着色器的巧妙技巧（Brabec and Seidel 2003）。现在，几何着色器为这个问题提供了「自然」的解法。一个重现固定功能管线的简单 GS 只会取入输入图元再原样输出，在我们的情形中就是生成阴影体的前盖。我们还会按需要为后盖和外推的轮廓边创建额外的图元。11.3.1 节所述完全相同的稳健算法可以完全在 GPU 上实现，从而得到一种非常优雅的动态阴影创建方式。</p><p>要计算网格的轮廓边，几何着色器必须能访问三角形的邻接信息。在 OpenGL 中，我们可以用 <code>glBegin</code> 的新模式 <code>GL_TRIANGLES_ADJACENCY_EXT</code> 为每个三角形传入额外的顶点。在这个模式下，完成一个三角形需要六个顶点而不是三个，其中三个指定各条边的邻接顶点。<a href="https://developer.download.nvidia.com/books/gpugems3/11fig03.jpg" rel="noreferrer noopener">图 11-3</a> 展示了带邻接的三角形的顶点布局。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/11fig03.jpg" alt="11fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/11fig03.jpg" rel="noreferrer noopener">图 11-3</a>　几何着色器的输入顶点</figcaption></figure><p>除了指定输入图元类型，我们还要指定 GS 将创建哪种图元。我们选择三角带，这样可以高效地渲染单个三角形（用于封盖）以及四边形（用于外推的轮廓边）。允许输出的最大顶点数设为 18（两个封盖各 3 + 3，侧面 4 x 3）。</p><p>代码清单 11-1 给出几何着色器的 GLSL 实现。代码假定 <code>gl_PositionIn</code> 中包含已变换到眼空间的顶点坐标。这个变换在 VS 中完成，只需把输入顶点乘以 <code>gl_ModelViewMatrix</code> 并写入 <code>gl_Position</code>。图元的所有顶点随后都会出现在 <code>gl_PositionIn</code> 数组中。如果某条边没有相邻三角形，我们就把相应邻接顶点的 <code>w</code> 设为零来编码这一情况。</p><h4>示例 11-1. 阴影体生成几何着色器的 GLSL 实现</h4><pre><code>
+#version 120
+#extension GL_EXT_geometry_shader4: enable
+   uniform vec4 l_pos;  // 光源位置（眼空间）
+   uniform int robust;  // 需要稳健生成吗？
+   uniform int zpass;  // 可以做 z-pass 吗？
+   void main()
+{
+   vec3 ns[3];  // 法线
+   vec3 d[3];  // 指向光源的方向
+   vec4 v[4];  // 临时顶点
+   vec4 or_pos[3] = {  // 朝向光源的三角形
+     gl_PositionIn[0],
+     gl_PositionIn[2],
+     gl_PositionIn[4]
+   };
+   // 计算每个顶点处的法线。
+   ns[0] = cross(
+     gl_PositionIn[2].xyz - gl_PositionIn[0].xyz,
+     gl_PositionIn[4].xyz - gl_PositionIn[0].xyz );
+   ns[1] = cross(
+     gl_PositionIn[4].xyz - gl_PositionIn[2].xyz,
+     gl_PositionIn[0].xyz - gl_PositionIn[2].xyz );
+   ns[2] = cross(
+     gl_PositionIn[0].xyz - gl_PositionIn[4].xyz,
+     gl_PositionIn[2].xyz - gl_PositionIn[4].xyz );
+   // 计算从顶点指向光源的方向。
+   d[0] = l_pos.xyz-l_pos.w*gl_PositionIn[0].xyz;
+   d[1] = l_pos.xyz-l_pos.w*gl_PositionIn[2].xyz;
+   d[2] = l_pos.xyz-l_pos.w*gl_PositionIn[4].xyz;
+   // 检查主三角形是否朝向光源。
+   bool faces_light = true;
+   if ( !(dot(ns[0],d[0])>0 || dot(ns[1],d[1])>0 ||
+          dot(ns[2],d[2])>0) ) {
+     // 既不朝向光源又不需要稳健处理，忽略。
+   if ( robust == 0 ) return;
+     // 在 or_pos 中翻转顶点绕序。
+     or_pos[1] = gl_PositionIn[4];
+     or_pos[2] = gl_PositionIn[2];
+     faces_light = false;
+  }
+  // 渲染封盖。仅在 z-fail 时需要。
+   if ( zpass == 0 ) {
+     // 近端封盖：直接渲染三角形。
+     gl_Position = gl_ProjectionMatrix*or_pos[0];
+     EmitVertex();
+     gl_Position = gl_ProjectionMatrix*or_pos[1];
+     EmitVertex();
+     gl_Position = gl_ProjectionMatrix*or_pos[2];
+     EmitVertex(); EndPrimitive();
+     // 远端封盖：把位置拉伸到无穷远。
+     v[0] =vec4(l_pos.w*or_pos[0].xyz-l_pos.xyz,0);
+     v[1] =vec4(l_pos.w*or_pos[2].xyz-l_pos.xyz,0);
+     v[2] =vec4(l_pos.w*or_pos[1].xyz-l_pos.xyz,0);
+     gl_Position = gl_ProjectionMatrix*v[0];
+     EmitVertex();
+     gl_Position = gl_ProjectionMatrix*v[1];
+     EmitVertex();
+     gl_Position = gl_ProjectionMatrix*v[2];
+     EmitVertex(); EndPrimitive();
+  }
+  // 遍历所有边，按需拉伸。
+   for ( int i=0; i<3; i++ ) {
+     // 计算相邻三角形的索引。
+   int v0 = i*2;
+     int nb = (i*2+1);
+     int v1 = (i*2+2) % 6;
+     // 以与上面 *完全相同* 的方式
+   // 计算顶点处的法线！
+     ns[0] = cross(
+       gl_PositionIn[nb].xyz-gl_PositionIn[v0].xyz,
+       gl_PositionIn[v1].xyz-gl_PositionIn[v0].xyz);
+     ns[1] = cross(
+       gl_PositionIn[v1].xyz-gl_PositionIn[nb].xyz,
+       gl_PositionIn[v0].xyz-gl_PositionIn[nb].xyz);
+     ns[2] = cross(
+       gl_PositionIn[v0].xyz-gl_PositionIn[v1].xyz,
+       gl_PositionIn[nb].xyz-gl_PositionIn[v1].xyz);
+     // 同样如上计算指向光源的方向。
+     d[0] =l_pos.xyz-l_pos.w*gl_PositionIn[v0].xyz;
+     d[1] =l_pos.xyz-l_pos.w*gl_PositionIn[nb].xyz;
+     d[2] =l_pos.xyz-l_pos.w*gl_PositionIn[v1].xyz;
+     // 如果这条边没有相邻三角形，
+   // 或可能是轮廓边，就拉伸它。
+   if ( gl_PositionIn[nb].w < 1e-3 ||
+          ( faces_light != (dot(ns[0],d[0])>0 ||
+                            dot(ns[1],d[1])>0 ||
+                            dot(ns[2],d[2])>0) ))
+     {
+       // 确保侧面朝向正确。
+   int i0 = faces_light ? v0 : v1;
+       int i1 = faces_light ? v1 : v0;
+       v[0] = gl_PositionIn[i0];
+       v[1] = vec4(l_pos.w*gl_PositionIn[i0].xyz - l_pos.xyz, 0);
+       v[2] = gl_PositionIn[i1];
+       v[3] = vec4(l_pos.w*gl_PositionIn[i1].xyz - l_pos.xyz, 0);
+       // 以三角带形式输出一个四边形。
+       gl_Position = gl_ProjectionMatrix*v[0];
+       EmitVertex();
+       gl_Position = gl_ProjectionMatrix*v[1];
+       EmitVertex();
+       gl_Position = gl_ProjectionMatrix*v[2];
+       EmitVertex();
+       gl_Position = gl_ProjectionMatrix*v[3];
+       EmitVertex(); EndPrimitive();
+     }
+  }
+}</code></pre><p>这里要注意的一件事是，必须让实际渲染的场景几何体与阴影体着色器中的几何体变换完全一致。也就是说，如果你用 <code>ftransform</code> 或固定功能管线渲染，很可能需要调整实现，使至少前盖也使用经 <code>ftransform</code> 变换的坐标。否则，很可能因 z 冲突而出现阴影瑕疵（「阴影痤疮」）。参数 <code>l_pos</code> 以四维齐次坐标给出眼空间中的光源位置。这样就能方便地传入点光源与平行光源，而不必分别处理各种情形。</p><p>uniform 变量 <code>robust</code> 控制是否需要按 11.3.1 节的算法生成阴影体。如果我们知道网格是二流形，可以把 <code>robust</code> 设为 false，这时着色器就简单地忽略所有不朝向光源的多边形。这意味着我们实际上切换到了 11.2.2 节所述的众所周知的阴影体生成方法。<code>zpass</code> 标志指定是否可以安全地使用 z-pass 方法。这个决定在运行时通过检查相机是否位于阴影体内部来做出。（实际上我们做的是保守检查，用的是比精确阴影体更粗糙的包围体。）如果是，就需要用 z-fail；否则着色器可以跳过前盖与后盖的渲染。</p><p>注意，代码还处理了一个我们尚未讨论、但在低质量网格中经常出现的问题：退化三角形。三角形可能一开始就是退化的，也可能在变换到眼空间时因计算的数值误差而退化。这种情况常出现在已剖分为多边形、且含有极细小或极扁三角形的网格中。退化（或近乎退化）三角形在阴影体生成中是个麻烦问题，因为它们造成的瑕疵通常不仅在阴影中可见，还会以阴影条纹的形式从遮挡体「泄漏」出来。</p><p>退化三角形的主要难点在于判断它是否朝向光源。取决于我们如何计算随后与光源方向比较的法线，可能得出不同结论。如果像在几何着色器中那样，我们需要多次查看同一个三角形（某一时刻的「主」三角形在另一时刻可能是「邻接」三角形），就会出问题。如果两次运行结果不一致，就可能多外推一条轮廓边或少外推一条，从而产生瑕疵。</p><p>为处理这个问题，我们确保凡需要判断三角形是否朝向光源时，都执行完全相同的计算。遗憾的是，这个解法导致每个三角形要计算三个法线，并与三个不同的光源方向向量比较。这一操作当然会消耗宝贵的性能，所以如果你确定只会处理没有「难缠」三角形的网格，可以退回不那么稳健的实现。</p><h4>11.3.3 用层次遮挡剔除提升性能</h4><p>阴影体集成到 RealityServer 中，主要是为了用于大场景，例如城市模型，这类场景中阴影贴图通常表现不佳。在这类场景中，用层次遮挡剔除方法可以大幅提升渲染性能，例如 Wimmer and Bittner 2005 给出的方法。这种方法也有在线描述（Bittner et al. 2004）。</p><p>思路是把场景中所有物体组织成层次树结构。渲染时按从前到后的顺序递归遍历这棵树，渲染叶节点中包含的物体。不过在遍历某个树节点之前，先用图形硬件提供的遮挡剔除功能测试其可见性。如果发现节点不可见，整棵子树都可以剪掉。这种情况下最简单的层次结构是轴对齐包围盒（AABB）的二叉包围体层次（BVH）。这种层次结构生成极快，这对动画场景很重要，因为 BVH（或其一部分）需要每帧重建。</p><p>要检查节点是否可见，我们可以先做视锥相交测试，然后简单地渲染 AABB 做一次遮挡查询。只有当它确实可见时，才继续遍历树或渲染叶节点内容。</p><p>要最优地利用层次遮挡剔除技术，应当使用异步遮挡查询与时间相关性，如 Wimmer and Bittner 2005 所述。由于遮挡查询需要从 GPU 回读，开销相对较大。因此，我们可以发出异步遮挡查询，然后继续在树的别处遍历，直到查询结果可用。把节点在上一帧是否可见的信息存下来，有助于估计是否根本需要遮挡查询，或者不做查询直接遍历节点是否更快。</p><p>现在我们把这个想法也扩展到阴影体上。我们希望判断能否跳过树中的某个节点，因为我们知道这一层次部分中的物体都不会投出可见的阴影。我们改为测试沿光源方向外推后的包围盒，不再测试节点原来的包围盒，就好像 AABB 本身会投下阴影一样。换句话说，我们实际上是在<em>对节点包围盒的阴影体做遮挡剔除</em>。如果这个外推的盒子不可见，就意味着包围盒内物体投出的任何阴影都不可能可见，该节点可以忽略。原理见 <a href="https://developer.download.nvidia.com/books/gpugems3/11fig04.jpg" rel="noreferrer noopener">图 11-4</a>。两个遮挡体包含在一个 BVH 中，它们的阴影体渲染可能开销很大。蓝色物体 AABB 的阴影体被橙色物体遮挡，对相机不可见，所以我们可以安全地跳过蓝色物体实际阴影体的生成与渲染。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/11fig04.jpg" alt="11fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/11fig04.jpg" rel="noreferrer noopener">图 11-4</a>　BVH 中的两个遮挡体</figcaption></figure><p>当然，如果被遮挡的节点包含的是场景的整棵子树而不只是一个物体，这个结论同样成立。当树遍历到达一个<em>可见</em>的叶节点时，就用本章前面所述的方法渲染它的阴影体。注意，对光源位于当前处理的 AABB 内部、或相机位于外推后的 AABB 内部这两种情形要特别留意。不过检测这些情形非常简单，检测到之后直接遍历节点、不做遮挡查询即可。</p><p>显然，常规层次遮挡剔除所用的优化同样可以用于这个扩展方法。异步遮挡查询与时间相关性的效果符合预期。唯一的区别是，为了利用时间相关性，我们必须在每个 BVH 节点中包含<em>逐光源</em>的相关性信息。也就是说，对每个光源和每个节点，我们存一个可见性标志（该节点的阴影体上次被检查时是否可见），以及一个帧 ID（说明该可见性信息最后何时更新）。</p><p>这里描述的层次剔除方法并非在所有情况下都能提升性能。事实上，在某些情形中，渲染甚至可能比直接绘制场景中的所有物体略慢。但对我们的多数场景，层次剔除（无论是原始版本还是阴影体变体）都能显著提升性能。在城市漫游这类情形中，这种加速往往非常可观。</p><h2>11.4 结论</h2><p>通过采用一种非标准的阴影体几何体生成方法，我们对难缠的网格也能实现非常稳健的阴影渲染。把这种方法与层次硬件遮挡查询、几何着色器结合使用，我们在以往模板阴影表现不佳的情形中也能获得高性能。示例见 <a href="https://developer.download.nvidia.com/books/gpugems3/11fig05.jpg" rel="noreferrer noopener">图 11-5</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/11fig06.jpg" rel="noreferrer noopener">11-6</a>。本文介绍的所有技术实现起来都相对直接。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/11fig05.jpg" alt="11fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/11fig05.jpg" rel="noreferrer noopener">图 11-5</a>　城市场景近景，其中一棵复杂的树网格约有五十万个多边形</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/11fig06.jpg" alt="11fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/11fig06.jpg" rel="noreferrer noopener">图 11-6</a>　同一模型，拉远视角</figcaption></figure><p>未来我们将研究更多的性能优化，尤其是针对几何复杂度极高的场景。</p><h2>11.5 参考文献</h2><p>Bittner, J., M. Wimmer, H. Piringer, and W. Purgathofer. 2004. "Coherent Hierarchical Culling: Hardware Occlusion Queries Made Useful."，载 <em>Computer Graphics Forum (Proceedings of Eurographics 2004)</em> 23(3)，第 615–624 页。</p><p>Brabec, S., and H. Seidel. 2003. "Shadow Volumes on Programmable Graphics Hardware."，载 <em>Computer Graphics Forum (Proceedings of Eurographics 2003)</em> 25(3)。</p><p>Carmack, John. 2000. 私人交流。可在线获取：<a href="http://developer.nvidia.com/object/robust_shadow_volumes.html" rel="noreferrer noopener">http://developer.nvidia.com/object/robust_shadow_volumes.html</a>。</p><p>Everitt, Cass, and Mark Kilgard. 2002. "Practical and Robust Stenciled Shadow Volumes for Hardware-Accelerated Rendering." 可在线获取：<a href="http://developer.nvidia.com/object/robust_shadow_volumes.html" rel="noreferrer noopener">http://developer.nvidia.com/object/robust_shadow_volumes.html</a>。</p><p>McGuire, Morgan. 2004. "Efficient Shadow Volume Rendering."，载 <em>GPU Gems</em>，Randima Fernando 编，第 137–166 页。Addison-Wesley。</p><p>McGuire, Morgan, John F. Hughes, Kevin Egan, Mark Kilgard, and Cass Everitt. 2003. "Fast, Practical and Robust Shadows." <em>Brown Univ. Tech. Report</em> CS03-19。2003 年 10 月 27 日。可在线获取：<a href="http://developer.nvidia.com/object/fast_shadow_volumes.html" rel="noreferrer noopener">http://developer.nvidia.com/object/fast_shadow_volumes.html</a>。mental images. 2007. "RealityServer Functional Overview." 白皮书。可在线获取：<a href="http://www.mentalimages.com/2_3_realityserver/index.html" rel="noreferrer noopener">http://www.mentalimages.com/2_3_realityserver/index.html</a>。</p><p>NVIDIA Corporation. 2007. "NVIDIA OpenGL Extension Specifications." 可在线获取：<a href="http://developer.nvidia.com/object/nvidia_opengl_specs.html" rel="noreferrer noopener">http://developer.nvidia.com/object/nvidia_opengl_specs.html</a>。</p><p>Wimmer, Michael, and Jiri Bittner. 2005. "Hardware Occlusion Queries Made Useful."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 91–108 页。Addison-Wesley。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-11-efficient-and-robust-shadow-volumes-using" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-11-efficient-and-robust-shadow-volumes-using</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

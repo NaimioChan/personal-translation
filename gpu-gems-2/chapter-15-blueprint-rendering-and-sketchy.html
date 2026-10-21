@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 15 章　蓝图渲染与「手绘草图」 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 15 章　蓝图渲染与「手绘草图」」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 15 章　蓝图渲染与「素描图」</h1>
+<p><em>Marc Nienhaus</em><br> <em>University of Potsdam, Hasso-Plattner-Institute</em></p><p><em>Jürgen Döllner</em><br> <em>University of Potsdam, Hasso-Plattner-Institute</em></p><p>本章介绍两种硬件加速的图像空间非真实感渲染技术：蓝图渲染与素描绘制。</p><p>在建筑与技术零件的草图中勾勒并强化可见与不可见特征，是可视化复杂聚合对象、说明其部件位置、布局与关系的核心手法。蓝图渲染是一种新颖的多遍渲染技术，它勾勒出三维物体中可见与不可见但在视觉上重要的边缘。<em>blueprint</em>（蓝图）一词的本义，Merriam-Webster 定义为「在亮蓝底上以白色、或白底上以蓝色印制的照片式印张，尤用于复制地图、机械图纸与建筑师平面图」。蓝图由以轮廓形式表现、透明渲染的特征组成。因此蓝图容易理解复杂、层级化的零件装配体结构，比如建筑图纸、技术插图与设计中常见的那些。</p><p>在这个意义上，蓝图渲染可以成为交互探索、可视化与交流空间关系的有效工具。例如，它能引导玩家穿越地牢式环境，突出计算机游戏中的隐藏房间与部件；也能让美术在自定义关卡编辑器中更容易地可视化并设计游戏关卡。</p><p>相比之下，以「素描」方式渲染可以用来传达视觉想法、说明草图与概念，尤其适用于建筑与产品设计这类应用领域。素描图特别能促进人们在重新考虑草图时的想法交流。</p><p>素描绘制是一种实时渲染技术，用来为任意三维几何体勾画视觉上重要的边缘以及内部色块，甚至让它们超出几何体边界。总体而言，用素描绘制我们勾画三维几何体的轮廓以暗示模糊感，并把内部色块「蜡笔式地涂」出素描轮廓，仿佛画得潦草随意。两者结合产生素描式、卡通式的描绘，可用于增强角色与三维场景的视觉吸引力。</p><p>由于实现方式（用深度精灵渲染）以及按对象逐个工作的事实，蓝图渲染与素描渲染都能方便地集成到任何实时图形应用中。</p><h2>15.1 基本原理</h2><p>蓝图渲染与素描渲染都建立在三条基本原理之上：(1) 保留场景几何体中间渲染结果的图像；(2) 实现边缘增强技术；(3) 应用深度精灵渲染。下面几节简要说明这些概念。</p><h4>15.1.1 中间渲染结果</h4><p>我们把从三维几何体导出、渲染到纹理中的二维数据称为<em>中间渲染结果</em>。为此我们实现 G 缓冲（Saito and Takahashi 1990），用来存储三维几何体的几何属性。（把这一想法用于真实感渲染的例子，见本书第 9 章「<em>S.T.A.L.K.E.R.</em> 中的延迟着色」。）具体来说，我们把三维几何体编码后的法线与 z 值直接渲染进二维纹理，生成法线缓冲和 z 缓冲，如图 15-1 所示。在多遍渲染技术中，中间渲染结果只生成一次，可在后续渲染遍中重复使用。技术上我们使用图形硬件的渲染到纹理能力。这样做还使我们能把高精度（颜色）值渲染到高精度缓冲（如纹理）中。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/15_blueprint_01.jpg" alt="15_blueprint_01.jpg"><figcaption>图 15-1 生成边缘图的步骤</figcaption></figure><h4>15.1.2 边缘增强</h4><p>为了按对象逐个从三维几何体中提取视觉上重要的边缘，我们实现了一种图像空间边缘增强技术（Nienhaus and Döllner 2003）。视觉上重要的边缘包括轮廓边、边界边和折痕边。我们通过检测法线缓冲与 z 缓冲中的不连续来获得这些边缘。为此，我们用这些纹理给一个铺满画布视口的屏幕对齐四边形贴图，并计算该四边形每个片元的纹理坐标（<em>s</em>, <em>t</em>），使其对应窗口坐标。采样相邻纹素就能提取出不连续，得到强度值。强度值的组合构成边缘，我们把它直接渲染进一张纹理，称为<em>边缘图</em>。图 15-2 描绘了法线缓冲、z 缓冲以及由此得到的边缘图。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/15_blueprint_02.jpg" alt="15_blueprint_02.jpg"><figcaption>图 15-2 每一层的 z 缓冲、法线缓冲与边缘图</figcaption></figure><h4>15.1.3 深度精灵渲染</h4><p>从概念上讲，深度精灵是在每个像素上为深度测试提供额外 z 值的二维图像。就我们的目的而言，深度精灵渲染按如下方式实现：</p><ol type="1"><li>我们渲染一个屏幕对齐四边形，用一张包含 z 值的高精度纹理给它贴图。</li><li>我们施加一个专门的片元着色器，用访问纹理得到的 z 值替换四边形（由光栅化器产生的）片元 z 值。为优化填充率，若片元的 z 值等于 1——即远裁剪平面的深度——我们还会丢弃该片元。否则，片元着色器计算该片元的 RGBA 颜色值。</li><li>随后渲染按常规深度测试继续。若片元通过测试，帧缓冲就会被填入深度精灵的颜色与 z 值。</li></ol><p>以三维场景为例，深度精灵渲染通过考虑 z 值，能正确解算由三维几何体得出的基于图像渲染的可见性。特别是，我们可以把蓝图与素描图同其他三维几何模型以任意顺序组合。</p><h2>15.2 蓝图渲染</h2><p>在蓝图渲染中，我们提取三维几何体的可见边缘与不可见边缘。可见边缘是虚拟摄像机直接看到的边缘；不可见边缘是被三维几何体的面遮挡、即不能直接看到的边缘。为提取这些边缘，我们结合深度剥离技术（Everitt 2001）与边缘增强技术。生成之后，我们把可见与不可见边缘作为蓝图在帧缓冲中合成。</p><h4>15.2.1 深度剥离</h4><p>深度剥离是一种逐片元工作的技术，它按深度排序提取三维几何体的二维层。总体而言，深度剥离逐次「剥去」唯一深度复杂度相同的各层。</p><p>一般来说，通过常规深度测试的片元定义了每个像素上的最小 z 值。但我们无法确定就深度复杂度而言排第二（或第三、依此类推）的片元。因此我们需要一次额外的深度测试，来提取构成给定序号层（就深度复杂度而言）的那些片元（Diefenbach 1996）。这样我们就能用 <em>n</em> 遍渲染提取前 <em>n</em> 层。</p><p>我们把唯一深度复杂度相同的一层称为<em>深度层</em>，把捕获相应 z 缓冲内容得到的高精度纹理称为<em>深度层图</em>。相应地，我们把捕获到另一张纹理中的相应颜色缓冲内容称为<em>颜色层图</em>。特别地，颜色层图之后可以按深度排序用于合成最终渲染，例如用于与顺序无关的透明（Everitt 2001）。</p><p>代码清单 15-1 的伪代码概述了我们深度剥离的实现。它作用于一个三维几何体集合 <em>G</em>。我们把 <em>G</em> 渲染多次，由光栅化器产生片元集合 <em>F</em>。若没有片元被渲染（<em>终止条件</em>），循环结束；否则继续处理下一个深度层。也就是说，如果渲染遍数达到最大深度复杂度，条件即满足。</p><h4>示例 15-1. 结合深度剥离与边缘增强实现蓝图渲染的伪代码</h4><pre><code> procedure depthPeeling(G
+3DGeometry) begin
+i=0
+do
+F
+rasterize(G)
+/* 在第一趟渲染中做一次深度测试 */
+if(i==0)
+begin
+for all fragment ∈ F
+begin
+bool test
+performDepthTest(fragment)
+if(test)
+begin
+fragment.depth
+z-buffer
+fragment.color
+color buffer
+end
+else reject fragment
+end
+end
+else begin
+/* 做两次深度测试 */
+for all fragment ∈ F
+begin
+if(fragment.depth > fragment.valuedepthLayerMap(i-1))
+begin
+/* 第一次测试 */
+bool test
+performDepthTest(fragment)
+if(test)
+begin
+/* 第二次测试 */
+fragment.depth
+z-buffer
+fragment.color
+color buffer
+end
+else reject fragment
+end
+else reject fragment
+end
+end
+depthLayerMap(i)
+capture(z-buffer)
+colorLayerMap(i)
+capture(color buffer)
+/* 边缘强度 */
+edgeMap(i)
+edges(depthLayerMap(i),colorLayerMap(i))
+i++
+while(occlusionQuery()
+0 )
+/* 终止条件 */
+end</code></pre><h4>执行两次深度测试</h4><p>第一遍渲染（<code>i = 0</code>）中，我们对每个片元执行常规深度测试。我们把 z 缓冲与颜色缓冲的内容分别捕获到深度层图和颜色层图中，以备后续处理。</p><p>在后续各遍渲染中（<code>i &gt; 0</code>），我们对每个片元执行一次额外的深度测试。这次测试我们使用带上一遍渲染（<code>i - 1</code>）深度层图的纹理。然后我们确定片元的纹理坐标，使其对应目标像素位置的画布坐标。这样，一次纹理访问就能为片元提供上一遍渲染 z 缓冲中该像素位置所存的 z 值。</p><p>于是两次深度测试按如下方式工作：</p><ul><li>若片元当前的 z 值大于访问深度层图得到的纹理值，片元继续，执行第二次常规深度测试。</li><li>否则，若测试失败，片元被拒绝。</li></ul><p>处理完所有片元后，z 缓冲与颜色缓冲的内容就构成新的深度层图和颜色层图。我们可以用片元程序高效实现额外的深度测试。此外，我们利用遮挡查询扩展（Kilgard 2004）来高效实现终止条件。</p><h4>15.2.2 提取可见与不可见边缘</h4><p>我们为每个深度层用边缘图构造来补充深度剥离。由于法线缓冲与 z 缓冲中的不连续构成可见边缘，我们必须在一次渲染遍中同时构造两者。我们把片元法线编码为颜色值，以颜色层图的形式生成法线缓冲。然后由于深度图已经存在，我们可以直接构造边缘图。</p><p>此外，随着深度层被逐次剥去，不可见边缘会变为可见。因此，我们也能用改进的深度剥离技术（已在代码清单 15-1 中给出）提取不可见边缘。</p><p>结果是，我们的蓝图渲染技术把可见与不可见边缘保存为边缘图，以供后续处理。图 15-2 给出连续各深度层的 z 缓冲、法线缓冲以及由此得到的边缘图。</p><p>注意，连续深度层的边缘图中，边缘会反复出现，因为剥去三维几何体的面之后，局部的不连续仍然存在。考虑以下情形：</p><ol type="1"><li>两个相连的多边形共享同一条边。一个多边形遮挡另一个。剥去遮挡的多边形之后，沿共享边产生的 z 缓冲不连续仍会保留。</li><li>一个多边形部分遮挡另一个多边形，会在过渡处的 z 缓冲中产生不连续。若我们剥去遮挡的多边形与被遮挡的部分，z 缓冲中会在同一位置产生不连续。</li></ol><p>图 15-3 说明了这两种情形。不过，边缘图构造的性能几乎与不连续的数量无关。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/15_blueprint_03.jpg" alt="15_blueprint_03.jpg"><figcaption>图 15-3 剥去三维几何体时的两种可能</figcaption></figure><h4>15.2.3 合成蓝图</h4><p>我们按深度排序，用边缘图中存储的可见与不可见边缘合成蓝图。对每张边缘图，我们按如下步骤处理：</p><ul><li>我们用该边缘图及其对应的深度图给一个铺满视口的屏幕对齐四边形贴图。</li><li>我们再施加一个片元程序，它 (1) 以相应的深度层图作为输入执行深度精灵渲染；(2) 用访问边缘图得到的边缘强度值和比如一种偏蓝的颜色，计算片元的 RGB 值；(3) 把片元的 alpha 值设为边缘强度。</li><li>然后我们用颜色混合，把边缘强度值作为混合因子，在保持边缘增强的同时提供深度复杂度线索。</li></ul><p>我们发现实践中只混合前几张颜色层图就足以合成蓝图。其余层图对整体合成的视觉影响较小，因为只有少数（往往孤立的）像素被着色。为了改变蓝图渲染的终止条件、从而优化渲染速度，我们指定一个期望的最小片元比例（取决于窗口分辨率）通过深度测试。这样我们在保持蓝图视觉质量的同时减少了渲染遍数。为实现速度与质量之间的权衡，我们适当配置遮挡查询扩展。图 15-4a 给出曲柄模型得到的蓝图。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/15_blueprint_04.jpg" alt="15_blueprint_04.jpg"><figcaption>图 15-4 该技术的各种应用</figcaption></figure><h4>15.2.4 深度遮罩</h4><p>深度遮罩是一种剥去最少数量深度层、直到某个被遮挡部件的指定比例变为可见的技术。实际上，深度遮罩为蓝图渲染提供了一个终止条件，以动态调整渲染遍数。对于深度遮罩，我们按如下步骤处理：</p><ol type="1"><li>我们在之前的某遍渲染中导出指定部件的深度纹理，作为<em>深度遮罩</em>。</li><li>在后续各遍渲染中，每次剥去一个深度层，我们就以深度精灵的方式渲染深度遮罩。若有指定比例的片元通过常规深度测试（基于刚生成的 z 缓冲内容），我们即终止该技术。否则，我们必须继续剥去更多深度层。</li><li>最后，我们在合成蓝图时直接把这个指定部件整合进去。</li></ol><p>对技术的修改见代码清单 15-2 的伪代码。我们同样用遮挡查询扩展来实现终止条件。</p><h4>示例 15-2. 用修改后的终止条件实现深度遮罩的伪代码</h4><pre><code>procedure depthPeeling(G 3DGeometry,
+                       C geometryOfOccludedComponent) begin depthMask
+    depthTexture(C)
+quad createTexturedScreenAlignedQuad(depthMask) renderDepthSprite(quad)
+    /* 把四边形渲染为深度精灵 */
+    int Q = occlusionQuery()
+    /* 各分量的片元数量 */
+    ... do... renderDepthSprite(quad) int R = occlusionQuery()
+    /* Number of visible fragments of the
+    component */
+    while (R < fraction(Q))
+    /* 终止条件 */
+    end</code></pre><h4>15.2.5 用蓝图渲染可视化建筑</h4><p>蓝图可用于勾勒建筑设计。我们应用蓝图渲染来生成建筑的平面视图。用正交摄像机合成平面视图是件直接的事。在阿比多斯（Abydos）拉美西斯二世神庙的可视化中（图 15-4b），我们可以系统地辨认出厅室、柱子和雕像。因此蓝图增强了这些插图的视觉感知。平面视图是自动生成的。</p><p>在建筑蓝图中，透视图仍能提供更好的空间方位感与概念洞见。图 15-4c 可视化了神庙入口与内院的设计，以及周围的墙和雕像。这些位于高亮的雕像之前，那些雕像守卫着通往神庙后部的门道。借助深度遮罩，我们确定遮挡守卫雕像、因而必须剥去的深度层数。这样，当模型的结构复杂度超出合理展示范围时，我们可以降低蓝图的视觉复杂度。</p><h2>15.3 素描渲染</h2><p>我们的素描绘制技术利用视觉上重要的边缘与表面颜色，借助不确定性对三维几何体做非均匀的勾画。</p><p>我们的渲染技术按如下流程进行：与蓝图渲染一样，我们先生成中间渲染结果，表示三维几何体的边缘与表面颜色。然后在图像空间施加不确定性值，对这些纹理做非均匀勾画。最后调整深度信息，使得到的素描图能与一般三维场景内容合并。</p><h4>15.3.1 边缘与色块</h4><p>我们再次用边缘增强技术把三维几何体的边缘存为边缘图，供后续使用，如图 15-5a 所示。此外，我们把三维几何体的表面颜色渲染到纹理，产生醒目的色块，它们看起来平坦、覆盖所有表面细节，并模拟卡通风格。我们把这张纹理称为<em>明暗图</em>；见图 15-5b。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/15_blueprint_05.jpg" alt="15_blueprint_05.jpg"><figcaption>图 15-5 用边缘图与明暗图施加不确定性</figcaption></figure><h4>15.3.2 施加不确定性</h4><p>我们在图像空间对边缘与表面颜色施加不确定性值，以模拟「在平面上勾画」的效果。为此，我们用边缘图和明暗图作为纹理，给一个屏幕对齐四边形（铺满画布视口）贴图。另外，我们再施加一张纹理，其纹素表示不确定性值。由于我们希望得到大体连续、且帧间一致的素描边界，我们选择纹素值由 Perlin 噪声函数决定的噪声纹理（Perlin 1985）；因此相邻的不确定性值在图像空间中相关。噪声纹理在预处理步骤中生成一次，渲染时作为偏移纹理用于访问边缘图和明暗图。也就是说，它的纹素值会轻微扰动四边形上访问这两张图的每个片元的纹理坐标。</p><p>此外，我们引入一个<em>不确定性程度</em>来控制扰动量，为此使用一个用户定义的 2 x 2 矩阵。我们把由噪声纹理得出的不确定性值乘以该矩阵，以统一加权这些值，然后用得到的偏移向量平移纹理坐标。图 15-6 说明用不确定性程度扰动访问明暗图所用的纹理坐标。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/15_blueprint_06.jpg" alt="15_blueprint_06.jpg"><figcaption>图 15-6 在图像空间施加不确定性</figcaption></figure><p>为增强素描效果，我们以不同方式扰动访问边缘图与明暗图的纹理坐标。因此我们施加两个不同的 2 x 2 矩阵，使两张图各自得到不同的不确定性程度。一个不确定性程度平移边缘图的纹理坐标，另一个平移明暗图的纹理坐标——也就是说，我们朝相反方向平移它们。图 15-5 给出我们施加不确定性之后的边缘图与明暗图。</p><p>我们把对应三维几何体片元的纹理值称为<em>内部区域</em>；不对应三维几何体片元的纹理值称为<em>外部区域</em>。所以总的来说，通过给四边形贴图并用不确定性扰动纹理坐标，我们能访问边缘图与明暗图的内部区域，而原来的纹理坐标访问的则是外部区域，反之亦然（图 15-6）。这样，内部区域可以被勾画到三维几何体边界之外，外部区域也能渗入内部区域。我们甚至能在三维几何体边界之外产生斑点（图 15-5）。</p><p>最后，我们把边缘图与明暗图的纹理值组合起来。我们把扰动边缘图得到的强度值乘以扰动明暗图得到的颜色值。对于图 15-7a 中的素描图，我们用湍流函数（基于 Perlin 噪声）确定不确定性值（<em>off<sub>s</sub></em> , <em>off<sub>t</sub></em> ）：</p><pre><code>
+offs turbulence(s, t);
+and offt turbulence(1 - s, 1 - t);</code></pre><figure><img src="https://developer.download.nvidia.com/books/gpugems2/15_blueprint_07.jpg" alt="15_blueprint_07.jpg"><figcaption>图 15-7 素描渲染的不同风格</figcaption></figure><h4>15.3.3 调整深度</h4><p>到目前为止，我们只是给一个屏幕对齐四边形贴上了素描式的图案。这种方法有显著缺陷。当我们渲染贴有三维几何体纹理的四边形时：(1) 内部区域不存在原几何体的 z 值；特别地，(2) 施加不确定性之后，外部区域也不存在原几何体的 z 值。因此素描渲染无法与场景中的其他物体正确交互。</p><p>为克服这些缺陷，我们考虑之前的扰动来施加深度精灵渲染。也就是说，我们额外用高精度深度图（已有的）给四边形贴图，并用扰动后的纹理坐标访问这张纹理两次。第一次扰动使用访问边缘图所用的不确定性程度；第二次扰动使用访问明暗图所用的不确定性程度。这两个纹理值中的最小值就是该片元用于深度测试的最终 z 值。图 15-5c' 给出对深度图施加两种扰动后的结果。扰动后深度图的内部区域，与扰动后边缘图和扰动后明暗图内部区域的组合相符。甚至为明暗图产生的那些斑点，也会出现在深度图的扰动中。</p><p>因此，修改深度精灵渲染使我们能为代表三维几何体素描图案的贴图四边形调整 z 值。这样，z 缓冲相对于该几何体保持正确状态，它的素描表示也能与更多（例如非素描的）三维几何体合成。书附光盘中的配套视频演示了这一特性。</p><h4>15.3.4 素描渲染的变体</h4><p>我们给出素描渲染的两种变体，两者也都能实时运行。</p><h4>粗糙轮廓与颜色过渡</h4><p>尽管我们对边缘与表面颜色做非均匀勾画，素描图案的轮廓与颜色过渡仍像是用铅笔在平面上画的那样精确。我们把轮廓与颜色过渡做得粗糙，以模拟不同的绘画工具和媒材，比如在粗糙表面上用粉笔。我们施加随机选取的噪声值；因此噪声纹理相邻的纹理值不相关。于是，我们施加到相邻片元纹理坐标上的不确定性程度也不相关。这样我们得到边缘与颜色过渡柔和、毛糙的素描图案，如图 15-7b 所示。粗糙度与颗粒感——尤其是边缘的——变化不定，仿佛用粉笔画时笔压有变化。该效果取决于我们在图像空间施加的不确定性的量。</p><h4>重复边缘</h4><p>手绘的一项基本技法是用重复画线来打草稿或构思设计。我们仅勾画视觉上重要的边缘来模拟这一技法。为此我们不用明暗图，而是用不同的不确定性程度、可能还有不同的边缘颜色，把边缘图施加多次。边缘于是会非均匀地重叠，仿佛三维几何体的边缘被反复勾画过，如图 15-7c。我们还必须用相应的不确定性程度多次访问深度图，以调整深度信息。</p><h4>15.3.5 控制不确定性</h4><p>总体而言，控制不确定性值使我们能配置素描渲染的视觉外观。通过在图像空间为每个像素提供基于 Perlin 噪声函数的不确定性值，(1) 我们获得帧间一致性，例如在与场景交互时（因为相邻的不确定性值相关）；(2) 我们能从外部区域访问内部区域，反之亦然，把线勾到三维几何体边界之外。然而，不确定性值在图像空间中保持不变，与原三维几何体的几何属性没有明显的对应关系。于是素描图容易在图像空间中「游动」（称为<em>纱门效应</em>），我们也无法预先确定它们的视觉外观。</p><p>为克服这些局限，我们力争取做到以下几点：</p><ul><li>保留表面位置、法线或曲率信息等几何属性，用以确定不确定性值。</li><li>继续在外部区域（至少是三维几何体附近）提供不确定性值。</li></ul><h4>保留几何属性</h4><p>为保留三维几何体的几何属性以控制不确定性，我们按如下步骤处理：</p><ol type="1"><li>我们把这些几何属性直接渲染进一张纹理，生成额外的 G 缓冲。</li><li>接着我们用这张额外纹理给屏幕对齐四边形贴图，然后用纹理坐标（<em>s</em>, <em>t</em>）访问几何属性。</li><li>最后，我们以几何属性为参数，基于噪声函数计算不确定性值。</li></ol><p>然后我们就可以用这些不确定性值确定不同的不确定性程度，用来扰动纹理坐标，得到（<em>s</em>', <em>t</em>'）。在数学上，我们用下面的函数确定扰动后的纹理坐标（<em>s</em>', <em>t</em>'）：</p><table><tbody><tr><td><p><em>f</em> : (<em>s, t</em>) ← (<em>s', t'</em>)</p></td></tr><tr><td><p><em>f</em> (<em>s, t</em>) = <em>p</em>(<em>s, t, g</em>(<em>s, t</em>)),</p></td></tr></tbody></table><p>其中（<em>s</em>, <em>t</em>）表示光栅化屏幕对齐四边形时产生的片元纹理坐标，<em>g</em>() 提供额外纹理中可用的几何属性，<em>p</em>() 以 <em>g</em>() 为输入，确定施加到（<em>s</em>, <em>t</em>）上的扰动。</p><p>对于素描渲染，我们用两个函数 <em>f</em>(<em>s</em>, <em>t</em>) 分别处理边缘图（<em>f<sub>Edge</sub></em> (<em>s, t</em>)）与明暗图（<em>f<sub>Shade</sub></em> (<em>s, t</em>)）的扰动。</p><h4>放大几何体</h4><p>我们放大原始三维几何体，以便在图像空间中于其周围生成几何属性。做法是在物体空间中沿顶点法线轻微平移网格的每个顶点。要让这项技术按预期工作，表面至少需构成一个连通分量，且其每个共享顶点都必须有插值后的法线。</p><p>以这种方式放大三维几何体后，我们可以把几何属性渲染进一张纹理，用来在内部区域以及外部区域（原三维几何体附近）计算不确定性值。这样，内部区域可以被勾画到三维几何体边界之外，外部区域也能渗入内部区域。随后我们就能施加基于不确定性值的扰动，而这些值与底层三维几何体确实有明显的对应关系。</p><h4>15.3.6 减轻纱门效应</h4><p>现在我们举例说明如何控制素描程度，以减轻素描渲染中的纱门效应。</p><p>我们把放大的三维几何体连同其物体空间位置作为颜色值渲染进一张纹理。为此，我们确定每个位移后顶点的物体空间位置，把它们作为纹理坐标提供给光栅化过程。然后光栅化器为每个片元产生插值后的物体空间位置。再由专门的片元着色器把它们作为高精度颜色值输出到一张高精度纹理。于是，<em>g</em>(<em>s</em>, <em>t</em>) 保留了物体空间位置。</p><p>基于 <em>g</em>(<em>s</em>, <em>t</em>)，我们可以用 <em>p</em>() 确定纹理坐标 <em>f</em> (<em>s</em>, <em>t</em>)。在我们的例子中，函数 <em>p</em>() 用一个用户定义的 2 x 2 矩阵和一个编码进三维纹理的 Perlin 噪声函数来计算扰动。然后我们以 <em>g</em>(<em>s</em>, <em>t</em>) 作为纹理坐标访问该三维纹理。我们把得到的纹理值乘以 2 x 2 矩阵，得到不确定性程度。函数 <em>f</em> (<em>s</em>, <em>t</em>) 随即把该不确定性程度施加到（<em>s</em>, <em>t</em>）上做扰动，得到（<em>s</em>', <em>t</em>'）。</p><p>用不同矩阵计算 <em>f<sub>Edge</sub></em> (<em>s, t</em>) 与 <em>f<sub>Shade</sub></em> (<em>s, t</em>)，得到图 15-8 中的素描图案。书附光盘中的配套视频显示纱门效应已明显减轻。图 15-8 的概览说明了考虑底层几何属性时素描渲染的流程。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/15_blueprint_08.jpg" alt="15_blueprint_08.jpg"><figcaption>图 15-8 素描渲染涉及的缓冲与中间渲染结果</figcaption></figure><p>尽管这个例子只是减轻了纱门效应，但它提示了如何用几何属性控制素描图案。使用 GLSL（Rost 2004）或 Cg（Mark et al. 2003）这类高级着色语言，还可以进一步设计和风格化素描图。</p><h2>15.4 结论</h2><p>蓝图渲染是第一种渲染三维几何体可见与遮挡边缘的图像空间渲染技术。在今后的工作中，我们希望结合基于体绘制技术的边缘图，提升蓝图的视觉感知效果。</p><p>素描绘制也是第一种生成三维几何体风格化边缘的图像空间渲染技术（Isenberg et al. 2003），用于卡通式描绘。由于我们是用中间渲染结果在外部区域生成并访问几何属性与不确定性值，仅用高级着色语言编写着色器不足以复现我们的素描渲染技术。在今后的工作中，我们期望能复现艺术上令人满意的素描。</p><h2>15.5 参考文献</h2><p><a id="biblio15_01"></a>Diefenbach, P. J. 1996. "Pipeline Rendering: Interaction and Realism Through Hardware-Based Multi-Pass Rendering." 博士论文。University of Pennsylvania。</p><p><a id="biblio15_02"></a>Everitt, C. 2001. "Interactive Order-Independent Transparency." NVIDIA 技术报告。可在线获取：<strong><a href="http://developer.nvidia.com/object/Interactive_Order_Transparency.html" rel="noreferrer noopener">http://developer.nvidia.com/object/Interactive_Order_Transparency.html</a></strong></p><p><a id="biblio15_03"></a>Isenberg, T., B. Freudenberg, N. Halper, S. Schlechtweg, and T. Strothotte. 2003. "A Developer's Guide to Silhouette Algorithms for Polygonal Models." <em>IEEE Computer Graphics and Applications</em> 23(4)，第 28–37 页。</p><p><a id="biblio15_04"></a>Kilgard, M. 编. 2004. "NVIDIA OpenGL Extension Specifications." NVIDIA Corporation。可在线获取：<strong><a href="http://www.nvidia.com/dev_content/nvopenglspecs/nvOpenGLspecs.pdf" rel="noreferrer noopener">http://www.nvidia.com/dev_content/nvopenglspecs/nvOpenGLspecs.pdf</a></strong></p><p><a id="biblio15_05"></a>Mark, W. R., R. S. Glanville, K. Akeley, and M. J. Kilgard. 2003. "Cg: A System for Programming Graphics Hardware in a C-like Language." <em>ACM Transactions on Graphics (Proceedings of ACM SIGGRAPH 2003)</em> 22(3)，第 896–907 页。</p><p><a id="biblio15_06"></a>Nienhaus, M., and J. Döllner. 2003. "Edge-Enhancement: An Algorithm for Real-Time Non-Photorealistic Rendering." <em>Journal of WSCG '03</em>，第 346–353 页。</p><p><a id="biblio15_07"></a>Perlin, K. 1985. "An Image Synthesizer." 载 <em>Computer Graphics (Proceedings of SIGGRAPH 85)</em> 19(3)，第 287–296 页。</p><p><a id="biblio15_08"></a>Rost, R. J. 2004. <em>OpenGL Shading Language</em>。Addison-Wesley 出版。</p><p><a id="biblio15_09"></a>Saito, T., and T. Takahashi. 1990. "Comprehensible Rendering of 3-D Shapes." 载 <em>Computer Graphics (Proceedings of SIGGRAPH 90)</em> 24(4)，1990 年 8 月，第 197–206 页。</p><p><em>作者感谢柏林 ART+COM 提供拉美西斯二世神庙模型；感谢 Amy 与 Bruce Gooch 提供曲柄模型；感谢 Konstantin Baumann、Johannes Bohnet、Henrik Buchholz、Oliver Kersting、Florian Kirsch 和 Stefan Maass 对 Virtual Rendering System 的贡献。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-15-blueprint-rendering-and-sketchy" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-15-blueprint-rendering-and-sketchy</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

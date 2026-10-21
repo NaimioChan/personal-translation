@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 7 章　带置换贴图的细分曲面自适应剖分 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 7 章　带置换贴图的细分曲面自适应剖分」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 7 章　带置换贴图的细分曲面自适应剖分</h1>
+<p><em>Michael Bunnell</em><br> <em>NVIDIA Corporation</em></p><p>本章介绍如何对 Catmull-Clark 细分曲面做视角相关的自适应剖分，并可选择附加置换贴图。我们用 GPU 完成剖分计算，这节省了图形总线带宽，也比用 CPU 快许多倍。本章第一部分说明如何把细分曲面剖分成多边形，以渲染高质量曲面而不出现可见的多边形瑕疵。第二部分说明如何加入置换贴图支持，以渲染可实时动画的高精细模型。</p><p>本章采用重复细分的思路做剖分，通过渲染到二维纹理来实现。细分、平坦度测试和最终顶点属性计算都用片元程序（像素着色器）完成。该方法假定细分曲面控制网格的顶点数据存放在一张纹理中。中间结果同样渲染到纹理并从中读取，最终剖分结果（位置、法线等）渲染到一个顶点数组中，供 <code>glDrawElements()</code> 这类渲染图元调用使用。</p><h2>7.1 细分曲面</h2><p>细分曲面可以说是当今计算机图形中使用最广的曲面表示。具体来说，几乎每一个三维建模与动画软件都支持 Catmull-Clark 细分曲面。它由 Pixar 通过 <em>A Bug's Life</em> 引入大银幕，此后 Pixar 的每一部影片都用到了它，包括 <em>Finding Nemo</em> 和 <em>The Incredibles</em>。细分曲面常与置换贴图结合，为真人电影中的计算机生成角色增加细节。置换贴图细分曲面模型最引人注目的例子，大概要算近年 <em>Lord of the Rings</em> 系列影片中的怪物 Gollum。</p><p>细分曲面是由简单多边形控制网格和若干细分规则描述的曲面（或高阶曲面）。细分规则定义了如何对曲面执行一次细分步骤。每一次细分都产生一个新网格，几何体更多、外观比前一个网格更平滑。图 7-1 说明了这类规则用于一个立方体的情形。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_01.jpg" alt="07_tessellation_01.jpg"><figcaption>图 7-1　立方体的 Catmull-Clark 细分</figcaption></figure><h4>7.1.1 一些定义</h4><ul><li><strong>极限曲面</strong>——经无限次细分后形成的假想曲面</li><li><strong>（顶点的）价</strong>——连接到某个顶点的边数</li><li><strong>奇异点</strong>——价不为 4 的顶点（对基于四边形的细分方案而言，例如 Catmull-Clark）</li></ul><h4>7.1.2 Catmull-Clark 细分</h4><p>本章使用 Catmull-Clark 细分曲面，因此采用 Catmull-Clark 细分规则（Catmull and Clark 1978）。Catmull-Clark 细分可作用于任意流形拓扑的网格。但它被视为基于四边形的细分方案，因为它在四边形多边形上效果最好，而且第一次细分之后网格中的所有多边形都是四边形。我们的实现限于只由四边形构成的控制网格。这意味着源模型必须按全四边形建模，对具备 NURBS 建模背景或使用过 Lightwave SubPatches 的美术来说，这是熟悉的任务。</p><p>把全四边形网格细分的 Catmull-Clark 规则很简单。在面中心加一个顶点、在每条边加一个顶点，从而把控制网格的每个面拆成四个面。这些新顶点的位置以及原顶点的新位置，可以用图 7-2 中的权重掩码从细分前的网格顶点位置算出。我们只给出价为 3、4、5 的原顶点新位置的权重掩码。更高价的权重掩码遵循同样的递进规律。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_02.jpg" alt="07_tessellation_02.jpg"><figcaption>图 7-2　Catmull-Clark 细分掩码</figcaption></figure><p>如果观察单个面经过几步细分的情况，会注意到细分与缩放二维图像非常相似。区别只在于所用的滤波取值，以及顶点位置数据一般以浮点存储，而大多数图像以整数或定点存储。图 7-3 展示了一个网格的单个面被细分两次的过程。这张图有一点需要注意：要执行细分，我们需要在被细分面周围有一圈顶点。另外，原网格中该面左上角的奇异点（价为 5 的顶点）也出现在细分后的网格中。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_03.jpg" alt="07_tessellation_03.jpg"><figcaption>图 7-3　细分曲面的一个面</figcaption></figure><h4>7.1.3 用细分做剖分</h4><p>剖分细分曲面的一种显而易见的做法，是对原控制网格施加固定次数的细分步骤，生成待渲染的四边形列表。事实上，大多数三维建模软件就是这样生成预剖分曲面的。这种方法的缺点在于，模型的某些部分被过度剖分，另一些部分则剖分不足。而且它把选择细分次数的负担留给了应用程序。剖分不足会导致可见的多边形瑕疵。过度剖分会产生过多小三角形，严重影响渲染性能。几何体太多会让 GPU 受限于顶点变换或三角形装配。更糟的是，大量只有几个像素大小的细碎三角形会显著降低光栅化效率。</p><h4>自适应细分</h4><p>我们使用基于平坦度测试的自适应细分算法，以避免固定细分方法的问题。我们不再盲目地细分固定步数，而是先测试曲面的平坦度。这样，细分就会自适应于曲面曲率和视点。曲面越近或越弯曲，就被细分得越多。见图 7-4。我们把平坦度衡量为多边形网格到极限曲面的距离，以屏幕像素为单位。例如，平坦度值 0.5 表示曲面多边形近似到极限曲面的最大距离为半个像素。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_04.jpg" alt="07_tessellation_04.jpg"><figcaption>图 7-4　自适应剖分与均匀剖分</figcaption></figure><h4>7.1.4 把曲面分块</h4><p>我们需要以一种便于高效处理的格式存储细分控制网格的顶点数据。做法是把原控制网格拆成更小的网格，使它们能表示为规则的二维栅格，从而存进二维数组。见图 7-5。这样，网格的连通关系就可以由顶点在数组中的位置推断出来。相邻的顶点被假定由边相连。以这种方式排列在二维数组或矩阵中的控制点，一般称为<em>块</em>（patch），我们也就这么叫。我们的块不同之处在于允许块的角上出现奇异点。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_05.jpg" alt="07_tessellation_05.jpg"><figcaption>图 7-5　把曲面分块</figcaption></figure><p>把控制网格划分成块，显而易见的做法是为网格的每个面建一个块。这种方法需要大量重复顶点，因为我们必须把相邻面的顶点也包含进来才能细分该块。在可能时用包含更多面的块，可以改善这种情况。</p><p>给曲面分块并不是简单的过程，但幸运的是可以在预处理步骤中完成。即便是动画网格，拓扑一般也不变，因此每个块的顶点位置可以预先算出并存进一张二维纹理。这张纹理可以连同块信息列表一起传给剖分代码，块信息包括块的大小以及各奇异点的价。本书网站上提供的演示程序给出了一种把任意四边形模型分块的实现。</p><h4>7.1.5 GPU 剖分算法</h4><p>剖分算法的工作流程如下。首先，我们把控制网格的顶点数据（位置）复制进块缓冲纹理。平坦度测试假定顶点坐标在眼空间中。如果不在眼空间，可以在复制之前或复制过程中做变换。接着，我们对每个块检查平坦度（见本节后面的「平坦度测试」）。然后为已平坦的块计算顶点属性数据，例如位置和法线，写入顶点数组，并把索引信息写入图元索引缓冲。不平坦的块被细分进另一个块缓冲。然后交换块缓冲指针，回到平坦度测试步骤。本节更详细地描述剖分过程中的每一步。</p><h4>CPU 处理</h4><p>我们用 CPU 做缓冲管理，并生成构成部分剖分结果的顶点索引列表。CPU 不必接触顶点数据，但它要读取平坦度测试结果（用 <code>glReadPixels</code>），并决定哪些块需要进一步剖分。它在缓冲中为块分配位置，并用一个简单的递归过程，基于着色器算出的边平坦度结果构建图元索引列表。</p><h4>创建块</h4><p>创建块的方式是在块缓冲中的相应位置为每个块渲染一个四边形，从而从纹理中复制控制网格的顶点位置数据。在该四边形的片元上执行的程序使用一张预计算的纹理，去索引 7.1.4 节讨论的控制网格顶点。如果还有别的顶点属性需要细分，例如纹理坐标，就把它们复制到块缓冲中的另一处位置。除位置之外的顶点属性为性能起见采用双线性插值。</p><h4>平坦度测试</h4><p>块中每条边的平坦度，是通过用 FlatTest1.cg 或 FlatTest2.cg 着色器把一个尺寸合适的四边形渲染到平坦度缓冲中来计算的。（这里提到的所有着色器都可以在 SubdViewer 演示程序中找到。）与剖分所用的其他缓冲不同，这个缓冲不是浮点的，而是每分量 8 位的缓冲。</p><p>这两个平坦度测试着色器测量控制网格每条边的平坦度。两者都把沿一条边的四个控制点当作一条 b 样条曲线，并测量该曲线的平坦度。其中一个着色器用在第一次细分之前，因为它能处理 s 型曲线，即一阶导数变号的曲线。第二个更快的测试在此之后使用，因为第一次细分之后只存在 c 型曲线。（c 型曲线的一阶导数不变号，因而呈 c 形。）</p><p>如图 7-6 所示，第一个着色器的平坦度测试计算控制点 2 到控制点 1 与 3 中点的距离，以及控制点 3 到控制点 2 与 4 中点的距离。第二个平坦度测试计算控制点 1 与 4 的中点到控制点 2 与 3 的中点的距离。两个测试都把算出的距离与以像素给出的平坦度值（经适当缩放）比较。平坦度值事先经过缩放，以补偿 b 样条控制点到极限曲线的距离，并且被加倍，使得中点计算只需一次加法。由于控制点假定在眼空间中，平坦度距离要乘以控制点 2 与 3 中点的 <em>z</em> 值来缩放，以处理透视投影。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_06.jpg" alt="07_tessellation_06.jpg"><figcaption>图 7-6　比较两种平坦度测试</figcaption></figure><p>平坦度测试还需要处理小于近渲染平面的 <em>z</em> 缩放值，以避免对穿越近平面的网格过度剖分。做法是把小于近平面的 <em>z</em> 值反射到平面的另一侧。这种技术对穿越近平面的块能给出良好的剖分，而不会产生过多随后被裁掉的几何体。</p><p>平坦度测试的结果被复制到主机内存，以便 CPU 判断哪些块是平坦的。除最后一层（我们知道最后一次细分后所有边都平坦）之外，每一层细分的结果也被保存下来，以便用于构建图元索引数组。这些数据经过打包以节省带宽，平均而言比块本身的描述少约 200 倍字节数。</p><h4>细分</h4><p>细分的做法是用代码清单 7-1 所示的 Subdiv.cg 着色器，为每个块把渲染一个四边形到目标块缓冲中。渲染过程类似一幅放大 2 倍的图像 blit，但使用的是 Catmull-Clark 细分的权重，如 7.1.2 节所述。渲染所用的源坐标相对块的原点偏移 (0.75, 0.75)，以补偿被细分面周围那一圈额外顶点，并在目标中生成类似的一圈。见图 7-7。结果块的大小是源块的两倍减 3。Subdiv.cg 着色器用源坐标的小数部分来确定使用哪个细分掩码：面掩码、边掩码还是价 4 顶点掩码。除位置之外的属性在 Normal.cg 中做双线性插值。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_07.jpg" alt="07_tessellation_07.jpg"><figcaption>图 7-7　重采样一个块</figcaption></figure><h4>示例 7-1　Subdiv.cg——用 Catmull-Clark 规则细分规则网格</h4><pre><code>float4 main(float4 srcCoord, uniform samplerRECT srcTexMap : TEXUNIT0) : COLOR
+{
+  float3 wh, wv;
+  // 权重值
+  float3 s1, s2, s3;
+  float2 f;
+  // 根据源纹理坐标的小数部分
+  // 计算权重
+  //
+  // x == 0.0、y == 0.0 时用面权重（1/4, 1/4, 0）
+  //
+  (1 / 4, 1.4, 0)
+      //
+      (0, 0, 0)
+      // x == 0.5、y == 0.0 时用边权重（水平）
+      //
+      (1 / 16, 6 / 16, 1 / 16)
+      //
+      (1 / 16, 6 / 16, 1 / 16)
+      //
+      (0, 0, 0)
+      // x == 0.0、y == 0.5 时用边权重（垂直）
+      //
+      (1 / 16, 1 / 16, 0)
+      //
+      (6 / 16, 6 / 16, 0)
+      //
+      (1 / 16, 1 / 16, 0)
+      // x == 0.5、y == 0.5 时用价数为 4 的顶点权重
+      //
+      (1 / 64, 6 / 64, 1 / 64)
+      //
+      (6 / 64, 36 / 64, 6 / 64)
+      //
+      (1 / 64, 6 / 64, 1 / 64) wh = float3(1.0 / 8.0, 6.0 / 8.0, 1.0 / 8.0);
+  f = frac(srcCoord.xy + 0.001) < 0.25; // 考虑有限精度
+  if (f.x != 0.0)
+  {
+    wh = float3(0.5, 0.5, 0.0);
+    srcCoord.x += 0.5; // 小数部分为零——移到纹素中心
+  }
+  wv = float3(1.0 / 8.0, 6.0 / 8.0, 1.0 / 8.0);
+  if (f.y != 0)
+  {
+    wv = float3(0.5, 0.5, 0.0);
+    srcCoord.y += 0.5;
+    // 小数部分为零——需要移到纹素中心
+  }
+  // 用围绕 srcCoord 的 9 个顶点位置的加权和
+  // 来计算目标顶点位置
+  s1 = texRECT(srcTexMap, srcCoord.xy + float2(-1, -1)).xyz * wh.x +
+       texRECT(srcTexMap, srcCoord.xy + float2(0, -1)).xyz * wh.y +
+       texRECT(srcTexMap, srcCoord.xy + float2(1, -1)).xyz * wh.z;
+  s2 = texRECT(srcTexMap, srcCoord.xy + float2(-1, 0)).xyz * wh.x +
+       texRECT(srcTexMap, srcCoord.xy + float2(0, 0)).xyz * wh.y +
+       texRECT(srcTexMap, srcCoord.xy + float2(1, 0)).xyz * wh.z;
+  s3 = texRECT(srcTexMap, srcCoord.xy + float2(-1, 1)).xyz * wh.x +
+       texRECT(srcTexMap, srcCoord.xy + float2(0, 1)).xyz * wh.y +
+       texRECT(srcTexMap, srcCoord.xy + float2(1, 1)).xyz * wh.z;
+  return float4(s1 * wv.x + s2 * wv.y + s3 * wv.z, 0);
+}</code></pre><p>如果块的角上存在奇异点，就用奇异点细分着色器 EPSubdiv.cg 复制并调整它们。这个着色器严格来说并不做细分，因为不会产生更多数据。它只是按细分规则调整位置，用查表取得合适的滤波权重。它根据奇异点的价以及它正在计算的控制点的相对位置，算出权重在查找表中的坐标。这个着色器比常规细分着色器慢得多，但它在少得多的像素上运行。块的每个（带奇异点的）角都通过渲染一个单独的小四边形来处理。奇异点着色器在常规细分着色器之后运行，覆盖目标中被错误计算的控制点。</p><h4>极限位置与法线</h4><p>我们用极限着色器和法线着色器生成写入顶点数组用于渲染的顶点属性，其中包括在法线着色器中复制的、经双线性插值的属性。极限着色器计算与块各顶点对应的极限曲面上的位置。它对每个顶点及其八个邻居取加权平均（Halstead et al. 1993）。控制点本身往往离极限曲面不够近，不能直接替代极限曲面上的点，尤其是相邻的块被细分到不同深度时。EPLimit.cg 着色器用于计算奇异点的极限位置。</p><p>法线着色器为每个控制点计算两条切线，再用它们的叉积算出该点处极限曲面的表面法线。EPNormal.cg 着色器对奇异点做同样的事。两个着色器都用控制顶点邻居的加权平均来算切线。由于法线着色器使用与极限着色器相同的控制点，把它们合并到一个着色器中，并用多渲染目标同时写出位置和法线，是个好主意。</p><h4>7.1.6 水密剖分</h4><p>无缝剖分指剖分输出中多边形之间没有缝隙。即使极小的缝隙，也会在渲染表面时导致像素缺失。这类缝隙的一个来源是：浮点运算以不同顺序执行时，并不总能得到完全相同的结果。要让相邻面片的着色器计算顺序完全一致，性能代价很大。因此，我们不依赖面片边缘的位置或平坦度数据与其相邻面片一致。索引列表构建代码只使用单个面片的数据来处理共享的角与边，从而保证无缝。</p><p>另一个必须避免的无缝剖分问题是 T 形接缝。T 形接缝在自适应剖分方案中经常出现。如果某个面片的一条或多条边是平的，面片却被拆分，就会出现 T 形接缝。若共享这些平坦边的面片没有被同样拆分，T 形接缝就产生了。剖分过程中避免 T 形接缝有不同方法，其中一些相当复杂。我们的剖分器有一个优势：构建索引列表时，面片所有顶点的索引值都是已知的。剖分器只需把接缝处顶点的索引替换为离该边更远的顶点索引，并用一个三角形填补空隙，如图 7-8 所示。移动 T 形接缝处的顶点可以避免零面积三角形，这类三角形在渲染 alpha 混合表面时会导致瑕疵。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_08.jpg" alt="07_tessellation_08.jpg"><figcaption>图 7-8　T 形接缝的处理</figcaption></figure><h2>7.2 置换贴图</h2><p>置换贴图是一种给简单轻量模型增加几何复杂度的方法。置换贴图是一张纹理图，每个纹素存一个标量值，描述其所作用的表面沿法线方向应当位移多少。与凹凸贴图或法线贴图不同，置换贴图改变表面的实际几何形状，而不只是表面法线。</p><p>把置换贴图加进细分曲面有几个理由。第一，细分曲面提供了适合位移的光滑表面，即使做动画也是如此。第二，它们非常紧凑。控制网格不需要像多边形模型那样带法线和切线数据，因为这些数据在剖分时导出。第三，很容易修改我们的细分曲面着色器来支持自适应置换贴图。</p><h4>7.2.1 修改平坦度测试</h4><p>高效置换贴图的关键在于只在真正需要的地方增加几何。我们可以修改平坦度测试，使最大位移大于平坦度阈值时增加更多几何。由于平坦度是逐边测试的，我们借助置换贴图建一张表，记录每条边两侧的最大位移。图 7-9 以二维示意给出每个细分层次上最大距离的计算方式。注意所有低分辨率网格点都位于位移后的表面上，因为剖分顶点正是放在那里。在平坦度测试着色器中，我们把该边的最大位移值加到误差距离上，再与平坦度阈值比较。几何方面剩下的工作，就是在极限着色器中把置换贴图中的位移加到顶点位置上。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_09.jpg" alt="07_tessellation_09.jpg"><figcaption>图 7-9　最大位移计算的四个步骤</figcaption></figure><h4>7.2.2 用法线贴图着色</h4><p>我们用法线贴图在着色时把位移考虑进去，而不去调整顶点法线。示例见图 7-10。这种做法有几个好处。第一，法线贴图是逐像素完成的，因此通常能比顶点法线提供更细致的着色。更重要的是，由于自适应剖分使几何数量变化，做动画时表面不会出现突跳。法线贴图需要剖分器提供一些额外属性：一个切线，以及法线贴图的纹理坐标。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/07_tessellation_10.jpg" alt="07_tessellation_10.jpg"><figcaption>图 7-10　置换贴图的一个示例</figcaption></figure><h2>7.3 结论</h2><p>我们描述了在 GPU 上剖分细分曲面的方法，采用广度优先递归的细分算法。我们介绍了执行平坦度测试、完成细分、计算极限表面属性所需的着色器。我们还说明了如何修改这些着色器以支持置换贴图，从而增加细分曲面模型的几何细节。</p><h2>7.4 参考文献</h2><p><a id="biblio07_01"></a>Catmull, E., and J. Clark. 1978. "Recursively Generated B-Spline Surfaces on Arbitrary Topology Meshes." <em>Computer Aided Design</em> 10(6)，第 350–355 页。</p><p><a id="biblio07_02"></a>DeRose, T., M. Kass, and T. Truong. 1998. "Subdivision Surfaces in Character Animation."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 98)</em>，第 85–94 页。</p><p><a id="biblio07_03"></a>Halstead, M., M. Kass, and T. DeRose. 1993. "Efficient, Fair Interpolation Using Catmull-Clark Surfaces."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 93)</em>，第 35–44 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-7-adaptive-tessellation-subdivision-surfaces" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-7-adaptive-tessellation-subdivision-surfaces</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

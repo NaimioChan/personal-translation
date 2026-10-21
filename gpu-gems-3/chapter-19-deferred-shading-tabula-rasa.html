@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 19 章　《Tabula Rasa》中的延迟着色 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 19 章　《Tabula Rasa》中的延迟着色」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 19 章　Tabula Rasa 中的延迟着色</h1>
+<p><em>Rusty Koonce<br> NCsoft Corporation</em></p><p>本章是 Oles Shishkovtsov 在 <em>GPU Gems 2</em> 中的「<em>S.T.A.L.K.E.R.</em> 中的延迟着色」一文的自然延伸（Shishkovtsov 2005）。它基于我们为游戏 <em>Tabula Rasa</em> 开发渲染引擎的两年工作，这是一款由 Richard Garriott 设计的大型多人在线游戏（MMO）。Shishkovtsov 2005 讲的是实现延迟着色的基础知识，本章则侧重于在使用延迟着色引擎的过程中遇到的高层问题、技术与解决方案。</p><h2>19.1 引言</h2><p>在计算机图形学中，<em>着色</em>（shading）一词指渲染受光物体的过程。该过程包含以下步骤：</p><ol><li>计算几何形状（即三角网格）</li><li>确定表面材质特性，例如法线、双向反射分布函数等</li><li>计算入射光</li><li>计算表面与光照的相互作用，得到最终视觉效果</li></ol><p>典型的渲染引擎在渲染场景中的物体时，会一次性完成上述全部四个步骤。延迟着色是一种把前两步与后两步分开的技术，让它们分别在渲染管线的不同离散阶段执行。</p><p>本章假定读者对延迟着色有基本了解。延迟着色的入门材料可参阅 Shishkovtsov 2005、Policarpo 与 Fonseca 2005、Hargreaves 与 Harris 2004，或其他类似资料。</p><p>本章中，<em>前向着色</em>（forward shading）一词指传统的着色方法，即着色过程的四个步骤一起执行。<em>效果</em>（effect）一词指 Direct3D 的 D3DX 效果。<em>技术</em>（technique）、<em>注解</em>（annotation）与<em>遍</em>（pass）三个词都在 D3DX 效果的语境下使用。</p><p><em>材质着色器</em>一词指用于渲染几何形状（即着色过程的前两步）的效果，<em>光照着色器</em>指用于渲染可见光照的效果（属于着色过程的后两步）。<em>物体</em>（body）指所渲染场景中的一个几何对象。</p><p>本章我们避免了针对具体 GPU 的优化或实现；所有方案都是通用的，面向着色器模型 2.0 或着色器模型 3.0 硬件。我们希望以此强调技术本身，而不是具体实现。</p><h2>19.10 结论</h2><p>延迟着色已从理论走向实用。很多情况下新技术要么过于昂贵、要么过于抽象、要么过于不实用，只能在范围很窄的演示里使用。延迟着色已被证明是一种通用、强大且易于管理的技术，能在真实的游戏环境中工作。</p><p>延迟着色主要的缺点包括：</p><ul><li>内存带宽占用高</li><li>没有硬件抗锯齿</li><li>缺乏对 alpha 混合的恰当支持</li></ul><p></p><p>我们发现当前的中端硬件在中等分辨率下能够应对内存带宽需求，当前的高端硬件则能在开启全部特性的情况下应对更高分辨率。在 DirectX 10 硬件上，ATI 与 NVIDIA 都大幅提升了 MRT 性能。DirectX 10 与着色器模型 4.0 还在像素着色器中提供了整数运算以及对深度缓冲的读取访问，两者都可用来降低内存带宽占用。随着新硬件与新特性的出现，性能只会继续提升。</p><p>可靠的边缘检测配合恰当的滤波，可以显著减轻几何边缘附近的走样瑕疵。这些技术虽然不如硬件全屏抗锯齿中的子采样准确，但该方法产生的结果仍能让眼睛觉得硬边被平滑了。</p><p>延迟着色尚未解决的主要问题，是缺乏对 alpha 混合的支持。在延迟管线中不支持透明，我们有意牺牲了与此相关的一部分画质。不过我们觉得，使用延迟着色带来的收益总体上超过了这些问题。</p><p>延迟着色主要的优势包括：</p><ul><li>光照开销与场景复杂度无关。</li><li>着色器可以访问深度及其他像素信息。</li><li>每个像素对每盏灯只被照亮一次。也就是说，对于之后会被其他不透明几何体遮挡的像素，不会计算光照。</li><li>着色器代码分离得干净：材质渲染与光照计算彼此分开。</li></ul><p>每天都有新技术与新硬件出现，延迟着色的适用性也随之升降。未来难以预测，但在当今硬件的语境下，我们对自己选择延迟着色感到满意。</p><h2>19.11 参考文献</h2><p>Hargreaves, Shawn, and Mark Harris. 2004. "6800 Leagues Under the Sea: Deferred Shading."，可在线获取：<a href="http://developer.nvidia.com/object/6800_leagues_deferred_shading.html" rel="noreferrer noopener">http://developer.nvidia.com/object/6800_leagues_deferred_shading.html</a>。</p><p>Kozlov, Simon. 2004. "Perspective Shadow Maps: Care and Feeding."，载 <em>GPU Gems</em>，Randima Fernando 编，第 217–244 页。</p><p>Martin, Tobias, and Tiow-Seng Tan. 2004. "Anti-aliasing and Continuity with Trapezoidal Shadow Maps."，载 <em>Eurographics Symposium on Rendering Proceedings 2004</em>，pp. 153–160。</p><p>Policarpo, Fabio, and Francisco Fonseca. 2005. "Deferred Shading Tutorial."，可在线获取：<a href="http://fabio.policarpo.nom.br/docs/Deferred_Shading_Tutorial_SBGAMES2005.pdf" rel="noreferrer noopener">http://fabio.policarpo.nom.br/docs/Deferred_Shading_Tutorial_SBGAMES2005.pdf</a>。</p><p>Shishkovtsov, Oles. 2005. "Deferred Shading in <em>S.T.A.L.K.E.R</em>."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 143–166 页。Addison-Wesley 出版。</p><p>Sousa, Tiago. 2005. "Generic Refraction Simulation."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 295–306 页。Addison-Wesley 出版。</p><p>Stamminger, Marc, and George Drettakis. 2002. "Perspective Shadow Maps."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)，第 557–562 页。</p><p><em>感谢本章的所有贡献者，其中几位在 NCsoft Austin 的同事也帮助我们的渲染引擎得以实现：Sean Barton、Tom Gambill、Aaron Otstott、John Styes 与 Quoc Tran。</em></p><h2>19.2 一些背景</h2><p>在 <em>Tabula Rasa</em> 中，我们最初的渲染引擎是建立在 DirectX 9 之上的传统前向着色引擎，使用的着色器是用 HLSL D3DX 效果编写的。我们的效果在技术中使用了遍注解，描述该遍所支持的光照。CPU 一侧的引擎会判断哪些灯光影响了每个物体。这个信息连同效果遍注解中的光照数据一起，用来设置光照参数并按适当次数调用各个遍。</p><p>这种前向着色做法有几个问题：</p><ul><li>计算哪些灯光影响每个物体要消耗 CPU 时间，最坏情况下会变成 <em>O</em>(<em>n</em> x <em>m</em>) 运算。</li><li>着色器执行光照时往往需要不止一个渲染遍，复杂着色器在 <em>n</em> 盏灯时最坏需要 <em>O</em>(<em>n</em>) 个渲染遍。</li><li>添加新的光照模型或光源类型，需要改动所有效果源文件。</li><li>着色器很快就触及着色器模型 2.0 的指令数上限。</li></ul><p>做 MMO 时，我们无法严密控制游戏环境。我们控制不了同时可见多少玩家，也控制不了同时有多少特效或灯光处于激活状态。鉴于环境不可控、前向渲染器中光照开销的可扩展性又差，我们决定转向延迟着色渲染器。我们觉得这样可以给出不逊于任何顶级游戏引擎的画面，同时让光照开销与场景几何复杂度脱钩。</p><p>延迟着色带来以下好处：</p><ul><li>光照开销与场景复杂度无关；判断哪些灯光影响哪个物体没有额外开销。</li><li>几何体上不再有额外的光照渲染遍，因此绘制调用更少，渲染场景所需的状态切换也更少。</li><li>新增光源类型或光照模型时，无需修改任何材质着色器。</li><li>材质着色器不再执行光照，从而腾出指令用于额外的几何处理。</li></ul><p>延迟着色需要多渲染目标（MRT）支持，并会加大内存带宽占用，因此延迟着色对硬件的要求高于我们期望的最低配置。正因如此，我们决定同时支持前向着色与延迟着色。我们利用已有的前向着色渲染器，并在其上构建了自己的延迟渲染管线。</p><p>有完整的前向着色渲染管线作为后备，我们就可以把延迟着色管线的硬件要求提高。我们把最低配置与前向渲染管线定在着色器模型 2.0 硬件，而延迟着色管线则要求着色器模型 3.0 硬件。这让延迟管线的开发容易得多，因为我们不再受指令数限制，还可以依赖动态分支支持。</p><h2>19.3 前向着色支持</h2><p>即便引擎基于延迟着色，半透明几何体仍然需要前向着色（细节见 19.8 节）。我们在渲染器中保留了对完整前向着色管线的支持。前向渲染器用于半透明几何体，同时也是低端硬件上所有几何体的后备管线。</p><p>本节介绍我们用哪些方法，让同时支持前向与延迟两条着色管线变得更容易管理。</p><h4>19.3.1 受限的功能集</h4><p>我们把前向着色管线的光照特性限制在延迟着色管线所支持特性中很小的一部分。有些特性因技术原因无法支持，有些因时间限制没有支持，但还有很多纯粹是为了让开发更容易而没有支持。</p><p>我们的前向渲染器只支持半球光、平行光与点光，其中点光可选。不支持其他类型的光源（例如聚光灯与盒光源，这两者在延迟渲染器中都支持）。延迟管线中的阴影及其他特性，在前向管线中都不支持。</p><p>最后，前向渲染器中的着色器可以做逐顶点或逐像素光照。在延迟管线中，所有光照都是逐像素的。</p><h4>19.3.2 一个效果，多个技术</h4><p>我们的效果中包含用于前向着色、延迟着色、阴影贴图渲染等的多个技术。我们用一个技术注解来标明该技术是为哪种渲染写的。这样就能把所有着色器代码放在一个效果文件里，涵盖渲染引擎用到的该着色器的全部变体。见代码清单 19-1。其中包括对静态与蒙皮几何体做前向着色的技术、延迟管线中对静态与蒙皮几何体做「材质着色」的技术，以及阴影贴图的技术。</p><p>把一个效果的所有着色器代码放在一处，使我们能在各个不同技术之间尽可能共享代码。我们没有采用单个庞大的效果文件，而是把它拆成多个着色器库——即含有共享顶点程序、像素程序与通用函数的源文件——供许多效果使用。这种做法把着色器代码的重复降到最低，便于维护、减少缺陷数量，并提高各着色器之间的一致性。</p><h4>19.3.3 光源优先级</h4><p>当一块几何体上激活的灯光变多时，我们的前向渲染器会迅速产生额外的渲染遍。这不仅带来更多绘制调用，也带来更多状态切换与更多过度绘制。我们发现，前向渲染器只开启一小部分灯光，就可能比开启很多灯光的延迟渲染器还慢。因此为了最大化性能，我们在前向着色管线中严格限制单块几何体上可激活的灯光数量。</p><h4>示例 19-1. 材质着色器源码示例</h4><pre><code>
+// 这些定义在公共头文件里，也可以把定义
+// 作为参数传给效果编译器。
+#define RM_FORWARD
+1 #define RM_DEFERRED 2 #define TM_STATIC 1 #define TM_SKINNED 2 // 各种
+    // technique
+    // 都
+    // 被定义，
+    // 每一个都用
+    // 标注
+    // 来
+    // 描述
+    // 该 technique 所支持的渲染模式与变换模式。
+    technique ExampleForwardStatic < int render_mode = RM_FORWARD;
+int transform_mode = TM_STATIC;
+> {...} technique ExampleForwardSkinned < int render_mode = RM_FORWARD;
+int transform_mode = TM_SKINNED;
+> {...} technique ExampleDeferredStatic < int render_mode = RM_DEFERRED;
+int transform_mode = TM_STATIC;
+> {...} technique ExampleDeferredSkinned < int render_mode = RM_DEFERRED;
+int transform_mode = TM_SKINNED;
+> { ... }</code></pre><p>我们的延迟渲染管线在单帧内可以处理三十、四十、五十乃至更多激活的动态灯光，开销与被照亮的几何体无关。而我们的前向渲染器只要有那么两三盏点光开始影响大量几何体，就会迅速变慢。两条管线之间的性能差距这么大，让它们使用相同的灯光是不可能的。</p><p>我们让美术与策划能够给灯光指定优先级，并指定某盏灯由前向着色管线、延迟着色管线还是两者使用。当引擎因性能原因需要削减光照时，前向着色与延迟着色管线都会用到灯光的优先级。在前向着色管线中，削减一盏灯就是从场景中直接去掉它；而在延迟着色管线中，则可以根据性能、画质设置与该灯的优先级，关掉它的阴影或削减其他昂贵属性。</p><p>总的来说，地图是按延迟着色管线来打光的。随后会快速过一遍，确认前向着色管线中的光照可以接受。一般唯一需要额外做的，是把前向管线中的环境光调高，以弥补灯光数量少于延迟管线。</p><h2>19.4 高级光照特性</h2><p>下面所有这些技术在前向或延迟着色引擎中都可以实现。我们在延迟着色管线中全部用到了。虽然延迟着色并非必需，但它让实现干净得多。有了延迟着色，我们把这些特性的实现与材质着色器分开。这意味着我们可以在不修改材质着色器的情况下新增光照模型与光源类型。同样，我们也可以新增材质着色器，而不依赖任何光照模型或光源类型。</p><h4>19.4.1 双向光照</h4><p>DirectX 文档中描述的传统半球光照相当常见。该光照模型使用两种颜色，传统上称为<em>顶部</em>色与<em>底部</em>色，然后依据表面法线在这两色之间做线性插值。典型的半球光照在表面法线从正指向上转到正指向下时对颜色插值（顶部与底部之名即由此而来）。在 <em>Tabula Rasa</em> 中，我们支持这种传统半球模型，同时还为平行光增加了一个<em>背面</em>色。</p><p>有了延迟光照，美术可以轻松添加多个平行光。我们发现他们会再加一盏方向与第一盏几乎相反的平行光，用来模拟环境中的反弹光或辐射光。他们很喜欢这种外观和它带来的控制力，因此顺理成章的优化就是把两盏方向相反的平行光合并成一种新的平行光——一盏同时有正面色与背面色。这样他们以一半的开销得到了同样的控制力。</p><p>进一步的优化是：背面色只是一个简单的 <strong>N · L</strong>，也就是简单的兰伯特光照模型。我们不对它做任何镜面反射、阴影、遮蔽或其他高级光照计算。这个背面色实质上是对场景中辐射光或环境光的廉价近似。我们保存由正面光算出的 <strong>N · L</strong>，对背面色直接取其相反数。</p><h4>19.4.2 球罩贴图</h4><p>球罩贴图（globe map）是一张用来给光照染色的纹理，就像现实里在光源外面套一个玻璃球罩。光线从光源发出后必须穿过这个球罩，在那里被染色或被挡住。对点光源，我们用立方体贴图实现这个效果。对聚光灯，我们用二维纹理。用它可以廉价地模拟彩色玻璃效果，或按特定图案遮挡光线。我们还让美术能够旋转或动画化这些球罩贴图。</p><p>美术会在可能时用球罩贴图廉价地仿造阴影贴图，也会用来仿造彩色玻璃效果、迪斯科球反射效果等。我们引擎里的所有灯光都支持它。球罩贴图应用于灯光的示例见<a href="https://developer.download.nvidia.com/books/gpugems3/19fig01.jpg" rel="noreferrer noopener">图 19-1</a> 至<a href="https://developer.download.nvidia.com/books/gpugems3/19fig03.jpg" rel="noreferrer noopener">19-3</a>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig01.jpg" alt="19fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig01.jpg" rel="noreferrer noopener">图 19-1</a> 基本的聚光灯</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig02.jpg" alt="19fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig02.jpg" rel="noreferrer noopener">图 19-2</a> 一个简单的球罩贴图</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig03.jpg" alt="19fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig03.jpg" rel="noreferrer noopener">图 19-3</a> 带球罩贴图的聚光灯</figcaption></figure><h4>19.4.3 盒光源</h4><p>在 <em>Tabula Rasa</em> 中，平行光是影响整个场景的全局光，用来模拟日光或月光。我们发现美术想用平行光照亮一小片区域，但又不想让这盏灯影响整个场景。他们需要的是局部化的平行光。</p><p>我们对局部化平行光的解决方案是<em>盒光源</em>（box light）。这类灯使用我们基本的平行光光照模型，但被限制在一个长方体体积内。它们像聚光灯一样支持衰减，因此强度可以在接近光体积边缘时淡出。盒光源还支持阴影贴图、球罩贴图、背面色，以及我们光照引擎的其他全部特性。</p><h4>19.4.4 阴影贴图</h4><p><em>Tabula Rasa</em> 中没有预计算的光照。我们只用阴影贴图，不用模板阴影或光照贴图。美术可以在任意灯光（半球光除外）上开启投影。点光源的阴影贴图我们用立方体贴图，其他情况用二维纹理。</p><p>目前 <em>Tabula Rasa</em> 中所有阴影贴图都是浮点纹理，并使用抖动采样来柔化阴影。美术可以控制抖动采样的分布范围，从而控制阴影的柔和程度。这种做法让我们能写出一套解决方案，在所有硬件上都能工作且外观一致；不过阴影贴图也可以使用硬件专用的纹理格式。硬件专用格式能带来更好的精度与硬件滤波等好处。</p><h4>全局阴影贴图</h4><p>关于全局阴影贴图——即从单盏平行光的视角对整个场景做阴影贴图——已有许多论文。我们花了几周时间研究与试验透视阴影贴图（Stamminger 与 Drettakis 2002）与梯形阴影贴图（Martin 与 Tan 2004）。这些技术的缺陷在于，最终结果取决于光线方向与视线方向之间的夹角。两种方法中，随着相机移动，阴影质量都会变化，最坏情况下退化为标准的正交投影。</p><p><em>Tabula Rasa</em> 中有昼夜循环，太阳与月亮不断划过天空。黄昏与黎明很难处理，因为此时光线方向接近与地面平行，这大大增加了视线方向与光线方向变得平行的机会。而这正是透视阴影贴图与梯形阴影贴图的最坏情形。</p><p>由于相机或光源移动时阴影质量不稳定，我们最终改用一张 2048x2048 的大阴影贴图，配以常规正交投影。这样得到了与相机或光线方向无关的一致结果。不过我们没试过的一些新技术可能效果更好，例如级联阴影贴图。</p><p>我们用多重采样抖动采样来柔化阴影边缘，把光照变换的位置量化，使其始终指向阴影贴图内一个亚像素范围内的一致位置；我们还将光照方向量化，使写入阴影贴图的值不会每帧发生细微变化。这样在相机自由移动时能得到稳定的阴影。见代码清单 19-2。</p><h4>示例 19-2. 为构建阴影贴图投影矩阵而对光照位置做量化的 C++ 代码</h4><pre><code>
+// 假设阴影贴图与阴影视景体都是正方形。
+// 计算阴影贴图中的一个像素在世界空间中“有多宽”。
+const float pixelSize =
+    viewSize /
+    shadowMapWidth; // 自上一帧以来，光源位置变化了多少？
+vector3 delta(lightPos - lastLightPos); // 把该增量投影到光照矩阵的
+// 各个基向量上。
+float xProj = dot(delta, lightRight);
+float yProj = dot(delta, lightUp);
+float zProj = dot(
+    delta, lightDir); // 把投影量化到最接近的整数值。
+// （光源横向与纵向各移动了多少个“像素”？）
+const int numStepsX = static_cast<int>(xProj / pixelSize);
+const int numStepsY = static_cast<int>(
+    yProj / pixelSize); // 接着把“z”即光源方向也量化。
+// 该值影响写入阴影贴图的深度分量。
+// 这样能稳定阴影深度值，并把
+// 阴影偏移走样降到最低。
+const float zQuantization = 0.5f;
+const int numStepsZ = static_cast<int>(
+    zProj /
+    zQuantization); // 计算新的光源位置，使其与上次光源位置保持
+// 相同的亚像素
+// 位置。lightPos = lastLightPos + (pixelSize *
+// numStepsX) * lgtRight +
+(pixelSize *numStepsY) * lgtUp + (zQuantization * numStepsZ) * lgtDir;</code></pre><h4>局部阴影贴图</h4><p>由于我们引擎中任何灯光都能投影，而地图中动辄有数百盏灯，引擎必须管理大量阴影贴图的创建与使用。所有阴影贴图都在需要时即时生成。不过大多数阴影贴图是静态的，不必每帧重新生成。我们让美术通过给每盏投影灯设置标志位来控制这一点，选择使用静态阴影贴图还是动态阴影贴图。静态阴影贴图只构建一次，之后每帧复用；动态阴影贴图每帧重建。</p><p>我们还会把几何体标记为静态或动态，表示它在运行时是否会移动。这样就能依据该标记做剔除。构建静态阴影贴图时，我们剔除动态几何体。这可以避免动态对象（例如角色化身）的阴影被「烘焙」进静态阴影贴图。不过动态几何体依然会被这些静态阴影贴图投上阴影，与静态几何体一样。例如，一个走过楼梯下方的角色，身上会落下楼梯的阴影。</p><p>这其中有大量工作可以自动化并优化。我们选择不预生成静态阴影贴图，而是在判断需要时即时生成。这意味着我们不必随包发布和打补丁更新阴影贴图文件，也减少了加载地图或在其中跑动时需要从磁盘读取的数据量。为应对显存占用与纹理创建开销，我们使用了阴影贴图池。本章后文会给出更多细节。</p><p>动态投影灯是最昂贵的，因为它们必须不断重新生成阴影贴图。如果一盏动态投影灯不移动，或很少移动，有几种技术可以帮助提升其性能。最简单的做法是：除非有动态几何体位于其体积内，否则不重新生成该动态阴影贴图。另一种选择是把静态几何体渲染到单独一张只生成一次的静态阴影贴图中。在需要它的每一帧，只把动态几何体渲染到另一张动态阴影贴图里。把这两张阴影贴图合成，方法是比较两者的值并取较小（即较近）的那个。最终结果等价于把所有几何体都渲染进一张阴影贴图，但实际只渲染了动态几何体。</p><h4>19.4.5 未来扩展</h4><p>由于所有光照功能都与几何体渲染干净分离，在基于延迟着色的引擎中修改或增加光照特性极其容易。事实上，盒光源从白板上的一个提案，到功能完备并完整集成进我们的地图编辑器，只用了三天。</p><p>高动态范围、泛光及其他效果，加到延迟着色引擎里和加到前向引擎里一样容易。延迟着色管线的架构在很多方面都很适合扩展。通常，给延迟引擎增加特性比给前向着色引擎增加更容易，至少不会更难。最可能限制延迟着色引擎特性集的，是每像素能存放的材质属性数量有限、可用的显存以及显存带宽。</p><h2>19.5 可读深度与法线缓冲的好处</h2><p>延迟着色的一个必要条件是构建存放深度与法线信息的纹理。它们用于为场景提供光照；不过在光照之外，它们还能用于各种视觉效果，例如雾、深度模糊、体积粒子，以及消除 alpha 混合几何体与不透明几何体相交处的硬边。</p><h4>19.5.1 高级水面与折射</h4><p>在 <em>Tabula Rasa</em> 中，若使用延迟着色管线，我们的水面着色器会考虑（视空间中的）水深。渲染水面的每个像素时，着色器会采样延迟着色管线保存的深度，并与水面像素的深度比较。这意味着我们的水面可以自动生成岸线，颜色与透明度可随视空间深度变化，水下像素会折射而水上像素不会。这也意味着我们能在单个遍里完成所有这些，而不像传统前向渲染器那样。</p><p>我们的前向渲染器只支持基本的折射特性，并且需要额外一个渲染遍来初始化折射纹理的 alpha 通道，以便不对水面之下的像素做折射。这一基本流程在 Sousa 2005 中有概述。</p><p>在延迟渲染器中，我们可以采样当前像素的视深度，以及相邻的折射像素的视深度。比较这两个深度，就能判断折射像素是否确实位于目标像素之后。如果是，就执行折射效果；否则不做。见<a href="https://developer.download.nvidia.com/books/gpugems3/19fig04.jpg" rel="noreferrer noopener">图 19-4</a> 与<a href="https://developer.download.nvidia.com/books/gpugems3/19fig05.jpg" rel="noreferrer noopener">19-5</a>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig04.jpg" alt="19fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig04.jpg" rel="noreferrer noopener">图 19-4</a> 只用前向着色的水面</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig05.jpg" alt="19fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig05.jpg" rel="noreferrer noopener">图 19-5</a> 使用前向着色、但可访问延迟着色不透明几何体深度缓冲的水面</figcaption></figure><p>为了让美术能随深度控制颜色与透明度，我们实际上同时使用了体积纹理和一张一维纹理。一维纹理只是一张透明度的查找表，用归一化水深作为纹理坐标。这项技术让美术能轻松模拟水深与透明度之间的非线性关系。体积纹理用于水面颜色。它可以是平的体积纹理（从而变成常规二维纹理），也可以有两层或四层 W。同样，W 纹理坐标用归一化深度，UV 坐标由美术指定。水面的表面法线由两张各自独立做 UV 动画的法线贴图驱动。</p><h4>19.5.2 与分辨率无关的边缘检测</h4><p>Shishkovtsov 2005 提出了一种边缘检测方法，用来对帧做假的抗锯齿处理。其实现依赖一些随分辨率变化的魔数。我们同样需要边缘检测来做抗锯齿；不过我们改进了算法，使实现与分辨率无关。</p><p>我们采样像素周围全部八个邻域，考察深度梯度的变化与法线夹角的变化。这基本上与 Shishkovtsov 的方法相同。到此我们与之分道：我们比较深度变化的最大值与最小值，以此判断该处边缘的强度。像素之间的这个深度梯度是与分辨率相关的。通过比较该梯度的相对变化，而不是把梯度与固定值比较，我们就能让这段逻辑与分辨率无关。</p><p>我们的法线处理与 Shishkovtsov 的方法非常相似。我们在测试深度梯度的同一批边缘上，比较中心像素与其邻域像素之间夹角余弦的变化。这里我们用自己的常数值；不过跨像素的法线变化并不依赖分辨率。这就使该逻辑与分辨率无关。</p><p>算法中我们没有加入任何逻辑来把选取限定为「右上」或「前面」的边缘；结果许多边缘会变成几个像素宽。不过这正好配合我们的滤波方法，帮助平滑这些边缘。</p><p>边缘检测的输出是介于零与一之间的逐像素权重，反映该像素位于边缘上的程度。计算最终像素颜色时，我们用这个权重做四次双线性采样。权重为零时四次采样取像素中心，权重为一时取像素的四个角。这样就得到目标像素与其全部八个邻域的加权平均。像素越处在边缘上，与邻域的混合就越多。见代码清单 19-3。</p><h4>示例 19-3. 边缘检测的着色器源码</h4><pre><code>
+////////////////////////////
+// Neighbor offset table
+////////////////////////////
+const static float2 offsets[9] = {float2(0.0, 0.0),
+                                  // 中心
+                                  0 float2(-1.0, -1.0), // 左上
+                                  1 float2(0.0, -1.0),
+                                  // Top
+                                  2 float2(1.0, -1.0),
+                                  // 右上
+                                  3 float2(1.0,
+                                           0.0), // 右
+                                  4 float2(1.0,
+                                           1.0), // 右下 5
+                                  float2(0.0,
+                                         1.0), // 下
+                                  6 float2(-1.0,
+                                           1.0), // 左下
+                                  7 float2(-1.0, 0.0)
+                                  // 左
+                                  8};
+float DL_GetEdgeWeight(in float2 screenPos)
+{
+  float Depth[9];
+  float3 Normal[9];
+  // 取回所有邻域的法线与深度数据。
+  for (int i = 0; i < 9; ++i)
+  {
+    float2 uv = screenPos + offsets[i] * PixelSize;
+    Depth[i] = DL_GetDepth(uv);
+    // 从 MRTs 中取回深度
+    Normal[i] = DL_GetNormal(uv); // 从 MRTs 中取回法线
+  }
+  // 计算深度的差值。
+  float4 Deltas1;
+  float4 Deltas2;
+  Deltas1.x = Depth[1];
+  Deltas1.y = Depth[2];
+  Deltas1.z = Depth[3];
+  Deltas1.w = Depth[4];
+  Deltas2.x = Depth[5];
+  Deltas2.y = Depth[6];
+  Deltas2.z = Depth[7];
+  Deltas2.w = Depth[8];
+  // 计算相对中心的绝对梯度。
+  Deltas1 = abs(Deltas1 - Depth[0]);
+  Deltas2 = abs(Depth[0] - Deltas2);
+  // 求最小与最大梯度，并确保 min != 0
+  float4 maxDeltas = max(Deltas1, Deltas2);
+  float4 minDeltas = max(min(Deltas1, Deltas2), 0.00001);
+  // 比较梯度的变化，标记出变化
+  // 显著的像素。
+  // 变化要多剧烈才会被标记，取决于
+  // 最小梯度。这与分辨率无关。这里的
+  // 常数会随深度值的存储方式以及
+  // 边缘检测所需的灵敏度而变化。
+  float4 depthResults = step(minDeltas * 25.0, maxDeltas);
+  // 计算法线之间夹角余弦的变化。
+  Deltas1.x = dot(Normal[1], Normal[0]);
+  Deltas1.y = dot(Normal[2], Normal[0]);
+  Deltas1.z = dot(Normal[3], Normal[0]);
+  Deltas1.w = dot(Normal[4], Normal[0]);
+  Deltas2.x = dot(Normal[5], Normal[0]);
+  Deltas2.y = dot(Normal[6], Normal[0]);
+  Deltas2.z = dot(Normal[7], Normal[0]);
+  Deltas2.w = dot(Normal[8], Normal[0]);
+  Deltas1 = abs(Deltas1 - Deltas2);
+  // 比较夹角余弦的变化，标记出超过
+  // 某个常数阈值的改变。夹角的余弦不是
+  // 关于角度的线性函数，因此要让标记
+  // 结果与所涉及的角度无关，就需要
+  // 使用 arccos 函数。
+  float4 normalResults = step(0.4, Deltas1);
+  normalResults = max(normalResults, depthResults);
+  return (normalResults.x + normalResults.y + normalResults.z +
+          normalResults.w) *
+         0.25;
+}</code></pre><h2>19.6 注意事项</h2><h4>19.6.1 材质属性</h4><h4>谨慎选择属性</h4><p>在 <em>Tabula Rasa</em> 中，我们的延迟着色管线面向 DirectX 9、着色器模型 3.0 级别硬件。这给了我们很大的潜在用户群，但同时也存在一些约束，而 DirectX 10、着色器模型 4.0 级别硬件可以缓解这些约束。首要的一点是，大多数着色器模型 3.0 级别硬件最多只支持四个同时的渲染目标，且不支持各渲染目标独立的位深。这就把可用于存放材质属性的数据通道限制在很小的数量上。</p><p>假设是典型的 DirectX 9 32 位多渲染目标配置、四个渲染目标，其中一个专用于深度，那么共有 13 个通道可用于存放像素属性：3 张四通道 RGBA 纹理，加上一个用于深度的 32 位高精度通道。改用 64 位渲染目标代替 32 位能增加精度，但未必增加任何数据通道。</p><p>尽管大多数通道在纹理中以整数值存放，但在着色器模型 3.0 中，对这些数据的所有访问都通过浮点寄存器进行。这意味着用位掩码或类似手段把更多数据压缩或塞进单个通道，在着色器模型 3.0 下并不可行。不过着色器模型 4.0 确实支持真正的整数运算。</p><p>重要的是，这些通道应存放通用的材质数据，使引擎能最大限度地用好任何类型的光源为每个像素提供光照。尽量避免存放特定于某类光源的数据。通道数量如此有限，每一个都应当被视为极其宝贵的资源并妥善利用。</p><p>有一些常用技术可以帮助压缩或减少材质属性所需的数据通道。把像素法线存放在视空间中，就能用两个通道而不是三个来存放法线。在视空间中，法线的 <em>z</em> 分量符号都相同（所有可见像素都朝向相机）。利用这一点，再加上每个法线都是单位向量这一事实，我们就可以由法线的 <em>x</em> 与 <em>y</em> 分量重建其 <em>z</em> 分量。另一种技术是把材质属性存放在纹理查找表中，然后在 MRT 数据通道中存放相应的纹理坐标。</p><p>这些材质属性是把材质着色器与光照着色器连接起来的「胶水」。它们是材质着色器的输出，也是光照着色器输入的一部分。</p><p>因此，它们是材质着色器与光照着色器唯一共享的依赖。也正因如此，改动材质属性数据，可能就需要改动所有着色器，材质与光照的一样。</p><h4>封装并隐藏 MRT 数据</h4><p>我们不向材质着色器或光照着色器暴露材质属性的数据通道或数据格式。所有材质属性数据的读写都通过函数进行。这样任何数据位置或格式都可以改变，材质与光照着色器只需重新编译，无需修改。</p><p>我们还在每个材质着色器中用一个函数来初始化全部 MRT 数据。这确实可能增加一些不必要的指令，但也让我们将来能添加新的数据通道，并且省去了修改现有材质着色器的麻烦。只有在需要改动新增材质属性的默认值时，才需要修改材质着色器。见代码清单 19-4。</p><h4>示例 19-4. 对材质着色器封装并隐藏 MRT 布局</h4><pre><code>
+// 把所有材质属性的布局信息放在它自己的
+// 头文件中，并让材质着色器和光照着色器
+// 都包含这个头文件。为每个材质属性
+// 提供访问器与修改器函数，访问
+// MRT 中的材质属性数据时只用这些函数。
+// 延迟光照材质着色器输出
+struct DL_PixelOutput
+{
+  float4 mrt_0 : COLOR0;
+  float4 mrt_1 : COLOR1;
+  float4 mrt_2 : COLOR2;
+  float4 mrt_3 : COLOR3;
+}; // 把材质输出初始化为默认值的函数
+void DL_Reset(out DL_PixelOutput frag)
+{
+  // 把所有材质属性设为合适的默认值
+  frag.mrt_0 = 0;
+  frag.mrt_1 = 0;
+  frag.mrt_2 = 0;
+  frag.mrt_3 = 0;
+} // 修改器/访问器——所有数据转换与压缩都应
+// 在这里完成，使其与确切的存储细节
+// 保持抽象，对着色器不可见
+void DL_SetDiffuse(inout DL_PixelOutput frag, in float3 diffuse)
+{
+  frag.mrt_0.rgb = diffuse;
+}
+float3 DL_GetDiffuse(in float2 coord)
+{
+  return tex2D(MRT_Sampler_0, coord).rgb;
+}
+//...
+// 示例材质着色器
+DL_PixelOutput psProgram(INPUT input)
+{
+  DL_PixelOutput output;
+  // 用默认值初始化输出
+  DL_Reset(output);
+  // 用本着色器特有的属性
+  // 覆盖默认值。
+  DL_SetDiffuse(output, input.diffuse);
+  DL_SetDepth(output, input.pos);
+  DL_SetNormal(output, input.normal);
+  return output;
+}</code></pre><h4>19.6.2 精度</h4><p>使用延迟着色时，很容易遇到数据精度损失引起的问题。最明显的精度损失出现在把材质属性存入 MRT 数据通道时。在 <em>Tabula Rasa</em> 中，取决于使用 32 位还是 64 位渲染目标（每个渲染目标四个通道），大多数数据通道是 8 位或 16 位的。硬件内部寄存器的精度与内部格式与渲染目标通道不同，因此从该通道读出与写入时都需要转换。例如，我们的法线按硬件满精度逐分量计算，但保存时每个分量只有 8 位或 16 位精度。在 8 位精度下，法线无法给出平滑的镜面高光，镜面反射光照中的走样清晰可见。</p><h2>19.7 优化</h2><p>使用延迟着色时，光照的性能直接正比于光照着色器必须执行的像素数。下面这些技术旨在减少必须执行光照计算的像素数，从而提升性能。</p><p>早期 z 剔除、模板遮罩与动态分支这三种优化有一个共同点：都依赖数据的局部性。这确实取决于硬件架构，但对大多数硬件而言成立。一般来说，要让早期 z 剔除、模板遮罩与动态分支尽可能高效，一小块屏幕区域内的所有像素在该特性上的行为需要一致。也就是说，它们必须全部被 z 剔除、全部被模板剔除，或全部走同一条动态分支，才能获得最高性能。</p><h4>19.7.1 高效的光体积</h4><p>我们使用紧贴实际光体积的光体积几何体。严格来说，为每盏灯渲染一个全屏四边形，最终图像看起来也一样。但性能会大幅下降。光体积几何体在屏幕空间中覆盖的像素越少，像素着色器执行的次数就越少。聚光灯我们用锥形几何体，点光源用球体，盒光源用长方体，只有平行光这类全局光才用全屏四边形。</p><p>大多数延迟着色论文中记载的另一种做法，是依据光体积与相机的位置来调整深度测试与剔除模式。这种调整能最大化早期 z 剔除。该技术要求用 CPU 判断哪种深度测试与剔除模式最有可能产生最多的早期 z 剔除像素。</p><p>我们最终选用了「大于」深度测试与「顺时针」绕序（即反向绕序），这在我们这里对所有情况都有效（我们的光体积从不会被远裁剪面裁掉）。有经验的猜测可以很快挑出最可能最优的剔除模式与深度测试。不过我们的瓶颈在别处，所以决定不动用 CPU 资源去用这种技术优化性能。</p><h4>19.7.2 模板遮罩</h4><p>用模板缓冲把像素遮蔽掉，是延迟渲染器中加速光照的另一种常用技术。基本做法是用模板缓冲标记出灯光无法影响的像素。渲染该灯的光体积几何体时，只需把模板测试设为拒绝这些被标记的像素。</p><p>我们试过这项技术的几种变体。我们发现平均而言，该方法带来的性能提升不足以抵消它可能产生的额外绘制调用开销。我们试过在光照遍之前先执行「廉价」的遍，把背向光源或超出光源范围的像素在模板里标记出来。这个变体确实增加了最终光照遍丢弃的像素数。但 DirectX 9.0 的绘制调用开销再加上廉价遍的执行成本，似乎抵消了、甚至（平均而言）超过了最终光照遍所省下的性能。</p><p>不过在渲染场景中的不透明几何体时，我们确实用模板技术标记出之后将由延迟着色来照亮的像素。这种做法排除了天空盒的像素，以及我们事先知道不会或不应在其上执行光照计算的像素。它不需要任何额外的绘制调用，因此基本上是免费的。随后光照遍用模板测试丢弃这些被标记的像素。当天空占据屏幕大部分区域时，这项技术能省下可观的性能；同样重要的是，即使在最坏情况下，它也不会对性能产生不利影响。</p><p>DirectX 10 降低了绘制调用开销。面向该平台的读者或许值得探索用廉价遍丢弃更多像素的做法。不过如果面向着色器模型 3.0 或更高版本，用动态分支代替额外的遍大概是更好的选择。</p><h4>19.7.3 动态分支</h4><p>着色器模型 3.0 硬件的关键特性之一是动态分支支持。动态分支不仅提升了 GPU 的可编程性，在合适的情形下还能作为优化手段发挥作用。</p><p>要用动态分支做优化，遵循以下两条规则：</p><ol><li>只创建一条，最多两条动态分支，并使被跳过的代码量与分支被走到的频率都最大化。</li><li>留意数据的局部性。如果某个像素走了某条分支，要确保其邻域走同一分支的概率尽可能高。</li></ol><p>在光照中，用动态分支做优化的最佳机会是根据像素到光源的距离、或许还有其表面法线来剔除像素。如果使用了法线贴图，表面法线在同一个表面上的一致性会变差，这就使它不太适合用于优化。</p><h2>19.8 问题</h2><p>延迟着色并非没有代价。从存放材质属性信息的通道有限，到硬件内存带宽的约束，延迟着色有几个必须解决才能用好这项技术的问题。</p><h4>19.8.1 alpha 混合几何体</h4><p>延迟着色最大的单一缺点是无力处理 alpha 混合几何体。不支持 alpha 混合，部分原因是硬件限制，但只要我们把自己限制为只跟踪最近像素的材质属性，这项技术本身也从根本上不支持它。在 <em>Tabula Rasa</em> 中，我们用的解决办法和迄今为止所有人一样：在延迟渲染器完成不透明几何体的渲染之后，用前向渲染器渲染半透明几何体。</p><p>要在延迟渲染器内支持真正的 alpha 混合，需要某种深度帧缓冲来跟踪与给定像素重叠的每个材质片元。这也是解决顺序无关透明度所需的同一套机制。我们面向的硬件目前不支持这类深度缓冲。</p><p>不过，在 MRT 激活时，只要渲染目标使用兼容的格式，我们面向的硬件就支持加法混合（alpha 混合的一种形式）以及 alpha 测试。MRT 激活时做 alpha 测试，使用的是颜色 0 的 alpha 值。如果片元未通过，所有渲染目标都不会被更新。我们不使用 alpha 测试。在延迟着色的 MRT 激活时，我们改用 clip 指令杀掉像素。这样做是因为渲染目标 0 的 alpha 通道被用来存放其他材质属性数据，而不是漫反射 alpha。延迟管线中渲染的每个像素都是完全不透明的，所以我们选择不用一个数据通道去存放无用的 alpha 值。</p><p>用前向渲染器处理半透明几何体大体上解决了问题。我们的水面与所有半透明几何体都用前向渲染器。水面着色器把延迟管线的深度纹理作为输入。不过水面上的实际光照是由传统前向着色技术完成的。这个办法的问题在于，几乎不可能让半透明几何体上的光照与不透明几何体上的光照匹配。此外，延迟渲染器支持的许多光源类型与光照特性，我们的前向渲染器并不支持。这使得在我们的引擎里让两者光照匹配成为不可能。</p><p>在 <em>Tabula Rasa</em> 中，光照不一致真正成为问题的情形主要有两类：头发与植被（地被植物）。头发与植被都用 alpha 混合渲染时效果最好。但让角色走进阴影而头发不变暗是不可接受的。同样，一片草地周围所有其他几何体都有阴影，而它自己没有，也是不可接受的。</p><p>我们最终决定对头发与植被使用 alpha 测试而不是 alpha 混合。这让头发与植被能用延迟着色来照亮，于是它们的光照保持一致。为尽量减少植被的突变，我们试了几种技术。我们考虑过某种筛网式透明，甚至试过真正的透明：先用前向渲染器渲染正在淡入的植被，待其完全不透明后再切换到延迟渲染器。两者都不可接受。我们目前的做法是把植被放大缩小来模拟淡入淡出。</p><h4>19.8.2 内存带宽</h4><p>延迟着色显著提高了硬件的内存带宽占用。我们不是写一个渲染目标，而是渲染到四个。这使写入的字节数变成四倍。在光照遍中，我们又要从所有这些缓冲采样，增加了读取的字节数。在给定硬件上，内存带宽（或填充率）是决定延迟着色引擎性能的单一最大因素。</p><p>在我们可控的范围内，缓解内存带宽问题的最重要因素是屏幕分辨率。内存带宽直接正比于渲染的像素数，所以 1280x1024 可能比 1024x768 慢多达 66%。基于延迟着色的引擎，其性能在很大程度上取决于渲染时所用的分辨率。</p><p>检查是否支持各渲染目标独立的位深，并对不需要额外精度的数据使用位深更低的渲染目标，有助于降低总体内存带宽。不过这对我们不是一个选项，因为我们面向的硬件不支持该特性。我们尽量精简需要存入渲染目标的材质属性数据，并在可能时减少对这些目标的写入与读取。</p><p>渲染灯光时，我们实际上用了多个渲染目标。我们激活两个 MRT 并使用加法混合。这两个渲染目标分别是漫反射光与镜面反射光的累积缓冲。乍看之下，为了降低带宽这似乎是个奇怪的选择，因为光照着色器执行时会写两个渲染目标而不是一个。不过总体而言，这个选择其实更高效。</p><p>把漫反射光与镜面反射光合成为最终片元颜色的通用光照公式如下：</p><table><tbody><tr><td><p><em>Frag</em> <sub>lit</sub> = <em>Frag</em> <sub>unlit</sub> x <em>Light</em> <sub>diffuse</sub> + <em>Light</em> <sub>specular</sub>·</p></td></tr></tbody></table><p>这个公式对漫反射光与镜面反射光是可分离的。把漫反射光与镜面反射光放在不同的渲染目标中，我们就不必在光照着色器内部取未照亮时的片元颜色。光照着色器只计算并输出两种颜色：漫反射光与镜面反射光；除了光与表面的相互作用，它什么也不计算。</p><p>如果我们不把镜面反射光分量与漫反射光分量分开存放，光照着色器就得真正计算出最终的受光片元颜色。这个计算需要取未照亮的片元颜色，还要取影响其最终受光颜色的其他任何材质属性。在光照着色器中计算这个最终颜色，也意味着我们会丢失实际的漫反射与镜面反射分量，也就是说，无法把着色器的结果分解回原来的光照分量。能在渲染目标中访问漫反射与镜面反射分量，正好适合高动态范围（HDR）或任何其他需要访问场景中「光照」的后处理。</p><p>所有光照着色器执行完毕后，我们执行一个最终的全屏遍来计算最终片元颜色。在这个最终后处理遍里，我们计算雾、边缘检测与平滑，以及最终片元颜色。这种做法确保每项操作对每个像素只执行一次，从而减少取数，并在从 MRT 取材质属性数据时最大化纹理缓存的一致性。从 MRT 取材质数据可能很昂贵，尤其是在过度取数、硬件纹理缓存被反复冲刷的时候。</p><p>使用这些光照累积缓冲，还让我们能在关闭镜面反射光照时轻松禁用镜面反射累积渲染目标，省下不必要的带宽。这些光照累积缓冲也非常适合对光照做后处理，以增强对比度、计算 HDR 或实现其他类似效果。</p><h4>19.8.3 内存管理</h4><p>在 <em>Tabula Rasa</em> 中，即便只是 1024x768 这样的中等分辨率，光是延迟着色与折射所用的渲染目标就能吃掉远超 50 MB 的显存。这还不包括主后台缓冲、顶点缓冲、索引缓冲或纹理。在最高画质设置下，1600x1200 分辨率仅渲染目标一项就需要超过 100 MB 显存。</p><p>用材质着色器渲染几何体时，我们用四个屏幕大小的渲染目标存放材质属性数据。光照着色器使用两个屏幕大小的渲染目标。这些渲染目标可以是每像素 32 位或 64 位，取决于画质与图形设置。在此基础上还要加上给全局平行光用的一张 2048x2048 的 32 位阴影贴图，以及其他灯光所创建的额外阴影贴图。</p><p>一个可能的建议是使用分辨率更低的渲染目标，最后再把结果放大。这有很多好处，但我们发现画质很差。这个选项我们没有深入尝试，不过或许在某些特定应用中能成功使用。</p><p>渲染目标占用的显存量只是问题的一部分。这些渲染目标在显存中的存活期与位置同样对性能有显著影响。虽然这些纹理在显存中的实际位置不受我们控制，但我们做了几件事来帮驱动一把。</p><p>我们把主要的 MRT 纹理紧挨着分配，并且排在任何其他纹理之前。思路是在显存最充裕的时候分配它们，好让驱动能以最小的碎片把它们放进显存。我们仍然受制于驱动，但会尽可能帮它。</p><p>我们使用阴影贴图池，让多盏灯共用。我们限制引擎可用的阴影贴图数量。依据灯光优先级、灯光位置与期望的阴影贴图尺寸，把阴影贴图分派给各盏灯。这些阴影贴图不释放，而是保留复用。这能减少显存碎片，并降低创建与释放资源带来的驱动开销。</p><p>与此相关，我们还限制了任意一帧内渲染（或重新生成）多少张阴影贴图。如果多盏灯都需要在同一帧重建阴影贴图，引擎可能在该帧只重建其中一两张，把全部重建的开销分摊到多帧。</p><h2>19.9 结果</h2><p>在 <em>Tabula Rasa</em> 中，我们用延迟着色渲染器达成了目标。我们认为延迟着色的可扩展性与性能可以接受。一些早期的着色器 3.0 硬件，例如 NVIDIA GeForce 6800 Ultra，在基本设置与中等分辨率下能保持接近 30 fps。我们发现最新的 DirectX 10 级别硬件，例如 NVIDIA GeForce 8800 与 ATI Radeon 2900，能在高分辨率、全部设置拉满的情况下极为流畅地运行 <em>Tabula Rasa</em>。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/19fig06.jpg" rel="noreferrer noopener">图 19-6</a> 至<a href="https://developer.download.nvidia.com/books/gpugems3/19fig10.jpg" rel="noreferrer noopener">19-10</a> 展示了我们用这套方法得到的结果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig06.jpg" alt="19fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig06.jpg" rel="noreferrer noopener">图 19-6</a> 使用全局阴影贴图的室外场景</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig07.jpg" alt="19fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig07.jpg" rel="noreferrer noopener">图 19-7</a> 有大量静态投影灯的室内场景</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig18.jpg" alt="19fig18.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig18.jpg" rel="noreferrer noopener">图 19-8</a> 片元颜色与法线</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig9.jpg" alt="19fig9.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig9.jpg" rel="noreferrer noopener">图 19-9</a> 深度与边缘权重可视化</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/19fig10.jpg" alt="19fig10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/19fig10.jpg" rel="noreferrer noopener">图 19-10</a> 光照累积</figcaption></figure>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-19-deferred-shading-tabula-rasa" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-19-deferred-shading-tabula-rasa</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

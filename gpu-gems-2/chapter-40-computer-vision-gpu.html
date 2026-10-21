@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 40 章　GPU 上的计算机视觉 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 40 章　GPU 上的计算机视觉」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 40 章　GPU 上的计算机视觉</h1>
+<p><em>James Fung</em><br> <em>多伦多大学</em></p><p>计算机视觉任务计算密集且重复性强，常常超出 CPU 的实时处理能力，留给高层任务的时间很少。不过，许多计算机视觉操作能高效地映射到现代 GPU 上，其可编程性使得种类繁多的计算机视觉算法得以实现。本章介绍如何把计算机视觉中常见的数学操作高效地映射到现代计算机图形架构上。</p><h2>40.1 引言</h2><p>在某种意义上，计算机图形与计算机视觉互为对立。计算机图形取场景的数值描述并渲染成图像，而计算机视觉分析图像，以建立场景的数值表示。因此，在图形硬件上执行计算机视觉任务，是以「逆向」方式使用图形硬件。</p><p>GPU 提供流式的数据并行算术架构。这类架构对一组图像数据执行同一套计算。GPU 的单指令多数据（SIMD）能力使其适合运行计算机视觉任务，这类任务往往涉及对整幅图像执行相似的计算。</p><p>专用计算机视觉硬件在典型的量产个人计算机中很少见。人们通常改用 CPU 执行计算机视觉任务。为 CPU 优化的计算机视觉库往往要消耗大量 CPU 周期才能达到实时性能，留给其他非视觉任务的时间很少。</p><p>另一方面，GPU 出现在大多数个人计算机上，而且往往超出 CPU 的能力。因此我们可以用 GPU 加速计算机视觉计算，把 CPU 解放出来做其他任务。此外，同一台机器上可以使用多块 GPU，构成能并行运行多种计算机视觉算法的架构。</p><h2>40.2 实现框架</h2><p>许多计算机视觉操作可以看作一系列滤波操作的序列，每一个后续的滤波阶段都作用于前一滤波阶段的输出。在 GPU 上，这些滤波操作由片元程序执行。要把这些片元程序作用于输入图像，需先把输入图像初始化为纹理，再映射到四边形上。在尺寸合适的窗口中显示这些四边形，就能保证图像像素与输出片元一一对应。</p><p>带纹理的四边形显示时，片元程序随即运行，对图像的每个像素执行相同的操作。片元程序类似于常见 for 循环语句的循环体，但循环体的每次迭代可以看作并行执行。输出的结果不是原图像，而是滤波后的图像。现代 GPU 允许输入与结果都采用完整的 32 位 IEEE 浮点精度，为许多算法提供了足够的精度。</p><p>实现这些滤波操作的序列，就能构成完整的计算机视觉算法。纹理经片元程序滤波后，结果图像被放入纹理内存，可以用渲染到纹理扩展，也可以把帧缓冲拷贝进纹理内存。这样，输出图像就成为下一个片元程序的输入纹理。由此形成一条运行整个计算机视觉算法的管线。</p><p>不过，完整的视觉算法常常需要滤波之外的操作。例如求和就是常见的操作，我们会给出如何实现和使用它的例子。此外，诸如特征跟踪这类更一般化的计算，也能有效地映射到图形硬件上。</p><p>这些方法实现在 OpenVIDIA GPU 计算机视觉库中，可以用它编写实时计算机视觉程序（<a href="http://openvidia.sourceforge.net" rel="noreferrer noopener">http://openvidia.sourceforge.net</a>）。</p><h2>40.3 应用示例</h2><p>本章给出的示例在 GPU 上实现了常见的计算机视觉技术。这些算法之间的共同点是，它们都在我们的系统中用来构建一个完全交互、实时的<em>计算机中介现实</em>，其中用户所处的环境显得被增强、削弱或以其他方式改变。一些示例如图 40-1 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/40_vision_01.jpg" alt="40_vision_01.jpg"><figcaption>图 40-1 用计算机视觉中介现实</figcaption></figure><h4>40.3.1 用片元程序序列实现计算机视觉</h4><p>本节演示片元程序序列如何配合完成更复杂的计算机视觉操作。</p><h4>校正径向畸变</h4><p>许多相机镜头会使图像产生某种径向畸变（也称为<em>桶形畸变</em>），广角镜头与低成本镜头中最常见。在图形硬件上校正径向畸变有几种做法，我们给出一个用片元程序完成的例子。</p><p>我们首先假定径向畸变造成的像素位移为 <em>x</em>、<em>y</em>，常用的建模方式是：</p><p><img alt="ch40_eqn001.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch40_eqn001.jpg"/></p><p>其中 <em>x</em>、<em>y</em> 是图像坐标，<em>r</em> 是像素到相机主点的距离，系数 <em>k</em> <sub>1,2,3...</sub> 是由某种已知标定方法确定的相机参数。对特定的相机，可以用 Bouguet 2004 提供的工具求出所需的标定参数。</p><p>代码清单 40-1 所示的片元程序利用当前纹理坐标计算一个偏移量，以此施加这种校正。程序再把这个偏移量加到当前像素的坐标上，用结果在校正后的坐标处查找纹理值。这个纹理值随后被输出，图像的径向畸变因而得到校正。</p><h4>示例 40-1. 径向去畸变</h4><pre><code>float4 CorrectBarrelDistortion(float2 fptexCoord
+                               : TEXCOORD0, float4 wpos
+                               : WPOS, uniform samplerRECT FPE1)
+    : COLOR
+{
+  // 特定镜头与传感器的已知常量
+  float f = 368.28488;
+  // 焦距
+  float ox = 147.54834; // 主点，x 轴
+  float oy = 126.01673; // 主点，y 轴
+  float k1 = 0.4142;
+  // 径向畸变校正用的常量
+  float k2 = 0.40348;
+  float2 xy = (fptexCoord - float2(ox, oy)) / float2(f, f);
+  r = sqrt(dot(xy, xy));
+  float r2 = r * r;
+  float r4 = r2 * r2;
+  float coeff = (k1 * r2 + k2 * r4);
+  // 把算出的偏移加到当前纹理坐标上
+  xy = ((xy + xy * coeff.xx) * f.xx) + float2(ox, oy);
+  // 在校正后的坐标处采样纹理
+  // 并输出颜色
+  return texRECT(FPE1, xy);
+}</code></pre><h4>Canny 边缘检测器</h4><p>边缘检测是许多视觉应用中的关键算法。这里我们给出常用的「Canny」边缘检测算法的一个实现，它完全在 GPU 上运行。示例见图 40-2。我们把 Canny 边缘检测器实现为一系列片元程序，每个片元程序执行算法中的一个步骤：</p><ol><li><strong>步骤 1.</strong> 用可分离的高斯边缘滤波器滤波图像（Jargstorff 2004）。滤波器的足迹宽度通常约为 15x15 个元素，且可分离。可分离滤波器是指其二维掩模可以通过在 <em>x</em> 与 <em>y</em> 方向上分别施加两个一维滤波器来计算。可分离性为我们省下大量纹理查找，代价是多一遍渲染。</li><li><strong>第 2 步。</strong>确定第 1 步对每个像素算出的导数的模长 <em>l</em> ，并把方向 <em>d</em> 量化。<em>d</em> 与 <em>l</em> 的取值由下式给出：<p><img alt="ch40_eqn002.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch40_eqn002.jpg"/></p>其中 <em>d</em> 是梯度向量的方向，量化为遍历 3x3 像素区域时可走的八个方向之一。长度 <em>l</em> 是该向量的模。</li><li><strong>步骤 3.</strong> 执行非极大值抑制，如代码清单 40-2 所示。非极大值抑制利用局部梯度的方向确定哪些像素位于梯度的前向与后向。这个方向用来计算纹理坐标的 <em>x</em> 与 <em>y</em> 偏移，以便查找前向与后向的邻居。只有梯度相对其邻居取得极大值时才认为找到边缘，从而保证沿检测到的边缘得到一条细线。</li></ol><figure><img src="https://developer.download.nvidia.com/books/gpugems2/40_vision_02.jpg" alt="40_vision_02.jpg"><figcaption>图 40-2 Canny 边缘检测</figcaption></figure><h4>示例 40-2. 使用非极大值抑制的 Canny 边缘检测器</h4><p><em>本程序查找当前像素处梯度的方向，然后取沿梯度前向与后向的像素。若当前像素值大于沿梯度方向的两个值，程序返回 1；否则抑制（置零）输出。一个阈值参数使边缘检测器的灵敏度可以实时调节，以适应视觉装置与环境。</em></p><pre><code>float4 CannySearch(uniform float4 thresh, float2 fptexCoord
+                   : TEXCOORD0, uniform samplerRECT FPE1)
+    : COLOR
+{
+  // magdir 存放 { dx, dy, mag, direct }
+  float4 magdir = texRECT(FPE1, fptexCoord);
+  float alpha = 0.5 / sin(3.14159 / 8); // 网格上的八个方向
+  float2 offset = round(alpha.xx * magdir.xy / magdir.zz);
+  float4 fwdneighbour, backneighbour;
+  fwdneighbour = texRECT(FPE1, fptexCoord + offset);
+  backneighbour = texRECT(FPE1, fptexCoord + offset);
+  float4 colorO;
+  if (fwdneighbour.z > magdir.z || backneighbour.z > magdir.z)
+    colorO = float4(0.0, 0.0, 0.0, 0.0); // 不是边缘点
+  else
+    colorO = float4(1.0, 1.0, 1.0, 1.0); // 是边缘点
+  if (magdir.z < thresh.x)
+    colorO = float4(0.0, 0.0, 0.0, 0.0); // 阈值化
+  return colorO;
+}</code></pre><h4>40.3.2 求和操作</h4><p>许多常见的视觉操作涉及对图像缓冲求和。需要用到求和的方法包括矩计算以及线性方程组的求解。</p><p>Buck 与 Purcell（2004）讨论了一种利用局部邻域高效求缓冲之和的通用方法。然而在不支持渲染到纹理的系统上，这种技术所需的渲染遍数可能成为限制，因为涉及大量图形上下文切换。我们发现，在这类系统上分两遍完成计算更高效。在我们的做法中，先创建一个片元程序对每一行像素求和，得到一列保存各行和的值。然后在第二遍中绘制一个像素，执行一个沿该列向下求和的程序。结果是一个像素，其「颜色」就是整个缓冲的总和。以此方式求和的 Cg 代码见本书 CD 上本章的附录。</p><p>我们在两个不同但常用的算法中使用求和操作，它们都需要对缓冲求和：一个手部跟踪算法，以及一个通过确定如何拼接图像来生成全景图的算法。</p><h4>跟踪手部</h4><p>跟踪用户的手或脸是构建交互系统的有用视觉工具，可以通过图像滤波与矩计算的组合在 GPU 上实现。跟踪用户手部的常见做法是用颜色分割找出肤色区域，然后在图像中持续跟踪这些区域的位置。此外，跟踪肤色的平均颜色也很有用，因为它会逐帧变化，通常是由光照变化引起的。</p><p>通常把分割放在 HSV 色彩空间中进行，因为各种色调的肤色在 HSV 色彩空间中趋于聚集。HSV 色彩空间用<em>色调</em>（颜色的种类，例如红、绿、蓝）、<em>饱和度</em>（该颜色的鲜艳程度）和<em>明度</em>（颜色的亮度）来描述颜色。相机通常产生 RGB 图像，因此可以用一个片元程序作为滤波操作完成快速的颜色空间转换。</p><p>假定我们对肤色的 HSV 值有某种初始猜测，还可以用片元程序对像素做阈值判断。给定某个像素的 HSV 值，我们可以求出它与平均肤色 HSV 的差，若差过大则输出 0，否则输出该 HSV 值。例如，这个比较可以简单地写成：</p><pre><code>if (distance(hsv, meanhsv) &lt; thresh)
+{
+  colorO = hsv;
+}
+else
+  colorO = float4(0.0, 0.0, 0.0, 0.0);</code></pre><p>最后，我们求出肤色区域的质心，并根据当前所见更新平均肤色值。这两个步骤都需要在整幅图像上求和。</p><p>要计算质心，可以先计算图像的前三个矩：</p><p><img alt="ch40_eqn003.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch40_eqn003.jpg"/></p><p>其中 <em>W</em> 与 <em>H</em> 是图像在各轴上的尺寸，<em>E</em> (<em>x</em>, <em>y</em>) 是位置 (<em>x</em>, <em>y</em>) 处的像素值。质心的 <em>x</em> 坐标随后计算为 <em>M</em> <sub>10</sub>/<em>M</em> <sub>00</sub>，<em>M</em> <sub>01</sub>/<em>M</em> <sub>00</sub> 则是质心的 <em>y</em> 坐标。</p><p>这些求和可以先运行一个片元程序，把下列值填入缓冲来完成：</p><p><img alt="ch40_eqn004.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch40_eqn004.jpg"/></p><p>然后用 GPU 求和方法对整个缓冲求和。结果是一个像素，其值可以读回 CPU，用来更新质心的位置。</p><p>在我们的情形中——跟踪经阈值处理的肤色块的质心——不妨简单地让片元程序在肤色区域输出 1.0，在其他区域输出 0。代码清单 40-3 给出一个 Cg 程序，它产生四个输出分量，求和之后便能提供计算零阶与一阶矩所需的和。图 40-3 描绘了这一过程。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/40_vision_03.jpg" alt="40_vision_03.jpg"><figcaption>图 40-3 跟踪用户的手</figcaption></figure><p>如果需要更多前述那样的统计量，我们可以降低精度，向 128 位浮点纹理输出八个 16 位浮点结果，或者使用 OpenGL 的多重渲染目标（MRT）扩展。</p><h4>示例 40-3. 为矩计算生成输出统计量</h4><pre><code>float4 ComputeMoments(float2 texCoord
+                      : TEXCOORD0, uniform samplerRECT FPE1
+                      : TEXUNIT0)
+    : COLOR
+{
+  float4 samp = texRECT(FPE1, fptexCoord);
+  float4 colorO = float4(0, 0, 0, 0);
+  if (samp.x != 0.0)
+    colorO = float4(1.0, fptexCoord.x, fptexCoord.y, samp.y);
+}</code></pre><h4>40.3.3 用于生成全景图的方程组</h4><p>在构造 <strong>Ax</strong> = <strong>b</strong> 这种常见形式的方程组时，我们也会遇到这类「计算并求和」的操作。</p><h4>VideoOrbits</h4><p>VideoOrbits 是一种图像配准算法，用来计算成对图像之间的坐标变换，这些图像由可自由平移、俯仰、绕光轴旋转和变焦的相机拍摄。该技术解决两种情况下的问题：(1) 从同一位置拍摄任意三维场景的图像；(2) 从任意位置拍摄平面场景的图像。图 40-4 展示了由若干帧视频合成的图像全景。同样地，Mann 与 Fung（2002）展示了同一算法如何用计算机生成的内容替换场景中的平面，例如图 40-1 那样。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/40_vision_04.jpg" alt="40_vision_04.jpg"><figcaption>图 40-4 VideoOrbits 全景图</figcaption></figure><p>VideoOrbits 求解图像的投影，以便把它与另一幅图像配准。考虑同一场景的一对图像，相机在两次拍摄之间发生了移动。场景中某个点在第一幅图像中出现在坐标 [<em>x</em>, <em>y</em>]，在第二幅图像中则出现在坐标 [<em>x'</em>, <em>y'</em>]。在前面提到的约束下，图像中所有点的运动都可以看作由八个参数决定，如下式所示：</p><p><a id="ch40equ01"></a><strong>公式 1</strong></p><p><a><img alt="ch40_eqn005.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch40_eqn005.jpg"/></a></p><p>描述该投影的八个标量参数记为：</p><p><img alt="ch40_eqn006.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch40_eqn006.jpg"/></p><p>它们由 VideoOrbits 计算得出。一旦确定了每幅图像的参数 <strong>p</strong>，就可以把各图像变换到同一坐标系中，生成图 40-4 所示的图像全景。（关于投影流与 VideoOrbits 算法更深入的讨论，见 Mann 1998。）</p><p>VideoOrbits 通过求解一个线性方程组来计算参数 <strong>p</strong>。计算的主要部分在于这个方程组的初始化，其形式为 <strong>Ax</strong> = <strong>b</strong>。这里 <strong>A</strong> 是一个 8x8 矩阵，其元素需要初始化；<strong>x</strong> 是 8x1 列向量，对应 <strong>p</strong>；<strong>b</strong> 是一个同样需要初始化的 8x1 列向量。</p><p>求解这个方程组在计算上代价很高，因为 <strong>A</strong> 与 <strong>b</strong> 的每个元素实际上都是图像中每个点上一系列乘加运算的求和。矩阵 <strong>A</strong> 的 64 个元素中，每一个的初始化都涉及遍及所有像素的大量乘加运算。<strong>A</strong> 的形式为：</p><p><a id="ch40equ02"></a><strong>公式 2</strong></p><p><a><img alt="ch40_eqn007.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch40_eqn007.jpg"/></a></p><p>其中每个元素都是一个求和。（注意元素 <em>a</em> <sub>11</sub>、<em>a</em> <sub>12</sub>、<em>a</em> <sub>21</sub>、<em>a</em> <sub>22</sub> 并非公式 1 中的那些元素。）这些求和的被加项涉及大量算术运算。例如元素 <em>a</em> <sub>21</sub> 为：</p><p><a id="ch40equ03"></a><strong>公式 3</strong></p><p><a><img alt="ch40_eqn008.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch40_eqn008.jpg"/></a></p><p>这个操作必须在每个像素处执行，然后求和，才能得到矩阵 <strong>A</strong> 的每个元素。</p><p>这种「计算并求和」的操作与前面讨论的矩计算类似。不出所料，我们可以在 GPU 上以类似方式计算：把求和的被加项填入缓冲，再对缓冲求和。通常，要算出矩阵的全部元素需要多遍渲染。</p><p>每完成一次求和，结果就被拷贝到一张保存结果的纹理中。矩阵 <strong>A</strong> 与向量 <strong>b</strong> 的全部元素算完后，这些值才读回 CPU。这样操作留在 GPU 上，回读推迟到所有矩阵元素都算完之后，使 GPU 能以更大的独立性于 CPU 运行。随后系统在 CPU 上求解，而绝大部分逐像素计算已由 GPU 完成。</p><h4>40.3.4 特征向量计算</h4><p>在检测到的特征点处计算<em>特征向量</em>是计算机视觉中的常见操作。图像中的<em>特征</em>是一个点周围的局部区域，其「独特性」高于平均水平。这使该点更容易在后续视频帧中被识别。点的独特性通过为每个特征点计算特征向量来刻画。特征向量可用于在不同图像中识别同一个点，并可推广到更一般的物体识别技术。图 40-5 展示了相机移动时特征在帧间的运动。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/40_vision_05.jpg" alt="40_vision_05.jpg"><figcaption>图 40-5 相机平摇时检测有区分度的点</figcaption></figure><p>在 GPU 上计算特征向量需要以不同于前文所介绍操作的方式处理图像数据。由于图像中只有少数点是特征点，这项计算不需要在图像的每个点处进行。此外，对单个特征点通常要计算一个较大的特征向量（100 个元素或更多）。因此，每个单点产生的结果数量较多，而非我们此前讨论的一对一或多对一映射。</p><p>这类计算仍然可以在 GPU 上完成。我们以一个特征向量为例，它由某个已定位特征点周围局部区域内经过滤的梯度幅值组成。</p><p>特征检测可以用类似 Canny 边缘检测器的方法实现，只是寻找角点而非线条。如果特征点是用滤波序列检测的（这很常见），我们可以在 GPU 上完成滤波，并把一个标记哪些像素是特征点的缓冲读回 CPU。CPU 随后可以快速扫描该缓冲，定位每个特征点，生成一个图像位置列表，我们将在 GPU 上为这些位置计算特征向量。</p><p>生成特征向量以跟踪特征点有许多做法。我们给出其中一种作为例子。对每个检测到的特征点，我们考察一个 16x16 的梯度幅值与方向邻域（如 Canny 边缘示例中所计算）。这个邻域被划分为 4x4 像素的区域，得到 16 个各含 16 个像素的区域。在每个区域中，我们建立梯度幅值的 8 元直方图。每个像素的梯度幅值按其量化后的梯度方向加入直方图对应的箱。每个区域的结果便是一个 8 元直方图。特征向量是这 16 个 8 元直方图的拼接，因此特征向量长度为 16 x 8 = 128 个元素。不同图像中的特征可以通过计算特征向量两两之间的欧氏距离来匹配，距离最小者即最佳匹配。</p><p>为产生 128 元的特征向量结果，我们绘制若干行顶点，每个特征一行，使行中绘制的每个点对应该特征向量的一个元素。逐点关联纹理值，能在为计算特征向量而映射纹理坐标时提供最大的灵活性。图 40-6 展示了顶点的布局以及图像纹理坐标的绑定。每个点都映射了不同的纹理坐标，使单个片元程序能够访问计算直方图所需的局部区域中相应的梯度。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/40_vision_06.jpg" alt="40_vision_06.jpg"><figcaption>图 40-6 特征顶点的 OpenGL 顶点布局与纹理绑定</figcaption></figure><p>通过为每个点顶点关联正确的纹理坐标，代码清单 40-4 所示的单个片元程序即可计算特征向量。为了每个区域产生 8 个元素，我们把结果打包进 16 位半精度浮点值；另一种做法是用 MRT 输出多个 32 位值。完成后，我们把帧缓冲读回 CPU，其中每行保存一个特征向量。</p><h4>示例 40-4. 计算特征向量的片元程序</h4><pre><code>float4 FeatureVector(float2 fptexCoord
+                     : TEXCOORD0, float2 tapsCoord
+                     : TEXCOORD1, float4 colorZero
+                     : COLOR0, float4 wpos
+                     : WPOS, uniform samplerRECT FPE1, uniform samplerRECT FPE2)
+    : COLOR
+{
+  const float4x4 lclGauss = {0.3536, 0.3536, 0.3536, 0.3536, 0.3536, 0.7071,
+                             0.7071, 0.3536, 0.3536, 0.7071, 0.7071, 0.3536,
+                             0.3536, 0.3536, 0.3536, 0.3536};
+  const float eps = 0.001;
+  float4 input;
+  int xoffset = 1, yoffset = 1;
+  float4 bins_0 = float4(0.0, 0.0, 0.0, 0.0);
+  float4 bins_1 = float4(0.0, 0.0, 0.0, 0.0);
+  for (xoffset = 0; xoffset < 4; xoffset++)
+  {
+    for (yoffset = 0; yoffset < 4; yoffset++)
+    {
+      input = texRECT(FPE1, fptexCoord + float2(xoffset, yoffset));
+      float dir = input.y;
+      input *= lclGauss[xoffset, yoffset].xxxx *
+               texRECT(FPE2, tapsCoord + float2(xoffset, yoffset)).xxxx;
+      if (dir < = (1.0 + eps) / 8.0)
+        bins_0.x += input.z;
+      /* . . . for each bin . . . */
+      else if (dir < = (7.0 + eps) / 8.0)
+        bins_1.z += input.z;
+      else
+        bins_1.w += input.z;
+    }
+  }
+  return float4(pack_2half(bins_0.xy), pack_2half(bins_0.zw),
+                pack_2half(bins_1.xy), pack_2half(bins_1.zw))
+}</code></pre><h2>40.4 并行计算机视觉处理</h2><p>当应用需要多种计算机视觉算法时，可以把多块显卡插入主板的 PCI 总线插槽，实现 GPU 并行处理。图 40-7 展示了一台为探索多显卡并行计算收益而搭建的机器。让每个计算机视觉程序在不同的 GPU 上运行，各卡便能并行处理；程序之间可以用常规的共享内存交互。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/40_vision_07.jpg" alt="40_vision_07.jpg"><figcaption>图 40-7 用于计算机视觉应用的多块 GPU</figcaption></figure><p>由于 PCI 总线即将过时，用 PCI 显卡搭建多 GPU 系统很快就会变得不可行；不过 PCI Express 的出现使新的多 GPU 方案成为可能。其中一种是 NVIDIA 的 SLI，它在多块 GPU 之间自动分配工作，使多 GPU 的存在对开发者透明。</p><h2>40.5 结论</h2><p>本章介绍了把计算机视觉算法映射到现代 GPU 上的技术。我们希望本章能让读者理解如何编写在 GPU 上快速处理的计算机视觉算法。虽然也可以使用其他专用硬件系统为计算机视觉算法提供硬件加速，但 GPU 的低成本与广泛可得会使硬件加速的计算机视觉算法更容易普及。</p><h2>40.6 参考文献</h2><p>这里介绍的方法实现在 OpenVIDIA 项目中。OpenVIDIA 是一个开源项目，包含在 GPU 上运行计算机视觉应用的库函数与示例程序。更多信息请访问 OpenVidia 的网站：<a href="http://openvidia.sourceforge.net" rel="noreferrer noopener">http://openvidia.sourceforge.net</a>。</p><p><a id="biblio40_01"></a>Bouguet, J.-Y. 2004. Camera Calibration Toolbox for Matlab. 可在线获取：<strong><a href="http://www.vision.caltech.edu/bouguetj/calib_doc/index.html" rel="noreferrer noopener">http://www.vision.caltech.edu/bouguetj/calib_doc/index.html</a></strong></p><p><a id="biblio40_02"></a>Bradski, G. 1998. "Computer Vision Face Tracking for Use in a Perceptual User Interface."，载 <em>Intel Technology Journal</em>。</p><p><a id="biblio40_03"></a>Buck, I., and T. Purcell. 2004. "A Toolkit for Computation on GPUs."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 621–636，Addison-Wesley 出版。</p><p><a id="biblio40_04"></a>Canny, J. F. 1986. "A Computational Approach to Edge Detection."，载 <em>IEEE PAMI</em> 8(6)，pp. 679–698。</p><p><a id="biblio40_05"></a>Fung, J., and S. Mann. 2004a. "Computer Vision Signal Processing on Graphics Processing Units."，载 <em>Proceedings of the IEEE International Conference on Acoustics, Speech, and Signal Processing (ICASSP 2004)</em>，Montreal, Quebec, Canada，pp. 83–89。</p><p><a id="biblio40_06"></a>Fung, J., and S. Mann. 2004b. "Using Multiple Graphics Cards as a General Purpose Parallel Computer: Applications to Computer Vision."，载 <em>Proceedings of the 17th International Conference on Pattern Recognition (ICPR2004)</em>，Cambridge, United Kingdom，pp. 805–808。</p><p><a id="biblio40_07"></a>Fung, J., F. Tang, and S. Mann. 2002. "Mediated Reality Using Computer Graphics Hardware for Computer Vision."，载 <em>Proceedings of the International Symposium on Wearable Computing 2002 (ISWC2002)</em>，Seattle, Washington，pp. 83–89。</p><p><a id="biblio40_08"></a>Horn, B., and B. Schunk. 1981. "Determining Optical Flow."，载 <em>Artificial Intelligence</em> 17，pp. 185–203。</p><p><a id="biblio40_09"></a>Jargstorff, F. 2004. "A Framework for Image Processing."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 445–467，Addison-Wesley 出版。</p><p><a id="biblio40_10"></a>Lowe, D. 2004. "Distinctive Image Features from Scale-Invariant Keypoints."，载 <em>International Journal of Computer Vision</em> 60(2)，pp. 91–110。</p><p><a id="biblio40_11"></a>Mann, S. 1998. "Humanistic Intelligence/Humanistic Computing: 'Wearcomp' as a New Framework for Intelligent Signal Processing."，载 <em>Proceedings of the IEEE</em> 86(11)，pp. 2123–2151。可在线获取：<strong><a href="http://wearcam.org/procieee.htm" rel="noreferrer noopener">http://wearcam.org/procieee.htm</a></strong></p><p><a id="biblio40_12"></a>Mann, S., and J. Fung. 2002. "Eye Tap Devices for Augmented, Deliberately Diminished or Otherwise Altered Visual Perception of Rigid Planar Patches of Real World Scenes."，载 <em>Presence</em> 11(2)，pp. 158–175。</p><p><a id="biblio40_13"></a>Tsai, R. 1986. "An Efficient and Accurate Camera Calibration Technique for 3D Machine Vision."，载 <em>Proceedings of IEEE Conference on Computer Vision and Pattern Recognition</em>，Miami Beach, Florida，pp. 364–374。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-40-computer-vision-gpu" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-40-computer-vision-gpu</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

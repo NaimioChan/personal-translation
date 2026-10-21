@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 24 章　高质量滤波 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 24 章　高质量滤波」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 24 章　高质量滤波</h1>
+<p><em>Kevin Bjorke<br> NVIDIA</em></p><p>GPU 硬件能提供快速、经过滤波的纹理访问，但并非对所有纹素格式都可用，而且只支持少数几种受限的纹理滤波类型。对许多应用来说，自己实现图像滤波方法能带来更高的质量与灵活性。理解硬件滤波与过程化滤波之间的质量与速度权衡，对这类应用至关重要。</p><p>用于图像滤波的考量同样适用于 3D 渲染，尤其是模型带纹理时：我们是在把 3D 数据（可能还包括纹理信息）变换成新的 2D 图像。理解这一变换是绘制抗锯齿图像的关键。</p><p>混合滤波方法把硬件纹理单元与分析式着色结合使用，能走出最优的中间路线。</p><h2>24.1 质量与速度</h2><p>在某些应用中，高质量滤波至关重要。现代图形硬件能以极高速度提供经过 mipmap 的纹理访问，但只能使用线性滤波方法。其他滤波方法也是存在的，而某些类型的成像应用正需要它们。</p><p>当硬件滤波不可用，或我们需要极致的图像质量时，可以用像素着色代码实现任意滤波器。</p><p>GPU 着色程序与 CPU 着色程序在一个关键方面不同：一般来说，CPU 做数学运算比做纹理访问快。在 RenderMan 着色语言这类语言中，<code>texture()</code> 通常是最昂贵的算子之一。这与 GPU 中的情况正好相反。</p><p>在 GPU 着色语言中，<code>tex2D()</code> 这类纹理算子通常属于最快的算子，因为与 CPU 着色器不同，GPU 着色器不管理周围的图形状态或磁盘系统。我们可以利用这一速度获得各种有用的滤波要素，例如滤波核与伽马校正查找。</p><h4>24.1.1 滤波核：图像到图像的变换</h4><p>图像滤波的目标很简单：给定输入图像 A，我们要创建新图像 B。从源 A 到目标 B 的变换操作就是图像滤波器。最常见的变换有图像缩放、锐化、颜色改变和模糊。</p><p>在某些情形下（尤其是颜色变换），新图像 B 中的每个像素都恰好对应图像 A 中的一个像素。但对大多数其他操作，我们要在图像 A 中采样多个像素，并根据某个用户定义的函数施加它们的值。源像素的分布模式，以及这些像素对图像 B 中最终像素的相对贡献，称为<em>滤波核</em>。把核施加到源图像上的过程称为<em>卷积</em>：我们用特定的核对 A 中的像素做卷积，生成新图像 B 中的像素。</p><p>在 Adobe Photoshop 这类常见成像应用中，我们可以把核指定为像素贡献的矩形数组。也可以让 Photoshop 在 Sharpen、Blur 这类操作中，或在缩放图像时自行计算该用哪个核。</p><p>如果核内的像素只是简单取平均，我们把这个模式称为<em>盒式滤波器</em>，因为它的形状就是一个简单矩形（所有装在盒子里的像素）。每个被采样的纹素（即纹理中的一个像素）权重相同。盒式滤波器易于构造、执行快速，实际上也是 GPU 硬件滤波的核心。</p><h4>用户自定义核</h4><p>如果能接受使用小核，我们可以把这些项直接作为参数传给着色器。代码清单 24-1 的示例代码实现了一个 3x3 滤波操作：被索引的纹素及其邻居被赋予权重 <code>W00</code> 到 <code>W22</code>，加权值求和，再按预算的 <code>Sum</code> 值重归一化。参见图 24-1。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-01.jpg" alt="fig24-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-01.jpg" rel="noreferrer noopener">图 24-1</a> 以 为中心 3x3 核的像素布局</figcaption></figure><h4>例 24-1. 读取九个纹素计算加权和</h4><pre><code>float4 convolve3x3PS(vertexOutput IN, uniform sampler2D ColorMap,
+                     uniform float W00, uniform float W01, uniform float W02,
+                     uniform float W10, uniform float W11, uniform float W12,
+                     uniform float W20, uniform float W21, uniform float W22,
+                     uniform float Sum, uniform float StepHoriz,
+                     uniform float StepVert)
+    : COLOR
+{
+  float2 ox = float2(StepHoriz, 0.0);
+  float2 oy = float2(0.0, StepVert);
+  float2 PP = IN.UV.xy - oy;
+  float4 C00 = tex2D(ColorMap, PP - ox);
+  float4 C01 = tex2D(ColorMap, PP);
+  float4 C02 = tex2D(ColorMap, PP + ox);
+  PP = IN.UV.xy;
+  float4 C10 = tex2D(ColorMap, PP - ox);
+  float4 C11 = tex2D(ColorMap, PP);
+  float4 C12 = tex2D(ColorMap, PP + ox);
+  PP = IN.UV.xy + oy;
+  float4 C20 = tex2D(ColorMap, PP - ox);
+  float4 C21 = tex2D(ColorMap, PP);
+  float4 C22 = tex2D(ColorMap, PP + ox);
+  float4 Ci = C00 * W00;
+  Ci += C01 * W01;
+  Ci += C02 * W02;
+  Ci += C10 * W10;
+  Ci += C11 * W11;
+  Ci += C12 * W12;
+  Ci += C20 * W20;
+  Ci += C21 * W21;
+  Ci += C22 * W22;
+  return (Ci / Sum);
+}</code></pre><p><code>StepHoriz</code> 与 <code>StepVert</code> 定义了纹素之间的间距（对 256x256 纹理传 <a href="https://developer.download.nvidia.com/books/gpugems/1x256.jpg" rel="noreferrer noopener"><img alt="1x256.jpg" src="https://developer.download.nvidia.com/books/gpugems/1x256.jpg"/></a>，依此类推）。纹理不应带 mipmap，因为我们要从原始数据中读取确切的纹素。</p><p>根据硬件 profile 的不同，如果把纹理查找位置预先在顶点着色器中算好、只作为插值量传给像素着色器，而不是像这里这样在像素着色器中显式计算，这样的着色器也可能更高效。</p><h4>灰度数据的提速</h4><p>代码清单 24-1 的着色器做了九次纹理访问，还必须相应调整查找位置。这意味着像素之间存在冗余访问（希望被 GPU 缓存），以及大量小的加法和乘法。对于灰度数据纹理，我们可以让 CPU 预先做一点工作，从而大幅加速纹理访问。</p><p>图 24-2 展示了一幅灰度图像和两幅「辅助」图像。图中还给出了 4 倍细节。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-02.jpg" alt="fig24-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-02.jpg" rel="noreferrer noopener">图 24-2</a> 灰度图像加两幅带偏移纹素数据的 RGB「辅助」图</figcaption></figure><p>第一幅辅助图是第一幅的副本，但红色通道向左偏移一个纹素，绿色向右偏移一个纹素，蓝色向上偏移一个纹素，alpha（在印刷页面上不可见）向下偏移一个纹素。</p><p>第二幅辅助图做类似的偏移，但偏到纹素的角上而不是紧邻的纹素邻居：红色向左上偏移一个纹素，绿色向左上偏移一个纹素，蓝色向左下偏移一个纹素，依此类推。</p><p>这样安排通道后，四个邻居（或四个角）都能在<em>一次</em> <code>tex2D()</code> 调用中访问——而且不必调整纹理索引。我们的卷积着色器因此短了很多，见代码清单 24-2。</p><h4>例 24-2. 九次纹素访问缩减为三次</h4><pre><code>float4 convolve3x3GrayHPS(
+    vertexOutput IN, uniform sampler2D GrayMap, uniform sampler2D NeighborMap,
+    uniform sampler2D CornerMap, uniform float W00, uniform float W01,
+    uniform float W02, uniform float W10, uniform float W11, uniform float W12,
+    uniform float W20, uniform float W21, uniform float W22, uniform float Sum)
+    : COLOR
+{
+  float gray = tex2D(GrayMap, IN.UV).x;
+  float4 ntex = tex2D(NeighborMap, IN.UV);
+  float4 ctex = tex2D(CornerMap, IN.UV);
+  float Ci = ctex.x * W00;
+  Ci += ntex.z * W01;
+  Ci += ctex.y * W02;
+  Ci += ntex.x * W10;
+  Ci += gray * W11;
+  Ci += ntex.y * W12;
+  Ci += ctex.z * W20;
+  Ci += ntex.w * W21;
+  Ci += ctex.w * W22;
+  return (Ci / Sum).xxxx;
+}</code></pre><p>我们可能想把这些乘加组合并成点积，如代码清单 24-3 所示。</p><h4>例 24-3. 与代码清单 24-2 相同，用点积紧凑写出</h4><pre><code>float4 convolve3x3GrayHDPS(
+    vertexOutput IN, uniform sampler2D GrayMap, uniform sampler2D NeighborMap,
+    uniform sampler2D CornerMap, uniform float W00, uniform float W01,
+    uniform float W02, uniform float W10, uniform float W11, uniform float W12,
+    uniform float W20, uniform float W21, uniform float W22, uniform float Sum)
+    : COLOR
+{
+  float gray = tex2D(GrayMap, IN.UV).x;
+  float4 ntex = tex2D(NeighborMap, IN.UV);
+  float4 ctex = tex2D(CornertMap, IN.UV);
+  float Ci = gray + dot(ntex, float4(W10, W12, W01, W21)) +
+             dot(ctex, float4(W00, W02, W20, W22));
+  return (Ci / Sum).xxxx;
+}</code></pre><p>结果会更快还是更慢，取决于 profile。第一个着色器在 DirectX ps_2_0 中占 16 条指令；第二个用了 19 条，因为构造两个 <code>float4</code> 项需要大量 <code>MOV</code> 操作。</p><p>不过，如果我们在 CPU 中预先组装这些向量（毕竟对整个图像它们都是 uniform 的），就能把函数缩减到 11 条 ps_2_0 指令——是原始单纹理版本指令数的三分之一。参见代码清单 24-4。</p><h4>例 24-4. 使用预合并 <code>float4</code> 权重的最紧凑形式</h4><pre><code>float4 convolve3x3GrayHDXPS(vertexOutput IN, uniform sampler2D GrayMap,
+                            uniform sampler2D NeighborMap,
+                            uniform sampler2D CornerMap,
+                            uniform float4 W10120121, uniform float4 W00022022,
+                            uniform float W11, uniform float Sum)
+    : COLOR
+{
+  float gray = tex2D(GrayMap, IN.UV).x;
+  float4 ntex = tex2D(NeighborMap, IN.UV);
+  float4 ctex = tex2D(CornerMap, IN.UV);
+  float Ci = W11 * gray + dot(ntex, W10120121) + dot(ctex, W00022022);
+  return (Ci / Sum).xxxx;
+}</code></pre><h4>当核为常量时</h4><p>如果核在着色器整个使用过程中不变，有时明智的做法是手动把核值代入着色器，把数值当作常量来推演，提取出 0、1 或 –1 这类核值以减少指令数。代码清单 24-5 的着色器就采用这种做法，它基于两个常量 3x3 核做边缘检测。结果见图 24-3。</p><h4>例 24-5. 边缘检测像素着色器</h4><pre><code>float4 edgeDetectGPS(vertexOutput IN, uniform sampler2D TexMap,
+                     uniform float DeltaX, uniform float DeltaY,
+                     uniform float Threshold)
+    : COLOR
+{
+  float2 ox = float2(DeltaX, 0.0);
+  float2 oy = float2(0.0, DeltaY);
+  float2 PP = IN.UV - oy;
+  float g00 = tex2D(TexMap, PP - ox).x;
+  float g01 = tex2D(TexMap, PP).x;
+  float g02 = tex2D(TexMap, PP + ox).x;
+  PP = IN.UV;
+  float g10 = tex2D(TexMap, PP - ox).x;
+  float g11 = tex2D(TexMap, PP).x;
+  float g12 = tex2D(TexMap, PP + ox).x;
+  PP = IN.UV + oy;
+  float g20 = tex2D(TexMap, PP - ox).x;
+  float g21 = tex2D(TexMap, PP).x;
+  float g22 = tex2D(TexMap, PP + ox).x;
+  float sx = g20 + g22 - g00 - g02 + 2 * (g21 - g01);
+  float sy = g22 + g02 - g00 - g20 + 2 * (g12 - g10);
+  float dist = (sx * sx + sy * sy);
+  float tSq = Threshold * Threshold; // 可以在 CPU 上完成
+  float result = 1;
+  if (dist > tSq)
+  {
+    result = 0;
+  }
+  return result.xxxx;
+}</code></pre><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-03.jpg" alt="fig24-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-03.jpg" rel="noreferrer noopener">图 24-3</a> 边缘检测着色器的结果</figcaption></figure><p>去掉零项后，我们可以省掉若干乘法、加法，甚至一次纹理取数。这个着色器编译后略少于四十条指令。</p><p>如果像前面灰度示例那样有辅助图像，指令数还能减少约一半——而且可以完全去掉原始纹理，见代码清单 24-6。</p><h4>例 24-6. 改用灰度辅助纹理的边缘检测着色器</h4><pre><code>float4 edgeDetectGXPS(vertexOutput IN, uniform sampler2D NeighborMap,
+                      uniform sampler2D CornerMap, uniform float Threshold)
+    : COLOR
+{
+  float4 nm = tex2D(NeighborMap, IN.UV);
+  float4 cm = tex2D(CornerMap, IN.UV);
+  float sx = cm.z + cm.w - cm.x - cm.y + 2 * (nm.w - nm.x);
+  float sy = cm.w + cm.y - cm.x - cm.z + 2 * (nm.z - nm.y);
+  float tSq = Threshold * Threshold;
+  float dist = (sx * sx + sy * sy);
+  float result = 1;
+  if (dist &gt; tSq)
+  {
+    result = 0;
+  }
+  return result.xxxx;
+}</code></pre><h4>双三次滤波核</h4><p>盒式滤波的问题在于它产生的图像往往相当差。图像缩小时边缘会显得对比度下降。图像放大时会明显「锯齿」，因为盒式滤波的矩形形状会把图像 A 中像素的矩形形状暴露出来。</p><p>通过改变源像素的相对重要性，我们可以生成更好看的缩放图像。人们用过多种不同的滤波模式，通常给 A 中靠近 B 对应像素中心的像素更大的重要性。</p><p>成像软件里「高质量」缩放所使用的一种滤波，通常称为<em>三次滤波</em>；当它在 <em>x</em> 与 <em>y</em> 两个方向上都施加时，我们称结果为<em>双三次图像滤波</em>。参见图 24-4。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-04a.jpg" alt="fig24-04a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-04a.jpg" rel="noreferrer noopener">图 24-4</a> 双线性滤波与双三次滤波的效果</figcaption></figure><p>我们可以解析地算出三次核。例如，要构造一个三次 sinc 近似滤波器，可以使用以下规则：</p><table><tbody><tr><td><p>( <em>A</em> + 2) <em>x</em> <sup>3</sup> - (<em>A</em> + 3)<em>x</em> <sup>2</sup> + 1.0, 0 &lt; <em>x</em> &lt; 1 时</p></td></tr><tr><td><p><em>Ax</em> <sup>3</sup> - 5<em>Ax</em> <sup>2</sup> + 8<em>Ax</em> - 4<em>A</em>, 1 &lt; <em>x</em> &lt; 2 时</p></td></tr><tr><td><p><em>A</em> = -0.75.</p></td></tr></tbody></table><p>画成图后，这些规则给出的形状如图 24-5 所示。该函数的 <em>y</em> 值表示我们应当赋予距给定纹理坐标中心较远的那些纹素的相对权重。离该中心超过两个纹素的纹素被忽略，而位于中心的纹素被赋予 100% 的权重。注意，对这个特定的滤波器，某些权重可能是<em>负</em>的：结果会给重采样后的图像带来轻微的锐化效果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-05.jpg" alt="fig24-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-05.jpg" rel="noreferrer noopener">图 24-5</a> 典型的三次滤波核函数</figcaption></figure><p>我们可以写一个函数为每个采样像素计算滤波值。不过既然在滤波范围内不需要高频精度，查找表就够用了。我们只需把这些值写进一张小的浮点纹理，它就能提供足够的精度和快速查找。</p><p>可施加到不同图像上的滤波公式范围相当大，往往同样取决于对结果的艺术判断，而非数学上的「正确」。一份有用的常见滤波公式综述见 <a href="http://www.control.auc.dk/%7Eawkr00/graphics/filtering/filtering.html" rel="noreferrer noopener">http://www.control.auc.dk/~awkr00/graphics/filtering/filtering.html</a>。</p><p>代码清单 24-7 给出了为 OpenGL 生成这种滤波核纹理的 C++ 代码，由 Simon Green 提供。这个函数使用的是略有不同的滤波，称为 Mitchell-Netravali。</p><p>建议的尺寸是 256 个元素：调用 <code>createWeightTexture(256, 0.5, 0.5)</code>。</p><p>代码清单 24-8 是一个简短的着色器函数，返回四个颜色值的滤波组合结果。记住浮点纹理总是使用 <code>samplerRECT</code> 数据类型，所以对这张 256 个元素的小型 1D 纹理我们使用 <code>texRECT()</code> 函数，并把第二个索引项设为 0。</p><h4>例 24-7. 生成浮点核纹理的 OpenGL C++ 代码</h4><pre><code>// Mitchell Netravali 重建滤波器
+// B = 1,
+C = 0 - cubic B -
+    spline
+        // B = 1/3, C = 1/3 - recommended
+        // B = 0,
+        C = 1 / 2 - Catmull -
+            Rom spline float MitchellNetravali(float x, float B, float C)
+{
+  float ax = fabs(x);
+  if (ax < 1)
+  {
+    return ((12 - 9 * B - 6 * C) * ax * ax * ax +
+            (-18 + 12 * B + 6 * C) * ax * ax + (6 - 2 * B)) /
+           6;
+  }
+  else if ((ax > = 1) && (ax < 2))
+  {
+    return ((-B - 6 * C) * ax * ax * ax + (6 * B + 30 * C) * ax * ax +
+            (-12 * B - 48 * C) * ax + (8 * B + 24 * C)) /
+           6;
+  }
+  else
+  {
+    return 0;
+  }
+}
+// 创建一维浮点纹理，为三次滤波编码权重
+GLuint createWeightTexture(int size, float B, float C)
+{
+  float *img = new float[size * 4];
+  float *ptr = img;
+  for (int i = 0; i < size; i++)
+  {
+    float x = i / (float)(size - 1);
+    *ptr++ = MitchellNetravali(x + 1, B, C);
+    *ptr++ = MitchellNetravali(x, B, C);
+    *ptr++ = MitchellNetravali(1 - x, B, C);
+    *ptr++ = MitchellNetravali(2 - x, B, C);
+  }
+  GLuint texid;
+  glGenTextures(1, &texid);
+  GLenum target = GL_TEXTURE_RECTANGLE_NV;
+  glBindTexture(target, texid);
+  glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexImage2D(target, 0, GL_FLOAT_RGBA_NV, size, 1, 0, GL_RGBA, GL_FLOAT, img);
+  delete[] img;
+  return texid;
+}</code></pre><h4>例 24-8. 把核纹理用作 Cg 函数</h4><pre><code>float4 cubicFilter(uniform samplerRECT kernelTex, float xValue, float4 c0,
+                   float4 c1, float4 c2, float4 c3)
+{
+  float4 h = texRECT(kernelTex, float2(xValue * 256.0, 0.0));
+  float4 r = c0 * h.x;
+  r += c1 * h.y;
+  r += c2 * h.z;
+  r += c3 * h.w;
+  return r;
+}</code></pre><p>代码清单 24-9 给出一个双三次滤波器，它扫描任意纹素的四个邻居，根据滤波器的分数位置对采样位置周围各列像素调用 <code>cubicFilter()</code>，然后再调用一次来混合这四次返回的采样。</p><h4>例 24-9. 先对四行纹素滤波，再把结果作为一列滤波</h4><pre><code>float4 texRECT_bicubic(uniform samplerRECT tex, uniform samplerRECT kernelTex,
+                       float2 t)
+{
+  float2 f = frac(t);
+  // 我们需要的是亚纹素部分
+  float4 t0 = cubicFilter(kernelTex, f.x, texRECT(tex, t + float2(-1, -1)),
+                          texRECT(tex, t + float2(0, -1)),
+                          texRECT(tex, t + float2(1, -1)),
+                          texRECT(tex, t + float2(2, -1)));
+  float4 t1 = cubicFilter(kernelTex, f.x, texRECT(tex, t + float2(-1, 0)),
+                          texRECT(tex, t + float2(0, 0)),
+                          texRECT(tex, t + float2(1, 0)),
+                          texRECT(tex, t + float2(2, 0)));
+  float4 t2 = cubicFilter(kernelTex, f.x, texRECT(tex, t + float2(-1, 1)),
+                          texRECT(tex, t + float2(0, 1)),
+                          texRECT(tex, t + float2(1, 1)),
+                          texRECT(tex, t + float2(2, 1)));
+  float4 t3 = cubicFilter(kernelTex, f.x, texRECT(tex, t + float2(-1, 2)),
+                          texRECT(tex, t + float2(0, 2)),
+                          texRECT(tex, t + float2(1, 2)),
+                          texRECT(tex, t + float2(2, 2)));
+  return cubicFilter(kernelTex, f.y, t0, t1, t2, t3);
+}</code></pre><p>这里我们调用 <code>texRECT()</code> 的次数相当多：我们向纹理系统请求了 <code>tex</code> 的十六次独立采样和 <code>ftex</code> 的五次采样。</p><p>这里展示的方法通过沿 <em>x</em> 对局部邻域滤波四次、再沿 <em>y</em> 对结果滤波一次，使滤波器能在单个通道内完成。这种做法可行，也是很好的教科书示例，但远非最优。对于这类均匀滤波，计算上更高效的做法是<em>两通道滤波</em>，把 <em>x</em> 与 <em>y</em> 通道用作可分离函数。这项技术在本章配套的第 21 章「实时泛光」中有详细描述。</p><h4>屏幕对齐核</h4><p>在前面的示例中，我们施加的滤波器随每个纹素「移动」：核纹理相对于正在生成的采样来对齐。</p><p>某些类型的图像，尤其是视频和数字照片应用生成的图像，可以受益于使用「静态核」的类似方法。这类核纹理可用于把像素解码或编码成数字采集与广播格式所用的格式，例如 D1、YUV、GBGR 以及相关的 Bayer 图案传感器——甚至像 Sony RGBE 这样复杂的 2D 图案。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch24fn01.html" rel="noreferrer noopener">[1]</a></sup> 在这种情况下，纹素的相对权重对齐的是<em>屏幕</em>，而不是采样点。</p><p>我们以 YCbCr「D1」4:2:2 编码为例。在 4:2:2 图像中，像素按单一数据流排列：</p><blockquote><p>Y Cb Y Cr Y Cb Y Cr Y Cb...</p></blockquote><p>所以要把这个流解码成 RGB 像素，我们需要对每个相邻像素施加不同的权重。虽然存在若干略有差异的标准，我们看最常见的一个：ITU-R BT.601。</p><p>给定一个 Y 值，我们需要由该 Y 值及相邻的 Cb、Cr 值生成 RGB。通常我们会在这两侧的邻居之间插值（对大多数消费级应用来说线性插值就够了），但在画面边缘只使用紧邻的邻居。我们可以把这些值当作纹理中的权重。由于边缘纹素需要特殊处理，权重纹理必须与整个屏幕同样大小。对大多数 Y 采样，有效的 Cb 或 Cr 值会在两侧相邻值之间插值；但对边缘处的 Y 值，我们需要调整权重图案，把全部权重给最近的 Cb/Cr 采样，而对任何「屏幕外」的纹理查找赋零权重。</p><p>给定合成后的 (Y, Cb, Cr) 像素，转换公式为：</p><pre><code>#define MID
+(128.0 / 255.0) #define
+    VIDEO_BLACK(16.0 / 255.0) float3 YUV = float3(1.164 * (Y - VIDEO_BLACK),
+                                                  (Cb - MID), (Cr - MID));
+float3 RGB =
+    float3((YUV.x + 1.596 * YUV.y), (YUV.x - 0.813 * YUV.z - 0.392 * YUV.y),
+           (YUV.x + 2.017 * YUV.z));</code></pre><p>这个转换还把我们的 RGB 值归一化到 0–1 范围。默认情况下，YUV 数据通常从 16 到 235，而不是 RGB 计算机图形中常用的 0–255 范围。高于视频白和低于视频黑的值通常用于特殊的视频效果：例如在没有 alpha 通道时，「超黑」常用于视频抠像。</p><p>视频数据通常还需要伽马校正。由于伽马是常量（NTSC 为 2.2，PAL 为 2.8），这也可以借助 <code>tex1D()</code> 查找表快速完成。</p><h2>24.2 理解 GPU 导数</h2><p>复杂滤波取决于知道我们需要对多少纹理（或着色）做滤波。GeForce FX 这类现代 GPU 提供<em>偏导数函数</em>来帮忙。对于着色中用到的任何值，我们都可以问 GPU：「这个值在屏幕 x 或屏幕 y 方向上，逐像素变化多少？」</p><p>这些函数是 <code>ddx()</code> 与 <code>ddy()</code>。它们虽然很少被使用，但对滤波和抗锯齿操作非常有帮助。这些导数函数为我们提供了必要信息，用来执行过程化滤波，或巧妙地修改大多数纹理采样中固有的滤波。</p><p>对于不直接支持 <code>ddx()</code> 与 <code>ddy()</code> 的 GPU，可以使用本书第 25 章「用纹理图快速估计滤波宽度」中所列的方法。</p><p>GPU 对 <code>ddx()</code> 与 <code>ddy()</code> 返回的数值是逐项迭代出来的。也就是说，如果求 <code>ddx(myVar)</code>，GPU 会给出 <code>myVar</code> 在当前像素的值与在隔壁像素的值之差。这是直接的线性差分，GPU SIMD 架构的特性使其高效（相邻像素会同时计算）。当然，它应当作用于由顶点着色器传入、在多边形上插值的值——任何 <code>uniform</code> 值的导数始终为零。</p><p>由于这些导数总是线性的，二阶导数——例如 <code>ddx(ddx(myVar))</code>——<em>始终</em>为零。如果你的着色器中某个巧妙函数的高阶导数本可以解析地精确算出，而该值又很重要（例如用于科学计算或电影级渲染），就采用那种公式。</p><p>一旦知道某个像素内的变化量，我们就能确定合适的滤波。对纹理来说，正确的滤波是在不仅仅给定的 u-v 坐标处、而是在该纹理中一个四边形窗口范围内对纹理做积分，该窗口的纹理坐标横向为 <code>ddx(UV)</code>、纵向为 <code>ddy(UV)</code>。当我们调用 <code>tex2D()</code> 这类函数时，这实际上是自动为我们算好的。Cg 在高级 profile 中允许我们可选地指定想要施加的滤波器大小。例如，通过指定：</p><pre><code>float2 nilUV = float2(0, 0);
+float4 pt = tex2D(myTextureSampler, IN.UV, nilUV, nilUV);</code></pre><p>我们就能强制滤波器大小为零——实际上就是强制对该纹理的采样始终使用「最近邻」滤波方法，不管 API 设置的模式如何，也不管是否存在 mipmap。</p><h2>24.3 解析式抗锯齿与纹理化</h2><p>对于使用过程化纹理的着色器，知道每个像素处纹理采样的尺寸对有效抗锯齿至关重要。</p><p>要对一个函数做抗锯齿，我们需要在该像素范围内对函数积分。最简单的情形是只在像素边界内精确积分再取平均（这称为<em>盒式滤波</em>）。其他方案可能对像素内某些区域或来自相邻像素的值赋予更大或更小的权重（正如我们在本章开头的模糊示例中所做的）。</p><p>考虑条纹这一简单情形。条纹函数可以表达为每像素全开或全关，但这样会出现锯齿，如代码清单 24-10 中的函数所示，它绘制垂直于物体 <em>x</em> 坐标的条纹。（<code>Balance</code> 是一个分数，定义暗条纹与亮条纹的关系：默认值 <code>0.5</code> 表示亮暗条纹宽度相同。）我们可以用 <code>stripes</code> 值在两个颜色之间做线性插值。</p><h4>例 24-10. 朴素条纹函数</h4><pre><code>float4 stripeJaggedPS(vertexOutput IN) : COLOR
+{
+  float strokeS = frac(IN.ObjPos.x / Scale);
+  half stripes = 0.0;
+  if (strokeS &gt; Balance)
+    stripes = 1.0;
+  float4 dColor = lerp(SurfColor1, SurfColor2, stripes);
+  return dColor;
+}</code></pre><p>图 24-6 显示了结果。如你所见，条纹有明显的「锯齿」瑕疵。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-06.jpg" alt="fig24-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-06.jpg" rel="noreferrer noopener">图 24-6</a> 施加到模型上的朴素条纹</figcaption></figure><p>换个做法，我们可以考虑条纹函数在一个像素上的积分，再除以该像素的面积，得到抗锯齿的结果。</p><p>图 24-7 中的小图展示了条纹函数及其沿 <em>x</em> 的积分。可以看到，条纹沿 <em>x</em> 时开时关，而积分——也就是随 <em>x</em> 增大条纹迄今覆盖的面积总和——在每一条后续条纹处先稳步上升、再持平、再上升、再持平……</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-07.jpg" alt="fig24-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-07.jpg" rel="noreferrer noopener">图 24-7</a> 条纹函数的积分</figcaption></figure><p>所以对值 <code>x0</code> 与 <code>x1</code> 之间沿 <em>x</em> 的任意区间，我们可以取 <code>x0</code> 处的积分，从 <code>x1</code> 处的积分中减去它，从而知道在 <code>x0</code> 与 <code>x1</code> 之间跨过了多少条纹。再除以区间宽度（<code>x1 - x0</code>），就得到整个跨度上条纹/非条纹的平均分布。对单个像素来说，这种统计意义上的混合正是我们需要的。</p><p>把这个解法写成着色函数，我们就可以通过 <code>ddx()</code> 与 <code>ddy()</code> 估计变化量来对任何值做抗锯齿，见代码清单 24-11。</p><h4>例 24-11. 根据条纹覆盖量返回灰度值的条纹函数</h4><pre><code>half stripe(float value, half balance, half invScale, float scale)
+{
+  half width = abs(ddx(value)) + abs(ddy(value));
+  half w = width * invScale;
+  half x0 = value / scale - (w / 2.0);
+  half x1 = x0 + w;
+  half edge = balance / scale;
+  half i0 = (1.0 - edge) * floor(x0) + max(0.0, frac(x0) - edge);
+  half i1 = (1.0 - edge) * floor(x1) + max(0.0, frac(x1) - edge);
+  half strip = (i1 - i0) / w;
+  strip = min(1.0, max(0.0, strip));
+  return (strip);
+}</code></pre><p>这里我们做了一个简化假设：函数大致按线性方式变化。我们还把 <code>scale</code> 与其倒数分开，以便缩放倒数来引入超采样，这是一个用户控件，让结果可以按需变得更模糊。</p><p>有了 <code>stripe()</code> 函数，我们可以再写一个简短的像素着色器并在 EffectEdit 中应用。参见代码清单 24-12。</p><h4>例 24-12. 应用滤波条纹函数的简单像素着色器</h4><pre><code>float4 stripePS(vertexOutput IN) : COLOR
+{
+  half edge = Scale * Balance;
+  half op = OverSample / Scale;
+  half stripes = stripe(IN.ObjPos.x, edge, op, Scale);
+  float4 dColor = lerp(SurfColor1, SurfColor2, stripes);
+  return dColor;
+}</code></pre><p>图 24-8 比图 24-6 好看得多，但有代价：第一版有锯齿的渲染速度约为这个平滑版本的两倍。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-08.jpg" alt="fig24-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-08.jpg" rel="noreferrer noopener">图 24-8</a> 施加到模型上的滤波条纹</figcaption></figure><p>为了几条条纹做这么多工作似乎太费劲了。我们不能直接用一张黑白纹理吗？可以，实际上能，见代码清单 24-13。</p><h4>例 24-13. 用条纹纹理实现简单条纹</h4><pre><code>float4 stripeTexPS(vertexOutput IN) : COLOR
+{
+  half stripes = tex1D(stripe1DSampler, (IN.ObjPos.x / Scale)).x;
+  float4 dColor = lerp(SurfColor1, SurfColor2, stripes);
+  return dColor;
+}</code></pre><p>这个版本跑得最快——约为过程化抗锯齿版本的三倍。如图 24-9 所示，结果图像似乎丢掉了「balance」控制，但为速度做这个权衡似乎值得。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-09.jpg" alt="fig24-09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-09.jpg" rel="noreferrer noopener">图 24-9</a> 施加到模型上的简单纹理</figcaption></figure><p>但如果我们想把明暗平衡作为最终外观的一部分来控制呢？不必把它做成用户输入。我们可以按每个像素的 (<strong>L · N</strong>) 改变 balance，做出铜版画般的观感。参见代码清单 24-14。</p><h4>例 24-14. 用亮度控制条纹函数的平衡</h4><pre><code>float4 strokePS(vertexOutput IN) : COLOR
+{
+  float3 Nn = normalize(IN.WorldNormal);
+  float strokeWeight = max(0.01, -dot(LightDir, Nn));
+  half edge = Scale * strokeWeight;
+  half op = OverSample / Scale;
+  half stripes = stripe(IN.ObjPos.x, edge, op, Scale);
+  float4 dColor = lerp(SurfColor1, SurfColor2, stripes);
+  return dColor;
+}</code></pre><p>图 24-10 显示了结果图像。这个着色器又变慢了，甚至比我们第一个解析示例还略慢。幸运的是，我们也能通过施加纹理来加速这个函数，依据的观察是我们可以把 1D 黑白条纹纹理「铺展」到 2D 上，然后把算出的「balance」值当作「V」索引。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-10.jpg" alt="fig24-10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-10.jpg" rel="noreferrer noopener">图 24-10</a> 施加到模型上的明暗平衡</figcaption></figure><p>我们的条纹纹理于是看起来像图 24-11。这样的纹理可以在 HLSL 的 .fx 格式中由一段过程生成，见代码清单 24-15。结果几乎和 <code>tex1D</code> 条纹一样快。参见代码清单 24-16。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-11.jpg" alt="fig24-11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-11.jpg" rel="noreferrer noopener">图 24-11</a> 条纹纹理</figcaption></figure><h4>例 24-15. 生成可变条纹纹理的 HLSL .fx 指令</h4><pre><code>#define TEX_SIZE 64
+texture stripeTex < string function = "MakeStripe";
+int width = TEX_SIZE;
+int height = TEX_SIZE;
+> ;
+sampler2D stripeSampler = sampler_state
+{
+  Texture = <stripeTex>;
+  MinFilter = LINEAR;
+  MagFilter = LINEAR;
+  MipFilter = LINEAR;
+  AddressU = CLAMP;
+  AddressV = CLAMP;
+};
+float4 MakeStripe(float2 Pos : POSITION, float ps : PSIZE) : COLOR
+{
+  float v = 0;
+  float nx = Pos.x + ps; // 始终让最后一列保持全开
+  v = nx > Pos.y;
+  return float4(v.xxxx);
+}</code></pre><h4>例 24-16. 在像素着色器中施加可变条纹纹理</h4><pre><code>float4 strokeTexPS(vertexOutput IN) : COLOR
+{
+  float3 Nn = normalize(IN.WorldNormal);
+  float strokeWeight = max(0.0, -dot(LightDir, Nn));
+  float strokeS = (IN.ObjPos.x / Scale);
+  float2 newST = float2(strokeS, strokeWeight);
+  half stripes = tex2D(stripeSampler, newST).x;
+  float4 dColor = lerp(SurfColor1, SurfColor2, stripes);
+  return dColor;
+}</code></pre><p>纹理版本（图 24-12）包含一些小瑕疵，可以通过提高分辨率或仔细创建 mip 级来改善。注意我们的 HLSL 纹理创建函数 <code>MakeStripe()</code> 使用了可选的 <code>PSIZE</code> 输入。<code>PSIZE</code> 将包含当前纹素相对于整张纹理的宽度和高度。它的值会随 <code>MakeStripe()</code> 当前正在计算的 mip 级而变化。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig24-12.jpg" alt="fig24-12.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig24-12.jpg" rel="noreferrer noopener">图 24-12</a> 施加到模型上的可变条纹纹理</figcaption></figure><p>提速体现在最终着色器的大小上：PS2.0 只需 14 条指令，而解析版本需要 45 条。</p><p>纹理版本精度有限；尤其是当我们非常靠近飞船时，纹素开始清晰可见。解析版本则<em>始终</em>呈现干净平滑的边缘。</p><h4>24.3.1 与图形 API 抗锯齿的配合</h4><p>我们这里描述的滤波方法忽略了图形 API 施加的抗锯齿（AA）。通过 API，我们可以对整个帧施加硬件 AA：2x、4x 等等。API 会按其自身的硬件核在每个像素内的多个子像素位置对几何采样。这种多重采样抗锯齿能纠正许多问题，包括一些否则难以处理的数学函数。不过对于多重采样，多边形边缘的质量会改善，但着色的质量可能<em>不</em>改善，因为着色器通常不会针对每个独立采样重新求值。</p><p>多重采样 AA 的缺点是表面必须被多次采样和求值，性能随之下降。对某些应用来说，第二个缺点可能是你根本无法知道用户有没有开启 AA。这就带来一个问题：如何平衡质量与性能？如果 API AA 已开启，过程化抗锯齿是否浪费？如果用户关掉了 AA，它是否又是保持质量的关键？着色器本身无法知道当前的 AA 设置。这得由 CPU 侧的应用来管理 API。最终你大概应该在不同采样环境下测试程序，选出最好的平衡——如果 API 侧 AA 带来问题，尽量从应用中控制它。</p><h2>24.4 结论</h2><p>用于图像处理的像素着色是 GPU 用途中大片尚未开发的领域之一。不仅游戏及相关娱乐能从 GPU 图像处理中获益，许多其他成像操作，例如图像合成、缩放、数字摄影，甚至 GUI，都能从显示管线中快速、高质量的成像中获益。</p><p>图像处理中管理像素所用的这些数值，同样可用于 3D 成像，实现有效的抗锯齿，甚至管理复杂的非真实感着色算法。</p><h2>24.5 参考文献</h2><p><a id="ch24bib01_01"></a>Castleman, Kenneth R. 1996. <em>Digital Image Processing</em>. Prentice-Hall.</p><p><a id="ch24bib01_02"></a>Madisetti, Vijay K., and Douglas B. Williams, eds. 1998. <em>The Digital Signal Processing Handbook</em>. CRC Press 出版。</p><p><a id="ch24bib01_03"></a>Poynton, Charles. 2003. 网站。<strong><a href="http://www.poynton.com" rel="noreferrer noopener">http://www.poynton.com</a></strong> 。<em>Charles Poynton 的网站非常出色，提供了许多有用的参考资料</em>。</p><p><a id="ch24bib01_04"></a>Young, Ian T., Jan J. Gerbrands, and Lucas J. van Vliet. 1998. "Fundamentals of Image Processing."，在线获取：<strong><a href="http://www.ph.tn.tudelft.nl/DIPlib/docs/FIP2.2.pdf" rel="noreferrer noopener">http://www.ph.tn.tudelft.nl/DIPlib/docs/FIP2.2.pdf</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-24-high-quality-filtering" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-24-high-quality-filtering</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

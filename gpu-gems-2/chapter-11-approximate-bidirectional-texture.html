@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 11 章　近似双向纹理函数 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 11 章　近似双向纹理函数」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 11 章　近似双向纹理函数</h1>
+<p><em>Jan Kautz</em><br> <em>Massachusetts Institute of Technology</em></p><p>本章介绍一种便于采集与渲染逼真材质（如布、羊毛、皮革）的技术。这些材质用以往的技术很难渲染，那些技术大多依赖简单的纹理贴图。我们的目标是采集上少费力、渲染上少花算力，却仍能得到逼真的外观。</p><p>我们的方法基于 Kautz 等人（2004）的近期工作，源于一个观察：在某些情况下，材质只需很少几张图像即可采集，所得结果与完整的<em>双向纹理函数</em>（即 BTF，我们会在第一节给出完整定义）相当。用这个近似的 BTF 渲染，相当于求值一个简单的着色模型，再在三维纹理中做一次查找。用图形硬件很容易渲染，能达到实时帧率。对多种材质都取得了有说服力的结果。</p><h2>11.1 引言</h2><p>计算机图形学长期追求的目标之一是生成照片级的图像。为此，逼真的材质属性必不可少。捕捉材质细微的空间变化与介观结构尤其重要，因为它们传达了关于材质的大量信息。图 11-1 比较了只用一张漫反射纹理贴图渲染的一块布，与用我们的方法渲染的结果，后者保留了空间变化与自阴影。这一比较显示了材质介观结构有多重要，也说明对许多材质来说，简单的纹理映射甚至凹凸贴图都不足以逼真地渲染。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/11_btfs_01a.jpg" alt="11_btfs_01a.jpg"><figcaption>图 11-1　简单漫反射纹理映射与我们的方法的比较</figcaption></figure><p>遗憾的是，采集这类材质属性相当繁琐费时（Dana 等 1999，Lensch 等 2001，Matusik 等 2002）。原因是材质属性由四维的<em>双向反射分布函数</em>（BRDF）确定，它依赖局部光照方向与观察方向；Phong 模型就是 BRDF 的一个例子。若要捕捉表面上的空间变化，这个函数（也就是前面提到的双向纹理函数 [Dana 等 1999]）就变成六维的。显然，采集这样一个高维函数需要取大量样本，导致采集时间（以及存储需求）很大，这也是 BTF 测量数据不易获得的原因。</p><p>采集这全部数据的好处是，BTF 能生成非常逼真的材质渲染，因为它不仅捕捉表面上每个点的局部反射属性，还捕捉所有非局部效应，例如材质内部的自阴影、遮蔽与相互反射，如图 11-1 所示。</p><p>我们不去采集完整 BTF 再用它渲染，而是说明只采集 BTF 的若干切片就够了。这使得采集装置简单（可以手工完成），渲染方法更简单，在几年前的老 GPU 上也能实时运行。美术也能轻松调整采集到的材质，例如通过调整几个参数让它更亮或更不亮。为此我们假设采集的材质块是各向同性的（即外观不依赖其朝向），且只含小尺度特征（即没有大尺度的自阴影与遮蔽效应）。后文会更详细地讨论为何需要这些前提。</p><h2>11.2 采集</h2><p>采集与预处理步骤非常简单，因此采集流程很快。</p><h4>11.2.1 装置与采集</h4><p>装置如图 11-2 上方所示。相机正交地对准要采集的材质。假设材质是平的，所以最好把材质块放在平坦表面上。然后用平行光源（远处的点光源也可以）在不同入射仰角上照射表面。光源只沿一条弧线移动，也就是说它不绕表面法线旋转。光源沿弧线移动时，材质会显现出细微的自阴影效果，这对许多材质来说非常有特征性。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/11_btfs_02a.jpg" alt="11_btfs_02a.jpg"><figcaption>图 11-2　采集方法概览</figcaption></figure><p>光源仰角大致以 10 度为步长分隔；也就是说，每种材质采集十张图像。如 11.4 节所示，对实时渲染而言低动态范围图像就够用；不过也可以采集高动态范围图像。</p><p>在图 11-2 中可以看到几种不同光源角度下采集的图像。所有图像都是手工采集的，但即便如此，采集一种材质也只需几分钟，相比其他方法（Dana 等 1999，Matusik 等 2002，Sattler 等 2003）是很大的优势。</p><h4>11.2.2 组装着色贴图</h4><p>现在我们把这些采集到的图像叠成一个图像栈。为此，我们先计算 <em>a</em> <sub><em>k</em></sub>，即每张采集图像 <em>k</em> 的平均辐亮度（或强度）。由于我们之后想高效地索引这个图像栈，把它重采样使平均辐亮度线性增长是有用的。做法是先算出切片 <em>i</em> 应当具有的平均辐亮度，其中 <em>i</em> 指重采样后栈中的某个切片：</p><p><a id="ch11equ01"></a><strong>公式 1</strong></p><p><a><img alt="ch11_eqn001.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch11_eqn001.jpg"/></a></p><p>这里 <em>r<sub>i</sub></em> 表示切片 <em>i</em> 的目标辐亮度，<em>a</em> <sub>max</sub> 是采集到的最大平均辐亮度，<em>N</em> 是切片数。对每个重采样后的切片 <em>i</em>，我们取平均辐亮度为 <em>a<sub>k1</sub></em> 与 <em>a<sub>k2</sub></em>、分别位于目标辐亮度 <em>r<sub>i</sub></em> 上下两侧的两张原始图像，并在两者之间做线性插值。所得的新图像栈称为<em>着色贴图</em>，如图 11-3 所示。此后，着色贴图中存储的值被解释为 BRDF 乘余弦值，下一节会说明。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/11_btfs_03.jpg" alt="11_btfs_03.jpg"><figcaption>图 11-3　创建着色贴图</figcaption></figure><h2>11.3 渲染</h2><p>如前所述，用我们的数据渲染相当简单。先做高层次描述，再深入细节。</p><p>设想用普通光照模型（例如 Phong 模型）和点光源为一个片元着色。这种情况下，我们用当前视线与光照方向以及一组参数（漫反射度、镜面反射度等）对光照模型求值，算出反射光的量。这个值让我们大致知道该像素应当多亮。既然算出了亮度，就可以用我们的图像栈把它着色得更好。我们在图像栈中选出平均亮度与像素相同的图像，再从该图像中查找相应的纹素，用这个值替代。这样就引入了图像栈中捕捉到的自阴影等细节，使渲染逼真得多。</p><h4>11.3.1 算法细节</h4><p>这里只描述一个片元所需的计算；显然，每个片元都要重复一遍。假设给定片元的局部视线方向与光照方向（<em><sub>o</sub></em> , <em><sub>i</sub></em> ），以及一组纹理坐标（<em>s</em>, <em>t</em>）。</p><p>首先，我们对光照模型求值算出 <em>r</em>，即 BRDF <em>f<sub>r</sub></em>（可以是任意 BRDF 模型）乘以入射角的余弦：</p><p><img alt="ch11_eqn002.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch11_eqn002.jpg"/></p><p>值 <em></em> 用于微调材质的色调。如果采集时用的不是单位光源，或者只采集了低动态范围图像，就需要它。</p><p>例如对简单的 Phong 模型，这一计算归结为下面的公式：</p><p><img alt="ch11_eqn003.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch11_eqn003.jpg"/></p><p>其中 <em>k</em> <sub><em>d</em></sub> 与 <em>k</em> <sub><em>s</em></sub> 分别是漫反射与镜面反射系数，<em>E</em> 是镜面反射指数。</p><p>现在我们用入射光的强度乘以着色贴图中的值 <em>S</em>(<em>r</em>)，算出反射光的量：</p><p><img alt="ch11_eqn004.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch11_eqn004.jpg"/></p><p>其中 <em>I</em>(<em><sub>i</sub></em> ) 是光源的强度（来自 <em><sub>i</sub></em> ）。用值 <em>r</em>(<em><sub>o</sub></em> , <em><sub>i</sub></em> )，我们通过算子 <em>S</em>() 在着色贴图中查找。查找坐标为 (<em>s</em>, <em>t</em>, <em>r</em>/<em>a</em> <sub>max</sub> x (<em>N</em>-1))，其中 (<em>s</em>, <em>t</em>) 表示贴图中的位置，<em>r</em>/<em>a</em> <sub>max</sub> x (<em>N</em> - 1) 是要选取的层（如前，<em>a</em> <sub>max</sub> 是采集到的最大值，<em>N</em> 是切片数）。对着色贴图的采样应使用三线性滤波，以避免块状与等值线瑕疵。</p><p>有一种特殊情况需要处理。若所需值 <em>r</em> 高于着色贴图中的最大平均值 <em>a</em> <sub>max</sub>，我们可以把结果钳制在 <em>a</em> <sub>max</sub>，或把着色贴图中最亮的那张图像缩放到目标水平 <em>r</em> <sub><em>i</em></sub> 。最小平均辐亮度 <em>r</em> <sub>0</sub> 始终为零（见公式 1），无需特殊处理。</p><h4>11.3.2 实时渲染</h4><p>用图形硬件做实时渲染的算法很直接。我们把着色贴图作为三维（体积）纹理载入图形硬件。在顶点着色器中计算 <em>r</em>(<em></em> <sub><em>o</em></sub> , <em></em> <sub><em>i</em></sub> )（针对单个点光源）。顶点着色器的结果是一组纹理坐标 (<em>s</em>, <em>t</em>, <em>r</em>/<em>a</em> <sub>max</sub>)，随后用它到着色贴图中查找。片元着色器完成与光源强度的相乘。执行这一操作的顶点着色器与片元着色器见代码清单 11-1。</p><p>较新的图形硬件支持片元着色器中的依赖纹理查找。有了这一特性，就可以逐片元计算 BRDF（乘以余弦），再对着色贴图做依赖纹理查找，从而避免使用顶点着色器时可能出现的欠采样瑕疵。</p><h4>示例 11-1　渲染所需的顶点着色器与像素着色器</h4><p><em>这个例子中我们使用了增强的 Phong 着色模型。</em></p><pre><code>// 顶点着色器
+void btfv(float4 position
+          : POSITION, float3 normal
+          : NORMAL, float3 tex
+          : TEXCOORD0, out float4 HPOS
+          : POSITION, out float3 TEX
+          : TEXCOORD0, out float4 COL0
+          : TEXCOORD1, uniform float4x4 mvp, uniform float3 lightpos,
+            uniform float3 eye, uniform float lightintensity, uniform float Ka,
+            uniform float Kd, uniform float Ks, uniform float N)
+{
+  // 计算光照方向
+  float3 L = lightpos - (float3)position;
+  L = normalize(L);
+  // 计算反射方向
+  float3 R = (2.0f * dot(eye, normal) * normal - eye);
+  // 光照（增强的、物理正确的 Phong 模型）
+  const float pi = 3.14159265;
+  float costh = dot(normal, L);
+  float specular = pow(dot(R, L), N);
+  float intensity = Kd / pi + Ks * (N + 2.0) * specular / (2.0 * pi);
+  intensity *= costh; // * cos(th)
+  // 检查边界
+  if (diffuse < 0.0 || intensity < 0.0)
+    intensity = 0.0;
+  if (intensity > 1.0)
+    intensity = 1.0;
+  // 加上环境光
+  intensity += Ka;
+  // 设置用于在体积中查找的坐标
+  TEX.z = intensity;
+  // 根据光照，假设 a_max 为 1
+  TEX.xy = tex.xy;
+  // 从应用程序拷贝 2D 部分
+  // 为片元着色器设置用于缩放的光源强度
+  COL0.rgb = lightintensity;
+  // 变换位置
+  HPOS = mul(mvp, position);
+}
+// 片元着色器
+float3 btfp(float3 tc
+            : TEXCOORD0, float3 color
+            : TEXCOORD1, uniform sampler3D material
+            : TEXUNIT0)
+    : COLOR
+{
+  float3 r = (float3)tex3D(material, tc).xyz; // 在体积中查找
+  return r * color;
+  // 按强度缩放
+}</code></pre><h2>11.4 结果</h2><p>下面展示若干用采集材质完成的渲染。所有材质都用十个不同光源位置采集。图像先裁剪到 1024x1024，再降采样到 512x512。为兼容通常要求 2 的幂纹理尺寸的图形硬件，线性化时把这十张图像重采样为八张。每组图像的线性化约需 5 秒。所有渲染中我们都用了 Phong 模型。</p><p>在图 11-4 中可以看到用我们的实时实现做出的几种渲染。所示材质有牛仔裤（Stanford 兔子与裤子）、绒面革（Stanford 兔子）、皮革（猫）、压制木（头）、蜡（头）、尼龙（裤子）、布（一块布）和羊毛（一块针织布）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/11_btfs_04.jpg" alt="11_btfs_04.jpg"><figcaption>图 11-4　不同模型与材质</figcaption></figure><p>图 11-5 是一张羊毛毛衣的渲染。左图用完整 BTF 完成（6,500 张图像，用主成分分析压缩到 16 个分量）。右图用我们的技术完成。差别主要体现在掠射角处，那里遮蔽效应变得重要，而我们的技术无法重现。这也造成轻微的颜色差异（不过部分颜色差异也来自压缩）。考虑到羊毛是违反我们初始假设的材质之一（它有大尺度结构且各向异性），我们的方法表现相当不错。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/11_btfs_05a.jpg" alt="11_btfs_05a.jpg"><figcaption>图 11-5　一件羊毛毛衣</figcaption></figure><h4>11.4.1 讨论</h4><p>为什么只针对固定视角、采集几个入射照明方向的图像就够？如前所述，我们只采集材质表面结构引起的光照变化，为此我们的方法足够。实际的 BRDF 由美术提供。</p><p>我们认为这项技术效果这么好，是因为人眼预期材质会有某种变化。从结果看，这种变化被我们的技术捕捉到了，给出了对真实材质的良好印象。</p><p>一般来说，带小尺度变化的材质效果最好，例如所示的布、绒面革、牛仔裤等。具有空间变化反射属性（例如不同的镜面反射度等）的材质也能采集得不错，从图 11-4 中的蜡烛蜡和压制木可以看出。</p><p>不过对某些材质，这项技术效果较差。例如采集高镜面反射材质就有问题，主要因为我们用点光源近似平行光源。我们的方法假设材质具有细尺度结构。这是因为本技术只建模随入射角的变化，不建模随方位角的变化。因此较大结构产生的阴影无法很好地捕捉或表示，因为它们总是出现在同一方向。此外，材质被假设为各向同性。</p><p>即使对违反这些假设的材质，我们的技术仍可能适合做快速预览，因为它远好于常规纹理映射，如图 11-1 所示。</p><h2>11.5 结论</h2><p>我们提出了一种只需少量图像就能采集与渲染复杂空间变化材质的方法。这种经验方法并不捕捉真实 BRDF，只捕捉细表面结构引起的光照变化；BRDF 可以之后再调整。用该技术做实时渲染很容易实现。</p><h2>11.6 参考文献</h2><p><a id="biblio11_01"></a>Dana, K., B. van Ginneken, S. Nayar, and J. Koenderink. 1999. "Reflectance and Texture of Real-World Surfaces." <em>ACM Transactions on Graphics</em> 18(1)，1999 年 1 月，第 1–34 页。</p><p><a id="biblio11_02"></a>Kautz, J., M. Sattler, R. Sarlette, R. Klein, and H.-P. Seidel. 2004. "Decoupling BRDFs from Surface Mesostructures."，载 <em>Proceedings of Graphics Interface 2004</em>，2004 年 5 月，第 177–184 页。</p><p><a id="biblio11_03"></a>Lensch, H., J. Kautz, M. Goesele, W. Heidrich, and H.-P. Seidel. 2001. "Image-Based Reconstruction of Spatially Varying Materials."，载 <em>12th Eurographics Workshop on Rendering</em>，2001 年 6 月，第 103–114 页。</p><p><a id="biblio11_04"></a>Matusik, W., H. Pfister, A. Ngan, P. Beardsley, and L. McMillan. 2002. "Image-Based 3D Photography Using Opacity Hulls." <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em>，2002 年 7 月，第 427–437 页。</p><p><a id="biblio11_05"></a>Sattler, M., R. Sarlette, and R. Klein. 2003. "Efficient and Realistic Visualization of Cloth."，载 <em>Eurographics Symposium on Rendering 2003</em>，2003 年 6 月，第 167–178 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-11-approximate-bidirectional-texture" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-11-approximate-bidirectional-texture</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

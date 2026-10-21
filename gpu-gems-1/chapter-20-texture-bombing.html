@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 20 章　纹理轰炸 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 20 章　纹理轰炸」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 20 章　纹理轰炸</h1>
+<p><em>R. Steven Glanville<br> NVIDIA</em></p><p>纹理适合给几何添加视觉细节，但当它要铺满大片区域（比如一片花田）或覆盖许多相似物体（比如一座满是建筑的城市）时就不太好用。这类用法要么需要极大量的纹理数据，要么需要重复同一图案，结果形成不理想的规则外观。<em>纹理轰炸</em>是一种过程化技术，它以不规则的间隔放置小图像，以帮助减轻这类图案瑕疵。</p><h2>20.1 纹理轰炸入门</h2><p>纹理轰炸的基本思路是把 UV 空间划分成规则的网格单元。然后用噪声或伪随机数函数在每个单元内的随机位置放置一幅图像。最终结果是这些图像叠在背景之上的合成。</p><p>真的用这种方式合成图像效率不高，因为我们可能要合成几百幅图像。我们可能还想以过程化方式计算图像，而这与合成有些不相容。本章会讨论这两种技术。先从像素的角度看问题，设法削减工作量。第一步是找出包含该像素的单元。我们需要以某种方式计算每个单元的坐标，使我们能快速定位相邻单元，后面你会看到。我们用这些坐标访问该单元的所有独有参数，例如图像在该单元内的位置。最后，在图像位于单元内的位置上采样它，并与默认的背景色合并。这里我们假设采样结果要么完全不透明，要么完全透明，以简化合成步骤。</p><p>但事情没这么简单。如果某个单元的图像位置靠近该单元的边缘，或者图像比单元还大，它就会越进相邻的单元。因此我们还需要考虑相邻单元的图像。单元图像很大时，就得采样许多相邻图像。如果把图像尺寸限制为不超过一个单元，那就只需采样九个单元：左右、上下，以及四个角上的单元。通过对图像施加几项小限制，我们能把所需采样数减到四个。</p><h4>20.1.1 找出单元</h4><p>单元坐标的计算很简单，对像素的 UV 参数取 floor 函数：</p><pre><code>float2 scaledUV = UV * scale;
+int2 cell = floor(scaledUV);</code></pre><p>注意单元坐标是整数。相邻单元在 <code>cell.x</code> 或 <code>cell.y</code> 上相差 1。<code>scale</code> 因子让我们按需改变单元大小。求出我们在单元内的位置只需一次减法：</p><pre><code>float2 offset = scaledUV - cell;</code></pre><h4>20.1.2 采样图像</h4><p>在采样图像之前，我们需要确定它的位置。这项任务我们使用一张填满伪随机数的二维纹理。采样坐标由单元坐标乘以较小的值得到。</p><pre><code>float2 randomUV = cell * float2(0.037, 0.119);
+fixed4 random = tex2D(randomTex, randomUV);</code></pre><p>计算 <code>randomUV</code> 所用的缩放因子没什么玄妙。它们把整数形式的单元名映射到随机纹理中的某处，并且应当具有把邻近单元映射到互不相关值这一性质。任何大到足以让相邻单元间隔超过一个纹素的值都可以。</p><p>我们用纹理的前两个分量作为图像在单元内的位置，这个位置必须从像素在单元内的偏移中减去。如果图像的 alpha 分量不为零，就使用图像的颜色；否则使用原来的颜色。</p><pre><code>fixed4 image = tex2D(imageTex, offset.xy - random.xy);
+if (image.w &gt; 0.0)
+  color.xyz = image.xyz;</code></pre><p>把这些放进示例程序 <code>texbomb_1.cg</code>，并使用图 20-1a 和 20-1b 中的背景与图像图案，得到图 20-1c 所示的结果。（本章展示的所有示例程序都收录在本书附带的 CD 中，并可在本书网站上获取。）</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-01a.jpg" alt="fig20-01a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-01a.jpg" rel="noreferrer noopener">图 20-1</a> 纹理轰炸的第一次尝试</figcaption></figure><p>还不太对。图像被单元的边缘裁掉了。只有偏移为零时才能看到完整的图像。我们还得去找相邻单元里的图像。</p><h4>20.1.3 相邻单元的图像</h4><p>到目前为止我们只采样了当前单元的图像。我们还需要检查相邻单元中与之重叠的图像。由于我们把图像相对单元的偏移限制在 0 到 1 之间，一幅图像只可能与它所在单元上方和右侧的那些单元重叠。因此我们只需采样四个单元：当前单元，以及它下方与左侧的单元。见代码清单 20-1。</p><h4>示例 20-1. 把采样扩展到四个单元</h4><pre><code>for (i = -1; i &lt; = 0; i++)
+{
+  for (j = -1; j &lt; = 0; j++)
+  {
+    float2 cell_t = cell + float2(i, j);
+    float2 offset_t = offset - float2(i, j);
+    randomUV = cell_t.xy * float2(0.037, 0.119);
+    random = tex2D(randomTex, randomUV);
+    image = tex2D(imageTex, offset_t - random.xy);
+    if (image.w &gt; 0.0)
+      color = image;
+  }
+}
+}</code></pre><h4>20.1.4 图像优先级</h4><p>有点不对劲。两幅图像重叠时，位于右上方的总在上面，因为它是最后测试的。对鱼鳞或木瓦来说这也许可以接受，但我们一般想避免这种效果。为每个单元引入优先级，让优先级最高的图像胜出，就能解决这个问题。我们用单元随机参数的 <code>w</code> 分量作为优先级，并把代码清单 20-1 中的 <code>if</code> 判断改为代码清单 20-2 所示。</p><h4>示例 20-2. 添加图像优先级</h4><pre><code>fixed priority = -1;
+... if (random.w &gt; priority &amp;&amp; image.w &gt; 0.0)
+{
+  color = image;
+  priority = random.w;
+}</code></pre><p>图 20-2 展示了这个修改后程序 <code>texbomb_2.cg</code> 的输出。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-02.jpg" alt="fig20-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-02.jpg" rel="noreferrer noopener">图 20-2</a> 输出</figcaption></figure><h4>20.1.5 过程化图像</h4><p>图像没有理由一定要来自纹理。过程化图像同样可行。在代码清单 20-3 中，我们把图像采样换成了一个过程化生成的半径为 0.5 的圆。</p><h4>示例 20-3. 使用过程化生成的圆</h4><pre><code>offset_t -= float2(0.5, 0.5) + (float2)random;
+fixed radius2 = dot(offset_t, offset_t);
+if (random.w &gt; priority &amp;&amp; radius2 &lt; 0.25)
+{
+  color = tex2D(randomTex, randomUV + float2(0.13, 0.4));
+  priority = random.w;
+}</code></pre><p>对随机纹理的第二次采样给出圆的颜色，结果如图 20-3 所示，由程序 <code>gem_proc_2.cg</code> 生成。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-03.jpg" alt="fig20-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-03.jpg" rel="noreferrer noopener">图 20-3</a> 输出</figcaption></figure><h4>每个单元多幅图像</h4><p>每个单元只用一幅图像会导致图案显得规则，单元较小时尤其如此。变化不足以掩盖计算的网格特性，分布看起来太规则。为对抗这种倾向，我们可以增加每个单元的图像数量：在图像采样外面加一个循环，并偏移用于查找随机数的坐标即可。见代码清单 20-4。</p><h4>示例 20-4. 每个单元采样多个圆可减少网格状图案</h4><pre><code>randomUV = cell_t.xy * float2(0.037, 0.119);
+for (k = 0; k &lt; NUMBER_OF_SAMPLES; k++)
+{
+  random = tex2D(randomTex, randomUV);
+  randomUV += float2(0.03, 0.17);
+  image = tex2D(imageTex, offset_t - random.xy);
+  ...
+}</code></pre><p>我们为循环中的每一遍偏移坐标，以免每次都采到同一个值。见图 20-4。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-04.jpg" alt="fig20-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-04.jpg" rel="noreferrer noopener">图 20-4</a> 每个单元采样三个圆</figcaption></figure><p>我们还可以用另一个随机值来改变每个单元的图像数量，甚至只需把初始优先级设为大于 0 的值，比如 0.5。这样每幅图像都有 0.5 的概率被拒绝。这种变化进一步增强了结果的表面随机性，如图 20-5 所示。这里单元尺寸被调小，以展示更大的数量。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-05.jpg" alt="fig20-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-05.jpg" rel="noreferrer noopener">图 20-5</a> 改变每个单元中圆的数量</figcaption></figure><h4>20.1.6 从多个候选中随机选图</h4><p>还有一种变化维度：每次从多幅图像中选一幅。一种做法是把这些图像平铺进单张纹理，用随机纹理的 <code>z</code> 分量作为这些图像的索引。把图像排成一行水平排列更简单，如图 20-6 所示。黑色区域对应透明区域，其 alpha 分量为零。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-06.jpg" alt="fig20-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-06.jpg" rel="noreferrer noopener">图 20-6</a> 在单张纹理贴图中存储四幅图像</figcaption></figure><p>接下来只需修改图像查找调用，从四幅子图像中选一幅。把随机向量的 <code>z</code> 分量缩放后取 floor，就得到随机图像的整数 <code>index</code>。我们需要钳制 <code>x</code> 坐标，以免采到相邻图像，再加上 <code>index</code> 的值，并乘以 1/<em>图像数量</em>。</p><pre><code>float index = floor(random.z * NUM_IMAGES_PER_ROW);
+float2 uv = offset_t.xy - random.xy;
+uv.x = (saturate(uv.x) + index) / NUM_IMAGES_PER_ROW;
+image = tex2D(imageTex, uv);</code></pre><p>结果如图 20-7 所示。注意各图像之间至少需要两个像素的边界把它们与所在区域的边缘隔开，否则纹理采样会引起瑕疵。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-07.jpg" alt="fig20-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-07.jpg" rel="noreferrer noopener">图 20-7</a> 随机选图</figcaption></figure><p>如果多图纹理使用普通 mipmap，那么图像之间两像素的边界就不够了。从更高级别的贴图中取到图像边缘附近的采样会与相邻图像混在一起。你可以加宽边界，或在构建 mipmap 时让每一级都带类似边界，以减轻这类问题。你可能还想把最大 mipmap 层级钳制住，以避免退化情况，或者干脆把图像尺寸减到零。</p><h2>20.2 技术考量</h2><p>有两个实现细节需要讨论。</p><p>为随机数纹理选择正确的缩小滤波很重要。启用 mipmap 时，诸如取伪随机数这类依赖纹理读取，会根据当前像素与相邻像素 UV 值的差分生成一个细节层次（LOD）。在一个单元内部，<code>randomUV</code> 对所有像素都相同。差值因此为零，采到的是 LOD 0，得到（可能是双线性插值的）原始随机数。然而在两个单元的交界处，<code>randomUV</code> 的值会突变。于是会用到更高的 mipmap 层级，从而引入瑕疵。</p><p>为随机纹理指定 <code>LINEAR</code> 或 <code>NEAREST</code> 缩小滤波可以消除这些瑕疵，因为它们强制所有采样都在 LOD 0。对静态纹理，用 <code>NEAREST</code> 滤波更好。<code>LINEAR</code> 滤波会降低随机数的方差，并使图像趋于待在单元中心附近。但如果你要让图像位置动起来，那就该用 <code>LINEAR</code> 以获得平滑运动。</p><p>纹理图像的环绕模式应设为 <code>CLAMP</code>。否则我们会看到不该出现的鬼影采样。另一种做法是把坐标钳制到 [0..1] 范围。大多数 GPU 有硬件可以零代价完成这件事。</p><h4>20.2.1 效率问题</h4><p>缩短执行时间对像素着色器始终重要，纹理轰炸也不例外。依赖纹理采样、对多个单元重复评估基本着色，甚至每个单元多次采样，都会拖累性能。得到的着色器可能长达数百条指令。</p><p>例如，前面图 20-2 中 <code>texbomb_2.cg</code> 生成的完整雏菊图像需要八次纹理采样和 44 条数学指令。前面图 20-3 中 <code>gem_proc_2.cg</code> 的第一幅过程化图像需要八次纹理采样和 62 条数学指令。</p><p>一些关键优化能显著提升性能。尽可能把最后的颜色纹理采样移出内层循环。不要多次采样纹理，而是把最终采样的坐标存进变量，在程序末尾做一次采样。这对圆这样的过程化形状以及类 Voronoi 区域很有效，因为是否采用某个颜色并不取决于该次采样的值。（关于 Voronoi 区域的更多内容见 20.3.5 节。）遗憾的是，对图像而言，当需要 alpha 分量判断该值是否透明时，这个技巧就不管用了。</p><p>在 GeForce FX 硬件上，尽可能使用 fixed 和半精度变量。这样每个着色器遍能执行更多指令，并减少运行程序所需的寄存器数量。除非你渲染到浮点帧缓冲，颜色用较低精度完全够用。不过纹理坐标通常应以完整浮点精度存储。</p><h2>20.3 高级特性</h2><p>纹理轰炸可以从多方面扩展，产生一系列有趣的效果。</p><h4>20.3.1 缩放与旋转</h4><p>一个简单的补充是随机缩放或旋转每幅图像，以获得更多变化。你必须小心，保证仍在图像可能覆盖的相邻单元的采样范围内。至于缩放，很明显你只能缩小，除非你愿意为每个像素测试四个以上的单元。</p><p>旋转后的图像有类似限制。图像的不透明部分应当位于单元中心、直径为 1 的圆内。如果它超出这个尺寸伸到角上，那么旋转后图像的这些部分在垂直或水平方向上可能超出其所属单元 0.5 个单元宽。四单元采样算法同样会漏掉这些部分。</p><h4>20.3.2 可控的可变密度</h4><p>有时你想以艺术方式控制图案，比如地面上的落叶。用伪随机密度处理不好这种情况。你可以改用一张专门的密度贴图，按你的意愿绘制叶子出现的概率。这张贴图按普通的基于 UV 的采样读取，读到的值像前面的示例那样用来设定叶子出现的概率。</p><h4>20.3.3 过程化三维轰炸</h4><p>一旦决定使用过程化纹理，就实在没有理由把单元限制在二维 UV 空间里。何不用像素的物体空间坐标把思路扩展到三维来求颜色？在代码清单 20-5 中，我们把物体空间划分成单位立方体。我们仍然可以使用二维伪随机纹理，但计算采样坐标时需要把第三个维度作为一个分量纳入。把 <em>z</em> 坐标缩放后加到 <em>x</em> 与 <em>y</em> 上，效果不错。</p><h4>示例 20-5. 过程化三维轰炸</h4><pre><code>for (i = -1; i &lt; = 0; i++)
+{
+  for (j = -1; j &lt; = 0; j++)
+  {
+    for (k = -1; k &lt; = 0; k++)
+    {
+      cell_t = cell + float3(i, j, k);
+      offset_t = offset - float3(i, j, k);
+      randomUV = cell_t.xy * float2(0.037, 0.119) + cell_t.z * 0.003;
+      ...
+    }
+  }
+}</code></pre><p>你还得把采样的单元数也扩展到三维，总共八次采样。正因如此，三维纹理轰炸天生比二维昂贵。图 20-8 的示例展示了过程化生成的球体。它用简单的点积漫反射光照模型来表现深度。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-08.jpg" alt="fig20-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-08.jpg" rel="noreferrer noopener">图 20-8</a> 每个单元一个球体的过程化三维纹理</figcaption></figure><p>为清楚起见，完整的着色器主体见代码清单 20-6。</p><h4>示例 20-6. 过程化三维纹理程序</h4><pre><code>priority = -1;
+for (i = -1; i &lt; = 0; i++)
+{
+  for (j = -1; j &lt; = 0; j++)
+  {
+    for (k = -1; k &lt; = 0; k++)
+    {
+      cell_t = cell + float3(i, j, k);
+      offset_t = offset - float3(i, j, k);
+      randomUV = cell_t.xy * float2(0.037, 0.119) + cell_t.z * 0.003;
+      random = tex2D(randomTex, randomUV);
+      offset_t3 = offset_t - (float3(0.5, 0.5, 0.5) + (float3)random);
+      radius2 = dot(offset_t3, offset_t3);
+      if (random.w &gt; priority &amp;&amp; radius2 &lt; 0.5)
+      {
+        color = tex2D(randomTex, randomUV + float2(0.13, 0.4));
+        priority = random.w;
+      }
+    }
+  }
+}
+float factor = dot(normal.xyz, float3(0.5, 0.75, -0.3)) * 0.7 + 0.3;
+color.xyz = color.xyz * factor;
+return color;</code></pre><h4>20.3.4 时变纹理</h4><p>你可以轻松地让纹理轰炸着色器动起来。只需让一个或多个伪随机参数随时间变化。如果用双线性滤波采样伪随机数纹理，许多属性会动得相当平滑。不过你可能有时会注意到这种滤波的斜坡特性，物体运动时尤其明显，因为人眼很擅长察觉运动方向上的不连续。</p><pre><code>random = tex2D(randomTex, randomUV *time * 0.0001);</code></pre><p>这里给出的代码中，时间值以秒为单位。如果不按合适的因子缩小，动画会走得太快。缩放因子取决于动画速率和伪随机纹理的大小。如果示例中用的是 1024×1024 的纹理，那么大约每 10 秒才会采到一个新纹素：</p><blockquote><p><em>变化率</em> = （<em>缩放因子</em> x <em>时间</em>） / <em>纹理尺寸。</em></p></blockquote><h4>20.3.5 与 Voronoi 相关的细胞方法</h4><p>纹理轰炸的一个有趣变体是在平面上描绘 Voronoi 区域。关于这种贴图技术，详见 Steven Worley 1996 年的 SIGGRAPH 论文。简而言之，给定一个平面和该平面上的一组点，某点的 Voronoi 区域就是平面上离该点最近的那片区域。你可以在叶面或皮肤上细胞的形状、干泥的裂纹，以及一定程度上在爬行动物的皮肤花纹中看到类 Voronoi 图案的例子，不过后者往往更规则。图 20-9 展示了 Voronoi 区域的一个典型视图。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-09.jpg" alt="fig20-09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-09.jpg" rel="noreferrer noopener">图 20-9</a> Voronoi 区域示例</figcaption></figure><p>只需对基本的纹理轰炸代码做点小改动，就能做出这些图案。从前面代码清单 20-3 所示的过程化圆代码开始，我们改用到某点的距离作为优先级，而不用 <code>random.w</code> 中的值，并且不再检查是否在圆的半径之外。见代码清单 20-7。</p><p>我们用距离的平方代替实际距离，以免计算平方根。每个区域被赋予随机指定的颜色。结果如图 20-10a 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig20-10a.jpg" alt="fig20-10a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig20-10a.jpg" rel="noreferrer noopener">图 20-10</a> Voronoi 区域</figcaption></figure><h4>示例 20-7. 计算 Voronoi 区域</h4><pre><code>float priority = 999;
+... radius2 = dot(offset_t2, offset_t2);
+if (radius2 &lt; priority)
+{
+  color = tex2D(randomTex, randomUV + float2(0.13, 0.4));
+  priority = radius2;
+}</code></pre><p>注意图 20-10a 中算法的矩形网格结构相当明显。增加采样数可以大幅降低这种规则性。图 20-10b 每个单元用三次采样，单元尺寸乘以 <code>sqrt(3)</code>，以保持平均 Voronoi 区域大小不变。</p><p>从技术上说，这个算法产生的单元并不保证是 Voronoi 区域。相邻单元中的点 <em>P<sub>n</sub></em> 可能位于我们采样点的对角，但再过去那个单元中的点 <em>P<sub>n</sub></em> <sub>+1</sub> 可能位于靠近的边缘上，使得 <em>P<sub>n</sub></em> <sub>+1</sub> 实际上更近。然而我们并未把属于 <em>P<sub>n</sub></em> <sub>+1</sub> 的单元纳入计算。实际中这并不常发生，这些区域仍然有用。增加每个单元的采样数可以降低该问题出现的概率。</p><p>用这些单元可以做出许多有趣的效果。图 20-10c 与图 20-10b 有相同的单元图案，但它用最近点距离的平方来调制背景色。</p><h2>20.4 结论</h2><p>纹理轰炸及相关细胞技术能为你的着色器增添视觉丰富度。借助一张存于纹理中的伪随机数表，加上一点编程，你可以放大一幅或一组图像的变化性，减少大片纹理区域重复单调的外观。</p><h2>20.5 参考文献</h2><p><a id="ch20bib01_01"></a>Apodaca, A. A., and L. Gritz. 2002. <em>Advanced RenderMan</em>，第 255–261 页。Morgan Kaufmann。</p><p><a id="ch20bib01_02"></a>Ebert, D. S., F. K. Musgrave, D. Peachy, K. Perlin, and S. Worley. 2003. <em>Texturing and Modeling: A Procedural Approach</em>，第 3 版，第 91–94 页。Morgan Kaufmann。</p><p><a id="ch20bib01_03"></a>Lefebvre, S., and F. Neyret. 2003. "Pattern Based Procedural Textures."，载 <em>ACM Symposium on Interactive 3D Graphics 2003</em>。</p><p><a id="ch20bib01_04"></a>Schacter, B. J., and N. Ahuja. 1979. "Random Pattern Generation Processes." <em>Computer Graphics and Image Processing</em> 10，第 95–114 页。</p><p><a id="ch20bib01_05"></a>Worley, Steven P. 1996. "A Cellular Texture Basis Function."，载 <em>Proceedings of SIGGRAPH 96</em>，第 291–294 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-20-texture-bombing" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-20-texture-bombing</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

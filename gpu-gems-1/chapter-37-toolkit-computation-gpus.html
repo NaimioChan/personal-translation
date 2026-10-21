@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 37 章　GPU 通用计算工具箱 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 37 章　GPU 通用计算工具箱」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 37 章　GPU 计算工具箱</h1>
+<p><em>Ian Buck<br> Stanford University</em></p><p><em>Tim Purcell<br> Stanford University</em></p><p>传统上，GPU 一直是渲染协处理器，或者按这个名字的字面意思，是宿主 PC 的图形处理单元。本书中许多章节演示了如何用 GPU 飞快地渲染炫酷效果。但谁说 GPU 只能用于渲染？研究界已经清楚地展示了如何在 GPU 上执行与图形无关的计算，在 SIGGRAPH 和 Graphics Hardware 会议上发表的论文已有十几篇。本章讨论在 GPU 上执行通用计算的一些基本做法，并演示如何实现许多基于 GPU 的应用所需的一些基本算法。</p><h2>37.1 用 GPU 计算</h2><p>为什么要用 GPU 做通用计算？第一是性能。现代 GPU 执行浮点计算比当今的 CPU 快得多。例如，3 GHz 的 Pentium 4 理论上每秒能发出约 60 亿次浮点乘法（6 gigaflops）。而在 NVIDIA GeForce FX 5900 Ultra 上运行的片元程序每秒可完成 200 亿次以上的乘法，<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch37fn01.html" rel="noreferrer noopener">[1]</a></sup>大致相当于 10 GHz 的 Pentium 4。把这样的计算性能与 GPU 上更高的内存带宽结合起来——峰值 25.3 GB/sec，而 Pentium 4 的峰值为 5.96 GB/sec——GPU 为何胜过 CPU 就很清楚了。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch37fn02.html" rel="noreferrer noopener">[2]</a></sup></p><blockquote><ul><li>256 位 DDR @ 425 MHz = 425 x 2 x 32 字节 = 25.3 GB/sec</li></ul></blockquote><blockquote><ul><li>64 位 QDR @ 200 MHz = 200 x 4 x 8 字节 = 5.96 GB/sec</li></ul></blockquote><p>第二个原因是负载均衡。如果 CPU 限制了应用程序的性能，让 GPU 空转，我们就可以把工作卸载到 GPU 上，从而整体加速应用程序。</p><p>最后，展望未来，GPU 的性能增长曲线远比 CPU 陡峭。在截至 2003 年 6 月的两年里，Pentium 4 的性能从 4 gigaflops 提升到 6.3 gigaflops，即每年 0.65 gigaflops。而 NVIDIA GPU 在截至 GeForce FX 5900 Ultra 发布的短短六个月里，就从 8 gigaflops 提升到 20 gigaflops，相当于每年 24 gigaflops。换句话说，GPU 在性能上已经超过 CPU，将来还会继续把 CPU 甩在后面。</p><h4>37.1.1 编程模型</h4><p>你可能已经意识到，为 GPU 编程与为 CPU 编程差别很大。我们不能只改几个编译器开关再重新编译。原因是两者的编程模型略有不同。</p><p>主要区别在于，GPU 不是串行处理器，而是<em>流</em>处理器。串行处理器也称为冯·诺依曼架构（von Neumann 1945），它顺序执行指令，边执行边更新内存。流处理器的运作方式略有不同——它把某个函数（例如片元程序）作用在一组输入记录（片元）上，并行产生一组输出记录（着色后的像素）。流处理器通常把这个函数称为<em>内核</em>，把这组记录称为<em>流</em>。数据流入处理器，经内核函数运算，再输出到内存，如图 37-1 所示。送入处理器的每个元素都独立处理，元素之间没有任何依赖关系。这使得该架构可以并行执行程序，而不必把并行单元或任何并行构造暴露给程序员。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig37-01.jpg" alt="fig37-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig37-01.jpg" rel="noreferrer noopener">图 37-1</a> GPU 上的流程序模型</figcaption></figure><p>不过正如本章所述，这些函数和记录不必是像素和着色器；它们完全可以是任意数据，例如网格点和物理方程。举个例子，假设我们想实现一个简单的粒子仿真，让 GPU 承担大部分物理运算。我们用浮点纹理和像素缓冲（pbuffer）存储粒子的位置、速度和朝向。片元程序执行必要的计算，求出一个粒子的新位置。要计算所有粒子的新位置，我们只需渲染一个大四边形，让四边形中的片元数等于粒子数，如图 37-2 所示。四边形的纹理坐标告诉片元程序它需要处理哪个已存储的粒子。存进 pbuffer 的结果就是新的位置值。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig37-02.jpg" alt="fig37-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig37-02.jpg" rel="noreferrer noopener">图 37-2</a> 粒子系统示例</figcaption></figure><p>我们的粒子系统示例展示了 GPU 用于通用计算的一个显然但有用的应用。更新粒子位置这一操作可以推广为把函数作用到一组数据上的过程。这一操作在函数式编程语言中也称为<em>映射</em>，可用于多种应用。Simon Green（2003）说明了如何用与我们粒子仿真器相同的技术在 GPU 上模拟布料。</p><h4>37.1.2 并行编程</h4><p>能映射到 GPU 上的东西有一些限制。最重要的是函数必须可并行化。由于片元程序无法在不同片元之间共享可写内存，对每个粒子、网格点或别的什么东西所执行的计算必须<em>彼此独立</em>。正如着色时不能读取相邻片元的计算结果一样，作用在流数据上的函数也必须遵守同样的规则。幸运的是，大多数用于图形的物理仿真天然并行，我们的粒子系统示例就是如此。每个粒子更新自己时并不需要知道邻居刚算出的位置。</p><p>用 GPU 做通用计算还会带来其他挑战，后文会谈到，但把计算映射到 GPU、或映射到大多数流处理器时，最重要的考虑是强制并行性。</p><h4>37.1.3 高级 GPU 编程</h4><p>我们那个简单的粒子系统示例挺有意思，但如果我们想在 GPU 上算点更复杂的东西呢？并非所有应用都能用简单的<em>映射</em>操作实现。</p><p>本章余下部分介绍几个基本工具，你可以用它们在 GPU 的并行编程环境中实现更高级的算法。「归约」提供了从一组数据算出一个值的方法。「排序与搜索」提供了在 GPU 上构建和使用数据结构的机制。用这些操作，我们可以完成许多过去只能交给 CPU 的通用计算任务。</p><h2>37.2 归约</h2><p>一般来说，GPU 着色器把函数作用到一组数据上，产生一组结果，例如用片元程序给像素着色，或用顶点着色器处理顶点。两种情况下，我们送入一组值，拿回一组结果。但如果我们只想要一组值中的<em>单个</em>结果呢？以色调映射问题为例。我们用浮点 pbuffer 渲染一个高动态范围场景，需要把它显示在精度有限的帧缓冲中。一种直接的做法是把最大的浮点值映射为白色，其余值按比例缩放。</p><p>怎么得到最大值？我们可以把整个场景读回，让 CPU 来算。但如果每帧都要这么做，读回会严重拖累帧率。更好的方案是用 GPU 从场景所有像素中算出最大值。换句话说，用 GPU 把这组浮点像素<em>归约</em>为单个结果，即最大值。</p><p>一般来说，归约就是从一组数据算出一个结果的任何操作。例如最小值/最大值、平均值、求和、乘积，或任何其他用户定义的函数。本节说明如何只用几遍就完成 GPU 上的归约。</p><h4>37.2.1 并行归约</h4><p>回到色调映射的例子。当前的图形硬件缺少能直接给出 pbuffer 中最大浮点值的内置功能。不过我们可以用可编程片元管线做部分归约，从而减少需要归约的像素数。</p><p>代码清单 37-1 中的片元程序输出四个浮点值中的最大值。</p><p>用这个程序，我们可以把像素数减少到四分之一，只保留取值较大的像素。做法是：（1）把图像缓冲绑定到变量 <code>img</code> 对应的纹理单元，并渲染一个尺寸为图像四分之一的四边形（每个维度除以二）。（2）设置纹理坐标，使四边形的每个片元对应纹理中不同的 2x2 矩形。渲染出的四边形是原图像的四分之一大小，只保留了较大的值。我们可以用新图像重复这一算法，直到只剩一个浮点值，再读回 CPU，如图 37-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig37-03.jpg" alt="fig37-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig37-03.jpg" rel="noreferrer noopener">图 37-3</a> 用多遍执行的最大值归约</figcaption></figure><h4>示例 37-1. 执行部分归约</h4><pre><code>float main(float2 texcoord : TEXCOORD0, uniform samplerRECT img) : COLOR
+{
+  float a, b, c, d;
+  a = f1texRECT(img, texcoord);
+  b = f1texRECT(img, texcoord + float2(0, 1));
+  c = f1texRECT(img, texcoord + float2(1, 0));
+  d = f1texRECT(img, texcoord + float2(1, 1));
+  return max(max(a, b), max(c, d));
+}</code></pre><h4>性能</h4><p>对 1024x1024 的图像做一次大规模归约只需十遍，每一遍的尺寸是上一遍的四分之一。一般来说，需要 <em>O</em>(log <em>n</em>) 遍才能完成对 <em>n</em> <sup>2</sup> 个元素的归约。读回时未必非要一直归约到一个像素。有些情况下，读回一个小方块、让 CPU 完成最后的归约可能更快。我们还可以增加片元程序内执行的归约次数，每一遍做不止一次归约，从而减少所需的总遍数。</p><h4>37.2.2 归约杂记</h4><p>虽然我们的例子针对的是色调映射，但这个基本算法可以用在任何需要归约的地方，前提是它能符合硬件的限制。显然，我们得能把归约写成片元程序，因此受指令数和输出大小的限制。如果 GPU 只支持单个四分量浮点输出（也就是片元颜色），那么对需要着色器给出四个四分量浮点输出的 4x4 矩阵乘法，我们就无法实现归约操作（至少不能轻松实现）。另外，如果要归约的数据量在任一维度上不是 2 的幂，情况会更复杂。</p><h2>37.3 排序与搜索</h2><p>假设我们要给 GPU 粒子系统示例加上碰撞检测。写一个执行粒子间相互作用的片元程序相对容易。但随着粒子越来越多，让每个粒子与所有其他粒子作用很快就变得昂贵。总遍数与系统中粒子数的<em>平方</em>成正比。更糟的是，相距很远的粒子对给定粒子几乎或完全没有影响。花在计算远距离粒子对之间作用上的时间全都是白费的帧时间，因为这些粒子根本不会碰撞。</p><p>更好的想法是只计算与可能产生碰撞的邻近粒子之间的作用。一种做法是把粒子组织成空间数据结构，例如均匀网格。相邻粒子位于同一个网格单元或同一组网格单元中。基于一个网格单元能容纳的粒子数以及需要搜索的网格单元数，这种方法可以把粒子碰撞测试的次数从 <em>n</em> <sup>2</sup> 降到<em>常数</em>。</p><p>本节介绍为粒子仿真构建均匀网格数据结构所需的两个算法：<em>排序</em>与<em>搜索</em>。我们把排序实现为一个小的多遍着色器，把搜索实现在单遍渲染中。</p><h4>37.3.1 双调归并排序</h4><p>排序是经典的算法问题，催生了许多不同的排序算法。不幸的是，多数排序算法并不适合在 GPU 上实现。<em>双调归并排序</em>（Batcher 1968）是一种经典的并行排序算法，很适合 GPU 受限的编程环境。</p><p>为粒子系统构建均匀网格的第一步，是把数据按网格单元排序。粒子的网格单元位置通过把场景包围盒划分成立方体（网格单元）来确定。每个粒子中心恰好属于一个网格单元。我们可以给网格单元编号，然后按单元编号升序排列粒子。</p><h4>算法</h4><p>双调归并排序让 <em>n</em> 个处理器排好 <em>n</em> 个元素，共需 <em>O</em>(log<sup>2</sup> <em>n</em>) 步：log <em>n</em> 步，每步最多含 log <em>n</em> 个阶段。每个阶段并行执行 <em>n</em> 次比较与交换。</p><p>图 37-4 展示了对八元素数据集运行的双调归并排序。箭头指示要比较的两个元素（位于每个箭头的头和尾）以及交换方向，使得较小的元素最终落在箭头尾部。例如在第 1 阶段的第 1 步，我们比较 4 和 8 并交换它们的位置，因为较小的元素（4）需要位于箭头尾部。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig37-04.jpg" alt="fig37-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig37-04.jpg" rel="noreferrer noopener">图 37-4</a> 对八个元素的双调归并排序</figcaption></figure><p>双调归并排序的工作原理是反复把两个有序序列组合成一个双调序列，再对该序列排序，形成一个有序列表。回忆一下，双调序列是指先单调递增后递减、或先递减后递增的序列。以图 37-4 为例，可以看到在第 1 步结束时，初始序列已被排成四个子列表：(3, 7)、(8, 4)、(2, 6) 和 (5, 1)。这四个子列表实际上构成两个双调序列：(3, 7, 8, 4) 和 (2, 6, 5, 1)。这两个序列在第 2 步中被排序。得到的两个有序列表构成单个双调序列 (3, 4, 7, 8, 6, 5, 2, 1)。该序列在第 3 步中被排序，得到最终的有序列表。</p><h4>GPU 实现</h4><p>双调归并排序（以及后文描述的二分搜索）需要一个辅助函数 <code>convert1dto2d</code>，它只是把一维数组地址转换为二维纹理坐标。其实现很直接，如代码清单 37-2 所示。</p><h4>示例 37-2. 双调归并排序的辅助函数</h4><pre><code>float2 convert1dto2d(float coord1d, float width)
+{
+  float2 coord2d;
+  coord2d.y = coord1d / width;
+  coord2d.x = floor(frac(coord2d.y) * width);
+  coord2d.y = floor(coord2d.y);
+  return coord2d;
+}</code></pre><p>双调归并排序实现为一个多遍着色器。双调归并排序的 Cg 代码见代码清单 37-3。优化过的实现可在本书附带的 CD 和网站上找到。</p><p>我们要排序的数据存储在纹理内存中。每一遍渲染对应一个并行比较阶段。片元程序根据排序当前所处的步（<code>stepno</code>）和阶段（<code>stage</code>）计算需要比较哪两个元素。比较得到的最小值或最大值被写出，同样取决于排序当前的阶段和步。新生成的纹理作为下一个比较阶段的输入。对 <em>n</em> 个元素的排序恰好需要 (log <em>n</em> x (log <em>n</em> + 1)) ÷ 2 遍渲染。</p><h4>性能</h4><p>对刚过一百万个元素（存放在 1024x1024 纹理中）排序需要 210 遍渲染。即便是今天最快的显卡，也很难在实时条件下对百万像素区域渲染 210 遍。不过，排序较少的元素所需的遍数少得多，区域也小得多。4,096 个元素的数据集只需 20 毫秒就能排好。优秀的基于 CPU 的排序例程具有 <em>O</em>(<em>n</em> log <em>n</em>) 的运行时渐进复杂度，意味着它们往往比 GPU 排得更快。不过，如果排序后的数据需要留在 GPU 内存中，与主机之间来回传输的时间会抵消这一优势。</p><h4>示例 37-3. 双调归并排序</h4><pre><code>float BitonicSort(float2 elem2d
+                  : WPOS, uniform float offset,
+                    // offset = 2^(stage - 1)
+                    uniform float pbufwidth, uniform float stageno,
+                    // stageno = 2^stage
+                    uniform float stepno,
+                    // stepno = 2^step
+                    uniform samplerRECT sortedlist)
+    : COLOR
+{
+  elem2d = floor(elem2d);
+  float elem1d = elem2d.y * pbufwidth + elem2d.x;
+  half csign = (fmod(elem1d, stageno) < offset) ? 1 : -1;
+  half cdir = (fmod(floor(elem1d / stepno), 2) == 0) ? 1 : -1;
+  float adr1d = csign * offset + elem1d;
+  float2 adr2d = convert1dto2d(adr1d, pbufwidth);
+  float val0 = f1texRECT(sortedlist, elem2d);
+  float val1 = f1texRECT(sortedlist, adr2d);
+  float cmin = (val0 < val1) ? val0 : val1;
+  float cmax = (val0 > val1) ? val0 : val1;
+  return (csign == cdir) ? cmin : cmax;
+}</code></pre><h4>37.3.2 二分搜索</h4><p>搜索是另一个经典算法。正如讨论排序时提到的，多数搜索算法在 GPU 受限的编程环境中无法工作。不过，<em>二分搜索</em>是最常见的搜索算法之一，而且很适合映射到 GPU 上。</p><p>有了粒子的有序列表，我们几乎已备齐完成均匀网格数据结构所需的全部数据。虽然有序列表把粒子按网格单元排好了序，但我们无法得知某个网格单元的粒子子列表在哪里结束、下一个列表在哪里开始。我们在有序粒子列表上并行执行若干顺序二分搜索，来构建均匀网格。每个网格单元为自己在有序列表中发起一次搜索。搜索返回每个网格单元对应粒子列表的起始位置。</p><h4>算法</h4><p>二分搜索只能作用于有序的元素列表。算法先查看列表的中间元素，决定接下来检查列表的哪一半。这一判断对每个后续子列表重复施加，直到子列表长度为 1。此时还需要做一次最终的「校正」比较：如果最终位置上的值不等于要搜索的值，就决定是否要递增位置。这是搜索某个元素首次出现位置带来的副产物，如图 37-5 所示。该算法需要 <em>O</em>(log <em>n</em>) 次比较。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig37-05.jpg" alt="fig37-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig37-05.jpg" rel="noreferrer noopener">图 37-5</a> 在八个元素上对值 2 的两次二分搜索</figcaption></figure><h4>GPU 实现</h4><p>二分搜索很容易映射到单遍片元程序。待搜索的元素列表存储在纹理内存中。单个片元在一次片元程序执行中完成整个二分搜索。该片元程序是一个简单的展开循环，恰好遍历列表 log <em>n</em> + 1 次。程序归结为一系列相互依赖的纹理查找。最终返回的值要么是所搜索的单元，要么是下一个单元的起始位置。见代码清单 37-4。</p><p>代码清单 37-5 中的 <code>Search</code> 例程只执行依赖纹理取数，然后计算并返回下一个要检查的位置。</p><h4>示例 37-4. 双调搜索</h4><pre><code>float BinarySearch(float2 elem2d
+                   : WPOS, uniform float stride, uniform float pbufwidth,
+                     uniform float sortbufwidth, uniform samplerRECT sortlist)
+    : COLOR
+{
+  elem2d = floor(elem2d);
+  float elem1d = elem2d.y * pbufwidth + elem2d.x;
+  float curpos = stride;
+  // 对 (LOGN - 1) 个搜索轮次循环
+  for (int i = 0; i < LOGN - 1; i++)
+  {
+    stride = floor(stride * 0.5);
+    curpos = Search(curpos, elem1d, stride, sortlist, sortbufwidth);
+  }
+  // 第 log n 个轮次
+  curpos = Search(curpos, elem1d, 1.0, sortlist, sortbufwidth);
+  // 清理轮次
+  curpos = SearchFinal(curpos, elem1d, 1.0, sortlist, sortbufwidth);
+  return curpos;
+}</code></pre><h4>示例 37-5. Search 例程</h4><pre><code>float Search(float curpos, float elem, float stride, uniform samplerRECT data,
+             float texw)
+{
+  float2 adr2d = convert1dto2d(curpos, texw);
+  float val = f1texRECT(data, adr2d);
+  float dir = (elem &lt; = val) ? -1.0 : 1.0;
+  return dir * stride + curpos;
+}</code></pre><p>回忆一下，搜索结束后还需要一次最终的「校正」比较，用来决定是否递增最终位置。<code>SearchFinal</code> 的代码与 <code>Search</code> 完全相同，只有一行不同：</p><pre><code>float dir = (elem &lt; = val) ? 0.0 : 1.0;</code></pre><h4>性能</h4><p>二分搜索非常高效。与归约和排序不同，搜索往往可以在单遍渲染中完成。在超过一百万个有序元素（存放在 1024x1024 纹理中）中搜索单个元素，耗时不到一毫秒。构建一个网格数据结构并并行执行若干次搜索，只需几毫秒。</p><h2>37.4 挑战</h2><p>用当前的 GPU 做计算会带来一些挑战——主要是输出数量有限和读回缓慢。</p><h4>37.4.1 输出数量有限</h4><p>一个困难是片元程序可用的输出数量。当今 GPU 支持的输出数，从单个四分量浮点输出到最新硬件上的四个或更多此类输出不等。输出数量有限会限制我们在一遍中能算什么。例如，如果我们在实现光线追踪器，每条入射光线可能产生多条出射光线（反射、透射和阴影），我们就很容易受 GPU 支持的输出数量所限。随着 GPU 技术演进，这一缺陷应当会减弱。</p><h4>37.4.2 读回缓慢</h4><p>读回可能是 GPU 上计算的最大限制之一。算出新的粒子位置后，我们的应用程序可能要用 CPU 做一些有挑战性的操作，例如与场景物体做碰撞检测。为此，我们要用相应的 API 命令从显卡内存中把值读回。但这要求把所有数据通过 AGP 连接传输，而尽管现代 GPU 支持快速的 8x AGP 传输，读回路径却只有 1x AGP。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch37fn03.html" rel="noreferrer noopener">[3]</a></sup> 这种缓慢的传输可能把卸载物理计算到 GPU 所获得的性能收益全部抵消。避免这一读回代价，正是把尽可能多的计算放到 GPU 上的动机。即将到来的兼容 PCI Express 的主板应当能缓解这一限制。</p><h4>37.4.3 GPU 与 CPU</h4><p>如本章所见，许多在 CPU 上表现出色的传统算法，未必能很好地映射到 GPU 的流编程模型。流编程模型强制的并行性，加上本节提到的一些限制，可能迫使我们重新思考某些问题的解法。有些情况下，GPU 并不是实现某个算法的首选平台。此外，调试器、性能分析器这类编程支持工具在 CPU 上要容易获得得多。不过我们预期，随着人们学会把自己的算法映射到流编程模型上，会不断有新的、令人兴奋的算法为 GPU 而写。本章的「延伸阅读」一节列出了一些人们在 GPU 上实现的有趣工作的参考。这些程序包括光线追踪、光子映射、流体求解器、布料仿真和全局光照计算。我们还预期 GPU 会继续演进，更全面地支持通用计算——包括程序员支持和 CPU 编程中常见的那些工具。</p><h2>37.5 结论</h2><p>本章表明，GPU 能做的远不止渲染着色像素。我们展示了四种有用的操作——<em>映射</em>、<em>归约</em>、<em>排序</em>和<em>搜索——</em>并给出了使用它们的示例。随着 GPU 性能继续快速增长，用 GPU 做通用计算很可能会变得司空见惯。</p><h2>37.6 延伸阅读</h2><p><em>注：<a href="http://www.gpgpu.org" rel="noreferrer noopener">www.gpgpu.org</a> 有若干近期成果的链接，是 GPU 通用计算信息的绝佳仓库。</em></p><p><a id="ch37bib01_01"></a>Batcher, Kenneth E. 1968. 「Sorting Networks and Their Applications.」，载 <em>Proceedings of AFIPS Spring Joint Computer Conference</em> 32，pp. 307–314。</p><p><a id="ch37bib01_02"></a>Bolz, Jeff, Ian Farmer, Eitan Grinspun, and Peter Schröder. 2003. 「Sparse Matrix Solvers on the GPU: Conjugate Gradients and Multigrid.」，载 <em>ACM Transactions on Graphics</em> 22(3)，pp. 917–924。</p><p><a id="ch37bib01_03"></a>Carr, Nathan A., Jesse D. Hall, and John C. Hart. 2002. 「The Ray Engine.」，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2002,</em> pp. 37–46。</p><p><a id="ch37bib01_04"></a>Carr, Nathan A., Jesse D. Hall, and John C. Hart. 2003. 「GPU Algorithms for Radiosity and Subsurface Scattering.」，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 51–59。</p><p><a id="ch37bib01_05"></a>Goodnight, Nolan, Rui Wang, Cliff Woolley, and Greg Humphreys. 2003. 「Interactive Time-Dependent Tone Mapping Using Programmable Graphics Hardware.」，载 <em>Eurographics Symposium on Rendering: 14th Eurographics Workshop on Rendering</em>，pp. 26–37。</p><p><a id="ch37bib01_06"></a>Goodnight, Nolan, Cliff Woolley, Gregory Lewin, David Luebke, and Greg Humphreys. 2003. 「A Multigrid Solver for Boundary Value Problems Using Programmable Graphics Hardware.」，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 102–111。</p><p><a id="ch37bib01_07"></a>Green, Simon. 2003. 「Stupid OpenGL Shader Tricks.」 Presentation at Game Developers Conference 2003. 可在线获取：<strong><a href="http://developer.nvidia.com/docs/IO/8230/GDC2003_OpenGLShaderTricks.pdf" rel="noreferrer noopener">http://developer.nvidia.com/docs/IO/8230/GDC2003_OpenGLShaderTricks.pdf</a></strong></p><p><a id="ch37bib01_08"></a>Harris, Mark J., Greg Coombe, Thorsten Scheuermann, and Anselmo Lastra. 2002. 「Physically-based Visual Simulation on Graphics Hardware.」，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2002</em>，pp. 109–118。</p><p><a id="ch37bib01_09"></a>Harris, Mark J., William Baxter III, Thorsten Scheuermann, and Anselmo Lastra. 2003. 「Simulation of Cloud Dynamics on Graphics Hardware.」，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 92–101。</p><p><a id="ch37bib01_10"></a>Hillesland, Karl E., Sergey Molinov, and Radek Grzeszczuk. 「Nonlinear Optimization Framework for Image-Based Modeling on Programmable Graphics Hardware.」，载 <em>ACM Transactions on Graphics</em> 22(3)，pp. 925–934。</p><p><a id="ch37bib01_11"></a>Krüger, Jens, and Rüdiger Westermann. 2003. 「Linear Algebra Operators for GPU Implementation of Numerical Algorithms.」，载 <em>ACM Transactions on Graphics</em> 22(3)，pp. 908–916。</p><p><a id="ch37bib01_12"></a>Ma, Vincent C. H., and Michael D. McCool. 2002. 「Low Latency Photon Mapping Using Block Hashing.」，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2002,</em> pp. 89–99。</p><p><a id="ch37bib01_13"></a>Moreland, Kenneth, and Edward Angel. 2003. 「The FFT on a GPU.」，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 112–120。</p><p><a id="ch37bib01_14"></a>Purcell, Timothy J., Ian Buck, William R. Mark, and Pat Hanrahan. 2002. 「Ray Tracing on Programmable Graphics Hardware.」，载 <em>ACM Transactions on Graphics</em> 21(3)，pp. 703–712。</p><p><a id="ch37bib01_15"></a>Purcell, Timothy J., Craig Donner, Mike Cammarano, Henrik Wann Jensen, and Pat Hanrahan. 2003. 「Photon Mapping on Programmable Graphics Hardware.」，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 41–50。</p><p><a id="ch37bib01_16"></a>Sen, Pradeep, Michael Cammarano, and Pat Hanrahan. 2003. 「Shadow Silhouette Maps.」，载 <em>ACM Transactions on Graphics</em> 22(3)，pp. 521–526。</p><p><a id="ch37bib01_17"></a>von Neumann, John. 1945. 「First Draft of a Report on the EDVAC.」 Moore School of Electrical Engineering，University of Pennsylvania，Philadelphia，报告编号 W-670-ORD-4926。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-37-toolkit-computation-gpus" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-37-toolkit-computation-gpus</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

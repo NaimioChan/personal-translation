@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 章　「Dawn」演示中的皮肤 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 3 章　「Dawn」演示中的皮肤」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 3 章　「Dawn」演示中的皮肤</h1>
+<p><em>Curtis Beeson<br> NVIDIA</em></p><p><em>Kevin Bjorke<br> NVIDIA</em></p><h2>3.1 引言</h2><p>「Dawn」是 NVIDIA 制作的演示，用于介绍 GeForce FX 产品线，并展示可编程着色如何能创造出逼真的人物角色，如图 3-1 所示。顶点着色器（在第 4 章「'Dawn' 演示中的动画」中描述）通过索引蒙皮和混合形状对高分辨率网格做形变，并为片元着色器中所用的光照模型做设置。皮肤和翅膀的片元着色器产生出的动态范围和细节，在可编程图形硬件出现之前是无法达到的。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch03fn01.html" rel="noreferrer noopener">[1]</a></sup></p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig03-01.jpg" alt="fig03-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig03-01.jpg" rel="noreferrer noopener">图 3-1</a> Dawn</figcaption></figure><p>本章讨论演示中如何用可编程图形硬件为 Dawn 角色打光，并加速皮肤着色器。</p><h2>3.2 皮肤着色</h2><p>由于多种原因，皮肤是计算机图形中难以模拟的表面。即便是电影中使用的高端制作级图形，也无法模拟经得起近距离审视的逼真人物角色。人类从非语言的线索中获得大量信息：重心的转移、独特的走路方式、面部表情，甚至某人皮肤的泛红。研究者已经表明，婴儿在出生后片刻就能识别并注视面部表情。因此，我们在察觉角色动作、情绪表达以及皮肤细微色泽上的不自然时，是非常敏锐的。虽然很少有人理解<em>次表面散射</em>和<em>边缘光</em>这样的术语，但几乎任何人都能告诉你，你的渲染在哪儿把它们弄错了。</p><p>除了着色问题，人们也可能很快指出皮肤着色器看起来像塑料，而这其实是因为皮肤的运动方式，所以要重视角色设置的问题。第 4 章描述了「Dawn」演示中所用的技术：用累积索引蒙皮驱动身体，通过混合目标给 Dawn 的脸添加情绪。这些技术为 Dawn 以及她需要做的动作提供了过得去的近似，但对于其他用途，它们可能无法完整描述皮肤在真实骨架上滑动、屈伸和下垂的方式。创建角色时，重要的是针对观察者实际会看到的视角范围，恰当地建模绑定与着色。</p><h2>3.3 场景光照</h2><p>一旦皮肤以尽可能逼真的方式运动起来，你就可以专注于着色了。拆解表面着色最直接的办法，是先考察场景的光照环境，再看皮肤对该光照的响应。</p><h4>3.3.1 高动态范围环境</h4><p>我们想把角色放进一个场景，让它摆脱传统实时图形技术所典型的那种平淡、简单的着色。较早的图形架构是围绕 Gouraud 和 Phong 着色的概念建立的，它们把所有入射光都描述为从无限小的点光源、方向光和聚光灯发出。材质表面的漫反射和镜面反射响应通常用纹理和方程来描述，而这些无法描述合适范围的光照响应。</p><p>这种旧做法的一个不良后果是，场景往往缺少真实世界中那种亮度范围。地上一张白纸会和头顶的白色光源一样亮；复杂环境中的角色常常显得格格不入，因为他们是由离散的点照亮的，而不是由周围环境照亮的。</p><p>Paul Debevec 在高动态范围图像的处理与操控方面做了大量研究，正是为了解决这个问题。他的成果可见于多种 SIGGRAPH 出版物，并通过他渲染的影片中的例子变得更具体可感。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch03fn02.html" rel="noreferrer noopener">[2]</a></sup> 我们想利用新的可编程实时图形架构，把这些概念应用到实时角色上。特别是，我们希望 Dawn 由环境照亮，并让亮斑造成光线溢散，柔化她的轮廓边缘。</p><p>因为 Dawn 是仙女，我们找了一片合适的林地，拍摄了若干张标定过的照片。我们用了 iPIX 套件，包括一个可在相对角度锁定的三脚架、一台数码相机和一只 183 度鱼眼镜头。在这里，两张半球照片是用相机内置的某个微距模式在若干档快门下拍摄的。这组图像比任何单档快门产生的单一像素颜色提供了更多关于各像素光强的信息。</p><p>我们用 iPIX 软件把对应的两个半球拼接成一张全景图，然后用 Debevec 的 HDRShop 软件创建高动态范围全景图，它编码了环境在每个给定角度上的光色与光强。见<a href="https://developer.download.nvidia.com/books/gpugems/fig03-02.jpg" rel="noreferrer noopener">图</a> <a href="https://developer.download.nvidia.com/books/gpugems/fig03-02.jpg" rel="noreferrer noopener">3-2</a>。HDRShop 随后可以创建一张漫反射查找图，通过卷积为给定表面粗糙度的表面生成漫反射或镜面反射贴图（过去这种粗糙度是用 Phong 指数来建模的）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig03-02.jpg" alt="fig03-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig03-02.jpg" rel="noreferrer noopener">图 3-2</a> 环境的立方体贴图</figcaption></figure><p>漫反射贴图是一张立方体贴图，如图 3-3 所示，用网格的表面法线索引，它存储了该方向上入射光的余弦加权平均值。暂且忽略在给定点半球的一部分可能被遮挡这一事实，这个加权平均值为计算表面各点的漫反射给出了恰当的值。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig03-03.jpg" alt="fig03-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig03-03.jpg" rel="noreferrer noopener">图 3-3</a>　漫反射立方体环境贴图</figcaption></figure><p>镜面反射贴图同样是一张立方体贴图，如图 3-4 所示，用反射向量来索引（也就是「常规」立方体贴图用于反射的用法）。这张镜面反射贴图按粗糙度系数做模糊，以模拟表面上任意一点不断变化的法线。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig03-04.jpg" alt="fig03-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig03-04.jpg" rel="noreferrer noopener">图 3-4</a>　镜面反射立方体环境贴图</figcaption></figure><h4>3.3.2 遮蔽项</h4><p>用环境贴图来描述环境或光照方案有一个问题：贴图中采到的值实际上只在空间中的单个点上准确。第一个副作用是，当小仙子四处走动时，背景看起来「无限」远。这对我们是一个合适的近似，因为小仙子很小，而在这种情形下背景本来就该显得很远。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch03fn03.html" rel="noreferrer noopener">[3]</a></sup></p><p>第二个副作用是，漫反射贴图与镜面反射贴图描述的是拍摄所得环境中的入射光，但对 Dawn 这类被模拟的元素自身投下的阴影毫无描述。因此必须开发一种技术来纳入这部分信息。</p><p>许多实时阴影技术产生硬阴影，而我们想要特别柔和的外观。因此我们生成一个遮蔽项，近似表示每个顶点上方半球被场景中其他物体遮挡的比例。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch03fn04.html" rel="noreferrer noopener">[4]</a></sup></p><p>我们用一个定制的软件工具完成这件事：它在该顶点可见的半球上随机投射光线，找出与其他几何体的相交。我们在「Dawn」演示和「Ogre」演示（内容由 Spellcraft Studio 提供）中用了这项技术，不过两次的结果用法不同。对 Dawn，遮蔽项在她躯体的顶点上保持不变；她的脸部则混合了来自各个变形目标的多组遮蔽项。</p><p>在一台预发布的 GeForce FX 5800 上我们已经到了能力的极限（Dawn 本来就是为该产品的发布而做的演示），所以没有进一步做到每帧为每个顶点动画遮蔽项，而在 Spellcraft Studio 的「Yeah! The Movie」演示中我们对 Ogre 角色做到了这一步。</p><h2>3.4 皮肤如何响应光照</h2><p>皮肤不同于我们在计算机图形学中建模的大多数表面，因为它由半透明的表皮、真皮和皮下组织多层构成。光线进入表面、在介质中散射、再从另一点射出，这一现象我们称为<em>次表面散射</em>。把手举到太阳前面时，透过皮肤的光呈现橙红色辉光，就是这一效果的常见表现。皮肤下的这种散射对皮肤在各个角度下的外观都很重要，也让它有一种柔和而极具辨识度的质感。遗憾的是，这一事实违背了图形 API 与体系结构中的一个常见假设：物体上某一点的光不影响其他点的反射。</p><p>过去有些团队尝试用多层叠加的纹理贴图来模拟皮肤的复杂性。总体而言，这种做法难以管理，纹理美术在预视最终混合颜色时也很难操作。我们改用单张颜色贴图，颜色变化通过着色加入，如图 3-5 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig03-05.jpg" alt="fig03-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig03-05.jpg" rel="noreferrer noopener">图 3-5</a>　Dawn 头部前半部分的漫反射颜色贴图</figcaption></figure><p>此外，皮肤还有极其细微的变化影响着它的反射特性。这些变化对皮肤外观的影响很微妙，尤其是当光源正好位于相机对面时——也就是边缘光与轮廓光的情形。真实的皮肤上有绒毛和毛孔这类微小的特征会捕捉光线。这些细节太小，我们无法显式建模，但我们希望表面整体看起来仍然合适。加一张凹凸贴图能在特写时提供一些额外细节——尤其是细小的皱纹——但我们想要柔和的外观，而不是闪亮、带颗粒感的塑料，并且希望这些效果不受屏幕上的尺寸影响（凹凸贴图通常只有近看才可见）。</p><p>我们通过一个认识近似了这两种着色属性：它们可以建模为基于表面法线与光照或视线向量的简单公式。具体来说，在轮廓边缘处，我们按视线向量索引，采样 Dawn <em>背后</em>的光照——把「透过」Dawn 的光与她基础肤色混合，制造次表面与边缘光照的错觉，对背景贴图中很亮的区域尤其有效。见图 3-6。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig03-06.jpg" alt="fig03-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig03-06.jpg" rel="noreferrer noopener">图 3-6</a>　Dawn 头部正面的切线空间法线贴图（凹凸贴图）</figcaption></figure><h2>3.5 实现</h2><p>光照过程分在顶点着色器和片元着色器中完成。这是一个<em>单遍</em>光照方案：生成皮肤表面不需要额外的渲染遍，也不需要 alpha 混合。</p><h4>3.5.1 顶点着色器</h4><p>顶点着色器的主要功能是把坐标变换到投影空间，并执行那些在片元着色器中计算代价过高的数学运算。如 3.3.2 节所述，「Dawn」演示中的顶点着色器先应用变形目标（如果有），然后用一副 98 根骨骼的骨架对超过 180,000 个顶点的网格做蒙皮。详见第 4 章。</p><p>对每个顶点，我们从 CPU 应用接收代码清单 3-1 所示的数据。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch03fn05.html" rel="noreferrer noopener">[5]</a></sup></p><p>在顶点着色器中计算、并以插值形式传入片元着色器的量包括：世界空间视线方向向量（<code>worldEyeDirection</code>），描述从观察者眼睛到任意给定顶点的方向；3x3 的切线到世界空间矩阵（<code>tangentToWorld</code>）<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch03fn06.html" rel="noreferrer noopener">[6]</a></sup> ；以及一组统称为<em>血液透射项</em>的量（<code>bloodTransmission</code>）。代码清单 3-2 给出输出顶点的数据结构。</p><h4>示例 3-1　从 CPU 应用接收的逐顶点数据</h4><pre><code>// 下面是逐顶点（PER-VERTEX）数据 —— 我们用了 16 个向量，
+// 这是我们的图形 API 允许的上限
+struct a2vConnector
+{
+  float4 coord;
+  // 3D 位置
+  float4 normal;
+  float4 tangent;
+  float3 coordMorph0;
+  // 到目标 0 的 3D 偏移
+  float4 normalMorph0;
+  // 对应的偏移
+  float3 coordMorph1;
+  // 到目标 1 的 3D 偏移
+  float4 normalMorph1;
+  // 对应的偏移
+  float3 coordMorph2;
+  // 到目标 2 的 3D 偏移
+  float4 normalMorph2;
+  // 对应的偏移
+  float3 coordMorph3;
+  // 到目标 3 的 3D 偏移
+  float4 normalMorph3;
+  // 对应的偏移
+  float3 coordMorph4;
+  // 到目标 4 的 3D 偏移
+  float4 normalMorph4;
+  // 对应的偏移
+  float4 boneWeight0_3;
+  // 颅骨与颈部骨骼
+  float4 boneIndex0_3;
+  // 索引与权重
+  float4 skinColor_frontSpec;
+  // UV 索引
+};</code></pre><h4>示例 3-2　输出顶点的数据结构</h4><pre><code>// 这里是从顶点着色器传到
+// 片元着色器的数据
+struct v2fConnector
+{
+  float4 HPOS : POSITION;
+  float4 SkinUVST : TEXCOORD0;
+  float3 WorldEyeDir : TEXCOORD2;
+  float4 SkinSilhouetteVec : TEXCOORD3;
+  float3 WorldTanMatrixX : TEXCOORD5;
+  float3 WorldTanMatrixY : TEXCOORD6;
+  float3 WorldTanMatrixZ : TEXCOORD7;
+};</code></pre><p>由于我们做的是凹凸贴图，片元着色器必须求出世界空间中的扰动后法线，因此必须给它一条从切线空间扰动法线（由纹理贴图提供）转到世界空间的途径。凹凸贴图的常见做法是让顶点着色器传出世界空间的法线、副法线和切线，再把这三个向量当作 3x3 矩阵，把向量从世界空间旋转到切线空间去计算。在这个例子里，片元着色器要用世界空间向量查光照解，所以我们传入该矩阵的转置（对旋转矩阵而言转置即逆），结果是在顶点着色器里用九条 <code>MOV</code> 指令载入 <code>WorldTanMatrixX</code>、<code>WorldTanMatrixY</code> 和 <code>WorldTanMatrixZ</code> 三项。</p><p>最后，顶点着色器里的血液透射项或称「皮肤轮廓」项是一个 <code>float4</code> 向量，由遮蔽项、表达式（<strong>N · V</strong>）的几种变体（即表面法线与视线向量的点积），以及把法线相对立方体贴图光照坐标系所做的一次旋转组成。见图 3-7。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig03-07.jpg" alt="fig03-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig03-07.jpg" rel="noreferrer noopener">图 3-7</a>　存储于……的点积</figcaption></figure><pre><code>OUT.SkinSilhouetteVec =
+    float4(objectNormal.w, oneMinusVdotN *oneMinusVdotN, oneMinusVdotN,
+           vecMul(G_DappleXf, worldNormal.xyz).z);</code></pre><p>这些步骤只提供了几种把「像素离轮廓有多近」参数化的方式，它们在开发片元着色器时给了我们一盒可玩的数值。数学敏感的读者可能注意到，（<strong>N · V</strong>）项在大三角形上经 Gouraud（线性）着色插值时可能不准确。所幸对这个具体情形，Dawn 的网格剖分得很细，而且相机要<em>非常</em>贴近她的脸，误差才会显现。这是一个好例子：着色器高度针对特定模型，且只在可预期的屏幕尺寸范围内观看。（<strong>N · V</strong>）本可以在片元着色器里计算，但那会让着色器贵得多（因而更慢）。</p><p>注意「Dawn」演示中所有顶点着色器都是程序化生成的。我们在 Maya 里指定片元着色器，另有一个顶点着色器生成器读取角色设置（骨架、变形目标等）以及片元着色器请求的输入，然后用 A* 搜索按规则文件生成最优的顶点着色器。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch03fn07.html" rel="noreferrer noopener">[7]</a></sup></p><p>代码清单 3-3 是一段带注释的示例顶点着色器，用于 Dawn 的脸部区域（同时包含矩阵蒙皮与形状混合，以及片元着色器中颜色计算所用的各项数值）。</p><h4>示例 3-3　Dawn 脸部的示例顶点着色器</h4><pre><code>// 辅助函数：
+// vecMul(matrix, float3) 按向量方式相乘，
+// 而不是按点的方式（不进行平移）
+float3 vecMul(const float4x4 matrix, const float3 vec)
+{
+  return (float3(dot(vec, matrix._11_12_13), dot(vec, matrix._21_22_23),
+                 dot(vec, matrix._31_32_33)));
+}
+// Dawn 面部的顶点着色器
+v2fConnector faceVertexShader(
+    a2vConnector IN, const uniform float MorphWeight0,
+    const uniform float MorphWeight1, const uniform float MorphWeight2,
+    const uniform float MorphWeight3, const uniform float MorphWeight4,
+    const uniform float4x4 BoneXf[8], const uniform float4 GlobalCamPos,
+    const uniform float4x4 ViewXf, const uniform float4x4 G_DappleXf,
+    const uniform float4x4 ProjXf)
+{
+  v2fConnector OUT;
+  // 下面这一大块内容完全
+  // 用于形状蒙皮。
+  // 首先在五个混合形状（“变形目标”）
+  // 之间做形状混合
+  float4 objectCoord = IN.coord;
+  objectCoord.xyz += (MorphWeight0 * IN.coordMorph0);
+  objectCoord.xyz += (MorphWeight1 * IN.coordMorph1);
+  objectCoord.xyz += (MorphWeight2 * IN.coordMorph2);
+  objectCoord.xyz += (MorphWeight3 * IN.coordMorph3);
+  objectCoord.xyz += (MorphWeight4 * IN.coordMorph4);
+  // 现在用颈部骨骼变换整个头部
+  float4 worldCoord =
+      IN.boneWeight0_3.x * mul(BoneXf[IN.boneIndex0_3.x], objectCoord);
+  worldCoord +=
+      (IN.boneWeight0_3.y * mul(BoneXf[IN.boneIndex0_3.y], objectCoord));
+  worldCoord +=
+      (IN.boneWeight0_3.z * mul(BoneXf[IN.boneIndex0_3.z], objectCoord));
+  worldCoord +=
+      (IN.boneWeight0_3.w * mul(BoneXf[IN.boneIndex0_3.w], objectCoord));
+  // 对表面法线重复
+  // 上面的蒙皮操作
+  float4 objectNormal = IN.normal;
+  objectNormal += (MorphWeight0 * IN.normalMorph0);
+  objectNormal += (MorphWeight1 * IN.normalMorph1);
+  objectNormal += (MorphWeight2 * IN.normalMorph2);
+  objectNormal += (MorphWeight3 * IN.normalMorph3);
+  objectNormal += (MorphWeight4 * IN.normalMorph4);
+  objectNormal.xyz = normalize(objectNormal.xyz);
+float3 worldNormal = IN.boneWeight0_3.x *
+vecMul(BoneXf[IN.boneIndex0_3.x],
+objectNormal.xyz));
+worldNormal +=
+    (IN.boneWeight0_3.y * vecMul(BoneXf[IN.boneIndex0_3.y], objectNormal.xyz));
+worldNormal +=
+    (IN.boneWeight0_3.z * vecMul(BoneXf[IN.boneIndex0_3.z], objectNormal.xyz));
+worldNormal +=
+    (IN.boneWeight0_3.w * vecMul(BoneXf[IN.boneIndex0_3.w], objectNormal.xyz));
+worldNormal = normalize(worldNormal);
+// 对正交化后的表面切线向量
+// 重复上面的蒙皮操作
+float4 objectTangent = IN.tangent;
+objectTangent.xyz =
+    normalize(objectTangent.xyz -
+              dot(objectTangent.xyz, objectNormal.xyz) * objectNormal.xyz);
+float4 worldTangent;
+worldTangent.xyz =
+    IN.boneWeight0_3.x * vecMul(BoneXf[IN.boneIndex0_3.x], objectTangent.xyz);
+worldTangent.xyz +=
+    (IN.boneWeight0_3.y * vecMul(BoneXf[IN.boneIndex0_3.y], objectTangent.xyz));
+worldTangent.xyz +=
+    (IN.boneWeight0_3.z * vecMul(BoneXf[IN.boneIndex0_3.z], objectTangent.xyz));
+worldTangent.xyz +=
+    (IN.boneWeight0_3.w * vecMul(BoneXf[IN.boneIndex0_3.w], objectTangent.xyz));
+worldTangent.xyz = normalize(worldTangent.xyz);
+worldTangent.w = objectTangent.w;
+// 形变到此完成。
+// 用切向量与法向量的叉积
+// 构造副法线向量
+float3 worldBinormal =
+    worldTangent.w * normalize(cross(worldNormal, worldTangent.xyz));
+// 重排这些值，以 3 x 3 矩阵的形式输出，
+// 供片元着色器做凹凸贴图
+OUT.WorldTanMatrixX = float3(worldTangent.x, worldBinormal.x, worldNormal.x);
+OUT.WorldTanMatrixY = float3(worldTangent.y, worldBinormal.y, worldNormal.y);
+OUT.WorldTanMatrixZ = float3(worldTangent.z, worldBinormal.z, worldNormal.z);
+// 向量已齐备，现在用它们
+// 计算一些光照值
+float4 worldEyePos = GlobalCamPos;
+OUT.WorldEyeDir = normalize(worldCoord.xyz - worldEyePos.xyz);
+float4 eyespaceEyePos = {0.0f, 0.0f, 0.0f, 1.0f};
+float4 eyespaceCoord = mul(ViewXf, worldCoord);
+float3 eyespaceEyeVec = normalize(eyespaceEyePos.xyz - eyespaceCoord.xyz);
+float3 eyespaceNormal = vecMul(ViewXf, worldNormal);
+float VdotN = abs(dot(eyespaceEyeVec, eyespaceNormal));
+float oneMinusVdotN = 1.0 - VdotN;
+OUT.SkinUVST = IN.skinColor_frontSpec;
+OUT.SkinSilhouetteVec =
+    float4(objectNormal.w, oneMinusVdotN * oneMinusVdotN, oneMinusVdotN,
+           vecMul(G_DappleXf, worldNormal.xyz).z);
+float4 hpos = mul(ProjXf, eyespaceCoord);
+OUT.HPOS = hpos;
+return OUT;
+}</code></pre><p></p><h4>3.5.2 片元着色器</h4><p>有了顶点着色器的输出（在 Dawn 身体各处，顶点着色器输出的数据结构都一致），我们就能生成实际的带纹理颜色。</p><p>代码清单 3-4 给出脸部所用的完整片元着色器。</p><h4>示例 3-4　Dawn 脸部的片元着色器</h4><pre><code>float4 faceFragmentShader(
+    v2fConnector IN, uniform sampler2D SkinColorFrontSpecMap,
+    uniform sampler2D SkinNormSideSpecMap,
+    // xyz 法线贴图
+    uniform sampler2D SpecularColorShiftMap, // 以及“w”中的高光贴图
+    uniform samplerCUBE DiffuseCubeMap, uniform samplerCUBE SpecularCubeMap,
+    uniform samplerCUBE HilightCubeMap)
+    : COLOR
+{
+  half4 normSideSpec tex2D(SkinNormSideSpecMap, IN.SkinUVST.xy);
+  half3 worldNormal;
+  worldNormal.x = dot(normSideSpec.xyz, IN.WorldTanMatrixX);
+  worldNormal.y = dot(normSideSpec.xyz, IN.WorldTanMatrixY);
+  worldNormal.z = dot(normSideSpec.xyz, IN.WorldTanMatrixZ);
+  fixed nDotV = dot(IN.WorldEyeDir, worldNormal);
+  half4 skinColor = tex2D(SkinColorFrontSpecMap, IN.SkinUVST.xy);
+  fixed3 diffuse = skinColor * texCUBE(DiffuseCubeMap, worldNormal);
+  diffuse = diffuse * IN.SkinSilhouetteVec.x;
+  fixed4 sideSpec = normSideSpec.w * texCUBE(SpecularCubeMap, worldNormal);
+  fixed3 result = diffuse * IN.SkinSilhouetteVec.y + sideSpec;
+  fixed3 hilite = 0.7 * IN.SkinSilhouetteVec.x * IN.SkinSilhouetteVec.y *
+                  texCUBE(HilightCubeMap, IN.WorldEyeDir);
+  fixed reflVect = IN.WorldEyeDir * nDotV - (worldNormal * 2.0x);
+  fixed4 reflColor =
+      IN.SkinSilhouetteVec.w * texCUBE(SpecularCubeMap, reflVect);
+  result += (reflColor.xyz * 0.02);
+  fixed hiLightAttenuator = tex2D(SpecularColorShiftMap, IN.SkinUVST.xy).x;
+  result += (hilite * hiLightAttenuator);
+  fixed haze = reflColor.w * hiLightAttenuator;
+  return float4(result.xyz, haze);
+}</code></pre><p>首先取凹凸贴图后的表面法线。<code>SkinNormSideSpecMap</code> 中存的纹理在 RGB 分量里是切线空间法线，而镜面反射贴图——用来表示高光强度的灰度图——搭在 alpha 通道里（为代码清晰起见，这里把 RGB 分量称作 <code>xyz</code>）。把切线空间的 <code>xyz</code> 值相对 <code>WorldTanMatrix</code> 旋转，就将其重述为世界坐标——正是我们执行世界空间光照算法所需要的。</p><p>然后我们把新算出的表面法线与视线方向比较。这个 <code>nDotV</code> 值后面会用到。</p><pre><code>half4 normSideSpec tex2D(SkinNormSideSpecMap, IN.SkinUVST.xy);
+half3 worldNormal;
+worldNormal.x = dot(normSideSpec.xyz, IN.WorldTanMatrixX);
+worldNormal.y = dot(normSideSpec.xyz, IN.WorldTanMatrixY);
+worldNormal.z = dot(normSideSpec.xyz, IN.WorldTanMatrixZ);
+fixed nDotV = dot(IN.WorldEyeDir, worldNormal);</code></pre><p>漫反射颜色是皮肤纹理贴图乘以预先卷积好的漫反射光照立方体贴图。我们再用 <code>SkinSilhouetteVec</code> 传入的半球遮蔽项对它稍作调制。</p><pre><code>half4 skinColor = tex2D(SkinColorFrontSpecMap, IN.SkinUVST.xy);
+fixed3 diffuse = skinColor * texCUBE(DiffuseCubeMap, worldNormal);
+diffuse = diffuse * IN.SkinSilhouetteVec.x;</code></pre><p>边缘镜面反射颜色来自镜面反射立方体贴图，由随法线贴图一起取得的镜面反射强度图（即在 <code>SkinNormSideSpecMap</code> 的 alpha 通道里）调制。我们开始累积结果。</p><pre><code>fixed4 sideSpec = normSideSpec.w * texCUBE(SpecularCubeMap, worldNormal);
+fixed3 result = diffuse * IN.SkinSilhouetteVec.y + sideSpec;</code></pre><p>接着，我们取 Dawn <em>背后</em>环境的颜色，按 <code>WorldEyeDir</code> 索引，并取得传统的反射立方体贴图颜色。把这些加上一些美术上的「经验系数」，累加到结果里。</p><pre><code>fixed3 hilite = 0.7 * IN.SkinSilhouetteVec.x * IN.SkinSilhouetteVec.y *
+                texCUBE(HilightCubeMap, IN.WorldEyeDir);
+fixed reflVect = IN.WorldEyeDir * nDotV - (worldNormal * 2.0x);
+fixed4 reflColor = IN.SkinSilhouetteVec.w * texCUBE(SpecularCubeMap, reflVect);
+result += (reflColor.xyz * 0.02);
+fixed hiLightAttenuator = tex2D(SpecularColorShiftMap, IN.SkinUVST.xy).x;
+result += (hilite * hiLightAttenuator);</code></pre><p>最后，我们在最终输出的 alpha 通道里加入一点额外的轮廓信息，好让 Dawn 轮廓边缘处的「泛光」在 alpha 混合时显得更自然。</p><pre><code>fixed haze = reflColor.w * hiLightAttenuator;
+return float4(result.xyz, haze);</code></pre><h2>3.6 结论</h2><p>Dawn 皮肤着色器里的许多实现细节对很多游戏引擎来说可能限制过强，但大部分概念都可以用别的办法实现。高动态范围、次表面散射、轮廓光等等的基本要素，同样可以从合成光源或其他场景信息计算得出。</p><p>在许多方面，让 Dawn 由环境光照亮是件难办的事。更复杂、更真实的光照方案往往以牺牲美术控制力为代价。在这个例子里，我们想让她皮肤上的鸡皮疙瘩更明显，可环境光太漫射，只好不真实地夸大她的表面凹凸来补偿。</p><p>如果重做一遍 Dawn，我们大概会采用更混合的光照做法：用平滑法线去查漫反射与镜面反射贴图，再用一个主「光照方向」计算凹凸贴图的贡献。这样我们对凹凸贴图的外观会有更直接的控制，也能省掉顶点着色器里那次昂贵的矩阵转置。</p><h2>3.7 参考文献</h2><p><a id="ch03bib01_01"></a>Debevec, Paul. 1998. "Rendering Synthetic Objects into Real Scenes: Bridging Traditional and Image-Based Graphics with Global Illumination and High Dynamic Range Photography."，载 <em>Proceedings of SIGGRAPH 98</em>，第 189–198 页。</p><p><a id="ch03bib01_02"></a>Gritz, Larry, Tony Apodaca, Matt Pharr, Dan Goldman, Hayden Landis, Guido Quaroni, and Rob Bredow. 2002. "RenderMan in Production."，SIGGRAPH 2002 第 16 号课程。</p><p><a id="ch03bib01_03"></a>McMillan, Leonard, and Gary Bishop. 1995. "Plenoptic Modeling: An Image-Based Rendering System."，载 <em>Proceedings of SIGGRAPH 1995</em>。</p><p><a id="ch03bib01_04"></a>Stout, Bryan. 1996. "Smart Moves: Intelligent Pathfinding."，<em>Game Developer</em>，1996 年 10 月。可在 Gamasutra 网站获取：<strong><a href="http://www.gamasutra.com/features/19970801/pathfinding.htm" rel="noreferrer noopener">http://www.gamasutra.com/features/19970801/pathfinding.htm</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-3-skin-dawn-demo" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-3-skin-dawn-demo</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

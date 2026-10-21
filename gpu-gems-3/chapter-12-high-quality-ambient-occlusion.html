@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 12 章　高质量环境光遮蔽 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 12 章　高质量环境光遮蔽」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 12 章　高质量环境光遮蔽</h1>
+<p><em>Jared Hoberock<br> University of Illinois at Urbana-Champaign</em></p><p><em>Yuntao Jia<br> University of Illinois at Urbana-Champaign</em></p><p>环境光遮蔽是制作中用来近似环境光照效果的一种技术。局部光照模型看上去平板、呆滞，环境光遮蔽则不同，它能突出表面细部并添加软阴影，从而为场景增加真实感。Bunnell 2005 展示了一种新颖的技术，通过对模型层次近似做自适应遍历来积分遮蔽，从而近似这一效果。这项技术在近似平滑变化的阴影方面表现不错，但它对输入模型做了假设，使其对一般的高质量应用不够稳健。</p><p>本章我们说明这项技术在实践中会出现的问题。此外，我们展示如何通过对算法做几处小改动，扩展它的适用范围，并提高它对制作中存在的更一般模型的稳健性。最终结果是一个快速、GPU 加速的高质量环境光遮蔽算法，能产生有说服力的平滑软阴影和真实的锐利局部细节。</p><h2>12.1 回顾</h2><p>原始技术用一组近似圆盘来表示多边形网格。网格的每个顶点关联一个圆盘，用来近似其相邻多边形。算法通过累加其他每个圆盘的阴影贡献来计算某顶点处的遮蔽。它计算的是<em>形状因子</em>——一个与圆盘面积成正比、与到圆盘距离的平方成反比的几何量。</p><p>不过这项技术忽略了可见性：被其他圆盘遮挡的圆盘不应贡献任何阴影。算法用如下方式处理这个问题。首先，它计算每个圆盘受其他圆盘产生的遮蔽并随该圆盘一起存储。然后在评估每个圆盘的阴影贡献时，乘以该圆盘的遮蔽值。这样，算法就用遮蔽近似了可见性。如果用这项技术迭代几遍，解会收敛到非常像环境光遮蔽的结果——而且完全不必投射任何光线。</p><p>累加每一对圆盘之间的相互作用可能相当昂贵。事实上，这个算法的直接实现是 <em>O</em>(<em>n</em> <sup>2</sup>)，在实践中无法接受。于是 Bunnell 观察到，远处表面的贡献可以近似，而近处表面需要更精确的计算。我们可以把彼此靠近的圆盘归组为一个近似它们的聚合圆盘来实现这一点。我们可以把这些聚合圆盘再归组为更大的聚合体，如此继续，直到最后得到一个近似整个模型的圆盘。</p><p>这样，算法就建立了一棵圆盘的层次树，靠近顶部粗略近似模型，在底部精细近似。当需要评估某个圆盘处的遮蔽时，我们从树的顶部开始遍历。根据该圆盘与我们当前所在树层之间的距离，我们可以判定距离足够远、可以使用当前的近似。如果是，我们就用在祖先处的一次计算代替许多后代圆盘的阴影计算。如果不是，就继续向树下深入，累加其子节点的贡献。这种自适应遍历把原本为 <em>O</em>(<em>n</em> <sup>2</sup>) 的计算变成高效的 <em>O</em>(<em>n</em> log <em>n</em>)。事实上，这项技术如此高效，以至于可以在 GeForce 6800 GPU 上对形变几何体实时执行。技术的详细描述请读者参见 Bunnell 2005。</p><h2>12.2 问题</h2><p>原始技术对于计算可在三角形之间线性插值的、平滑变化的逐顶点遮蔽相当有用。但如果能在任意位置评估这个遮蔽函数就更好了。例如，高质量渲染器可能希望逐片元评估环境光遮蔽，以避免顶点插值带来的线性插值瑕疵。此外，有些环境光遮蔽特征是根本不平滑的。例如接触阴影是两个表面相接处出现的锐利特征；它们是建立真实感的重要成分。这些阴影频率太高，无法用插值结果准确重建。<a href="https://developer.download.nvidia.com/books/gpugems3/12fig01.jpg" rel="noreferrer noopener">图 12-1</a> 左侧同时显示了线性插值瑕疵和以逐顶点频率应用该方法造成的阴影缺失。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig01.jpg" alt="12fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig01.jpg" rel="noreferrer noopener">图 12-1</a>　稀疏剖分网格上的瑕疵</figcaption></figure><p>我们也许可以尝试通过提高网格的剖分密度——也就是简单地增加三角形——来避免这些插值瑕疵并捕捉高频细节。这并不令人满意，因为它对网格制作方提出了不必要的需求，也增加了存储开销。更重要的是，以这种方式提高采样率恰恰暴露了我们的第一种瑕疵。这就是 <a href="https://developer.download.nvidia.com/books/gpugems3/12fig02.jpg" rel="noreferrer noopener">图 12-2</a> 中兔子背部出现的圆盘状区域。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig02.jpg" alt="12fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig02.jpg" rel="noreferrer noopener">图 12-2</a>　密集剖分网格上的瑕疵</figcaption></figure><p>除了提高网格的剖分密度，我们也可以提高屏幕空间中的采样密度。也就是说，可以逐片元应用遮蔽着色器。不幸的是，直接应用这个着色器会产生我们的第二个问题，使这种方法照原样无法使用。<a href="https://developer.download.nvidia.com/books/gpugems3/12fig01.jpg" rel="noreferrer noopener">图 12-1</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/12fig02.jpg" rel="noreferrer noopener">12-2</a> 的右侧展示了这些瑕疵。注意网格顶点附近出现的高频「掐捏」特征。此外，采样密度的提高使圆盘状瑕疵完全显现出来。</p><h4>12.2.1 圆盘状瑕疵</h4><p>在演示如何修正这些问题之前，先弄清它们的来源会有帮助。首先看圆盘状瑕疵。它们表现为一条分界，把表面分隔成亮区与暗区。假设我们在分界一侧的某点计算来自某个圆盘的遮蔽。随着着色点越来越靠近分界，到该圆盘的距离越来越小。最后到达分界上的某一点，此时我们的距离判据认为该圆盘太近，无法提供良好的网格近似。于是我们向树下深入一层，累加该圆盘子节点的遮蔽。</p><p>这里我们在近似中做了一次离散的切换，但我们期望阴影保持平滑。实际上，无法保证分界一侧由圆盘算出的遮蔽值恰好等于另一侧其子节点之和。结果就是阴影中的不连续。由于树中更深的父节点更有可能很好地近似其子节点，我们可以通过向树中越走越深，把这些不连续做得任意微弱。当然，以这种方式深入到更细的层次会增加工作量。我们更希望有一种更高效的解法。</p><h4>12.2.2 高频掐捏瑕疵</h4><p>接下来考察掐捏瑕疵。假设我们正在着色的点非常靠近层次底层的某个圆盘。当我们计算来自这个圆盘的遮蔽时，它的贡献会压过所有其他圆盘。由于形状因子与距离的平方成反比，着色点越靠近，问题越严重。实际上，我们是在除以一个在圆盘周围各点会变得任意小的数。</p><p>一种解法可能是忽略离着色点太近的圆盘。遗憾的是，没有通用办法判断多近算太近。这一策略还会在被忽略的圆盘周围引入不连续。此外，邻近几何体对于渲染接触阴影和折痕这类锐利细节至关重要。我们想要一种在所有情况下都「直接管用」的稳健解法。</p><h2>12.3 稳健的解法</h2><p>本节我们描述一种对原始版本算法所遇瑕疵的稳健解法。算法的基本骨架保持不变——我们从存在树中的粗略遮蔽解自适应地累加遮蔽——但几处关键改动显著提升了结果的稳健性。</p><h4>12.3.1 平滑不连续</h4><p>首先描述我们对圆盘状阴影不连续的解法。回顾一下，无法保证任何给定点从父圆盘收到的阴影恰好等于其子节点之和。不过，我们可以强制让切换成为分界两侧阴影之间的平滑混合。为此，我们在切换边界周围定义一个区域，在其中遮蔽将在圆盘贡献与其子节点贡献之间平滑插值。<a href="https://developer.download.nvidia.com/books/gpugems3/12fig03.jpg" rel="noreferrer noopener">图 12-3</a> 展示了过渡区域的几何关系。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig03.jpg" alt="12fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig03.jpg" rel="noreferrer noopener">图 12-3</a>　过渡区域的几何关系</figcaption></figure><p>在这个区域内，当我们计算来自某个圆盘的遮蔽时，也一并考虑来自其父节点的遮蔽。代码清单 12-1 的代码片段给出细节。首先，当距离判据告诉我们要深入层次树时，我们记下当前近似层次的遮蔽贡献。我们还记下圆盘的面积，随后施加的加权混合会依赖它。最后，我们为这个父圆盘计算一个权重，它取决于我们在过渡区域内的位置。可以看到，当 <code>d2</code> 位于区域外边界 <code>tooClose * (1.0 + r)</code> 时，父节点的权重为一。在内边界 <code>tooClose * (1.0 - r)</code> 处，父节点的权重为零。在区域内部，权重是父节点与子节点之间的简单线性混合。不过，采用更高阶多项式并考虑祖父节点的更精细实现可以更加平滑。</p><p>之后，我们完成向树下的深入并累加来自圆盘的遮蔽贡献。在这一步施加混合。此外，父节点的贡献还要乘上子节点面积与父节点面积之比的调制。要理解这一步为何必要，回顾一下父圆盘的面积等于其子节点之和。由于我们会累加父节点每个子节点贡献的遮蔽，乘以这个比值可以确保不「重复计算」父节点的那份贡献。</p><p>注意，在施加这个混合时，我们假定对父节点的每个子节点都深入到了相同深度。一般来说，某个圆盘各子节点的遍历深度可能并不相同。更正确的混合实现可以把这一点考虑进去。在我们的实验中，我们通过增加遍历深度来补偿这一假设。</p><h4>示例 12-1. 平滑不连续</h4><pre><code>
+// 计算当前圆盘产生的阴影贡献。
+float contribution = ... // 停止还是继续下降？
+    if (d2 < tooClose * (1.0 + r))
+{
+  // 记住父节点的贡献。
+  parentContribution = contribution;
+  // 记住父节点的面积。
+  parentArea = area;
+  // 计算父节点权重：简单的线性混合。
+  parentWeight = (d2 – (1.0 – r) * tooClose) / (2.0 * r * tooClose);
+  // 向层级更深处遍历。
+  ...
+}
+else
+{
+  // 计算子节点的权重。
+  childrenWeight = 1.0 – parentWeight;
+  // 混合贡献：
+  // 父节点的贡献按子节点面积与其自身面积
+  // 之比进行调制。
+  occlusion += childrenWeight * contribution;
+  occlusion += parentWeight * parentContribution * (area / parentArea);
+}</code></pre><h4>12.3.2 消除掐捏并添加细节</h4><p>我们对掐捏瑕疵的解法有两个部分。先从最细一层圆盘的放置说起。这个算法的原始版本为网格的每个顶点关联一个圆盘，用来近似该顶点的相邻面。回想一下，对于这些顶点附近的点，这些圆盘是对实际表面的很差近似。对于高曲率区域周围的点，结果就是偏大且错误的阴影值。</p><p>我们的解法把最细一层的圆盘改放在每个网格面的质心。这是对网格表面好得多的近似，也消除了大部分掐捏瑕疵。</p><p>这些圆盘代表最细一层的表面近似，但它们无法代表真实的网格。因此，高细节区域中的锐利阴影特征会明显缺失。为了补上最后这层缺失的细节，我们比基于圆盘的近似再往前走一步。在层次的最底层，我们根据实际的网格三角形计算解析形状因子，不再依赖圆盘近似。</p><p>这做起来比听起来容易。对于一般多边形，我们可以通过下面的公式解析地计算它相对于某点的形状因子：</p><p><img alt="0264equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0264equ01.jpg"/></p><p>这个公式见于标准的全局光照教材（例如 Sillion and Puech 1994），它计算从多边形光源 <em>A</em> 到点 <em>p</em>（法线为 <strong>n</strong>）的形状因子。对每条边 <em>e</em> <em><sub>i</sub></em>（属于 <em>A</em>），我们关联一个单位向量 <strong></strong> <em><sub>i</sub></em> 。<strong></strong> <em><sub>i</sub></em> 由沿 <em>e</em> <em><sub>i</sub></em> 的向量与从 <em>p</em> 指向 <em>e</em> <em><sub>i</sub></em> 起始顶点的向量叉乘得到。对 <em>A</em> 的每条边，我们把 <strong></strong> <em><sub>i</sub></em> 与 <strong>n</strong> 点乘，然后求和。<a href="https://developer.download.nvidia.com/books/gpugems3/12fig04.jpg" rel="noreferrer noopener">图 12-4</a> 展示了这一做法。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig04.jpg" alt="12fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig04.jpg" rel="noreferrer noopener">图 12-4</a>　点与多边形之间的形状因子</figcaption></figure><p>这个公式假定整个多边形可见。对我们的应用，需要把多边形裁剪到着色点的支撑平面上，以确定其可见部分。该平面就是穿过待着色点、朝向等于着色法线方向的平面。不做这次裁剪会高估真实形状因子，产生令人不适的瑕疵。<a href="https://developer.download.nvidia.com/books/gpugems3/12fig05.jpg" rel="noreferrer noopener">图 12-5</a> 展示了裁剪的几何关系。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig05.jpg" alt="12fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig05.jpg" rel="noreferrer noopener">图 12-5</a>　把三角形裁剪为可见四边形</figcaption></figure><p>用一个平面裁剪三角形会产生三种情形之一：</p><ul><li>整个三角形位于平面之下，不可见。</li><li>三角形部分位于平面之下，部分可见。这种情况下我们裁剪三角形，得到一个四边形。</li><li>三角形完全位于平面之上，完全可见。</li></ul><p>我们的裁剪算法通过检查三角形三个顶点相对于裁剪平面的位置来工作。点可能位于平面之上或之下，但为了稳健性，我们也允许点位于平面上。三个顶点各有三种可能状态，因此总共有 3<sup>3</sup> = 27 种可能的组合。所幸 GeForce 8800 强大的分支性能可以迅速判定组合，最坏情况下也只测试五个分支条件。</p><p>代码清单 12-2 给出我们计算三角形可见部分的函数。该函数接受由点和法线描述的裁剪平面，以及待裁剪三角形的三个顶点作为输入。它输出三角形可见四边形的四个顶点。注意，含两个相同顶点的退化四边形可以描述一个完全可见的三角形。类似地，含四个相同顶点的退化四边形可以描述一个不可见的三角形。</p><p>我们首先指定一个 epsilon 值，用来控制裁剪的稳健性。比该值更靠近平面的顶点视为位于平面上。接着，我们对每个顶点求平面方程的值。这给出每个顶点到平面的有符号距离。平面上方的点距离为正，下方为负。离平面太近的点，其距离被钳制为零。</p><h4>示例 12-2. 求三角形的可见四边形部分</h4><pre><code>
+void visibleQuad(float3 p, float3 n, float3 v0, float3 v1, float3 v2,
+                 out float3 q0, out float3 q1, out float3 q2, out float3 q3)
+{
+  const float epsilon = 1e-6;
+  float d = dot(n, p);
+  // 计算各顶点到平面的有符号距离。
+  float sd[3];
+  sd[0] = dot(n, v0) – d;
+  if (abs(sd[0]) < = epsilon)
+    sd[0] = 0.0;
+  sd[1] = dot(n, v1) – d;
+  if (abs(sd[1]) < = epsilon)
+    sd[1] = 0.0;
+  sd[2] = dot(n, v2) – d;
+  if (abs(sd[2]) < = epsilon)
+    sd[2] = 0.0;
+  // 确定所处的分支。
+  if (sd[0] > 0.0)
+  {
+    if (sd[1] > 0.0)
+    {
+      if (sd[2] < 0.0)
+      {
+        // v0、v1 在上，v2 在下
+        q0 = v0;
+        q1 = v1;
+        // 求解射线与平面的方程：
+        q2 = v1 + (sd[1] / (sd[1] - sd[2])) * (v2 - v1);
+        q3 = v0 + (sd[0] / (sd[0] - sd[2])) * (v2 - v0);
+      }
+      else
+      {
+        // v0、v1、v2 全在上方
+        q0 = v0;
+        q1 = v1;
+        q2 = v2;
+        q3 = q3;
+      }
+    }
+  }
+  // 其他情况同理
+  ...</code></pre><p>我们通过检查这些距离的符号来裁剪三角形。当两个符号相同而另一个不同时，就必须裁剪。这种情况下，三角形的两条边与平面相交。交点定义了可见四边形的两个顶点。视哪两条边与平面相交，我们求解两个射线与平面相交的方程。算出三角形的可见部分后，我们就能通过对四边形直接套用形状因子公式来计算其形状因子。</p><h2>12.4 结果</h2><p>接下来，我们把改进算法的结果与原始算法对比。我们选择了两个测试——兔子和汽车——来在多种输入上展示新解法的效果。兔子是平滑、剖分良好的网格，三角形相当接近等边。相比之下，汽车细节不均匀，有尖锐角度，三角形的长宽比范围很宽。<a href="https://developer.download.nvidia.com/books/gpugems3/12fig06.jpg" rel="noreferrer noopener">图 12-6</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/12fig07.jpg" rel="noreferrer noopener">12-7</a> 展示了结果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig06.jpg" alt="12fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig06.jpg" rel="noreferrer noopener">图 12-6</a>　兔子上的环境光遮蔽对比</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig07.jpg" alt="12fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig07.jpg" rel="noreferrer noopener">图 12-7</a>　汽车上的环境光遮蔽对比</figcaption></figure><p>可以看到，原始的逐顶点算法因其密集规则的剖分而很适合兔子。不过，圆盘状瑕疵与线性插值瑕疵都清晰可见。新算法消除了这些瑕疵。</p><p>然而，原始算法在汽车上表现更差。稀疏的剖分使逐顶点结果上的线性插值瑕疵显现出来。以逐片元频率应用原始着色器可以抹平这种插值，但会增加圆盘状不连续以及顶点附近的掐捏。我们的新算法对这两类瑕疵都稳健，能给出真实的结果。</p><h2>12.5 性能</h2><p>这里简要讨论一下性能。在所有实验中，我们把控制遍历深度的 epsilon 设为 8。首先，我们测量了着色粗略遮蔽层次中各圆盘的初始迭代步骤的性能。这一步的实现与原始算法完全相同，用作对比。接着，我们测量了新着色器在有、无三角形裁剪与形状因子时的性能。我们用延迟着色方法确保只着色可见片元。最后，我们统计着色片元的总数以衡量着色速率。表 12-1 与 <a href="https://developer.download.nvidia.com/books/gpugems3/12fig08.jpg" rel="noreferrer noopener">图 12-8</a> 给出我们的性能测量结果。</p><h4>表 12-1. 性能结果</h4><table><thead><tr><td><p>模型</p></td><td><p>三角形数量</p></td><td><p>着色片元总数</p></td><td><p>着色圆盘总数</p></td></tr></thead><tbody><tr><td><p><strong>兔子</strong></p></td><td><p>69,451</p></td><td><p>381,046</p></td><td><p>138,901</p></td></tr><tr><td><p><strong>汽车</strong></p></td><td><p>29,304</p></td><td><p>395,613</p></td><td><p>58,607</p></td></tr></tbody></table><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig08.jpg" alt="12fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig08.jpg" rel="noreferrer noopener">图 12-8</a>　性能结果</figcaption></figure><p>我们发现，层次中圆盘着色的性能与用高质量形状因子计算着色片元大致相当。我们观察到圆盘着色速率往往比逐片元着色低得多。我们认为这是由批次规模小于待着色片元总数造成的。在着色器中加入高质量形状因子计算需要大量分支，导致着色速率降低。不过这一添加保证了结果的稳健性。</p><h2>12.6 注意事项</h2><p>下面继续谈在实践中应用本算法的一些注意事项。首先，如前所述，我们的平滑解法可能无法完全消除所有不连续。但在所有情况下，我们都能通过增加遍历深度把它们做得任意微弱。此外，由于这个算法只能近似可见性，结果常常偏向夸张的阴影，可能与光线追踪器算出的参考结果不符。为控制遮蔽的深度，我们引入了一些可调参数，可用于控制误差或达到期望的艺术效果。</p><h4>12.6.1 强制收敛</h4><p>回顾一下，这个方法通过在多遍中迭代地对圆盘施加遮蔽算法来近似可见性。在实验中我们发现，这个算法在一般场景上往往不会收敛到唯一解。特别是高遮蔽的建筑场景，通常在两个解之间振荡。为处理这一点，我们先像之前一样迭代若干遍原始遮蔽算法来计算圆盘之间的遮蔽。然后，把每个圆盘的遮蔽设为最近两次结果的加权最小值，以强制收敛。<a href="https://developer.download.nvidia.com/books/gpugems3/12fig09.jpg" rel="noreferrer noopener">图 12-9</a> 给出这一调整后的结果；代码清单 12-3 给出代码。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig09.jpg" alt="12fig09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig09.jpg" rel="noreferrer noopener">图 12-9</a>　使用加权最小值的好处</figcaption></figure><h4>示例 12-3. 强制收敛</h4><pre><code>
+float o0 = texture2DRect(occlusion0, diskLocation).x;
+float o1 = texture2DRect(occlusion1, diskLocation).x;
+float m = min(o0, o1);
+float M = max(o0, o1);
+// 加权混合
+occlusion = minScale * m + maxScale * M;</code></pre><p>这里，<code>occlusion0</code> 与 <code>occlusion1</code> 保存遮蔽解最近两次迭代的结果。我们把结果设为两者的混合。由于这个算法总体上会高估遮蔽，我们让最终结果偏向较小的值。我们发现 <code>minScale</code> 与 <code>maxScale</code> 分别取 0.7 和 0.3 效果不错。</p><h4>12.6.2 可调参数</h4><p>我们注意到，我们的方法总体上倾向于高估环境光遮蔽。事实上，完全封闭的环境会产生全黑的画面！一般来说，环境光遮蔽未必恰好是我们想计算的量。更一般地，我们可能想要一个对近处投影者类似环境光遮蔽、但随距离平滑衰减的函数。这样的函数会在局部细节上产生很深的对比，但不会让封闭环境完全变黑。我们引入两个可调参数来控制这一效果。</p><h4>距离衰减</h4><p>首先，我们允许某个元素（无论是圆盘还是三角形）的遮蔽贡献按其到该元素距离的平方成反比衰减。调整这个参数往往会使整体结果变亮，如 <a href="https://developer.download.nvidia.com/books/gpugems3/12fig10.jpg" rel="noreferrer noopener">图 12-10</a> 所示。代码清单 12-4 给出细节。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig10.jpg" alt="12fig10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig10.jpg" rel="noreferrer noopener">图 12-10</a>　参数对结果的影响</figcaption></figure><h4>示例 12-4. 按距离衰减遮蔽</h4><pre><code>
+// 计算某个元素带来的遮蔽贡献
+contribution = solidAngle(. . .);
+// 按距离衰减
+contribution /= (1.0 + distanceAttenuation * e2);</code></pre><h4>三角形衰减</h4><p>我们还衰减层次最细一层中三角形的遮蔽贡献。回顾一下，我们用两个因素来考虑点到三角形的可见性：把每个三角形裁剪到平面上，并用三角形的遮蔽值调制形状因子。这两个因素的组合可能低估真实可见性，因为被裁三角形的形状因子又被调制进一步压低。我们可以通过以下办法补偿：在三角形的遮蔽值乘上形状因子并加入求和之前，先把它提升到某个幂次。这个参数取低值会强调折痕、裂缝这类小特征，否则它们会丢失。取高值会减弱那些大概不可见的大而远的三角形的影响。特别是在 <a href="https://developer.download.nvidia.com/books/gpugems3/12fig10.jpg" rel="noreferrer noopener">图 12-10</a> 中可以看到这个参数对楼梯着色的影响。代码清单 12-5 给出细节。</p><h4>示例 12-5. 三角形衰减</h4><pre><code>
+// 取得该三角形的遮蔽值。
+float elementOcclusion = . . .
+// 计算点到三角形的形状因子。
+contribution = computeFormFactor(. . .);
+// 用其遮蔽值的幂次进行调制。
+contribution *= pow(elementOcclusion, triangleAttenuation);</code></pre><h2>12.7 未来工作</h2><p>我们给出了一个稳健、GPU 加速的算法，用于计算高质量的环境光遮蔽。通过对投影者的近似做自适应遍历，我们既能快速产生平滑软阴影，又能重建锐利的局部细节。</p><p>最后要指出，这种自适应积分方案并不限于计算环境光遮蔽。Bunnell 2005 展示了同样的方案可用于计算间接光照。我们还要指出，次表面散射也可以用同样的层次积分方法计算。如 <a href="https://developer.download.nvidia.com/books/gpugems3/12fig11.jpg" rel="noreferrer noopener">图 12-11</a> 所示，只要在每个圆盘处计算辐照度，然后把对 <code>solidAngle()</code> 的调用替换为 <code>multipleScattering()</code>，我们就能在自己的框架中实现多次散射技术（Jensen and Buhler 2002）。代码清单 12-6 给出细节。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/12fig11.jpg" alt="12fig11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/12fig11.jpg" rel="noreferrer noopener">图 12-11</a>　通过层次积分实现的多次散射</figcaption></figure><h4>示例 12-6. 实现多次散射</h4><pre><code>
+float3 multipleScattering(float d2,
+                          float3 zr,     // 散射参数
+   float3 zv,     // 定义于
+   float3 sig_tr) // Jensen and Buhler 2002
+{
+  float3 r2  = float3(d2, d2, d2);
+  float3 dr1 = rsqrt(r2 + (zr * zr));
+  float3 dv1 = rsqrt(r2 + (zv * zv));
+  float3 C1  = zr * (sig_tr + dr1);
+  float3 C2  = zv * (sig_tr + dv1);
+  float3 dL  = C1 * exp(-sig_tr/dr1) * dr1 * dr1;
+         dL += C2 * exp(-sig_tr/dv1) * dv1 * dv1;
+  return dL;
+}</code></pre><p>我们把这个效果连同环境光遮蔽实现一起放在本书附赠 DVD 中。由于许多光照效果都可以定义为对场景表面的积分，我们鼓励读者把这项技术推广开来，快速生成其他炫目的效果。</p><h2>12.8 参考文献</h2><p>Bunnell, Michael. 2005. "Dynamic Ambient Occlusion and Indirect Lighting."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 223–233 页。Addison-Wesley。</p><p>Jensen, Henrik Wann, and Juan Buhler. 2002. "A Rapid Hierarchical Rendering Technique for Translucent Materials."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)。</p><p>Sillion, François X., and Claude Puech. 1994. <em>Radiosity and Global Illumination</em>. Morgan Kaufmann 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-12-high-quality-ambient-occlusion" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-12-high-quality-ambient-occlusion</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

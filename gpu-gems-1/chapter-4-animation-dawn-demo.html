@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 章　「Dawn」演示中的动画 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 4 章　「Dawn」演示中的动画」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 4 章　「Dawn」演示中的动画</h1>
+<p><em>Curtis Beeson<br> NVIDIA</em></p><h2>4.1 引言</h2><p>「Dawn」是 NVIDIA 公司为推出 GeForce FX 产品线而制作的演示，用来展示如何用高级语言（如 HLSL 或 Cg）创建逼真的人物角色。顶点着色器通过带索引的蒙皮与变形目标对高分辨率网格做变形，并为片元着色器所用的光照模型做好准备。皮肤和翅膀的片元着色器所提供的范围与细节，在先进的可编程图形硬件出现之前是无法达到的。见图 4-1。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig04-01.jpg" alt="fig04-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig04-01.jpg" rel="noreferrer noopener">图 4-1</a>　实时 Dawn 的屏幕截图</figcaption></figure><p>本章讨论如何用可编程图形硬件加速演示中 Dawn 角色的动画。</p><h2>4.2 网格动画</h2><p>传统上，网格动画对复杂网格来说代价过高，因为它在 CPU 上执行，而 CPU 本就已负担着物理仿真、人工智能以及当今应用所需的其他计算。较新的图形硬件用可编程的顶点着色器与片元着色器取代了传统的固定功能管线，现在可以从 CPU 分担掉一部分负担。</p><p>有时仍然必须在 CPU 上执行这类操作。许多基于模板的阴影体技术必须遍历变换后的网格以找出轮廓边，动态阴影视锥的生成往往也最好在 CPU 上完成（见第 9 章「高效的阴影体渲染」）。在角色每帧要被多次绘制进阴影缓冲、辉光缓冲等临时表面的场景里，如果应用变成顶点受限，那么在 CPU 上做变形可能更好。网格变形放在 CPU 还是 GPU 上执行，应当按应用甚至按物体分别决定。</p><p>Dawn 角色的建模、贴图和动画主要在 Alias Systems 的 Maya 中完成。因此我们的网格动画方法基于该软件提供的工具集。后来我们又用同样的技术在 discreet 的 3ds max 中做了一个类似的演示（「Dusk」，用于推出 GeForce FX 5900）；这些方法通行于多种建模软件，并不绑定任何单一工作流程。这两个演示用到的方法是（带索引的）蒙皮，即顶点受一组带权矩阵影响，以及带权变形目标，用来驱动 Dawn 面部的表情。</p><h2>4.3 变形目标</h2><p>用变形目标来表达复杂的网格变形是常见做法，NVIDIA 演示团队已用这项技术做过多种演示。「Zoltar」演示与「Yeah! The Movie」演示（内容由 Spellcraft Studio 提供）起初每秒有 30 个网格插值体，然后按累积误差方案删除网格关键帧。这让我们减小了文件体积和内存占用——最多可删掉原始关键帧的三分之二，而几乎看不出瑕疵。这类网格插值中，任意时刻只有两个插值体处于活动状态，它们按顺序播放。</p><p>另一种做法是并行使用变形目标。Dawn 是说明这种做法用处的标准例子。从一个中性头部（27,000 个三角形）开始，我们的美术复制了 50 份，并建模成一组变形目标，如图 4-2 所示。其中约 30 个头部对应情绪（如高兴、悲伤、若有所思等），另外 20 个是修饰项（如左眉上扬、右眉上扬、撇嘴笑等）。这种风格的动画里，变形目标的权重加起来多半不等于 1，因为你可能有（<code>0.8 * happy + 1.0 * ear_wiggle</code>）这样的组合——毕竟 Dawn 是个小仙子。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig04-02.jpg" alt="fig04-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig04-02.jpg" rel="noreferrer noopener">图 4-2</a>　情绪混合目标（混合形状）</figcaption></figure><p>这类复杂的情绪面部本来完全可以由更基本的修饰项混合而成，但我们的美术发现直接按想要的姿态建模更直观，因为不看眼睛、脸颊和嘴如何配合，就很难塑造眉毛皱起这样的元素。这种组合方式也有助于缓解后文所述的硬件寄存器限制。</p><h4>4.3.1 高级语言中的变形目标</h4><p>幸运的是，在 HLSL 或 Cg 中实现变形目标很简单。假设 <code>vertexIn</code> 是存放逐顶点数据的结构，以线性或串行方式应用变形目标很容易：</p><pre><code>float4 position = (1.0f - interp) * vertexIn.prevPositionKey +
+                  interp * vertexIn.nextPositionKey;</code></pre><p>这段代码里，<code>interp</code> 是着色器中的常量输入参数，而 <code>prevPositionKey</code> 与 <code>nextPositionKey</code> 分别是前一个时刻和后一个时刻的位置。并行应用变形目标时，我们求出变形目标与中性姿态之间的空间差异，得到一个差异向量，再用一个标量给该差异向量加权。结果是权重为 1.0 时就会应用逐顶点偏移得到该变形目标，而每个变形目标都能单独应用。每个变形目标的应用只是一条「乘加」指令：</p><pre><code>// vertexIn.positionDiffN = position morph target N - neutralPosition
+float4 position = neutralPosition;
+position += weight0 * vertexIn.positionDiff0;
+position += weight1 * vertexIn.positionDiff1;
+position += weight2 * vertexIn.positionDiff2;
+// ...</code></pre><h4>4.3.2 变形目标的实现</h4><p>我们希望变形目标既影响顶点位置，也影响基向量（即法线、副法线与切线），从而能影响片元着色器执行的光照。乍看之下，只要对位置、法线、副法线和切线各执行一遍前面那几行即可，但顶点输入寄存器很容易用尽。我们编写「Dawn」和「Dusk」演示时，GPU 最多能映射 16 个逐顶点输入属性。网格一开始必须有中性位置、法线、副法线、纹理坐标、骨骼权重和骨骼索引（后文介绍），剩下 10 个输入可供变形目标使用。切线本来也可以映射，但我们选择用副法线与法线叉乘来省下一个输入。</p><p>由于每个差异向量占一个输入，我们可能有 10 个影响位置的混合形状、5 个影响位置与法线的混合形状、3 个位置-法线-副法线的混合形状，或 2 个位置-法线-副法线-切线的混合形状。我们最终让顶点着色器应用 5 个修改位置与法线的混合形状。顶点着色器随后把中性切线相对新的法线正交化（即从中性切线中减去与新法线共线的部分，再归一化），并用叉乘求副法线。对于不绕表面法线扭转的网格，正交化是合理的近似：</p><pre><code>// 假定法线已是变形目标作用后的结果
+// 只有在片元着色器中没做归一化时才需要归一化
+float3 tangent =
+    vertexIn.neutralTangent - dot(vertexIn.neutralTangent, normal) * normal;
+tangent = normalize(tangent);</code></pre><p>这样，我们的数据集有 50 个变形目标，但任意时刻只能有 5 个处于活动状态（即权重大于 0）。我们不想每次切换混合形状时都让 CPU 把数据复制进网格，于是分配了一个带若干顶点通道的网格：<code>neutralPosition</code>、<code>neutralNormal</code>、<code>neutralBinormal</code>、<code>textureCoord</code>，以及 <code>50 * (positionDiff, NormalDiff)</code>。每帧我们只改变顶点输入属性的名字，让应当活动的那些成为有效输入，不活动的被忽略。每一帧我们找出这五组位置与法线对，把它们映射进顶点着色器，其余顶点数据一概不用。</p><p>注意 <code>positionDiff</code> 与 <code>normalDiff</code> 的 <code>.w</code> 分量并没有真正存储有用的插值量。我们利用这一点，把标量的自遮蔽项存进 <code>neutralNormal</code> 的 <code>.w</code>，并把遮蔽差异存进每个法线目标的相应分量。取出结果法线时，我们只对寄存器用 <code>.xyz</code> 修饰符，这样就无需任何额外指令便能算出一个动态遮蔽项，它随 Dawn 的眼睛和嘴张开或闭合而变化。这为她皮肤的着色提供了软阴影（详见第 3 章「Dawn 演示中的皮肤」）。</p><p>在内容创作一侧，我们的动画师没有费力就守住了 5 个活动混合形状的上限，因为他主要在三个左右的情绪面部之间做动画，再叠加基础修饰项来增加复杂度。我们把头部网格与身体其余网格分开，因为不想为「高兴」表情作用于 Dawn 的肘部这类零差异去做运算或存储。结果依然无缝——尽管头部在做变形目标和蒙皮，身体只做蒙皮——因为脸部网格最外圈的顶点不参与任何情绪混合形状。它们仍受下文所述的蒙皮影响，但权重与身体网格中对应顶点完全相同。这确保了不产生可见瑕疵。</p><h2>4.4 蒙皮</h2><p><em>蒙皮</em>是一种网格变形方法：网格的每个顶点被赋予一组作用于它的矩阵，以及描述该顶点应多紧密地绑定到该矩阵的权重（权重之和应为 1.0）。例如，二头肌上的顶点可能只受肩关节影响，而肘部的顶点可能是 50% 肩关节加 50% 肘关节，越过肘部弯曲处之后的顶点则 100% 受肘关节影响。</p><p>为蒙皮准备网格通常要先为网格建立一个中性状态，称为<em>绑定姿势</em>。这个姿势让四肢彼此略有分开，尽量避开折痕，如图 4-3 所示。首先我们建立一个与该网格匹配的变换层次，然后按距离赋予矩阵影响——通常借助动画工具，它们能把这件事做得相当好。几乎总要对结果再作调整，以处理肩、肘、髋等部位的问题。这副骨架随后可以用多种技术做成动画。我们结合使用了关键帧动画、反向运动学和动作捕捉，这些在内容创作工具中都有支持。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig04-03.jpg" alt="fig04-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig04-03.jpg" rel="noreferrer noopener">图 4-3</a>　Dawn 的绑定姿势</figcaption></figure><p>蒙皮后的顶点，是该顶点经其各个活动关节变换后的加权求和，即：</p><p><img alt="ch04_eqn001.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch04_eqn001.jpg"/></p><p>从概念上说，这个公式把顶点从中性位置变换到加权模型空间，再对每个矩阵变换回世界空间，然后混合结果。串联后的 <a href="https://developer.download.nvidia.com/books/gpugems/ch04_eqn002.jpg" rel="noreferrer noopener"><img alt="ch04_eqn002.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch04_eqn002.jpg"/></a> 矩阵存为常量参数，矩阵索引与权重作为顶点属性传入。四骨骼蒙皮的应用如下：</p><pre><code>float4 skin(float4x4 bones[98], float4 boneWeights0, float4 boneIndices0)
+{
+  float4 result = boneWeights0.x * mul(bones[boneIndices.x], position);
+  result = result + boneWeights0.y * mul(bones[boneIndices.y], position);
+  result = result + boneWeights0.z * mul(bones[boneIndices.z], position);
+  result = result + boneWeights0.w * mul(bones[boneIndices.w], position);
+  return result;
+}</code></pre><p>在「Dawn」演示中，我们用一副 98 根骨骼的骨架驱动超过 180,000 个三角形的网格。我们发现每顶点四个矩阵对驱动身体和头部绰绰有余，因此每个顶点都要把四个骨骼索引和四个骨骼权重存为顶点输入属性（即 4.3.2 节提到的 16 个 <code>xyzw</code> 顶点寄存器中的最后两个）。我们对骨骼权重和骨骼索引做了排序，这样在需要更高的顶点性能时，可以改写顶点着色器，人为截断作用于该顶点的骨骼数量。注意若这样做，还必须重新缩放活动骨骼的权重，使它们之和仍为 1。</p><h4>4.4.1 累积矩阵蒙皮</h4><p>做蒙皮时，矩阵及其绑定姿势逆矩阵不仅要作用于位置，还要作用于法线、副法线和切线，光照才会正确。如果你的层次结构不能假定 <em>x</em>、<em>y</em>、<em>z</em> 三个方向的缩放一致，就必须应用该串联矩阵的逆转置。若缩放是均匀的，逆即转置，矩阵保持不变。非均匀缩放会在多个方面造成问题，所以我们的引擎不允许它存在。</p><p>如果我们调用前面代码中的 <code>skin</code> 函数，就必须对每个顶点的每种属性、每个矩阵调用一次 <code>mul</code>。在当前硬件上，点乘矩阵实现为四次点积加三次加法，向量乘矩阵是三次点积加两次加法。因此对位置、法线、副法线和切线做四骨骼蒙皮的结果是：</p><p><img alt="ch04_eqn003.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch04_eqn003.jpg"/></p><p>有一种不那么直觉的技术可以构造加权矩阵之和，在 HLSL 或 Cg 中实现起来很简单，如下：</p><pre><code>float4x4 accumulate_skin(float4x4 bones[98], float4 boneWeights0,
+                         float4 boneIndices0)
+{
+  float4x4 result = boneWeights0.x * bones[boneIndices0.x];
+  result = result + boneWeights0.y * bones[boneIndices0.y];
+  result = result + boneWeights0.z * bones[boneIndices0.z];
+  result = result + boneWeights0.w * bones[boneIndices0.w];
+  return result;
+}</code></pre><p>尽管这项技术确实消耗指令来构建累积矩阵（16 次乘法、12 次加法），但此后蒙皮一个点或向量只需一次矩阵乘法。对同样的属性做蒙皮，代价为：</p><p><img alt="ch04_eqn004.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch04_eqn004.jpg"/></p><h2>4.5 结论</h2><p>把网格动画从 CPU 卸下来、利用现代图形硬件提供的可编程顶点管线，几乎总是有益的。不过，看过用着色器实现蒙皮与变形目标之后，很明显这些内层循环用流式 SIMD 扩展（SSE）指令之类的手段实现起来也很容易，而在少数确实希望留在 CPU 上的情形里，同样的技术同样好用。</p><p>在「Dawn」演示中，变形目标只用于驱动头部的表情。如果时间更多，我们会在全身使用变形目标来解决简单蒙皮的问题。即便是蒙皮良好的网格，肘、膝等关节在旋转时也会失去体积。原因是网格弯曲了，关节却不会「变胖」来补偿肉与肉之间的挤压。在蒙皮步骤之前或之后施加变形目标或其他网格变形，可以提供这种柔软、有肉的形变，得到更真实的结果。我们在复现数字内容创作工具所提供的各种网格变形器方面做过一些工作，期待将来把它们用上。</p><h2>4.6 参考文献</h2><p><a id="ch04bib01_01"></a>Alias Systems. Maya 5.0 Devkit. <em>&lt;installation_directory&gt;/devkit/animEngine/</em></p><p><a id="ch04bib01_02"></a>Alias Systems. Maya 5.0 Documentation.</p><p><a id="ch04bib01_03"></a>Eberly, David H. 2001. <em>3D Game Engine Design</em>, pp. 356–358. Academic Press.</p><p><a id="ch04bib01_04"></a>Gritz, Larry, Tony Apodaca, Matt Pharr, Dan Goldman, Hayden Landis, Guido Quaroni, and Rob Bredow. 2002. "RenderMan in Production."，SIGGRAPH 2002 第 16 号课程。</p><p><a id="ch04bib01_05"></a>Hagland, Torgeir. 2000. "A Fast and Simple Skinning Technique."，载 <em>Game Programming Gems</em>，Mark DeLoura 编，Charles River Media 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-4-animation-dawn-demo" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-4-animation-dawn-demo</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

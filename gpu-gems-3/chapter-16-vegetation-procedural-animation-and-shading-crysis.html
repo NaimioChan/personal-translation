@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 16 章　《Crysis》中的植被过程化动画与着色 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 16 章　《Crysis》中的植被过程化动画与着色」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 16 章　Crysis 中的植被过程化动画与着色</h1>
+<p><em>Tiago Sousa<br> Crytek</em></p><p>在 Crytek，我们对 <em>Crysis</em> 的主要目标之一，是为电脑游戏图形确立新标准。为这款最新的游戏，我们开发了若干新技术，共同构成 CryENGINE 2。在 <em>Crysis</em> 的这些技术中，一项关键特性是<em>植被渲染</em>，它由几个部分组成，包括过程化折断与物理交互、着色、过程化动画，以及远景 sprite 生成等。</p><p>游戏中的植被历来基本是静态的，只靠某种简单的弯曲来制造风的错觉。我们的游戏场景中可以有成千上万种不同的植被，但我们仍进一步推进：让植被对全局与局部风源作出反应，而且不只弯曲植被本身，还细致地弯曲叶片，所有计算都在 GPU 上以过程化方式高效完成。</p><p>本章介绍我们如何以高效而真实的方式处理着色与过程化植被动画。</p><h2>16.1 过程化动画</h2><p>在我们的方法中，动画分两部分：（1）主弯曲，让整株植被沿风向摆动；（2）细节弯曲，让叶片动起来。风力向量按实例在世界空间中计算，把影响该实例的各风力相加。风区可以是有向风源，也可以是无向风源。在我们的实现中，求和方式与影响单个点的光源非常相似，都考虑方向与衰减。此外，每个实例有自己的刚度，当实例不再受任何风源影响时，风力强度会随时间衰减。<a href="https://developer.download.nvidia.com/books/gpugems3/16fig01.jpg" rel="noreferrer noopener">图 16-1</a> 是一个示例。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/16fig01.jpg" alt="16fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/16fig01.jpg" rel="noreferrer noopener">图 16-1</a> 主弯曲强度递增的可视化</figcaption></figure><p>设计者可以把风源放在特定位置、挂到某个实体上（例如直升机），也可以挂到粒子系统上。用这种方法，理论上我们能承受大量风源，而每顶点开销保持不变，只是每个实例会多出一些线性的 CPU 开销。</p><p>我们用风力向量的 <em>xy</em> 分量生成主弯曲，它给出风向与风力强度，并以植被网格的高度作为尺度施加有向的顶点形变。注意必须小心限制形变量，否则结果看起来不可信。</p><p>叶片的细节弯曲做法类似，但这里只考虑风力强度。美术在常用的三维建模软件中为每个顶点绘制一个 RGB 颜色。这个颜色为我们提供了关于细节弯曲的额外信息。如<a href="https://developer.download.nvidia.com/books/gpugems3/16fig02.jpg" rel="noreferrer noopener">图 16-2</a> 所示，红色通道用于叶片边缘的刚度，绿色通道用于每片叶子的相位变化，蓝色通道用于叶片的整体刚度。alpha 通道用于预计算的环境光遮蔽。关于这套着色的更多细节，见 16.2 节。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/16fig02.jpg" alt="16fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/16fig02.jpg" rel="noreferrer noopener">图 16-2</a> 使用顶点颜色</figcaption></figure><h4>16.1.1 实现细节</h4><p>我们的主要目标之一是做出直观的系统，尽可能简单，方便美术或设计者使用。因此，设计者的主要输入是风向与风速。如果某些情况下有需要，美术仍可以覆盖默认设置，调整叶片的风速（频率）、边缘以及每片叶子的振幅，让植被动画在视觉上更悦目。</p><h4>近似正弦波</h4><p>过程化顶点动画的传统做法依赖正弦波。我们可以用一种更省的方式近似得到类似结果，即使用<em>三角波</em>。<sup><a href="https://developer.download.nvidia.com/books/gpugems3/ch16fn01.html" rel="noreferrer noopener">[1]</a></sup> 更具体地说，在细节弯曲的情形下，我们一共用四个向量化的三角波：两个用于叶片边缘，两个用于叶片弯曲。算出这些波之后，我们用三次插值对其平滑（Bourke 1999），如代码清单 16-1 所示。<a href="https://developer.download.nvidia.com/books/gpugems3/16fig03.jpg" rel="noreferrer noopener">图 16-3</a> 说明了这一过程。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/16fig03.jpg" alt="16fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/16fig03.jpg" rel="noreferrer noopener">图 16-3</a> 波的合成</figcaption></figure><h4>示例 16-1. 用于生成波的函数</h4><pre><code>
+float4 SmoothCurve(float4 x) { return x * x * (3.0 - 2.0 * x); }
+float4 TriangleWave(float4 x) { return abs(frac(x + 0.5) * 2.0 - 1.0); }
+float4 SmoothTriangleWave(float4 x) { return SmoothCurve(TriangleWave(x)); }</code></pre><h4>细节弯曲</h4><p>如前所述，叶片弯曲通过形变边缘完成，用顶点颜色的红色通道控制边缘刚度。这一形变沿世界空间的顶点法线 <em>xy</em> 方向进行。</p><p>最后是每片叶子的弯曲，我们只是沿 <em>z</em> 轴上下形变，用蓝色通道控制叶片刚度。</p><p>顶点颜色的绿色通道存放每片叶子的相位变化，我们用它给每片叶子各自的相位，使每片叶子的运动都不相同。代码清单 16-2 给出了细节弯曲方法的代码。</p><p>叶片的形状与顶点数量会因植被类型而异。例如，棕榈树的整片叶子我们完整建模，这样可以很好地、高度可控地为它做动画。不过对更大的树，我们把叶子建模为若干平面；我们接受无法完全控制，因为一片多边形数量相对较低的平面上以纹理形式放下了好几片叶子。即便如此，我们对所有不同情形都使用同一套做法，效果不错。</p><h4>主弯曲</h4><p>我们通过沿风向偏移顶点的 <em>xy</em> 位置来完成植被的主弯曲，并用归一化高度缩放形变量。只做简单位移还不够，因为需要限制顶点移动以减少形变瑕疵。我们的做法是计算顶点到网格中心的距离，并用这个距离重新缩放位移后的新归一化位置。</p><p>这个过程得到球面限定的移动，对植被这种情形已经够用，因为每株植被是单个对象。弯曲形变量也需要仔细调整：弯曲过多会毁掉错觉。代码清单 16-3 是我们的实现。<a href="https://developer.download.nvidia.com/books/gpugems3/16fig04.jpg" rel="noreferrer noopener">图 16-4</a> 展示了用这种主弯曲技术生成的一些示例。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/16fig04.jpg" alt="16fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/16fig04.jpg" rel="noreferrer noopener">图 16-4</a> 对不同类型植被的弯曲</figcaption></figure><h4>示例 16-2. 细节弯曲方法的实现</h4><pre><code>
+// 阶段（object、vertex、branch）
+float fObjPhase = dot(worldPos.xyz, 1);
+fBranchPhase += fObjPhase;
+float fVtxPhase = dot(
+    vPos.xyz,
+    fDetailPhase + fBranchPhase); // x 用于边缘；y 用于枝条
+float2 vWavesIn =
+    fTime +
+    float2(fVtxPhase,
+           fBranchPhase); // 1.975, 0.793, 0.375, 0.193 are good frequencies
+float4 vWaves =
+    (frac(vWavesIn.xxyy * float4(1.975, 0.793, 0.375, 0.193)) * 2.0 - 1.0) *
+    fSpeed * fDetailFreq;
+vWaves = SmoothTriangleWave(vWaves);
+float2 vWavesSum =
+    vWaves.xz + vWaves.yw; // 边缘（xy）与枝条弯曲（z）：vPos.xyz +=
+// vWavesSum.xxy * float3(fEdgeAtten * fDetailAmp *
+vNormal.xy, fBranchAtten * fBranchAmp);</code></pre><h4>示例 16-3. 主弯曲的实现</h4><pre><code>
+// 弯曲系数 —— 风的随机变化在 CPU 上完成。
+float fBF = vPos.z * fBendScale; // 平滑弯曲系数，并提高其
+// 附近的高度上限。fBF += 1.0; fBF *= fBF;
+// fBF = fBF * fBF - fBF; 位移位置
+float3 vNewPos = vPos;
+vNewPos.xy +=
+    vWind.xy * fBF; // 重新缩放 vPos.xyz = normalize(vNewPos.xyz)* fLength;</code></pre><h2>16.2 植被着色</h2><p><em>Crysis</em> 中有成千上万个不同的植被对象，常常覆盖整个屏幕。因此我们必须时刻顾及质量与效率之比。</p><p>为此，我们把逐像素着色与顶点着色结合起来，草的情形也是同样的处理方式。唯一的区别是，由于草对填充率要求很高，我们对草全部采用逐顶点着色。</p><p>树干着色使用标准的兰伯特与 Phong 着色模型。</p><p>叶簇则另有一套做法。我们把它渲染为双面，叶片使用 alpha 测试，草使用 alpha 混合。项目开始时我们试过不同方案，比如两遍的 alpha 测试/混合，但在我们的情形中，质量与效率之比不划算。</p><p>现实中，叶簇可以有不同的厚度（对我们的叶簇，我们总是这样假设），并让不同数量的光从不同区域透过。因此我们需要一个次表面散射近似。</p><p>我们用一张美术制作的次表面纹理贴图来近似这一项，如<a href="https://developer.download.nvidia.com/books/gpugems3/16fig05.jpg" rel="noreferrer noopener">图 16-5</a> 所示，它用常见的图像编辑软件制作。这张贴图可以包含叶片内部深处的细节，例如叶脉与内部枝条，分辨率可以相对较低（例如 128 x 128），具体取决于所需细节。16.2.4 节的代码清单 16-4 给出实现细节。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/16fig05.jpg" alt="16fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/16fig05.jpg" rel="noreferrer noopener">图 16-5</a> 次表面纹理贴图的示例</figcaption></figure><p>由于植被的性能与质量都至关重要，这个情形下我们决定采用一种开销低、对美术友好的次表面散射近似，按顶点计算：简单地用 - <strong>N</strong> · <strong>L</strong> 乘以光源位置可见性，再乘以 <strong>E</strong> · <strong>L</strong>（视线向量与光照向量的点积），两者都再乘以次表面纹理以获得厚度变化。<a href="https://developer.download.nvidia.com/books/gpugems3/16fig06.jpg" rel="noreferrer noopener">图 16-6</a> 给出了一些示例。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/16fig06.jpg" alt="16fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/16fig06.jpg" rel="noreferrer noopener">图 16-6</a> 次表面散射近似的可视化</figcaption></figure><p>还值得一提的是，CryENGINE 2 中所有着色都在世界空间中进行，在我们的具体方案中，这有助于绕开基于属性的实例化情形下的硬件限制，并在某些特定情形下减少着色不连续。</p><h4>16.2.1 环境光照</h4><p>传统的常数环境色看起来非常单调，已经过时。开发初期我们有两套不同的植被着色器。一套成为本章所描述的实现；另一套更复杂，用球谐函数做间接光照，主要用于大树。为了减少着色器排列组合的数量，也由于球谐函数的复杂性，我们遗憾地不得不放弃后一种做法，改用统一且更省的外景环境光照方案。</p><p>我们引擎中的环境光照现有三种变体：室外、室内，以及一个面向低配硬件的简单方案。室外与室内环境光照的处理相当复杂，要解释清楚还得再写两章，因此超出了本章范围。</p><p>这三种变体都试图让未受光照的表面显得有趣。本章我们假定使用低配硬件方案，它用半球光照（Taylor 2001）实现，以打破阴影区域的平板感。</p><p>最后，我们还使用一项预计算的环境光遮蔽，存放在顶点的 alpha 通道中，由美术绘制或用标准三维建模软件计算。</p><h4>16.2.2 边缘平滑</h4><p>使用 alpha 测试时的一大问题是边缘生硬。我们开发植被主着色的时候，还没有任何硬件支持 alpha-to-coverage（现在我们已支持）。于是我们想出一个特别的办法，通过后处理把边缘平滑掉。</p><p>在 CryENGINE 2 中，我们采用延迟渲染方案，先渲染一个 z 遍，把深度写入浮点纹理。</p><p>这项技术使许多需要深度信息的特效成为可能（Wenzel 2007）。边缘平滑就是其中之一：它用深度纹理做边缘检测，再用旋转的三角采样做依赖纹理读取，并利用双线性滤波。不过边缘平滑只对不透明几何体有效，因为非不透明几何体不会把深度写入 z 目标。<a href="https://developer.download.nvidia.com/books/gpugems3/16fig07.jpg" rel="noreferrer noopener">图 16-7</a> 展示了边缘平滑能带来多大改善。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/16fig07.jpg" alt="16fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/16fig07.jpg" rel="noreferrer noopener">图 16-7</a> 边缘平滑的好处</figcaption></figure><h4>16.2.3 整合起来</h4><p>最终效果还借助了高质量阴影、指数色调映射，以及泛光（Kawase 2004）、太阳光轴等各种后处理方法。多亏这些技术的组合，我们达到了想要的最终游戏内画质，如<a href="https://developer.download.nvidia.com/books/gpugems3/16fig08.jpg" rel="noreferrer noopener">图 16-8</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/16fig08.jpg" alt="16fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/16fig08.jpg" rel="noreferrer noopener">图 16-8</a> 最终效果</figcaption></figure><h4>16.2.4 实现细节</h4><p>在展示着色器实现之前，我们要指出 CryENGINE 2 开发了一套统一的着色器库方案，它不仅简化了着色器，还让它们更易读、更易维护。它还有个额外好处：强制命名约定，并尽量减少代码重复。</p><p>思路很简单：尽可能多地共享，并尽量减少用户与着色内核的交互。结果是，所有光源管理、环境光计算以及其他重要计算（如视差遮蔽贴图或贴花）都对写着色器的人隐藏起来。</p><p>用户可以使用四个自定义函数，分别用于初始化自定义数据、做逐光源计算、环境光照以及着色最终合成。其余一切都被当作黑箱处理，黑箱通过一个统一的数据结构把每个函数所需的重要数据交给用户。这个数据结构包含重要的可共享数据，如视线向量、法线向量、漫反射贴图颜色、凹凸贴图颜色、alpha 等等。</p><p>代码清单 16-4 与 16-5 给出了最终的着色器实现。代码清单 16-5 中的函数是用户自定义函数，我们在其中做逐光源的着色计算，并应用光源的漫反射色、镜面反射色等属性。环境光函数里我们做半球光照近似。清单末尾的着色最终合成，则是应用漫反射纹理、漫反射色、镜面反射色等材质属性的地方。</p><h4>示例 16-4. 用于着色叶片背面与正面的函数</h4><pre><code>
+half3 LeafShadingBack(half3 vEye, half3 vLight, half3 vNormal, half3 cDiffBackK,
+                      half fBackViewDep)
+{
+  half fEdotL = saturate(dot(vEye.xyz, -vLight.xyz));
+  half fPowEdotL = fEdotL * fEdotL;
+  fPowEdotL *= fPowEdotL;
+  // 背面漫反射着色，并稍作环绕
+  half fLdotNBack = saturate(dot(-vNormal.xyz, vLight.xyz) * 0.6 + 0.4);
+  // 允许美术调整视角相关项。
+  half3 vBackShading = lerp(fPowEdotL, fLdotNBack, fBackViewDep);
+  // 应用材质的背面漫反射颜色。
+  return vBackShading * cDiffBackK.xyz;
+}
+void LeafShadingFront(half3 vEye, half3 vLight, half3 vNormal, half3 cDifK,
+                      half4 cSpecK, out half3 outDif, out half3 outSpec)
+{
+  half fLdotN = saturate(dot(vNormal.xyz, vLight.xyz));
+  outDif = fLdotN * cDifK.xyz;
+  outSpec = Phong(vEye, vLight, cSpecK.w) * cSpecK.xyz;
+}</code></pre><h4>示例 16-5. 植被的像素着色器代码</h4><pre><code>
+void frag_custom_per_light(inout fragPass pPass, inout fragLightPass pLight)
+{
+  half3 cDiffuse = 0, cSpecular = 0;
+  LeafShadingFront(pPass.vReflVec, pLight.vLight, pPass.vNormal.xyz,
+                   pLight.cDiffuse.xyz, pLight.cSpecular, cDiffuse, cSpecular);
+  // 阴影 * 光照衰减 * 光源投影纹理
+  half3 cK = pLight.fOcclShadow * pLight.fFallOff * pLight.cFilter;
+  // 累加结果。
+  pPass.cDiffuseAcc += cDiffuse * cK;
+  pPass.cSpecularAcc += cSpecular * cK;
+  pPass.pCustom.fOcclShadowAcc += pLight.fOcclShadow;
+}
+void frag_custom_ambient(inout fragPass pPass, inout half3 cAmbient)
+{
+  // 半球光照近似
+  cAmbient.xyz =
+      lerp(cAmbient * 0.5f, cAmbient, saturate(pPass.vNormal.z * 0.5f + 0.5f));
+  pPass.cAmbientAcc.xyz = cAmbient;
+}
+void frag_custom_end(inout fragPass pPass, inout half3 cFinal)
+{
+  if (pPass.nlightCount && pPass.pCustom.bLeaves)
+  {
+    // 归一化阴影累加结果。
+    half fOccFactor = pPass.pCustom.fOcclShadowAcc / pPass.nlightCount;
+    // 应用次表面贴图。
+    pPass.pCustom.cShadingBack.xyz *= pPass.pCustom.cBackDiffuseMap;
+    // 应用阴影与光源投影纹理。
+    pPass.pCustom.cShadingBack.xyz *= fOccFactor * pPass.pCustom.cFilterColor;
+  } // 把漫反射纹理与材质漫反射颜色应用到
+  // 环境光/漫反射/sss 项。cFinal.xyz = (pPass.cAmbientAcc.xyz +
+  // pPass.cDiffuseAcc.xyz +
+pPass.pCustom.cShadingBack.xyz) *
+pPass.cDiffuseMap.xyz * MatDifColor.xyz; // 应用光泽贴图与材质镜面反射颜色，加到结果上。cFinal.xyz += pPass.cSpecularAcc.xyz * pPass.cGlossMap.xyz *
+MatSpecColor.xyz; // 乘上预烘焙的环境光遮蔽项。cFinal.xyz *=
+                  // pPass.pCustom.fAmbientOcclusion; }</code></pre><h2>16.3 结论</h2><p>本章给出了撰写本章时 <em>Crysis</em> 中植被着色与过程化动画做法的一个快照。CryENGINE 2 演进得如此之快，在 <em>Crysis</em> 完成之前可能还会加入改进。</p><p>所介绍的过程化动画技术是以通用方式实现的，因此甚至可以对布料、毛发这类非植被对象施加风力；唯一的区别是这些情形不使用主弯曲。</p><p>我们可以让直升机、手榴弹爆炸乃至武器射击影响植被、布料与毛发，而且方式极其高效。</p><p>尽管我们在植被渲染上推进了不少，但随着硬件变快，仍有很大改进空间。例如着色可以改进——多数情况下叶片的镜面光照并非各向同性；我们也可以改用按像素计算的更准确的次表面散射近似。最后，用更多的波来做弯曲会扩大动画变化的范围。</p><h2>16.4 参考文献</h2><p>Baer, M. 2005. "Effects in <em>Madagascar</em>: Escape from Realism." 发表于 Eurographics 2005。更多信息可在线获取：<a href="http://isg.cs.tcd.ie/eg2005/IS1.html" rel="noreferrer noopener">http://isg.cs.tcd.ie/eg2005/IS1.html</a>。</p><p>Bourke, P. 1999. "Interpolation Methods." 可在线获取：<a href="http://local.wasp.uwa.edu.au/~pbourke/other/interpolation/index.html" rel="noreferrer noopener">http://local.wasp.uwa.edu.au/~pbourke/other/interpolation/index.html</a>。</p><p>Green, Simon. 2004. "Real-Time Approximations to Subsurface Scattering"，载 <em>GPU Gems</em>，Randima Fernando 编，第 263–278 页。Addison-Wesley 出版。</p><p>Kawase, M. 2004. "Practical Implementation of High Dynamic Range Rendering." 发表于 Game Developers Conference 2004。可在线获取：<a href="http://www.daionet.gr.jp/~masa/column/2004-04-04.html" rel="noreferrer noopener">http://www.daionet.gr.jp/~masa/column/2004-04-04.html</a>。</p><p>NVIDIA Corporation. 2005. "GPU Programming Exposed: The Naked Truth Behind NVIDIA's Demos." 发表于 SIGGRAPH 2005。可在线获取：<a href="http://http.download.nvidia.com/developer/presentations/2005/SIGGRAPH/Truth_About_NVIDIA_Demos_Med.pdf" rel="noreferrer noopener">http://http.download.nvidia.com/developer/presentations/2005/SIGGRAPH/Truth_About_NVIDIA_Demos_Med.pdf</a>。</p><p>Taylor, P. 2001. "Per-Pixel Lighting." 在线文章，见 <a href="http://msdn2.microsoft.com/en-us/library/ms810494.aspx" rel="noreferrer noopener">http://msdn2.microsoft.com/en-us/library/ms810494.aspx</a>。</p><p>Wenzel, C. 2007. "Real-Time Atmospheric Effects in Games Revisited." 发表于 Game Developers Conference 2007。可在线获取：<a href="http://ati.amd.com/developer/gdc/2007/D3DTutorial_Crytek.pdf" rel="noreferrer noopener">http://ati.amd.com/developer/gdc/2007/D3DTutorial_Crytek.pdf</a>。</p><p><em>本章介绍的风力技术部分受电影 Madagascar 以及 DreamWorks Animation SKG 的 Matt Baer 在 Eurographics 2005 上所作的美术导向演讲启发（Baer 2005）。遗憾的是，Baer 2005 似乎在网上任何地方都找不到。</em></p><p><em>特别感谢 Marco Corbetta 与 Martin Mittring 帮我审阅并改进本章，也感谢 Crytek 的 R&amp;D 团队中所有参与植被渲染的同事。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-16-vegetation-procedural-animation-and-shading-crysis</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

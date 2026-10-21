@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 25 章　用纹理贴图快速估计滤波宽度 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 25 章　用纹理贴图快速估计滤波宽度」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 25 章　用纹理图快速估计滤波宽度</h1>
+<p><em>Matt Pharr<br> NVIDIA</em></p><p>本章介绍一种在片元程序中计算任意量导数近似值的技术。这项技术把特殊的值加载到纹理 mipmap 的每一级，并以一种不寻常的方式使用纹理映射硬件，使其返回导数计算的结果，从而指示该量在屏幕上逐像素变化的快慢。计算这类导数对生成过程化图案的着色器而言是关键操作，因为它让着色器能够对生成的图案做抗锯齿：预滤除那些无法用像素采样率表示的细节。</p><p>Cg 标准库提供 <code>ddx()</code> 与 <code>ddy()</code> 函数，计算任意量对 <em>x</em> 与 <em>y</em> 像素的导数。换句话说，给定某个任意变量 <code>v</code>，调用 <code>ddx(v)</code> 会大致告诉你 <code>v</code> 在当前像素与 <em>x</em> 方向下一个像素之间会变化多少；<code>ddy(v)</code> 对 <em>y</em> 方向同理。可惜有些硬件 profile（例如 <code>arbfp1</code>）不支持这些导数计算，这使得在这些 profile 上写出不走样的着色器变得非常困难。本章针对这一缺陷给出一个解决方案，它基于这些 profile 确实提供的纹理映射功能。</p><h2>25.1 着色器中对导数的需求</h2><p>考虑一个简单的过程化棋盘函数，它根据某点的 (<em>u</em>, <em>v</em>) 纹理坐标返回 0 或 1：</p><pre><code>float checker(float2 uv)
+{
+  return (fmod(floor(uv.x) + floor(uv.y), 2) &lt; 1) ? 0 : 1;
+}</code></pre><p>这个函数计算 (<em>u</em>, <em>v</em>) 点所在格子的坐标的整数部分，并在相邻格子间交替返回 0 和 1。结果就是图 25-1b 所示的棋盘图案。有了可编程图形硬件，就不再需要把这类图案编码进纹理图；纹理函数可以改在片元程序中求值。（对简单棋盘来说，并没有真正的理由用过程化方式做，但一般来说，过程化纹理为实时渲染开辟了新的灵活性层次。无论如何，我们将施加于棋盘的抗锯齿原理同样适用于更复杂的过程化纹理。）</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig25-01a.jpg" alt="fig25-01a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig25-01a.jpg" rel="noreferrer noopener">图 25-1</a> 过程化棋盘纹理，未抗锯齿与抗锯齿</figcaption></figure><p>过程化纹理的一个缺点是，着色器的作者需要小心地为其抗锯齿。粗略地说，这意味着不是计算过程化函数在单点上的值，而是必须计算该函数在一个区域上的平均值。（第 24 章「高质量滤波」更深入地讨论了这一主题。）具体来说，需要计算函数在当前像素与相邻像素之间区域上的平均值。如果片元着色器不做这件事，图像就会走样，如图 25-1a 所示。那里不仅棋盘在远处碎成难看的图案，较近棋格的边缘也有阶梯状瑕疵。当观察者或物体运动时，这些错误看起来更糟。（这种走样类似于纹理图被缩小时使用点采样纹理滤波模式、而不是三线性滤波的差别。）</p><p>要消除这些错误，我们需要计算棋盘在每个像素周围一小块屏幕区域上的平均颜色。下面给出的基本 <code>filterwidth()</code> 函数能方便地算出任何值逐像素变化的快慢，从而得出过程化纹理需要滤波的区域。把它与前面 <code>checker()</code> 函数中的 <code>uv</code> 坐标一起调用时，返回的值给出它们在当前像素与邻居之间将变化多少的单一近似。（因此它返回的是<em>各向同性</em>的滤波宽度，而不是更精确的<em>各向异性</em>宽度，后者在不同方向上可能具有不同范围。）</p><pre><code>float filterwidth(float2 v)
+{
+  float2 fw = max(abs(ddx(v)), abs(ddy(v)));
+  return max(fw.x, fw.y);
+}</code></pre><p>具体来说，我们可以认为：若 <code>uv</code> 是一个像素处纹理坐标的值，<code>uv1</code> 是邻居处的值，那么它们的变化量以滤波宽度为界：</p><pre><code>abs(uv.x - uv1.x) &lt; filterwidth(uv) abs(uv.y - uv1.y) &lt; filterwidth(uv)</code></pre><p>无论被渲染物体的几何形状如何、<code>uv</code> 是如何算出的，这一点都应当成立——例如它不一定只是从顶点程序传入的值。<code>filterwidth()</code> 函数一般会高估传给它的值的变化量（导致在过大的区域上滤波、结果过度模糊），并尽量避免低估（低估导致在过小的区域上滤波、结果走样）。OpenGL 和 Direct3D 这类图形 API 在指定纹理滤波行为时，也做同样的权衡。</p><p>要计算抗锯齿的棋盘，我们不如去计算 (<em>u</em>, <em>v</em>) 坐标从 <code>uv - .5 * filterwidth(uv)</code> 到 <code>uv + .5 * filterwidth(uv)</code> 这一 2D 范围内的平均颜色。代码清单 25-1 的代码实现了这一计算，它实际上就是函数在滤波区域上的积分除以滤波区域的尺寸。（本章末尾的「进一步阅读」一节给出了关于此方法原理的更多资料线索。）使用这个版本 <code>checker()</code> 函数渲染的图像如图 25-1b 所示。注意原棋盘中的两种走样错误都不再出现在这幅图中。图像中部棋格的边缘略有过度模糊，但这是视觉上远不那么令人反感的错误。</p><h4>例 25-1. 抗锯齿棋盘函数</h4><pre><code>float checker(float2 uv)
+{
+  float width = filterwidth(uv);
+  float2 p0 = uv - .5 * width, p1 = uv + .5 * width;
+#define BUMPINT(x)
+  (floor((x) / 2) + 2.f * max(((x) / 2) - floor((x) / 2) - .5f, 0.f)) float2 i =
+      (BUMPINT(p1) - BUMPINT(p0)) / width;
+  return i.x * i.y + (1 - i.x) * (1 - i.y);
+}</code></pre><h2>25.2 用纹理计算滤波宽度</h2><p>可惜我们前面给出的 <code>filterwidth()</code> 函数在不支持 <code>ddx()</code> 与 <code>ddy()</code> 的 profile 上无法编译。不过，我们可以骗过纹理映射硬件，让它计算出与 <code>filterwidth()</code> 本质相同的值。这个技巧的关键在于：用 <code>tex2D()</code> 这类函数做的纹理图查找会自动对抗锯齿，无论传入的纹理坐标是什么。例如，若调用 <code>tex2D(map, float2(sin(u), tan(v)))</code>，即使实际纹理坐标逐像素以不寻常的方式变化，每个像素仍会返回经过正确滤波的纹理值。硬件能根据相邻像素处算出的纹理坐标，为每次独立查找确定该在纹理的哪块区域上滤波。</p><p>纹理映射的这一特性可用来在不调用 <code>ddx()</code> 与 <code>ddy()</code> 的情况下计算 <code>filterwidth()</code> 函数。我们将以一种能让我们推断出纹理图被滤波区域的方式来执行纹理查找；这也告诉我们过程化棋盘纹理需要滤波的区域。我们的方案有两个组成部分：(1) 确定某一组纹理坐标选用了哪一级 mipmap，然后 (2) 用这个知识确定滤波宽度。</p><p>对于问题的第一部分，考虑一张 mipmap 有八级的正方形纹理。mipmap 的基层 0 有 128x128 个纹素，下一级有 64x64，依此类推，直到顶层 7，那里只有一个纹素。如果我们显式地把 mipmap 每一级的所有值都赋好，使第 0 级所有纹素的值为 0、第 1 级的值为 1，依此类推，那么每当我们用这张纹理做纹理查找时，返回的值就会告诉我们纹理映射硬件为那次特定查找实际选用了哪一级 mipmap。一般来说，纹理映射硬件会在 mipmap 的两级之间混合，所以会返回两个相邻级值之间的分数混合结果。</p><p>我们将沿用这个基本思路，但改为在每一级编码纹理图宽度的以 2 为底的对数（以纹素计）。于是，图的顶层在其唯一纹素中值为 0，其下一级值为 1，再下一级值为 2，依此类推。我们还会把这个值放大 16 倍，以便利用每通道 8 位纹理图中更多的可用精度。代码清单 25-2 给出了用这种方式加载纹理图的 OpenGL C++ 源码。</p><p>于是，当我们在 Cg 程序中用这张纹理图做纹理查找时，就能得知纹理滤波所用 mipmap 级宽度的以 2 为底的对数。</p><p>这项技术背后的关键观察是：带 mipmap 的纹理滤波会依据给定纹理坐标逐像素变化的快慢来选择 mipmap 级，其计算使得所选 mipmap 级上纹素之间的距离与相邻像素的纹理坐标间距大致相同。换句话说，如果我们能确定所选 mipmap 级的纹素间距，就大致知道纹理坐标逐像素变化多少。由于我们存储了每级纹素数量的以 2 为底的对数，纹素间距就是 <code>1/exp2(logNumTexels) == exp2(-logNumTexels)</code>。这就是我们想要的滤波宽度。</p><h4>例 25-2. 用估计滤波宽度所需的值加载 mipmap 各级的代码</h4><pre><code>glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+#define LEVELS
+10 #define RES(1 << (LEVELS - 1)) GLubyte *data = new GLubyte[RES * RES];
+for (int level = 0; level < LEVELS; ++level)
+{
+  int res = (1 << (LEVELS - 1 - level));
+  int log2Width = LEVELS - 1 - level;
+  for (int i = 0; i < res * res; ++i)
+    data[i] = 16 * log2Width;
+  glTexImage2D(GL_TEXTURE_2D, level, 1, res, res, 0, GL_RED, GL_UNSIGNED_BYTE,
+               data);
+}
+delete[] data;</code></pre><p>于是，给定一张像上面那样初始化、绑定到名为 <code>filterMap</code> 的 <code>sampler2D</code> 上的纹理图，代码清单 25-3 的 Cg 代码先求出给定纹理坐标做纹理查找时所用的 mipmap 级的 log-2 宽度。注意 <code>tex2D()</code> 返回的值在 0 到 1 之间；上面传给 <code>glTexImage2D()</code> 的数据值实际上被除以 255 才落入这个范围。因此，我们需要同时修正这一缩放和填充 mipmap 各级时额外乘的 16 倍缩放，才能在 Cg 程序中得到真正的 log-2 宽度。</p><h4>例 25-3. 用代码清单 25-2 的 mipmap 计算滤波宽度的函数</h4><pre><code>uniform sampler2D filterMap;
+float filterwidth(float2 uv)
+{
+  float log2width = (255. / 16.) * tex2D(filterMap, uv).x;
+  return exp2(-log2width);
+}</code></pre><p>用这个滤波宽度函数替代原来的版本，可视化结果无法区分。它编译成三条片元着色器指令，不过在完整着色器的语境下，我们并未观察到两者之间有可测量的性能差异。</p><h2>25.3 讨论</h2><p>在许多情形下，这种方法都能很好地计算滤波宽度值。它的性能几乎与基于导数的 <code>filterwidth()</code> 计算相同，代价是要占用一个纹理单元和大约一兆字节的纹理内存。由于纹理各级存放的是常量值，所用纹理很可能是压缩纹理格式的理想候选，这会降低内存占用和运行时的 GPU 带宽需求。</p><p>这种方法的主要缺点在于，与标准技术不同，当滤波宽度值应当很大或很小时，它可能给出错误结果。考虑一个变化很快的值，其滤波宽度本应为 2。这项技术会低估滤波宽度，因为会选用 mipmap 的顶层，而我们无法把它与滤波宽度为 1 的量区分开。类似地，对于变化很慢的值，我们可能高估滤波宽度：mipmap 最细的一级同样限制了它能算出的最小滤波宽度。不过，如果已知预期滤波宽度范围的一个大致界限，这个问题在实践中可能并不太麻烦。另一种情况是，如果我们知道超过某个点后过程化纹理的滤波版本对所有滤波宽度都取同一个平均值，那就不必操心这种情形了。</p><p>我们可以通过检测何时得到来自 mipmap 顶层或底层的结果（分别对应纹理 mipmap 级值为 0 和 mipmap 级数减 1）来绕过这些问题。这种情况下，我们可以用缩放过的纹理坐标再做一次纹理查找，算出那些坐标的滤波宽度，然后重新缩放滤波宽度以补偿纹理坐标的缩放。代码清单 25-4 展示了如何针对因超出 mipmap 金字塔顶部而导致滤波宽度被低估的情形做到这一点。类似的做法也可用于解决超出金字塔底部的问题。</p><h4>例 25-4. 较不易产生滤波宽度低估的滤波宽度函数</h4><pre><code>float filterwidth(float2 uv)
+{
+  float log2width = (255. / 16.) * tex2D(filterMap, uv).x;
+  if (log2width &lt; .01)
+  {
+    log2width = (255. / 16.) * tex2D(filterMap, uv / 512).x;
+    return 512 * exp2(-log2width);
+  }
+  else
+    return exp2(-log2width);
+}</code></pre><p>这里用的缩放因子 512 基于我们在代码清单 25-2 中加载了十级 mipmap 这一事实。如果可用级数更多或更少，我们需要相应调整缩放因子。</p><h2>25.4 进一步阅读</h2><p><a id="ch25bib01_01"></a>Ebert, David S., F. Kenton Musgrave, Darwyn Peachey, Ken Perlin, and Steven Worley. 2003. <em>Texturing and Modeling: A Procedural Approach</em>. Morgan Kaufmann 出版。<em>该书第 2 章对过程化着色器中与抗锯齿相关的问题有出色的介绍。</em></p><p><a id="ch25bib01_02"></a>Apodaca, Anthony A., and Larry Gritz, eds. 1999. <em>Advanced RenderMan: Creating CGI for Motion Pictures</em>. Morgan Kaufmann 出版。<em>这是关于这些问题的另一份出色资料</em>。</p><p><a id="ch25bib01_03"></a>Williams, Lance. 1983. "Pyramidal Parametrics."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 83)</em> 17(3)，pp. 1–11。<em>Williams 在这篇文章中把 mipmap 引入了图形学界</em>。</p><p><a id="ch25bib01_04"></a>Fernando, Randima, Sebastian Fernandez, Kavita Bala, and Donald P. Greenberg. 2001. "Adaptive Shadow Maps."，载 <em>Proceedings of ACM SIGGRAPH 2001</em>，pp. 387–390。<em>据我们所知，这篇论文首次做了类似的 mipmapping 妙用；作者用可比的技术确定阴影贴图中的放大程度。</em></p><p><a id="ch25bib01_05"></a>Hadwiger, Markus, Helwig Hauser, Thomas Theußl, and Meister Eduard Gröller. 2003. "MIP-Mapping with Procedural and Texture-Based Magnification."，SIGGRAPH 2003 上发表的小品文。<em>更近一些，这篇小品文的作者用类似技术在片元程序中检测纹理放大，以便手工施加双三次滤波，从而在纹理被放大时得到更好的图像。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-25-fast-filter-width-estimates-texture-maps" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-25-fast-filter-width-estimates-texture-maps</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

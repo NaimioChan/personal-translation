@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 40 章　把实时光照应用于三维超声可视化 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 40 章　把实时光照应用于三维超声可视化」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 40 章　把实时着色用于三维超声可视化</h1>
+<p><em>Thilaka Sumanaweera<br> Siemens Medical Solutions USA, Inc.</em></p><p>现代可编程 GPU 的强大算力可以被有效利用来可视化三维医学数据，从而有可能更快、更有效地诊断疾病。例如，心肌功能和唇裂等胎儿异常都可以通过对超声数据做体绘制来可视化。本章介绍一种用 GPU 的顶点处理器和片元处理器对随时间变化的三维医学超声体积——也就是四维体积——做体绘制的技术。我们用三维投影纹理映射对超声数据做体绘制。文中给出使用真实胎儿超声数据的结果。</p><h2>40.1 背景</h2><p>体绘制是一种可视化三维体积数据集的技术，这些数据由计算机断层扫描（CT）、磁共振成像（MRI）和三维超声等医学成像技术产生。体绘制也用于石油勘探领域，对体积数据做可视化。</p><p>可视化体积数据集很有挑战性。人类虽然非常擅长观看和理解二维图像，但多数人难以想象三维体积数据集。在体积医学成像技术发明之前，平面二维 X 光片在诊断医学成像领域占统治地位。放射科医生习惯于相当熟练地观看和理解二维 X 光片。体积成像技术发明后，放射科医生需要观看的二维图像数量猛增，因为每个体积现在都包含一系列二维图像或切片。人们很快意识到需要一种更直观的方式来可视化体积数据，这促成了体绘制的发展。</p><p>自 20 世纪 80 年代末以来，CT 和 MRI 等医学成像模态一直受益于体绘制这种可视化体积数据的技术。CT 和 MRI 数据在三维笛卡尔网格中采集，如图 40-1a 所示。而超声数据更复杂，因为超声数据通常在非笛卡尔网格中采集，例如图 40-1b 所示的<em>声学网格</em>。因此，CT 和 MRI 的体绘制比超声数据的体绘制简单。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig40-01.jpg" alt="fig40-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig40-01.jpg" rel="noreferrer noopener">图 40-1</a> CT、MRI 与超声数据的采样网格</figcaption></figure><p>假设你想对自己身体某部位做一次三维超声扫描。在诊所里，超声技师先把超声换能器放在你的皮肤上。换能器本质上是一根天线，对约 1 MHz 或更高频率的声波敏感。它向体内发出人耳听不见的声脉冲，并像雷达那样接收回声。也像雷达一样，超声体积通常在随深入体内而发散的网格中采集。为了让你对超声图像的性质有个概念，图 40-2 显示了一幅胎儿二维超声图像。你可以想象该超声体积的三维版本：一个截棱锥或锥体，与图 40-1b 类似。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig40-02.jpg" alt="fig40-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig40-02.jpg" rel="noreferrer noopener">图 40-2</a> 胎儿头部的二维超声图像</figcaption></figure><p>三维超声数据由超声扫描仪采集，并以三维数组形式存于其本地内存。这个三维数组中变化最快的索引对应离换能器的距离，称为<em>距离（range）</em>方向（见图 40-1b）。次快的索引对应换能器的<em>方位角</em>方向。最慢的索引对应换能器的<em>仰角</em>方向。</p><p>超声数据也可以是四维的，在三个空间方向和时间方向上采集。你可能在产科诊所见过采集胎儿面部图像的四维超声。对胎儿面部成像这类应用，每秒所需的体积数远少于对人体心脏成像这类应用所需的体积数。这是因为心脏运动很快，为了充分显示心脏运动，我们需要在每个心动周期内采集并体绘制若干个三维体积。</p><p>所幸，NVIDIA 的 GeForce FX 和 Quadro FX 等现代 GPU 中的可编程顶点与片元处理器近来提供了手段，能以可视化人体心脏所需的速率，对在非笛卡尔网格中采集的四维超声数据做体绘制。对四维超声数据做体绘制已有多种技术。本章详细介绍其中一种。</p><h2>40.2 引言</h2><p>三维网格数据集（如 CT、MRI 和超声数据）可以用纹理映射做体绘制。已有多种技术。综述可参见本书第 39 章「体绘制技术」以及 Hadwiger et al. 2002。本章使用三维纹理。我们先回顾如何用纹理对笛卡尔网格中的 CT、MRI 这类数据做体绘制。示例 OpenGL 程序 <code>VolumeRenderCartesian.cpp</code>（收在本书的 CD 和网站上）演示如何用笛卡尔网格做体绘制。这里不详述该程序，但先过一遍基本要点。</p><h4>40.2.1 笛卡尔网格数据的体绘制</h4><p>图 40-3 展示了用三维纹理对笛卡尔数据做体绘制的要点。数据先用 <code>glTexImage3D</code> 作为三维纹理载入显存。然后启用 alpha 混合，对一系列均垂直于观察方向的切平面做纹理映射，从离观察者最远的切平面开始，逐步推向离观察者最近的切平面。记住，所有切平面都平行于计算机屏幕。我们把与计算机屏幕关联的坐标系称为<em>切平面空间</em>。数据集可以相对计算机屏幕旋转。我们把与数据集关联的坐标系称为<em>数据集空间</em>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig40-03.jpg" alt="fig40-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig40-03.jpg" rel="noreferrer noopener">图 40-3</a> 对三维笛卡尔数据做体绘制</figcaption></figure><p>第 <em>i</em> 个切平面渲染完后帧缓冲中某个像素的内容 <em>P<sub>i</sub></em> 可以表示为：</p><p><a id="ch40equ01"></a><strong>公式 1</strong></p><p><a><img alt="697equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/697equ01.jpg"/></a></p><p>式中 <em>P<sub>i</sub></em> <sub>-</sub> <sub>1</sub> 是第 (<em>i</em> - 1) 个切平面渲染后的像素内容，<em>I<sub>i</sub></em> 是第 <em>i</em> 个切平面输入的片元，<em>f</em>() 是不透明度函数，<em>g</em>() 是不透明度加权传递函数。<em>f</em>() 和 <em>g</em>() 都假定取值在 [0, 1] 范围内。直观地说，这意味着若输入的片元不透明，它后面片元的贡献就被压制。公式 1 可以用 alpha 混合在 OpenGL 中实现，混合函数为 <code>GL_ONE_MINUS_SRC_ALPHA</code>。不透明度加权传递函数产生像素的 RGB 值，不透明度函数产生像素的 alpha 值。</p><p>对切平面做纹理映射时，可以用两种不同的方式指定：<em>外包矩形</em>和<em>相交多边形</em>。</p><h4>外包矩形</h4><p>使用外包矩形是对切平面做纹理映射最直接的方式。示例程序 <code>VolumeRenderCartesian.cpp</code> 采用这种技术。该方法从后到前绘制一系列外包数据集范围的四边形。可以把四边形顶点的坐标存入显存，以便快速访问、快速渲染。唯一要记住的是，必须启用两种方式之一来抑制对原始数据体积之外区域做纹理映射（即任一纹理坐标 (<em>s</em>, <em>t</em>, <em>r</em>) 小于 0.0 或大于 1.0 时）。有三种做法：（a）使用裁剪平面；（b）用 <code>GL_CLAMP_TO_BORDER_ARB</code> 环绕纹理坐标，并把边框颜色设为黑色；（c）用 <code>GL_CLAMP_TO_EDGE</code> 环绕纹理坐标，并让边界处的数据值为 0，如下所示：</p><blockquote><p><em>Data</em> = 0 若 <em>s</em> = 0.0、<em>t</em> = 0.0、<em>r</em> = 0.0、<em>s</em> = 1.0、<em>t</em> = 1.0 或 <em>r</em> = 1.0。</p></blockquote><h4>相交多边形</h4><p>这种方法稍复杂，需要求出给定切平面与数据立方体相交的多边形。可以让 CPU 或 GPU（用顶点程序）来算。求出相交多边形的顶点后，就可以对该多边形做纹理映射。从片元程序的角度看，这种做法更快，因为只访问数据立方体内部的片元。不过从光栅化器的角度看，要求更高，因为需要光栅化更多三角形。此外，每当观察者相对数据集空间改变观察方向，程序都要重新计算多边形。若用 CPU 重新计算多边形，还需要在渲染前把多边形顶点上传到 GPU，这可能很耗时。</p><p>示例程序 <code>VolumeRenderCartesian.cpp</code> 用外包矩形配合裁剪平面来渲染切平面。图 40-4 显示了 <code>VolumeRenderCartesian.cpp</code> 程序生成的一幅 CT 数据集体绘制图像。运行该程序时，你可以旋转、缩放并逐层浏览体积。把键盘焦点放在图形窗口上时按「h」键可查看帮助。该可视化所用的数据集为 256x256x256 体素。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig40-04.jpg" alt="fig40-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig40-04.jpg" rel="noreferrer noopener">图 40-4</a> 在笛卡尔坐标系中采集的 CT 数据集的体绘制</figcaption></figure><h4>40.2.2 金字塔网格数据的体绘制</h4><p>下面考察在金字塔网格中采集的数据的体绘制。有好几种网格具有随深入体内而发散的性质，包括金字塔网格、圆锥网格、球面网格和圆柱网格。为简单起见，本章使用金字塔网格，因为正如后文所见，它适合 GPU 擅长的那类线性处理。此外，图 40-1b 和图 40-2 所示的其他类型网格，也可以沿距离方向重采样超声数据后变换为金字塔网格，而不失一般性。</p><p>为便于解释，先看两个二维情形：（a）笛卡尔网格和（b）金字塔网格，如图 40-5 所示。对每个二维网格，我们在每个网格点采集一个超声数据样本，构成二维数据数组。一般超声图像的网格点要多得多，这里只看 5x5 的网格。图 40-5a 所示的笛卡尔网格中，对应常数 <em>s</em> 的竖线称为<em>超声线</em>。换能器位于 <em>r</em> = 0.0 平面上。超声扫描仪从左到右依次发射每条超声线，并在每个网格点采样，从而收集一幅二维图像。纹理坐标 (<em>s</em>, <em>r</em>) 对应换能器的方位角方向和距离方向。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig40-05.jpg" alt="fig40-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig40-05.jpg" rel="noreferrer noopener">图 40-5</a> 二维的笛卡尔网格与金字塔网格</figcaption></figure><p>图 40-5b 所示的金字塔网格中，所有超声线交于一点 <em>O</em>，称为<em>顶点</em>。换能器的范围 <em>AB</em> 称为<em>孔径尺寸</em>。本章使用归一化孔径尺寸的概念：<em>a</em> = <em>AB</em>/<em>R</em>，其中 <em>R</em> 是金字塔的高（0 ≤ <em>R</em> ≤ 1.0）。角 <em>AOB</em> 称为<em>顶角</em>，记为 2<em>q</em>。可以把金字塔网格看作与笛卡尔网格等价，只是 <em>s</em> 坐标随 <em>r</em> 坐标线性缩放。这可以借助投影纹理映射轻松实现，后文会讨论。</p><p>图 40-6 显示三维金字塔网格。为生成三维金字塔网格的正确纹理坐标，我们像二维金字塔网格那样，把 <em>s</em> 和 <em>t</em> 纹理坐标按 <em>r</em> 的线性函数缩放。算法步骤如下：</p><ol><li>假设使用笛卡尔网格，在顶点程序内部模仿 OpenGL 的自动纹理坐标生成函数 <code>glTexGen</code> 生成纹理坐标。</li><li>目标是缩放 <em>s</em> 和 <em>t</em> 坐标，而不缩放 <em>r</em> 坐标，且缩放量是 <em>r</em> 的线性函数。为此，在顶点程序中计算下列新纹理坐标：<p><a id="ch40equ02"></a><strong>公式 2</strong></p><p><a><img alt="700equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/700equ01.jpg"/></a></p><p><a id="ch40equ03"></a><strong>公式 3</strong></p><p><a><img alt="700equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems/700equ02.jpg"/></a></p><p><a id="ch40equ04"></a><strong>公式 4</strong></p><p><a><img alt="700equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems/700equ03.jpg"/></a></p>其中 <em>s</em> ′、<em>t</em> ′ 和 <em>q</em> 是新坐标。</li><li>然后在片元程序中，用投影三维纹理查找指令一步完成缩放与纹理查找。注意必须避免对 <em>r</em> 坐标施加缩放；否则沿 <em>r</em> 方向也会被缩放，产生一个金字塔形的数据体，越深入体内，沿 <em>r</em> 方向看起来拉伸得越厉害。要避免这一点，只需在片元程序中用缩放量预乘 <em>r</em> 坐标：<p><a id="ch40equ05"></a><strong>公式 5</strong></p><p><a><img alt="701equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/701equ01.jpg"/></a></p>其中 <em>r</em> ′ 也是新的纹理坐标。（由于这一步是非线性运算，我们无法在顶点程序中完成，因为那样 GPU 会在每个片元上对 <em>r</em> ′ 插值出错误的值。）</li><li>一切完成后，投影纹理查找指令实际用于纹理查找的有效纹理坐标如下：<p><a id="ch40equ06"></a><strong>公式 6</strong></p><p><a><img alt="701equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems/701equ02.jpg"/></a></p><p><a id="ch40equ07"></a><strong>公式 7</strong></p><p><a><img alt="701equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems/701equ03.jpg"/></a></p><p><a id="ch40equ08"></a><strong>公式 8</strong></p><p><a><img alt="701equ04.jpg" src="https://developer.download.nvidia.com/books/gpugems/701equ04.jpg"/></a></p></li></ol><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig40-06.jpg" alt="fig40-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig40-06.jpg" rel="noreferrer noopener">图 40-6</a> 三维金字塔网格</figcaption></figure><p>切平面如前所述用一系列外包矩形指定。这些矩形的尺寸选择为完全包住金字塔网格。示例 OpenGL 程序 <code>VolumeRenderPyramid.cpp</code>、顶点程序 <code>VolumeRenderPyramidV.cg</code> 和片元程序 <code>VolumeRenderPyramidF.cg</code> 用与前面 <code>VolumeRenderCartesian.cpp</code> 相同的 CT 数据集演示我们的算法。此外还有该片元程序的汇编版本 <code>VolumeRenderPyramidF.ocg</code>。下面我们来考察顶点程序和片元程序。</p><h4>顶点程序</h4><p>下面逐行讲解代码清单 40-1 所示的顶点程序。该顶点程序的输入是变量 <code>Position</code>，含顶点坐标。十个 uniform 变量——<code>ZoomFactor</code>、<code>Pyramid</code>、<code>ClipPlane0-5</code>、<code>ModelView</code> 和 <code>ModelViewProj</code>——也是该程序的输入。<code>ZoomFactor</code> 含用于缩放的缩放值。<code>Pyramid</code> 含描述金字塔网格几何的两个参数：<code>Pyramid.x</code> 是换能器的归一化孔径尺寸 <em>a</em>，<code>Pyramid.y</code> 是顶角一半的正切的两倍，即 2 tan <em></em>。<code>ClipPlane0</code> 到 <code>ClipPlane5</code> 含六个裁剪平面的方程。<code>ModelView</code> 和 <code>ModelViewProj</code> 分别含数据集空间中的模型视图矩阵，以及模型视图矩阵与切平面空间投影矩阵相乘后的结果。</p><h4>示例 40-1. <code>VolumeRenderPyramidV.cg</code></h4><pre><code>void VertexProgram(in float4 Position
+                   : POSITION, out float4 hPosition
+                   : POSITION, out float4 hTex0
+                   : TEX0, out float hClip0
+                   : CLP0, out float hClip1
+                   : CLP1, out float hClip2
+                   : CLP2, out float hClip3
+                   : CLP3, out float hClip4
+                   : CLP4, out float hClip5
+                   : CLP5, uniform float4 ZoomFactor, uniform float4 Pyramid,
+                     uniform float4 ClipPlane0, uniform float4 ClipPlane1,
+                     uniform float4 ClipPlane2, uniform float4 ClipPlane3,
+                     uniform float4 ClipPlane4, uniform float4 ClipPlane5,
+                     uniform float4x4 ModelView, uniform float4x4 ModelViewProj)
+{
+  // 计算裁剪空间位置
+  hPosition = mul(ModelViewProj, Position);
+  // 从位置坐标中除去缩放因子
+  Position = Position * ZoomFactor;
+  // 用笛卡尔网格计算纹理坐标
+  hTex0 = mul(ModelView, Position);
+  // 保存原始纹理坐标
+  float4 hTex0_Orig = hTex0 - float4(0.5, 0.5, 0.0, 0.0);
+  // 计算金字塔网格中纹理坐标的
+  // 缩放系数
+  hTex0.w = Pyramid.x + hTex0.z * Pyramid.y;
+  // 针对纹理坐标的偏移做调整
+  hTex0.x = hTex0.x - 0.5 + 0.5 * hTex0.w;
+  hTex0.y = hTex0.y - 0.5 + 0.5 * hTex0.w;
+  // 裁剪金字塔体积
+  hClip0 = dot(hTex0_Orig, ClipPlane0);
+  hClip1 = dot(hTex0_Orig, ClipPlane1);
+  hClip2 = dot(hTex0_Orig, ClipPlane2);
+  hClip3 = dot(hTex0_Orig, ClipPlane3);
+  hClip4 = dot(hTex0_Orig, ClipPlane4);
+  hClip5 = dot(hTex0_Orig, ClipPlane5);
+}</code></pre><p>该顶点程序的输出是顶点的裁剪空间位置 <code>hPosition</code>、纹理坐标 <code>hTex0</code>，以及裁剪距离 <code>CLP0</code> 到 <code>CLP5</code>。</p><p>第一行计算顶点的裁剪空间位置；第二行去掉 OpenGL 程序对位置坐标施加的任何缩放；第三行模仿 OpenGL 的 <code>glTexGen</code> 函数，计算笛卡尔坐标系的纹理坐标。第 4 行把纹理坐标的原始内容（仅在 <em>s</em> 和 <em>t</em> 方向偏移 0.5）存入 <code>hTex0_Orig</code> 备用。接下来是有意思的部分。第 5 行计算对给定 <em>r</em> 坐标时 <em>s</em> 和 <em>t</em> 纹理坐标所需的拉伸或缩放量。第 6、7 行平移 <em>s</em> 和 <em>t</em> 纹理坐标的原点，使片元程序中对 <em>s</em>、<em>t</em> 纹理坐标的缩放围绕金字塔的中心轴进行。第 8–13 行计算包围金字塔体积的六个平面的裁剪值。含小于零裁剪值的片元不会被绘制到帧缓冲。</p><h4>片元程序</h4><p>代码清单 40-2 的片元程序接着顶点程序的工作往下做。输入 <code>inTex</code> 是含纹理坐标的变量。还有两个 uniform 输入：<code>USTexture</code> 和 <code>ColorMap</code>。<code>USTexture</code> 含描述三维超声体积的三维纹理。<code>ColorMap</code> 是颜色映射表，含不透明度加权传递函数和不透明度函数。输出 <code>sColor0</code> 含片元颜色。</p><p>第一行把 <em>r</em> 坐标与缩放值预乘；第二行用投影纹理映射在三维超声体积中查找纹理值；第三行做一维颜色映射查找，按超声数据值生成渲染用的颜色。</p><h4>示例 40-2. <code>VolumeRenderPyramidF.cg</code></h4><pre><code>void FragmentProgram(in float4 inTex
+                     : TEXCOORD0, out float4 sColor0
+                     : COLOR0, const uniform sampler3D USTexture,
+                       const uniform sampler1D ColorMap)
+{
+  // 将 'r' 坐标预乘该缩放系数
+  inTex.z = inTex.z * inTex.w;
+  // 投影式 3D 纹理查找
+  float val = tex3Dproj(USTexture, inTex);
+  // 颜色表查找
+  sColor0 = tex1D(ColorMap, val);
+}</code></pre><p>通常，体绘制速度受片元程序复杂度限制（也就是说受填充率限制）。因此有时最好手工调整片元汇编代码以获得最大吞吐量，如代码清单 40-3 所示。</p><h4>示例 40-3. <code>VolumeRenderPyramidF.ocg</code></h4><pre><code>!!FP1 .0 #NV_fragment_program generated by NVIDIA Cg
+     compiler #cgc version 1.1.0003,
+    build date Mar 4 2003 12 : 32 : 10 #command line args
+    : -q -
+      profile fp30 -
+      entry FragmentProgram #vendor NVIDIA
+          Corporation #version 1.0.02 #profile fp30 #program FragmentProgram #semantic FragmentProgram
+              .USTexture #semantic FragmentProgram
+              .ColorMap #var float4 inTex
+    : $vin.TEXCOORD0 : TEXCOORD0 : 0 : 1 #var float4 sColor0 : $vout.COLOR0
+    : COLOR0 : 1 : 1 #var sampler3D USTexture
+    : : texunit 0 : 2 : 1 #var sampler1D ColorMap : : texunit 1 : 3 : 1 MOVX H0,
+    f[TEX0];
+MULX H0.z, H0.z, H0.w;
+TXP R0, H0, TEX0, 3D;
+TEX o[COLR], R0.x, TEX1, 1D;
+END #4 instructions, 1 R - regs, 1 H - regs.#End of program</code></pre><p>第一行把输入的纹理坐标载入 12 位定点寄存器 <code>H0</code>。下一行用缩放值预乘纹理坐标的 <em>r</em> 分量。使用 12 位定点运算可以显著加快渲染速度。第三行用三维投影纹理查找求片元值。最后一行用一维颜色映射查找求片元的颜色值。就这些！</p><p>图 40-7 显示了示例 OpenGL 程序 <code>VolumeRenderPyramid.cpp</code> 生成的一幅体绘制图像。该程序让你调整孔径尺寸（「a」/「A」键）和顶角（「b」/「B」键），并在屏幕上看到效果。按「h」键查看帮助。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig40-07.jpg" alt="fig40-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig40-07.jpg" rel="noreferrer noopener">图 40-7</a> 在金字塔坐标系中体绘制的 CT 数据集</figcaption></figure><h4>超声数据的体绘制</h4><p>示例程序 <code>VolumeRenderPyramidUS.cpp</code> 演示如何用超声数据做体绘制。用 ACUSON Sequoia 512 超声系统采集的<em>宫内</em>胎儿超声数据包含 256x256x32 个体素。注意，这种情况下由于采集数据所用超声探头的特殊几何形状，我们不需要像公式 7 那样改变 <em>t</em> 坐标，只需把 <em>s</em> 坐标按线性函数缩放。这产生由楔形体积构成的金字塔几何。</p><h2>40.3 结果</h2><p>图 40-8 显示用本章所述的投影纹理映射技术对胎儿面部做体绘制得到的图像。示例程序 <code>VolumeRenderPyramidUS.cpp</code> 用 181 个切平面生成这幅图像。在影片 VolumeRenderPyramidUS.avi 中，若仔细看，可以看到胎儿吐舌头和挠头的动作。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig40-08.jpg" alt="fig40-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig40-08.jpg" rel="noreferrer noopener">图 40-8</a> 用投影纹理映射对胎儿面部做体绘制得到的图像</figcaption></figure><h2>40.4 结论</h2><p>GPU 已经发展到可以对三维超声成像所需的快速速率做体绘制的地步。我们描述了如何用投影纹理映射对金字塔网格做到这一点。以此为框架，还可以纳入着色模型，并用预积分体绘制（Engel et al. 2001）等技术减少摩尔纹瑕疵，代价是损失一些帧率。</p><p>注意，公式 6 和公式 7 可以直接在片元程序中实现，而不使用投影纹理映射。这种做法比本章采用的做法慢。这是因为典型的体绘制应用受填充率限制，而实现公式 6 和公式 7 需要求 <em>r</em> 的倒数，这会增加语句，因而运行更慢。</p><p>还要注意，我们本可以把传递函数而非不透明度加权传递函数提供给片元程序，并在片元程序内把不透明度值与颜色 <code>sColor0</code> 相乘来生成不透明度加权颜色。这样做可以减少量化瑕疵，代价是帧率，因为需要多加一条语句。</p><h2>40.5 参考文献</h2><p><a id="ch40bib01_01"></a>Engel, Klaus, Martin Kraus, and Thomas Ertl. 2001. "High-Quality Pre-Integrated Volume Rendering Using Hardware-Accelerated Pixel Shading." <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2001</em>. 可在线获取：<strong><a href="http://wwwvis.informatik.uni-stuttgart.de/~engel/pre-integrated/paper_GraphicsHardware2001.pdf" rel="noreferrer noopener">http://wwwvis.informatik.uni-stuttgart.de/~engel/pre-integrated/paper_GraphicsHardware2001.pdf</a></strong></p><p><a id="ch40bib01_02"></a>Hadwiger, Markus, Joe Kniss, Klaus Engel, and Christof Rezk-Salama. 2002. "High-Quality Volume Graphics on Consumer PC Hardware." Course Notes 42，SIGGRAPH 2002。可在线获取：<strong><a href="http://www.cs.utah.edu/~jmk/sigg_crs_02/course_42/course_42_notes_small.pdf" rel="noreferrer noopener">http://www.cs.utah.edu/~jmk/sigg_crs_02/course_42/course_42_notes_small.pdf</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-40-applying-real-time-shading-3d-ultrasound" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-40-applying-real-time-shading-3d-ultrasound</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 章　水面焦散的渲染 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 2 章　水面焦散的渲染」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 2 章　水面焦散的渲染</h1>
+<p><em>Juan Guardado<br> NVIDIA</em></p><p><em>Daniel Sánchez-Crespo<br> Universitat Pompeu Fabra/Novarama Technology</em></p><h2>2.1 引言</h2><p>水与光相互作用的方式有种催眠般的魔力：微妙的反折射，光弯折后在海底形成摇曳焦散的样子，以及海面无穷变化的外观。见图 2-1。这些现象及其复杂性吸引了物理学界的许多研究者，近年来也吸引了计算机图形学界的。模拟和渲染逼真的水，和模拟火焰一样，是一项迷人的任务。要在交互帧率下取得好效果并不容易，因此常常必须采取有创意的做法。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig02-01a.jpg" alt="fig02-01a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig02-01a.jpg" rel="noreferrer noopener">图 2-1</a> 水面焦散的示例</figcaption></figure><p>光线从曲面反射或折射，因而只聚焦在接收面的某些区域，就形成<em>焦散</em>。本章讲解一种由美学驱动、实时渲染水下焦散的方法。我们这种纯美学驱动的方法干脆不考虑真实感。结果是一个好看的场景，但可能没有正确模拟该环境的物理。正如本章所展示的，我们方法的结果看起来相当逼真，而且该方法在大多数图形硬件上都容易实现。这种简化的做法在许多与分形相关的学科中被证明非常成功，例如山脉和云的渲染或树木建模。</p><p>本章的目的是介绍一种实时渲染焦散的新技术，从物理基础讲到实现细节。因为该技术是过程化的，它非常适合用高级着色语言实现。</p><h2>2.2 计算焦散</h2><p>精确计算水下焦散是一个复杂的过程：涉及数以百万计的单个光子，发生大量相互作用。要正确模拟，我们必须从光源（例如海面场景中的太阳）发射光子开始。这些光子中有一部分最终撞上海面，被反射或折射。先撇开反射不谈，看看透射的光子如何按斯涅尔定律折射，该定律指出：</p><p><sub>1</sub> sin <sub>1</sub> = <sub>2</sub> sin <sub>2</sub>,</p><p>也可写作：</p><p><img alt="032equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems/032equ02.jpg"/></p><p>在上述公式中，<em></em> <sub>1</sub> 和 <em></em> <sub>2</sub> 是相应材质的折射率，<em></em> <sub>1</sub> 和 <em></em> <sub>2</sub> 是入射角和折射角，如图 2-2 所示。于是折射率 <em>IOR</em> 可以直接写成入射光线与折射光线角度正弦之比。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig02-02.jpg" alt="fig02-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig02-02.jpg" rel="noreferrer noopener">图 2-2</a> 计算折射</figcaption></figure><p>斯涅尔定律用这种表述不容易写成代码，因为它只施加一个约束，使折射光线的计算并不简单。假定入射光线、透射光线和表面法线共面，可以使用多种便于编码的公式，例如 Foley 等 1996 中的这个：</p><p><img alt="033equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/033equ01.jpg"/></p><p>这里 <em>T</em> 是透射光线，<em>N</em> 是表面法线，<em>E</em> 是入射光线，<em></em> <sub>1</sub>、<em></em> <sub>2</sub> 是折射率。</p><p>光子一旦弯折，就在水中前进，强度随深度增加而衰减。最终，其中一些光子会击中海底，把它照亮。由于海面起伏，从不同路径进入水中的光子可能照亮海底的同一区域。每当这种情况发生，我们就看到一个由光聚集在焦散中形成的亮斑，类似于透镜聚焦光线的方式。</p><p>从仿真的角度看，焦散通常用正向或反向光线追踪来计算。在正向光线追踪中，光子从光源发出，在场景中被跟踪，其贡献在底面的离散区域上累加。这种做法的毛病在于，许多光子根本不会撞上海面，而真正撞上的那些里，极少真正对焦散的形成有贡献。因此这是蛮力方法，即使借助空间细分做了一些加速也是如此。</p><p>反向光线追踪的方向相反。它从海底出发，按时间倒序反向追踪光线，试图计算给定点上所有入射光照之和。理想情况下，这可以通过求解该点上方所有来光的半球积分来实现。但出于实际考虑，积分结果要靠蒙特卡洛采样来求解。于是，以采样点为中心，向半球各个方向发出一束候选光线。击中其他物体（如鲸、船或石头）的射线被丢弃。反之，击中海面的射线肯定来自外部，因此是好的候选。于是它们必须用斯涅尔定律的逆形式折射。这些剩下的射线必须在空气中传播，以检验每条假设的射线究竟真的来自光源，还是仅仅是一个错误的假设。同样，只有真正击中光源的射线对焦散有贡献，其余射线都作为错误假设被丢弃。</p><p>因此两种方法代价都很高：只有极小一部分计算时间真正对最终结果有贡献。在商业焦散处理器中，有用射线与总射线之比通常在 1% 到 5% 之间。</p><p>实时焦散最早由 Jos Stam 探索（Stam 1996）。Stam 的方法是用波动理论计算一张动态的焦散纹理，从而可以用它照亮底面。这张纹理与物体的基础纹理做相加混合，给出漂亮而有说服力的外观，如图 2-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig02-03.jpg" alt="fig02-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig02-03.jpg" rel="noreferrer noopener">图 2-3</a> 用 Jos Stam 的投影焦散纹理生成的焦散</figcaption></figure><p>Lasse Staff Jensen 和 Robert Golias 在他们出色的 Gamasutra 论文中探索了另一种有意思的方法（Jensen and Golias 2001）。该论文不仅涵盖焦散，还给出完整的水面动画与渲染框架。平台基于快速傅里叶变换（FFT）做波函数建模。在此基础上，他们的方法处理反射、折射和焦散，力求每一项都达到物理准确的模型。因此，Jensen 和 Golias 处理焦散的办法试图模拟真实过程，也就不足为奇了：从太阳向波浪网格的每个顶点追踪射线，这些射线按斯涅尔定律折射，从而产生新的射线。</p><h2>2.3 我们的方法</h2><p>我们用来模拟水下焦散的算法，只是上一节所述反向蒙特卡洛光线追踪思路的简化。我们对焦散的合适候选作了一些激进的假设，只计算到达射线的一个子集。因此该方法计算代价很低，产生的东西虽然在物理上「不正确」，却在观感和行为上与真实焦散非常相似。整体效果看起来很有说服力，而焦散带来的出色画质让实现它是值得的。</p><p>首先，我们假定是在赤道正午计算焦散。这意味着太阳正在我们正上方。为了算法的需要，我们要算出太阳圆盘在天空中所占的角度。太阳距地球 1.47 亿到 1.52 亿公里，具体取决于一年中的时节；其直径为 142 万公里，因此太阳圆盘的角度为 0.53 度，如图 2-4 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig02-04.jpg" alt="fig02-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig02-04.jpg" rel="noreferrer noopener">图 2-4</a> 太阳圆盘的角度</figcaption></figure><p>我们作的第二个假设是：海底由从所关注点正上方竖直射来的光线照亮。水的透明度为每直线米 77% 到 80%，因此每米有 20% 到 23% 的入射光被介质吸收，用于加热水体。从逻辑上说，这意味着当光线从进入水中到击中海底所走的距离最短时，最容易形成焦散。因此焦散对垂直射线最强，对侧向进入水中的射线则不那么明显。这是一个激进的假设，但它是算法成功的关键。</p><p>于是我们的算法如下。我们从海底开始，就在画完底面之后。然后用第二遍相加混合渲染，把焦散叠加在上面。为此，我们建一个与波浪网格粒度相同的网格，按顶点用焦散值着色：0 表示没有光照，1 表示一束高度聚焦的光击中了海底。为了构建这个光照，我们使用反向光线追踪：对网格的每个顶点，把它垂直投影，直到抵达正上方的那一点波面。然后用有限差分计算该点处波浪的法线。有了这个向量和法线，再用斯涅尔定律（水的折射率为 1.33），我们可以生成次级射线，从波面射入空中。这些射线是把光照带到海底的潜在候选。为检验它们，我们计算每条射线与竖直方向的夹角。因为太阳圆盘非常遥远，我们可以直接用这个夹角作为光照的度量：越接近竖直，从该方向进入海洋的光就越多，如图 2-5 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig02-05.jpg" alt="fig02-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig02-05.jpg" rel="noreferrer noopener">图 2-5</a> 太阳圆盘的强度与入射角的关系</figcaption></figure><h2>2.4 用 OpenGL 实现</h2><p>该算法最初的实现就是普通的 OpenGL 代码，唯一的例外是使用了多遍纹理。第一遍把海底作为常规的带纹理四边形渲染。然后，用一张精细网格再次绘制同一底面，该网格用我们的焦散生成器逐顶点照亮，如图 2-6b 所示。对精细网格的每个顶点，我们竖直发射一条射线，让它与海面相交，用斯涅尔定律生成弯折后的射线，再用该射线做射线-四边形测试，以索引纹理图，如图 2-6a 所示。最终，这个操作与一遍平面环境映射并没有很大不同。第三遍也是最后一遍，用我们的波形生成器渲染海浪。这些三角形会用平面环境贴图贴图，从而在它们上面得到漂亮的天空反射。其他效果，例如菲涅尔方程，可以在此之上实现。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig02-06a.jpg" alt="fig02-06a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig02-06a.jpg" rel="noreferrer noopener">图 2-6</a> OpenGL 实现</figcaption></figure><p>该技术的伪代码如下：</p><ol><li>绘制海底。</li><li>对细网格中的每个顶点：<ol type="a"><li>发射一条竖直射线。</li><li>让射线与海洋网格相交。</li><li>用斯涅尔定律的逆形式计算折射射线。</li><li>用折射射线计算「太阳」贴图的纹理坐标。</li><li>把纹理坐标应用到更精细网格的顶点上。</li></ol></li><li>渲染海面。</li></ol><h2>2.5 用高级着色语言实现</h2><p>完全在 GPU 上实现这项技术，可以获得更好的画质并提升性能。像 Microsoft 的 HLSL 或 NVIDIA 的 Cg 这样的高级着色语言，让我们可以用类 C 语法迅速把这些计算搬到 GPU 上。事实上，之前在基础 OpenGL 实现中于 CPU 上执行的同一个波函数，只是通过一个 include 文件被直接复制进像素和顶点着色器，仅做了少量修改以适应这些高级语言中基于向量的结构。</p><p>逐像素而非逐顶点计算焦散，提升了整体画质，并使效果与几何复杂度解耦。把该技术移植到 GPU 像素着色器时考虑过两种做法，两者都用波函数的偏导数生成法线，而不像原始方法那样依赖有限差分。</p><p>第一种方法利用了这样一个事实：过程化纹理可以在屏幕空间渲染，从而在只有一小部分像素可见时节省渲染时间。不幸的是，这也意味着当大量像素可见时，每个像素都要做大量工作，即便增加的细节可能并不明显。有时这么大的工作量会把帧率拖慢到不可接受的程度，所以需要另一种方法来克服这个限制。</p><p>第二种方法在纹理空间中渲染到固定分辨率的渲染目标。虽然在纹理空间中渲染有每帧保持恒定工作量的优点，但只渲染可见像素的好处就失去了。此外，也很难判断哪种渲染目标分辨率最适合当前场景，以至于当纹素与像素之比降得太低时，依赖纹理滤波可能会引入泄露真相的双线性滤波十字图案。</p><p>我们可以进一步优化算法，注意到用斯涅尔定律折射入射光线，与直接按沿波面法线从水面到底面的距离做环境映射，在视觉上差别很小。见图 2-7。结果是，竖直射线访问纹理中心，那里很亮；斜射的射线则产生逐渐衰减的光源。此外，在更大的深度处，环境贴图的相对尺寸——因而光源的相对尺寸——会缩小，产生更锐利的焦散，而焦散同样可以按距离衰减。注意，这种方法允许我们使用非均匀的底面，而这个可变的深度可以很容易地编码进顶点属性的一个标量分量。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig02-07.jpg" alt="fig02-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig02-07.jpg" rel="noreferrer noopener">图 2-7</a> 头顶太阳的环境贴图</figcaption></figure><p>因此，该效果计算波函数的法线，以追踪射线到平面上截点的路径——本例中就是海底。为生成法线，波函数在 <em>x</em> 和 <em>y</em> 方向的偏导数很容易求出。</p><p>把原始方法中所用的波函数写成：</p><p><img alt="039equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/039equ01.jpg"/></p><p>其中 <em>i</em> 表示用于生成波的倍频数；<em>c</em> <sub>1</sub>、<em>c</em> <sub>2</sub> 和 <em>c</em> <sub>3</sub> 是分别给出波频率、振幅和速度的常量；<em>x</em> 和 <em>y</em> 从 0 到 1（含端点）变化，表示单位正方形上的一点。</p><p>应用链式法则和乘积法则，得到两个函数，即偏导数，写作： <sup><a href="https://developer.download.nvidia.com/books/gpugems/ch02fn01.html" rel="noreferrer noopener">[1]</a></sup></p><p><img alt="039equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems/039equ02.jpg"/></p><p>以及</p><p><img alt="040equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems/040equ01.jpg"/></p><p>这些偏导数实际上是求值点处梯度向量的分量。因为函数实际表示高度，也就是 <em>z</em>，对 <em>z</em> 的偏导数就是 1。于是法线是梯度向量的叉积，得到：</p><p><img alt="040equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems/040equ02.jpg"/></p><p>渲染焦散所需的最后一个公式是直线-平面截距。我们可以用下式算出直线上一点到平面上截点的距离：</p><p><img alt="040equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems/040equ03.jpg"/></p><p>其中 <em>D<sub>pl</sub></em> 是水面到原点的距离，<em>n<sub>pl</sub></em> 是底面的法线，<em>v<sub>l</sub></em> 是描述折射光方向的向量（实际上沿波面法线），<em>p<sub>l</sub></em> 是折射射线与海底的交点。见图 2-8。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig02-08.jpg" alt="fig02-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig02-08.jpg" rel="noreferrer noopener">图 2-8</a> 访问环境贴图</figcaption></figure><p>显然，逐像素所做的新计算相当复杂，但考虑到高级着色语言的灵活性以及当前一代硬件设备提供的像素处理能力，它们实现起来很简单，渲染也很快。代码清单 2-1 中的示例代码展示了 Cg 实现。</p><h4>示例 2-1. 波函数、波函数梯度与直线-平面截距方程的代码示例</h4><pre><code>// 焦散
+// Copyright (c) NVIDIA Corporation. All rights reserved.
+//
+// 注意：
+// 本着色器基于 Daniel Sanchez-Crespo（西班牙巴塞罗那
+// Pompeu Fabra 大学）的原创工作。
+#define VTXSIZE 0.01f
+// 振幅
+#define WAVESIZE 10.0f
+// 频率
+#define FACTOR 1.0f
+#define SPEED 2.0f
+#define OCTAVES 5
+// 顶点引擎里使用的同一个波函数示例
+float wave(float x, float y, float timer)
+{
+  float z = 0.0f;
+  float octaves = OCTAVES;
+  float factor = FACTOR;
+  float d = sqrt(x * x + y * y);
+  do
+  {
+    z -= factor * cos(timer * SPEED + (1 / factor) * x * y * WAVESIZE);
+    factor = factor / 2;
+    octaves--;
+  } while (octaves > 0);
+  return 2 * VTXSIZE * d * z;
+} // 这是上面那个波函数的导数。
+// 它返回 d(wave)/dx 与 d(wave)/dy 两个偏导数。
+float2 gradwave(float x, float y, float timer)
+{
+  float dZx = 0.0f;
+  float dZy = 0.0f;
+  float octaves = OCTAVES;
+  float factor = FACTOR;
+  float d = sqrt(x * x + y * y);
+  do
+  {
+    dZx +=
+        d * sin(timer * SPEED + (1 / factor) * x * y * WAVESIZE) * y *
+            WAVESIZE -
+        factor * cos(timer * SPEED + (1 / factor) * x * y * WAVESIZE) * x / d;
+    dZy +=
+        d * sin(timer * SPEED + (1 / factor) * x * y * WAVESIZE) * x *
+            WAVESIZE -
+        factor * cos(timer * SPEED + (1 / factor) * x * y * WAVESIZE) * y / d;
+    factor = factor / 2;
+    octaves--;
+  } while (octaves > 0);
+  return float2(2 * VTXSIZE * dZx, 2 * VTXSIZE * dZy);
+}
+float3 line_plane_intercept(float3 lineP, float3 lineN, float3 planeN,
+                            float planeD)
+{
+  // 未优化
+  float distance = (planeD - dot(planeN, lineP)) / dot(lineN, planeN);
+  // 优化版（假定 planeN 始终朝上）
+  float distance = (planeD - lineP.z) / lineN.z;
+  return lineP + lineN * distance;
+}</code></pre><p></p><p>算出截点之后，我们可以用它通过依赖纹理读取来取焦散光照图，然后把焦散贡献加到地面纹理上，如代码清单 2-2 所示。</p><h4>示例 2-2. 最终渲染遍的代码示例，展示依赖纹理读取操作</h4><pre><code>float4 main(VS_OUTPUT vert, uniform sampler2D LightMap
+            : register(s0), uniform sampler2D GroundMap
+            : register(s1), uniform float Timer)
+    : COLOR
+{
+  // 由波函数的梯度生成法线（直线方向），
+  // 并与水面求交。
+  // 我们用屏幕空间 z 来衰减该效果，以避免走样。
+  float2 dxdy = gradwave(vert.Position.x, vert.Position.y, Timer);
+  float3 intercept = line_plane_intercept(
+      vert.Position.xyz, float3(dxdy, saturate(vert.Position.w)),
+      float3(0, 0, 1), -0.8);
+  // 输出
+  float4 colour;
+  colour.rgb = (float3)tex2D(LightMap, intercept.xy * 0.8);
+  colour.rgb += (float3)tex2D(GroundMap, vert.uv);
+  colour.a = 1;
+  return colour;
+}</code></pre><p>图 2-9 中的结果表明，逐像素而非逐顶点计算所带来的画质提升。可以看到，分辨率足够大的纹理，画质与屏幕空间渲染一样好，而在显示大量像素时没有性能损失。此外，使用渲染目标纹理时，我们可以利用自动 mipmap 生成和各向异性滤波来减少焦散的走样，这在渲染到屏幕空间时做不到。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig02-09a.jpg" alt="fig02-09a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig02-09a.jpg" rel="noreferrer noopener">图 2-9</a> 渲染出的焦散</figcaption></figure><h2>2.6 结论</h2><p>本章描述的效果展示了如何升级并增强一个经典算法，以利用基于着色器的技术。随着着色处理能力提升，完整的蒙特卡洛方法最终会完全在图形硬件上运行，计算物理正确的焦散将成为现实。</p><p>要获得完整且赏心悦目的水下渲染模型，另一个值得研究的效果是<em>曙暮光条</em>。这个效果也称为<em>体积光</em>，看起来像可见的光束，由水下粒子的反射造成。</p><h2>2.7 参考文献</h2><p><a id="ch02bib01_01"></a>Foley, James, Andries van Dam, Steven Feiner, and John Hughes. 1996. <em>Computer Graphics: Principles and Practice</em>，第 2 版，Addison-Wesley 出版。</p><p><a id="ch02bib01_02"></a>Jensen, Lasse Staff, and Robert Golias. 2001. "Deep-Water Animation and Rendering." Gamasutra 文章。可在线获取：<strong><a href="http://www.gamasutra.com/gdce/2001/jensen/jensen_01.htm" rel="noreferrer noopener">http://www.gamasutra.com/gdce/2001/jensen/jensen_01.htm</a></strong></p><p><a id="ch02bib01_03"></a>Stam, Jos. 1996. "Random Caustics: Wave Theory and Natural Textures Revisited." 技术小品。载 <em>Proceedings of SIGGRAPH 1996</em>，第 151 页。可在线获取：<strong><a href="http://www.dgp.toronto.edu/people/stam/INRIA/caustics.html" rel="noreferrer noopener">http://www.dgp.toronto.edu/people/stam/INRIA/caustics.html</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-2-rendering-water-caustics" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-2-rendering-water-caustics</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 14 章　动态环境光遮蔽与间接光照 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 14 章　动态环境光遮蔽与间接光照」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 14 章　动态环境光遮蔽与间接光照</h1>
+<p><em>Michael Bunnell</em><br> <em>NVIDIA Corporation</em></p><p>本章介绍一种计算漫反射光传输的新技术，并说明如何用它为动画场景计算全局光照。该技术在较快的 GPU 上实现后效率足够高，可以针对每个渲染帧即时计算环境光遮蔽与间接光照数据。它没有预计算辐亮度传输（PRT）或预计算环境光遮蔽技术的那些局限——后者只适用于彼此之间不发生相对运动的刚体（Sloan 2002）。图 14-1 展示了环境光遮蔽与间接光照如何增强环境光照。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/14_ambient_occlusion_01.jpg" alt="14_ambient_occlusion_01.jpg"><figcaption>图 14-1 用环境光遮蔽与间接光照增加真实感</figcaption></figure><p>我们的技术把多边形网格看作一组表面元素，它们能发射、传输或反射光，并能相互遮挡。这种方法效率高的原因在于它不计算元素之间的可见性。它改用一种基于近似遮蔽的简单得多、也快得多的技术来体现遮挡（阻挡）几何体。</p><h2>14.1 表面元素</h2><p>算法的第一步是把多边形数据转换成表面元素，以便容易地计算表面上一部分对另一部分的遮蔽或照明有多少。图 14-2 说明了基本概念。我们把表面元素定义为一个有朝向的圆盘，具有位置、法线和面积。元素有正面和背面。光从正面发射和反射。光从背面透射，阴影也从背面投射。我们为网格的每个顶点创建一个元素。假定顶点已经定义了位置和法线，我们只需计算每个元素的面积。顶点处的面积按共享该顶点的三角形面积的三分之一求和（四边形则取四分之一）。三边长分别为 <em>a</em>、<em>b</em>、<em>c</em> 的三角形面积，其海伦公式为：</p><p><img alt="ch14_eqn001.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch14_eqn001.jpg"/></p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/14_ambient_occlusion_02.jpg" alt="14_ambient_occlusion_02.jpg"><figcaption>图 14-2 把多边形网格转换为元素</figcaption></figure><p>其中 <em>s</em> 是三角形周长的一半：(<em>a</em> + <em>b</em> + <em>c</em>)/2。</p><p>我们把元素数据（位置、法线和面积）存储在纹理图中，因为我们将用片元程序（即像素着色器）完成全部环境光遮蔽计算。假定顶点位置与法线每帧都会变化，我们需要能快速改变纹理图中的值。一种选择是从一开始就把顶点数据保存在纹理图中，并用片元程序而非顶点程序完成所有动画以及从物体空间到眼睛（或世界）空间的变换。我们可以用渲染到顶点数组来生成要送入常规管线的顶点数组，然后使用一个简单的直通顶点着色器。另一种效率较低的选择是在 CPU 上做动画与变换，每帧把顶点数据加载到一张纹理里。</p><h2>14.2 环境光遮蔽</h2><p>环境光遮蔽是为受环境光照明的漫反射物体添加阴影的实用技术。没有阴影时，被多个方向照亮的漫反射物体看起来平淡、不真实。环境光遮蔽通过压暗对环境只有部分可见的表面来提供软阴影。它要计算可及度值，即每个表面点上方半球中未被几何体遮挡的比例（Landis 2002）。除可及度之外，计算遮蔽最少的方向也很有用，通常称为<em>弯曲法线</em>。给表面着色时用弯曲法线代替常规法线，可以得到更准确的环境光照。</p><p>我们可以把每个元素的可及度值计算为 1 减去其他所有元素对该元素的遮蔽量。我们把被遮蔽的元素称为<em>接收者</em>，把投射阴影的元素称为<em>发射者</em>。我们用基于有朝向圆盘立体角的近似来计算发射者元素对接收者元素的遮蔽量。设 <em>A</em> 为发射者的面积，则遮蔽量可近似为：</p><p><a id="ch14equ01"></a><strong>公式 14-1 阴影近似</strong></p><p><a><img alt="ch14_eqn002.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch14_eqn002.jpg"/></a></p><p>如图 14-3 所示，<em><sub>E</sub></em> 是发射者法线与从发射者指向接收者的向量之间的夹角。<em><sub>R</sub></em> 是接收者元素对应的夹角。圆盘立体角公式中加入 max(1, 4 x cos <em><sub>R</sub></em> ) 项，以忽略不位于接收者上方半球内的发射者，同时不对位于地平线附近的元素造成渲染瑕疵。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/14_ambient_occlusion_03.jpg" alt="14_ambient_occlusion_03.jpg"><figcaption>图 14-3 接收者元素与发射者元素的关系</figcaption></figure><p>下面是近似计算元素间遮蔽的片元程序函数：</p><pre><code>float ElementShadow(float3 v, float rSquared, float3 receiverNormal,
+                    float3 emitterNormal, float emitterArea)
+{
+  // 我们假设 emitterArea 已经除以 PI
+  return (1 - rsqrt(emitterArea / rSquared + 1)) *
+         saturate(dot(emitterNormal, v)) * saturate(4 * dot(receiverNormal, v));
+}</code></pre><h4>14.2.1 多遍遮蔽算法</h4><p>我们分两遍计算可及度值。第一遍中，我们把其他每个元素所张开的半球份额相加，再从 1 中减去，以此近似每个元素的可及度。第一遍之后，有些元素通常会太暗，因为处于阴影中的其他元素本身也在投射阴影。于是我们用第二遍做同样的计算，但这次把每个形状因子乘以发射者元素在上一遍中的可及度。效果是处于阴影中的元素对其他元素的遮蔽变少，如图 14-4 所示。第二遍之后，我们消除了任何重复遮蔽。不过被三重以上遮蔽的表面会变得太亮。我们可以用更多遍得到更好的近似，也可以用第一遍与第二遍合并结果的加权平均来近似同样的答案。图 14-5 给出每一遍之后的结果，以及与光线追踪解法的对比。弯曲法线在第二遍中计算。我们先求元素之间归一化向量与形状因子的乘积，再从原元素法线中减去该结果，得到弯曲法线。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/14_ambient_occlusion_04.jpg" alt="14_ambient_occlusion_04.jpg"><figcaption>图 14-4 修正重叠物体造成的遮蔽</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/14_ambient_occlusion_05.jpg" alt="14_ambient_occlusion_05.jpg"><figcaption>图 14-5 用我们的技术渲染的模型与参考图像的对比</figcaption></figure><p>我们通过渲染单个四边形（或两个三角形）来计算遮蔽结果，使每个表面元素对应渲染一个像素。着色器计算每个元素接收到的遮蔽量，并把它写成像素颜色的 alpha 分量。结果渲染到一张纹理图，这样第二遍可以用另一次渲染完成。这一遍中计算弯曲法线，并把它写成颜色的 RGB 值，同时把新的阴影值写入 alpha 分量。</p><h4>14.2.2 提升性能</h4><p>即使元素间的遮蔽计算非常快（一块 GeForce 6800 每秒能做 1.5 亿次这样的计算），我们仍需改进算法，才能在实时下处理数千个以上的元素。我们可以对远处表面使用简化几何体来减少工作量。这对漫反射光照环境很有效，因为阴影非常软，远处几何体细节投射的阴影看不见。幸运的是，由于我们的技术并不使用多边形本身，我们可以创建表示简化几何体的表面元素，而不需要另做多边形模型。我们只需把原网格中顶点相邻的元素分组，用一个更大的元素表示它们。对更大的元素也可以这样做，形成元素更少、尺寸更大的层级结构。这样，我们渲染每个像素时不再遍历每一个元素，而是遍历元素的层级结构。如果接收者元素离发射者足够远——比如达到发射者半径的四倍——我们就用它来计算。只有当接收者靠近某个发射者时，才需要遍历它的子节点（如果有）。见图 14-6。以这种方式遍历层级结构，实践中可以把算法性能从 <em>O</em>(<em>n</em> <sup>2</sup>) 提升到 <em>O</em>(<em>n</em> log <em>n</em>)。图 14-7 的图表表明，随着层级结构中顶点数增加，每个顶点的性能保持稳定。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/14_ambient_occlu_06.jpg" alt="14_ambient_occlu_06.jpg"><figcaption>图 14-6 层级元素</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/14_ambient_occlu_07.jpg" alt="14_ambient_occlu_07.jpg"><figcaption>图 14-7 不同密度网格的环境光遮蔽着色器性能</figcaption></figure><p>我们用在层级结构中直接位于其下的子元素来计算父元素的数据。父元素的位置与法线由其子元素的位置与法线取平均得到。面积则取子元素面积之和。我们可以用一个着色器完成这些计算：对层级结构的每一层执行一遍该着色器，把值从叶节点向上传播。也可以用同样的技术对后续遍所需的遮蔽遍结果取平均，或者干脆把父节点与子节点同样对待，省去取平均这一步。值得注意的是，多数动画元素的面积变化很小、甚至不变，即使是非刚体对象也是如此；因此面积不必每帧重新计算。</p><p>环境光遮蔽片元着色器见代码清单 14-1。</p><h4>示例 14-1. 环境光遮蔽着色器</h4><pre><code>float4 AmbientOcclusion(float4 position
+                        : WPOS, float4 normOffset
+                        : TEX1, uniform samplerRECT lastResultMap
+                        : TEXUNIT0, uniform samplerRECT positionMap
+                        : TEXUNIT1, uniform samplerRECT elementNormalMap
+                        : TEXUNIT2, uniform samplerRECT indexMap
+                        : TEXUNIT3)
+    : COL
+{
+  float eArea;
+  // 发光体面积
+  float4 ePosition; // 发光体位置
+  float4 eNormal;
+  // 发光体法线
+  float3 rPosition = texRECT(positionMap, position.xy).xyz;
+  float3 rNormal = texRECT(elementNormalMap, position.xy).xyz;
+  float3 v;
+  // 从接收点到发光体的向量
+  float total = 0;
+  // 用来计算可达性
+  float4 eIndex = float2(0.5, 0.5); // 当前发光体的索引
+  float3 bentNormal = rNormal;
+  // 用接收点法线初始化
+  float value;
+  float d2;
+  // 接收点到发光体距离的平方
+  while (emitterIndex.x != 0)
+  { // 遍历尚未结束时循环
+    ePosition = texRECT(positionMap, emitterIndex.xy);
+    eNormal = texRECT(elementNormalMap, emitterIndex.xy);
+    eArea = emitterNormal.w;
+    eIndex = texRECT(indexMap, emitterIndex.xy); // 取下一个索引
+    v = ePosition.xyz - rPosition;
+    // 指向发光体的向量
+    d2 = dot(v, v) + 1e - 16;
+    // 计算距离平方，避免为 0
+    // 接收点是否靠近父元素？
+    if (d2 < -4 * emitterArea)
+    {
+      // （父元素面积为负）
+      eIndex.xy = eIndex.zw;
+      // 沿层次向下
+      emitterArea = 0;
+      // 忽略此元素
+    }
+    v *= rsqrt(d2);
+    // 对 v 归一化
+    value = SolidAngle(v, d2, rNormal, eNormal.xyz, abs(eArea)) *
+            texRECT(resultMap, position.xy).w; // 以上一次的结果调制
+    bentNormal -= value * v;
+    // 更新弯曲法线
+    total += value;
+  }
+  if (!lastPass)
+    // 只有最后一趟才需要弯曲法线
+    return saturate(1 - total); // 只返回可达性
+  else
+    return float4(normalize(bentNormal), 1 Ð total);
+}</code></pre><h2>14.3 间接光照与面光源</h2><p>通过加入由漫反射表面反射光所形成的间接光照，我们可以给渲染图像再加一层真实感（Tabellion 2004）。用环境光遮蔽着色器的一处小改动，就能加入单次反弹的间接光。我们把立体角函数换成圆盘对圆盘的辐亮度传输函数。我们用着色器的一遍来传输反射光或发射光，用两遍来对光做阴影。</p><p>对于间接光照，首先要计算每个表面元素正面反射的光量。如果反射光来自环境光照，我们先计算环境光遮蔽数据，再用它计算到达每个顶点的环境光。如果使用点光源或平行光的直接光照，我们就按给表面着色的方式计算每个元素处的光，包括阴影贴图。也可以同时做环境光照与直接光照，把两个结果相加。然后把光值乘以表面元素的颜色，使红色表面反射红光、黄色表面反射黄光，依此类推。面光源的处理与反射光的漫反射表面相同，只是它们被初始化为一个要发射的光值。</p><p>下面是计算元素间辐亮度传输的片元程序函数：</p><pre><code>float FormFactor(float3 v, float d2, float3 receiverNormal,
+                 float3 emitterNormal, float emitterArea)
+{
+  // 假定 emitterArea 已除以 PI
+  return emitterArea * saturate(dot(emitterNormal, v)) *
+         saturate(dot(receiverNormal, v)) / (d2 + emitterArea);
+}</code></pre><p><a id="ch14equ02"></a><strong>公式 14-2 圆盘对圆盘形状因子近似</strong></p><p><a><img alt="ch14_eqn003.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch14_eqn003.jpg"/></a></p><p>我们用公式 14-2 给出的圆盘对圆盘形状因子的几何项来计算从一个表面元素传输到另一个表面元素的光量。我们略去可见性因子，该因子考虑遮挡（阻挡）几何体。取而代之的是像计算环境光遮蔽时那样的遮蔽技术——只不过这次用的是传输光时所用的同一个形状因子。此外，我们把遮蔽元素的形状因子乘以三分量的光值，而不是单分量的可及度值。</p><p>现在我们运行一遍辐亮度传输着色器，计算出能到达任一元素的最大反射光或发射光量。然后运行一遍阴影遍，根据到达遮蔽元素的光量，从每个元素的总光量中减去相应部分。与环境光遮蔽一样，我们可以再运行一遍，通过消除重复遮蔽来改善光照。图 14-8 展示一个同时受直接光照以及一次、两次间接光反弹照明的场景。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/14_ambient_occlu_08.jpg" alt="14_ambient_occlu_08.jpg"><figcaption>图 14-8 结合直接光照与间接光照</figcaption></figure><h2>14.4 结论</h2><p>环境光遮蔽与间接光照这类全局光照技术能极大提升漫反射表面的渲染质量。我们提出了一种用 GPU 计算漫反射表面光传输的新技术。该技术适用于在带可变形几何体的动态场景中实现各种全局光照效果。</p><h2>14.5 参考文献</h2><p><a id="biblio14_01"></a>Landis, Hayden. 2002. "Production-Ready Global Illumination." 课程 16 讲义, SIGGRAPH 2002.</p><p><a id="biblio14_02"></a>Pharr, Matt, and Simon Green. 2004. "Ambient Occlusion." 载 <em>GPU Gems</em>，Randima Fernando 编，第 279–292 页。Addison-Wesley 出版。</p><p><a id="biblio14_03"></a>Sloan, Peter-Pike, Jan Kautz, and John Snyder. 2002. "Precomputed Radiance Transfer for Real-Time Rendering in Dynamic, Low-Frequency Lighting Environments." <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)，第 527–536 页。</p><p><a id="biblio14_04"></a>Tabellion, Eric, and Arnauld Lamorlette. 2004. "An Approximate Global Illumination System for Computer Generated Films." <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2004)</em> 23(3)，第 469–476 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-14-dynamic-ambient-occlusion-and" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-14-dynamic-ambient-occlusion-and</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

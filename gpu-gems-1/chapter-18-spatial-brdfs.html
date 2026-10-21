@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 18 章　空间 BRDF - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 18 章　空间 BRDF」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 18 章　空间 BRDF</h1>
+<p><em>David McAllister<br> NVIDIA</em></p><p>空间双向反射分布函数（SBRDF）描述表面上每个不同点、在每一对入射角与出射角下的反射率。该函数以非常通用、细致的方式表现表面的外观。本章讨论一种紧凑的 SBRDF 表示，以及用离散光源或环境贴图照明 SBRDF 的渲染方法。</p><h2>18.1 什么是 SBRDF？</h2><p>SBRDF 是纹理映射与双向反射分布函数（BRDF）的结合。纹理贴图存储的是在二维表面上随空间变化的反射率或其他属性。BRDF 存储的是表面上单个点在所有入射角与出射角下的反射率。见图 18-1。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig18-01.jpg" alt="fig18-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig18-01.jpg" rel="noreferrer noopener">图 18-1</a> SBRDF 的定义域</figcaption></figure><p>真实表面通常变化显著，既有表面上的空间变化，也有随所有光照与视线方向的角度变化。因此，要更真实地表现大多数表面，就应当把 BRDF 与纹理映射结合起来。这种结合就是 SBRDF。详见 McAllister 2002。</p><h2>18.2 表示的细节</h2><p>最直接的 SBRDF 表示，是在纹理贴图的每个纹素处存储该点 BRDF 的全部参数。任何 BRDF 表示都可以用，但紧凑且适合硬件渲染的一种是 Lafortune 表示（Lafortune 1997）。该表示由若干项之和构成：</p><p><img alt="ch18_eqn001.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn001.jpg"/></p><p>其中 <em><sub>d</sub></em> 是漫反射率。求和中的各项是镜面波瓣。每个波瓣 <em>j</em> 有一个反照率（反射率缩放因子）<em><sub>s</sub></em> <sub>,</sub> <em><sub>j</sub></em> ，以及一个波瓣形状 <em>s<sub>j</sub></em> 。入射方向与出射方向分别是 <em><sub>i</sub></em> 与 <em><sub>r</sub></em> 。波瓣形状定义如下，类似于标准的 Phong 波瓣：</p><p><img alt="ch18_eqn002.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn002.jpg"/></p><p>这个公式可以看作一个广义的点积，其中三项被任意缩放：</p><p><img alt="ch18_eqn003.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn003.jpg"/></p><p>见图 18-2。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig18-02.jpg" alt="fig18-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig18-02.jpg" rel="noreferrer noopener">图 18-2</a> 由三个波瓣（蓝色）与一个漫反射分量（橙色）组成的 BRDF（绿色）</figcaption></figure><p>Lafortune 表示在局部表面坐标中求值。<em>x</em> 轴与 <em>y</em> 轴沿各向异性方向（划痕或线纹方向），<em>z</em> 轴为法线。把矩阵 <em>C</em> 定义为 <em>C<sub>x</sub></em> = -1、<em>C<sub>y</sub></em> = -1、<em>C<sub>z</sub></em> = 1，会使 <em><sub>i</sub></em> 关于法线反射，得到标准的 Phong 波瓣。但 <em>C</em> 的系数可以取其他值，以剪切镜面波瓣，从而表现真实表面的散射行为。波瓣的峰值位于 <em>C</em> · <em><sub>i</sub></em> 方向上。对于各向同性 BRDF，<em>C<sub>x</sub></em> = <em>C<sub>y</sub></em>。对于偏离镜面方向的反射，<a href="https://developer.download.nvidia.com/books/gpugems/ch18_eqn004.jpg" rel="noreferrer noopener"><img alt="ch18_eqn004.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn004.jpg"/></a> ，把波瓣拉向切平面。对于回射，<em>C<sub>x</sub></em> &gt; 0 且 <em>C<sub>y</sub></em> &gt; 0。当 <em>C<sub>x</sub></em> 与 <em>C<sub>y</sub></em> 符号相反时，波瓣对平行于主各向异性方向射来的光做前向散射，对垂直于该方向射来的光做后向散射，这正好模拟线纹与划痕的行为。</p><p>Lafortune 表示能逐个瞄准并缩放散射波瓣，这种灵活性正是仅用少数几个波瓣就能近似 BRDF 的关键。这一性质也支撑了 18.4 节所述的光泽环境贴图技术。Lafortune 表示很贴合 BRDF 通常具有的形状。它紧凑，并且能表现有意思的 BRDF 特性，例如菲涅尔反射随角度增大的反射率、偏镜面峰值以及回射。</p><p>反照率 <em></em> 值是 RGB 三元组，而 <em>C<sub>x</sub></em> 、 <em>C<sub>y</sub></em> 、 <em>C<sub>z</sub></em> 与 <em>n</em> 的值由各通道共用，每个镜面波瓣共七个系数。视表面性质以及质量与速度之间的权衡，通常一到三个镜面项就足够。系数少至十个（三个漫反射加七个镜面反射）时，SBRDF 表示仅比 RGB 纹理贴图大约三倍，却真实得多。</p><p>SBRDF 数据可以从真实表面测量得到（McAllister 2002），也可以由美术用专门编写的绘制程序绘制。最简单的绘制方法是使用一个现有 BRDF 的调色板，把它们绘制进 SBRDF 纹理贴图。调色板条目可以混合现有 BRDF，可以从 SBRDF 数据库采样（McAllister 2003），也可以用对话框设置 <em></em>、<em>C<sub>x</sub></em> 、 <em>C<sub>y</sub></em> 、 <em>C<sub>z</sub></em> 与 <em>n</em> 的值来定义。</p><h2>18.3 使用离散光源渲染</h2><p>两种渲染方式载入 SBRDF 到纹理内存的方式相同。漫反射颜色 <em><sub>d</sub></em> 存在一张纹理贴图中（其 alpha 通道可用于 alpha kill 或其他用途）。对每个波瓣，<em><sub>s</sub></em> 存在一张纹理贴图中（其 alpha 通道不使用，或用于各向异性方向），而 <em>C<sub>x</sub></em> 、 <em>C<sub>y</sub></em> 、 <em>C<sub>z</sub></em> 与 <em>n</em> 存在第二张贴图中。使用八位纹理贴图时，必须施加缩放与偏置，因为 <em>C<sub>x</sub></em> 与 <em>C<sub>y</sub></em> 的有用取值范围约为 -1.1 到 1.1。先乘 96，再加 128 的偏置，效果不错。视可用的内存带宽与片元着色器性能，把 SBRDF 数据存进浮点纹理而非八位纹理可能更高效，这样可避免缩放并提高精度。</p><p>用标准点光源或方向光照明 SBRDF 表面的 Cg 着色器很简单，如代码清单 18-1 所示。它类似于标准 Phong 模型与硬件光源的着色器。区别之一在于，所有 BRDF 参数都从纹理贴图采样，而非只有漫反射颜色。另一个区别是点积在局部表面坐标中求值，因此其分量可以用 <em>C<sub>x</sub></em> 、 <em>C<sub>y</sub></em> 与 <em>C<sub>z</sub></em> 缩放。这要求顶点程序以局部表面坐标提供光照向量。示例结果见图 18-3。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig18-03.jpg" alt="fig18-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig18-03.jpg" rel="noreferrer noopener">图 18-3</a> 用离散光源渲染</figcaption></figure><h4>示例 18-1. 用于离散光源的 SBRDF 片元着色器</h4><pre><code>#define NUM_LOBES 3 #define NUM_LIGHTS 2
+// Store Cx, Cy, Cz on range -1.3333 .. 1.3333.
+#define SCL
+(1.0 / (96.0 / 256.0)) #define BIAS(SCL / 2.0) #define EXSCL
+    255.0 // 将指数缩放到 0 .. 255 范围。
+    // 对视线向量和所有光源向量做光栅化。
+    // 把光源颜色作为 uniform 参数传入。
+    struct fromrast
+{
+  float2 TexUV : TEXCOORD0;
+  // 表面纹理坐标
+  float3 EyeVec : TEXCOORD1;
+  // 指向眼睛的向量（局部空间）
+  float3 LightVec[NUM_LIGHTS] : TEXCOORD2; // 光源（局部空间）
+};
+float4 main(fromrast I, uniform sampler2D tex_dif,
+            // 漫反射
+            uniform sampler2D tex_lshp[NUM_LOBES], // 波瓣形状
+            uniform sampler2D tex_lalb[NUM_LOBES], // 波瓣反照率
+            uniform float4 Expos, uniform float3 LightCol[NUM_LIGHTS])
+    : COLOR
+{
+  // 从纹理中加载 BRDF 参数
+  float4 lobe_shape[NUM_LOBES];
+  float4 lobe_albedo[NUM_LOBES];
+  for (float p = 0; p < NUM_LOBES; p++)
+  {
+    lobe_shape[p] =
+        f4tex2D(tex_lshp[p], I.TexUV.xy) * float4(SCL, SCL, SCL, EXSCL) -
+        float4(BIAS, BIAS, BIAS, 0.0);
+    lobe_albedo[p] = f4tex2D(tex_lalb[p], I.TexUV.xy);
+  }
+  float4 dif_albedo = f4tex2D(tex_dif, I.TexUV.xy);
+  // 局部空间中指向眼睛的向量。
+  float3 toeye = normalize(I.EyeVec.xyz);
+  // 累加各光源在该表面上的出射辐亮度
+  float3 exrad = float3(0, 0, 0);
+  for (int l = 0; l < NUM_LIGHTS; l++)
+  {
+    // 局部空间中指向光源的向量。
+    float3 tolight = normalize(I.LightVec[l].xyz);
+    // 对该点与方向对求值 SBRDF
+    float3 refl = dif_albedo.xyz;
+    for (float p = 0; p < NUM_LOBES; p++)
+    {
+      // 错切视线向量
+      float3 Cwr_local = lobe_shape[p].xyz * toeye;
+      float thedot = dot(Cwr_local, tolight);
+      refl = refl + lit(thedot, thedot, lobe_shape[p].w).z * lobe_albedo[p].xyz;
+    }
+    // 该光源的辐照度（入射辐亮度乘以 NdotL）。
+    float NdotL = max(0, tolight.z);
+    float3 irrad = LightCol[l] * NdotL;
+    // 反射率乘以辐照度即为出射辐亮度。
+    exrad += refl * irrad;
+  }
+  float4 final_col = exrad.xyzz * Expos.xxxx; // 设置 HDR 曝光。
+  final_col.w = dif_albedo.w; // 把贴图中的 alpha 写入像素。
+  return final_col;
+}</code></pre><h4>18.3.1 纹理采样</h4><p><em>C<sub>x</sub></em> 、 <em>C<sub>y</sub></em> 、 <em>C<sub>z</sub></em> 与 <em>n</em> 是一个非线性函数的参数，因此对这些纹理贴图做双线性或三线性插值会产生闪烁的瑕疵。最简单的解决办法是对这张贴图使用点采样。</p><h2>18.4 使用环境贴图渲染</h2><p>除了用点光源或方向光照明，SBRDF 还可以通过环境贴图接受来自各个方向的入射光。关键在于渲染前先把环境贴图与 BRDF 的一部分做卷积。对大多数 BRDF 表示，这必须针对每个不同的 BRDF 分别进行。但一个 SBRDF 可能包含上百万个不同的 BRDF，这样做是不可能的。</p><p>我们改为只把环境贴图与一组挑选了不同镜面指数的 Phong 波瓣做卷积，例如 <em>n</em> = 0、1、4、16、64 和 256<em>.</em> 这些贴图可以存进立方体 mipmap 的各个层，<em>n</em> = 0 的贴图放在最粗的 mipmap 层，<em>n</em> = 256 的贴图放在最细的 mipmap 层。SBRDF 纹素的 <em>n</em> 值随即指示采样立方体贴图相应 mipmap 层时所用的细节层次（LOD）值。</p><p>这组卷积后的环境贴图的另一种表示是单张三维纹理，其中 <em>s</em> 与 <em>t</em> 两个映射维度对应抛物面映射（Heidrich and Seidel 1999），<em>r</em> 维度对应 <em>n</em>。</p><h4>18.4.1 数学推导</h4><p>推导从把被着色像素的辐亮度 <em>L</em>(<em><sub>r</sub></em> ) 写成 Lafortune BRDF 的漫反射项与镜面反射项开始：</p><p><img alt="ch18_eqn005.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn005.jpg"/></p><p>其中 <em><sub>i</sub></em> 表示对入射半球积分。入射辐亮度 <em>L<sub>i</sub></em> (<em><sub>i</sub></em> ) 存在环境贴图中，以入射方向为索引。漫反射项可以很容易地编码进一张只以 <strong>N</strong> 为索引的环境贴图：</p><p><img alt="ch18_eqn006.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn006.jpg"/></p><p><em>D</em>(<strong>N</strong>) 与 BRDF 无关，因此对所有要反射环境贴图 <em>L<sub>i</sub></em> (<em><sub>i</sub></em> ) 的物体只需预计算一次。镜面反射项同样利用预计算贴图。正如 <strong>N</strong> 索引预卷积的漫反射贴图，视方向的一个函数索引一张预卷积的镜面反射环境贴图：</p><p><img alt="ch18_eqn007.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn007.jpg"/></p><p><em>p<sub>j</sub></em> (<em><sub>r</sub></em> ) 是波瓣状采样核的峰值向量——即对朝向 <em><sub>r</sub></em> 的出射辐亮度影响最大的入射方向，这一影响来自波瓣 <em>j</em>。于是公式为：</p><p><img alt="ch18_eqn008.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn008.jpg"/></p><p>与环境贴图做镜面波瓣卷积的结果为：</p><p><img alt="ch18_eqn009.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn009.jpg"/></p><p>这个公式在给定原始环境贴图的情况下生成卷积后的环境贴图。如前所述，该贴图既以入射核峰值方向 <em><sub>p</sub></em> 为参数，也以指数 <em>n</em> 为参数。代码清单 18-2 的伪代码给出一种暴力方法，用于计算与指数为 <em>n</em> 的 Phong 波瓣卷积的环境贴图。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig18-04.jpg" alt="fig18-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig18-04.jpg" rel="noreferrer noopener">图 18-4</a> 入射波瓣峰值</figcaption></figure><h4>示例 18-2. 将环境贴图与 Phong 波瓣卷积的伪代码</h4><pre><code>float3 S(float3 Wp, float n)
+{
+  float3 Sum = 0.xyz;
+  float WgtSum = 0;
+  for (int si = 0; si < 6; si++)
+  {
+    for (int yi = 0; yi < YMAX; yi++)
+    {
+      for (int xi = 0; xi < XMAX; xi++)
+      {
+        float3 Wi = VecFromCubeMap(xi, yi, si);
+        float dp = dot(Wp, Wi);
+        if (dp < 0)
+          continue;
+        float lobe_shape = pow(dp, n);
+        float3 FN = FaceNormal(si);
+        // 用立方体向量的长度缩放辐照度，
+        // 以补偿立方体贴图分布的不规则。
+        float3 Irrad = Li(Wi) * dp / length2(Wi);
+        Sum += Irrad * lobe_shape;
+        WgtSum += lobe_shape; // 计算波瓣的体积
+      }
+    }
+  }
+  return Sum / WgtSum;
+}
+// 用指数为 n 的 Phong 波瓣卷积立方体贴图 Li
+CubeMap PrecomputeEnvMap(float n)
+{
+  CubeMap Smap;
+  // 遍历立方体贴图的所有像素
+  for (int s = 0; s < 6; s++)
+  {
+    for (int y = 0; y < YMAX; y++)
+    {
+      for (int x = 0; x < XMAX; x++)
+      {
+        float3 Wp = VecFromCubeMap(x, y, s);
+        Smap(x, y, s) = S(Wp, n);
+      }
+    }
+  }
+  return Smap;
+}</code></pre><p>硬件渲染中最终采用的公式为：</p><p><img alt="ch18_eqn010.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn010.jpg"/></p><p><a href="https://developer.download.nvidia.com/books/gpugems/ch18_eqn011.jpg" rel="noreferrer noopener"><img alt="ch18_eqn011.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch18_eqn011.jpg"/></a> 因子之所以出现，是因为 <em>S</em> 是用归一化的 <em><sub>p</sub></em> 计算的，因此入射辐亮度仍需按波瓣的大小缩放。这个公式只是近似，因为辐照度衰减 <strong>N ·</strong> <em><sub>i</sub></em> 必须在关于 <em><sub>i</sub></em> 的积分内部计算。但这无法存入环境贴图，因为那样它就会同时以 <em>p</em>(<em><sub>r</sub></em> ) 与 <strong>N</strong> 为参数。所提出的公式改为在积分内对所有入射方向等权，但把 <em>S</em>(<em><sub>p</sub></em> , <em>n</em>) 用 <strong>N ·</strong> <em>p</em>(<em><sub>r</sub></em> ) 加权。这一近似在实践中没有造成问题。</p><p>于是每个波瓣只需一次环境贴图查找和几次乘法，我们就能渲染任意多个独立的 BRDF，只要它们由同一组任意环境贴图照明。</p><h4>18.4.2 着色器代码</h4><p>代码清单 18-3 给出用预卷积环境贴图渲染的示例代码。它调用函数 <code>f3texCUBE_RGBE_Conv(</code> <em>env_tex</em>, <em>dir</em>, <em>n</em> <code>)</code>，该函数在给定方向上采样预卷积环境贴图，并根据 <em>n</em> 计算 LOD。结果见图 18-5。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig18-05.jpg" alt="fig18-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig18-05.jpg" rel="noreferrer noopener">图 18-5</a> 用环境贴图渲染</figcaption></figure><p>为了紧凑地表示大于 1.0 的入射辐亮度值，可以使用 RGBE 表示，解码为 <code>float3</code> 也在该函数内完成。</p><h4>示例 18-3. 用于环境贴图的 SBRDF 片元着色器</h4><pre><code>#define NUM_LOBES 2
+// Store Cx, Cy, Cz on range -1.3333 .. 1.3333.
+#define SCL
+(1.0 / (96.0 / 256.0)) #define BIAS(SCL / 2.0) #define EXSCL
+    255.0 // 将指数缩放到 0 .. 255 范围。
+    float3
+    ApplyLobe(float3 toeye, float4 lobe_shape, float3 lobe_albedo, float3 Tan,
+              float3 BiN, float3 Nrm, uniform samplerCUBE tex_s)
+{
+  // 在局部表面空间中反射视线向量得到 p(wr)
+  float3 Cwr_local = lobe_shape.xyz * toeye;
+  // 环境查找之前先把波瓣峰值变换到世界空间
+  float3 Cwr_world = ToWorld(Cwr_local, Tan, BiN, Nrm);
+  // 在波瓣峰值方向上采样立方体贴图。
+  float sharpness = lobe_shape.w; // 这就是 n。
+  float3 incrad = f3texCUBE_RGBE_Conv(tex_s, Cwr_world, sharpness);
+  // (length^2)^(n*0.5) = length^n
+  float lobelen = pow(dot(Cwr_world, Cwr_world), sharpness * 0.5);
+  // 用峰值方向的衰减
+  // 来近似所有点处的辐照度衰减。
+  // 这就是局部空间中的 N dot Cwr。
+  float3 irrad = incrad * (Cwr_local.z * lobelen);
+  float3 radiance = irrad * lobe_albedo;
+  return radiance;
+}
+struct fromrast
+{
+  float2 TexUV : TEXCOORD0;
+  // 表面纹理坐标
+  float3 EyeVec : TEXCOORD1; // 指向眼睛的向量（局部空间）
+  // ——需要归一化
+  float3 NrmVec : TEXCOORD2; // 法线（世界空间）
+  // ——需要归一化
+  float3 TanVec : TEXCOORD3; // 切线（世界空间）
+  // ——需要归一化
+};
+float4 main(fromrast I, uniform sampler2D tex_dif,
+            // 漫反射
+            uniform sampler2D tex_lshp0,
+            // 波瓣形状
+            uniform sampler2D tex_lalb0,
+            // 波瓣反照率
+            uniform sampler2D tex_lshp1,
+            // 波瓣形状
+            uniform sampler2D tex_lalb1,
+            // 波瓣反照率
+            uniform samplerCUBE tex_envd, // 立方体漫反射环境贴图
+            uniform samplerCUBE tex_envs, // 立方体镜面反射环境贴图
+            uniform float4 Expos)
+    : COLOR
+{
+  // 预加载所有 BRDF 参数。
+  float4 lobe_shape[NUM_LOBES];
+  float4 lobe_albedo[NUM_LOBES];
+  for (float p = 0; p < NUM_LOBES; p++)
+  {
+    lobe_shape[p] =
+        f4tex2D(tex_lshp[p], I.TexUV.xy) * float4(SCL, SCL, SCL, EXSCL) -
+        float4(BIAS, BIAS, BIAS, 0.0);
+    lobe_albedo[p] = f4tex2D(tex_lalb[p], I.TexUV.xy);
+  }
+  float4 dif_albedo = f4tex2D(tex_dif, I.TexUV.xy);
+  float3 Nrm = normalize(I.NrmVec.xyz);
+  float3 Tan = normalize(I.TanVec.xyz);
+  float3 BiN = cross(Nrm, Tan);
+  // 局部空间中指向眼睛的向量。
+  float3 toeye = normalize(I.EyeVec.xyz);
+  // 累加各波瓣在该表面上的出射辐亮度
+  float3 exrad = float3(0, 0, 0);
+  for (int l = 0; l < NUM_LOBES; l++)
+    exrad += ApplyLobe(toeye, lobe_shape[l], lobe_albedo[l].xyz, Tan, BiN, Nrm,
+                       tex_envs);
+  // 加上漫反射项。tex_envd 保存了表面
+  // 法线方向为 Nrm 时的辐照度。
+  float3 irrad = f3texCUBE_RGBE(tex_envd, Nrm);
+  exrad = exrad + dif_albedo.xyz * irrad;
+  float4 final_col = exrad.xyzz * Expos.xxxx; // 设置 HDR 曝光。
+  final_col.w = dif_albedo.w; // 把贴图中的 alpha 写入像素。
+  return final_col;
+}</code></pre><h2>18.5 结论</h2><p>考虑到 SBRDF 的通用性之强，离散光源着色器的性能好得惊人。它的主要工作是对每个波瓣、每个光源做一次点积和一次 <code>lit()</code> 计算。</p><p>同样，环境贴图着色器的性能也相当好，因为它允许每个纹素拥有完全不同的 BRDF，却仍能用环境贴图照明。这个着色器的核心只是一次环境贴图纹理查找，但遗憾的是，计算查找坐标需要一次矩阵变换。两个着色器都有大量运算可以轻松地以半精度完成，而看不出视觉差异。</p><p>为简化起见，本章省略了随空间变化的各向异性方向。不过细节可以在 McAllister 2002 中找到，其中还有卷积环境贴图的示例代码、与这些片元着色器对应的顶点着色器，以及更多内容。</p><h2>18.6 参考文献</h2><p><a id="ch18bib01_01"></a>Heidrich, Wolfgang, and H.-P. Seidel. 1999. "Realistic, Hardware-Accelerated Shading and Lighting."，载 <em>Proceedings of SIGGRAPH 99</em>。</p><p><a id="ch18bib01_02"></a>Lafortune, E. P. F., S.-C. Foo, et al. 1997. "Non-Linear Approximation of Reflectance Functions."，载 <em>Proceedings of SIGGRAPH 97</em>，第 117–126 页。</p><p><a id="ch18bib01_03"></a>McAllister, David K. 2002. "A Generalized Surface Appearance Representation for Computer Graphics." Department of Computer Science, University of North Carolina, Chapel Hill. 可在线获取：<strong><a href="http://www.cs.unc.edu/~davemc/Pubs.html" rel="noreferrer noopener">http://www.cs.unc.edu/~davemc/Pubs.html</a></strong></p><p><a id="ch18bib01_04"></a>McAllister, David K., and Anselmo A. Lastra. 2003. "The SBRDF Home Page." 网站。<strong><a href="http://www.cs.unc.edu/~davemc/SBRDF" rel="noreferrer noopener">http://www.cs.unc.edu/~davemc/SBRDF</a></strong></p><p><em>作者感谢 Ben Cloward 为旅馆大堂场景建模并制作贴图，还采集了旅馆大堂的 HDR 辐亮度图；也感谢 Anselmo Lastra 博士担任作者的学位论文导师，并在工作的各个方面给予帮助。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-18-spatial-brdfs" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-18-spatial-brdfs</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

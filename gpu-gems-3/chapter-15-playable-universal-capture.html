@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 15 章　可播放的通用捕捉 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 15 章　可播放的通用捕捉」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 15 章　可玩的 Universal Capture</h1>
+<p><em>George Borshukov<br> Electronic Arts</em></p><p><em>Jefferson Montgomery<br> Electronic Arts</em></p><p><em>John Hable<br> Electronic Arts</em></p><p>本章讨论 Universal Capture（缩写 UCap）的实时实现。这项技术从非交互的电影应用（<em>The Matrix</em> 系列电影）起步，经过实时回放（E3 2005 的 Fight Night Round 3 概念演示），发展到完全可交互（E3 2006 的 Tiger Woods 演示），最终被用于在游戏《<em>Tiger Woods PGA Tour 07</em>》与《<em>Need for Speed: Carbon</em>》中驱动高保真面部表演。基于这些项目中得到的经验，我们认为此处描述的系统是我们在未来游戏与交互应用中愿意推荐的最佳权衡。</p><h2>15.1 引言</h2><p>逼真动画面部的数字再现是一个难题，主要原因有两个：</p><ul><li>要再现逼真的面部动画，涉及的因素浩如烟海。哪怕只考虑单个像素的颜色，复杂度也近乎无穷：面部的骨骼结构、血管、肌肉与脂肪（以及它们动态的收缩、兴奋与密度）；各层皮肤的结构与状态，化妆品、汗水、油脂与污垢对反射与折射的影响，如此等等。</li><li>尽管其中一些因素很细微，但许多（甚至可能是全部）都极其重要，因为人类观察者在看脸这方面是终极专家。这一点或许可以用「恐怖谷」假说描述得最好，该假说由 Mori 博士（Mori 1982）最初针对人类对机器人的反应提出。简而言之，恐怖谷描述的是：随着逼真度<em>提高</em>，外观会骤然滑向一种无意间令人毛骨悚然的样子。</li></ul><p>这两个因素合起来，使动画师或计算机仿真极难得到真正逼真的结果。我们对面部表情的重要特征与微妙动态根本没有足够的模型。这正是本章技术基于表演捕捉理念的原因。本质上，我们让现实世界的物理去处理复杂性，只试图捕捉并再现最终结果（即面部上的像素值）。</p><p>电子游戏中的大多数面部，都是在通过动作捕捉（又称 <em>mocap</em>）得到的蒙皮几何体上贴一张漫反射贴图（手绘或从照片导出）。我们展示如何用三台高分辨率摄像机生成动画漫反射贴图。这张贴图捕捉到的细节几乎无法手工动画，包括细微的眉毛运动、细微的光照变化与自阴影效果、嘴唇的拉伸，以及四处游走的皱纹。随后我们用<em>主成分分析</em>（PCA）的一种变体压缩纹理，并对动画 PCA 权重与几何体都做熵编码。纹理最后在 GPU 的像素着色器中解压。</p><p>我们要展示的技术，是在数字人所有应用中最具挑战性的一类——要求实时交互的应用——里直接尝试避开恐怖谷。最终，我们希望这套技术能帮助电子游戏及其他实时应用中的人物角色，接近其电影同行所提供的那种可信度与情感冲击力。</p><h2>15.2 数据采集管线</h2><p>我们开发了 Universal Capture 系统一个更稳健的制作级版本（Borshukov et al. 2003）。为保证稳健性，我们部署了一套先进的面部动作捕捉系统：八台红外摄像机，加三台同步的高清彩色摄像机，在环境光照设置下对准演员的面部。演员脸上贴大约 70 个小型回光反射标记。重建出的面部标记三维运动路径，直接用作静态扫描并重建表面的头部几何体的形变源。我们用一套面部骨骼装置完成形变，骨骼数量等于脸上标记的数量。<a href="https://developer.download.nvidia.com/books/gpugems3/15fig01.jpg" rel="noreferrer noopener">图 15-1</a> 说明了这一过程。这种形变方式在准确重建面部各处形状与运动上效果极佳——只有嘴唇内侧轮廓例外，因为显然无法在那里贴标记。嘴唇轮廓的问题我们用少量额外骨骼解决，这些骨骼控制嘴唇内部，由动画师参照背景图像快速打关键帧。见<a href="https://developer.download.nvidia.com/books/gpugems3/15fig02.jpg" rel="noreferrer noopener">图 15-2</a>。面部形变成功重建之后，我们就可以把每台摄像机、每一帧的输入图像序列在 UV 空间中重投影并混合，生成动画漫反射纹理贴图。面部标记的存在不成问题，因为我们的动作捕捉系统只需要直径 1.5 mm 的回光反射标记，很容易在最终纹理中抠掉，如<a href="https://developer.download.nvidia.com/books/gpugems3/15fig03.jpg" rel="noreferrer noopener">图 15-3</a> 所示。<a href="https://developer.download.nvidia.com/books/gpugems3/15fig04.jpg" rel="noreferrer noopener">图 15-4</a> 展示了最终结果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig01.jpg" alt="15fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig01.jpg" rel="noreferrer noopener">图 15-1</a> 三路摄像机视角的图像</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig02.jpg" alt="15fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig02.jpg" rel="noreferrer noopener">图 15-2</a> 动捕标记、嘴唇与舌头的跟踪</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig03.jpg" alt="15fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig03.jpg" rel="noreferrer noopener">图 15-3</a> 合并三路摄像机视角并去掉标记，生成最终的动画漫反射纹理</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig04.jpg" alt="15fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig04.jpg" rel="noreferrer noopener">图 15-4</a> 未着色的最终「Leanne」角色</figcaption></figure><p>我们的技术为面部良好的动态光照提供了一条直接的解决路径：表演在环境光下捕捉，而一张从头部扫描中提取或由美术制作的高细节法线贴图可用于光照与着色。<sup><a href="https://developer.download.nvidia.com/books/gpugems3/ch15fn01.html" rel="noreferrer noopener">[1]</a></sup> 我们把系统捕捉到的漫反射颜色纹理视为已经烘焙了环境光遮蔽的漫反射反照率贴图。对于逼真皮肤的近景，次表面散射近似至关重要，我们推荐采用 Borshukov and Lewis 2003 提出的纹理空间扩散方法，以及 d'Eon 2007 最新的实时实现。镜面反射方面，我们依靠高细节法线贴图，配合镜面强度与粗糙度贴图，扰动一个基于 Weyrich et al. 2006 结论的解析模型。</p><h2>15.3 动画纹理的压缩与解压</h2><p>我们要用的压缩方案基于一个非常简单的假设，可以通过考察<a href="https://developer.download.nvidia.com/books/gpugems3/15fig05.jpg" rel="noreferrer noopener">图 15-5</a> 所示的二维数据集来说明。在这个例子中，我们假设沿 <em>x</em> 轴的方差比沿 <em>y</em> 的方差更重要。如果它重要得多（足以把 <em>y</em> 上的差异当作噪声忽略），我们就可以把数据投影到这个重要维度上，用一半的大小存储。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig05.jpg" alt="15fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig05.jpg" rel="noreferrer noopener">图 15-5</a> 一个二维数据集，演示我们对对方差的假设</figcaption></figure><p>事实证明，对动画面部纹理来说，有大量维度可以像 <em>y</em> 那样被判为不重要，从而取得合理的压缩比。此外，这种表示的解压只涉及一个简单算法，特别适合在 GPU 上并行实现。</p><h4>15.3.1 主成分分析</h4><p>动画面部纹理不是简单的二维数据集，所以我们需要主成分分析这类技术来帮我们判断哪些多维轴最重要。这些轴称为<em>主成分</em>，彼此正交，且与方差最大的方向对齐，如<a href="https://developer.download.nvidia.com/books/gpugems3/15fig06.jpg" rel="noreferrer noopener">图 15-6</a> 所示。PCA 确定这些成分的方式，是假设每个数据点都是来自多元正态分布的一个样本。<sup><a href="https://developer.download.nvidia.com/books/gpugems3/ch15fn02.html" rel="noreferrer noopener">[2]</a></sup> 这意味着整个集合可以用一个均值向量和一个协方差矩阵参数化；寻找方差最大的方向，等价于寻找一个能把协方差矩阵对角化的投影。对动画面部纹理而言，这个假设并不算太离谱，主要是因为特征在 UV 表示中是空间平稳的。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig06.jpg" alt="15fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig06.jpg" rel="noreferrer noopener">图 15-6</a> 一个数据点分布及其两个主成分</figcaption></figure><p>分析的第一步是把纹理数据映射到一个矩阵中，行为随机变量，列为来自多元正态分布的样本。如<a href="https://developer.download.nvidia.com/books/gpugems3/15fig07.jpg" rel="noreferrer noopener">图 15-7</a> 所示，我们把每一帧纹理当作来自同一分布的三个样本（对应红、绿、蓝通道）。这看起来有点奇怪，但我们发现这种结构能让我们利用颜色通道之间的相关性，最终实现更好的压缩。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig07.jpg" alt="15fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig07.jpg" rel="noreferrer noopener">图 15-7</a> 主成分分析中所用动画漫反射贴图的矩阵结构</figcaption></figure><p>下一步是计算该分布的底层参数。首先算出均值向量，并从数据矩阵的每一列中减去它，从而把数据「居中」：</p><p><img alt="f0355equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/f0355equ01.jpg"/></p><p>接着我们要计算 <strong>B</strong> 的协方差矩阵并对其对角化。这两步可以通过求矩阵 <strong>B</strong> 的奇异值分解（SVD）一次完成：</p><table><tbody><tr><td><p><strong>B</strong> = <strong>U∑V</strong> <sup><em>T</em></sup></p></td></tr></tbody></table><p>该运算的结果如下：</p><ul><li><strong>U</strong> 的列包含 <strong>A</strong> 的主成分。每个成分是一个长度为 <em>W</em> x <em>H</em> 的向量，共有 <em>rank</em>(<strong>B</strong>) 个。</li><li><strong>∑</strong> 是一个对角矩阵，其取值直接度量对应成分的重要性。</li><li><strong>V</strong> 的行为权重，说明如何线性组合各主成分以重建 <strong>B</strong>。</li></ul><h4>15.3.2 压缩</h4><p>PCA 之后，构成动画的各成分按重要性排序。每个成分的相对重要性可以通过绘制 <strong>∑</strong> 的对角项看出，<a href="https://developer.download.nvidia.com/books/gpugems3/15fig08.jpg" rel="noreferrer noopener"></a>图 15-8 就是这样做的。尽管对这份数据来说真正冗余（重要性为零）的成分很少，但其中很大一批对最终结果的贡献相对很小。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig08.jpg" alt="15fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig08.jpg" rel="noreferrer noopener">图 15-8</a> 某段 Leanne 表演中 ∑ 的前 32 个对角值</figcaption></figure><p>PCA 压缩的思路就是简单地排除贡献最小的那些成分。这实际上是把数据投影到更低维的表示上，从而压缩数据集。在我们的 Leanne 例子中，我们可以选择只用 10,644 个成分中的 16 个来表示动画。虽然这是相当大的压缩量，但要注意它会引入误差，因为被排除的成分（<a href="https://developer.download.nvidia.com/books/gpugems3/15fig09.jpg" rel="noreferrer noopener">图 15-9</a> 中除第一行之外的全部）含有丢失的相关结构。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig09.jpg" alt="15fig09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig09.jpg" rel="noreferrer noopener">图 15-9</a> 某段 Leanne 表演中最主要的 80 个成分，自左至右、自上而下排列</figcaption></figure><h4>15.3.3 解压</h4><p>解压算法就是依据 15.3.1 节的公式，把 <strong>U</strong>、<strong>∑</strong>、<strong>V</strong> 与 <em>a</em> 重新组合成 <strong>A</strong> 所需的矩阵运算。为记号简便，考虑矩阵 <strong>L</strong> 与 <strong>R</strong>，使得 <strong>A</strong> = <strong>LR</strong>。见<a href="https://developer.download.nvidia.com/books/gpugems3/15fig10.jpg" rel="noreferrer noopener"></a>图 15-10。</p><p><img alt="f0358equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/f0358equ01.jpg"/></p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig10.jpg" alt="15fig10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig10.jpg" rel="noreferrer noopener">图 15-10</a> 解压算法的矩阵维度，=</figcaption></figure><p>要用 <em>C</em> 个成分从这种表示重建第 <em>f</em> 帧，使用下面的公式（如<a href="https://developer.download.nvidia.com/books/gpugems3/15fig11.jpg" rel="noreferrer noopener">图 15-11</a> 所示）。</p><p><img alt="f0358equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/f0358equ02.jpg"/></p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig11.jpg" alt="15fig11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig11.jpg" rel="noreferrer noopener">图 15-11</a> 帧解压算法的图示</figcaption></figure><p>PCA 保证这是任意 <em>C</em> 个成分的最优线性组合。此外，由于解压算法只是一个矩阵-矩阵乘法，很容易用 GPU 着色器实现。代码清单 15-1 展示了这样一个着色器：<em>C</em> 列以纹理形式保存（即 <strong>L</strong> 的这些列），该帧对应的三列则作为 <strong>R</strong> 传入。</p><h4>示例 15-1. 16 个成分 PCA 解压的 GPU 实现</h4><p><em><strong>U</strong> 的前 16 列通过把取值换算到 [0, 255] 范围，打包进四张纹理。</em></p><pre><code>
+// 用 16 个分量解压一个像素颜色。
+float4 PcaDecompress16(uniform float2 uv, uniform sampler2D componentTexture[4],
+                       uniform float4 rFrameWeights[4],
+                       uniform float4 gFrameWeights[4],
+                       uniform float4 bFrameWeights[4])
+{
+  // components[0] 存放前四个分量；这些值必须
+  // 从 [0, 1] 映射到 [-1, 1]，这正是 U 的
+  // 各列原本的取值范围
+  float4 components[4];
+  components[0] = 2 * tex2D(componentTexture[0], uv.xy) - 1;
+  components[1] = 2 * tex2D(componentTexture[1], uv.xy) - 1;
+  components[2] = 2 * tex2D(componentTexture[2], uv.xy) - 1;
+  components[3] = 2 * tex2D(componentTexture[3], uv.xy) - 1;
+  // 矩阵相乘 LxR
+  float4 color;
+  color.r = dot(components[0], rFrameWeights[0]) +
+            dot(components[1], rFrameWeights[1]) +
+            dot(components[2], rFrameWeights[2]) +
+            dot(components[3], rFrameWeights[3]);
+  color.g = dot(components[0], gFrameWeights[0]) +
+            dot(components[1], gFrameWeights[1]) +
+            dot(components[2], gFrameWeights[2]) +
+            dot(components[3], gFrameWeights[3]);
+  color.b = dot(components[0], bFrameWeights[0]) +
+            dot(components[1], bFrameWeights[1]) +
+            dot(components[2], bFrameWeights[2]) +
+            dot(components[3], bFrameWeights[3]);
+  color.a = 1.0;
+  return color;
+}</code></pre><h4>15.3.4 可变 PCA</h4><p>PCA 的最优性建立在前述假设之上，还有一个假设是均方误差是合适的好坏度量。对动画面部漫反射贴图来说，情况并非如此——某些像素在定性上更重要，因此应承受更小的误差。最典型的例子是把眼睛和后脑勺相比：尽管 PCA 对每个像素同等看待，人类观察者对眼睛的误差会比头发更难以接受。</p><p>我们设计了一种技术，在放宽对 <strong>U</strong> 的正交归一约束的同时保留 PCA 的好处，使我们能对每个像素保留多少数据有所选择。在可变 PCA 中，标准的「只保留最主干的 <em>C</em> 个成分」的压缩步骤，被替换为给每个像素分配不同数目的最主成分。像素 <em>i</em> 得到 <em>C</em> <em><sub>i</sub></em> 个成分，像素 <em>j</em> 得到 <em>C</em> <em><sub>j</sub></em> 个成分，但 <em>C</em> <em><sub>i</sub></em> 不一定等于 <em>C</em> <em><sub>j</sub></em> 。这样，我们就能逐像素地影响图像质量。例如，头发像素可以用 4 个成分，而眼睛像素可以用 88 个。</p><p>成分分配也可以按区域进行，这大大简化了解压算法，因为每个区域的处理可以硬编码。例如，<a href="https://developer.download.nvidia.com/books/gpugems3/15fig12.jpg" rel="noreferrer noopener">图 15-12</a> 展示了一种具体的区域划分以及每个区域所用的成分数目。这种划分允许在眼睛区域使用 88 个成分，在仍然把所有成分数据装进标准 16 成分 PCA 表示所用同样大小的纹理的同时，大幅提升感知质量。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig12.jpg" alt="15fig12.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig12.jpg" rel="noreferrer noopener">图 15-12</a> 一种区域划分</figcaption></figure><h4>15.3.5 实际考虑</h4><p>随着动画变长，矩阵 <strong>A</strong> 很容易大到在许多机器上装不进内存。这个问题有多种解法：或者采用能一次处理 <strong>A</strong> 的子集的外存 SVD 实现，或者只分析一部分帧，再把未分析的帧投影到所得到的基上。</p><p>最终质量、内存占用与所需计算量，是需要针对每个应用权衡的因素。如果还需要进一步压缩，可以对 PCA 权重流使用熵编码之类的技术。质量上的损失通常值得这点内存节省。权重解压确实要花 CPU 时间，但 CPU 开销相对很小，因为每帧的 PCA 权重与骨骼动画只涉及几百个浮点数。最终，大部分解压开销在 GPU 的像素着色器中完成，这很有利，因为只有可见像素需要解压。</p><p>所达到的数据量与解压速度，使我们能实时同时渲染多个高质量的角色表演。例如，用<a href="https://developer.download.nvidia.com/books/gpugems3/15fig12.jpg" rel="noreferrer noopener">图 15-12</a> 中的可变 PCA 区域布局，512x512 纹理的各成分可以存进一张 512x2048 的纹理，占用 4MB 内存。我们测试过的最大表演集含 5,672 帧，需要 803KB 的 PCA 权重与 601KB 的骨骼动画<sup><a href="https://developer.download.nvidia.com/books/gpugems3/ch15fn03.html" rel="noreferrer noopener">[3]</a></sup>——总大小不到 6MB。<a href="https://developer.download.nvidia.com/books/gpugems3/15fig13.jpg" rel="noreferrer noopener">图 15-13</a> 展示了由此得到的表演。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig13.jpg" alt="15fig13.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig13.jpg" rel="noreferrer noopener">图 15-13</a> PCA 权重流的典型压缩比</figcaption></figure><h2>15.4 表演的编排</h2><p>这项压缩技术不仅让我们能编码大型表演片段库，还允许随机访问以及在压缩空间中做任意线性运算。例如，在解压前把代表两帧的 PCA 权重混合，等价于对整帧逐像素混合，但计算量小得多。我们利用这些优势动态编排多个表演，在过渡处做混合。</p><p>这项技术保留了表演中捕捉到的细微差别与多样性，这一事实使我们能把<em>运动图</em>用于面部动画。使用运动图（又称<em>动作树</em>）是电子游戏开发中的常见做法，已被成功用于从捕捉片段与手工动画片段生成丰富而真实的肢体动作。要把运动图方法用于面部动画，需要捕捉一批对某个情境而言基础的面部表情片段库。然后设计一张连接各表情的运动图，图可以被遍历，在渲染片段的同时在过渡处对纹理与几何体做插值。表演可以由 AI 子系统触发，也可以由玩家直接通过游戏控制器触发。</p><h2>15.5 结论</h2><p>我们展示了实现逼真人物角色动画与渲染的一种有力途径。<a href="https://developer.download.nvidia.com/books/gpugems3/15fig14.jpg" rel="noreferrer noopener">图 15-14</a> 至 <a href="https://developer.download.nvidia.com/books/gpugems3/15fig17.jpg" rel="noreferrer noopener">15-17</a> 给出了一些结果示例。代码清单 15-2 是着色器的代码。我们的方法基于用 PCA 压缩、并在 GPU 上解压由先进的面部表演捕捉系统获取的动画漫反射纹理贴图。这些结果已在高保真实时原型以及真正的游戏制作中应用和检验。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig14.jpg" alt="15fig14.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig14.jpg" rel="noreferrer noopener">图 15-14</a> 最终着色的「Leanne」角色</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig15.jpg" alt="15fig15.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig15.jpg" rel="noreferrer noopener">图 15-15</a> E3 2006 Tiger Woods 演示中的一帧，忠实再现了 Tiger 标志性的笑容</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig16.jpg" alt="15fig16.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig16.jpg" rel="noreferrer noopener">图 15-16</a> Tiger Woods 演示中的更多帧</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/15fig17.jpg" alt="15fig17.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/15fig17.jpg" rel="noreferrer noopener">图 15-17</a> 一帧，出自</figcaption></figure><h4>示例 15-2. 针对<a href="https://developer.download.nvidia.com/books/gpugems3/15fig12.jpg" rel="noreferrer noopener">图 15-12</a> 中各区域的可变 PCA 着色器</h4><pre><code>
+struct tPcaTex
+{
+  uniform float faceHeight;
+  uniform float eyesHeight;
+  uniform sampler2D Tex0;
+  uniform float4 TexWeightR[32];
+  uniform float4 TexWeightG[32];
+  uniform float4 TexWeightB[32];
+};
+float PcaDec(float4 weights[], float4 components[], const int num,
+             const int w_start, const int c_start)
+{
+  int i;
+  float ret;
+  ret = 0;
+  for (int i = 0; i &lt; num; i++)
+    ret += dot(weights[i + w_start], components[i + c_start]);
+  return ret;
+}
+struct UcapWindow
+{
+  float x, y, width, height;
+  void Set(float f1, float f2, float f3, float f4)
+  {
+    x = f1 / 512.0;
+    y = f2 / 512.0;
+    width = f3 / 512.0;
+    height = f4 / 512.0;
+  }
+  float2 GetCorner() { return float2(x, y); }
+};
+bool InWindow(UcapWindow win, float2 uv)
+{
+  if (win.x &lt; uv.x &amp;&amp; uv.x &lt; win.x + win.width &amp;&amp; win.y &lt; uv.y &amp;&amp;
+      uv.y &lt; win.y + win.height)
+    return true;
+  else
+    return false;
+}
+float3 DecompressPcaColor(float2 tex, tPcaTex pcaTex)
+{
+  float4 comp_all[1];
+  float4 comp_face[5];
+  float4 comp_eyes[16];
+  float4 comp_upper_tongue[3];
+  float4 comp_lower_teeth[4];
+  float4 comp_upper_teeth[4];
+  float3 color;
+  comp_all[0] = tex2D(pcaTex.Tex0, tex.xy * float2(1, .25)) * 2 - 1;
+  color.r = PcaDec(pcaTex.TexWeightR, comp_all, 1, 0, 0);
+  color.g = PcaDec(pcaTex.TexWeightG, comp_all, 1, 0, 0);
+  color.b = PcaDec(pcaTex.TexWeightB, comp_all, 1, 0, 0);
+  UcapWindow faceWindow, eyesWindow, upperTongueWindow, upperTeethWindow,
+      lowerTeethWindow;
+  faceWindow.Set(96, pcaTex.faceHeight, 320, 288);
+  eyesWindow.Set(160, pcaTex.eyesHeight, 192, 64);
+  upperTeethWindow.Set(106, 2, 150, 56);
+  lowerTeethWindow.Set(256, 2, 150, 56);
+  upperTongueWindow.Set(414, 2, 96, 96);
+  if (InWindow(faceWindow, tex.xy))
+  {
+    for (int i = 0; i &lt; 5; i++)
+    {
+      comp_face[i] =
+          tex2D(pcaTex.Tex0,
+                ((tex.xy - faceWindow.GetCorner()) * float2(1, .25)) +
+                    float2(0, .25 + i * (288.0 / 2048.0))) *
+              2 -
+          1;
+    }
+    color.r += PcaDec(pcaTex.TexWeightR, comp_face, 5, 1, 0);
+    color.g += PcaDec(pcaTex.TexWeightG, comp_face, 5, 1, 0);
+    color.b += PcaDec(pcaTex.TexWeightB, comp_face, 5, 1, 0);
+    if (InWindow(eyesWindow, tex.xy))
+    {
+      for (int i = 0; i &lt; 16; i++)
+      {
+        comp_eyes[i] =
+            tex2D(pcaTex.Tex0,
+                  ((tex.xy - eyesWindow.GetCorner()) * float2(1, .25)) +
+                      float2(320.0 / 512.0, .25 + i * (64.0 / 2048.0))) *
+                2 -
+            1;
+      }
+      color.r += PcaDec(pcaTex.TexWeightR, comp_eyes, 16, 6, 0);
+      color.g += PcaDec(pcaTex.TexWeightG, comp_eyes, 16, 6, 0);
+      color.b += PcaDec(pcaTex.TexWeightB, comp_eyes, 16, 6, 0);
+    }
+  }
+  else
+  {
+    if (InWindow(upperTeethWindow, tex.xy))
+    {
+      for (int i = 0; i &lt; 4; i++)
+      {
+        comp_upper_teeth[i] =
+            tex2D(pcaTex.Tex0,
+                  ((tex.xy - upperTeethWindow.GetCorner()) * float2(1, .25)) +
+                      float2(320.0 / 512.0, .75 + i * (128.0 / 2048.0))) *
+                2 -
+            1;
+      }
+      color.r += PcaDec(pcaTex.TexWeightR, comp_upper_teeth, 4, 1, 0);
+      color.g += PcaDec(pcaTex.TexWeightG, comp_upper_teeth, 4, 1, 0);
+      color.b += PcaDec(pcaTex.TexWeightB, comp_upper_teeth, 4, 1, 0);
+    }
+    if (InWindow(lowerTeethWindow, tex.xy))
+    {
+      for (int i = 0; i &lt; 4; i++)
+      {
+        comp_lower_teeth[i] =
+            tex2D(pcaTex.Tex0,
+                  ((tex.xy - lowerTeethWindow.GetCorner()) * float2(1, .25)) +
+                      float2(320.0 / 512.0, .75 + (64 + i * 128.0) / 2048.0)) *
+                2 -
+            1;
+      }
+      color.r += PcaDec(pcaTex.TexWeightR, comp_lower_teeth, 4, 1, 0);
+      color.g += PcaDec(pcaTex.TexWeightG, comp_lower_teeth, 4, 1, 0);
+      color.b += PcaDec(pcaTex.TexWeightB, comp_lower_teeth, 4, 1, 0);
+    }
+    if (InWindow(upperTongueWindow, tex.xy))
+    {
+      for (int i = 0; i &lt; 3; i++)
+      {
+        comp_upper_tongue[i] =
+            tex2D(pcaTex.Tex0,
+                  ((tex.xy - upperTongueWindow.GetCorner()) * float2(1, .25)) +
+                      float2(i * (96 / 512.0), 1952.0 / 2048.0)) *
+                2 -
+            1;
+      }
+      color.r += PcaDec(pcaTex.TexWeightR, comp_upper_tongue, 3, 1, 0);
+      color.g += PcaDec(pcaTex.TexWeightG, comp_upper_tongue, 3, 1, 0);
+      color.b += PcaDec(pcaTex.TexWeightB, comp_upper_tongue, 3, 1, 0);
+    }
+  }
+  color.rgb /= 255;
+  return color;
+}
+float4 mainf(PsInput IN, tPcaTex pcaTex) : COLOR
+{
+  float4 out_color;
+  out_color.rgb = 0;
+  out_color.rgb = DecompressPcaColor(IN.tex.xy, pcaTex);
+  out_color.a = 1;
+  return out_color;
+}</code></pre><p></p><h2>15.6 参考文献</h2><p>Borshukov, George, and J. P. Lewis. 2003. "Realistic Human Face Rendering for <em>The Matrix Reloaded</em>."，载 <em>ACM SIGGRAPH 2003 Sketches and Applications</em>。</p><p>Borshukov, George, Dan Piponi, Oystein Larsen, J. P. Lewis, and Christina Tempelaar-Lietz. 2003. "Universal Capture: Image-Based Facial Animation for <em>The Matrix Reloaded</em>." 提交于 SIGGRAPH 2003 的短片。</p><p>d'Eon, Eugene. 2007. "NVIDIA Demo Team Secrets–Advanced Skin Rendering." 发表于 Game Developers Conference 2007。可在线获取：<a href="http://developer.download.nvidia.com/presentations/2007/gdc/Advanced_Skin.pdf" rel="noreferrer noopener">http://developer.download.nvidia.com/presentations/2007/gdc/Advanced_Skin.pdf</a>。</p><p>Mori, M. 1982. <em>The Buddha in the Robot</em>. Tuttle 出版。</p><p>Shlens, Jonathon. 2005. "A Tutorial on Principal Component Analysis." 可在线获取：<a href="http://www.cs.cmu.edu/~elaw/papers/pca.pdf" rel="noreferrer noopener">http://www.cs.cmu.edu/~elaw/papers/pca.pdf</a>。</p><p>Strang, G. 1998. <em>Introduction to Linear Algebra</em>. Wellesley-Cambridge Press 出版。</p><p>Weyrich, Tim, W. Matusik, H. Pfister, B. Bickel, C. Donner, C. Tu, J. McAndless, J. Lee, A. Ngan, H. W. Jensen, and M. Gross. 2006. "Analysis of Human Faces Using a Measurement-Based Skin Reflectance Model."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2006)</em> 25(3)，第 1013–1024 页。</p><p></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-15-playable-universal-capture" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-15-playable-universal-capture</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

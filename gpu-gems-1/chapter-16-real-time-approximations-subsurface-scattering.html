@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 16 章　次表面散射的实时近似 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 16 章　次表面散射的实时近似」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 16 章　次表面散射的实时近似</h1>
+<p><em>Simon Green<br> NVIDIA</em></p><p>如今实时图形中用的大多数着色模型只考虑光在物体表面的交互。然而在现实世界中，许多物体略带半透明：光进入表面，在材质内部四处散射，然后从表面射出，射出点可能与入射点不同。</p><p>已有大量研究致力于建立高效而准确的次表面光传输模型。虽然完整物理精确的次表面散射仿真超出了当前图形硬件的能力，但实时近似这一效果的大部分视觉外观是可行的。本章介绍用可编程图形硬件近似皮肤、大理石等半透明材质外观的几种方法。</p><h2>16.1 次表面散射的视觉效果</h2><p>在试图重现任何视觉效果时，先观察该效果的图像、把视觉外观拆解成若干组成部分，往往很有帮助。</p><p>看半透明物体的照片和渲染图像，我们会注意到几件事。首先，次表面散射往往会柔化光照的整体效果。一个区域的光会渗入表面上相邻的区域，表面细节变得不那么明显。光透入物体越深，衰减和扩散就越多。对皮肤而言，散射还往往使表面从受光过渡到阴影处产生轻微的偏红色彩偏移。这是因为光从受光一侧进入表面，被皮肤下的血液和组织散射吸收，再从阴影一侧透出。散射效果在皮肤薄的地方最明显，比如鼻孔和耳朵周围。</p><h2>16.2 简单的散射近似</h2><p>一种近似散射的简单技巧是<em>环绕光照</em>。通常，漫反射（兰伯特）光照在表面法线与光照方向垂直时贡献为零。环绕光照修改漫反射函数，让光照绕过物体、延伸到原本会变暗的位置之外。这降低了漫反射光照的对比度，从而减少所需的环境光和补光。环绕光照是对 Oren-Nayar 光照模型的粗略近似，后者试图更准确地模拟粗糙的哑光表面（Nayar and Oren 1995）。</p><p>这里给出的代码和图 16-1 的曲线说明了如何修改漫反射光照函数以包含环绕效果。值 <code>wrap</code> 是 0 到 1 之间的浮点数，控制光照绕物体延伸的程度。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig16-01.jpg" alt="fig16-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig16-01.jpg" rel="noreferrer noopener">图 16-1</a> 环绕光照函数的曲线</figcaption></figure><pre><code>float diffuse = max(0, dot(L, N));
+float wrap_diffuse = max(0, (dot(L, N) + wrap) / (1 + wrap));</code></pre><p>要在片元程序中高效计算，可以把该函数编码进一张纹理，以光向量与法线的点积作为索引。这张纹理还可以做成在光照趋近于零时带轻微偏红的色彩偏移。这是为皮肤着色器模拟散射的一种廉价做法。同一张纹理还可以在 alpha 通道里包含镜面光照的幂函数。代码清单 16-1 中的 FX 代码演示了如何使用这一技术。示例见图 16-2。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig16-02a.jpg" alt="fig16-02a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig16-02a.jpg" rel="noreferrer noopener">图 16-2</a> 对球体应用环绕光照</figcaption></figure><h4>例 16-1　包含环绕光照的皮肤着色效果的片段</h4><pre><code>// 为皮肤着色生成 2D 查找表
+float4 GenerateSkinLUT(float2 P : POSITION) : COLOR
+{
+  float wrap = 0.2;
+  float scatterWidth = 0.3;
+  float4 scatterColor = float4(0.15, 0.0, 0.0, 1.0);
+  float shininess = 40.0;
+  float NdotL = P.x * 2 - 1;
+  // remap from [0, 1] to [-1, 1]
+  float NdotH = P.y * 2 - 1;
+  float NdotL_wrap = (NdotL + wrap) / (1 + wrap); // 环绕光照（wrap lighting）
+  float diffuse = max(NdotL_wrap, 0.0);
+  // 在明暗过渡处叠加颜色偏移
+  float scatter = smoothstep(0.0, scatterWidth, NdotL_wrap) *
+                  smoothstep(scatterWidth * 2.0, scatterWidth, NdotL_wrap);
+  float specular = pow(NdotH, shininess);
+  if (NdotL_wrap < = 0)
+    specular = 0;
+  float4 C;
+  C.rgb = diffuse + scatter * scatterColor;
+  C.a = specular;
+  return C;
+}
+// 用查找表为皮肤着色
+half3 ShadeSkin(sampler2D skinLUT, half3 N, half3 L, half3 H,
+                half3 diffuseColor, half3 specularColor)
+    : COLOR
+{
+  half2 s;
+  s.x = dot(N, L);
+  s.y = dot(N, H);
+  half4 light = tex2D(skinLUT, s * 0.5 + 0.5);
+  return diffuseColor * light.rgb + specularColor * light.a;
+}</code></pre><h2>16.3 用深度贴图模拟吸收</h2><p>模拟高度半透明材质时最重要的因素之一是吸收。光在材质中穿行越远，被散射和吸收得越多。要模拟这一效果，我们需要一个度量光在材质中穿行距离的量。</p><p>估计这个距离的一种方法是使用深度贴图（Hery 2002）。这种技术与阴影贴图非常相似，且适用于实时渲染。第一遍，我们从光源的视点渲染场景，把光源到表面的距离存进一张纹理。然后按常规的投影纹理映射把这幅图像投回场景。在渲染遍中，对要着色的点，我们可以查这张纹理，得到光线进入表面那一点处距光源的距离（<em>d<sub>i</sub></em> ）。用它减去光线离开表面那一点距光源的距离（<em>d<sub>o</sub></em> ），就得到光在物体中穿行距离的估计（<em>s</em>）。见图 16-3。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig16-03.jpg" alt="fig16-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig16-03.jpg" rel="noreferrer noopener">图 16-3</a> 用深度贴图计算光在物体中穿行的距离</figcaption></figure><p>这一技术明显的问题在于它只对凸物体有效：物体内部的孔洞得不到正确处理。实践中这不算大问题，但或许可以用<em>深度剥离</em>绕开它，深度剥离会一层一层地剥去物体的层（Everitt 2003）。</p><p>你可能会想，对静态物体，可以手绘或预计算一张贴图来表示各点处表面的近似厚度。用深度贴图的好处是它考虑了入射光的方向，而且对动画模型也有效（前提是每帧重新生成深度贴图）。</p><p>代码清单 16-2 和 16-3 中的程序演示了如何把光源到表面的距离渲染到纹理。它们假定应用程序已针对光源视图设置好 <code>modelView</code> 和 <code>modelViewProj</code> 矩阵。</p><h4>例 16-2　深度遍的顶点程序</h4><pre><code>struct a2v
+{
+  float4 pos : POSITION;
+  float3 normal : NORMAL;
+};
+struct v2f
+{
+  float4 hpos : POSITION;
+  float dist : TEXCOORD0; // 到光源的距离
+};
+v2f main(a2v IN, uniform float4x4 modelViewProj, uniform float4x4 modelView,
+         uniform float grow)
+{
+  v2f OUT;
+  float4 P = IN.pos;
+  P.xyz += IN.normal * grow;
+  // 沿法线缩放顶点
+  OUT.hpos = mul(modelViewProj, P);
+  OUT.dist = length(mul(modelView, IN.pos));
+  return OUT;
+}</code></pre><h4>例 16-3　深度遍的片元程序</h4><pre><code>float4 main(float dist : TEX0) : COLOR
+{
+  return dist;
+  // 返回距离
+}</code></pre><p>代码清单 16-4 中的片元程序片段演示了如何查光源距离纹理来计算深度。为灵活起见，这段代码在片元程序里做投影，但如果你只取少量采样，在顶点程序里算这些变换会更高效。</p><h4>例 16-4　用深度贴图计算穿透深度的片元程序函数</h4><pre><code>// 给定物体空间中的一个点，从深度纹理中取样，
+// 返回深度值
+float trace(float3 P,
+            uniform float4x4 lightTexMatrix, // 变换到光照纹理空间
+            uniform float4x4 lightMatrix,
+            // 变换到光照空间
+            uniform sampler2D lightDepthTex, )
+{
+  // 把点变换到光照纹理空间
+  float4 texCoord = mul(lightTexMatrix, float4(P, 1.0));
+  // 取入射点处到光源的距离
+  float d_i = tex2Dproj(lightDepthTex, texCoord.xyw);
+  // 把位置变换到光照空间
+  float4 Plight = mul(lightMatrix, float4(P, 1.0));
+  // 该像素到光源的距离（出射点）
+  float d_o = length(Plight);
+  // 计算深度
+  float s = d_o - d_i;
+  return s;
+}</code></pre><p>一旦有了光在材质中穿行距离的度量，就有多种用法。一种简单的用法是直接用它索引一张美术制作的 1D 纹理，该纹理把距离映射到颜色。颜色应随距离指数衰减。通过更换这张颜色表，并把效果与其他更传统的光照模型结合，我们可以生成本用于不同材质的图像，比如大理石或玉。</p><pre><code>float si = trace(IN.objCoord, lightTexMatrix, lightMatrix, lightDepthTex);
+return tex1D(scatterTex, si);</code></pre><p>另一种做法是直接计算指数函数：</p><pre><code>return exp(-si * sigma_t) * lightColor;</code></pre><p>这一技术的问题在于它没有模拟光穿过物体时的扩散方式。当光源在物体背后时，你常常能清楚地看到物体背面的特征在前方透出来。解决办法是在表面不同位置取多次采样，或者换用不同的扩散近似，如下一节所述。</p><h4>16.3.1 实现细节</h4><p>在 GeForce FX 硬件上，从深度纹理读取时只有深度值最高有效的八位可用。这个精度不够。我们可以改用浮点纹理，或者用 NVIDIA 片元程序扩展中的打包／解包指令，把一个 32 位浮点值存进普通的八位 RGBA 纹理。浮点纹理目前不支持滤波，所以投影纹理被放大处有时会看到块状瑕疵。如有必要，可以在着色器里做双线性滤波，代价是一些性能。</p><p>投影深度贴图的另一个问题是投影边缘附近常出现瑕疵。这与阴影贴图中的自阴影瑕疵类似。它们主要源于纹理贴图分辨率有限，导致背景像素被投影到物体边缘上。示例代码在深度贴图遍中沿顶点法线把物体略微放大，以此避开这个问题。</p><p>要做更精确的仿真，我们可能还需要知道光线进入物体那一点处的法线，甚至表面颜色。这可以通过额外的渲染遍把这些信息渲染到纹理来实现。我们可以用与深度纹理类似的方式查这些纹理。在支持多重渲染目标的系统上，或许可以把深度、法线和其他遍合并成一遍，输出多个值。见图 16-4。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig16-04.jpg" alt="fig16-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig16-04.jpg" rel="noreferrer noopener">图 16-4</a> 用深度贴图近似散射</figcaption></figure><h4>16.3.2 更精细的散射模型</h4><p>更精细的模型试图准确模拟介质内部散射的累积效果。</p><p>一个模型是<em>单次散射近似</em>，它假定光在材质中只弹射一次。沿折射光线在材质中步进，可以估计有多少光子会被散射向相机。相位函数用来描述光击中粒子时散射方向分布。入射点和出射点处的菲涅尔效应也必须考虑。</p><p>另一个模型是<em>扩散近似</em>，它为高度散射的介质（例如皮肤）模拟多次散射的效果。</p><p>可惜这些技术超出了本章的范围。</p><p>Christophe Hery 在 SIGGRAPH 2003 RenderMan 课程中的那一章（Hery 2003）详细讨论了皮肤着色器的单次散射与扩散散射。</p><h2>16.4 纹理空间扩散</h2><p>如前面提到的，次表面散射最明显的视觉标志之一是光照效果整体变模糊。事实上，3D 美术常在屏幕空间里模拟这一现象：在 Adobe Photoshop 中对渲染结果做高斯模糊，再把少量模糊图像叠回原图之上。这种「辉光」技法柔化了光照，让图像看起来不那么像计算机生成的。</p><p>可以在纹理空间中模拟扩散（Borshukov and Lewis 2003）。我们可以用一个顶点程序把物体网格展开，该程序把 UV 纹理坐标当作顶点的屏幕位置。程序只是把纹理坐标的 [0, 1] 范围重映射到归一化设备坐标的 [–1, 1] 范围。必须注意物体要有良好的 UV 映射，即纹理上每个点只映射到物体的一个点，没有重叠。按常规方式为这个展开后的网格做光照，就得到一幅表示物体光照的 2D 图像。然后我们可以处理这幅图像，再像普通纹理一样贴回 3D 模型。</p><p>代码清单 16-5 中的顶点程序演示了如何在 UV 空间中渲染模型并做漫反射光照。</p><p>这一技术对其他应用也有用，因为它把着色复杂度与屏幕分辨率解耦：着色只对纹理贴图中的每个纹素执行，而不是对物体上的每个像素。许多操作（例如卷积）在图像空间中比在 3D 表面上做要高效得多。如果表面的 UV 参数化比较均匀，这就是个不错的近似，因为世界空间中接近的点会映射到纹理空间中同样接近的点。</p><p>要在图像空间中模拟光扩散，我们只需模糊光照贴图纹理。可以利用 GPU 图像处理的各种常规技巧，比如使用可分离滤波器和发挥双线性滤波硬件的作用。把光照渲染到分辨率相对较低的纹理上，本身就已经带来一定程度的模糊。图 16-5 显示了一个展开的头部网格以及模糊光照贴图纹理的结果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig16-05a.jpg" alt="fig16-05a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig16-05a.jpg" rel="noreferrer noopener">图 16-5</a> 展开的头部网格</figcaption></figure><h4>例 16-5　展开模型并做漫反射光照的顶点程序</h4><pre><code>struct a2v
+{
+  float4 pos : POSITION;
+  float3 normal : NORMAL;
+  float2 texture : TEXCOORD0;
+};
+struct v2f
+{
+  float4 hpos : POSITION;
+  float2 texcoord : TEXCOORD0;
+  float4 col : COLOR0;
+};
+v2f main(a2v IN, uniform float4x4 lightMatrix)
+{
+  v2f OUT;
+  // 把纹理坐标转换为 NDC 位置 [-1, 1]
+  OUT.hpos.xy = IN.texture * 2 - 1;
+  OUT.hpos.z = 0.0;
+  OUT.hpos.w = 1.0;
+  // 漫反射光照
+  float3 N = normalize(mul((float3x3)lightMatrix, IN.normal));
+  float3 L = normalize(-mul(lightMatrix, IN.pos).xyz);
+  float diffuse = max(dot(N, L), 0);
+  OUT.col = diffuse;
+  OUT.texcoord = IN.texture;
+  return OUT;
+}</code></pre><p>漫反射颜色贴图也可以并入光照贴图纹理，这样颜色贴图中的细节也会被扩散。如果纹理中包含阴影，模糊过程会产生软阴影。</p><p>为模拟吸收和散射与波长相关这一事实，我们可以对每个颜色通道分别设置不同的滤波权重。代码清单 16-6 和 16-7 中的示例着色器试图模拟皮肤。它取七个纹理采样，权重为高斯分布。红色通道的滤波宽度大于绿色和蓝色通道，因此红色的扩散程度高于其他通道。代码清单 16-6 中的顶点程序计算沿 <em>x</em> 方向模糊的采样位置；<em>y</em> 方向的程序几乎相同。采样间隔为两个纹素，以利用硬件的双线性滤波能力。</p><h4>例 16-6　扩散模糊的顶点程序</h4><pre><code>v2f main(float2 tex : TEXCOORD0)
+{
+  v2f OUT;
+  // 7 个采样点，纹素间距 2
+  OUT.tex0 = tex + float2(-5.5, 0);
+  OUT.tex1 = tex + float2(-3.5, 0);
+  OUT.tex2 = tex + float2(-1.5, 0);
+  OUT.tex3 = tex + float2(0, 0);
+  OUT.tex4 = tex + float2(1.5, 0);
+  OUT.tex5 = tex + float2(3.5, 0);
+  OUT.tex6 = tex + float2(5.5, 0);
+  return OUT;
+}</code></pre><h4>例 16-7　扩散模糊的片元程序</h4><pre><code>half4 main(v2fConnector v2f, uniform sampler2D lightTex) : COLOR
+{
+  // 让红色通道比绿、蓝通道模糊更多的权重
+  const float4 weight[7] = {
+      {0.006, 0.0, 0.0, 0.0},   {0.061, 0.0, 0.0, 0.0},
+      {0.242, 0.25, 0.25, 0.0}, {0.383, 0.5, 0.5, 0.0},
+      {0.242, 0.25, 0.20, 0.0}, {0.061, 0.0, 0.0, 0.0},
+      {0.006, 0.0, 0.0, 0.0},
+  };
+  half4 a;
+  a = tex2D(lightTex, v2f.tex0) * weight[0];
+  a += tex2D(lightTex, v2f.tex1) * weight[1];
+  a += tex2D(lightTex, v2f.tex2) * weight[2];
+  a += tex2D(lightTex, v2f.tex3) * weight[3];
+  a += tex2D(lightTex, v2f.tex4) * weight[4];
+  a += tex2D(lightTex, v2f.tex5) * weight[5];
+  a += tex2D(lightTex, v2f.tex6) * weight[6];
+  return a;
+}</code></pre><p>要得到更宽的模糊，可以多次应用模糊着色器，或者在片元程序中计算采样位置、写出取更多采样的着色器。图 16-6 显示了把模糊后的光照贴图纹理贴回 3D 头部模型的效果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig16-06b.jpg" alt="fig16-06b.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig16-06b.jpg" rel="noreferrer noopener">图 16-6</a> 头部模型上的纹理空间扩散</figcaption></figure><p>最后的着色器把扩散后的光照纹理与原始高分辨率颜色贴图混合，得到最终效果，如图 16-7 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig16-07.jpg" alt="fig16-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig16-07.jpg" rel="noreferrer noopener">图 16-7</a> 带颜色贴图的最终模型</figcaption></figure><h4>16.4.1 可能的后续工作</h4><p>深度贴图技术的一个可能扩展是渲染更多深度遍，以考虑物体内部更密的物体，比如身体内的骨骼。问题在于我们试图用基于表面的表示来处理体积效果。体渲染没有这一限制，对于密度变化的物体能给出精确得多的渲染结果。关于体渲染的更多内容，见本书第 39 章「体渲染技术」。</p><p>这一技术的另一个可能扩展是提供多张颜色贴图，每张代表皮肤不同层的颜色。例如，你可以为表面颜色提供一张贴图，为皮肤下的静脉和毛细血管提供另一张。</p><p>Greg James（2003）描述了一种处理任意多边形物体的技术：先把所有背面表面的距离相加，再减去所有正面表面的距离。他的应用是在屏幕空间中为体积雾效果计算距离，但可以扩展到更一般的情形。</p><p>一个有意思的未来研究方向是把深度贴图技术与纹理空间技术结合起来，兼取两者之长。</p><h2>16.5 结论</h2><p>次表面散射的效果是制作令人信服的皮肤和其他半透明材质图像的重要因素。通过几种不同的近似，我们展示了如今如何在实时中实现次表面散射的大部分外观。随着图形硬件变得更强，将有可能建立越来越精确的次表面光传输模型。</p><p>我们希望本章介绍的技术能启发你提升实时游戏角色的真实感。但记住，好的着色永远救不了糟糕的美术！</p><h2>16.6 参考文献</h2><p><a id="ch16bib01_01"></a>Borshukov, George, and J. P. Lewis. 2003. "Realistic Human Face Rendering for 'The Matrix Reloaded.'" SIGGRAPH 2003. 在线资源：<strong><a href="http://www.virtualcinematography.org/" rel="noreferrer noopener">http://www.virtualcinematography.org/</a></strong></p><p><a id="ch16bib01_02"></a>Everitt, Cass. 2003. "Order-Independent Transparency." 在线资源：<strong><a href="http://developer.nvidia.com/view.asp?IO=order_independent_transparency" rel="noreferrer noopener">http://developer.nvidia.com/view.asp?IO=order_independent_transparency</a></strong></p><p><a id="ch16bib01_03"></a>Hery, Christophe. 2002. "On Shadow Buffers." 演讲在线资源：<strong><a href="http://www.renderman.org/RMR/Examples/srt2002/PrmanUserGroup2002.ppt" rel="noreferrer noopener">http://www.renderman.org/RMR/Examples/srt2002/PrmanUserGroup2002.ppt</a></strong></p><p><a id="ch16bib01_04"></a>Hery, Christophe. 2003. "Implementing a Skin BSSRDF." RenderMan 课程讲义, SIGGRAPH 2003. 在线资源：<strong><a href="http://www.renderman.org/RMR/Books/sig03.course09.pdf.gz" rel="noreferrer noopener">http://www.renderman.org/RMR/Books/sig03.course09.pdf.gz</a></strong></p><p><a id="ch16bib01_05"></a>James, Greg. 2003. "Rendering Objects as Thick Volumes." 载 <em>ShaderX2: Shader Programming Tips &amp; Tricks With DirectX 9</em>，Wolfgang F. Engel 编，Wordware 出版。更多信息在线资源：<strong><a href="http://www.shaderx2.com" rel="noreferrer noopener">http://www.shaderx2.com</a></strong></p><p><a id="ch16bib01_06"></a>Jensen, Henrik Wann, Stephen R. Marschner, Marc Levoy, and Pat Hanrahan. 2001. "A Practical Model for Subsurface Light Transport." 载 <em>Proceedings of SIGGRAPH 2001</em>。</p><p><a id="ch16bib01_07"></a>Nayar, S. K., and M. Oren. 1995. "Generalization of the Lambertian Model and Implications for Machine Vision." <em>International Journal of Computer Vision</em> 14, 第 227–251 页。</p><p><a id="ch16bib01_08"></a>Pharr, Matt. 2001. "Layer Media for Surface Shaders." Advanced RenderMan 课程讲义, SIGGRAPH 2001. 在线资源：<strong><a href="http://www.renderman.org/RMR/Books/sig01.course48.pdf.gz" rel="noreferrer noopener">http://www.renderman.org/RMR/Books/sig01.course48.pdf.gz</a></strong></p><p><em>雕像模型承蒙 De Espona Infographica 提供（<a href="http://www.deespona.com" rel="noreferrer noopener">http://www.deespona.com</a>）。头部模型承蒙 Steven Giesler 提供（<a href="http://www.stevengiesler.com" rel="noreferrer noopener">http://www.stevengiesler.com</a>）。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-16-real-time-approximations-subsurface-scattering" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-16-real-time-approximations-subsurface-scattering</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 13 章　在 GPU 上实现 mental images 的 Phenomena 渲染器 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 13 章　在 GPU 上实现 mental images 的 Phenomena 渲染器」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 13 章　在 GPU 上实现 mental images 的 Phenomena 渲染器</h1>
+<p><em>Martin-Karl Lefrançois</em><br> <em>mental images</em></p><h2>13.1 引言</h2><p>mental images 的渲染软件 mental ray 是许多主流 3D 内容创作工具的渲染组件，这些工具包括工业 CAD、产品设计和建筑设计软件包。mental ray 广泛用于视觉特效与动画长片的制作，也用于工业与建筑设计中的高质量可视化与光照模拟。既然现代 GPU 能执行复杂的程序来计算每个着色像素的颜色，就有机会把这种能力用于渲染那些以往只能由基于 CPU 的渲染器处理的复杂场景。考虑到 GPU 上可观的浮点计算能力，在 GPU 上做这些计算可能比在 CPU 上快得多。本章介绍 mental images 为给 mental ray 添加基于 GPU 的渲染支持所做的一部分工作。</p><p>由于 GPU 完成的逐片元数学计算现在可以与软件渲染器的计算完全相同，用 GPU 加速最终图像的渲染成为可能。尽管有些技术（例如软件光线追踪）由于当前硬件的限制还无法用高效的 GPU 方案替代，但有许多场景并不需要这些技术，这类场景可以完全由 GPU 渲染。有些情况下我们仍需把软件渲染与硬件渲染结合起来才能得到最终图像，但硬件技术演进得如此之快，我们会看到越来越多的工作转移到 GPU 上。</p><p>在 GPU 上渲染高质量图像的主要困难之一，是让 GPU 上能用与 CPU 上相同的着色器。制作公司使用一套精心开发的着色器，把它们组合起来得到想要的最终效果。用大多数 GPU 编程语言很难高效地组合着色器，因为这些语言是为实现完整效果的单体程序设计的。不过 Cg 1.2 的发布是 GPU 上创建复杂着色器的一个突破：语言中加入着色器接口与不定长数组之后，就能在运行时组合着色器，生成渲染出目标最终效果的 GPU 程序。</p><p>本章简要回顾 mental ray 3.3/3.4 的着色架构，并说明我们如何把 mental ray 着色器的组合转换为 GPU 程序。我们所用的技术为创建复杂视觉效果提供了有力而灵活的手段。现在我们能在不牺牲质量与视觉丰富度的前提下，用 GPU 加速最终图像的渲染。</p><h2>13.2 着色器与 Phenomena</h2><p>对高质量离线渲染而言，「着色器」的概念与 GPU 上的交互式渲染略有不同。在 GPU 上，顶点着色器与片元着色器作用于输入几何，计算每个像素的颜色。在 mental ray 中，着色器是插件模块，用于材质、光源、相机等元素，控制从表面材质、体积、相机镜头属性到合成的广泛效果。高端视觉特效与动画长片制作公司把各个效果组件放在不同的着色器中，在运行时自动组合；把特定的视觉效果拆成更小的元素往往更合理，让环境与和它交互的东西分别表示。举例来说，物体带着表面着色器，定义表面对入射光的响应（即 BRDF）。光源是独立的场景元素，带着光着色器，定义光的发射特性。两者都需要在运行时组合起来才能完成着色。此外还有体积着色器；附着在相机上的镜头着色器；以及纹理、环境等各类着色器，它们都对着色有贡献，必须收集起来才能创建片元程序。</p><p>软件渲染器渲染场景时，会在管线的不同阶段调用不同的着色器。下面的例子中，最先被调用的是材质着色器，它定义被照亮表面的颜色。然后会依次调用照亮该表面的所有光源的光着色器，以确定它们在该表面上照了多少光。光着色器的行为依其是点光源、聚光灯还是面光源而不同。若表面有反射，可能会调用环境着色器把它的贡献加到表面上。若启用了光线追踪，一条光线可能击中另一个物体，于是调用该物体的材质着色器。若物体透明，材质与光着色器会被反复调用，直到达到完全不透明。除这些着色器外，雾等体积着色器也会影响最终图像。体积着色器若附着在相机上，会对每个采样点调用。图 13-1 说明了这些基本概念。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_01.jpg" alt="13_phenomena_01.jpg"><figcaption>图 13-1　场景中的着色器</figcaption></figure><p>mental ray 渲染器进一步扩展了这一思路，引入 Phenomenon 组件（Driemeyer 2005）。它们施加到场景上时看起来像着色器，但功能实现方式不同。着色器通常作为独立组件工作，而 Phenomena 封装了一组相互连接成图的子着色器节点，以及相关的渲染选项、几何、材质、体积等元素，这些元素会在场景中的适当位置自动整合。（例如，Phenomena 是 Maya 的 Hypershade 图集的超集。）着色器与 Phenomena 都有把数据送入其中的<em>接口参数</em>，以及返回其求值结果的<em>结果参数</em>。对 Phenomena 而言，Phenomenon 的结果参数取自一个特定着色器，称为该 Phenomenon 的<em>主根着色器</em>。</p><p>定义好之后，着色器就可以用来控制材质的表面属性。着色器与 Phenomena 可以连接成着色器图。在 mental ray 中，用户可以把另一个着色器的结果参数赋给某个接口参数。</p><p>图 13-2 是一个 Phenomenon 的例子。它用三个输入参数值计算结果。这些参数值可能又由其他着色器算出，可能是用户设定的常量，可能是纹理查找的结果，等等。注意在这个例子里，最终结果值由蓝框中另一个「子」Phenomenon 算出。用模块化部件以多种方式「接线」Phenomenon 图的能力，使其成为美术与设计师手中的强大范式。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_02.jpg" alt="13_phenomena_02.jpg"><figcaption>图 13-2　一个 Phenomenon 的例子</figcaption></figure><p>本章的示意图中，方框代表着色器或 Phenomena；它们的接口参数（例如「ambient」「diffuse」「specular」）在左侧，结果参数在右侧。Phenomenon 实例适合用作预打包的效果：例如一个木材 Phenomenon 可能有定义颜色与木纹扰动程度的参数，不同的预定义实例可以提供参数值，让它看起来像橡木、红木、桦木或其他变体。</p><p>在场景中使用着色器或 Phenomena 时，需要知道三个属性：</p><ul><li>着色器或 Phenomenon 的名称</li><li>它的接口参数</li><li>它的结果参数</li></ul><p>着色器名称与实现它的 Cg 结构体类型名称相同。接口参数是一组具名值，在着色器或 Phenomenon 运行时传入。例如，实现 Phong 着色的着色器可以有三个 <code>color</code> 类型的接口参数，名为 <code>ambient</code>、<code>diffuse</code> 和 <code>specular</code>，以及一个 <code>scalar</code> 类型的参数名为 <code>exponent</code>。最后，着色器的结果参数表示着色器返回的值。多数情况下这是单个 <code>color</code> 类型的值，但也可以是其他类型以及包含多个值的结构。</p><h2>13.3 用 Cg 实现 Phenomena</h2><p>由于 GPU 不支持载入多个着色器再在运行时让一个着色器调用另一个，mental ray 必须把 Phenomenon——包括为其输入参数提供数据的所有子着色器、根着色器，以及指派的着色器（例如照亮表面的光着色器）——收集进一个可下载到 GPU 的片元程序。Cg 1.2 引入的着色器接口特性（Pharr 2004）为这一过程提供了便利。</p><p>在我们的系统中，我们为着色器组件可能作为输入传入、或作为输出算出的每一种参数类型，都预定义了一个抽象 Cg 接口类型。着色器与 Phenomena 在声明输入输出参数时就使用这些抽象接口类型。运行时，用 Cg 运行库创建每个子着色器的具体实例，并把每个内部子着色器的输出接到相应的输入上，如图 13-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_03.jpg" alt="13_phenomena_03.jpg"><figcaption>图 13-3　Phenomenon 如何嵌入图形管线</figcaption></figure><p>本节余下部分详细说明我们使用的 GPU 程序、定义的接口类型，以及输出参数如何接到其他着色器的输入上以构成图。</p><h4>13.3.1 Cg 顶点程序与 varying 参数</h4><p>我们发现，对我们想实现的多数效果，都可以用同一个顶点程序。这个顶点程序主要充当应用传来数据的简单直通。最常见的 varying 参数在顶点着色器中变换后传给片元着色器。</p><p>除齐次位置外，送往片元程序的 varying 参数还有：位置、法线、四个纹理坐标，以及用于凹凸贴图的表面 U、V 参数导数。为简单起见，除纹理坐标外的所有数据都变换到相机空间。例如片元中的位置对应相机空间中从相机到所渲染像素的向量，向量长度对应到相机的距离。在片元程序中，若需要，可以用变换矩阵从一个空间转到另一个空间。从顶点程序到片元程序的 varying 参数存在一个名为 <code>vert2frag</code> 的结构中，见代码清单 13-1。</p><h4>示例 13-1　送往片元程序的 varying 参数</h4><pre><code>struct vert2frag
+{
+  float4 hPosition : POSITION;
+  // 齐次位置
+  float2 texCoord0 : TEXCOORD0; // 纹理坐标
+  float2 texCoord1 : TEXCOORD1; // 纹理坐标
+  float2 texCoord2 : TEXCOORD2; // 纹理坐标
+  float2 texCoord3 : TEXCOORD3; // 纹理坐标
+  float3 position : TEXCOORD4;
+  // 眼空间位置
+  float3 normal : TEXCOORD5;
+  // 眼空间法线
+  float3 derivU : TEXCOORD6;
+  // U 方向导数
+  float3 derivV : TEXCOORD7;
+  // V 方向导数
+  float2 screen : WPOS;
+  // 屏幕空间
+  float4 face : COLOR0;
+  // 1 表示正面，-1 表示背面
+};</code></pre><h4>13.3.2 片元着色器的 <code>main()</code> 入口点</h4><p>由 mental ray 从组件着色器组合而成的所有片元程序都必须以一个入口函数开始。为了能把 Phenomena 转换到 GPU，我们必须设计一个通用的主入口点。对所有着色器图，我们创建一个 <code>main()</code> 函数，它调用相应的 Phenomenon 根着色器，从而触发整个着色器图的求值。</p><p>这个主入口点还处理所有着色器都需要的一些通用操作。例如，它包含一项测试，用于丢弃比 z 深度纹理更近的像素，这用于顺序无关的透明。</p><h4>13.3.3 通用着色器接口</h4><p>对接口的支持是在 Cg 1.2 中引入的。这些接口提供了一种抽象结构体成员函数实现方式的手段。我们大量使用它们来实现返回给着色器某个参数的值。为了能把一个着色器的输出与其他着色器的输入参数相连，我们必须定义所有着色器都使用的通用 Cg 接口类型。这些默认的 Cg 接口类型及其实现会自动插入每个程序。着色器描述中出现的每一种<em>参数类型</em>都有对应的接口。举例来说，若某个输入参数在着色器声明中是 <code>scalar</code> 类型，则在着色器的 Cg 实现中必须声明为 <code>miiScalar</code>。</p><p>表 13-1 给出对应的参数类型与接口类型。</p><h4>表 13-1　mental ray 基本类型与对应的 Cg 接口</h4><table><thead><tr><td><p>mental ray 类型</p></td><td><p>Cg 接口类型</p></td><td><p>返回值</p></td></tr></thead><tbody><tr><td><p><code>light</code></p></td><td><p><code>miiLight</code></p></td><td><p><code>misLightOut</code></p></td></tr><tr><td><p><code>boolean</code></p></td><td><p><code>miiBoolean</code></p></td><td><p><code>bool</code></p></td></tr><tr><td><p><code>integer</code></p></td><td><p><code>miiInteger</code></p></td><td><p><code>int</code></p></td></tr><tr><td><p><code>scalar</code></p></td><td><p><code>miiScalar</code></p></td><td><p><code>float</code></p></td></tr><tr><td><p><code>vector</code></p></td><td><p><code>miiVector</code></p></td><td><p><code>float3</code></p></td></tr><tr><td><p><code>color</code></p></td><td><p><code>miiColor</code></p></td><td><p><code>float4</code></p></td></tr><tr><td><p><code>color texture</code></p></td><td><p><code>miiColorTexture</code></p></td><td><p><code>float4</code></p></td></tr><tr><td><p><code>matrix</code></p></td><td><p><code>miiMatrix</code></p></td><td><p><code>float4x4</code></p></td></tr></tbody></table><p>每个 Cg 接口类型定义一个求值方法，名为 <code>eval()</code>，返回相应具体类型的值。例如：</p><pre><code>// 整数
+interface miiInteger(int eval(vert2frag params););
+// 向量
+interface miiVector(float3 eval(vert2frag params););</code></pre><p>要写一个作为某接口类型具体实现的着色器，只需定义一个实现相应 <code>eval()</code> 方法的结构体。这让我们可以在任何需要该接口类型的地方「插入」这个结构体。</p><p>举例来说，下面的例子给出 <code>miiScalar</code> 的实现，其中我们想把一个简单的常量赋给接口参数。我们创建并连接一个简单的接口实现，使 <code>eval()</code> 方法返回常量值：</p><pre><code>
+// 基础标量实现
+struct miScalar : miiScalar
+{
+  float s;
+  float eval(vert2frag params) { return s; }
+};</code></pre><h4>13.3.4 一个简单着色器的示例</h4><p>mental ray 需要知道着色器是如何定义的，才能正确调用它们并把值赋给着色器的参数。下面是一个着色器声明的例子，解析 mental ray 场景时就会看到这样的声明：</p><pre><code>declare shader color
+    "mib_illum_phong"(color "ambience", color "ambient", color "diffuse",
+                      color "specular", scalar "exponent",
+#phong exponent
+                      integer "mode",
+#light selection mode 0..2
+                      array light "lights")end declare</code></pre><p>编写片元着色器时我们遵循一条简单规则：在实现该着色器的 Cg 文件中，定义一个结构体，按着色器声明的要求实现与该着色器返回值对应的接口。该结构体还应包含着色器的输入参数，以及用于返回接口的 <code>eval()</code> 方法。</p><p>结构体的名称与着色器声明中的名称相同。它必须实现着色器声明中也出现的返回类型接口。着色器所有必需的输入参数都必须用其等价的类型接口来定义。它们也必须与着色器声明中的名称相同。</p><p>对单个着色器，会创建一个着色器实例并接到 Phenomenon 的主根上。当输入参数上没有挂着色器时，就连接一个求值为常量的简单接口，并用 Cg 运行库把它的可变性设为 <code>CG_LITERAL</code>。把可变性设为 <code>CG_LITERAL</code> 能让 Cg 编译器对生成的片元着色器做更大程度的优化（通过常量折叠），比使用 uniform 值时更彻底。</p><p>如代码清单 13-2 所示，结构体的名称与着色器声明相同。该结构体实现接口 <code>miiColor</code>，对应输出参数。并非所有输入参数都需要用到；例如参数 <code>mode</code> 在 Cg 着色器中被忽略。</p><p>图 13-4 中的图展示了着色器中值连接的一个例子。为清楚起见省略了一些参数。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_04.jpg" alt="13_phenomena_04.jpg"><figcaption>图 13-4　一个简单着色器的示例</figcaption></figure><h4>示例 13-2　Phong 光照模型的 Cg 实现</h4><pre><code>
+struct mib_illum_phong : miiColor
+{
+  miiColor ambience, ambient, diffuse, specular;
+  miiScalar exponent;
+  miiLight lights[];
+  // miiColor 的实现
+  float4 eval(vert2frag p)
+  {
+    float4 result;
+    float4 ldiffuse = diffuse.eval(p);
+    float4 lspecular = specular.eval(p);
+    float lexponent = exponent.eval(p) result =
+        ambience.eval(p) * ambient.eval(p);
+    // 对每个光源做材质计算
+    for (int i = 0; i < lights.length; i++)
+    {
+      // 光源着色器求值
+      misLightOut light = lights[i].eval(p);
+      // 兰伯特余弦定律
+      float d = max(0, light.dot_nl);
+      result += d * ldiffuse * light.color;
+      // Phong 余弦幂次
+      if (d > 0)
+      {
+        float s = mi_phong_specular(lexponent, light.dir, vdir, p.normal);
+        result += s * lspecular * light.color;
+      }
+    }
+    return result;
+  }
+};</code></pre><h4>13.3.5 全局状态变量</h4><p>着色器可能需要一些不通过接口参数传给它的附加信息。例如，知道当前渲染的是哪个物体、或最终图像的分辨率，可能很重要。此外，许多着色器需要从一个坐标空间转到另一个，这就要访问各种变换矩阵。我们的系统用特定的全局状态变量来提供这些值。例如创建程序时，系统会遍历其全局参数，查找名为「<code>miToWorld</code>」的参数。若程序含这个参数名且类型对应 <code>float4x4</code>，就用相应的变换矩阵初始化它。表 13-2 给出可用的变量。</p><h4>表 13-2　mental ray 全局状态变量</h4><table><thead><tr><td><p>用途</p></td><td><p>状态变量名</p></td><td><p>Cg 类型</p></td><td><p>说明</p></td></tr></thead><tbody><tr><td><p><strong>材质</strong></p></td><td><p><code>miToWorld</code></p></td><td><p><code>float4x4</code></p></td><td><p>用于把 <code>vert2frag.position</code> 中的相机空间坐标变换到世界空间。</p></td></tr><tr><td><p><code>miFromWorld</code></p></td><td><p><code>float4x4</code></p></td><td><p>用于把世界空间坐标变换到相机空间。</p></td></tr><tr><td><p><code>miToObject</code></p></td><td><p><code>float4x4</code></p></td><td><p>用于把相机空间坐标变换到物体空间。</p></td></tr><tr><td><p><code>miFromObject</code></p></td><td><p><code>float4x4</code></p></td><td><p>用于把物体空间坐标变换到相机空间。</p></td></tr><tr><td><p><strong>仅用于光着色器</strong></p></td><td><p><code>miLightOrigin</code></p></td><td><p><code>float3</code></p></td><td><p>光源在相机空间中的位置。</p></td></tr><tr><td><p><code>miLightDir</code></p></td><td><p><code>float3</code></p></td><td><p>光源在相机空间中的方向。</p></td></tr><tr><td><p><code>miLightSpread</code></p></td><td><p><code>float</code></p></td><td><p>聚光灯的扩散角。</p></td></tr><tr><td><p><code>miLightType</code></p></td><td><p><code>int</code></p></td><td><p>光源类型：0 = 点光源，1 = 聚光灯，2 = 平行光</p></td></tr><tr><td><p><code>miLightFace</code></p></td><td><p><code>int</code></p></td><td><p>受光面：1 = 正面，2 = 背面，0 = 两面</p></td></tr><tr><td><p><code>miToLight</code></p></td><td><p><code>float4x4</code></p></td><td><p>用于把相机空间坐标变换到光源空间。</p></td></tr><tr><td><p><code>miFromLight</code></p></td><td><p><code>float4x4</code></p></td><td><p>用于把光源空间坐标变换到相机空间。</p></td></tr><tr><td><p><strong>相机</strong></p></td><td><p><code>miCameraAspect</code></p></td><td><p><code>float</code></p></td><td><p>宽高比：height x aspect = width</p></td></tr><tr><td><p><code>miCameraAperture</code></p></td><td><p><code>float</code></p></td><td><p>光圈尺寸：atan(focal/aperture) = 视场角</p></td></tr><tr><td><p><code>miCameraFocal</code></p></td><td><p><code>float</code></p></td><td><p>焦距：atan(focal/aperture) = 视场角</p></td></tr><tr><td><p><code>miCameraClip</code></p></td><td><p><code>float2</code></p></td><td><p>裁剪平面：x = 近，y = 远</p></td></tr><tr><td><p><code>miCameraRes</code></p></td><td><p><code>float2</code></p></td><td><p>窗口的分辨率。</p></td></tr><tr><td><p><code>miCameraOrtho</code></p></td><td><p><code>bool</code></p></td><td><p>相机是否为正交投影？</p></td></tr><tr><td><p><strong>阴影贴图（仅用于光着色器）</strong></p></td><td><p><code>miShadowMap</code></p></td><td><p><code>bool</code></p></td><td><p>为真时，表示全局阴影贴图选项已开启。</p></td></tr><tr><td><p><code>miShadowMapTex</code></p></td><td><p><code>samplerRECT[1|6]</code></p></td><td><p>阴影贴图纹理。聚光灯与平行光用 1 张，点光源用 6 张。</p></td></tr><tr><td><p><code>miShadowMapTransform</code></p></td><td><p><code>float4x4</code></p></td><td><p>用于把 <code>vert2frag.position</code> 变换到光源空间的矩阵。</p></td></tr><tr><td><p><code>miShadowMapWindow</code></p></td><td><p><code>float2</code></p></td><td><p>施加到 UV 坐标上的变换。</p></td></tr><tr><td><p><code>miShadowMapSize</code></p></td><td><p><code>float2</code></p></td><td><p>阴影贴图的分辨率。</p></td></tr><tr><td><p><code>miShadowMapBias</code></p></td><td><p><code>float</code></p></td><td><p>施加到阴影贴图上的偏移。</p></td></tr><tr><td><p><strong>着色器</strong></p></td><td><p><code>miRayEnvironment</code></p></td><td><p><code>miiColor</code></p></td><td><p>与环境着色器的连接。</p></td></tr></tbody></table><p>这些状态变量用 Cg 运行时创建为共享参数。当我们在程序的全局参数中发现某个已知的状态参数时，只需把它连接到对应的全局 uniform 参数。值在一帧中变化时，我们只需更新共享参数的值，每个绑定了该参数的着色器中的值就会随之更新。uniform 值的这种用法见图 13-5。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_05.jpg" alt="13_phenomena_05.jpg"><figcaption>图 13-5 全局 uniform 如何共享</figcaption></figure><h4>13.3.6 光源着色器</h4><p>光源着色器实现光源的特性。例如，聚光灯着色器会用照射方向来衰减锥体内发出的光量。只要材质着色器通过光照接口求值某个光源，就会调用光源着色器。在制作场景中，我们常看到大量不同的光源照亮同一个模型。在我们的实现中，所有光源着色器都必须返回一个结构，其中包含该光源贡献的颜色量、指向光源的方向，以及光源方向与法线的点积。由于表面着色器都是通过调用抽象的光照接口来取回这些值的，因此任何实现了该接口的光源都能方便地配任何类型的表面着色器使用。</p><p>光源着色器还负责投射阴影，如图 13-6 所示。在光源着色器中，我们可以用上一遍渲染出的阴影贴图或软件生成的阴影贴图，计算该片元当前对光源是否可见。若片元不可见，光源通常返回黑色，表示该光源对材质的照明没有贡献。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_06.jpg" alt="13_phenomena_06.jpg"><figcaption>图 13-6 平行光、点光源与聚光灯的照明及阴影贴图</figcaption></figure><p>代码清单 13-3 是聚光灯的一个示例实现。</p><h4>示例 13-3. mental ray 基础聚光灯的部分 Cg 实现</h4><pre><code>struct mib_light_spot : miiLight
+{
+  // 着色器的参数
+  miiColor color;
+  miiBoolean shadow;
+  miiScalar factor;
+  miiBoolean atten;
+  miiScalar start;
+  miiScalar stop;
+  miiScalar cone;
+  // 来自光源实例的信息
+  // 光源的位置
+  float3 miLightOrigin;
+  // 光源的方向
+  float3 miLightDir;
+  // 扩散角的余弦
+  float miLightSpread;
+  bool miShadowMap;
+  // 阴影是否启用？
+  samplerRECT miShadowMapTex[1]; // 光源阴影贴图
+  float4x4 miShadowMapTransfo;
+  // 从相机空间到光照空间
+  float2 miShadowMapWindow;
+  // 窗口的大小
+  float2 miShadowMapSize;
+  // 阴影贴图的大小
+  float miShadowMapBias;
+  // 光源求值
+  misLightOut eval(vert2frag p)
+  {
+    misLightOut ret_val;
+    float4 lcolor = color.eval(p);
+    // 指向光源的向量
+    ret_val.dir = normalize(miLightOrigin - p.position);
+    ret_val.dot_nl = dot(p.normal, ret_val.dir);
+    // 阴影
+    if (shadow.eval(p) && miShadowMap)
+    {
+      float lfactor = factor.eval(p);
+      ... lcolor.rgb *= lerp(lfactor, 1, map_z / 4);
+    }
+    // 锥体
+    ...
+        // 距离衰减
+        ... ret_val.color = lcolor;
+    return ret_val;
+  }
+};</code></pre><h4>13.3.7 纹理着色器</h4><p>纹理着色器通常从纹理图像返回一个颜色。它们也可以是过程化的，比如经典的大理石或木纹着色器。当某个着色器输入参数挂接到纹理图像上时，会创建一个显式的 <code>miColorTexture</code> 参数，并把它的纹理 ID 映射到 <code>sampler2D</code> 参数。只要调用 <code>cgGLSetManageTextureParameters()</code> 启用 Cg 运行时的纹理参数自动管理，我们就不必在绑定程序时处理纹理的激活。这样我们可以加载所有纹理，只需用 <code>cgSetTextureParameter()</code> 就能在着色器中访问图像。</p><p>基本接口的所有求值方法都只需要一个参数，即 <code>vert2frag</code> 结构，<code>miiColorTexture</code> 接口除外。除常规的 varying 参数外，我们还加了一个 <code>float2</code> 参数来传递 UV 坐标。</p><p>纹理着色器的一个好处是能生成过程化纹理坐标。通常 UV 挂在每个顶点上，常常由纹理投影生成。这些投影可以在片元程序中创建，从而消除在顶点级施加球面映射或其他参数化投影时经常出现的各种瑕疵。</p><p>图 13-7（见下页）给出一个纹理着色器的输出，它连接到 Phong 着色器的漫反射参数。纹理坐标用球面投影逐片元计算。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_07.jpg" alt="13_phenomena_07.jpg"><figcaption>图 13-7 连接到漫反射参数的纹理着色器</figcaption></figure><p>代码清单 13-4 是一个简单的纹理查找着色器示例，它返回一个颜色。</p><h4>示例 13-4. mental ray 纹理查找着色器的 Cg 实现</h4><pre><code>struct mib_texture_lookup : miiColor
+{
+  miiColorTexture tex;
+  miiVector coord;
+  float4 eval(vert2frag p)
+  {
+    // 球面投影着色器的求值
+    float3 lcoord = coord.eval(p);
+    // 求值化为一次简单的 tex2D 调用
+    float4 ret_val = tex.eval(p, lcoord.xy);
+    return ret_val;
+  }
+};</code></pre><h4>13.3.8 凹凸贴图</h4><p>在图 13-8 中，用于材质照明的法线向量被凹凸贴图着色器扰动。要对材质着色器施加凹凸贴图，我们必须在求值材质着色器之前修改 varying 状态中的法线。做法是在图中增加一个着色器节点，如图 13-9 所示。这个节点的接口接受两个参数：第一个调用法线修改器，把值返回给 varying 状态中的法线；第二个调用材质着色器。由于材质着色器所用的法线在求值前已被修改，光照就会相应地受到凹凸的影响。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_08.jpg" alt="13_phenomena_08.jpg"><figcaption>图 13-8 用凹凸贴图着色器修改后的法线</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_09.jpg" alt="13_phenomena_09.jpg"><figcaption>图 13-9 凹凸贴图着色器的结构</figcaption></figure><p>由于这是一个返回向量的着色器，实现法线修改器的着色器可以是任意类型。它可以是一次法线纹理查找，可以基于多次纹理查找修改法线，也可以是过程化的。通过 varying 参数传递的导数保证你总在同一个方向上采样，并让凹凸随物体正确旋转。</p><h4>13.3.9 环境着色器与体积着色器</h4><p>环境着色器是 Phenomena 的一个可选附加根节点，在光线射向无穷远时求值。它可以为反射面或透明面调用，也可以仅在某个像素上没有可见物体时调用。为确保渲染图像中所有这类像素都调用环境着色器，我们在摄像机远裁剪平面前方 epsilon 处绘制一个平面。</p><p>由于 GPU 尚不支持完全通用的光线追踪，反射或折射材质无法发射光线去击中其他物体或自身。因此它们只能反射所处的环境。要从另一个着色器调用全局环境着色器图，我们必须定义一个全局状态变量。图 13-10 给出了该图与类型为 <code>miiColor</code> 的全局状态变量 <code>miRayEnvironment</code> 之间的连接。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_10.jpg" alt="13_phenomena_10.jpg"><figcaption>图 13-10 环境着色器的结构</figcaption></figure><p>体积着色器是另一类 Phenomenon 根节点。这类着色器需要对每个渲染的片元调用。挂在摄像机上的体积着色器会依据不同因素影响渲染出的颜色。雾就是一种简单的体积模型，它按到摄像机的距离衰减颜色。由于体积着色器需要对每个片元调用，该着色器节点会被自动放在主 Phenomenon 根之上，如图 13-11 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_11.jpg" alt="13_phenomena_11.jpg"><figcaption>图 13-11 体积着色器的结构</figcaption></figure><p>在图 13-12 中，由于本场景施加了雾效，尖刺所用的蓝色着色器无需修改。挂在摄像机上的层雾着色器修改场景中各个着色器的输出，为场景带来大气效果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_12.jpg" alt="13_phenomena_12.jpg"><figcaption>图 13-12 用体积着色器渲染的图像</figcaption></figure><h4>13.3.10 返回结构的着色器</h4><p>着色器并不限于返回单个值；它们可以有多个结果。这类着色器算出的值以结构的形式返回。某个着色器输入参数可能连接到该结构中的某个成员。由于 Cg 无法连接不同类型的接口，我们必须实现转换器。</p><p>首先，返回结构的着色器必须实现该结构的接口。这个接口是连接转换器所必需的。结构中所有成员都必须有转换器节点，才能连接到着色器参数。一个返回颜色和向量的着色器必须实现两个转换器：实现 <code>miiColor</code> 的结构 <code>mystruct_outColor</code>，以及实现 <code>miiVector</code> 的结构 <code>mystruct_outVector</code>。转换器的输入参数连接到该着色器的输出，返回结构中的某个成员。得到的结构成员就可以连接到目标着色器参数。</p><p>转换器可以被许多着色器使用。为避免重复，我们只需用 <code>#include</code> 语句把转换器代码包含进来。图 13-13 展示了从包含向量的输出结构到 <code>miiVector</code> 的转换。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_13.jpg" alt="13_phenomena_13.jpg"><figcaption>图 13-13 返回结构的着色器</figcaption></figure><h4>13.3.11 渲染毛发</h4><p>在 mental ray 中，毛发渲染为 Bezier 曲线。毛发宽度可以用全局半径、单根毛发半径或逐顶点半径指定。用 GPU 渲染时，曲线的近似可能生成数百万个三角形，每个往往比一个片元还小。由于毛发被转换成三角形，它们可以像其他几何体一样处理。我们可以挂上一个 Phenomenon，用 varying 参数跟随毛发的切线、从发根到发梢的相对距离等信息。这些信息足以实现任何光照模型，因为毛发 Phenomenon 与其他材质 Phenomenon 没有本质区别。图 13-14 给出一个例子。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/13_phenomena_14.jpg" alt="13_phenomena_14.jpg"><figcaption>图 13-14 渲染出的长毛豆子</figcaption></figure><h4>13.3.12 整合起来</h4><p>渲染场景时，我们首先收集所有需要投射阴影贴图的光源。mental ray 也用 Cg 着色器计算到光源的距离，结果存入浮点 pbuffer。</p><p>接着我们把所有 Phenomenon 转换为 Cg，并用各个根节点构造一棵唯一的树。如果得到的着色器树能针对该显卡的 profile 编译成功，对象就由 GPU 绘制；否则由软件渲染。</p><p>由于有些材质是透明的，我们用与顺序无关的透明技术绘制整个场景，该技术也叫深度剥离（Everitt 2001）。着色器知道各层之间的距离，并据此调整对帧缓冲的颜色贡献。例如毛发图元就是这样渲染的。</p><p>硬件完成所有渲染遍之后，用 z 深度值和 alpha 把帧缓冲与软件渲染遍混合合并。</p><p>这个过程可能出现各种问题。例如显存或纹理内存不足，或者 Cg 着色器因硬件限制而编译不过。无论哪种情况，出错的对象都改用软件渲染。</p><h2>13.4 结论</h2><p>转换为 Cg 的 Phenomenon 与由软件求值的 Phenomenon 结果相同，最终硬件渲染的图像与软件渲染版本没有明显差别，这正是我们最初的目标。借助硬件多重采样与超采样，我们能达到与软件相当的画质，而 GPU 渲染一帧所需时间只是软件的一小部分。</p><p>在复杂的制作场景中，编译大量着色器要在场景预处理阶段花些时间。有时 Cg 编译器的开销会抵消高速硬件渲染带来的整体收益。但着色器编译完成、所有纹理都驻留显存之后，用 GPU 渲染场景无疑比用 CPU 快得多。在大量测试场景中我们发现，GPU 渲染始终比 CPU 快一个数量级以上。</p><p>GPU 现在足够快，我们可以把场景的三角形数量推到极限。由于并非所有三角形都需要驻留内存，我们能渲染那些用软件渲染代价极高的场景。另一方面，mental ray 的软件渲染器提供了硬件目前还做不到的功能。了解硬件的局限之后，我们可以针对它的强项来构建场景，把渲染时间缩短一到两个数量级。</p><p>撰写本章时我们注意到，渲染一帧所需的时间每年缩短一半以上。每一代新 GPU 都提供更强的算力和更大的显存，并克服更多限制。不久的将来，当前的硬件限制会消失，GPU 的使用会更普遍。我们认为到 2010 年，几乎所有渲染都会基于 GPU。</p><h2>13.5 参考文献</h2><p><a id="biblio13_01"></a>Driemeyer, Thomas 编. 2005. <em>Rendering with Mental Ray</em>，第 3 版。Springer 出版。</p><p><a id="biblio13_02"></a>Everitt, Cass. 2001. "Order-Independent Transparency." 技术报告。NVIDIA Corporation。可在线获取：<strong><a href="http://developer.nvidia.com/view.asp?IO=order_independent_transparency" rel="noreferrer noopener">http://developer.nvidia.com/view.asp?IO=order_independent_transparency</a></strong></p><p><a id="biblio13_03"></a>Pharr, Matt. 2004. "An Introduction to Shader Interfaces." 载 <em>GPU Gems</em>，Randima Fernando 编，第 537–550 页。Addison-Wesley 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-13-implementing-mental-images" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-13-implementing-mental-images</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
