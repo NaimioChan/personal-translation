@@ -72,5 +72,9 @@ window.PT_LIBRARIES = [
   { dir: 'supercollider-docs', title: 'SuperCollider 文档',
     desc: 'SuperCollider 3.14.1 官方帮助文档的中文译本。',
     source: 'https://docs.supercollider.online/',
-    updated: '2026-10-20', pages: 1278 }
+    updated: '2026-10-20', pages: 1278 },
+  { dir: 'ofbook', title: 'ofBook',
+    desc: 'openFrameworks 社区书籍的中文译本。',
+    source: 'https://openframeworks.cc/ofBook/',
+    updated: '2026-10-20', pages: 32 }
 ];

@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>声音 - ofBook</title>
+<meta name="description" content="ofBook 章节「声音」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="sound">声音</h1>
+<p><em>作者：<a href="http://adamcarlucci.com">Adam Carlucci</a></em></p>
+<p>本章将演示如何使用 openFrameworks 中的声音功能，以及一些你可以用来生成和处理声音的技巧。</p>
+<p>下面先快速概览一下 openFrameworks 中可以用于处理声音的类：</p>
+<p><code>ofSoundPlayer</code> 提供对声音文件的简单访问，让你可以轻松加载和播放声音、为应用添加音效，并在文件播放时提取一些关于该文件声音的数据。</p>
+<p><code>ofSoundStream</code> 让你访问计算机的声音硬件，既可以自己生成声音，也可以对从麦克风或 line-in 插孔之类的输入进入计算机的声音作出反应。</p>
+<p><code>ofSoundBuffer</code> 用来存储一段音频采样序列，并对这些采样执行与音频相关的操作（比如重采样）。</p>
+<h2 id="gettingstartedwithsoundfiles">从声音文件开始</h2>
+<p>在 openFrameworks 里播放一个声音文件只需要几行代码。只要让一个 <code>ofSoundPlayer</code> 指向存放在应用 data 文件夹里的文件，然后告诉它播放即可。</p>
+
+<pre><code>class ofApp : public ofBaseApp {
+  // ... 其他内容 ...
+  ofSoundPlayer soundPlayer;
+};
+
+void ofApp::setup() {
+  soundPlayer.load("song.mp3");
+  soundPlayer.play();
+}</code></pre>
+
+<p>如果要给应用加点背景音乐或氛围音，这样已经够了；不过 ofSoundPlayer 还附带几个额外功能，在处理音效时特别趁手。</p>
+<p>“Multiplay” 允许同一个文件同时播放好几次。对于任何可能被频繁触发的音效来说这很棒，这样你就不会因为播放器的播放头突然跳回文件开头而卡在一段不自然的截断上。Multiplay 默认不开启，用 <code>soundPlayer.setMultiPlay(true)</code> 启用它。之后你就能用下面这种极简的触发逻辑，得到自然的音效行为：</p>
+
+<pre><code>if ( thingHappened ) {
+  soundPlayer.play();
+}</code></pre>
+
+<p>ofSoundPlayer 另一个内置功能是速度控制。如果把速度设得比正常快，声音的音高会相应升高，反之亦然（就像黑胶唱片）。播放速度是相对于 “1” 定义的，所以 “0.5” 是一半速度，“2” 是双倍速度。</p>
+<p>速度控制和 multiplay 简直是为彼此而生的。同时用上两者，能大大延长单个音效文件的使用寿命。在启用 multiplay 的情况下，每次改变声音播放器的播放速度，之前触发的音效都不受影响地继续播放。于是，把上面的触发逻辑扩展成这样……</p>
+
+<pre><code>if( thingHappened ) {
+  soundPlayer.setSpeed(ofRandom(0.8, 1.2));
+  soundPlayer.play();
+}</code></pre>
+
+<p>……你就能给声音的每个实例增添一点独特的个性。</p>
+<p>ofSoundPlayer 还有一个重要功能是便捷的频谱访问。在桌面平台上，你可以用 ofSoundGetSpectrum() 取得应用中所有当前活跃的 ofSoundPlayer 所发出声音的<em>频域</em>表示。本章稍后会解释频域，不过跑一下 openFrameworks 的 <em>soundPlayerFFTExample</em> 就能大致明白。</p>
+<p>归根结底，ofSoundPlayer 是在易用性和控制力之间做取舍。你能用上 multiplay 和变调播放，但拿不到极其精确的控制，也访问不到声音文件里的单个采样。若需要这种级别的控制，ofSoundStream 才是合适的工具。</p>
+<h2 id="gettingstartedwiththesoundstream">从音频流开始</h2>
+<p>ofSoundStream 是通往计算机音频硬件的入口，比如麦克风和扬声器。如果你想让应用对实时音频输入作出反应，或者即时生成声音，这一节就是为你准备的！</p>
+<p>你可能永远都不需要直接使用 ofSoundStream，但它是负责管理资源的对象，这些资源用于在你的应用上触发 <code>audioOut()</code> 和 <code>audioIn()</code>。这两个函数是 ofApp 的可选成员，就像 <code>keyPressed()</code>、<code>windowResized()</code> 和 <code>mouseMoved()</code>。只要实现它们并启动音频流，它们就会开始被调用。下面是一个发声的 openFrameworks 应用的基本结构：</p>
+
+<pre><code>class ofApp : public ofBaseApp {
+  // ... 其他内容 ...
+  void audioOut( float * output, int bufferSize, int nChannels );
+  double phase;
+};
+
+void ofApp::setup() {
+  phase = 0;
+  ofSoundStreamSetup(2, 0); // 2 个输出声道（立体声），0 个输入声道
+}
+
+void ofApp::audioOut( float * output, int bufferSize, int nChannels ) {
+  for(int i = 0; i &lt; bufferSize * nChannels; i += 2) {
+    float sample = sin(phase); // 生成一个正弦波采样
+    output[i] = sample; // 写入左声道
+    output[i+1] = sample; // 写入右声道
+    phase += 0.05;
+  }
+}</code></pre>
+
+<p>生成或接收音频时，格式是介于 -1 和 1 之间的浮点数（原因本章稍后会讲）。声音会以<em>缓冲区</em>的形式到达你的应用。缓冲区其实就是数组，但“缓冲区”这个说法暗示每次你拿到的新缓冲区，代表的是上一个缓冲区之后的那段时间。openFrameworks 之所以向你要缓冲区（而不是单个采样），是因为把数据从你的程序搬运到音频硬件存在额外开销，这有点超出本书的范围。</p>
+<p>缓冲区大小可以调整，但通常最好保留默认值。默认值并不是某个特定数字，而通常是你的计算机硬件偏好的值。实践中大约是每缓冲区 512 个采样（256 和 1024 也是常见的缓冲区大小）。</p>
+<p>openFrameworks 里的声音缓冲区是<em>交错</em>存放的，意思是每个声道的采样紧挨在一起，就像：</p>
+
+<pre><code>[Left] [Right] [Left] [Right] ...</code></pre>
+
+<p>这意味着访问单个声道的方式，与访问 ofPixels 对象中不同颜色的方式很相似（即左声道用 <code>buffer[i]</code>，右声道用 <code>buffer[i + 1]</code>）。你在 <code>audioIn()</code> / <code>audioOut()</code> 里拿到的缓冲区总大小，可以用 <code>bufferSize * nChannels</code> 计算。</p>
+<p>使用 ofSoundStream 时要记住一个重要提醒：<code>audioIn()</code> 和 <code>audioOut()</code> 这类音频回调会在<em>另一个线程</em>上被调用，与标准的 <code>setup()</code>、<code>update()</code>、<code>draw()</code> 函数分开。这意味着，如果你想在（比如）<code>update()</code> 和 <code>audioOut()</code> 之间共享数据，就需要用 <code>ofMutex</code> 来避免两个线程互相干扰。本章稍后可以看到它的实际用法，也可以查看 threads 章节获得更深入的说明。</p>
+<p>在 openFrameworks 0.9.0 中，有一个新类 <em>ofSoundBuffer</em>，可以用在 <code>audioOut()</code> 里，替代 <code>float * output, int bufferSize, int channels</code> 这种形式。在这种情况下，上面的 <code>audioOut()</code> 函数可以改写成更简单的形式：</p>
+
+<pre><code>void ofApp::audioOut(ofSoundBuffer &amp;outBuffer) {
+	for(int i = 0; i &lt; outBuffer.size(); i += 2) {
+		float sample = sin(phase); // 生成一个正弦波采样
+		outBuffer[i] = sample; // 写入左声道
+		outBuffer[i + 1] = sample; // 写入右声道
+		phase += 0.05;
+	}
+}</code></pre>
+
+<h2 id="why1to1">为什么是 -1 到 1？</h2>
+<p>要理解<em>为什么</em> openFrameworks 选择把声音表示为取值在 -1 到 1 之间的连续 <code>float</code> 流，先了解声音在物理层面是如何产生的会很有帮助。</p>
+<figure><img alt="Speaker Mechanics" src="https://openframeworks.cc/ofBook/images/sound/images/speaker.png" title="simplified diagram of a speaker, showing the push/pull dynamics of its magnet"/>
+<figcaption>扬声器的工作原理</figcaption></figure>
+<p>在最基本的层面上，扬声器由纸盆和电磁铁组成。电磁铁推动和拉动纸盆，在气压中产生振动。这些振动传到你的耳朵，被解读为声音。电磁铁关闭时，纸盆就处于“静止”状态，既不拉进也不推出。基本的话筒工作方式很类似：让气压去振动一个由磁铁固定住的物体，从而产生电信号。</p>
+<p>从 openFrameworks 应用的角度看，声音硬件的具体电压并不重要。真正重要的只是扬声器纸盆在其“完全推出”和“完全拉进”两个位置之间被驱动，它们分别表示为 1 和 -1。这类似于 animation 章节中把 “1” 作为 100% 表示的概念，只不过声音引入了 -100% 的概念。</p>
+<p>另一些系统使用基于整数的表示，在类似 -65535 到 +65535 之间变化，0 仍然是“静止”的表示。Web Audio API 提供无符号 8 位表示，范围在 0 到 255 之间，127 表示“静止”。</p>
+<p>声音与视觉内容的一个主要区别是，声音其实没有“静态”的表示。比如，如果你在处理一张 OpenGL 纹理，其中 0 表示“黑”、1 表示“白”，你可以把纹理填满 0 或填满 1，分别得到“黑”或“白”的静态图像。声音不是这样。如果你创建一个全 0、全 1、全 -1 或任何单一数字的声音缓冲区，它们听起来都完全一样：什么都没有。</p>
+<blockquote>
+<p>严格来说，你大概会在开头听到一声“噗”，因为扬声器从“静止”位置跳到了你的缓冲区里填满的那个数字，但缓冲区剩下的部分就只是静音。</p>
+</blockquote>
+<p>这是因为你真正听到的是数值随时间的<em>变化</em>。缓冲区里任何单个采样本身并不真的带有声音。你听到的是它与前一个采样之间的<em>差别</em>。举例来说，声音的“响度”并不必然与缓冲区里各个数字有多“大”有关。一个在 0.9 到 1.0 之间振荡的正弦波，会比一个在 -0.5 到 0.5 之间振荡的正弦波安静得多。</p>
+<h2 id="timedomainvsfrequencydomain">时域与频域</h2>
+<p>当你把声音表示为 -1 到 1 之间的连续数值流时，你是在所谓的“时域”中处理声音。这意味着你处理的每个数值都指向一个特定的时刻。还有另一种表示声音的方式，在你用声音驱动应用其他方面时非常有用。这种表示叫做“频域”。</p>
+<figure><img alt="Time vs Frequency domain" src="https://openframeworks.cc/ofBook/images/sound/images/time-vs-freq.png" title="two graphs, one showing a signal represented in the time domain and the other showing the same signal in the frequency domain"/>
+<figcaption>时域与频域</figcaption></figure>
+<p>在频域中，你能看到输入信号在不同频率上各占多少，它们被切分成一个个独立的“bin”（见上图）。</p>
+<p>你可以用一种无处不在的算法把信号从时域变换到频域，它叫快速傅里叶变换（Fast Fourier Transform）。在 ofxFFT 或 ofxFft addon 中，你可以找到可直接用于 openFrameworks 的 FFT 实现（还带例子！），它们分别出自 Lukasz Karluk 和 Kyle McDonald 之手。</p>
+<p>在一个 FFT 采样中，索引较高的 bin 表示音高较高的频率（即高频），索引较低的表示低频。每个 bin 究竟代表<em>哪个</em>频率，取决于参与变换的时域采样数量。可以这样计算：</p>
+
+<pre><code>frequency = (binIndex * sampleRate) / totalSampleCount</code></pre>
+
+<p>所以，如果你对采样率 44100Hz、包含 1024 个时域采样的缓冲区做 FFT，bin 3 就代表 129.2Hz（ <code>(3 * 44100) / 1024 ≈ 129.2</code> ）。这个计算揭示了 FFT 一个非常值得记住的性质：用于计算 FFT 的时域采样越多，得到的频率分辨率就越好（也就是说，每个后续 FFT bin 代表的频率彼此更接近）。用这种方式提高频率分辨率的代价是你会开始失去对时间的把握，因为你的 FFT 表示的是信号中更大的一段。</p>
+<p>注意：原始 FFT 通常把输出表示为<a href="http://en.wikipedia.org/wiki/Complex_number">复数</a>，不过如果你是想做音频可视化之类的事情，这大概不是你想要的。更直观的表示是每个复数的<em>模</em>，它的计算方式为：</p>
+
+<pre><code>magnitude = sqrt( pow(complex.real, 2) + pow(complex.imaginary, 2) )</code></pre>
+
+<p>如果你使用的 FFT 实现直接给你一个 float 数组，那它很可能已经替你完成了这个计算。</p>
+<p>你也可以用逆快速傅里叶变换（Inverse Fast Fourier Transform，即 IFFT）把信号从频域<em>变回</em>时域。这不太常见，但有一整类叫做加法合成的音频合成方法就是围绕这个原理建立的（在频域中生成数值，然后对它们跑 IFFT 来产生合成声音）。</p>
+<p>频域在很多事情上都很有用，其中最直接的一种是按频率范围分离出声音的特定成分，比如一首歌里的各件乐器。另一个常见用途是分析声音的特质或音色，用来驱动复杂的音频反应式视觉。</p>
+<p>傅里叶变换背后的数学有点绕，但一旦理解了概念就相当直白。我觉得<a href="http://betterexplained.com/articles/an-interactive-guide-to-the-fourier-transform/">这篇对傅里叶变换的解释</a>把底层数学讲得很好，还配了一些可交互的视觉例子。</p>
+<h2 id="reactingtoliveaudio">对实时音频作出反应</h2>
+<h3 id="rms">RMS</h3>
+<p>给应用加上音频反应性最简单的方法之一，是计算输入音频数据缓冲区的 RMS。RMS 是 “root mean square”（均方根）的缩写，算法相当直白，能很好地近似“响度”（比求缓冲区平均值或取最大值之类的做法好得多）。算法里“平方”这一步保证输出始终是正值。这意味着你可以忽略原始音频可能含有“负”采样这件事（反正它们听起来和对应的正值一样响）。你可以在 <em>audioInputExample</em> 中看到 RMS 的计算。</p>
+
+<pre><code>// 由 audioInputExample 修改而来
+float rms = 0.0;
+int numCounted = 0;
+
+for (int i = 0; i &lt; bufferSize; i++){
+    float leftSample = input[i * 2] * 0.5;
+    float rightSample = input[i * 2 + 1] * 0.5;
+    
+    rms += leftSample * leftSample;
+    rms += rightSample * rightSample;
+    numCounted += 2;
+}
+
+rms /= (float)numCounted;
+rms = sqrt(rms);
+// rms 现在计算完毕</code></pre>
+
+<h3 id="onset-detection-aka-beat-detection">起始点检测（即节拍检测）</h3>
+<p>起始点检测算法试图在音频流中找出<em>起始点</em>出现的时刻，起始点通常是乐器奏出一个音或鼓被敲击的冲量之类。可用的起始点检测算法很多，复杂度和准确度各异，有些针对语音而非音乐做过微调，有些在频域而非时域工作，有些面向离线处理而非实时，等等。</p>
+<p>一个简单的实时起始点检测算法，可以建立在上面 RMS 计算的基础之上。</p>
+
+<pre><code>class ofApp : public ofBaseApp {
+    // ... audioInputExample 里的其他成员 ...
+
+    float threshold;
+    float minimumThreshold;
+    float decayRate;
+};
+
+void ofApp::setup() {
+    // ... audioInputExample 中 setup() 的内容 ...
+
+    decayRate = 0.05;
+    minimumThreshold = 0.1;
+    threshold = minimumThreshold;
+}
+
+void ofApp::audioIn(float * input, int bufferSize, int nChannels) {
+    // ... audioInputExample 中 audioIn() 的内容 ...
+    
+    threshold = ofLerp(threshold, minimumThreshold, decayRate);
+
+    if(rms &gt; threshold) {
+        // 检测到起始点！
+        threshold = rms;
+    }
+}</code></pre>
+
+<p>这在单独的鼓轨、稀疏的音乐，或者检测有没有人对着麦克风说话这类场景下大概够用。但在实践中你很可能发现，对于可靠的音频可视化或更精细的音频处理，它并不够用。</p>
+<p>你当然可以找一个外部的起始点检测算法（可用的 addon 相当多），但如果你想自己试验，试试把 FFT 引入你的算法。比如，试试把 RMS 换成一段 FFT bin 的平均振幅。</p>
+<p>如果你想深入起始点检测算法的世界（以及更大的所谓“音乐信息检索”算法生态），<a href="http://www.music-ir.org/mirex/wiki/MIREX_HOME">Music Information Retrieval Evaluation eXchange wiki</a> 是个很好的来源。在这个 wiki 上，你能找到年度比赛的结果，这些比赛比较的是起始点检测、调性检测、旋律提取、速度估计等各类算法。</p>
+<h3 id="fft">FFT</h3>
+<p>对输入音频跑 FFT，会返回一个表示输入频率内容的数值缓冲区。单纯的 FFT <em>不会</em>告诉你一段音乐里有哪些音符，但你能用这些数据把输入的听觉“质感”考虑进去。比如，FFT 数据能以相当细的粒度告诉你输入里有多少“低频”/“中频”/“高频”（实时音频反应式工作中典型的 FFT 会给你 512 到 4096 个独立的频率 bin 可用）。</p>
+<p>用 FFT 分析音乐时要记住，FFT 的 bin 是按<em>线性</em>尺度递增的，而人类是按<em>对数</em>尺度感知频率的。所以，如果你用 FFT 把音乐信号分成 512 个 bin，最低的那些（大概 bin 0 到 bin 40）很可能包含大部分数据，剩下的 bin 大多只是高频内容。如果你逐 bin 地分离声音，你能轻易分辨 bin 3 和 bin 4 的声音差别，但 bin 500 和 501 听起来大概完全一样。除非你有一对机器人的耳朵。</p>
+<p>还有另一种变换叫<em>常量 Q 变换</em>（Constant Q Transform，即 CQT），概念上与 FFT 相似，但它的 bin 按对数间隔分布，处理音乐时直观得多。比如，你可以在 CQT 中安排结果 bin，让它们依次表示 C、C#、D…… 截至本文写作时，我并不知道有现成的、可直接用于 openFrameworks 的 CQT addon，但如果你想在 FFT 之外探索其他音频可视化选项，这值得记住。我用<a href="https://code.soundsoftware.ac.uk/projects/constant-q-cpp">这个 Constant-Q 实现</a>得到过不错的结果，它属于 <a href="http://www.vamp-plugins.org/">Vamp</a> 插件与工具集。</p>
+<h2 id="synthesizingaudio">合成音频</h2>
+<p>这一节会带你做出一个基本的音乐合成器。完整的乐器超出了本书范围，但这里会介绍合成声音的基本构件。</p>
+<p>一个简单的合成器可以实现为受<em>包络</em>调制的<em>波形</em>，构成单个<em>振荡器</em>。典型的“真实”合成器会有好几个振荡器，还会引入<em>滤波器</em>，但很多合成器归根结底都是“波形 + 包络”组合的各种变体。</p>
+<h3 id="waveforms">波形</h3>
+<p>合成器的波形决定了振荡器的“音色”。波形越接近正弦波，产生的音色就越“纯”。波形几乎可以用任何东西构成，很多<a href="http://en.wikipedia.org/wiki/Category:Sound_synthesis_types">合成类型</a>都围绕着生成和操纵波形的技术展开。</p>
+<p>实现波形的一种常见技术是创建一个<em>查找表</em>，以一定分辨率存下完整波形。用一个<em>相位</em>索引扫描这张表，相位索引递增的速度决定振荡器的音高。</p>
+<p>下面是一个合成器应用的起点，我们会在这一节里不断扩展它。它演示了用查找表存储波形的技术，也把波形和最终的音频输出可视化出来。你可以用鼠标改变查找表的分辨率以及渲染的频率。</p>
+
+<pre><code>class ofApp : public ofBaseApp {
+public:
+    void setup();
+    void update();
+    void draw();
+    
+    void updateWaveform(int waveformResolution);
+    void audioOut(float * output, int bufferSize, int nChannels);
+    
+    std::vector&lt;float&gt; waveform; // 这就是查找表
+    double phase;
+    float frequency;
+
+    ofMutex waveformMutex;
+    ofPolyline waveLine;
+    ofPolyline outLine;
+};
+
+void ofApp::setup() {
+    phase = 0;
+    updateWaveform(32);
+    ofSoundStreamSetup(1, 0); // 单声道输出
+}
+
+void ofApp::update() {
+    ofScopedLock waveformLock(waveformMutex);
+    updateWaveform(ofMap(ofGetMouseX(), 0, ofGetWidth(), 3, 64, true));
+    frequency = ofMap(ofGetMouseY(), 0, ofGetHeight(), 60, 700, true);
+}
+
+void ofApp::draw() {
+    ofBackground(ofColor::black);
+    ofSetLineWidth(5);
+    ofSetColor(ofColor::lightGreen);
+    outLine.draw();
+    ofSetColor(ofColor::cyan);
+    waveLine.draw();
+}
+
+void ofApp::updateWaveform(int waveformResolution) {
+    waveform.resize(waveformResolution);
+    waveLine.clear();
+    
+    // "waveformStep" 把 sin() 的一个完整振荡周期映射到波形
+    // 查找表的长度
+    float waveformStep = (M_PI * 2.) / (float) waveform.size();
+    
+    for(int i = 0; i &lt; waveform.size(); i++) {
+        waveform[i] = sin(i * waveformStep);
+        
+        waveLine.addVertex(ofMap(i, 0, waveform.size() - 1, 0, ofGetWidth()),
+                           ofMap(waveform[i], -1, 1, 0, ofGetHeight()));
+    }
+}
+
+void ofApp::audioOut(float * output, int bufferSize, int nChannels) {
+    ofScopedLock waveformLock(waveformMutex);
+    
+    float sampleRate = 44100;
+    float phaseStep = frequency / sampleRate;
+    
+    outLine.clear();
+    
+    for(int i = 0; i &lt; bufferSize * nChannels; i += nChannels) {
+        phase += phaseStep;
+        int waveformIndex = (int)(phase * waveform.size()) % waveform.size();
+        output[i] = waveform[waveformIndex];
+        
+        outLine.addVertex(ofMap(i, 0, bufferSize - 1, 0, ofGetWidth()),
+                          ofMap(output[i], -1, 1, 0, ofGetHeight()));
+    }
+}</code></pre>
+
+<p>跑起来之后，试试用不同的方式填充波形表（也就是 <code>updateWaveform(...)</code> 里含有 <code>sin(...)</code> 的那一行）。比如，有个好玩的改法是把那一行换成：</p>
+
+<pre><code>waveform[i] = ofSignedNoise(i * waveformStep, ofGetElapsedTimef());</code></pre>
+
+<p>这样你会得到一个随时间自然演化的波形。不过要小心让波形采样保持在 -1 到 1 的范围内，免得炸掉你的扬声器和/或大脑。</p>
+<h3 id="envelopes">包络</h3>
+<p>现在我们有了一个持续音发生器，但往里面加入一些音量调制，会真正让声音活起来。这能让波形像乐器一样被演奏，或者让它听起来像是一个会对事件作出反应的活物。</p>
+<p>我们可以用 <code>ofLerp(...)</code> 做一个简单（但有效）的包络，只要往应用里加入下面的内容：</p>
+
+<pre><code>class ofApp : public ofBaseApp {
+    // ... 与之前的应用相同的成员 ...
+    
+    float volume;
+};
+
+void ofApp::setup() {
+    // ... 之前 setup() 的其余部分 ...
+    
+    volume = 0;
+}
+
+void ofApp::update() {
+    // ... 之前 update() 的其余部分 ...
+    
+    if(ofGetKeyPressed()) {
+        volume = ofLerp(volume, 1, 0.8); // 快速跳到 1
+    } else {
+        volume = ofLerp(volume, 0, 0.1); // 缓慢淡出到 0
+    }    
+}
+
+void ofApp::audioOut(float * output, int bufferSize, int nChannels) {
+    // ... 把之前那行 "output[i] = " 改成这样：
+
+    output[i] = waveform[waveformIndex] * volume;
+}</code></pre>
+
+<p>现在，每当你按下一个键，振荡器就会活跃起来，松开键后逐渐淡出。</p>
+<p>控制包络的标准做法是用一个相对简单的状态机，叫 ADSR，即 “Attack, Decay, Sustain, Release”。</p>
+<ul>
+<li><strong>起音</strong>（Attack）是音符触发后音量达到峰值有多快</li>
+<li><strong>衰减</strong>（Decay）是音量从峰值落下来要多久</li>
+<li><strong>延音</strong>（Sustain）是包络的保持音量，在音符释放前保持不变</li>
+<li><strong>释音</strong>（Release）是音符释放后音量回落到 0 要多久</li>
+</ul>
+<p>完整的 ADSR 实现留给读者作为练习，不过 <a href="http://www.earlevel.com/main/2013/06/03/envelope-generators-adsr-code/">earlevel.com 上的这个例子</a>是很好的参考。</p>
+<h3 id="frequency-control">频率控制</h3>
+<p>你大概能猜到接下来要做什么。既然应用已经能响应按键，我们就可以用这些按键来决定振荡器的频率。这里我们会再多用一点 <code>ofLerp(...)</code>，以获得漂亮的<em>连奏</em>效果。</p>
+
+<pre><code>class ofApp : public ofBaseApp {
+    // ... 与之前的应用相同的成员 ...
+    
+    void keyPressed(int key);
+    float frequencyTarget;
+};
+
+void ofApp::setup() {
+    // ... 之前 setup() 的其余部分 ...
+    
+    frequency = 0;
+    frequencyTarget = frequency;
+}
+
+void ofApp::update() {
+    // ... 用这个替换之前那行 "frequency = "：
+    frequency = ofLerp(frequency, frequencyTarget, 0.4);
+}
+
+void ofApp::keyPressed(int key) {
+    if(key == 'z') {
+        frequencyTarget = 261.63; // C
+    } else if(key == 'x') {
+        frequencyTarget = 293.67; // D
+    } else if(key == 'c') {
+        frequencyTarget = 329.63; // E
+    } else if(key == 'v') {
+        frequencyTarget = 349.23; // F
+    } else if(key == 'b') {
+        frequencyTarget = 392.00; // G
+    } else if(key == 'n') {
+        frequencyTarget = 440.00; // A
+    } else if(key == 'm') {
+        frequencyTarget = 493.88; // B
+    }
+}</code></pre>
+
+<p>现在我们有了一个基本可用的乐器！</p>
+<figure><img alt="Synthesis" src="https://openframeworks.cc/ofBook/images/sound/images/synthesis-example.png" title="screenshot of the synthesizer built in this section, clearly showing the aliasing effect of a low-resolution waveform"/>
+<figcaption>合成</figcaption></figure>
+<p>如果你想进一步探索，可以试试这几件事：</p>
+<ul>
+<li>不用 <code>keyPressed(...)</code> 来决定振荡器频率，而是用 ofxMidi 响应外部 MIDI 消息。想玩得花一点，可以试试实现弯音，或者用 MIDI CC 消息来控制频率插值的速率。</li>
+<li>不要“吸附”到波形查找表里最近的采样，而是尝试在相邻值之间插值，以减少低分辨率查找表产生的噪声杂音</li>
+<li>试着用图像或实时摄像头的数据填充波形表（用 <code>ofMap(...)</code> 可以方便地把数据保持在 -1 到 1 范围内）</li>
+<li>实现一个<em>复音</em>合成器。也就是用多个振荡器，让你能同时演奏不止一个音符。</li>
+<li>保留几份 <code>phase</code> 索引的副本，用 <code>ofSignedNoise(...)</code> 稍微改变它们各自代表的频率。把各个波形在 <code>output</code> 中相加，但用你跟踪的相位数量对结果求平均。</li>
+</ul>
+<p>例如：</p>
+
+<pre><code>void ofApp::audioOut(float * output, int bufferSize, int nChannels) {
+    ofScopedLock waveformLock(waveformMutex);
+
+    float sampleRate = 44100;
+    float t = ofGetElapsedTimef();
+    float detune = 5;
+
+    for(int phaseIndex = 0; phaseIndex &lt; phases.size(); phaseIndex++) {
+        float phaseFreq = frequency + ofSignedNoise(phaseIndex, t) * detune;
+        float phaseStep = phaseFreq / sampleRate;
+
+        for(int i = 0; i &lt; bufferSize * nChannels; i += nChannels) {
+            phases[phaseIndex] += phaseStep;
+            int waveformIndex = (int)(phases[phaseIndex] * waveform.size()) % waveform.size();
+            output[i] += waveform[waveformIndex] * volume;
+        }
+    }
+    
+    outLine.clear();
+    for(int i = 0; i &lt; bufferSize * nChannels; i+= nChannels) {
+        output[i] /= phases.size();
+        outLine.addVertex(ofMap(i, 0, bufferSize - 1, 0, ofGetWidth()),
+                          ofMap(output[i], -1, 1, 0, ofGetHeight()));
+    }
+}</code></pre>
+
+<h2 id="audiogotchas">音频陷阱</h2>
+<h3 id="popping">“爆音”</h3>
+<p>在开始或结束播放合成音频时，你应该试着让缓冲区快速淡入/淡出，而不是突然开始或停止。如果你开始播放一个像 <code>[1.0, 0.9, 0.8...]</code> 这样开头的缓冲区，扬声器做的第一件事就是从 0 这个“静止”位置立刻跳到 1.0。这是一个<em>巨大</em>的跳变，结果很可能是一声比你预期（基于计算机当前音量）响得多的“噗”声。</p>
+<p>通常，在约 30ms 的过程中淡入/淡出，就足以消除这类爆音。</p>
+<p>如果你在播放中途听到爆音，可以试着找出声音为什么会极其短暂地中断来诊断问题（也就是跳到 0，如果波形之前处于非零值，就会产生爆音）。</p>
+<h3 id="clipping-distortion">“削波”/失真</h3>
+<p>如果你的采样开始超出 -1 到 1 的范围，你可能就会开始听到所谓的“削波”，它通常听起来是刺耳、令人不适的失真。有些音频硬件会比较宽容地处理，允许你稍微超出 -1 到 1 的范围，但另一些会直接“削”掉你的缓冲区。</p>
+<figure><img alt="Clipping" src="https://openframeworks.cc/ofBook/images/sound/images/clipped-sinewave.png" title="diagram showing two sine waves, one demonstrating clipping by extending beyond the upper and lower bounds"/>
+<figcaption>削波</figcaption></figure>
+<p>假设这不是你想要的，削波一般可以归咎于代码里某个出错的加法或减法。任意两个 -1 到 1 之间的数相乘，结果总还是 -1 到 1 之间的数。</p>
+<p>如果你<em>想要</em>失真，更常见的做法是使用<a href="http://music.columbia.edu/cmc/musicandcomputers/chapter4/04_06.php">波形整形算法</a>，而不是设法让削波听起来好听。</p>
+<h3 id="latency">延迟</h3>
+<p>无论如何，你在应用里产生的声音，都会在触发它的事件之后过一段时间才到达扬声器。从事件到应用再到扬声器的整个往返时间，称为<em>延迟</em>。</p>
+<p>实践中这通常不是什么大问题，除非你在做像乐器这样对反应时间要求极严的东西（比如鼓类乐器）。如果你发现应用的声音响应不够快，可以试着降低 ofSoundStream 的缓冲区大小。但要小心！默认缓冲区大小之所以是默认值，通常是因为它被认为是延迟与可靠性之间的最佳折中。如果你用更小的缓冲区，而应用跟不上格外严格的音频截止时间，就可能会遇到“爆音”（如上所述）。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://openframeworks.cc/ofBook/chapters/sound.html" rel="noreferrer noopener">openframeworks.cc/ofBook/chapters/sound.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

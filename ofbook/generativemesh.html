@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>从图像生成网格的基础 - ofBook</title>
+<meta name="description" content="ofBook 章节「从图像生成网格的基础」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="basics-of-generating-meshes-from-an-image">从图像生成网格的基础</h1>
+<p><em>作者：<a href="http://www.mikewesthad.com/">Michael Hadley</a>。</em></p>
+<h2 id="basicsofgeneratingmeshesfromanimage1">从图像生成网格的基础</h2>
+<p>本章面向已经熟悉基础章节（安装 openFrameworks、使用变量、编写循环等）、并且跃跃欲试想玩 3D 形状的读者。有些地方可能略显啰嗦，但它会带你走完把这张图（来自 <a href="http://hubblesite.org/gallery/album/star/">Hubble 星空图库</a>）：</p>
+<figure><img alt="Original hubble image" src="https://openframeworks.cc/ofBook/images/generativemesh/images/stars_small.png"/>
+<figcaption>原始哈勃图像</figcaption></figure>
+<p>变成这样的东西的完整逻辑和代码：</p>
+<figure><img alt="Generative hubble mesh" src="https://openframeworks.cc/ofBook/images/generativemesh/images/mesh_small.png"/>
+<figcaption>生成的哈勃网格</figcaption></figure>
+<p>本章分为四节：</p>
+<ol style="list-style-type: decimal">
+<li><a href="#basicsworkingwithofmesh">基础：使用 ofMesh</a>
+<ul>
+<li>点</li>
+<li>颜色</li>
+<li>线</li>
+<li>索引</li>
+</ul></li>
+<li><a href="#generative">生成式网格：用图像驱动网格的创建</a>
+<ul>
+<li>加载图像</li>
+<li>从像素创建网格</li>
+<li>用 ofEasyCam 浏览网格</li>
+</ul></li>
+<li><a href="#manipulations">操纵：添加修改网格的效果</a>
+<ul>
+<li>添加抖动</li>
+<li>让顶点绕轨道运动</li>
+<li>创建可交互的放大效果</li>
+</ul></li>
+<li><a href="#nextsteps">接下来</a></li>
+</ol>
+<p><strong>注意：</strong>由于本章使用图形命令，你的显卡有<em>可能</em>不支持我们将要做的一些事情。请确保显卡驱动是最新的。如果你用的是双显卡笔记本——一块集成、一块独立——你需要确保用独立显卡来运行你的应用。</p>
+<h2 id="basicsworkingwithofmesh">基础：使用 ofMesh</h2>
+<p>网格是<strong>顶点</strong>的集合——也就是<a href="https://en.wikipedia.org/wiki/Vertex_%28computer_graphics%29">三维空间中的点</a>——这些顶点可以用不同方式连接起来。由连接这些顶点形成的形状称为<strong>图元</strong>。图元是我们能组合成网格的最小构件。我们可以创建几种不同的图元：</p>
+<ul>
+<li>你可以选择不连接任何顶点，只把点作为图元来绘制。</li>
+<li>你可以选择把顶点两两连接，把线作为图元来绘制。</li>
+<li>你可以连接三个或四个（或更多）顶点，把三角形或四边形（或多边形）作为图元来绘制。</li>
+</ul>
+<p>为了更具体一点，看看下面的网格。顶点是橙色的点。这些顶点按三点一组连接起来形成三角形图元，然后被涂成灰色。想深入了解的话，可以看 <em>OpenGL</em> 章节。</p>
+<figure><img alt="Keenan Crane's public domain cow shown in wireframe" src="https://openframeworks.cc/ofBook/images/generativemesh/images/Keenan_Crane_Public_Domain_Cow_Small.png"/>
+<figcaption>以线框显示的 Keenan Crane 公有领域奶牛模型</figcaption></figure>
+<p>我们将专注于用点和线作为图元。先在屏幕上画点东西。创建网格时，你应该：</p>
+<ol style="list-style-type: decimal">
+<li>定义一个 <a href="http://openframeworks.cc/documentation/3d/ofMesh/"><code>ofMesh</code></a> 变量。就叫它 mesh。</li>
+<li>用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#show_setMode"><code>mesh.setMode(...)</code></a> 指定网格用什么图元模式（点、线等）来连接顶点。我们将用点作为图元，所以应该使用 <code>OF_PRIMITIVE_POINTS</code> 模式。</li>
+<li>用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#show_addVertex"><code>mesh.addVertex(...)</code></a> 添加一些顶点。顶点是一个 <a href="http://openframeworks.cc/documentation/math/ofVec3f.html"><code>ofVec3f</code></a>，如果你之前没用过这个类，可以看看文档页面上的示例。</li>
+<li>用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#show_draw"><code>mesh.draw()</code></a> 绘制你的网格。</li>
+</ol>
+<p>那就上代码吧！</p>
+<p>在你的头文件（.h，例如 ofApp.h）中添加一个 mesh 变量：</p>
+
+<pre><code>class ofApp : public ofBaseApp{
+
+    public:
+        ofMesh mesh;
+    // ……
+    // 保留这里已有的其余代码。</code></pre>
+
+<p>把源文件（.cpp）里的 <code>setup()</code> 和 <code>draw()</code> 函数改成这样：</p>
+
+<pre><code>void ofApp::setup() {
+    mesh.setMode(OF_PRIMITIVE_POINTS);
+
+    ofVec3f top(100.0, 50.0, 0.0);
+    ofVec3f left(50.0, 150.0, 0.0);
+    ofVec3f right(150.0, 150.0, 0.0);
+
+    mesh.addVertex(top);
+    mesh.addVertex(left);
+    mesh.addVertex(right);
+}
+void ofApp::draw() {
+    ofBackground(0);
+    mesh.draw();
+}</code></pre>
+
+<p>如果你构建并运行项目，应该会看到黑色背景上以三角形排布的三个白点：</p>
+<figure><img alt="Triangle Points" src="https://openframeworks.cc/ofBook/images/generativemesh/images/TrianglePoints.png"/>
+<figcaption>三角形点</figcaption></figure>
+<p>白色太无聊？那你可以修改 setup 加点颜色：</p>
+
+<pre><code>void ofApp::setup() {
+    mesh.setMode(OF_PRIMITIVE_POINTS);
+    mesh.enableColors();
+
+    ofVec3f top(100.0, 50.0, 0.0);
+    ofVec3f left(50.0, 150.0, 0.0);
+    ofVec3f right(150.0, 150.0, 0.0);
+
+    mesh.addVertex(top);
+    mesh.addColor(ofFloatColor(1.0, 0.0, 0.0)); // 红色
+
+    mesh.addVertex(left);
+    mesh.addColor(ofFloatColor(0.0, 1.0, 0.0)); // 绿色
+
+    mesh.addVertex(right);
+    mesh.addColor(ofFloatColor(1.0, 1.0, 0.0)); // 蓝色
+}</code></pre>
+
+<p>我们先用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#show_enableColors"><code>mesh.enableColors()</code></a> 启用颜色。颜色默认就是启用的，但写上这一行是好习惯。然后可以用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#show_addColor"><code>mesh.addColor(...)</code></a> 添加颜色。颜色用 <code>ofFloatColor</code> 指定，它和 <a href="http://openframeworks.cc/documentation/types/ofColor.html"><code>ofColor</code></a> 类似，只是红、绿、蓝和 alpha 通道用 0.0 到 1.0 之间的浮点数指定。（如果你想，你<em>可以</em>用 ofColor，因为网格会自动把它转换成 ofFloatColor。）我们添加的第一个颜色作用于第一个顶点，第二个颜色作用于第二个顶点，依此类推。</p>
+<p>觉得我们的点很无聊？那就来点线。我们需要把图元模式改成线，但线图元有三种不同的选项。把 setup 函数的第一行依次改成下面这些，自己都试一遍：</p>
+
+<pre><code>    mesh.setMode(OF_PRIMITIVE_LINES);
+    mesh.setMode(OF_PRIMITIVE_LINE_STRIP);
+    mesh.setMode(OF_PRIMITIVE_LINE_LOOP);</code></pre>
+
+<figure><img alt="Triangle Points" src="https://openframeworks.cc/ofBook/images/generativemesh/images/TriangleLineMode.png"/>
+<figcaption>三角形点</figcaption></figure>
+<p><a href="http://openframeworks.cc/documentation/3d/ofMesh/#show_setMode"><code>mesh.setMode(...)</code></a> 的每种模式从顶点生成线的方式都不同：</p>
+<ul>
+<li><code>OF_PRIMITIVE_LINE</code> 把每对顶点连成一条<em>独立的</em>线。如果你有一组顶点——V<sub>1</sub>、V<sub>2</sub>、V<sub>3</sub>、V<sub>4</sub>……——那么 V<sub>1</sub> 会连到 V<sub>2</sub>，V<sub>3</sub> 会连到 V<sub>4</sub>，依此类推。</li>
+<li><code>OF_PRIMITIVE_LINE_STRIP</code> 把每对顶点连成一组<em>相连的</em>线。V<sub>1</sub> 会连到 V<sub>2</sub>，V<sub>2</sub> 会连到 V<sub>3</sub>，依此类推。</li>
+<li><code>OF_PRIMITIVE_LINE_LOOP</code> 与 <code>OF_PRIMITIVE_LINE_STRIP</code> 相同，但还会把最后一个顶点连回第一个顶点。</li>
+</ul>
+<p>只有 <code>OF_PRIMITIVE_LINE_LOOP</code> 勾勒出了完整的三角形。如果你想用 <code>OF_PRIMITIVE_LINE</code> 画出同样的三角形，可能会试着多添加一些顶点，像这样：</p>
+
+<pre><code>    mesh.addVertex(top);
+    mesh.addVertex(left);
+    mesh.addVertex(left);
+    mesh.addVertex(right);
+    mesh.addVertex(right);
+    mesh.addVertex(top);</code></pre>
+
+<p>添加重复的顶点感觉太啰嗦了？那我们试试别的：</p>
+
+<pre><code>void ofApp::setup() {
+    mesh.setMode(OF_PRIMITIVE_LINES);
+    mesh.enableColors();
+    mesh.enableIndices();
+
+    ofVec3f top(100.0, 50.0, 0.0);
+    ofVec3f left(50.0, 150.0, 0.0);
+    ofVec3f right(150.0, 150.0, 0.0);
+
+    mesh.addVertex(top);
+    mesh.addColor(ofFloatColor(1.0, 0.0, 0.0));
+
+    mesh.addVertex(left);
+    mesh.addColor(ofFloatColor(0.0, 1.0, 0.0));
+
+    mesh.addVertex(right);
+    mesh.addColor(ofFloatColor(1.0, 1.0, 0.0));
+
+    mesh.addIndex(0);
+    mesh.addIndex(1);
+    mesh.addIndex(1);
+    mesh.addIndex(2);
+    mesh.addIndex(2);
+    mesh.addIndex(0);
+}</code></pre>
+
+<p>索引增加了一层抽象。你添加到网格中的每个顶点都会被追加到一个大数组的末尾。也就是说，每个顶点都有一个编号，唯一地标识它在数组中的位置（也就是索引）。列表里有第 0 个顶点、第 1 个顶点、第 2 个顶点，等等。所以，你可以用索引号指向一个已有的顶点。</p>
+<p>当你调用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#!show_enableIndices"><code>mesh.enableIndices()</code></a> 时，openFrameworks 会创建一个空的索引数组。当你使用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#show_addIndex"><code>addIndex(...)</code></a> 时，你是在往这个数组的末尾添加值。当网格即将被绘制到屏幕上时，openFrameworks 不会遍历顶点数组来创建图形图元，而是遍历你的索引数组来决定如何创建图元。</p>
+<p>所以当我们的模式是 <code>OF_PRIMITIVE_LINE</code>、索引数组是 <code>{0, 1, 1, 2, 2, 0}</code> 时，第 0 个顶点与第 1 个顶点相连，第 1 个顶点与第 2 个顶点相连，第 2 个顶点与第 0 个顶点相连。为了画一个三角形要做这么多工作？没错。但索引这个概念强大且有用。</p>
+<p>还有一点你可能注意到了——线的颜色。这是显卡上发生的一些魔法。你可以告诉它点 A 是红色、点 B 是蓝色，并且点 A 和 B 之间连一条线。然后显卡在屏幕上绘制构成这条线的像素时，会（线性地）在这些颜色之间插值。</p>
+<p>作为读完整节的奖励：</p>
+<figure><img alt="Line Mode Smile" src="https://openframeworks.cc/ofBook/images/generativemesh/images/LineModeFace.png"/>
+<figcaption>线模式笑脸</figcaption></figure>
+<p>我知道，这奖励不怎么样。但它确实展示了 <code>OF_PRIMITIVE_LINES</code> 能做、而另外两种线图元模式做不到的事——你可以画出彼此独立的线。我们会在下一节里用到这一点。</p>
+
+<pre><code>    mesh.setMode(OF_PRIMITIVE_LINES);
+    mesh.enableColors();
+    mesh.enableIndices();
+
+    ofVec3f eyeLeftTop(50.0, 25.0, 0.0);
+    ofVec3f eyeLeftBottom(50.0, 50.0, 0.0);
+    ofVec3f eyeRightTop(100.0, 25.0, 0.0);
+    ofVec3f eyeRightBottom(100.0, 50.0, 0.0);
+    ofVec3f mouthLeft(50.0, 75.0, 0.0);
+    ofVec3f mouthMiddle(75.0, 100.0, 0.0);
+    ofVec3f mouthRight(100.0, 75.0, 0.0);
+
+    mesh.addVertex(eyeLeftTop);
+    mesh.addVertex(eyeLeftBottom);
+    mesh.addIndex(0);
+    mesh.addIndex(1);
+    mesh.addColor(ofFloatColor(0.0, 1.0, 1.0));
+    mesh.addColor(ofFloatColor(0.0, 1.0, 1.0));
+
+    mesh.addVertex(eyeRightTop);
+    mesh.addVertex(eyeRightBottom);
+    mesh.addIndex(2);
+    mesh.addIndex(3);
+    mesh.addColor(ofFloatColor(0.0, 1.0, 1.0));
+    mesh.addColor(ofFloatColor(0.0, 1.0, 1.0));
+
+    mesh.addVertex(mouthLeft);
+    mesh.addVertex(mouthMiddle);
+    mesh.addVertex(mouthRight);
+    mesh.addIndex(4);
+    mesh.addIndex(5);
+    mesh.addIndex(5);
+    mesh.addIndex(6);
+    mesh.addColor(ofFloatColor(0.0, 1.0, 0.0));
+    mesh.addColor(ofFloatColor(0.0, 1.0, 0.0));
+    mesh.addColor(ofFloatColor(0.0, 1.0, 0.0));</code></pre>
+
+<h2 id="generativemeshusinganimagetodrivethecreationofamesh">生成式网格：用图像驱动网格的创建</h2>
+<p>网格！你现在已经具备了开始创建“生成式”网格的基本材料。所谓生成式网格，就是一种把一组<em>规则</em>施加到某些<em>数据</em>上而生成的网格。</p>
+<p>所以我们需要一些数据和一些规则。我们从 Hubble 望远镜拍的一张图里取一些“数据”：</p>
+<figure><img alt="Original hubble image" src="https://openframeworks.cc/ofBook/images/generativemesh/images/stars.png"/>
+<figcaption>原始哈勃图像</figcaption></figure>
+<p>新建一个名为 HubbleMesh 的 openFrameworks 项目。在该项目里创建 bin/data 目录（“bin”可能已经存在），把上面的图片保存为“stars.png”。（点击<a href="https://raw.githubusercontent.com/openframeworks/ofBook/master/chapters/generativemesh/images/stars.png">这里</a>，然后右键图片并选择“图片另存为”。）</p>
+<p>现在我们有了些色彩缤纷、像素感十足的素材，但该用什么规则把这些像素变成网格呢？我们可以从画点开始，逐步过渡到画线。我们的图像里有大量星星，那就在这些星星所在的位置创建一些顶点。做到这一步之后，我们就可以用线把相邻的顶点连起来，织出一张网。</p>
+<p>先做第一件事，加载这张图。进入 main.cpp，把窗口尺寸改成你刚下载的图片的尺寸：</p>
+
+<pre><code>    ofSetupOpenGL(800,800,OF_WINDOW);</code></pre>
+
+<p>然后进入你的头文件（ofApp.h），添加：</p>
+
+<pre><code>    ofImage image;</code></pre>
+
+<p>最后进入源文件（ofApp.cpp）：</p>
+
+<pre><code>void ofApp::setup(){
+    image.load("stars.png");
+}
+
+void ofApp::draw(){
+    image.draw(0,0);
+}</code></pre>
+
+<p>没有专门讲 <code>ofImage</code> 的章节，但你可以看看 <a href="http://openframeworks.cc/learning/">openFrameworks 学习</a>页面里的 Graphics 部分。</p>
+<p>我们只需要用 <a href="http://openframeworks.cc/documentation/graphics/ofImage/#show_load"><code>load(...)</code></a> 加载图像，并用 <a href="http://openframeworks.cc/documentation/graphics/ofImage/#show_draw"><code>draw(0,0)</code></a> 把它画在屏幕左上角。</p>
+<p>很好！图像加载好了。现在我们要创建一个带顶点的网格。如果只想在星星所在的位置创建顶点，我们可以遍历像素、寻找“亮”的颜色。为此，我们需要用 <a href="http://openframeworks.cc/documentation/graphics/ofImage/#show_getColor"><code>image.getColor(x, y)</code></a> 获取像素的颜色信息。我们要遍历图像中的像素并施加一个<a href="http://en.wikipedia.org/wiki/Thresholding_%28image_processing%29">阈值</a>，只在颜色强度大于我们设定的某个值的像素位置创建顶点。</p>
+<p>给 ofApp.h 添加一个网格：</p>
+
+<pre><code>    ofMesh mesh;</code></pre>
+
+<p>并把这段加到 ofApp.cpp：</p>
+
+<pre><code>void ofApp::setup(){
+    image.load("stars.png")
+
+    mesh.setMode(OF_PRIMITIVE_POINTS);
+    mesh.enableColors();
+
+    float intensityThreshold = 150.0;
+    int w = image.getWidth();
+    int h = image.getHeight();
+    for (int x=0; x&lt;w; ++x) {
+        for (int y=0; y&lt;h; ++y) {
+            ofColor c = image.getColor(x, y);
+            float intensity = c.getLightness();
+            if (intensity &gt;= intensityThreshold) {
+                ofVec3f pos(x, y, 0.0);
+                mesh.addVertex(pos);
+                // 调用 addColor(...) 时，网格会自动把
+                // ofColor 转换成 ofFloatColor
+                mesh.addColor(c);
+            }
+        }
+    }
+}
+void ofApp::draw(){
+    ofBackground(0,0,255);
+    mesh.draw(); // 蓝色背景，方便看清网格
+}</code></pre>
+
+<figure><img alt="Thresholded Stars Point Mesh" src="https://openframeworks.cc/ofBook/images/generativemesh/images/ThresholdedStarsSmall.png"/>
+<figcaption>经阈值处理后的星点网格</figcaption></figure>
+<p>在那段代码里，我们创建了一个以点为图元的网格。然后我们遍历图像中的每个像素（用 <a href="http://openframeworks.cc/documentation/graphics/ofImage/#show_getWidth">getWidth()</a> 和 <a href="http://openframeworks.cc/documentation/graphics/ofImage/#show_getHeight">getHeight()</a>），并用 <a href="http://openframeworks.cc/documentation/types/ofColor/#!show_getLightness">getLightness()</a> 检查每个像素颜色的强度。如果强度超过了阈值，就在该像素的位置创建一个顶点，并用该像素的颜色给它着色。最后，我们在蓝色背景上绘制网格，这样就能看出图像中哪些像素被用来生成顶点。你可以调高或调低阈值，从而减少或增加顶点的数量。</p>
+<p>我们用 <a href="http://openframeworks.cc/documentation/graphics/ofGraphics/#!show_ofBackgroundGradient">ofBackgroundGradient</a> 把这个背景换成更合适的样子……</p>
+
+<pre><code>void ofApp::draw(){
+    ofColor centerColor = ofColor(85, 78, 68);
+    ofColor edgeColor(0, 0, 0);
+    ofBackgroundGradient(centerColor, edgeColor, OF_GRADIENT_CIRCULAR);
+    mesh.draw();
+}</code></pre>
+
+<p>马上就要进入线、线、线了！</p>
+<p>我们的网格里有很多顶点。如果你愿意，可以用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#show_getNumVertices">getNumVertices()</a> 查看数量：</p>
+
+<pre><code>// 阈值为 150 时，大约有 64,000 个顶点
+cout &lt;&lt; mesh.getNumVertices() &lt;&lt; endl;</code></pre>
+
+<p>如果我们开始遍历这 64,000 个顶点、把每个顶点和附近的其他顶点连接起来，这个循环可能会花掉相当多的时间。加速图像处理的一种常见做法是缩小图像：</p>
+
+<pre><code>image.load("stars.png");
+image.resize(200, 200);</code></pre>
+
+<p>然后，由于我们的图像像素与 openFrameworks 窗口像素不再一一对应，我们需要调整循环里的 <em>pos</em> 变量：</p>
+
+<pre><code>if (intensity &gt;= intensityThreshold) {
+    // 我们把图像缩小了 4 倍，所以需要把像素
+    // 位置乘以 4，才能让网格覆盖 openFrameworks 窗口
+    ofVec3f pos(x*4, y*4, 0.0);
+    mesh.addVertex(pos);
+    mesh.addColor(c);
+}</code></pre>
+
+<p>现在顶点数量比较合理了（约 2000 个），我们可以开始把这些顶点连成线。如果只想连接彼此靠近的顶点，就需要遍历所有可能的顶点对，检查它们之间的距离是否小于某个值，如果是，就把它们连起来。</p>
+
+<pre><code>// 别忘了切换到线模式！
+mesh.setMode(OF_PRIMITIVE_LINES);
+
+// 这次我们要使用索引
+mesh.enableIndices();
+
+// ……
+// 为清晰起见，省略了创建顶点的代码
+// 但不要从你的文件里删掉它！
+
+// 我们来加点线！
+float connectionDistance = 30;
+int numVerts = mesh.getNumVertices();
+for (int a=0; a&lt;numVerts; ++a) {
+    ofVec3f verta = mesh.getVertex(a);
+    for (int b=a+1; b&lt;numVerts; ++b) {
+        ofVec3f vertb = mesh.getVertex(b);
+        float distance = verta.distance(vertb);
+        if (distance &lt;= connectionDistance) {
+            // 在 OF_PRIMITIVE_LINES 中，每一对顶点或索引都会
+            // 被连接起来形成一条线
+            mesh.addIndex(a);
+            mesh.addIndex(b);
+        }
+    }
+}</code></pre>
+
+<p>你最终应该会得到类似这样的结果（如果代码在你机器上跑得太慢，试着调高 <em>intensityThreshold</em> 变量以减少顶点数量）：</p>
+<figure><img alt="First Line Mesh" src="https://openframeworks.cc/ofBook/images/generativemesh/images/StarLinesFirstMeshSmall.png"/>
+<figcaption>第一个线网格</figcaption></figure>
+<p>我们再来看一遍那段代码：</p>
+<ol style="list-style-type: decimal">
+<li>我们需要取得所有不重复的顶点对。用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#show_getVertex"><code>mesh.getVertex(...)</code></a> 可以取得网格中第 <em>a</em> 个顶点的位置。然后用两个 <code>for</code> 循环就能取到每一对顶点。你可能会奇怪第二个循环为什么从 <code>b=a+1</code> 开始。连接两个顶点形成线时，顶点的顺序无关紧要，所以我们可以排除掉一大堆 <em>b</em> 的取值。</li>
+<li>然后，我们需要求出这些顶点之间的距离。<code>ofVec3f</code> 正好有一个函数能做这件事：<a href="http://openframeworks.cc/documentation/math/ofVec3f/#show_distance"><code>distance(...)</code></a>。</li>
+<li>如果两个顶点之间的距离小于 <em>connectionDistance</em> 设定的值，我们就需要在它们之间加一条线。加线其实就是把索引 <em>a</em> 和 <em>b</em> 添加到网格的索引数组里。</li>
+</ol>
+<p>砰！生成式网格。我们再加两处调整，把它变成真正的 3D。首先，我们可以用某个像素颜色的饱和度来改变其对应顶点的 z 坐标。</p>
+
+<pre><code>if (intensity &gt;= intensityThreshold) {
+    float saturation = c.getSaturation();
+    float z = ofMap(saturation, 0, 255, -100, 100);
+    ofVec3f pos(x*4, y*4, z);
+    mesh.addVertex(pos);
+    mesh.addColor(c);
+}</code></pre>
+
+<p>这段代码用 <a href="http://openframeworks.cc/documentation/math/ofMath/#!show_ofMap"><code>ofMap(...)</code></a> 把更亮的颜色推向正 z 方向，把更白的颜色推向负 z 方向。<code>ofMap</code> 让我们可以把落在某个范围内的值（对我们来说是 0 到 255）映射到一个新的值范围（同样对我们来说是 -100 到 100）。</p>
+<p>嗯……你的网格没怎么变？那现在该做本节最后一处调整了：加一个相机。</p>
+<p>把这个加到你的头文件里：</p>
+
+<pre><code>		ofEasyCam easyCam;</code></pre>
+
+<p>然后修改你的 draw 函数：</p>
+
+<pre><code>void ofApp::draw(){
+    ofColor centerColor = ofColor(85, 78, 68);
+    ofColor edgeColor(0, 0, 0);
+    ofBackgroundGradient(centerColor, edgeColor, OF_GRADIENT_CIRCULAR);
+
+    easyCam.begin();
+        ofPushMatrix();
+            ofTranslate(-ofGetWidth()/2, -ofGetHeight()/2);
+            mesh.draw();
+        ofPopMatrix();
+    easyCam.end();
+}</code></pre>
+
+<p><a href="http://openframeworks.cc/documentation/3d/ofEasyCam/"><code>ofEasyCam</code></a> 是快速感受生成式网格中那难以捉摸的第三维的简便方法。OpenGL 章节会讲到相机、<a href="http://openframeworks.cc/documentation/graphics/ofGraphics/#!show_ofPushMatrix"><code>ofPushMatrix()</code></a>、<a href="http://openframeworks.cc/documentation/graphics/ofGraphics/#!show_ofPopMatrix"><code>ofPopMatrix()</code></a> 和 <a href="http://openframeworks.cc/documentation/graphics/ofGraphics/#!show_ofTranslate"><code>ofTranslate()</code></a>。这段代码会把你的网格居中放在相机的视野里。现在你可以左键拖动来旋转了！右键拖动来缩放！</p>
+<figure><img alt="Line Mesh with Camera" src="https://openframeworks.cc/ofBook/images/generativemesh/images/cameraSmall.gif"/>
+<figcaption>带相机的线网格</figcaption></figure>
+<h2 id="manipulationsaddingeffectsthatmodifythemesh">操纵：添加修改网格的效果</h2>
+<p>我们现在已经有一个网格感十足的网格了，那就继续给它加一些规则，让网格动起来。</p>
+<h3 id="jitter">抖动</h3>
+<p>这个网格看起来像显微镜下的东西，所以我们给顶点加一点“有机”的运动。在你的机器上，这个运动会比下面的 gif 快得多（浏览器会限制 gif 的最大帧率），但它能让你大致明白我们要做什么：</p>
+<figure><img alt="Jitter" src="https://openframeworks.cc/ofBook/images/generativemesh/images/jitterSmall.gif"/>
+<figcaption>抖动</figcaption></figure>
+<p>每一帧，我们都要把每个顶点移动一小段随机的距离。我们不用 <a href="http://openframeworks.cc/documentation/math/ofMath/#show_ofRandom"><code>ofRandom(...)</code></a> 来位移顶点，而是用 <a href="http://openframeworks.cc/documentation/math/ofMath/#!show_ofSignedNoise"><code>ofSignedNoise(...)</code></a>，它会生成一种叫做 <a href="https://en.wikipedia.org/wiki/Perlin_noise">Perlin 噪声</a>的东西。可以看看 Daniel Shiffman 在他在线书籍的 <a href="http://natureofcode.com/book/introduction/#i6-perlin-noise-a-smoother-approach">1.6 Perlin Noise (A Smoother Approach)</a> 一节中对 Perlin 噪声的描述。Perlin 噪声产生的随机值会随时间平滑变化。对比书中的 <a href="http://natureofcode.com/book/imgs/intro/intro_05.png">figure 1.5</a>（显示连续的噪声值）和 <a href="http://natureofcode.com/book/imgs/intro/intro_06.png">figure 1.6</a>（显示连续的随机值），你就能很好地理解随机值和 Perlin 噪声的区别。</p>
+<p>用 <code>ofRandom(...)</code> 时，你指定一个取值范围，它返回该范围内的一个随机值。如果你连续调用它多次，每次（极大概率）都会得到一个新值。Perlin 噪声的工作方式略有不同。<code>ofSignedNoise(...)</code> 总是返回 -1.0 到 1.0 之间的值，但你仍然需要给函数传入一个输入。把 <code>ofSignedNoise(...)</code> 想成画在坐标纸上的曲线。你传入一个坐标、一个 x 值，它返回对应的 y 值。如果你多次调用 <code>ofSignedNoise(3.0)</code>，每次都会得到相同的值。</p>
+<p>用 Perlin 噪声生成运动时，常见的做法是把当前时间作为输入（x 值）传进去。所以，为了位移顶点，我们要把时间（用 <a href="http://openframeworks.cc/documentation/utils/ofUtils/#!show_ofGetElapsedTimef%5D"><code>ofGetElapsedTimef()</code></a> 获取）传给 <code>ofSignedNoise</code>，这样它给出的值就会随时间平滑变化。有一个需要注意的地方——我们希望各个顶点看起来是彼此独立地移动。如果在一帧里给每个顶点都传入相同的 time 给 <code>ofSignedNoise</code>，那所有顶点都会朝同一个方向移动。位移第一个顶点时用的时间必须与位移第二个顶点（以及第三个、第四个……）时不同。</p>
+<p>我们直接进代码。把这个加到你的头文件里：</p>
+
+<pre><code>		vector&lt;ofVec3f&gt; offsets;</code></pre>
+
+<p>然后把下面两行加到你的 setup 函数里：</p>
+
+<pre><code>// 把这行加到代码里，显式地把帧率设为每秒 60 帧：
+ofSetFrameRate(60);
+
+// 为清晰起见省略了一些代码行，你仍应
+// 把它们保留在本地版本里
+
+for (int x=0; x&lt;w; ++x) {
+    for (int y=0; y&lt;h; ++y) {
+        ofColor c = image.getColor(x, y);
+        float intensity = c.getLightness();
+        if (intensity &gt;= intensityThreshold) {
+            float saturation = c.getSaturation();
+            float z = ofMap(saturation, 0, 255, -100, 100);
+            ofVec3f pos(x*4, y*4, z);
+            mesh.addVertex(pos);
+            mesh.addColor(c);
+
+            // 再把这行加到已有的 for 循环里：
+            // 它会创建一个带 3 个随机值的 ofVec3f，
+            // 让我们可以独立地移动每个顶点的
+            // x、y、z 坐标
+            offsets.push_back(ofVec3f(ofRandom(0,100000), ofRandom(0,100000), ofRandom(0,100000)));
+        }
+    }
+}</code></pre>
+
+<p>最后，把这些行加到你的 update 函数里：</p>
+
+<pre><code>int numVerts = mesh.getNumVertices();
+for (int i=0; i&lt;numVerts; ++i) {
+    ofVec3f vert = mesh.getVertex(i);
+
+    float time = ofGetElapsedTimef();
+    float timeScale = 5.0;
+    float displacementScale = 0.75;
+    ofVec3f timeOffsets = offsets[i];
+
+    // 使用 Perlin 噪声的典型模式会用到几个参数：
+    // ofSignedNoise(time*timeScale+timeOffset)*displacementScale
+    //     ofSignedNoise(time) 给出的噪声值会随时间
+    //         平滑变化
+    //     ofSignedNoise(time*timeScale) 让我们可以控制噪声的
+    //         平滑程度（timeScale 越小，值越平滑）
+    //     ofSignedNoise(time+timeOffset) 让我们可以用同一个 Perlin 噪声
+    //         函数来控制多个对象，并让它们看起来像
+    //         在各自独立地移动
+    //     ofSignedNoise(time)*displacementScale 让我们可以把噪声的
+    //         范围从 [-1, 1] 改成任意想要的值
+    // 把所有这些参数组合起来，你就能很好地
+    // 控制你的噪声
+
+    vert.x += (ofSignedNoise(time*timeScale+timeOffsets.x)) * displacementScale;
+    vert.y += (ofSignedNoise(time*timeScale+timeOffsets.y)) * displacementScale;
+    vert.z += (ofSignedNoise(time*timeScale+timeOffsets.z)) * displacementScale;
+    mesh.setVertex(i, vert);
+}</code></pre>
+
+<p>在 setup 里我们做了两件新事情：</p>
+<ol style="list-style-type: decimal">
+<li>用 <a href="http://openframeworks.cc/documentation/application/ofAppRunner/#!show_ofSetFrameRate"><code>ofSetFrameRate()</code></a> 指定程序最高 60 帧每秒。不做这个也能跑，但当你让东西随时间运动时，这么做很有用。</li>
+<li>我们创建了一个叫 offsets 的变量。它是一个装随机值的 ofVec3f 的 <code>vector</code>。（参见 <em>Introduction to Vectors</em> 章节。）这些值让我们可以在 x、y、z 三个方向上随机移动每个顶点，并且看起来与其它顶点的移动相互独立。</li>
+</ol>
+<p>然后，在 update 里：</p>
+<ol style="list-style-type: decimal">
+<li>我们用 <a href="http://openframeworks.cc/documentation/3d/ofMesh/#!show_getVertex"><code>mesh.getVertex(...)</code></a> 取得某个顶点的位置，存进名为 <code>vert</code> 的变量里。</li>
+<li>我们用 <code>ofSignedNoise(...)</code> 配合一组参数来移动 <code>vert</code> 的 x、y、z 值。</li>
+<li>我们用 <a href="/documentation/3d/ofMesh/#show_setVertex"><code>mesh.setVertex(...)</code></a> 更新顶点的位置。</li>
+</ol>
+<p>太好了！现在我们有了一个飘忽不定的网格。</p>
+<h3 id="orbit">绕轨</h3>
+<p>接下来，我们可以加一些旋转的轨道运动。毕竟这些<em>原本</em>就是星星，这么一来也挺贴切。</p>
+<figure><img alt="Orbit" src="https://openframeworks.cc/ofBook/images/generativemesh/images/orbitSmall.gif"/>
+<figcaption>绕轨</figcaption></figure>
+<p>我们要用三角函数来实现轨道运动。如果想先打打基础，可以看看 The Nature of Code 的<a href="http://natureofcode.com/book/chapter-3-oscillation/">第 3 章</a>。</p>
+<p>先不管 z 维度，专注于 x 和 y 维度。如果我们想让一个点沿圆周绕行，可以利用角度、正弦和余弦来实现。看看关于<a href="http://en.wikipedia.org/wiki/Polar_coordinate_system">极坐标</a>的维基条目——特别是“在极坐标与笛卡尔坐标之间转换”那一节。</p>
+<p>如果我们知道点距离中心多远，就可以用一个距离和一个角度（极坐标）来定义它在空间中的位置。我们可以拿这个距离和角度换算成 x、y 值（笛卡尔坐标）：</p>
+
+<pre><code>x = distance * cos(angle)
+y = distance * sin(angle)</code></pre>
+
+<p>如果你想让那个点沿圆周摆动，只需要随时间不断增大角度，剩下的数学会处理好。</p>
+<p>所以为了我们网格的目的，我们需要：</p>
+<ol style="list-style-type: decimal">
+<li>定义一个中心点，让顶点绕它旋转</li>
+<li>计算各顶点所在位置的初始极坐标</li>
+<li>随时间缓慢增大每个顶点极坐标的角度</li>
+</ol>
+<p>我们在头文件里加一些新变量：</p>
+
+<pre><code>// 我们要用它们来开关轨道运动
+ofMesh meshCopy;
+bool orbiting;
+float startOrbitTime;
+
+// 这些变量用来存储每个顶点的极坐标
+vector&lt;float&gt; distances;
+vector&lt;float&gt; angles;
+ofVec3f meshCentroid;</code></pre>
+
+<p>把这个加到你的 setup 函数末尾：</p>
+
+<pre><code>// 我们需要计算网格的中心点
+// ofMesh 有一个名为 getCentroid() 的方法，它会
+// 求出所有顶点的平均位置
+//    http://en.wikipedia.org/wiki/Centroid
+meshCentroid = mesh.getCentroid();
+
+// 现在我们知道了质心，还需要知道每个顶点相对于
+// 该中心点的极坐标（距离和角度）。
+// 我们之前求过点之间的距离，但角度怎么办？
+// 这时就该 atan2 出场了。atan2(y, x) 接收 x 和 y 值，返回
+// 相对于原点 (0,0) 的角度。如果要求两点
+// (x1, y1) 和 (x2, y2) 之间的角度，只需使用 atan2(y2-y1, x2-x1)。
+for (int i=0; i&lt;numVerts; ++i) {
+    ofVec3f vert = mesh.getVertex(i);
+    float distance = vert.distance(meshCentroid);
+    float angle = atan2(vert.y-meshCentroid.y, vert.x-meshCentroid.x);
+    distances.push_back(distance);
+    angles.push_back(angle);
+}
+
+// 这些变量用来开关轨道运动
+orbiting = false;
+startOrbitTime = 0.0;
+meshCopy = mesh; // 存一份网格副本，以便恢复原始状态</code></pre>
+
+<p>把这个加到你的 update 函数里：</p>
+
+<pre><code>if (orbiting) {
+    int numVerts = mesh.getNumVertices();
+    for (int i=0; i&lt;numVerts; ++i) {
+        ofVec3f vert = mesh.getVertex(i);
+        float distance = distances[i];
+        float angle = angles[i];
+        float elapsedTime = ofGetElapsedTimef() - startOrbitTime;
+
+        // 调整各轨道的速度，让靠近
+        // 中心的比远处的转得更快
+        float speed = ofMap(distance, 0, 200, 1, 0.25, true);
+
+        // 要求出顶点的角度旋转量，我们用当前时间和
+        // 起始角度
+        float rotatedAngle = elapsedTime * speed + angle;
+
+        // 记住，我们的距离是相对于网格质心
+        // 计算的，所以需要把一切移回屏幕
+        // 坐标，即加上质心的 x 和 y
+        vert.x = distance * cos(rotatedAngle) + meshCentroid.x;
+        vert.y = distance * sin(rotatedAngle) + meshCentroid.y;
+
+        mesh.setVertex(i, vert);
+    }
+}</code></pre>
+
+<p>然后往你的 cpp 文件里加一个 <code>keyPressed</code> 函数：</p>
+
+<pre><code>void ofApp::keyPressed(int key){
+	if (key == 'o') {
+		orbiting = !orbiting; // 取反布尔值
+		startOrbitTime = ofGetElapsedTimef();
+		mesh = meshCopy; // 把网格恢复为原始值
+	}
+}</code></pre>
+
+<p>现在你应该可以用 'o' 键开关轨道运动了！</p>
+<p>另外一点编程说明：变量 <em>meshCopy</em> 用作原始网格的备份副本，需要时可以重新载入。在 setup 函数里，当我们使用这一行时：</p>
+
+<pre><code>meshCopy = mesh;</code></pre>
+
+<p>我们创建了变量 <em>mesh</em> 的一个独立副本，并存进变量 <em>meshCopy</em>。在这种情形下，ofMesh 类提供的是所谓的深拷贝，所以如果我们改动 <em>mesh</em> 中的某些顶点，<em>meshCopy</em> 里的任何东西都不会变。只是要小心——并非所有对象默认都提供深拷贝！</p>
+<h3 id="magnifying">放大</h3>
+<p>我们要加的最后一项调整给网格带来一点交互性。我们会加一个放大镜效果：</p>
+<figure><img alt="Magnified" src="https://openframeworks.cc/ofBook/images/generativemesh/images/magnifierSmall.gif"/>
+<figcaption>放大</figcaption></figure>
+<p>严格来说，叫它放大镜效果是用词不当。它其实基于光学中一种叫<a href="http://en.wikipedia.org/wiki/Distortion_(optics)">桶形畸变</a>的现象。把它施加到网格上时，效果是这样的：</p>
+<figure><img alt="Grid" src="https://openframeworks.cc/ofBook/images/generativemesh/images/GridSmall.png"/>
+<figcaption>网格</figcaption></figure>
+<figure><img alt="BarrelDistortedGrid" src="https://openframeworks.cc/ofBook/images/generativemesh/images/BarrelDistortedGridSmall.png"/>
+<figcaption>BarrelDistortedGrid</figcaption></figure>
+<p>我们要做的是：</p>
+<ol style="list-style-type: decimal">
+<li>找到鼠标在屏幕上的位置。</li>
+<li>找到从鼠标指向每个顶点的方向。</li>
+<li>沿该方向把每个顶点从鼠标处推开。
+<ul>
+<li>如果顶点离鼠标近，就推得远一些。</li>
+<li>如果顶点离鼠标远，就推得近一些。</li>
+</ul></li>
+</ol>
+<p>这一项调整会用到一些向量运算，如果你觉得摸不着头脑，可以看看 Math 章节。上代码！</p>
+<p>往你的头文件里加一个新变量：</p>
+
+<pre><code>		// 和绕轨调整一样，这让我们可以开关放大效果
+		bool mouseDisplacement;</code></pre>
+
+<p>在 setup 函数末尾加一行：</p>
+
+<pre><code>    // 我们希望一开始不开启这个效果
+    mouseDisplacement = false;</code></pre>
+
+<p>在 update 函数的开头加上这段代码：</p>
+
+<pre><code>if (mouseDisplacement) {
+    // 获取鼠标位置——它必须相对于屏幕中心，
+    // 因为 draw() 里有 ofTranslate() 命令
+    ofVec3f mouse(mouseX, ofGetHeight()-mouseY, 0);
+
+    // 遍历网格中的所有顶点，把它们推离
+    // 鼠标
+    for (int i=0; i&lt;mesh.getNumVertices(); ++i) {
+        ofVec3f vertex = meshCopy.getVertex(i);
+        float distanceToMouse = mouse.distance(vertex);
+
+        // 根据到鼠标的距离缩放位移量
+        // 离鼠标越近，位移越小
+        float displacement = ofMap(distanceToMouse, 0, 400, 300.0, 0, true);
+
+        // 计算从鼠标指向当前顶点的方向
+        ofVec3f direction = vertex - mouse;
+
+        // 把方向归一化，使其长度为 1
+        // 这样之后就能方便地改变向量的长度
+        direction.normalize();
+
+        // 把顶点沿远离鼠标的方向推开，推开的距离
+        // 等于变量 displacement 的值
+        ofVec3f displacedVertex = vertex + displacement*direction;
+        mesh.setVertex(i, displacedVertex);
+    }
+}</code></pre>
+
+<p>最后，在 <code>keyPressed</code> 函数的开头加上这段代码：</p>
+
+<pre><code>if (key == 'm') {
+    mouseDisplacement = !mouseDisplacement; // 取反布尔值
+    mesh = meshCopy; // 恢复原始网格
+}</code></pre>
+
+<p>你读完了整章！（或者你只是一路滚到了最底下，那也是相当多的滚动，本身就该算一项成就。）</p>
+<h2 id="nextsteps">接下来</h2>
+<p>看看 OpenGL 章节，然后开始玩其它图元模式。</p>
+<p>去弄点别的数据。编一些新规则。做点怪东西，分享到 openFrameworks 论坛上！</p>
+<p>想知道能生成哪些类型的东西，可以看看这些项目：</p>
+<p>Golan Levin 用肖像创作了一系列线条，作品是 <a href="http://www.flong.com/projects/zoo/">Segmentation and Symptom</a>：</p>
+<figure><img alt="GolanSegmentationAndSymptom" src="https://openframeworks.cc/ofBook/images/generativemesh/images/GolanSegmentationAndSymptom.jpg"/>
+<figcaption>GolanSegmentationAndSymptom</figcaption></figure>
+<p>Quayola 探索了弗拉芒绘画，作品是 <a href="http://www.quayola.com/strata4/">Strata #4</a></p>
+<figure><img alt="QuayolaStrata4" src="https://openframeworks.cc/ofBook/images/generativemesh/images/QuayolaStrata4.png"/>
+<figcaption>QuayolaStrata4</figcaption></figure>
+<p>Marcin Ignac 创作了一些生成式水母生物，作品是 <a href="http://marcinignac.com/projects/cindermedusae/">Cindermedusae</a>：</p>
+<figure><img alt="IgnacCindermedusae" src="https://openframeworks.cc/ofBook/images/generativemesh/images/IgnacCindermedusae.png"/>
+<figcaption>IgnacCindermedusae</figcaption></figure>
+<p>The Rockwell group 用人的运动来改变他们的网格，作品是 <a href="http://lab.rockwellgroup.com/work/venice-biennale.html">Hall of Fragments</a>：</p>
+<figure><img alt="RockwellHallOfFragments" src="https://openframeworks.cc/ofBook/images/generativemesh/images/RockwellHallOfFragments.png"/>
+<figcaption>RockwellHallOfFragments</figcaption></figure>
+<p>Onformative 玩起了文字，作品是 <a href="http://www.onformative.com/work/growing-data/">Growing Data</a>：</p>
+<figure><img alt="onformativeGrowingData" src="https://openframeworks.cc/ofBook/images/generativemesh/images/onformativeGrowingData.png"/>
+<figcaption>onformativeGrowingData</figcaption></figure>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://openframeworks.cc/ofBook/chapters/generativemesh.html" rel="noreferrer noopener">openframeworks.cc/ofBook/chapters/generativemesh.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

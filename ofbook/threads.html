@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>线程 - ofBook</title>
+<meta name="description" content="ofBook 章节「线程」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="threads">线程</h1>
+<p><em>作者：<a href="http://arturocastro.net">Arturo Castro</a></em></p>
+<p><em>勘误：Brannon Dorsey</em></p>
+<h2 id="whatsathreadandwhentouseit">什么是线程，何时使用</h2>
+<p>有时在应用里我们需要执行一些要花上一段时间才能完成的任务。最典型的例子是从磁盘读取内容。在计算机里，CPU 比访问内存快得多，而访问内存又比访问硬盘快得多。所以，比如从硬盘读取一张图像，相比应用的正常流程可能要花上一阵子。</p>
+<p>在 openFrameworks 里，一般来说在用 openGL 时，我们的应用会跑在一个无限循环中，每一轮循环都调用 update/draw。如果启用了垂直同步，而屏幕工作在 60Hz，那么每轮循环大约持续 16ms（1s/(60frames/s)）*1000(ms/s)）。从磁盘加载一张图像可能远不止 16ms，所以如果我们试图在 update 方法里加载图像，就会注意到动画出现了停顿。</p>
+<p>为了解决这个问题，我们通常使用线程。线程是在应用内部、于主流程之外执行某些任务的方式。这样我们就能同时运行不止一个任务，让那些慢的事情不阻塞应用的主流程。我们也可以用线程来加速任务：把它们拆成几个更小的任务，让每个任务同时运行。你可以把线程想成程序里的子程序。</p>
+<p>每个应用至少有一个线程。在 openFrameworks 里，setup/update/draw 循环就发生在那个线程中。我们称它为主线程（或 openGL 线程）。但我们可以创建更多线程，每个线程都会与其他线程分开运行。</p>
+<p>所以如果我们想在应用运行中加载一张图像，可以不去 update 里加载，而是创建一个线程替我们加载。这样做的问题在于：一旦创建了线程，主线程并不知道它什么时候结束，因此我们需要能把辅助线程的结果传达给主线程。另外，不同线程访问内存中同一区域也可能引发问题。我们需要一些机制来同步两个或更多线程对共享内存的访问。</p>
+<p>先看看在 openFrameworks 里怎么创建线程。</p>
+<h2 id="ofthread">ofThread</h2>
+<p>每个应用至少有一个线程，也就是主线程（在使用 openGL 时也叫 GL 线程）。</p>
+<p>但正如我们所说，我们可以创建辅助线程来做某些在主线程里跑会太久的任务。在 openFrameworks 里，我们用 ofThread 类来做这件事。ofThread 并不是设计来直接使用的，而是由我们继承它并实现一个 <code>threadedFunction</code>，一旦我们启动线程，这个函数稍后就会从辅助线程被调用：</p>
+
+<pre><code>class ImageLoader: public ofThread{
+    void setup(string imagePath){
+        this-&gt;path = imagePath;
+    }
+
+    void threadedFunction(){
+        ofLoadImage(image, path);
+    }
+
+    ofPixels image;
+    string path;
+}
+
+//ofApp.h
+
+ImageLoader imgLoader;
+
+
+// ofApp.cpp
+void ofApp::keyPressed(int key){
+    imgLoader.setup("someimage.png");
+    imgLoader.startThread();
+}</code></pre>
+
+<p>当我们调用 <code>startThread()</code> 时，<code>ofThread</code> 会启动一个新线程并立即返回，那个线程会调用我们的 <code>threadedFunction</code>，并在函数结束时结束。</p>
+<p>这样一来，图像的加载就与我们的 update/draw 循环同时进行，应用在等待图像从磁盘加载时不会停下来。</p>
+<p>那么，我们怎么知道图像什么时候加载完？线程会与应用的主线程分开运行：</p>
+<figure><img alt="Simple Thread" src="https://openframeworks.cc/ofBook/images/threads/images/simple_thread.png" title="Simple Thread"/>
+<figcaption>简单的线程</figcaption></figure>
+<p>如你在图中看到的，加载图像持续多久、也就是调用 threadedFunction 持续多久，主线程并不会自动知道。既然我们的线程只负责加载图像，我们就可以检查线程是否已结束运行，这也就告诉我们图像已加载完毕。为此 ofThread 有一个方法：<code>isThreadRunning()</code>：</p>
+
+<pre><code>class ImageLoader: public ofThread{
+    void setup(string imagePath){
+        this-&gt;path = imagePath;
+    }
+
+    void threadedFunction(){
+        ofLoadImage(image, path);
+    }
+
+    ofPixels image;
+    string path;
+}
+
+//ofApp.h
+bool loading;
+ImageLoader imgLoader;
+ofImage img;
+
+// ofApp.cpp
+void ofApp::setup(){
+    loading = false;
+}
+
+void ofApp::update(){
+    if(loading==true &amp;&amp; !imgLoader.isThreadRunning()){
+        img.getPixelsRef() = imgLoader.image;
+        img.update();
+        loading = false;
+    }
+}
+
+void ofApp::draw(){
+    if (img.isAllocated()) {
+        img.draw(0, 0);
+    }
+}
+
+void ofApp::keyPressed(int key){
+    if(!loading){
+        imgLoader.setup("someimage.png");
+        loading = true;
+        imgLoader.startThread();
+    }
+}</code></pre>
+
+<p>如你所见，现在只有第一张图像加载完之后才能加载新的一张。如果我们想加载不止一张呢？一个可能的办法是为每张图启动一个新线程，并问它是否已经加载好：</p>
+
+<pre><code>class ImageLoader: public ofThread{
+    ImageLoader(){
+        loading = false;
+    }
+
+    void load(string imagePath){
+        this-&gt;path = imagePath;
+        loading = true;
+        startThread();
+    }
+
+    void threadedFunction(){
+        ofLoadImage(image,path);
+        loaded = true;
+    }
+
+    ofPixels image;
+    string path;
+    bool loading;
+    bool loaded;
+}
+
+//ofApp.h
+vector&lt;unique_ptr&lt;ImageLoader&gt;&gt; imgLoaders;
+vector&lt;ofImage&gt; imgs;
+
+// ofApp.cpp
+void ofApp::setup(){
+    loading = false;
+}
+
+void ofApp::update(){
+    for(int i=0;i&lt;imgLoaders.size();i++){
+        if(imgLoaders[i].loaded){
+            if(imgs.size()&lt;=i) imgs.resize(i+1);
+
+            imgs[i].getPixelsRef() = imgLoaders[i].image;
+            imgs[i].update();
+            imgLoaders[i].loaded = false;
+        }
+    }
+}
+
+void ofApp::draw(){
+    for(int i=0;i&lt;imgLoaders.size();i++){
+        imgs[i].draw(x,y);
+    }
+}
+
+void ofApp::keyPressed(int key){
+    imgLoaders.push_back(move(unique_ptr&lt;ImageLoader&gt;(new ImageLoader)));
+    imgLoaders.back()-&gt;load("someimage.png");
+}</code></pre>
+
+<p>另一种可能是只用一个线程。要做到这点，一个可行的办法是在加载线程里用一个队列：每当我们想加载新图像时，就把它的路径放进队列；threadedFunction 加载完一张图后就检查队列，如果有新图像就加载它，并把它从队列中移除。</p>
+<p>问题在于我们会从两个不同的线程试图访问这个队列，而正如我们在内存那一章提到的，当我们往某个内存结构里添加或删除元素时，这块内存有可能被移到别处。如果这发生在一个线程正试图访问它的时候，我们很容易得到一个悬空指针，导致应用崩溃。想象下面这两个线程的指令调用序列：</p>
+
+<pre><code>    loader thread: finished loading an image
+    loader thread: pos = get memory address of next element to load
+    main thread:   add new element in the queue
+    main thread:   queue moves in memory to an area with enough space to allocate it
+    loader thread: try to read element in pos  &lt;- crash pos is no longer a valid memory address</code></pre>
+
+<p>此时我们可能正在访问一个已经不包含字符串的内存地址，甚至试图访问一个位于应用所分配内存之外的地址。这种情况下操作系统会杀掉它，并像我们在内存那一章看到的那样发出段错误信号。</p>
+<p>出现这种情况的原因是，线程 1 和线程 2 同时运行，我们无法知道它们的指令会以什么顺序执行。我们需要一种办法确保线程 1 在线程 2 修改队列时无法访问它，反之亦然。为此我们会使用某种锁：在 C++ 里通常是 mutex，在 openFrameworks 里是 ofMutex。</p>
+<p>但在看 mutex 之前，我们先简要看看在使用 openGL 的同时使用线程的一些特殊之处。</p>
+<h2 id="threadsandopengl">线程与 openGL</h2>
+<p>你可能已经注意到，在前面的例子里：</p>
+
+<pre><code>class ImageLoader: public ofThread{
+    ImageLoader(){
+        loaded = false;
+    }
+    void setup(string imagePath){
+        this-&gt;path = imagePath;
+    }
+
+    void threadedFunction(){
+        ofLoadImage(image, path);
+        loaded = true;
+    }
+
+    ofPixels image;
+    string path;
+    bool loaded;
+}
+
+//ofApp.h
+ImageLoader imgLoader;
+ofImage img;
+
+// ofApp.cpp
+void ofApp::setup(){
+    loading = false;
+}
+
+void ofApp::update(){
+    if(imgLoader.loaded){
+        img.getPixelsRef() = imgLoader.image;
+        img.update();
+        imgLoader.loaded = false;
+    }
+}
+
+void ofApp::draw(){
+    if (img.isAllocated()) {
+        img.draw(0, 0);
+    }
+}
+
+void ofApp::keyPressed(int key){
+    if(!loading){
+        imgLoader.setup("someimage.png");
+        imgLoader.startThread();
+    }
+}</code></pre>
+
+<p>我们没有用 ofImage 来加载图像，而是用了 ofPixels，然后在主线程里用 ofImage 把 ofPixels 的内容放进去。这样做是因为 openGL 原则上只能与一个线程配合工作。这也是我们把主线程称为 GL 线程的原因。</p>
+<p>正如我们在高级图形那一章以及本书其他部分提到的，openGL 以某种客户端/服务器模型异步工作。我们的应用是客户端，向 openGL 服务器发送数据和绘制指令，服务器再按自己的节奏把它们发给显卡。</p>
+<p>因此，openGL 知道如何与一个线程配合工作，也就是创建 openGL 上下文的那个主线程。但如果我们试图从别的线程发起 openGL 调用，几乎肯定会让应用崩溃，至少也得不到期望的结果。</p>
+<p>当我们在 ofImage 上调用 <code>img.loadImage(path)</code> 时，它实际上会做一些 openGL 调用，主要是创建纹理并把图像内容上传上去。如果我们从非 GL 线程做这件事，应用很可能崩溃，或者纹理就是加载不正确。</p>
+<p>有一种办法可以告诉 ofImage（以及 openFrameworks 里大多数包含像素和纹理的其他对象）不要使用这些纹理，而只处理像素。这样我们就可以用 ofImage 把图像加载到像素，随后在主线程里启用纹理，以便绘制图像：</p>
+
+<pre><code>class ImageLoader: public ofThread{
+    ImageLoader(){
+        loaded = false;
+    }
+    void setup(string imagePath){
+        image.setUseTexture(false);
+        this-&gt;path = imagePath;
+    }
+
+    void threadedFunction(){
+        image.loadImage(path);
+        loaded = true;
+    }
+
+    ofImage image;
+    string path;
+    bool loaded;
+}
+
+//ofApp.h
+ImageLoader imgLoader;
+
+// ofApp.cpp
+void ofApp::setup(){
+    loading = false;
+}
+
+void ofApp::update(){
+    if(imgLoader.loaded){
+        imgLoader.image.setUseTexture(true);
+        imgLoader.image.update();
+        imgLoader.loaded = false;
+    }
+}
+
+void ofApp::draw(){
+    if (imgLoader.image.isAllocated()){
+        imgLoader.image.draw(0,0);
+    }
+}
+
+void ofApp::keyPressed(int key){
+    if(!loading){
+        imgLoader.setup("someimage.png");
+        imgLoader.startThread();
+    }
+}</code></pre>
+
+<p>也有办法从不同线程使用 openGL，例如创建共享上下文在另一个线程上传纹理，或者用 PBO 映射一块内存区域、之后从另一个线程上传到该区域，但这超出了本章范围。通常请记住，在 GL 线程之外访问 openGL 是不安全的。在 openFrameworks 里，你应该只在主线程执行涉及 openGL 调用的操作，也就是发生在 setup/update/draw 循环里的调用、键盘和鼠标事件，以及相关的 ofEvents。如果你启动了线程并从其中调用函数或发出 ofEvent 通知，那个调用也会发生在辅助线程里，所以注意不要在那里做任何 GL 调用。</p>
+<p>一个很特殊的情况是声音：openFrameworks 里的声音 API，特别是 ofSoundStream，会创建自己的线程，因为声音的时序需要非常精确。所以在使用 ofSoundStream 时注意不要使用任何 openGL 调用，通常就像你身处某个 ofThread 的 threadedFunction 中一样对待它。后面几节我们会看到更多相关内容。</p>
+<h2 id="ofmutex">ofMutex</h2>
+<p>在开始 openGL 与线程那一节之前，我们谈到过从两个不同线程访问同一内存区域会引发问题。这主要发生在其中一个线程执行写入，导致数据结构在内存中移动，或使某个位置失效的时候。</p>
+<p>为了避免这种情况，我们需要某种机制，让同一时刻只有一个线程能访问那份数据。为此我们使用一种叫 mutex 的东西。当一个线程想访问共享数据时，它锁住 mutex；而 mutex 被锁住时，任何其他试图锁它的线程都会阻塞在那里，直到 mutex 再次被解锁。你可以把它想成某种令牌，每个线程都必须持有它才能访问共享内存。</p>
+<p>想象你和一群人用纸牌搭塔，如果不止一个人同时往上放牌，塔很可能会塌。所以为了避免这种情况，任何想往塔上放牌的人都需要拿一颗小石子，这颗石子赋予他们往塔上加牌的权利，而且只有一颗，所以有人想加牌就得去拿石子，但如果石子已被别人拿着，他们就得等石子被释放。如果不止一个人想加牌而石子又不空闲，他们就排队，队里的第一个人会在石子最终被释放时拿到它。</p>
+<p>mutex 差不多就是这样：要<em>拿到石子</em>，你就对 mutex 调用 lock；做完之后再调用 unlock。如果另一个线程在某个线程持有时调用了 lock，它就会被放进队列，最先调用 lock 的线程会在 mutex 最终解锁时拿到它：</p>
+
+<pre><code>    thread 1: lock mutex
+    thread 1: pos = access memory to get position to write
+    thread 2: lock mutex &lt;- now thread 2 will stop it's execution till thread 1 unlocks it so better be quick
+    thread 1: write to pos
+    thread 1: unlock mutex
+    thread 2: read memory
+    thread 2: unlock mutex</code></pre>
+
+<p>当我们从一个线程锁住 mutex 而另一个线程试图锁它时，后者会停止执行。因此我们应该尽量在持有 mutex 锁的时候只做快速操作，以免把主线程的执行阻塞太久。</p>
+<p>在 openFrameworks 里，ofMutex 类让我们能做这种加锁。前面那个序列的语法大致是这样：</p>
+
+<pre><code>    thread 1: mutex.lock();
+    thread 1: vec.push_back(something);
+    thread 2: mutex.lock(); // now thread 2 will stop it's execution until thread 1 unlocks it so better be quick
+    thread 1: // end of push_back()
+    thread 1: mutex.unlock();
+    thread 2: somevariable = vec[i];
+    thread 2: mutex.unlock();</code></pre>
+
+<p>我们只需要在不同线程里、在 <code>threadedFunction</code> 里以及在 update/draw 循环里，于需要访问某块共享内存时调用 ofMutex 的 <code>lock()</code> 和 <code>unlock()</code>。ofThread 实际上包含一个 ofMutex，可以用 lock()/unlock() 锁住，我们可以这样使用：</p>
+
+<pre><code>class NumberGenerator{
+public:
+    void threadedFunction(){
+        while (isThreadRunning()){
+            lock();
+            numbers.push_back(ofRandom(0,1000));
+            unlock();
+            ofSleepMillis(1000);
+        }
+    }
+
+    vector&lt;int&gt; numbers;
+}
+
+//ofApp.h
+
+NumberGenerator numberGenerator;
+
+// ofApp.cpp
+
+void ofApp::setup(){
+    numberGenerator.startThread();
+}
+
+void ofApp::update(){
+    numberGenerator.lock();
+    while(!numberGenerator.numbers.empty()){
+        cout &lt;&lt; numberGenerator.numbers.front() &lt;&lt; endl;
+        numberGenerator.numbers.pop_front();
+    }
+    numberGenerator.unlock();
+}</code></pre>
+
+<p>正如之前所说，当我们锁住 mutex 时，就阻止了其他线程访问它。重要的是尽量让加锁时间尽可能短，否则最终还是会阻塞主线程，让使用线程变得毫无意义。</p>
+<h2 id="externalthreadsanddoublebuffering">外部线程与双缓冲</h2>
+<p>有时我们没有自己创建的线程，而是使用某个库，它创建自己的线程并在回调中调用我们的应用。我们用一个假想的视频库来看个例子：每当相机有新的一帧，它就调用某个函数。这类函数叫回调，因为某个库在事情发生时<em>回调我们</em>，OF 里的键盘和鼠标事件函数就是回调的例子。</p>
+
+<pre><code>class VideoRenderer{
+public:
+    void setup(){
+        pixels.allocate(640,480,3);
+        texture.allocate(640,480,GL_RGB);
+        videoLibrary::setCallback(this, &amp;VideoRenderer::frameCB);
+        videoLibrary::startCapture(640,480,"RGB");
+    }
+
+    void update(){
+        if(newFrame){
+            texture.loadData(pixels);
+            newFrame = false;
+        }
+    }
+
+    void draw(float x, float y){
+        texture.draw(x,y);
+    }
+
+    void frameCB(unsigned char * frame, int w, int h){
+        pixels.setFromPixels(frame,w,h,3);
+        newFrame = true;
+    }
+
+    ofPixels pixels;
+    bool newFrame;
+    ofTexture texture;
+}</code></pre>
+
+<p>在这里，即使我们不用 mutex，应用也不会崩溃。因为 pixels 的内存是在 setup 里预先分配的，而且大小从不改变。因此内存不会从它原来的位置移走。问题在于 update 和 frame_cb 这两个函数可能同时在运行，所以我们很可能看到<a href="http://en.wikipedia.org/wiki/Screen_tearing">画面撕裂</a>。撕裂与我们在没有启用垂直同步时向屏幕绘制所看到的效果是同一类。</p>
+<p>为了避免撕裂，我们也许想用 mutex：</p>
+
+<pre><code>class VideoRenderer{
+public:
+    void setup(){
+        pixels.allocate(640,480,3);
+        texture.allocate(640,480,GL_RGB);
+        videoLibrary::setCallback(this, &amp;VideoRenderer::frameCB);
+        videoLibrary::startCapture(640,480,"RGB");
+    }
+
+    void update(){
+        mutex.lock();
+        if(newFrame){
+            texture.loadData(pixels);
+            newFrame = false;
+        }
+        mutex.unlock();
+    }
+
+    void draw(float x, float y){
+        texture.draw(x,y);
+    }
+
+    void frameCB(unsigned char * frame, int w, int h){
+        mutex.lock();
+        pixels.setFromPixels(frame,w,h,3);
+        newFrame = true;
+        mutex.unlock();
+    }
+
+    ofPixels pixels;
+    bool newFrame;
+    ofTexture texture;
+    ofMutex mutex;
+}</code></pre>
+
+<p>这能解决撕裂，但我们在 <code>frameCB</code> 更新像素时阻塞了主线程，又在主线程上传纹理时阻塞了相机线程。对于小图像这通常没问题，但对于较大的图像我们可能会丢帧。一个可能的解决办法是使用一种叫双缓冲甚至三缓冲的技术：</p>
+
+<pre><code>class VideoRenderer{
+public:
+    void setup(){
+        pixelsBack.allocate(640,480,3);
+        pixelsFront.allocate(640,480,3);
+        texture.allocate(640,480,GL_RGB);
+        videoLibrary::setCallback(this, &amp;VideoRenderer::frameCB);
+        videoLibrary::startCapture(640,480,"RGB");
+    }
+
+    void update(){
+        bool wasNewFrame = false;
+        mutex.lock();
+        if(newFrame){
+            swap(pixelsFront,pixelsBack);
+            newFrame = false;
+            wasNewFrame = true;
+        }
+        mutex.unlock();
+
+        if(wasNewFrame) texture.loadData(pixelsFront);
+    }
+
+    void draw(float x, float y){
+        texture.draw(x,y);
+    }
+
+    void frameCB(unsigned char * frame, int w, int h){
+        pixelsBack.setFromPixels(frame,w,h,3);
+        mutex.lock();
+        newFrame = true;
+        mutex.unlock();
+    }
+
+    ofPixels pixelsFront, pixelsBack;
+    bool newFrame;
+    ofTexture texture;
+    ofMutex mutex;
+}</code></pre>
+
+<p>这样一来，我们在帧回调里只锁住 mutex 很短时间，用来在主线程中把 <code>newFrame = true</code>。我们这样做是为了检查是否有新帧，然后交换前缓冲和后缓冲。<code>swap</code> 是 c++ 标准库函数，用来交换两块内存区域，所以如果我们交换两个 int <code>a</code> 和 <code>b</code>，<code>a</code> 最终会得到 <code>b</code> 的值，反之亦然。通常这是通过复制变量完成的，但 <code>swap</code> 针对 ofPixels 做了重载，交换的是 <code>frontPixels</code> 和 <code>backPixels</code> 内部指向内存的指针，让它们互相指向。调用 <code>swap</code> 之后，<code>frontPixels</code> 会指向 <code>backPixels</code> 原先指向的地方，反之亦然。这个操作只涉及复制几个内存地址的值，加上尺寸和通道数。因此它比复制整张图像或上传到纹理要快得多。</p>
+<p>三缓冲是一种类似的技术，用 3 个缓冲区而不是 2 个，在某些情况下很有用。本章不涉及它。</p>
+<h2 id="ofscopedlock">ofScopedLock</h2>
+<p>有时我们需要把一个函数锁到它返回为止，或者在整个代码块的持续期间加锁。这正是 scoped lock 做的事。如果你读过内存那一章，大概还记得我们最初称为<em>栈语义</em>的东西，也就是 RAII <a href="http://en.wikipedia.org/wiki/Resource_Acquisition_Is_Initialization">Resource Adquisition Is Initialization</a>（资源获取即初始化）。scoped lock 就利用这一技术，在整个代码块持续期间锁住 mutex，甚至包括可能在同一个 <code>return</code> 调用里发生的任何复制。</p>
+<p>例如，前面的例子可以改写成：</p>
+
+<pre><code>class VideoRenderer{
+public:
+    void setup(){
+        pixelsBack.allocate(640,480,3);
+        pixelsFront.allocate(640,480,3);
+        texture.allocate(640,480,GL_RGB);
+        videoLibrary::setCallback(&amp;frame_cb);
+        videoLibrary::startCapture(640,480,"RGB");
+    }
+
+    void update(){
+        bool wasNewFrame = false;
+
+        {
+        ofScopedLock lock(mutex);
+            if(newFrame){
+                swap(fontPixels,backPixels);
+                newFrame = false;
+                wasNewFrame = true;
+            }
+        }
+
+        if(wasNewFrame) texture.loadData(pixels);
+    }
+
+    void draw(float x, float y){
+        texture.draw(x,y);
+    }
+
+    static void frame_cb(unsigned char * frame, int w, int h){
+        pixelsBack.setFromPixels(frame,w,h,3);
+        ofScopedLock lock(mutex);
+        newFrame = true;
+    }
+
+    ofPixels pixels;
+    bool newFrame;
+    ofTexture texture;
+    ofMutex mutex;
+}</code></pre>
+
+<p>ScopedLock 是避免问题的好办法，因为我们可能忘了解锁 mutex，而且它让我们能用 <code>{}</code> 来定义锁的持续时间，这对 C++ 来说更自然。</p>
+<p>有一种特殊情况，只有用 scoped lock 才能正确地加锁。那就是当我们想返回一个值、并让函数在值被返回之后仍保持锁定。那种情况下我们不能用普通的锁：</p>
+
+<pre><code>
+ofPixels accessSomeSharedData(){
+    ofScopedLock lock(mutex);
+    return modifiedPixels(pixels);
+}</code></pre>
+
+<p>我们可以在内部做一份副本稍后返回，但用这个模式我们避免了复制，语法也更短。</p>
+<h2 id="pococondition">Poco::Condition</h2>
+<p>在线程术语里，条件（condition）是一种能让两个线程同步的对象。模式大致是这样：一个线程等待某事发生之后才开始处理。处理完之后，它不去结束线程，而是锁在 condition 上，等到有新数据需要处理。一个例子就是我们前面一直在用的图像加载类。我们可以不为每张图像启动一个线程，而是维护一个待加载图像的队列。主线程把图像路径加进队列，辅助线程从队列里加载图像直到队列为空。然后辅助线程锁在一个 condition 上，直到有更多图像要加载。</p>
+<p>这样的例子在本节里写起来太长了，但如果你对这类东西怎么工作感兴趣，可以看看 ofxThreadedImageLoaded（它做的正是这件事）。</p>
+<p>我们还是看个简单的例子。想象一个类，我们可以在另一个线程里把 url 推给它去 ping 地址。大致像这样：</p>
+
+<pre><code>class ThreadedHTTPPing: public ofThread{
+public:
+    void pingServer(string url){
+        mutex.lock();
+        queueUrls.push(url);
+        mutex.unlock();
+    }
+
+    void threadedFunction(){
+        while(isThreadRunning()){
+            mutex.lock();
+            string url;
+            if(queueUrls.empty()){
+                url = queueUrls.front();
+                queueUrls.pop();
+            }
+            mutex.unlock();
+            if(url != ""){
+                ofHttpUrlLoad(url);
+            }
+        }
+    }
+
+private:
+    queue&lt;string&gt; queueUrls;
+}</code></pre>
+
+<p>这个例子的问题在于辅助线程会尽可能快地在循环里跑，占满我们计算机的一个 CPU 核心，这可不是个好主意。</p>
+<p>对这个问题的典型解决办法是在每轮循环末尾休眠一会儿，比如：</p>
+
+<pre><code>class ThreadedHTTPPing: public ofThread{
+public:
+    void pingServer(string url){
+        mutex.lock();
+        queueUrls.push(url);
+        mutex.unlock();
+    }
+
+    void threadedFunction(){
+        while(isThreadRunning()){
+            mutex.lock();
+            string url;
+            if(queueUrls.empty()){
+                url = queueUrls.front();
+                queueUrls.pop();
+            }
+            mutex.unlock();
+            if(url != ""){
+                ofHttpUrlLoad(url);
+            }
+            ofSleepMillis(100);
+        }
+    }
+
+private:
+    queue&lt;string&gt; queueUrls;
+};</code></pre>
+
+<p>这能稍微缓解问题，但不能彻底解决。线程现在消耗的 CPU 少了，但在还有 url 要加载时它却多睡了一段不必要的时间。而且即使没有 url 要 ping 了，它仍会在后台继续运行。特别是在靠电池供电的小设备上，比如手机，这种模式几个小时就会把电耗光。</p>
+<p>这个问题的最佳解决办法是使用 condition：</p>
+
+<pre><code>class ThreadedHTTPPing: public ofThread{
+    void pingServer(string url){
+        mutex.lock();
+        queueUrls.push(url);
+        condition.signal();
+        mutex.unlock();
+    }
+
+    void threadedFunction(){
+        while(isThreadRunning()){
+            mutex.lock();
+            if (queueUrls.empty()){
+                condition.wait(mutex);
+            }
+            string url = queueUrls.front();
+            queueUrls.pop();
+            mutex.unlock();
+
+            ofHttpUrlLoad(url);
+        }
+    }
+
+private:
+    Poco::Condition condition;
+    queue&lt;string&gt; queueUrls;
+};</code></pre>
+
+<p>在我们调用 <code>condition.wait(mutex)</code> 之前，mutex 需要先被锁住，然后 condition 会解锁 mutex 并阻塞该线程的执行，直到 <code>condition.signal()</code> 被调用。当 condition 因为收到信号而唤醒线程时，它会重新锁住 mutex 并继续执行。我们可以毫无问题地读取队列，因为我们知道另一个线程无法访问它。我们把下一个要 ping 的 url 复制出来，然后解锁 mutex，让加锁时间保持在最短。之后在锁之外我们 ping 服务器，再重新开始这个过程。</p>
+<p>每当队列被取空，condition 就会阻塞线程的执行，避免它在后台空转。</p>
+<h2 id="conclusion">结语</h2>
+<p>如我们所见，线程是一个强大的工具，能让同一应用中的多个任务同时发生。它们也很难用，主要问题通常是访问共享资源，一般是共享内存。我们只看到一个具体情况：如何用线程做后台任务，而这些任务会暂停主任务的执行。还有其他情况，我们可以通过把 1 个任务拆成小任务来并行化它，比如做某种图像操作时把图像分成几个子区域，给每个区域分配一个线程。对那些情况有专门的库让语法更简单，例如 OpenCv 可以通过 <a href="https://www.threadingbuildingblocks.org/">TBB</a> 用多个核心执行某些操作，还有 TBB 本身或 <a href="http://openmp.org/wp/">OpenMP</a> 这类库，可以指定某个循环应当被拆分并在多个核心上同时运行</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://openframeworks.cc/ofBook/chapters/threads.html" rel="noreferrer noopener">openframeworks.cc/ofBook/chapters/threads.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

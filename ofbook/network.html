@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网络 - ofBook</title>
+<meta name="description" content="ofBook 章节「网络」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1 id="network">网络</h1>
+<p><em>作者：<a href="http://arturocastro.net">Arturo Castro</a></em></p>
+<p><em>Brannon Dorsey 校正</em></p>
+<h2 id="tcpvsudp">TCP 与 UDP</h2>
+<p>TCP 和 UDP 是网络通信中最常用的两个协议。TCP 如此普遍，以至于互联网所基于的协议套件通常就叫 TCP/IP。网络协议按所谓 <a href="http://en.wikipedia.org/wiki/OSI_model">OSI 模型</a>分层。TCP 和 UDP 属于第 4 层，即传输层，在 oF 里它们通常与第 7 层（应用协议层）的协议一起使用，比如 HTTP、FTP 或 OSC，这些协议实际上工作在其它层之上，例如 HTTP 和 FTP 在 TCP 之上，OSC 通常在 UDP 之上。</p>
+<h3 id="tcp">TCP</h3>
+<p><strong>Transmission Control Protocol</strong> 毫无疑问是互联网上最常用的网络协议。它是基于流的协议，能抵抗传输错误，比如数据包损坏、乱序和丢失。我们来看看这些到底是什么意思。</p>
+<p>要理解这些，我们可能需要稍微了解 TCP/IP 网络是怎么工作的。首先要知道，当我们在网络上发送信息（比如一个大文件）时，它会被切分成更小的信息块，称为<em>数据包</em>。此外，网络中的每一段可能支持不同的包大小，所以这些包可能被进一步拆成更小的包。所以归根到底，一个包就是我们想发送的信息的一小片，加上一些称为首部的额外信息。首部帮助记录包的大小、传输顺序以及包的来源和目的地。把数据分成包，其中一个用途是更容易从错误中恢复。例如，如果我们把一个巨大的文件塞进一个巨包发送，传输途中有部分损坏，我们就得把整个文件重发一遍。把它分成包含一小片数据和一些首部的包，就能按包检测错误，于是只需要重发损坏的包，而不是整个文件。</p>
+<p>当我们把一个包从一台电脑发到另一台时，即使使用 TCP 这种面向连接的协议，也无法预先知道它在前往目的地的路上会走哪条路由。互联网上两点之间往往有很多条可能的路径，借助路由器之类的互联网硬件，包通常沿着发送那一刻最快的路径传输。但几毫秒之后那条路径可能就不再是最佳路径了，于是下一个包可能走另一条路由，并乱序到达。</p>
+<p>另一个问题是，包在前往目的电脑的途中可能损坏，比如因为某些线缆中的电噪声。</p>
+<p>综上所述，假设我们按顺序发送包 ABCD，另一端收到的可能是 GCB 之类的东西：包 A 损坏变成了 G，包 B 和 C 完好到达但顺序错了，包 D 则彻底丢了。</p>
+<p>TCP 能解决所有这些问题。TCP 发送包时会在首部里加一个序号，这样另一台电脑收到时就能正确排序。它还会给每个包加一个叫 CRC 的东西，让另一台电脑知道这个包是否损坏。</p>
+<p>当目的地收到一个包并且这个包是正确的，它会发一个确认，也叫 ACK。如果过了一段时间发送方还没收到确认，它就会重发这个包，这就解决了包损坏和丢失的问题。</p>
+<p>这些 ACK 还让发送方能调节发包的速度：如果客户端带宽比服务器低，服务器可以放慢发包，直到匹配客户端能可靠接收的速度。</p>
+<p>如我们所见，使用 TCP 连接能保证我们发出的所有东西都被对方正确接收。</p>
+<p>那么为什么不干脆一直用 TCP？嗯，TCP 有一些局限，例如 TCP 是面向连接的，这意味着要和另一台机器通信，我们必须显式地打开一条只通向那台机器的连接。</p>
+<p>TCP 也是面向流的。这意味着我们不能发送独立的消息并指望它们完整地到达：它们最终会到，但不会完全按我们发送的样子。例如，如果我们发送这样的内容：</p><pre><code>    "Hello world!! this is an openFrameworks network message"</code></pre>
+
+<p>在另一边，使用 TCP 的应用程序可能这样收到：</p><pre><code>    "Hello w"
+    "orld!"
+    "!this is a"
+    "n openFr"
+    "ameworks ne"
+    "twork mess"
+    "age"</code></pre>
+
+<p>我们甚至无法确定这些包会有多大。有一些发送完整消息的技巧，比如给消息加一个分隔符。例如 openFrameworks 在这样做时：</p><pre><code>tcpClient.send("Hello world!! this is an openFrameworks network message");</code></pre>
+
+<p>内部实际发送的是：</p><pre><code>    "Hello world!! this is an openFrameworks network message[/TCP]\0"</code></pre>
+
+<p>最后的 <code>\0</code> 其实是为了兼容旧版 flash 而加的！<code>[\TCP]</code> 让另一端可以一直读流，直到收到完整消息。所以当你使用：</p><pre><code>string message = tcpServer.receive();</code></pre>
+
+<p>内部 ofxTCPCLient/Server 会读取流，把不完整的消息留在内存里，等到拿到分隔符才返回一条完整消息。这一切是透明完成的，但如果你要和来自非 openFrameworks 应用的其它协议对接，你可能得自己处理，用 <code>sendRaw()</code> <code>sendRawMsg()</code> <code>receiveRaw()</code> 和 <code>receiveRawMsg()</code>，它们不发送也不期待终止符。</p>
+<p>如果你用的协议基于 TCP 并且有分隔符，很可能你也能用同样的技巧，方法是：</p><pre><code>tcpClient.setMessageDelimiter(myDelimiter);</code></pre>
+
+<p>有一点你可能已经知道：要通过 TCP/IP 传输层协议连接应用，通常需要一个 IP 地址和一个端口，IP 地址属于每台机器，端口属于每个应用。所以一个 IP/端口对几乎就能在全部互联网上确定某个地址上运行的一个应用。例如，运行 Web 服务器的应用通常跑在 80 端口，如果它所在的机器 IP 是 15.6.8.2，那么 15.6.8.2:80 就在全互联网所有机器上运行的其它应用中唯一确定了那个 Web 服务器。所以如果我们想连接两台机器，通常只需要知道服务器上那个应用的 IP 和端口，然后在客户端里用它去连接。</p>
+<p>不过有个例外。在大多数内部网络里，比如你的家庭网络，会有一个路由器把这个网络里的机器连接到互联网。这些路由器通常做一件叫网络地址转换（NAT）的事。NAT 之所以出现，是因为 IPv4 协议的 IP 地址数量有限。在内部，网络使用保留地址段：192.168.x.x/24 或 10.x.x.x/32，这些地址不会直接出现在互联网上。当我们尝试连接一个外部地址时，它充当你的电脑和我们想连接的服务器之间的一种代理。路由器有自己的外部地址，当它收到响应时，会把收到响应的地址和端口转换成内部的地址和端口，也就是我们电脑的，然后把包发回给我们。</p>
+<p>这虽然非常实用，但也意味着如果两台电脑都在 NAT 路由器后面，原则上无法在它们之间建立连接。有办法配置路由器，把发往特定端口的任何包都转发到同一个内部地址。也有一些库比如 <a href="https://github.com/arturoc/ofxNice">ofxNice</a> 可以让你做 NAT 穿透，但那只在 UDP 下有效。</p>
+<h3 id="udp">UDP</h3>
+<p>UDP，即 <strong>User Datagram Protocol</strong>，是一种无连接、面向数据报、不抗错误的协议。它差不多是 TCP 的完全反面。我们不需要建立连接，只是把消息发到特定的地址和端口。只要那台机器的那个端口上有进程在监听，它就会收到消息。</p>
+<p>面向数据报意味着，我们发送的任何内容，只要不超过从一台电脑到另一台路上所有子网都支持的包大小，就会完整地到达另一端。在 openFrameworks 里，如果我们这样做：</p><pre><code>string message = "Hello world!! this is an openFrameworks network message";
+udpManager.SendAll(message, message.size());</code></pre>
+
+<p>另一端会完整地收到这条消息——前提是它真的收到了这个数据报。</p>
+<p>如前所述，UDP 不抗错误，所以包可能到不了。它可能损坏，而且没办法恢复。如果我们发几个包，它们到达的顺序可能和发送时不同。UDP 也不会根据带宽调整，所以如果一端发得比另一端收得快，甚至发送时就把本地缓冲区填满，一些包就会丢失。更糟的是，发送方和接收方都不会得到任何包已丢失的反馈。</p>
+<p>UDP 看起来没什么用，但它有一些优势。第一，它快！因为 UDP 不需要反馈（例如 ACK），首部信息也极少，要发的字节更少。很多情况下，这种速度比可靠性更重要。例如，如果我们每隔几帧发一个包含应用状态的包，丢一两帧也无所谓，因为目的端会被下一个收到的包更新。而且在局域网里 UDP 包很少丢。所以，如果你需要非常快地发包（也就是低延迟），并且不在意丢几个包，UDP 可能正适合你。如果你的应用要求确认每一个字节都到达目的地，那就得用 TCP。</p>
+<p>UDP 的一些优势来自它是无连接的。这意味着，除了别的以外，我们可以用广播地址向局域网内所有电脑广播消息。要计算广播地址，我们需要知道发送方机器的 IP 地址和子网掩码，对它们做按位异或就得到广播地址。例如，如果我们的机器 IP 是 192.168.0.3，网络掩码是 255.255.255.0，广播地址就是 192.168.0.255。如果跨网络工作，我们还可以用多播，虽然配置起来更难。我们可以复用端口，因此同一台机器上可以有多个进程使用同一个端口，或者用同一个端口收发。</p>
+<p>如前面提到的，UDP 允许我们用一些巧妙的技巧做 NAT 穿透，虽然这不是裸 UDP 能做到的，需要第三方库。</p>
+<p>UDP 可能比 TCP 更可取的一个场景是非常强调时间的应用。你可能听说过 UDP 比 TCP 快。这不完全对，至少没快到能造成多大差别。真正的差别在于，使用 TCP 时，如果一个包损坏或丢失，后续消息在丢失的包被重发之前不会交给应用，这可能带来轻微延迟。在大多数应用里这点延迟察觉不到，但在一些非常强调时间的应用里，我们宁可丢一些包，也不愿等它们重发。这里通常说的是毫秒级，所以如我们所说，一般不是问题。</p>
+<p>另一种可能是：用 UDP 的同时实现一部分 TCP 的错误恢复。例如，我们可能不在意丢一些包或有些包损坏，但在意它们到达的顺序；这种情况下，我们可以只在每条消息里用一个序号，并在目的地用一个缓冲区重排包，这样在真正处理一条消息之前可以稍等一下，看看是否有后到的消息需要先处理。</p>
+<p>总的来说，如果你需要消息无论如何都要到达、丢一个包都可能致命，就用 TCP；如果你需要广播、多播、NAT 穿透这类更高级的用法，或者等待丢失包重发哪怕几毫秒都会对应用致命、而丢一些包没关系，就用 UDP。</p>
+<h2 id="osc">OSC</h2>
+<p>OSC，即 <strong>Open Sound Control</strong>，是一个应用层协议。它的层级高于 UDP 或 TCP，主要特点是能发送 int、float、string 等（以及其它）普通数据类型，而不用操心收发两端的底层体系结构。它通常基于 UDP，所以也有同样的一些问题。</p>
+<p>它在 openFrameworks 里的用法非常简单，看看 examples/addons 文件夹里的例子就知道怎么用了。</p>
+<p>使用 OSC 的一大优势是，有大量商业和开源项目支持 OSC。OSC 让你的软件可以轻松控制（或被控制）另一款软件。例如在一场演出中，你可能想让 Pure Data 补丁生成声音、openFrameworks 生成视频。演出期间，两个程序可以通过交换 OSC 消息来控制彼此的参数。</p>
+<p>除了 OSC，针对特定应用还有其它应用层协议，通常用它们比试图直接用 TCP 或 UDP 这样的传输协议更简单。例如视频流是个非常复杂的问题，但像 RTP 这样的协议已经解决或至少缓解了它涉及的所有麻烦，所以用一个实现 RTP 的库会比直接用 TCP 或 UDP 发视频更容易。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://openframeworks.cc/ofBook/chapters/network.html" rel="noreferrer noopener">openframeworks.cc/ofBook/chapters/network.html</a> · 译文更新于 2026-10-20</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
