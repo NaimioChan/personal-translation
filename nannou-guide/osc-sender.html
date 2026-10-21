@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>发送 OSC - Nannou Guide 中文译本</title>
+<meta name="description" content="发送 OSC
+教程信息
+
+作者：madskjeldgaard
+所需知识：
+
+nannou 应用剖析
+绘制二维图形
+让圆形动起来
+OSC 入门">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>发送 OSC</h1>
+<p><strong>教程信息</strong></p>
+<ul>
+<li>作者：<a href="https://madskjeldgaard.dk" rel="noreferrer noopener">madskjeldgaard</a></li>
+<li>所需知识：
+<ul>
+<li><a href="anatomy-of-a-nannou-app.html" rel="noreferrer noopener">nannou 应用剖析</a></li>
+<li><a href="drawing-2d-shapes.html" rel="noreferrer noopener">绘制二维图形</a></li>
+<li><a href="animating-a-circle.html" rel="noreferrer noopener">让圆形动起来</a></li>
+<li><a href="osc-introduction.html" rel="noreferrer noopener">OSC 入门</a></li>
+</ul>
+</li>
+<li>阅读时间：20 分钟</li>
+</ul>
+<hr>
+<p>在本教程中，我们将介绍如何使用 <code>nannou_osc</code> crate 从 nannou 应用向另一个应用发送 OSC 数据。</p>
+<p>我们要编写一个简单的程序：一个圆形在屏幕上移动，同时圆形的位置通过 OSC 发送到另一个应用。我们将继续基于<a href="animating-a-circle.html" rel="noreferrer noopener">让圆形动起来</a>中的应用来开发。</p>
+<h2>设置 OSC 发送端</h2>
+<p>在 <code>main.rs</code> 文件顶部，导入 <code>nannou_osc</code> crate，并通过简写 <code>osc</code> 让它在你的程序中可用。</p>
+<pre><code class="language-rust"># #![allow(unused_imports)]
+use nannou_osc as osc;
+# fn main(){}
+</code></pre>
+<p>接下来我们需要做的第一件事，是在你在其他 nannou 教程中可能见过的 <code>Model</code> 结构体中设置 OSC 发送端。</p>
+<p>给这个结构体添加一个名为 <code>sender</code> 的字段，类型为 <a href="https://docs.rs/nannou_osc/latest/nannou_osc/send/struct.Sender.html" rel="noreferrer noopener">Sender</a> 结构体。</p>
+<pre><code class="language-rust"># #![allow(dead_code, unused_imports)]
+# use nannou_osc as osc;
+struct Model {
+    sender: osc::Sender&lt;osc::Connected&gt;,
+}
+# fn main() {}
+</code></pre>
+<p>接下来，我们需要用 <code>model</code> 函数来设置 <code>Model</code> 结构体。别担心它一开始看起来有点吓人，我们会一步一步地讲解。</p>
+<pre><code class="language-rust"># #![allow(dead_code, unused_imports)]
+# use nannou_osc as osc;
+# use nannou::prelude::*;
+# struct Model {
+#   sender: osc::Sender&lt;osc::Connected&gt;,
+# }
+fn model(_app: &amp;App) -&gt; Model {
+    let port = 1234;
+    let target_addr = format!("{}:{}", "127.0.0.1", port);
+
+	let sender = osc::sender()
+        .expect("Could not bind to default socket")
+        .connect(target_addr)
+        .expect("Could not connect to socket at address");
+
+    Model { sender }
+}
+# fn main() {}
+</code></pre>
+<p>首先，让我们选择数据要发送到的网络端口。</p>
+<pre><code class="language-rust"># #![allow(unused_variables)]
+# fn main() {
+let port = 1234;
+# }
+</code></pre>
+<p>osc 发送端期望一个格式为 "address:port" 的字符串，例如 <code>"127.0.0.1:1234"</code>。</p>
+<p>这个地址可以是内部地址，也可以是你网络中另一台计算机的地址。在本教程中，我们将以自己计算机的内部地址为目标，它用 <code>"127.0.0.1"</code> 表示。</p>
+<pre><code class="language-rust"># #![allow(unused_variables)]
+# fn main() {
+# let port = 1234;
+let target_addr = format!("{}:{}", "127.0.0.1", port);
+# }
+</code></pre>
+<p>最后，我们需要把 OSC 发送端绑定到网络套接字上。这并不总是成功，所以我们附加了 <code>expect()</code> 方法（<a href="https://doc.rust-lang.org/std/option/enum.Option.html#method.expect" rel="noreferrer noopener">点此</a>阅读关于 <code>expect()</code> 的更多信息），在不成功时输出错误消息。如果成功，则用 <code>.connect(target_addr)</code> 方法把发送端连接到目标地址。同样，这也可能不成功，所以我们对该操作的结果也使用 <code>expect()</code> 方法。</p>
+<pre><code class="language-rust"># #![allow(unused_variables)]
+# use nannou_osc as osc;
+# fn main() {
+#     let port = 1234;
+#     let target_addr = format!("{}:{}", "127.0.0.1", port);
+let sender = osc::sender()
+    .expect("Could not bind to default socket")
+    .connect(target_addr)
+    .expect("Could not connect to socket at address");
+# }
+</code></pre>
+<h3>发送 OSC 消息</h3>
+<p>一个 OSC 数据包至少由两部分组成：一个 OSC 地址和 0 个或多个包含数据的参数。OSC 地址不要与我们之前连接的网络地址混淆。相反，OSC 地址是一种类似 URL 的路径，例如 <code>/circle/position</code>。</p>
+<p>要创建一个 OSC 数据包，我们首先需要构造一个地址。</p>
+<pre><code class="language-rust"># #![allow(unused_variables)]
+# fn main() {
+let osc_addr = "/circle/position".to_string();
+# }
+</code></pre>
+<p>然后创建一个参数向量。这些参数需要使用 nannou_osc crate 中 <a href="https://docs.rs/nannou_osc/latest/nannou_osc/enum.Type.html" rel="noreferrer noopener">osc::Type</a> 里的类型来格式化。下面我们创建一个包含两个浮点值的参数列表：我们圆形的 <code>x</code> 和 <code>y</code> 坐标。</p>
+<pre><code class="language-rust"># #![allow(unused_variables)]
+# use nannou_osc as osc;
+# fn main() {
+# let x = 0.0;
+# let y = 0.0;
+let args = vec![osc::Type::Float(x), osc::Type::Float(y)];
+#
+# }
+
+</code></pre>
+<p>现在，把这两者合在一起，我们就得到了一个 OSC 数据包。发送端期望它们以元组的形式传递。</p>
+<pre><code class="language-rust"># #![allow(unreachable_code, unused_variables)]
+# fn main() {
+# let osc_addr = unimplemented!();
+# let args = unimplemented!();
+let packet = (osc_addr, args);
+# }
+</code></pre>
+<p>通过<a href="https://docs.rs/nannou_osc/latest/nannou_osc/send/struct.Sender.html#method.send-1" rel="noreferrer noopener">阅读 <code>send</code> 方法的文档</a>，我们可以看到它返回一个 Result 类型：成功时包含写入的字节数，而更重要的是，不成功时包含一些有用的 CommunicationError 类型的错误。为了丢弃其中的错误部分，我们在最后使用 <code>ok()</code> 方法。</p>
+<pre><code class="language-rust"># #![allow(unreachable_code, unused_variables)]
+# use nannou_osc as osc;
+# struct Model {
+#    sender: osc::Sender&lt;osc::Connected&gt;,
+# }
+# fn main() {
+#    let model: Model = unimplemented!();
+#    let osc_addr = "/circle/position".to_string();
+#    let args = vec![osc::Type::Float(0.0), osc::Type::Float(0.0)];
+#    let packet = (osc_addr, args);
+    model.sender.send(packet).ok();
+# }
+</code></pre>
+<h2>完整的应用</h2>
+<pre><code class="language-rust">use nannou::prelude::*;
+use nannou_osc as osc;
+
+fn main() {
+    nannou::app(model).simple_window(view).run();
+}
+
+struct Model {
+    sender: osc::Sender&lt;osc::Connected&gt;,
+}
+
+fn model(_app: &amp;App) -&gt; Model {
+    // 数据发送到的网络端口
+    let port = 1234;
+
+    // osc 发送端期望一个格式为 "address:port" 的字符串，例如 "127.0.0.1:1234"
+    // "127.0.0.1" 等同于你的计算机的内部地址。
+    let target_addr = format!("{}:{}", "127.0.0.1", port);
+
+    // 这是 osc 发送端，其中包含若干 expect，以防出现问题。
+    let sender = osc::sender()
+        .expect("Could not bind to default socket")
+        .connect(target_addr)
+        .expect("Could not connect to socket at address");
+
+    Model { sender }
+}
+
+fn view(app: &amp;App, model: &amp;Model, _window: Entity) {
+    // 用应用时间推进正弦波
+    let sine = app.time().sin();
+    let slowersine = (app.time() / 2.0).sin();
+
+    // 获取窗口的边界（用来约束圆形的移动）
+    let boundary = app.window_rect();
+
+    // 把正弦波函数映射到窗口边界之间的区间
+    let x = map_range(sine, -1.0, 1.0, boundary.left(), boundary.right());
+    let y = map_range(slowersine, -1.0, 1.0, boundary.bottom(), boundary.top());
+
+    // 把 x-y 坐标作为 OSC 发送
+    let osc_addr = "/circle/position".to_string();
+    let args = vec![osc::Type::Float(x), osc::Type::Float(y)];
+    let packet = (osc_addr, args);
+
+    model.sender.send(packet).ok();
+
+    // 准备绘制。
+    let draw = app.draw();
+
+    // 把背景清成紫色。
+    draw.background().color(PLUM);
+
+    // 在 x/y 坐标 0.0, 0.0 处画一个蓝色椭圆
+    draw.ellipse().color(STEEL_BLUE).x_y(x, y);
+
+    
+}
+</code></pre>
+<p>在下一个教程中，我们将看看如何接收这些 OSC 值，并用它们做一些有趣的事情。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://guide.nannou.cc/tutorials/osc/osc-sender.html" rel="noreferrer noopener">guide.nannou.cc/tutorials/osc/osc-sender.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
