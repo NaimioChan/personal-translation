@@ -92,5 +92,9 @@ window.PT_LIBRARIES = [
   { dir: 'scratchapixel', title: 'Scratchapixel',
     desc: 'Scratchapixel 全站课程的中文译本。',
     source: 'https://scratchapixel.com/index.html',
-    updated: '2026-10-21', pages: 166 }
+    updated: '2026-10-21', pages: 166 },
+  { dir: 'nannou-guide', title: 'Nannou Guide',
+    desc: 'Nannou Guide 的中文译本。',
+    source: 'https://guide.nannou.cc/',
+    updated: '2026-10-21', pages: 30 }
 ];

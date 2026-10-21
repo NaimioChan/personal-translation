@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>接收 OSC - Nannou Guide 中文译本</title>
+<meta name="description" content="接收 OSC
+教程信息
+
+作者：mitchmindtree
+所需知识：
+
+nannou 应用剖析
+OSC 入门
+发送 OSC
+
+
+阅读时间：15 分钟
+
+
+在上">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+<h1>接收 OSC</h1>
+<p><strong>教程信息</strong></p>
+<ul>
+<li>作者：mitchmindtree</li>
+<li>所需知识：
+<ul>
+<li><a href="anatomy-of-a-nannou-app.html" rel="noreferrer noopener">nannou 应用剖析</a></li>
+<li><a href="osc-introduction.html" rel="noreferrer noopener">OSC 入门</a></li>
+<li><a href="osc-sender.html" rel="noreferrer noopener">发送 OSC</a></li>
+</ul>
+</li>
+<li>阅读时间：15 分钟</li>
+</ul>
+<hr>
+<p>在<a href="osc-sender.html" rel="noreferrer noopener">上一个教程</a>中，我们通过 OSC 把一个圆形的位置发送了出去。在本教程中我们将做相反的事：从另一个应用<em>接收</em> OSC 数据包，并把它们显示在窗口中。</p>
+<p>我们仍然使用 <code>nannou_osc</code> crate。如果你还没有把它添加到项目中，请参阅<a href="osc-introduction.html" rel="noreferrer noopener">OSC 入门</a>。</p>
+<pre><code class="language-rust"># #![allow(unused_imports)]
+use nannou_osc as osc;
+# fn main() {}
+</code></pre>
+<h2>设置 OSC 接收端</h2>
+<p>发送端在其 <code>Model</code> 中存放一个 <code>osc::Sender</code>，而接收端存放的则是一个 <a href="https://docs.rs/nannou_osc/latest/nannou_osc/recv/struct.Receiver.html" rel="noreferrer noopener"><code>osc::Receiver</code></a>。</p>
+<p>我们还会保存一个已收到数据包的列表，以便把它们绘制出来。每个收到的数据包都与发送方的网络地址配对，所以我们把两者都存下来。</p>
+<pre><code class="language-rust"># #![allow(dead_code, unused_imports)]
+# use nannou_osc as osc;
+struct Model {
+    receiver: osc::Receiver,
+    received_packets: Vec&lt;(std::net::SocketAddr, osc::Packet)&gt;,
+}
+# fn main() {}
+</code></pre>
+<p>接下来，我们在 <code>model</code> 函数中设置 <code>Model</code>。一个 <code>osc::Receiver</code> 会绑定到一个网络<em>端口</em> —— 也就是发送应用所指向的同一个端口。请确保它与你的发送端所用的端口一致（在<a href="osc-sender.html" rel="noreferrer noopener">发送教程</a>中我们用的是 <code>1234</code>，这里我们用 <code>34254</code> 以匹配 nannou 的 <code>osc_sender.rs</code> 示例 —— 任选一个你喜欢的，只要发送端和接收端一致即可）。</p>
+<pre><code class="language-rust"># #![allow(dead_code, unused_imports)]
+# use nannou_osc as osc;
+# use nannou::prelude::*;
+# struct Model {
+#     receiver: osc::Receiver,
+#     received_packets: Vec&lt;(std::net::SocketAddr, osc::Packet)&gt;,
+# }
+// 我们将用来监听 OSC 数据包的端口。
+const PORT: u16 = 34254;
+
+fn model(_app: &amp;App) -&gt; Model {
+    // 把一个 `osc::Receiver` 绑定到该端口。
+    let receiver = osc::receiver(PORT).unwrap();
+
+    // 用来收集数据包及其源地址的 vec。
+    let received_packets = vec![];
+
+    Model {
+        receiver,
+        received_packets,
+    }
+}
+# fn main() {}
+</code></pre>
+<p>绑定可能会失败（例如另一个程序已经占用了该端口），所以 <code>osc::receiver</code> 返回一个 <code>Result</code>。这里我们简单地对它 <code>unwrap()</code>，如果绑定不成功，程序会输出一条错误消息并退出。</p>
+<h2>接收 OSC 消息</h2>
+<p>接收端在后台收集传入的数据包。为了取出它们，我们在一个 <code>update</code> 函数中每一帧轮询接收端。<a href="https://docs.rs/nannou_osc/latest/nannou_osc/recv/struct.Receiver.html#method.try_iter" rel="noreferrer noopener"><code>try_iter</code></a> 方法返回一个迭代器，遍历自上次检查以来到达的所有数据包，如果没有数据包则<em>不会</em>阻塞。每一项是一个元组，包含 <code>osc::Packet</code> 和它的来源 <code>SocketAddr</code>。</p>
+<pre><code class="language-rust"># #![allow(dead_code, unused_imports)]
+# use nannou_osc as osc;
+# use nannou::prelude::*;
+# struct Model {
+#     receiver: osc::Receiver,
+#     received_packets: Vec&lt;(std::net::SocketAddr, osc::Packet)&gt;,
+# }
+fn update(_app: &amp;App, model: &amp;mut Model) {
+    // 接收所有待处理的 OSC 数据包。
+    for (packet, addr) in model.receiver.try_iter() {
+        model.received_packets.push((addr, packet));
+    }
+
+    // 我们一次显示 10 个数据包，所以移除多余的。
+    while model.received_packets.len() &gt; 10 {
+        model.received_packets.remove(0);
+    }
+}
+# fn main() {}
+</code></pre>
+<blockquote>
+<p><strong>注意：</strong>如果你更愿意<em>等待</em>数据包到达而不是没有数据包也继续，可以改用阻塞的 <a href="https://docs.rs/nannou_osc/latest/nannou_osc/recv/struct.Receiver.html#method.recv" rel="noreferrer noopener"><code>recv</code></a> 方法。在 nannou 应用中我们通常更喜欢非阻塞的 <code>try_iter</code>，这样绘制和其他事件就不会被拖住。</p>
+</blockquote>
+<h2>完整的应用</h2>
+<p>最后，我们把收到的数据包以文本形式绘制到窗口中。把所有内容合在一起：</p>
+<pre><code class="language-rust">use nannou::prelude::*;
+use nannou_osc as osc;
+
+// 与发送端所用的端口保持一致。
+const PORT: u16 = 34254;
+
+fn main() {
+    nannou::app(model).update(update).simple_window(view).run();
+}
+
+struct Model {
+    receiver: osc::Receiver,
+    received_packets: Vec&lt;(std::net::SocketAddr, osc::Packet)&gt;,
+}
+
+fn model(_app: &amp;App) -&gt; Model {
+    let receiver = osc::receiver(PORT).unwrap();
+    let received_packets = vec![];
+    Model {
+        receiver,
+        received_packets,
+    }
+}
+
+fn update(_app: &amp;App, model: &amp;mut Model) {
+    // 接收所有待处理的 OSC 数据包。
+    for (packet, addr) in model.receiver.try_iter() {
+        model.received_packets.push((addr, packet));
+    }
+
+    // 我们一次显示 10 个数据包，所以移除多余的。
+    while model.received_packets.len() &gt; 10 {
+        model.received_packets.remove(0);
+    }
+}
+
+fn view(app: &amp;App, model: &amp;Model, _window: Entity) {
+    let draw = app.draw();
+    draw.background().color(DARK_BLUE);
+
+    // 创建一个字符串，显示目前为止收到的所有数据包。
+    let mut packets_text = format!("Listening on port {}\nReceived packets:\n", PORT);
+    for &amp;(addr, ref packet) in model.received_packets.iter().rev() {
+        packets_text.push_str(&amp;format!("{}: {:?}\n", addr, packet));
+    }
+
+    let rect = app.window_rect().pad(10.0);
+
+    draw.text(&amp;packets_text)
+        .font_size(16)
+        .align_text_top()
+        .left_justify()
+        .wh(rect.wh());
+}
+</code></pre>
+<p>与上一个教程中的发送端（或 nannou 的 <code>osc_sender.rs</code> 示例）一起运行这个应用，你应该能看到 OSC 消息在到达时出现在窗口中。</p>
+<p>你可以在 nannou 仓库中找到这个示例的完整可运行版本 <a href="https://github.com/nannou-org/nannou/blob/master/examples/communication/osc_receiver.rs" rel="noreferrer noopener"><code>osc_receiver.rs</code></a>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://guide.nannou.cc/tutorials/osc/osc-receiver.html" rel="noreferrer noopener">guide.nannou.cc/tutorials/osc/osc-receiver.html</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
