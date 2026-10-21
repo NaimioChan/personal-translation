@@ -76,5 +76,17 @@ window.PT_LIBRARIES = [
   { dir: 'ofbook', title: 'ofBook',
     desc: 'openFrameworks 社区书籍的中文译本。',
     source: 'https://openframeworks.cc/ofBook/',
-    updated: '2026-10-20', pages: 32 }
+    updated: '2026-10-20', pages: 32 },
+  { dir: 'gpu-gems-1', title: 'GPU Gems',
+    desc: 'GPU Gems 第一册的中文译本。',
+    source: 'https://developer.nvidia.com/gpugems/gpugems',
+    updated: '2026-10-21', pages: 54 },
+  { dir: 'gpu-gems-2', title: 'GPU Gems 2',
+    desc: 'GPU Gems 第二册的中文译本。',
+    source: 'https://developer.nvidia.com/gpugems/gpugems2',
+    updated: '2026-10-21', pages: 57 },
+  { dir: 'gpu-gems-3', title: 'GPU Gems 3',
+    desc: 'GPU Gems 第三册的中文译本。',
+    source: 'https://developer.nvidia.com/gpugems/gpugems3',
+    updated: '2026-10-21', pages: 51 }
 ];

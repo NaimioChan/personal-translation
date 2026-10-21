@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 2 章　基于 GPU 几何纹理图的地形渲染 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 2 章　基于 GPU 几何纹理图的地形渲染」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 2 章　基于 GPU 几何 clipmap 的地形渲染</h1>
+<p><em>Arul Asirvatham</em><br> <em>Microsoft Research</em></p><p><em>Hugues Hoppe</em><br> <em>Microsoft Research</em></p><p>Losasso 和 Hoppe 2004 提出的几何剪贴图是一种用于地形渲染的新细节层次结构。它把地形几何体缓存到一组嵌套的规则网格中，这些网格随观察者移动而增量平移。相比以往的不规则网格技术，这种网格结构有多项好处：数据结构简单、视觉过渡平滑、渲染速率稳定、可优雅降级、压缩效率高，并能在运行时合成细节。本章讲述一种基于 GPU 的几何剪贴图实现，它依靠顶点纹理得以实现。把地形几何体当作一组图像来处理，我们几乎可以在 GPU 上完成全部计算，从而减轻 CPU 负载。这种技术易于实现，可以在仅占 355 MB 内存的美国 200 亿采样点网格上以约 90 帧/秒交互飞行。</p><h2>2.1 几何剪贴图回顾</h2><p>在大型户外环境中，地形景观的几何体可能带来可观的存储与渲染带宽需求。人们已开发出许多细节层次技术，按视点调整地形网格的三角化。但这类技术大多涉及在运行时创建和修改网格结构（顶点缓冲与索引缓冲），这在当前的图形架构上代价很高。而且使用不规则网格一般需要 CPU 处理，而游戏等许多应用本来就受 CPU 限制。</p><p>几何剪贴图框架（Losasso and Hoppe 2004）把地形当作一幅二维高程图像，预先滤波成 <em>L</em> 层的 mipmap 金字塔，如图 2-1 所示。对复杂地形，整个金字塔太大，装不进内存。几何剪贴图结构在每一层缓存一个 <em>n</em>x<em>n</em> 采样的方形窗口，很像 Tanner 等 1998 的纹理剪贴图。这些窗口对应一组以观察者为中心的嵌套规则网格，如图 2-2 所示。注意较细层的窗口在空间范围上比较粗层小。目标是让三角形在屏幕空间中大小一致。当剪贴图尺寸 <em>n</em> = 255 时，在 1024x768 窗口中三角形宽约 5 像素。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/02_clipmaps_01.jpg" alt="02_clipmaps_01.jpg"><figcaption>图 2-1 几何剪贴图的工作原理</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/02_clipmaps_02.jpg" alt="02_clipmaps_02.jpg"><figcaption>图 2-2 用粗粒度几何剪贴图渲染地形</figcaption></figure><p>只有最细的一层渲染成完整的网格方块。其他各层渲染成一个中空的「环」，略去已由更细分辨率渲染过的内部区域。</p><p>观察者移动时，剪贴图窗口随之平移并更新新数据。为支持高效的增量更新，每一层的剪贴图窗口按环形方式访问，即采用二维环绕寻址（见 2.4 节）。</p><p>剪贴图结构的难点之一，是在相邻分辨率层之间隐藏边界，同时保持网格无缝隙并避免随时间跳变的瑕疵。几何剪贴图的嵌套网格结构提供了简单的解法。关键思路是在每层外缘附近引入一个过渡区域，让几何体与纹理平滑变形以插值到下一较粗层（见图 2-3）。这些过渡分别在顶点着色器和像素着色器中高效实现。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/02_clipmaps_03part1.jpg" alt="02_clipmaps_03part1.jpg"><figcaption>图 2-3 在过渡区域内混合以实现视觉连续性</figcaption></figure><p>几何剪贴图的嵌套网格结构还带来了高效的压缩与合成。它允许通过升采样较粗层的数据来预测每一层的高程数据，因此只需存储或合成叠加到这个预测信号上的残差细节。</p><h2>2.2 GPU 实现概览</h2><p>Losasso 和 Hoppe 2004 给出的几何剪贴图原始实现把每个剪贴图层表示为一个传统的顶点缓冲。由于 GPU 目前无法修改顶点缓冲，那个实现需要 CPU 大量介入，既要更新也要渲染剪贴图（见表 2-1）。</p><h4>表 2-1. 与原始 CPU 实现的对比</h4><table><tbody><tr><td><p><em>我们用顶点纹理实现的几何剪贴图把几乎所有操作都移到了 GPU 上。</em></p></td></tr><tr><td></td><td><p><strong>原始实现 <sup><a href="https://developer.download.nvidia.com/books/gpugems2/chtn1.html" rel="noreferrer noopener">[1]</a></sup></strong></p></td><td><p><strong>基于 GPU 的实现</strong></p></td></tr><tr><td><p><strong>高程数据</strong></p></td><td><p>在顶点缓冲中</p></td><td><p>在二维顶点纹理中</p></td></tr><tr><td><p><strong>顶点缓冲</strong></p></td><td><p>由 CPU 增量更新</p></td><td><p>常量！</p></td></tr><tr><td><p><strong>索引缓冲</strong></p></td><td><p>由 CPU 每帧生成</p></td><td><p>常量！</p></td></tr><tr><td><p><strong>升采样</strong></p></td><td><p>CPU</p></td><td><p><strong><em>GPU</em></strong></p></td></tr><tr><td><p><strong>解压</strong></p></td><td><p>CPU</p></td><td><p>CPU</p></td></tr><tr><td><p><strong>合成</strong></p></td><td><p>CPU</p></td><td><p><strong><em>GPU</em></strong></p></td></tr><tr><td><p><strong>叠加残差</strong></p></td><td><p>CPU</p></td><td><p><strong><em>GPU</em></strong></p></td></tr><tr><td><p><strong>法线贴图更新</strong></p></td><td><p>CPU</p></td><td><p><strong><em>GPU</em></strong></p></td></tr><tr><td><p><strong>过渡混合</strong></p></td><td><p><strong><em>GPU</em></strong></p></td><td><p><strong><em>GPU</em></strong></p></td></tr></tbody></table><p>本章讲述一种用顶点纹理实现几何剪贴图的方法。这样做有优势，因为每个剪贴图窗口的二维网格数据以二维纹理存放要自然得多，不必人为地线性化成一维顶点缓冲。</p><p>回想一下，剪贴图有 <em>L</em> 层，每层含一个 <em>n</em>x<em>n</em> 几何采样的网格。我们的做法是把采样的 (<em>x</em>, <em>y</em>, <em>z</em>) 几何数据拆成两部分：</p><ul><li>(<em>x</em>, <em>y</em>) 坐标存为常量顶点数据。</li><li><em>z</em> 坐标存为单通道二维纹理，即<em>高程图</em>。我们为每个剪贴图层定义一张单独的 <em>n</em>x<em>n</em> 高程图纹理。这些纹理随观察者运动、剪贴图层平移而更新。</li></ul><p>由于剪贴图各层都是均匀的二维网格，其 (<em>x</em>, <em>y</em>) 坐标是规则的，因而在差一个平移和缩放的意义下是常量。所以我们定义一小组<em>只读</em>的顶点缓冲和索引缓冲，用来描述二维「脚印」，并在同一分辨率层内以及跨层反复实例化这些脚印，详见 2.3.2 节。</p><p>顶点通过以顶点纹理方式采样高程图来获得 <em>z</em> 高程。在顶点着色器中访问纹理是 DirectX 9 着色器模型 3.0 的新特性，NVIDIA GeForce 6 系列等 GPU 都支持。</p><p>把高程数据存成一组图像，就可以直接用 GPU 光栅化管线处理（如表 2-1 所述）。对合成地形，所有运行时计算（高程图升采样、地形细节合成、法线贴图计算以及渲染）全部在显卡内完成，CPU 基本空闲。对压缩地形，CPU 增量解压并把数据上传到显卡（见 2.4 节）。</p><h4>2.2.1 数据结构</h4><p>概括来说，主要数据结构如下。我们预定义一小组常量顶点缓冲和索引缓冲，用来编码剪贴图网格的 (<em>x</em>, <em>y</em>) 几何。对第 0…<em>L</em>–1 层中的每一层，我们分配一张高程图（单通道浮点二维纹理）和一张法线贴图（四通道 8 位二维纹理）。这些数据结构全部驻留在显存中。</p><h4>2.2.2 剪贴图尺寸</h4><p>由于每层的外缘必须落在下一较粗层的网格上（如图 2-4 所示），网格尺寸 <em>n</em> 必须是奇数。硬件可能针对 2 的幂的纹理尺寸做过优化，所以我们取 <em>n</em> = 2 <sup><em>k</em></sup> -1（即比 2 的幂小 1），让纹理有一行一列未被使用。我们的多数示例取 <em>n</em> = 255。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/02_clipmaps_04.jpg" alt="02_clipmaps_04.jpg"><figcaption>图 2-4 相邻的两个剪贴图环</figcaption></figure><p>取网格尺寸 <em>n</em> = 2 <sup><em>k</em></sup> -1 还有一个好处：较细层永远不会恰好相对于其父层（下一较粗层）居中。换言之，视点位置不同时，它总是向左或向右、向上或向下偏移 1 个网格单位（见图 2-4）。实际上，必须允许较细层在下一较粗层保持不动的情况下平移，因此较细层有时必须偏离下一较粗层的中心。若改取别的网格尺寸，例如 <em>n</em> = 2 <sup><em>k</em></sup> -3，虽有可能恰好居中，但仍需处理偏离中心的情形，整体复杂度反而更高。</p><h2>2.3 渲染</h2><h4>2.3.1 活动层</h4><p>虽然为剪贴图分配了 <em>L</em> 层，我们往往只渲染（并更新）一组<em>活动层</em> 0…<em>L</em>'-1，层数 <em>L</em>' ≤ <em>L</em> 取决于视点相对下方地形的高度。理由是：当观察者足够高时，最细的剪贴图层密得没有必要，反而会产生走样瑕疵。具体地说，我们会停用网格范围小于 2.5<em>h</em> 的层，其中 <em>h</em> 是观察者高出地形的高度。由于所有地形数据都在显存中，计算 <em>h</em> 只需从最细活动层（<em>L</em>'-1）的高程图纹理中回读一个点采样（就在视点正下方）。回读开销不大，所以我们每隔几帧才做一次。当然，第 <em>L</em>'-1 层用完整的方块渲染，而不是中空的环。</p><p>Losasso 和 Hoppe 2004 所述的实现允许在观察者运动期间某层数据未完全更新时对该层做「裁剪」。为简化我们的 GPU 实现，我们决定放弃这一特性，改为假定一层要么完全更新，要么被声明为非活动。</p><h4>2.3.2 顶点与索引缓冲</h4><p>如前所述，我们把网格的 (<em>x</em>, <em>y</em>) 值表示为顶点数据，把 <em>z</em> 高程值存为单通道浮点纹理。蛮力做法是为某一层内整个环的 (<em>x</em>, <em>y</em>) 数据定义一个顶点缓冲。为降低内存开销并支持视锥剔除，我们把环切成更小的二维脚印块，如图 2-5 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/02_clipmaps_05.jpg" alt="02_clipmaps_05.jpg"><figcaption>图 2-5 划分剪贴图环</figcaption></figure><p>环的大部分由 12 个尺寸为 <em>m</em>x<em>m</em> 的块（图中灰色）构成，其中 <em>m</em> = (<em>n</em> + 1)/4。由于二维网格是规则的，同一层内所有块的 (<em>x</em>, <em>y</em>) 几何在差一个平移的意义下完全相同。而且，跨层在差一个均匀缩放的意义下也完全相同。因此，我们只需用一个只读顶点缓冲和索引缓冲，让顶点着色器用几个参数对块的 (<em>x</em>, <em>y</em>) 几何做缩放和平移，就能渲染所有地形块的 (<em>x</em>, <em>y</em>) 几何。</p><p>对我们默认的剪贴图尺寸 <em>n</em> = 255，这个标准块有 64x64 个顶点。索引缓冲编码一组带索引的三角带，其长度按最优的顶点缓存选取。索引缓冲使用 16 位索引，这允许块尺寸最大为 <em>m</em> = 256，也就允许剪贴图尺寸最大为 <em>n</em> = 1023。</p><p>不过 12 个块的并集并不能完全覆盖环。我们用少量额外的二维脚印填补剩下的小缺口，下面说明。注意实际上这些额外区域的面积相比规则的 <em>m</em>x<em>m</em> 块非常小，如图 2-6 所示。第一处缺口在环每条边的中部，大小为 (<em>n</em> -1) - ((<em>m</em> -1) x 4) = 2 个四边形。我们用四个 <em>m</em>x3 的修补区域（图 2-5 和图 2-6 中绿色）补上这些缺口。这些区域用一个顶点缓冲和索引缓冲编码，并在所有层间复用。第二处缺口在内环周界的两条边上，各一个四边形，用于容纳偏离中心的较细层。这个 L 形条带（图中蓝色）可位于四个可能位置之一（左上、右上、左下、右下），取决于较细层在较粗层内的相对位置。我们为这个内部镶边定义一个顶点缓冲（共四个）和一个索引缓冲，并在所有层间复用。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/02_clipmaps_06part1_new.jpg" alt="02_clipmaps_06part1_new.jpg"><figcaption>图 2-6 直观呈现嵌套网格结构</figcaption></figure><p>此外，我们在外缘上渲染一串退化三角形（图中橙色）。这些零面积三角形是避免网格出现 T 形接点所必需的。最后，对最细层，我们用另外四个块和一个 L 形区域填补环的内部。</p><p>由于脚印的 (<em>x</em>, <em>y</em>) 坐标是局部的，不需要 32 位精度，所以我们把它们打包成 <code>D3DDECLTYPE_SHORT2</code>，每个顶点只占 4 字节。将来或许可以直接算出 (<em>x</em>, <em>y</em>) 坐标：在 <em>m</em>x<em>m</em> 的块内，坐标可由顶点索引 <em>i</em> 求得，即 <code>(fmod(i, m), floor(i/m))</code>。</p><h4>2.3.3 视锥剔除</h4><p>视锥剔除在 CPU 上按块进行。每个块按 [<em>z</em> <sub>min</sub>, <em>z</em> <sub>max</sub>] 拉伸，并在三维中与视锥求交，只有交集非空时才渲染。视方向不同，90 度视场角下渲染负载可减少到 1/2 至 1/3，如图 2-7 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/02_geoclipmaps_07.jpg" alt="02_geoclipmaps_07.jpg"><figcaption>图 2-7 视锥剔除</figcaption></figure><h4>2.3.4 <code>DrawPrimitive</code> 调用</h4><p>每一层最多发起 14 次 <code>DrawPrimitive</code>（DP）调用：12 次画块，1 次画内部镶边，1 次画剩余的三角形。加上视锥剔除后，12 个块平均每帧只有 4 个被渲染。最细层还需要多 5 次调用来填补内部空洞。因此总体上平均每帧发起 6<em>L</em> + 5 次 DP 调用（<em>L</em> = 11 时为 71 次）。若把每层要渲染的所有块用一次 DP 调用实例化，这个总数还能降到 3<em>L</em> + 2 次（35 次）。</p><h4>2.3.5 顶点着色器</h4><p>前面所述的所有二维脚印的渲染都使用同一个顶点着色器。首先，给定脚印的 (<em>x</em>, <em>y</em>) 坐标，着色器用简单的缩放和平移算出世界坐标 (<em>x</em>, <em>y</em>)。然后它从存在顶点纹理中的高程图读取 <em>z</em> 值。由于顶点与纹理采样一一对应，不需要纹理滤波。</p><p>为实现平滑过渡，顶点着色器把每层外边界附近的几何与下一较粗层的几何相混合。它计算混合参数 <em></em>，该参数依据 (<em>x</em>, <em>y</em>) 位置相对于连续的观察者位置 (<em>v</em> <sub><em>x</em></sub> , <em>v</em> <sub><em>y</em></sub> ) 而定。具体说来，<em></em> = max(<em></em> <sub><em>x</em></sub> , <em></em> <sub><em>y</em></sub> )，其中</p><p><img alt="ch02_eqn001.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch02_eqn001.jpg"/></p><p><em></em> <sub><em>y</em></sub> 同理。</p><p>这里所有坐标都用剪贴图网格的 [0…<em>n</em>-1] 范围表示，<em>w</em> 是过渡宽度（取 <em>n</em>/10）。我们希望的性质是：<em></em> 除过渡区域外都取 0，而在过渡区域内线性上升到外缘处的 1。图 2-3a（第 29 页）用紫色显示了过渡区域内参数 <em></em> 的取值。</p><p>做几何混合时，我们在当前（细层）高程 <em>z</em> <sub><em>f</em></sub> 与 <em>z</em> <sub><em>c</em></sub> 之间线性插值，后者是下一较粗层在 (<em>x</em>, <em>y</em>) 同一位置的高程：</p><table><tbody><tr><td><p><em>z</em>' = (1 - ) <em>z<sub>f</sub></em> + <em>z<sub>c</sub></em></p></td></tr></tbody></table><p>一般情况下，采样点位于较粗网格的一条边上，<em>z</em> <sub><em>c</em></sub> 由该边两端两个较粗采样取平均得到。我们可以在运行时做这个计算，但总共需要三次顶点纹理查找（一次求 <em>z</em> <sub><em>f</em></sub>，两次求 <em>z</em> <sub><em>c</em></sub> = (<em>z</em> <sub><em>c</em></sub> <sub>1</sub> + <em>z</em> <sub><em>c</em></sub> <sub>2</sub>)/2），而顶点纹理读取目前开销很高（Gerasimov et al. 2004）。</p><p>所以我们改为在剪贴图更新过程中计算 <em>z</em> <sub><em>c</em></sub>，把 <em>z</em> <sub><em>f</em></sub> 和 <em>z</em> <sub><em>c</em></sub> 打包进同一张单通道浮点纹理：把 <em>z</em> <sub><em>f</em></sub> 存进浮点数的整数部分，把差值 <em>z</em> <sub><em>d</em></sub> = <em>z</em> <sub><em>c</em></sub> - <em>z</em> <sub><em>f</em></sub>（缩放后）存进小数部分。打包在升采样阶段的像素着色器中完成（见 2.4.1 节）。</p><p>代码清单 2-1 是用于剪贴图渲染的高级着色语言（HLSL）顶点程序。</p><h4>示例 2-1. 用于渲染剪贴图层的顶点着色器代码</h4><pre><code>struct OUTPUT
+{
+  vector pos : POSITION;
+  float2 uv : TEXCOORD0;
+  // 法线贴图查找用的坐标
+  float z : TEXCOORD1;
+  // 高程图查找用的坐标
+  float alpha : TEXCOORD2; // 法线贴图上的过渡混合
+};
+uniform float4 ScaleFactor, FineBlockOrig;
+uniform float2 ViewerPos, AlphaOffset, OneOverWidth;
+uniform float ZScaleFactor, ZTexScaleFactor;
+uniform matrix WorldViewProjMatrix;
+// 用于渲染几何 clipmap 的顶点着色器
+OUTPUT RenderVS(float2 gridPos : TEXCOORD0)
+{
+  OUTPUT output;
+  // 将网格 xy 坐标转换为世界 xy 坐标
+  //
+  ScaleFactor
+      .xy : grid spacing of current level
+                //
+                ScaleFactor.zw
+      : origin of current block within world float2 worldPos =
+      gridPos * ScaleFactor.xy + ScaleFactor.zw;
+  // 计算顶点纹理的坐标
+  // FineBlockOrig.xy：纹理的 1/(w, h)
+  // FineBlockOrig.zw：纹理中块的起点
+  float2 uv = gridPos * FineBlockOrig.xy + FineBlockOrig.zw;
+  // 采样顶点纹理
+  float zf_zd = tex2Dlod(ElevationSampler, float4(uv, 0, 1));
+  // 解包得到 zf 与 zd = (zc - zf)
+  //
+  zf is elevation value in current(fine) level
+      //
+      zc is elevation value in coarser level float zf = floor(zf_zd);
+  float zd = frac(zf_zd) * 512 - 256; // (zd = zc - zf)
+  // 计算 alpha（过渡参数）并混合高程
+  float2 alpha =
+      clamp((abs(worldPos - ViewerPos) – AlphaOffset) * OneOverWidth, 0, 1);
+  alpha.x = max(alpha.x, alpha.y);
+  float z = zf + alpha.x * zd;
+  z = z * ZScaleFactor;
+  output.pos = mul(float4(worldPos.x, worldPos.y, z, 1), WorldViewProjMatrix);
+  output.uv = uv;
+  output.z = z * ZTexScaleFactor;
+  output.alpha = alpha.x;
+  return output;
+}</code></pre><h4>2.3.6 像素着色器</h4><p>像素着色器访问法线贴图并给表面着色。我们让法线贴图的分辨率是几何体的两倍，因为每个顶点一个法线太模糊。每当剪贴图更新时，法线贴图都会从几何体增量计算出来（见 2.4.3 节）。</p><p>为实现平滑的着色过渡，着色器查取当前层与下一较粗层的法线，用顶点着色器中算出的 <em></em> 值混合。通常这需要两次纹理查找。我们改为把两个法线打包成 (<em>N</em> <sub><em>x</em></sub> , <em>N</em> <sub><em>y</em></sub> , <em>N</em> <sub><em>cx</em></sub> , <em>N</em> <sub><em>cy</em></sub> )，存进一张四通道、每通道 8 位的纹理，并隐含假设 <em>N</em> <sub><em>z</em></sub> = 1、<em>N</em> <sub><em>cz</em></sub> = 1。因此解包后必须重新归一化。</p><p>着色颜色通过查找一张基于 <em>z</em> 的一维纹理图得到。</p><p>代码清单 2-2 是用于剪贴图渲染的 HLSL 像素程序。</p><h4>示例 2-2. 用于渲染剪贴图层的像素着色器代码</h4><pre><code>// 参数 uv、alpha 与 z 由顶点着色器插值而来。
+// 两个纹理采样器的 min 与 mag 滤波都设为 linear：
+//
+NormalMapSampler : 2D texture containing normal map,
+    //
+    ZBasedColorSampler : 1D texture containing elevation -
+        based color uniform float3 LightDirection;
+// 用于渲染几何 clipmap 的像素着色器
+float4 RenderPS(float2 uv
+                : TEXCOORD0, float z
+                : TEXCOORD1, float alpha
+                : TEXCOORD2)
+    : COLOR
+{
+  float4 normal_fc = tex2D(NormalMapSampler, uv);
+  // normal_fc.xy 存放当前（精细）层级的法线
+  // normal_fc.zw 存放更粗层级的法线
+  // 用顶点着色器中算出的 alpha 混合法线
+  float3 normal =
+      float3((1 - alpha) * normal_fc.xy + alpha * (normal_fc.zw), 1);
+  // 把坐标从 [0, 1] 解包到 [-1, +1] 范围，并重新归一化
+  normal = normalize(normal * 2 - 1);
+  // 计算简单的漫反射光照
+  float s = clamp(dot(normal, LightDirection), 0, 1);
+  // 根据地形高程指定地形颜色
+  return s * tex1D(ZBasedColorSampler, z);
+}</code></pre><h2>2.4 更新</h2><p>观察者在环境中移动时，每个剪贴图窗口都在其金字塔层内平移，以保持以观察者为中心，因此窗口必须相应更新。由于观察者运动是连贯的，一般每帧只需增量处理窗口中一小块 L 形区域。而且观察者在窗口内的相对运动在较粗层呈指数级减小，所以粗层很少需要更新。</p><p>我们按从粗到细的顺序更新活动的剪贴图层。回想每层存两张纹理：单通道浮点高程图，以及四通道、每通道 8 位的法线贴图。更新时，我们用像素着色器渲染到这些纹理的相应区域来修改它们。</p><p>为避免平移已有数据，我们按环形方式做所有访问，如图 2-8 所示。也就是用环绕寻址把剪贴图窗口定位在纹理图像中。在这种环形访问下，L 形的更新区域通常变成一个 + 形，图 2-8 中以红色示出。我们通过渲染两个四边形写入该区域。注意若更新区域跨越纹理边界回绕，可能需要三或四个四边形。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/02_geoclipmaps_08part1.jpg" alt="02_geoclipmaps_08part1.jpg"><figcaption>图 2-8 处理一次环形更新</figcaption></figure><p>为了便于地形压缩与合成，更新区域的高程数据先由升采样较粗层来预测，再叠加一个残差信号提供细节。下面几节讲述更新流程的三个基本步骤：升采样较粗层的高程数据、叠加残差、计算法线贴图。</p><h4>2.4.1 升采样</h4><p>较细层的几何由较粗层通过插值细分方案预测得到。我们使用著名的四点细分曲线插值格式的张量积版本，其掩模权重为（<img alt="9x16.jpg" src="https://developer.download.nvidia.com/books/gpugems2/9x16.jpg"/>）（Kobbelt 1996）。这个升采样滤波器具有 <em>C</em><sup>1</sup> 光滑这一可取的性质。</p><p>依据采样在网格中的位置（偶–偶、偶–奇、奇–偶、奇–奇），使用不同的掩模。对偶–偶像素，采样只需插值，故只需 1 次纹理查找；对奇–奇像素，需要 4x4 次纹理查找；其余两种情况各需 4 次纹理查找。在 CPU 上，用一条「if」语句就能轻易判断该用哪个掩模。但在像素着色器中分支语句开销很高。因此我们总是做 16 次纹理查找，再依据对一张 2x2 纹理的查找来施加不同的掩模。</p><p>升采样着色器的 HLSL 代码见代码清单 2-3。缺失的函数 <code>Upsample</code> 和 <code>ZCoarser</code> 的代码随书附带的 CD 提供。</p><h4>示例 2-3. 用于创建/更新剪贴图高程图的像素着色器代码</h4><pre><code>// residualSampler：存放残差的 2D 纹理，可用来
+//
+either decompressed data or synthesized noise
+                                // p_uv：该网格采样点的坐标
+                                uniform float2 Scale;
+// 用于更新高程图的像素着色器
+float4 UpsamplePS(float2 p_uv : TEXCOORD0) : COLOR
+{
+  float2 uv = floor(p_uv);
+  // Upsample() 函数负责采样更粗层级的高程图
+  //
+using a linear interpolatory filter with 4x4 taps
+// （取决于位置 uv 的奇偶配置，
+//
+it applies 1 of 4 possible masks)
+float z_predicted = Upsample(uv); // 此处省略细节
+// 加上残差即得实际高程
+float residual = tex2D(residualSampler, p_uv * Scale);
+float zf = z_predicted + residual;
+// zf 应始终为整数，因为它会被打包
+//
+into the integer component of the floating - point texture zf = floor(zf);
+// 对下面这些顶点做线性插值来计算 zc
+//
+coarse - grid edge on which the sample p_uv lies float zc =
+    ZCoarser(uv); // 此处省略细节
+float zd = zc - zf;
+// 把带符号差值 zd 打包进小数部分
+float zf_zd = zf + (zd + 256) / 512;
+return float4(zf_zd, 0, 0, 0);
+}</code></pre><h4>2.4.2 残差</h4><p>叠加到升采样后较粗层数据上的残差，可以来自解压，也可以来自合成。</p><p>在压缩表示中，残差数据用图像压缩编码。我们使用一种名为 PTC 的有损图像编码器，因为它支持高效的兴趣区域解码（Malvar 2000）。CPU 执行解压，把结果存入一张残差纹理图像。</p><p>另一种做法是合成分形细节，即让残差为不相关的加性高斯噪声（Fournier et al. 1982）。通过读取一张预先算好的小尺寸高斯噪声二维纹理，这种合成在 GPU 上可以做得极快。我们启用纹理环绕，使高斯纹理无限延伸，并对纹理坐标施加小幅放大以打破规则的周期性。噪声在多个分辨率层上叠加，产生没有可见重复图案的地形，如图 2-9 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/02_geoclipmaps_09part1.jpg" alt="02_geoclipmaps_09part1.jpg"><figcaption>图 2-9 实时地形合成</figcaption></figure><h4>2.4.3 法线贴图</h4><p>更新某一层法线贴图的着色器以同一层的高程图为输入。它把当前法线算成两个与网格对齐的切线向量的叉积；此外还做一次纹理查找，取来较粗层的法线；最后把 (<em>N</em> <sub><em>x</em></sub> , <em>N</em> <sub><em>y</em></sub> , <em>N</em> <sub><em>cx</em></sub> , <em>N</em> <sub><em>cy</em></sub> ) 打包进四通道纹理。代码随书附带的 CD 提供。</p><h2>2.5 结果与讨论</h2><p>我们的主要数据集是美国本土 216,000x93,600 的高程图，采用 30 米间距和 1.0 米垂直分辨率。它的压缩比超过 100，因此只占 355 MB 系统内存。我们在一台 2.4 GHz Pentium 4、1 GB 系统内存、NVIDIA GeForce 6800 GT 的 PC 上，把这片地形渲染到 1024x768 的窗口中。</p><p><strong>渲染速率：</strong>当 <em>L</em> = 11 层、尺寸 <em>n</em> = 255 时，加上视锥剔除可得 130 帧/秒，渲染速率为每秒 6000 万个三角形。顶点纹理查找是瓶颈：去掉该查找后渲染速率提高到 185 帧/秒。（<em>n</em> = 127 时，用顶点纹理的速率是 298 帧/秒。）</p><p><strong>更新速率：</strong>表 2-2 给出了更新流程各步骤的处理时间，取的是整层一次性更新的极端情况。CPU 解压显然是更新流程的瓶颈。</p><h4>表 2-2. 处理整个 255x255 层的更新时间</h4><table><tbody><tr><td><p><em>这些是最坏情况下的数值，因为一般来说，观察者平滑移动时每帧只需更新整层的一小部分。</em></p></td></tr><tr><td></td><td><p><strong>之前的实现</strong> <sup><a href="https://developer.download.nvidia.com/books/gpugems2/chtn2.html" rel="noreferrer noopener">[*]</a></sup></p></td><td><p><strong>基于 GPU 的实现</strong></p></td></tr><tr><td><p><strong>升采样</strong></p></td><td><p>3 ms</p></td><td><p>1.0 ms</p></td></tr><tr><td><p><strong>解压</strong></p></td><td><p>8 ms</p></td><td><p>8 ms <sup><a href="https://developer.download.nvidia.com/books/gpugems2/chtn3.html" rel="noreferrer noopener">[**]</a></sup></p></td></tr><tr><td><p><strong>合成</strong></p></td><td><p>3 ms</p></td><td><p>~0 ms</p></td></tr><tr><td><p><strong>法线贴图计算</strong></p></td><td><p>11 ms</p></td><td><p>0.6 ms</p></td></tr></tbody></table><p><strong>最终帧率：</strong>对解压地形，系统在观察者移动期间保持约 87 帧/秒；对合成地形，帧率约为 120 帧/秒。</p><h2>2.6 小结与改进</h2><p>我们给出了一种几何剪贴图框架的 GPU 实现。用规则网格表示几何体，使几乎全部计算都能在显卡上进行，从而把工作从 CPU 卸下。该系统支持在仅占 355 MB 内存的美国数据集 200 亿采样点网格上以约 90 帧/秒交互飞行。</p><h4>2.6.1 顶点纹理</h4><p>几何剪贴图以非常特殊、有限的方式使用顶点纹理：纹素基本上按光栅扫描顺序访问，且与顶点一一对应。因此我们可以期待将来的机制能提高渲染效率。</p><h4>2.6.2 省去法线贴图</h4><p>应该可以在像素着色器中直接访问高程图的四个滤波采样来计算法线。目前顶点纹理查找要求高程图以 32 位浮点图像存储，而这类图像不支持高效的双线性滤波。</p><h4>2.6.3 无内存的地形合成</h4><p>分形地形合成在 GPU 上非常快，以至于我们可以考虑每帧重新生成各剪贴图层，从而省下显存。我们分配两张纹理 <em>T</em> <sub>1</sub> 和 <em>T</em> <sub>2</sub>，按如下方式在两者之间切换。先让 <em>T</em> <sub>1</sub> 含用于启动合成过程的粗层几何。第一步，把 <em>T</em> <sub>1</sub> 作为源纹理传给更新像素着色器，把下一较细层升采样并合成到目标纹理 <em>T</em> <sub>2</sub> 中。第二步，把 <em>T</em> <sub>1</sub> 作为顶点纹理渲染其剪贴图环。然后交换两张纹理的角色，反复迭代，直到所有层都合成并渲染完毕。初步实验非常有希望：使用 <em>L</em> = 9 层时帧率约为 59 帧/秒。</p><h2>2.7 参考文献</h2><p><a id="biblio02_01"></a>Fournier, Alain, Don Fussell, and Loren Carpenter. 1982. "Computer Rendering of Stochastic Models." <em>Communications of the ACM</em> 25(6), 1982 年 6 月，第 371–384 页。</p><p><a id="biblio02_02"></a>Gerasimov, Philip, Randima Fernando, and Simon Green. 2004. "Shader Model 3.0: Using Vertex Textures." NVIDIA 白皮书 DA-01373-001_v00，2004 年 6 月。可在线获取：<strong><a href="http://developer.nvidia.com/object/using_vertex_textures.html" rel="noreferrer noopener">http://developer.nvidia.com/object/using_vertex_textures.html</a>。</strong></p><p><a id="biblio02_03"></a>Kobbelt, Leif. 1996. "Interpolatory Subdivision on Open Quadrilateral Nets with Arbitrary Topology."，载 <em>Eurographics 1996</em>，pp. 409–420。</p><p><a id="biblio02_04"></a>Losasso, Frank, and Hugues Hoppe. 2004. "Geometry Clipmaps: Terrain Rendering Using Nested Regular Grids."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2004)</em> 23(3)，pp. 769–776。</p><p><a id="biblio02_05"></a>Malvar, Henrique. 2000. "Fast Progressive Image Coding without Wavelets."，载 <em>Data Compression Conference (DCC '00)</em>，pp. 243–252。</p><p><a id="biblio02_06"></a>Tanner, Christopher, Christopher Migdal, and Michael Jones. 1998. "The Clipmap: A Virtual Mipmap."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 98)</em>，pp. 151–158。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-2-terrain-rendering-using-gpu-based-geometry" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-2-terrain-rendering-using-gpu-based-geometry</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

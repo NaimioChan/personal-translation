@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 章　深入几何实例化 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 3 章　深入几何实例化」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 3 章　深入几何实例化</h1>
+<p><em>Francesco Carucci</em><br> <em>Lionhead Studios</em></p><p>要让交互应用的用户体验更丰富，一个好办法是呈现一个可信的世界，其中满是细小的、有趣的细节与物件。从数不清的草叶，到树木，再到各类杂物：这些都能改善最终的观感，帮助维持用户的「可信幻觉」。如果用户相信自己置身的世界，他就更可能对这个世界产生情感联系——这是游戏开发的圣杯。</p><p>从渲染的角度看，要实现这种丰富度，就要渲染大量小对象，它们往往彼此相似，只在颜色、位置和朝向上有细微差别。例如，大森林里的每棵树在几何上可能非常相似，但颜色或高度都可以不同。用户感知到的是一片由许多独特树木组成的森林，从而相信这个世界可信，他或她的游戏体验也随之丰富。</p><p>然而，渲染大量小对象——每个只由少数几个多边形构成——会给当今的 GPU 和渲染库带来很大压力。Direct3D 和 OpenGL 这类图形 API 在设计上并不擅长每帧把少量多边形渲染上千次（Wloka 2003）。</p><p>本章讨论在 Direct3D 中渲染同一几何体的许多独特实例的问题。图 3-1 给出了一个例子，来自 Lionhead Studios 正在开发的游戏 <em>Black &amp; White 2</em>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/03_instancing_01.jpg" alt="03_instancing_01.jpg"><figcaption>图 3-1　<em>Black &amp; White 2</em> 中的几何实例化</figcaption></figure><h2>3.1 为什么需要几何实例化？</h2><p>在 Direct3D 中把三角形提交给 GPU 渲染是相对较慢的操作。Wloka 2003 指出，1 GHz 的 CPU 在 Direct3D 中每秒只能渲染约 1 万到 4 万个批次。在更现代的 CPU 上，这个数字大约为每秒 3 万到 12 万个批次（30 帧/秒时，每帧约 1,000 到 4,000 个批次）。这并不多！这意味着，如果要渲染一片森林，而每棵树占一个批次，那么无论一棵树有多少多边形，我们都渲染不了超过 4,000 棵树——而且 CPU 已经没有时间留给游戏的其他部分。这种情况显然不理想。我们希望能尽量减少应用中的状态切换与纹理切换，并在一次 Direct3D 调用中把同一批三角形反复渲染多次。这样就能减少提交批次所花的 CPU 时间，把时间腾给物理、人工智能和游戏逻辑等其他系统。</p><h2>3.2 定义</h2><p>我们先定义几何实例化背后的概念，以明确问题涉及哪些类型的对象。</p><h4>3.2.1 几何包</h4><p>几何包是对要实例化的一包几何体的描述，即一组顶点和索引。几何包可以用顶点来描述——包括位置、纹理坐标、法线，可能还有用于蒙皮的切空间与骨骼信息，以及逐顶点颜色——也可以用顶点流中的索引来描述。这种描述方式直接对应把几何体提交给 GPU 的最高效做法。</p><p>几何包是对一块几何体的抽象描述，其中的几何实体以模型空间表示，不显式引用它们将被渲染的上下文。</p><p>下面是几何包在代码中的一种可能描述；它既包含对象的几何信息，也包含其包围球：</p><pre><code>struct GeometryPacket
+{
+  Primitive mPrimType void *mVertices;
+  unsigned int mVertexStride;
+  unsigned short *mIndices;
+  unsigned int mVertexCount;
+  unsigned int mIndexCount;
+  D3DXVECTOR3 mSphereCentre;
+  float mSphereRadius;
+};</code></pre><h4>3.2.2 实例属性</h4><p>每个实例的典型属性包括模型到世界的变换矩阵、实例颜色，以及一个动画播放器，它提供用于蒙皮该几何包的骨骼。</p><pre><code>struct InstanceAttributes
+{
+  D3DXMATRIX mModelMatrix;
+  D3DCOLOR mInstanceColor;
+  AnimationPlayer *mAnimationPlayer;
+  unsigned int mLOD;
+};</code></pre><h4>3.2.3 几何实例</h4><p>几何实例是带上了该实例专属属性的几何包。它把几何包与渲染它时所用的实例属性包直接连接起来，从而给出一个几乎完整的实体描述，可以直接提交给 GPU。</p><p>几何实例结构在代码中可能如下：</p><pre><code>struct GeometryInstance
+{
+  GeometryPacket *mGeometryPacket;
+  InstanceAttributes mInstanceAttributes;
+};</code></pre><h4>3.2.4 渲染上下文与纹理上下文</h4><p>渲染上下文指 GPU 在渲染状态方面的当前状态（例如 alpha 混合与测试状态、当前渲染目标等）。纹理上下文记录当前激活的纹理。渲染上下文和纹理上下文通常用类来建模，如代码清单 3-1 所示。</p><h4>3.2.5 几何批次</h4><p>批次是一组几何实例，以及渲染这组实例所用的渲染状态和纹理上下文。为了简化类的设计，它总是直接对应一次 <code>DrawIndexedPrimitive()</code> 调用。</p><p>代码清单 3-2 是几何批次类的抽象接口。</p><h4>示例 3-1　渲染上下文与纹理上下文类</h4><pre><code>class RenderContext
+{
+public:
+
+  // 开启渲染上下文并激活它的渲染状态
+  //
+  void Begin(void);
+  // 结束渲染上下文并恢复先前的渲染状态，
+  // 如有必要
+  //
+  void End(void);
+
+private:
+
+  // 当前渲染状态以及像素着色器与顶点着色器
+  // 的描述都可以写在这里。
+  // D3DX Effect 框架在这方面特别有用。
+  //
+  ID3DXEffect *mEffect;
+  // 应用特定的渲染状态
+  // . . .
+};
+class TextureContext
+{
+public:
+
+  // 把当前纹理设置到对应的纹理阶段
+  //
+  void Apply(void) const;
+
+private:
+
+  Texture mDiffuseMap;
+  Texture mLightMap;
+  // . . .
+};</code></pre><h4>示例 3-2　GeometryBatch 类</h4><pre><code>class GeometryBatch
+{
+public:
+
+  // 从几何批次中移除所有实例
+  //
+  virtual void ClearInstances(void);
+  // 向集合中添加一个实例并返回其 ID。
+  // 若无法再接受更多实例则返回 -1。
+  //
+  virtual int AddInstance(GeometryInstance *instance);
+  // 提交所有实例；此函数要在渲染循环
+  // 开始前调用一次，并在每次改动
+  // 实例集合之后调用
+  //
+  virtual unsigned int Commit(void) = 0;
+  // 更新几何批次，必要时准备好可提交给驱动的
+  // GPU 专用数据，按需填充顶点缓冲与
+  // 索引缓冲；每帧调用一次
+  //
+  virtual void Update(void) = 0;
+  // 把批次提交给驱动，通常通过调用
+  // DrawIndexedPrimitive 实现
+  //
+  virtual void Render(void) const = 0;
+
+private:
+
+  GeometryInstancesCollection mInstances;
+  // . . .
+};</code></pre><h2>3.3 实现</h2><p>引擎的渲染器只通过 GeometryBatch 的抽象接口来看待几何实例化，该接口隐藏了实例化实现的具体细节，并提供管理实例、更新批次和渲染批次的服务。这样，引擎可以专注于批次排序以尽量减少渲染状态与纹理切换，而由 GeometryBatch 负责实际实现以及与 Direct3D 的通信协议。</p><p>代码清单 3-3 给出渲染循环的简单伪代码实现：先按渲染上下文、再按纹理上下文对 GeometryBatch 排序，从而尽量减少渲染状态切换的次数。</p><h4>示例 3-3　伪代码渲染循环</h4><pre><code>// 更新阶段
+Foreach GeometryBatch in ActiveBatchesList GeometryBatch.Update();
+// 渲染阶段
+Foreach RenderContext Begin RenderContext.BeginRendering();
+RenderContext.CommitStates();
+Foreach TextureContext Begin TextureContext.Apply();
+Foreach GeometryBatch in the texture context GeometryBatch.Render();
+End End</code></pre><p>更新阶段与渲染阶段可以分开，以便把所有批次只更新一次而渲染多次：例如在实现阴影贴图或水面反射与折射时，这个想法极为有用。</p><p>本章讨论 GeometryBatch 的四种实现，并分析它们的性能特征，尤其关注每种技术的内存占用与灵活性。</p><p>简要总结如下：</p><ul><li><strong>静态批处理。</strong>实例化几何体最快的方式。每个实例只变换一次到世界空间，应用其属性，然后每帧把已经变换好的实例发送给 GPU。静态批处理虽然简单，却是最不灵活的技术。</li><li><strong>动态批处理。</strong>实例化几何体最慢的方式。每帧都把每个实例流入 GPU 显存，且已经变换、已经应用属性。动态批处理能无缝支持蒙皮，是最灵活的实现。</li><li><strong>顶点常量实例化。</strong>一种混合实现：每个实例对应的多份几何体副本一次性复制到 GPU 显存。之后每帧通过顶点常量设置实例属性，由顶点着色器完成几何实例化。</li><li><strong>用 Geometry Instancing API 批处理。</strong>该实现使用 DirectX 9 提供、并由 GeForce 6 系列 GPU 在硬件上完整支持的 Geometry Instancing API，为几何实例化提供了灵活而快速的方案。与其他所有方法不同，它不需要在 Direct3D 顶点流中复制几何包。</li></ul><h4>3.3.1 静态批处理</h4><p>在静态批处理中，我们希望把所有实例变换一次并复制到静态顶点缓冲。静态批处理最明显的优点是渲染效率高，并且兼容市面上任何 GPU，不论其新旧。</p><p>要实现静态批处理，我们首先创建一个顶点缓冲对象（连同它的索引缓冲），用来填充变换后的几何体。这个对象必须足够大，能容纳我们决定处理的最大实例数。由于缓冲只填充一次、之后不再改动，我们可以用 <code>D3USAGE_WRITEONLY</code> 标志创建它，向驱动给出有用的提示：把缓冲放到可用的最快内存中：</p><pre><code>HRESULT res;
+res = lpDevice-&gt;CreateVertexBuffer(MAX_STATIC_BUFFER_SIZE, D3DUSAGE_WRITEONLY,
+                                   0, D3DPOOL_MANAGED, &amp;mStaticVertexStream, 0);
+ENGINE_ASSERT(SUCCEEDED(res));</code></pre><p>创建缓冲时选择 <code>D3DPOOL_MANAGED</code> 还是 <code>D3DPOOL_DEFAULT</code>，取决于具体应用，尤其取决于引擎的内存管理策略。</p><p>下一步是实现 <code>Commit()</code> 方法，真正把需要渲染的变换后几何体填入顶点缓冲和索引缓冲。</p><p>下面是 <code>Commit()</code> 方法的伪代码：</p><pre><code>Foreach
+    GeometryInstance in Instances Begin Transform geometry in mGeometryPacket to
+        world space with instance mModelMatrix Apply other instance
+        attributes(like instance color) Copy
+    transformed geometry to the Vertex Buffer Copy
+    indices(with the right offset) to the Index Buffer Advance current pointer
+    to the Vertex Buffer Advance current pointer to the Index Buffer End</code></pre><p>此后，只需用一次简单的 <code>DrawIndexedPrimitive()</code> 调用提交我们已经准备好的实例。<code>Update()</code> 与 <code>Render()</code> 方法的实际实现很简单。</p><p>静态批处理是渲染大量实例最快的方式，并且支持在同一几何批次内混用不同几何包的实例，但它有几个严重局限：</p><ul><li><strong>内存占用大。</strong>取决于每个几何包的大小与所渲染的实例数，内存占用可能变得过大；对大型世界而言，很容易耗尽预留给几何体的显存预算。退回 AGP 内存是可行的，但这会让该技术变慢，吸引力也随之下降。</li><li><strong>不支持不同的细节层次。</strong>因为所有实例都在提交时一次性复制到顶点缓冲，选一个对所有情况都有效的细节层次并不容易，会导致多边形预算利用不佳。可以采用半静态方案：把一个实例的所有细节层次都实例化进顶点缓冲，每帧流入索引，为每个实例挑出合适的细节层次。但这会让实现变得笨拙，背离这个方案的本意：简单与高效。</li><li><strong>不支持蒙皮。</strong></li><li><strong>不直接支持移动实例。</strong>要高效实现移动实例，需要顶点着色器中的动态分支逻辑。这在较老的显卡上可能无法承受。最终结果本质上就是顶点常量实例化。</li></ul><p>这些局限由下一种技术解决，代价是牺牲部分渲染速度以换取额外的灵活性。</p><h4>3.3.2 动态批处理</h4><p>动态批处理以降低渲染效率为代价，克服了静态批处理的局限。与静态批处理一样，动态批处理的一大优点是可以实现在任何 GPU 上，不要求支持高级可编程管线。</p><p>第一步是用 <code>D3DUSAGE_DYNAMIC</code> 和 <code>D3DPOOL_DEFAULT</code> 标志把顶点缓冲（连同其索引缓冲）创建为动态的。既然我们打算动态更新其内容，这些标志能确保缓冲被放到尽可能合适的内存位置。</p><pre><code>HRESULT res;
+res = lpDevice-&gt;CreateVertexBuffer(MAX_DYNAMIC_BUFFER_SIZE,
+                                   D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, 0,
+                                   D3DPOOL_DEFAULT, &amp;mDynamicVertexStream, 0);</code></pre><p>在这个实现中，为 <code>MAX_DYNAMIC_BUFFER_SIZE</code> 选对值至关重要。有两种决定其实际取值的思路：</p><ul><li>取得足够大，能容纳一帧中可能需要的所有实例的几何体</li><li>取得足够大，能容纳一定数量实例的几何体</li></ul><p>第一种做法能保证更新批次与渲染批次恰当分离。更新批次就是把所有实例流入动态缓冲；渲染只是用一次 <code>DrawIndexedPrimitive()</code> 调用提交几何体。但这种做法通常需要大量图形内存（即显存或 AGP 内存），而且如果无法保证缓冲在应用整个生命周期内始终足够大，在最坏情况下不太可靠。</p><p>第二种方案需要在流入几何体与渲染之间交替：动态缓冲满了就提交其几何体渲染、丢弃缓冲内容，准备流入更多实例。为达到最佳性能，使用正确的协议很重要，即在新一批实例开始时用 <code>D3DLOCK_DISCARD</code> 锁定动态缓冲，在流入每个新实例时用 <code>D3DLOCK_WRITEONLY</code>。这种方案的缺点是：每当批次需要渲染（例如实现阴影贴图时），都要重新锁定缓冲并再次流入几何体。</p><p>如何选择取决于具体应用及其需求。本章选择第一种方案，因为它简单、清晰，但我们增加了一点复杂度：动态批处理天然支持蒙皮，我们的实现也处理了这一点。</p><p>在 3.3.1 节中我们已描述过 <code>Commit()</code> 方法，<code>Update()</code> 与之非常相似，只是每帧执行。其伪代码如下：</p><pre><code>Foreach
+    GeometryInstance in Instances Begin Transform geometry in mGeometryPacket to
+        world space with instance mModelMatrix If instance needs skinning,
+    request a set of bones from mAnimationPlayer and
+        skin geometry Apply other instance
+        attributes(like instance color) Copy
+    transformed geometry to the Vertex Buffer Copy
+    indices(with the right offset) to the Index Buffer Advance current pointer
+    to the Vertex Buffer Advance current pointer to the Index Buffer End</code></pre><p>在这种情况下，<code>Render()</code> 方法只是一次 <code>DrawIndexedPrimitive()</code> 调用。</p><h4>3.3.3 顶点常量实例化</h4><p>在顶点常量实例化中，我们利用顶点常量来存放实例化属性。顶点常量批处理在渲染性能上非常快，并支持实例逐帧移动，但在灵活性上有代价。</p><p>主要局限有以下几点：</p><ul><li>每批实例数受限，取决于可用常量的数量；通常一次调用中最多只能批处理 50 到 100 个实例。不过，这已足以显著减轻绘制调用带来的 CPU 负载。</li><li>不支持蒙皮；顶点常量已被用来存放实例属性。</li><li>需要图形硬件支持顶点着色器。</li></ul><p>第一步是准备一个静态顶点缓冲（连同其索引缓冲），存放同一几何包的多个副本，以模型空间存储，批次中每个实例对应一份。</p><p>顶点缓冲的布局如图 3-2 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/03_instancing_02.jpg" alt="03_instancing_02.jpg"><figcaption>图 3-2　顶点缓冲布局</figcaption></figure><p>必须更新源顶点格式，为每个顶点增加一个整数索引，该索引在单个实例内保持不变，指明该几何包属于哪个实例。这类似调色板蒙皮，其中每个顶点包含一个影响它的骨骼（或多个骨骼）的索引。</p><p>更新后的顶点格式如下：</p><pre><code>struct InstanceVertex
+{
+  D3DXVECTOR3
+  mPosition;
+  // 其他顶点属性，例如法线与纹理
+  // 坐标
+  WORD mInstanceIndex[4]; // Direct3D 要求使用 SHORT4
+};</code></pre><p>在所有实例都加入几何批次之后，<code>Commit()</code> 方法按正确布局准备好顶点缓冲。</p><p>下一步是为每个要渲染的实例上传属性。假设我们只有描述实例位置与朝向的模型矩阵，以及实例颜色。</p><p>使用 DirectX 9 级别的 GPU 时，最多可用 256 个顶点常量；我们可以留出 200 个给实例化属性。在我们的例子里，每个实例需要 4 个常量存模型矩阵、1 个常量存实例颜色，合计每实例 5 个常量，因此每批最多 40 个实例。</p><p>代码清单 3-4 给出 <code>Update()</code> 方法。实际的实例化在顶点着色器中完成，见代码清单 3-5。</p><h4>示例 3-4　<code>Update()</code> 方法</h4><pre><code>D3DXVECTOR4 instancesData[MAX_NUMBER_OF_CONSTANTS];
+unsigned int count = 0;
+for (unsigned int i = 0; i < GetInstancesCount(); ++i)
+{
+  // 写入模型矩阵
+  instancesData[count++] = *(D3DXVECTOR4 *)&mInstances[i].mModelMatrix.m11;
+  instancesData[count++] = *(D3DXVECTOR4 *)&mInstances[i].mModelMatrix.m21;
+  instancesData[count++] = *(D3DXVECTOR4 *)&mInstances[i].mModelMatrix.m31;
+  instancesData[count++] = *(D3DXVECTOR4 *)&mInstances[i].mModelMatrix.m41;
+  // 写入实例颜色
+instanceData[count++] = ConvertColorToVec4(mInstances[i].mColor));
+}
+lpDevice->SetVertexConstants(INSTANCES_DATA_FIRST_CONSTANT, instancesData,
+                             count);</code></pre><h4>示例 3-5　顶点常量实例化的顶点着色器</h4><pre><code>// 顶点输入声明
+struct vsInput
+{
+  float4 position : POSITION;
+  float3 normal : NORMAL;
+  // 其他顶点数据
+  int4 instance_index : BLENDINDICES;
+};
+vsOutput VertexConstantsInstancingVS(in vsInput input)
+{
+  // 获取实例索引；该索引已预先乘以
+  // 5，以计入每个实例所用的
+  // 常量个数
+  int instanceIndex = ((int[4])(input.instance_index))[0];
+  // 访问实例模型矩阵的每一行
+  float4 m0 = InstanceData[instanceIndex + 0];
+  float4 m1 = InstanceData[instanceIndex + 1];
+  float4 m2 = InstanceData[instanceIndex + 2];
+  float4 m3 = InstanceData[instanceIndex + 3];
+  // 构造模型矩阵
+  float4x4 modelMatrix = {m0, m1, m2, m3};
+  // 获取实例颜色
+  float4 instanceColor = InstanceData[instanceIndex + 4];
+  // 用实例模型矩阵把输入的位置与法线
+  // 变换到世界空间
+  float4 worldPosition = mul(input.position, modelMatrix);
+  float3 worldNormal = mul(input.normal, modelMatrix);
+  // 输出位置、法线与颜色
+  output.position = mul(worldPosition, ViewProjectionMatrix);
+  output.normal = mul(worldNormal, ViewProjectionMatrix);
+  output.color = instanceColor;
+  // 输出其他顶点数据
+}</code></pre><p><code>Render()</code> 设置视图投影矩阵，并用一次 <code>DrawIndexedPrimitive()</code> 调用提交所有实例。</p><p>生产代码中一种可行的优化是把模型矩阵的旋转部分存成四元数，省下两个顶点常量，把最大实例数提高到约 70。均匀缩放值可以存进平移向量的 <em>w</em> 分量。然后在顶点着色器中重建模型矩阵，这会增加其复杂度和执行时间。</p><h4>3.3.4 用 Geometry Instancing API 批处理</h4><p>本章介绍的最后一种技术是用 Geometry Instancing API 批处理，该 API 由 DirectX 9 提供，并在 GeForce 6 系列 GPU 上由硬件完整实现。随着越来越多的硬件开始支持 Geometry Instancing API，这种技术会越来越有吸引力，因为它优雅地解决了顶点常量实例化的局限，内存占用很小，且几乎不需要 CPU 介入。这种技术唯一的缺点是只能处理同一几何包的实例。</p><p>DirectX 9 提供以下调用以访问 Geometry Instancing API：</p><pre><code>HRESULT SetStreamSourceFreq(UINT StreamNumber, UINT FrequencyParameter);</code></pre><p><em><code>StreamNumber</code></em> 是源流的索引，<em><code>FrequencyParameter</code></em> 指明每个顶点代表多少个实例。</p><p>我们首先创建两个顶点缓冲：一个静态缓冲，存放我们想多次实例化的单个几何包的几何体；一个动态缓冲，存放实例数据。两个顶点流如图 3-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/03_instancing_03.jpg" alt="03_instancing_03.jpg"><figcaption>图 3-3　用 Geometry Instancing API 实例化时的顶点流</figcaption></figure><p><code>Commit()</code> 方法确保所有实例只使用一个几何包，并把其几何体复制到静态缓冲。</p><p><code>Update()</code> 方法只是把所有实例属性复制到第二个流。尽管这个方法看起来与动态批处理的 <code>Update()</code> 非常相似，但 CPU 介入和图形总线（AGP 或 PCI Express）带宽都极小。而且，我们可以选择分配足够大的顶点缓冲来容纳所有实例的属性，不必担心图形内存消耗，因为每条实例属性只占用整个几何包所耗内存的一小部分。</p><p><code>Render()</code> 方法以正确的流频率设置两个流，并发出 <code>DrawIndexedPrimitive()</code> 调用，在一次批处理中渲染所有实例，如代码清单 3-6 所示。</p><p>GPU 负责在虚拟层面复制第一个流的顶点，并把它们与第二个流打包在一起。顶点着色器看到的输入是一个顶点，带有它在模型空间中的位置，外加一条额外的实例属性，给出把它变换到世界空间的模型矩阵。</p><h4>示例 3-6　为使用 Geometry Instancing API 批处理而设置两个流</h4><pre><code>unsigned int instancesCount = GetInstancesCount();
+// 为第一个流设置流源频率
+// 以渲染 instancesCount 个实例
+// D3DSTREAMSOURCE_INDEXEDDATA 告诉 Direct3D 我们将
+// 用带索引的几何体做实例化
+lpDevice->SetStreamSourceFreq(0, D3DSTREAMSOURCE_INDEXEDDATA | instancesCount);
+// 用包含几何包几何数据的顶点缓冲
+// 设置第一个流源
+lpDevice->SetStreamSource(0, mGeometryInstancingVB[0], 0, mGeometryPacketDecl);
+// 为第二个流设置流源频率；
+// 每一组实例属性描述一个待渲染的
+// 实例
+lpDevice->SetStreamSourceFreq(1, D3DSTREAMSOURCE_INSTANCEDATA | 1);
+// 用包含所有实例属性的顶点缓冲
+// 设置第二个流源
+pd3dDevice->SetStreamSource(1, mGeometryInstancingVB[0], 0,
+                            mInstancesDataVertexDecl);</code></pre><p>顶点着色器代码见代码清单 3-7。</p><h4>示例 3-7　使用 Geometry Instancing API 批处理的顶点着色器</h4><pre><code>// 顶点输入声明
+struct vsInput
+{
+  // 流 0
+  float4 position : POSITION;
+  float3 normal : NORMAL;
+  // 流 1
+  float4 model_matrix0 : TEXCOORD0;
+  float4 model_matrix1 : TEXCOORD1;
+  float4 model_matrix2 : TEXCOORD2;
+  float4 model_matrix3 : TEXCOORD3;
+  float4 instance_color : D3DCOLOR;
+};
+vsOutput GeometryInstancingVS(in vsInput input)
+{
+  // 构造模型矩阵
+  float4x4 modelMatrix = {input.model_matrix0, input.model_matrix1,
+                          input.model_matrix2, input.model_matrix3};
+  // 用实例模型矩阵把输入的位置与法线
+  // 变换到世界空间
+  float4 worldPosition = mul(input.position, modelMatrix);
+  float3 worldNormal = mul(input.normal, modelMatrix);
+  // 输出位置、法线与颜色
+  output.position = mul(worldPosition, ViewProjectionMatrix);
+  output.normal = mul(worldNormal, ViewProjectionMatrix);
+  output.color = input.instance_color;
+  // 输出其他顶点数据
+}</code></pre><p>凭借极小的 CPU 开销和内存占用，这种技术能高效渲染同一几何体的许多副本，因此在许多场景中都是理想方案。唯一的缺点是它需要特殊的硬件能力，并且不容易支持蒙皮。</p><p>要实现蒙皮，可以把所有实例的所有骨骼存入一张纹理，用 Shader Model 3.0 提供的纹理取值（Geometry Instancing API 要求 Shader Model 3.0）取出正确实例的正确骨骼。如果这个方案看起来有吸引力，那么这种访问模式下使用纹理取值的性能影响尚不确定，应当实测。</p><h2>3.4 结论</h2><p>本章定义了几何实例化背后的概念，并描述了四种技术来达成高效渲染同一几何体多次的目标。每种技术各有优劣，没有哪一种技术能明确成为所有场景的理想选择。最佳选择主要取决于应用以及所渲染对象的类型。</p><p>一些场景及其建议方案：</p><ul><li>室内场景中有许多同一几何体的静态实例，它们很少或从不移动（例如墙体或家具）。这是静态批处理的理想情况。</li><li>室外场景中有许多动画对象的实例，例如一场大规模战役、涉及数百名士兵的策略游戏。这种场景下，动态批处理大概是最佳方案。</li><li>室外场景中有大量植被和树木，其中许多会改变自身属性（例如随风摇曳的树木与草），还有大量粒子系统。这大概是 Geometry Instancing API 的最佳场景。</li></ul><p>同一个应用往往需要依靠两种或更多种技术。图 3-4 和图 3-5 给出两个例子。这种情况下，把实现隐藏在抽象的几何批次概念之后，能让引擎更模块化、更易维护。结果是，为整个应用实现所有几何实例化技术的成本大大降低。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/03_instancing_04.jpg" alt="03_instancing_04.jpg"><figcaption>图 3-4　在真实场景中结合静态批处理与几何实例化</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/03_instancing_05.jpg" alt="03_instancing_05.jpg"><figcaption>图 3-5　在真实场景中结合 GPU 动画与 CPU 动画</figcaption></figure><h2>3.5 参考文献</h2><p><a id="biblio03_01"></a>Cebenoyan, Cem. 2004. "Graphics Pipeline Performance."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 473–486，Addison-Wesley 出版。可在线获取：<strong><a href="http://developer.nvidia.com/object/GPU_Gems_Samples.html" rel="noreferrer noopener">http://developer.nvidia.com/object/GPU_Gems_Samples.html</a></strong></p><p><a id="biblio03_02"></a>O'Rorke, John. 2004. "Managing Visibility for Per-Pixel Lighting."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 245–257，Addison-Wesley 出版。</p><p><a id="biblio03_03"></a>Wloka, Matthias. 2003. "Batch, Batch, Batch: What Does It Really Mean?" 2003 年游戏开发者大会演讲。<strong><a href="http://developer.nvidia.com/docs/IO/8230/BatchBatchBatch.pdf" rel="noreferrer noopener">http://developer.nvidia.com/docs/IO/8230/BatchBatchBatch.pdf</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-3-inside-geometry-instancing" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-3-inside-geometry-instancing</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

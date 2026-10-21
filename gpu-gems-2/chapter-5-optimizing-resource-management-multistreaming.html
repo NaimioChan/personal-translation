@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 5 章　用多流优化资源管理 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 5 章　用多流优化资源管理」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 5 章　用多流优化资源管理</h1>
+<p><em>Oliver Hoeller</em><br> <em>Piranha Bytes</em></p><p><em>Kurt Pelzer</em><br> <em>Piranha Bytes</em></p><p>现代实时图形应用中最棘手的问题之一，是要管理海量数据。复杂网格构成的复杂场景，再加上多次渲染遍——例如高质量阴影以及额外的反射与折射效果所需的那些遍——渲染代价高昂。找到以最优格式向 GPU 提供数据的办法，是成功渲染复杂场景的关键。</p><p>本章处理这一问题，并聚焦于一个灵活的模型，用来解决应对当前 PC 上形形色色图形硬件的难题。一款 PC 游戏必须能在最新的高端 GPU 上运行良好，也能一路向下兼容到去年的「主流」GPU，以及两者之间的所有硬件。我们介绍一种方案，它既能处理海量数据，又谨慎地只传输每一遍当前所需的顶点分量。该系统已在 <em>Gothic III</em> 引擎中实现，它结合了两项强大的技术：用多流把多个顶点缓冲组合起来（Microsoft DirectX 8.0 引入的特性），以及用优化的资源管理器控制每个顶点缓冲。我们既给出抽象概念，也给出基于 DirectX 9.0c 的实现。</p><h2>5.1 概述</h2><p>网格中每个顶点都关联着多个分量（位置、法线、切线、纹理坐标等），但渲染对象时并不总是需要所有这些数据。我们希望有一个自动化系统，只使用当前需要的顶点分量。为完成这个任务，我们使用专用于某些子任务的顶点缓冲流。根据当前渲染遍的不同，把这些流的子集组合起来装配顶点。</p><p>我们需要四种基本类型的流，如图 5-1 所示。以下是这些流及其子任务：</p><ul><li><strong>G——几何数据的顶点流。</strong>包含顶点位置、法线和顶点颜色。</li><li><strong>T——纹理映射数据的顶点流。</strong>存放纹理坐标集，以及切空间法线贴图所需切向量之类的附加信息。</li><li><strong>A——动画数据的顶点流。</strong>存放骨骼权重与影响数等动画数据。</li><li><strong>I——实例化数据的顶点流。</strong>包含顶点流频率实例化所需的数据。</li></ul><figure><img src="https://developer.download.nvidia.com/books/gpugems2/05_multistreaming_1.jpg" alt="05_multistreaming_1.jpg"><figcaption>图 5-1　四种顶点流</figcaption></figure><p>这四种流的子集组合起来可完成不同任务，如图 5-2 所示：</p><ul><li><p><strong>渲染无动画的网格</strong></p><p>可用的流组合：<strong>G</strong> <em>或</em> <strong>G</strong> + <strong>T</strong></p></li><li><p><strong>渲染带动画的网格</strong></p><p>可用的流组合：<strong>G</strong> + <strong>A</strong> <em>或</em> <strong>G</strong> + <strong>T</strong> + <strong>A</strong></p></li><li><p><strong>渲染实例化网格（可选带动画）</strong></p><p>可用的流组合：<strong>G</strong> + <strong>I</strong> <em>或</em> <strong>G</strong> + <strong>T</strong> + <strong>I</strong></p><p>（可选：<strong>G</strong> + <strong>A</strong> + <strong>I</strong> <em>或</em> <strong>G</strong> + <strong>T</strong> + <strong>A</strong> + <strong>I</strong>）</p></li><li><p><strong>渲染纯 z 遍（可选带或不带实例化，带或不带动画）</strong></p><p>可用的流组合：<strong>G</strong></p><p>（可选：<strong>G</strong> + <strong>A</strong> <em>或</em> <strong>G</strong> + <strong>I</strong> <em>或</em> <strong>G</strong> + <strong>A</strong> + <strong>I</strong>）</p></li></ul><figure><img src="https://developer.download.nvidia.com/books/gpugems2/05_multistreaming_2.jpg" alt="05_multistreaming_2.jpg"><figcaption>图 5-2　组合当前所需的流</figcaption></figure><p>下一节给出该模型的一种实现。</p><h2>5.2 实现</h2><p>现在我们说明如何实现 5.1 节讨论的抽象概念。先看一段基于 DirectX 9.0c 的多流示例代码。然后介绍处理网格资源的资源管理器。最后说明如何把通用网格数据转换成合适的硬件结构。</p><h4>5.2.1 DirectX 9.0 中的多流</h4><p>Microsoft DirectX 8.0 引入了流的概念，用于把数据绑定到输入寄存器。流是分量的均匀数组。每个分量由一个或多个元素组成，表示单一实体，例如位置、法线、颜色、纹理坐标集等。借助流，GPU 可以并行地从多个顶点缓冲进行直接内存访问（DMA）。Direct3D 的能力位 <code>D3DCAPS9.MaxStreams</code> 定义了 GPU 支持多少个流；现代硬件最多支持 16 个流，而较老的、符合 DirectX 8.0 的 GPU 限于 8 个流。由于多流会带来一些轻微的性能影响，建议尽量减少活动流的数量。我们的实现只使用 1 到 4 个流，因此可以面向所有支持多流的 GPU，性能损失极小。</p><p>代码清单 5-1 给出多流的示例代码。用 DirectX 9.0 完成这个任务，只需要三个简单环节：</p><ul><li>正确的顶点声明（一个 <code>D3DVERTEXELEMENT9</code> 数组）以及 <code>IDirect3DDevice9::CreateVertexDeclaration()</code> 方法，用于创建顶点声明对象。</li><li><code>IDirect3DDevice9::SetVertexDeclaration()</code> 方法，用于设置顶点声明对象。</li><li><code>IDirect3DDevice9::SetStreamSource()</code> 方法，用于把顶点缓冲绑定到设备数据流，在顶点数据与若干个为图元处理函数供数的数据流端口之一之间建立关联。</li></ul><h4>示例 5-1　一组顶点定义与顶点声明</h4><pre><code>//
+// 初始化：
+//
+// 下面是一组支持两个流的顶点定义。
+// 顶点格式：
+//
+// 流 0->位置 + 法线 + 颜色 0 + 颜色 1
+// 流 1->4 对纹理坐标
+struct VTXSTREAM_0
+{
+  float fPosX, fPosY, fPosZ;
+  float fNormX, fNormY, fNormZ;
+  DWORD dwColor0, dwColor1;
+};
+struct VTXSTREAM_1
+{
+  float fTexU0, fTexV0;
+  float fTexU1, fTexV1;
+  float fTexU2, fTexV2;
+  float fTexU3, fTexV3;
+};
+// 顶点声明
+D3DVERTEXELEMENT9 m_VtxDcl[] =
+    {
+        {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION,
+         0}, // 流 0，位置
+        {0, 12, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL,
+         0},
+        // 流 0，法线
+        {0, 24, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR,
+         0},
+        // 流 0，颜色 0
+        {0, 28, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR,
+         1},
+        // 流 0，颜色 1
+        {1, 0, D3DDECLUSAGE_FLOAT2, D3DDECLMETHOD_DEFAULT,
+         D3DDECLUSAGE_TEXCOORD, 0}, // 流 1，纹理坐标集 0
+        {1, 8, D3DDECLUSAGE_FLOAT2, D3DDECLMETHOD_DEFAULT,
+         D3DDECLUSAGE_TEXCOORD, 1}, // 流 1，纹理坐标集 1
+        {1, 16, D3DDECLUSAGE_FLOAT2, D3DDECLMETHOD_DEFAULT,
+         D3DDECLUSAGE_TEXCOORD, 2}, // 流 1，纹理坐标集 2
+        {1, 24, D3DDECLUSAGE_FLOAT2, D3DDECLMETHOD_DEFAULT,
+         D3DDECLUSAGE_TEXCOORD, 3}
+        // 流 1，纹理坐标集 3
+}
+// 创建顶点声明对象
+LPDIRECT3DVERTEXDECLARATION9 m_pVtxDeclObject;
+m_pd3dDevice->CreateVertexDeclaration(m_VtxDcl, &m_pVtxDclObj);</code></pre><p>在代码清单 5-1 中，我们给出一组顶点定义，并创建顶点声明对象 <code>m_pVtxDeclObject</code>，它描述以下顶点数据布局：</p><ul><li>顶点位置数据位于流 0，偏移 0 字节。数据类型为三分量 float，扩展为 (float, float, float, 1)。</li><li>顶点法线数据位于流 0，偏移 12 字节。数据类型为三分量 float，扩展为 (float, float, float, 1)。</li><li>漫反射色与镜面反射色位于流 0，偏移分别为 24 字节（漫反射）和 28 字节（镜面反射）。数据类型为四分量、打包的无符号字节，映射到 0 到 1 的范围。</li><li>纹理坐标数据（集 0 到 3）位于流 1，偏移分别为 0 字节（集 0）、8 字节（集 1）、16 字节（集 2）和 24 字节（集 3）。数据类型为两分量 float，扩展为 (float, float, 0, 1)。</li></ul><p>调用绘制方法之前，我们必须设置这个顶点声明对象，并把顶点缓冲绑定到正确的设备数据流，如代码清单 5-2 所示。</p><h4>示例 5-2　把顶点缓冲绑定到流</h4><pre><code>//
+// 每次要渲染图元时：
+//
+// 设置顶点声明对象
+m_pd3dDevice->SetVertexDeclaration(m_pVtxDclObj);
+// 把顶点缓冲绑定到设备数据流
+m_pd3dDevice->SetStreamSource(0, m_pVtxBuf0, 0, sizeof(VTXSTREAM_0));
+m_pd3dDevice->SetStreamSource(1, m_pVtxBuf1, 0, sizeof(VTXSTREAM_1));
+// 渲染 ..
+m_pd3dDevice->DrawIndexedPrimitive(..);</code></pre><p>直到调用 <code>IDirect3DDevice9::DrawIndexedPrimitive()</code> 这类绘制方法时，才会真正访问流数据。</p><h4>5.2.2 资源管理</h4><p>在 <em>Gothic III</em> 引擎中，我们采用<em>资源管理</em>的概念，统一管理所有数据密集的元素，例如顶点数据（网格信息）、纹理、动画数据（关键帧与蒙皮数据）、音效和音乐。所有这些数据结构都使用统一的框架。它提供一个简单的接口，供引擎的其他系统访问。</p><p>所有资源都打包进抽象数据对象。我们按文件名或全局唯一标识符（GUID）来访问这些数据对象。访问数据容器的方式同样组织得类似数据库访问。调用一次查询，就能得到一个可引用的数据容器，其中包含指定数据所需的所有结构。</p><p>资源管理系统确保数据即时、同时可用。它还负责把这些专有数据转换为图形硬件偏好的格式。</p><p>如前所述，资源管理系统可以把网格数据存放在指定的文件位置，并且只在需要时加载这些网格对象。这些结构必须以高效灵活的方式存储，而顶点数据布局在网格之间可能差别很大。</p><p>加载的资源应当提供引用计数，以便同一个网格在场景中重复使用。几何实例化用于加速这类网格的渲染。（见本书第 3 章「深入几何实例化」。）</p><p>网格信息由 3ds max 或 Maya 之类的工具生成。为此需要开发合适的导入器，如图 5-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/05_multistre_3_new.jpg" alt="05_multistre_3_new.jpg"><figcaption>图 5-3　资源框架的结构</figcaption></figure><h4>网格资源</h4><p>资源管理系统提供的数据库容器之一是网格资源，它包含所有相关结构、所有顶点与索引数据数组，以及一个指向抽象材质对象（它同样是可引用资源）的链接。</p><p>注意，封装进资源类的顶点结构（如图 5-3 所示）并不针对任何特定的图形 API（例如 DirectX 或 OpenGL）。因此我们可以实现整个资源系统而不依赖所用的图形 API。</p><p>这些结构由简单的顶点流（数组）组成，每个流只含单一顶点分量，例如位置（三维向量数组）、法线（三维向量数组）、颜色（<code>DWORD</code> 值数组），或最多 16 组纹理坐标（一维、二维、三维或四维向量数组），以及其他定制数据数组，例如用于硬件蒙皮的权重。</p><p>为完成这项基础工作，我们开发了一个与硬件无关的资源框架，包含一个网格类及其管理接口。此外，我们为相应的建模工具编写了专用导入器。</p><h4>5.2.3 处理顶点</h4><p>渲染器负责把与硬件无关的数据转换成对图形硬件最优的格式。</p><p>首先，网格资源在应用启动时加载到主内存。另一种做法是按需加载，在需要时用单独的线程把数据载入内存。</p><p>对渲染器来说，网格对象只是一个临时容器，用来构建正确的格式。生成的、依赖硬件的格式由应用用来绘制场景。之所以要这样严格分离，是为了能针对应用当前运行的 PC 上的 GPU 最优地裁剪数据。我们只使用实际需要的顶点数据。</p><p>这种分离在裁剪所需纹理坐标时很有用：在性能较弱的硬件上，许多视觉效果会因为硬件无力运行或需要降低整体渲染负载而被关闭。既然不渲染这些效果，这些效果所用的纹理坐标就不必传给图形硬件，直接去掉即可。这样我们就减少了内存消耗，也节省了处理器运算和带宽。</p><p>为此，我们提供了一个子模块，命名为 Vertexprocessor，它把通用网格数据转换成指定的硬件结构。要把数据准备好用于多流，需要以下步骤：</p><ul><li>请求网格资源时，如果对象尚未可用，Vertexprocessor 就把这些数据加载到内存；如果对象已加载，则递增其引用计数。</li><li>确定网格对象存储的顶点格式。这可以通过内嵌的 FVF 标志完成，也可以通过资源类中所用的实现（与硬件无关）完成。</li><li>Vertexprocessor 把单一的通用顶点数组划分为四个硬件专用的顶点流（即 5.1 节讨论的 <strong>G</strong>、<strong>T</strong>、<strong>A</strong> 和 <strong>I</strong> 流）。顶点数组通过 <code>MeshResource::GetVertexStreamArray()</code> 方法访问，如图 5-4 所示；该方法把数组转换或复制到四个顶点缓冲之一的特定分量中。</li></ul><figure><img src="https://developer.download.nvidia.com/books/gpugems2/05_multistreaming_4.jpg" alt="05_multistreaming_4.jpg"><figcaption>图 5-4　Vertexprocessor 所使用的单一顶点流查询</figcaption></figure><h4>几何数据</h4><p>处理几何数据的 Vertexprocessor 单元从网格对象中取出位置、法线和两种颜色（如果存在）。</p><p>为便于说明，代码清单 5-3 创建一个包含所有这些信息的顶点缓冲，并使用这种特定的顶点布局。该缓冲的每条记录应取 32 字节，对缓存友好，因此这种缓冲类型的布局是固定的。</p><h4>示例 5-3　创建顶点缓冲</h4><pre><code>D3DVERTEXELEMENT9 m_VtxDcl[] = {
+    {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION,
+     0}, // 流 0，位置
+    {0, 12, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL, 0},
+    // 流 0，法线
+    {0, 24, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+    // 流 0，颜色 0
+    {0, 28, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0},
+    // 流 0，颜色 1
+};
+// 接下来是顶点定义。
+// 顶点格式：
+// 流 0->位置 + 法线 + 颜色 0 + 颜色 1
+struct sVTXStreamGeometry
+{
+  float vecPos[3];
+  float vecNorm[3];
+  DWORD dwColor0, dwColor1;
+};
+// 数据容器 Resourcemesh 在这里提供了 GetVertexStreamArray。
+// （参见上面的 API 方法。）
+cResourceMesh *m_pResourceMesh;
+// 创建顶点声明，并创建一个专用的顶点缓冲。
+// 为清晰起见，我们按元素个数与相应的 FVF 标志
+// 来计算缓冲大小。在我们的引擎实现中，
+// 几何流的大小为 32 字节（对缓存友好），因此我们
+// 可以轻松创建出足够大的顶点缓冲内存。
+CreateVertexDeclaration(m_VtxDcl);
+m_pVtxBuf0 = CreateVertexBuffer(NumVertices, FVF_XYZ | FVF_NORMAL |
+                                                 FVF_DIFFUSE | FVF_SPECULAR);
+sVTXStreamGeometry *pBuffer = LockBuffer(m_pVtxBuf0);
+for each
+  vertexIndex in m_pResourceMesh
+  {
+    pBuffer->m_vecPos =
+        m_pResourceMesh->GetVertexStreamArray(enum_Position, vertexIndex);
+    pBuffer->m_vecNorm =
+        m_pResourceMesh->GetVertexStreamArray(enum_Normal, vertexIndex);
+    pBuffer->m_dwColor0 =
+        m_pResourceMesh->GetVertexStreamArray(enum_Diffuse, vertexIndex);
+    pBuffer->m_dwColor1 =
+        m_pResourceMesh->GetVertexStreamArray(enum_Specular, vertexIndex);
+    pBuffer++;
+  }</code></pre><h4>纹理数据</h4><p>处理纹理数据的 Vertexprocessor 单元从网格对象中取出可用的纹理坐标槽位，构建一个包含所有必要纹理坐标的灵活顶点缓冲。最多可以有八组纹理坐标（每组纹理坐标为一个一维、二维、三维或四维向量）。</p><p>此外，其中一个槽位可以编码为切空间法线贴图所需的切向量；否则就必须为这项信息单独使用一个顶点缓冲流。为清楚起见，代码清单 5-4 省略了这一点。不过加上这个特性也很直接。</p><p>如果有光照贴图，我们应当使用单独的 Vertexprocessor 单元（即每个网格实例一个单独的顶点缓冲），因为每个实例的光照贴图纹理都必须有唯一的 UV 对。光照贴图必须逐个映射，其映射坐标取决于世界空间位置，因此无法被实例化。这可能给你的应用带来内存占用和性能上的大问题。所以，光照贴图适合大型网格，例如室外场景中的地形或地下城里的不规则墙体，而不适合小型网格或多次实例化的对象。</p><h4>示例 5-4　用于纹理数据的顶点缓冲流</h4><pre><code>
+// 数据容器 Resourcemesh 在这里提供了 GetVertexStreamArray。
+// （参见上面的 API 方法。）
+cResourceMesh *m_pResourceMesh;
+// 这是一个模板数组结构，用于在一个块中
+// 灵活分配多个 vtxDcl 结构
+Array<D3DVERTEXELEMENT9> arrDeclVtx;
+// 我们为纹素创建一个专用的顶点缓冲。这里使用
+// Resourcemesh 的 FVF 标志，筛选出具体的纹理标志
+// 来创建该专用缓冲。
+// 为清晰起见，这里用一个函数来计算缓冲大小
+// 与相应的 FVF 标志。你也可以换一种实现
+// 来计算顶点缓冲的正确大小。
+sVTXStreamTexture *pVtxBuf1 = CreateVertexBuffer(
+    NumTextureEntries, m_pResourceMesh->m_FVFFlag &TextureFlags);
+// 用不指定具体类型的字节指针锁定缓冲
+char *pBuffer = LockBuffer(pVtxBuf1);
+// 顶点缓冲已锁定数据中当前的缓冲位置（字节）
+DWORD dwGlobalBufferPosition = 0;
+for each
+  textureIndex in m_pResourceMesh
+  {
+    DWORD dwCurrentOffset = 0; // vtxDecl 的当前偏移位置
+    for (int i = 0; i < m_pResourceMesh->GetNumberOfTextureSlots(); i++)
+    {
+      // 数组模板在结构块的末尾为我们分配一个新结构，
+      // 并返回该块的一个非常量引用。
+      // 此前分配的所有结构都保持不变（由 realloc 保证）。
+      D3DVERTEXELEMENT9 &flexibleElement = arrDeclVtx.InsertNewEnd();
+      flexibleElement.Stream = 1; // 位于 Geometry 之后的第二个位置
+      flexibleElement.Usage = D3DDECLUSAGE_TEXCOORD;
+      // 纹理槽当前的字节大小（u,v = 8 字节）
+      // r,s,t = 12 字节，r,s,t,w = 16 字节
+      DWORD dwCurrentTextureSlotSize =
+          m_pResourceMesh->GetTextureCoordinateSizeBySlot(i);
+      // 对指定的槽，我们查出所需的大小（字节），
+      // 并把它加到全局偏移计数器 dwCurrentOffset 上
+      flexibleElement.Offset = dwCurrentOffset;
+      // 计算指定纹理槽在 Resourcemesh 中的
+      // 流位置
+      int enumStreamArraySlot = m_pResourceMesh->GetTextureSlotEnum(i);
+      // 现在把顶点信息从 Resourcemesh 的流中
+      // 拷贝到已锁定的缓冲里
+      memcpy(&pBuffer[dwGlobalBufferPosition + dwCurrentOffset],
+             m_pResourceMesh->GetVertexStreamArray(enumStreamArraySlot,
+                                                   textureindex),
+             dwCurrentTextureSlotSize);
+      dwCurrentOffset += dwCurrentTextureSlotSize;
+      // 计算 vtxDecl 各类型的大小（D3DDECLTYPE_FLOAT2 = 8 字节，
+      // D3DDECLTYPE_FLOAT3 = 12 字节，D3DDECLTYPE_FLOAT4 = 16 字节）
+      flexibleElement.Type = CalculateDataSizeType(dwCurrentTextureSlotSize);
+    }
+    // 把新的位置偏移加到缓冲中的全局位置上
+    dwGlobalBufferPosition += dwCurrentOffset;
+  }</code></pre><h4>动画数据</h4><p>处理动画数据的 Vertexprocessor 单元构建硬件骨骼动画蒙皮所需的权重。每根骨骼可以使用数目不定的权重，因此不必浪费比实际需要更多的内存。在 <em>Gothic III</em> 中，我们的动画系统每根骨骼最多使用六个权重。</p><h4>索引数据</h4><p>与上述顶点缓冲对应的索引缓冲也会构建起来。索引作为单独的信息流存放在网格对象中。索引项的位宽（16 位还是 32 位）取决于顶点数量。超过 65,535 条时必须用 <code>DWORD</code> 作索引项。否则，<code>WORD</code>（16 位）索引就够用。选择尽可能小的数据类型有助于减少应用的内存占用。</p><p>Vertexprocessor 负责以对硬件最优的方式创建前面提到的所有顶点缓冲（通常创建为 <code>Pool_Managed</code> 和 <code>WriteOnly</code>）（Ashida 2004）。</p><h4>渲染这些流</h4><p>所有流正确构建好之后，就可以用于渲染和绘制了。</p><p>作为单独使用各流的一个例子，我们把 <strong>G</strong> 流（即几何流）作为一个单独的 z 遍执行，在硬件中实现快速的 z 剔除，并把该缓冲与渲染系统中实现的遮挡查询系统结合使用。（这类系统的一个例子见本书第 6 章「让硬件遮挡查询真正有用」。）</p><p>可以把 <strong>A</strong> 流（动画流）也纳入计算，但多数情况下不值得这么做。因动画而不同的像素数量通常很少，与加入动画所增加的渲染成本不成比例。</p><p>渲染器根据视图（实体渲染还是 z 遍）激活相应的流。</p><h2>5.3 结论</h2><p>本章展示了当前应用如何克服场景中几何数据不断增长所带来的问题。我们讨论了一个灵活的模型，它通过结合两项强大的技术，让应用对数据有更多控制，并最优地驱动所检测到的硬件：</p><ul><li>多个顶点缓冲通过多流组合起来。</li><li>每个顶点缓冲由一个优化的资源管理器控制。</li></ul><p>一个不错的附带好处：我们高效地处理数据带宽，而带宽有时会因数据重复、或数据在系统内存到 GPU 的总线上冗余传输而受限。</p><h2>5.4 参考文献</h2><p><a id="biblio05_01"></a>Ashida, Koji. 2004. "Optimising the Graphics Pipeline." NVIDIA 演讲。<strong><a href="http://developer.nvidia.com/docs/IO/10878/ChinaJoy2004_OptimizationAndTools.pdf" rel="noreferrer noopener">http://developer.nvidia.com/docs/IO/10878/ChinaJoy2004_OptimizationAndTools.pdf</a></strong></p><p><a id="biblio05_02"></a>Cebenoyan, Cem. 2004. "Graphics Pipeline Performance."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 473–486，Addison-Wesley 出版。可在线获取：<strong><a href="http://developer.nvidia.com/object/GPU_Gems_Samples.html" rel="noreferrer noopener">http://developer.nvidia.com/object/GPU_Gems_Samples.html</a></strong></p><p><em>有关在 DirectX 中编写一个或多个流的更多信息，请参阅 Microsoft 网站：</em></p><p><strong><a href="http://msdn.microsoft.com/directx" rel="noreferrer noopener">http://msdn.microsoft.com/directx</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-5-optimizing-resource-management-multistreaming" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-5-optimizing-resource-management-multistreaming</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

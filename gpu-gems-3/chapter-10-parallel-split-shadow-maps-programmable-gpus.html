@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 10 章　可编程 GPU 上的平行分割阴影贴图 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 10 章　可编程 GPU 上的平行分割阴影贴图」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 10 章　可编程 GPU 上的平行分割阴影贴图</h1>
+<p><em>Fan Zhang<br> 香港中文大学</em></p><p><em>Hanqiu Sun<br> 香港中文大学</em></p><p><em>Oskari Nyman<br> 赫尔辛基理工大学</em></p><p>阴影贴图（Williams 1978）在三维游戏与应用中被广泛用于产生阴影效果。然而阴影贴图有固有的走样问题，因此在复杂大规模场景中，只用标准阴影贴图不足以产生高质量的阴影渲染。本章介绍一种高级阴影贴图技术，可为大规模环境生成抗锯齿的实时阴影。我们还给出该技术在当代可编程 GPU 上的实现细节。</p><h2>10.1 引言</h2><p>我们介绍的技术称为<em>并行分割阴影贴图</em>（PSSM）（Zhang et al. 2007；Zhang et al. 2006）。该技术用平行于视平面的裁剪面把视锥分割成多个深度层，并为每层渲染一张独立的阴影贴图，如<a href="https://developer.download.nvidia.com/books/gpugems3/10fig01.jpg" rel="noreferrer noopener">图 10-1</a>所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig01.jpg" alt="10fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig01.jpg" rel="noreferrer noopener">图 10-1</a> 并行分割阴影贴图在……中</figcaption></figure><p>这种分割方案的动因在于一个观察：距观察者不同距离的点需要不同的阴影贴图采样密度。把视锥分割成若干部分后，每张阴影贴图只需对更小的区域采样，从而提高了纹理空间中的采样频率。当视图空间与纹理空间的采样频率匹配得更好时，阴影走样误差就显著减少。</p><p>与其他流行的阴影贴图技术相比，例如<em>透视阴影贴图</em>（PSM）（Stamminger and Drettakis 2002）、<em>光源空间透视阴影贴图</em>（LiSPSM）（Wimmer et al. 2004）和<em>梯形阴影贴图</em>（TSM）（Martin and Tan 2004），PSSM 提供了一种直观的方式，以离散方式近似阴影贴图纹素的扭曲分布，而不产生映射奇异，也不需要特殊处理。</p><p>使用多张阴影贴图的想法由 Tadamura et al. 2001 提出。Lloyd et al. 2006 对其作了进一步研究，并在 Futuremark 的基准测试应用 3DMark 2006 中实现为级联阴影贴图。</p><p>所有这些算法（包括我们的 PSSM）的两个主要问题如下：</p><ul><li>如何确定分割位置？</li><li>如何减轻生成阴影贴图与渲染场景阴影时多遍渲染造成的性能下降？</li></ul><p>PSSM 很好地处理了这两个问题。我们使用一种快速、稳健、与场景无关的分割策略来适配由视图决定的分辨率需求，并说明如何利用 DirectX 9 级别与 DirectX 10 级别的硬件来提升性能。</p><h2>10.2 算法</h2><p>为清晰起见，本章用平行光来讲解 PSSM 技术，但实现细节对点光源同样有效。记号 PSSM(<em>m</em>, <em>res</em>) 表示把视锥分割为 <em>m</em> 份的分割方案；<em>res</em> 是每张阴影贴图的分辨率。<a href="https://developer.download.nvidia.com/books/gpugems3/10fig02.jpg" rel="noreferrer noopener">图 10-2</a>给出头顶光照下分割方案的一般配置，其中视锥 <em>V</em> 被分割为 {<em>V<sub>i</sub></em> | 0 ≤ <em>i</em> ≤ <em>m</em> - 1}，分割所用裁剪面位于 {<em>C<sub>i</sub></em> | 0 ≤ <em>i</em> ≤ <em>m</em>}，沿 <em>z</em> 轴方向排列。特别地，<em>C</em> <sub>0</sub> = <em>n</em>（近平面位置），C <em><sub>m</sub></em> = <em>f</em>（远平面位置）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig02.jpg" alt="10fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig02.jpg" rel="noreferrer noopener">图 10-2</a> 头顶光照下分割方案的配置</figcaption></figure><p>我们按以下步骤应用分割方案 PSSM(<em>m</em>, <em>res</em>)：</p><ol><li>把视锥 <em>V</em> 分割为 <em>m</em> 份 {<em>V<sub>i</sub></em> }，所用分割面位于 {<em>C<sub>i</sub></em> }。</li><li>为每个分割部分 <em>V<sub>i</sub></em> 计算光源的视图–投影变换矩阵。</li><li>为所有分割部分 {<em>V<sub>i</sub></em> } 生成分辨率为 <em>res</em> 的 PSSM {<em>T<sub>i</sub></em> }。</li><li>为场景合成阴影。</li></ol><h4>10.2.1 第一步：分割视锥</h4><p>第一步的主要问题是确定分割面放在哪里。虽然用户可以根据应用的特定需求调整分割位置，我们的实现使用 Zhang et al. 2006 提出的<em>实用分割方案</em>。</p><p>在介绍该分割方案之前，我们先简要回顾阴影贴图中的走样问题，Stamminger and Drettakis 2002、Wimmer et al. 2004 与 Lloyd et al. 2006 对此已有充分讨论。</p><p>在<a href="https://developer.download.nvidia.com/books/gpugems3/10fig03.jpg" rel="noreferrer noopener">图 10-3</a>中，穿过一个纹素（尺寸为 <em>ds</em>）的光束落在物体表面，在世界空间中的长度为 <em>dz</em>。由 Direct3D 的标准投影矩阵可知，从该表面投影出的视图光束尺寸 <em>dp</em>（在归一化屏幕上）为 <em>dy</em>(<em>z</em> tan <em></em>)<sup>-1</sup>，其中 2<em></em> 是视锥的视场角。从<a href="https://developer.download.nvidia.com/books/gpugems3/10fig03.jpg" rel="noreferrer noopener">图 10-3</a>中表面的局部视图可得近似 <em>dy</em> ≈ <em>dz</em> cos <em>f</em>/cos <em></em>，其中 <em></em> 与 <em></em> 分别表示表面法线与指向屏幕的向量之间的夹角，以及表面法线与阴影贴图平面之间的夹角。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig03.jpg" alt="10fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig03.jpg" rel="noreferrer noopener">图 10-3</a> 阴影贴图走样</figcaption></figure><h4>阴影贴图走样</h4><p>该小表面上的走样误差于是定义为</p><p><img alt="0207equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0207equ01.jpg"/></p><p>我们通常把这个走样表示 <em>dp</em>/<em>ds</em> 分解为两部分：<em>透视走样 dz</em>/<em>zds</em> 与<em>投影走样</em> cos <em></em>/cos <em></em>（注意对给定视图矩阵而言 <em></em> 是常数）。当透视走样或投影走样变大时，就会出现阴影贴图欠采样。</p><p>投影走样取决于局部几何细节，因此减少这类走样需要在每帧做昂贵的场景分析。另一方面，透视走样来自透视缩短效应，可以通过用透视投影变换扭曲阴影平面来减少。更重要的是，透视走样与场景无关，因此减少透视走样不需要复杂的场景分析。</p><p>实用分割方案基于对透视走样的分析。</p><h4>实用分割方案</h4><p>在实用分割方案中，分割位置由下式确定：</p><p><img alt="0207equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0207equ02.jpg"/></p><p>其中 { <a href="https://developer.download.nvidia.com/books/gpugems3/clog.jpg" rel="noreferrer noopener"><img alt="clog.jpg" src="https://developer.download.nvidia.com/books/gpugems3/clog.jpg"/></a> } 与 { <a href="https://developer.download.nvidia.com/books/gpugems3/cuni.jpg" rel="noreferrer noopener"><img alt="cuni.jpg" src="https://developer.download.nvidia.com/books/gpugems3/cuni.jpg"/></a> } 分别是<em>对数分割方案</em>与<em>均匀分割方案</em>中的分割位置。理论上，对数分割方案的设计目标是在整个深度范围上获得透视走样的最优分布。另一方面，均匀分割方案中的走样分布与标准阴影贴图相同。<a href="https://developer.download.nvidia.com/books/gpugems3/10fig04.jpg" rel="noreferrer noopener">图 10-4</a>在阴影贴图空间中可视化了这三种分割方案。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig04.jpg" alt="10fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig04.jpg" rel="noreferrer noopener">图 10-4</a> 阴影贴图空间中实用分割方案的可视化</figcaption></figure><p>理论上最优的透视走样分布使 <em>dz</em>/<em>zds</em> 在整个深度范围上保持常数。如 Wimmer et al. 2004 所示，下面的简单推导给出最优的阴影贴图参数化 <em>s</em>(<em>z</em>)：</p><p><img alt="0207equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0207equ03.jpg"/></p><p>其中 <em></em> 是常数。由 <em>s</em>(<em>f</em>) = 1 得 <em></em> = ln(<em>f</em>/<em>n</em>)。当前硬件唯一支持的非线性变换是透视投影变换（<em>s</em> = <em>A</em>/<em>z</em> + <em>B</em>），因此为近似前面从 <em>z</em> 到 <em>s</em> 的对数映射，对数分割方案在若干深度层 z = <a href="https://developer.download.nvidia.com/books/gpugems3/clog.jpg" rel="noreferrer noopener"><img alt="clog.jpg" src="https://developer.download.nvidia.com/books/gpugems3/clog.jpg"/></a> 上对它离散化，如下式：</p><p><img alt="0208equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0208equ01.jpg"/></p><p>由于对数分割方案的设计目标是产生理论上均匀的透视走样分布，分配给每个分割的分辨率应为整体纹理分辨率的 1/<em>m</em>。把 <em>s<sub>i</sub></em> = <em>i</em>/<em>m</em> 代入上式得</p><p><img alt="0208equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0208equ02.jpg"/></p><p>对数分割方案的主要缺点是，实践中靠近观察者的分割部分长度太小，因此这些分割部分中能包含的物体很少。设想分割方案 PSSM(3) 的情形——即把视锥分割为三份。取 <em>f</em> = 1000、<em>n</em> = 1，第一个分割 <em>V</em> <sub>0</sub> 与第二个分割 <em>V</em> <sub>1</sub> 只占视距的 1% 与 10%。靠近观察者的部分通常过采样，较远的部分则欠采样。因此在实践中，对数分割方案很难直接使用。</p><p>均匀分割方案只是沿视线方向等距放置分割面：</p><p><img alt="0209equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0209equ01.jpg"/></p><p>均匀分割方案中的走样分布与标准阴影贴图相同。由于标准阴影贴图中 <em>s</em> = (<em>z</em>- <em>n</em>)/(<em>f</em> - <em>n</em>)，忽略投影走样，我们有</p><p><img alt="0209equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0209equ02.jpg"/></p><p>这意味着当物体靠近视平面时，标准阴影贴图的走样误差按双曲方式增大。与标准阴影贴图一样，均匀分割方案对靠近观察者的物体造成欠采样，对远处物体造成过采样。</p><p>由于对数与均匀分割方案无法同时为近、远深度层产生合适的采样密度，实用分割方案把两种方案结合起来，在整个深度范围上产生适中的采样密度。权重 <em></em> 按应用的实际需求调整分割位置。在我们当前的实现中，<em></em> = 0.5 是默认设置。在<a href="https://developer.download.nvidia.com/books/gpugems3/10fig04.jpg" rel="noreferrer noopener">图 10-4</a>中，实用分割方案为近、远分割部分都产生了适中的采样密度。关于<a href="https://developer.download.nvidia.com/books/gpugems3/10fig04.jpg" rel="noreferrer noopener">图 10-4</a>有一点重要说明：各分割方案中着色表示的采样频率仅用于示意，并非在理论上精确可视化走样分布。对多个深度层中（透视）走样分布感兴趣的读者可参阅 Lloyd et al. 2006。</p><h4>预处理</h4><p>在分割视锥之前，我们可能会调整相机的近、远平面，使视锥尽可能紧地包住可见物体。这样可以尽量减少视锥中的空白空间，提高可用的阴影贴图分辨率。</p><h4>10.2.2 第二步：计算光源的变换矩阵</h4><p>与标准阴影贴图一样，生成阴影贴图时需要知道光源的视图矩阵与投影矩阵。由于我们把光源的视锥 <em>W</em> 分割为多个子视锥 {<em>W<sub>i</sub></em> }，就需要为每个 <em>W <sub>i</sub></em> 分别构造独立的投影矩阵。</p><p>我们给出两种计算这些矩阵的方法：</p><ul><li>与场景无关的方法只是把光源视锥 <em>W<sub>i</sub></em> 收束到分割视锥 <em>V<sub>i</sub></em> 内，如 <a href="https://developer.download.nvidia.com/books/gpugems3/10fig05.jpg" rel="noreferrer noopener">图 10-5</a> 所示。由于没有用到场景信息，阴影贴图分辨率的利用可能不是最优的。<figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig05.jpg" alt="10fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig05.jpg" rel="noreferrer noopener">图 10-5</a> 计算分割部分 的光源投影矩阵。</figcaption></figure></li><li>与场景相关的方法把光源视锥 <em>W<sub>i</sub></em> 对准那些可能向分割视锥 <em>V<sub>i</sub></em> 投射阴影的物体，从而提高可用的纹理分辨率，参见后文的 <a href="https://developer.download.nvidia.com/books/gpugems3/10fig06.jpg" rel="noreferrer noopener">图 10-6</a> 。<figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig06.jpg" alt="10fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig06.jpg" rel="noreferrer noopener">图 10-6</a> 比较两种投影方法</figcaption></figure></li></ul><h4>与场景无关的投影</h4><p>在计算子视锥 <em>W<sub>i</sub></em> 的投影矩阵之前，我们必须求出<em>轴对齐包围盒</em>（AABB），即分割视锥 <em>V<sub>i</sub></em> 在光源坐标系下的包围盒。BoundingBox 类在<a href="https://developer.download.nvidia.com/books/gpugems3/10fig05.jpg" rel="noreferrer noopener">图 10-5</a>中用两个向量表示——最小向量与最大向量——分别存储最小坐标与最大坐标。</p><p>为简化计算，我们用函数 <code>CreateAABB()</code> 在光源的裁剪空间中确定分割视锥的轴对齐包围盒。注意我们把包围盒的最小 z 值设为 0，因为我们希望近平面位置保持不变。之所以要保持这一位置，是因为在分割包围盒的近平面与光源近平面之间可能存在阴影投射体。这一情形由<a href="https://developer.download.nvidia.com/books/gpugems3/10fig05.jpg" rel="noreferrer noopener">图 10-5</a>中的「投射体」对象示出。</p><p>之后我们构造一个<em>裁剪</em>矩阵，把光源视锥 <em>W<sub>i</sub></em> 有效地「拉近」到 <code>CreateAABB()</code> 算出的包围盒上。裁剪矩阵是一个偏心正交投影矩阵，按代码清单 10-1 所示计算。</p><h4>示例 10-1. 由裁剪空间包围值构造裁剪矩阵的伪代码</h4><pre><code>
+// 构建用于裁剪光源投影的矩阵
+// 给定的向量在光源的裁剪空间矩阵中
+Light::CalculateCropMatrix(Frustum splitFrustum)
+{
+  Matrix lightViewProjMatrix = viewMatrix * projMatrix;
+  // 在光源裁剪空间中求边界
+  BoundingBox cropBB = CreateAABB(splitFrustum.AABB, lightViewProjMatrix);
+  // 使用默认的近平面值
+  cropBB.min.z = 0.0f;
+  // 创建裁剪矩阵
+  float scaleX, scaleY, scaleZ;
+  float offsetX, offsetY, offsetZ;
+  scaleX = 2.0f / (cropBB.max.x - cropBB.min.x);
+  scaleY = 2.0f / (cropBB.max.y - cropBB.min.y);
+  offsetX = -0.5f * (cropBB.max.x + cropBB.min.x) * scaleX;
+  offsetY = -0.5f * (cropBB.max.y + cropBB.min.y) * scaleY;
+  scaleZ = 1.0f / (cropBB.max.z - cropBB.min.z);
+  offsetZ = -cropBB.min.z * scaleZ;
+  return Matrix(scaleX, 0.0f, 0.0f, 0.0f, 0.0f, scaleY, 0.0f, 0.0f, 0.0f, 0.0f,
+                scaleZ, 0.0f, offsetX, offsetY, offsetZ, 1.0f);
+}</code></pre><p>最后，我们用光源的视图–投影变换 <code>lightViewMatrix * lightProjMatrix * cropMatrix</code> 来生成阴影贴图纹理 <em>T<sub>i</sub></em> 。</p><p>注意，除了在光源裁剪空间中计算裁剪矩阵，我们也可以在其他空间（例如光源视图空间）中计算各分割专用的投影矩阵。不过由于点光源与平行光在光源裁剪空间中都转换为平行光，我们的方法对平行光与点光源的工作方式相同。此外，在光源裁剪空间中计算包围盒更直观。</p><h4>与场景相关的投影</h4><p>与场景无关的投影在多数情况下够用，但我们可以把场景几何考虑进来，进一步优化纹理分辨率的使用。</p><p>如我们在<a href="https://developer.download.nvidia.com/books/gpugems3/10fig06.jpg" rel="noreferrer noopener">图 10-6</a>中所见，与场景无关的 <em>W<sub>i</sub></em> 可能包含大量空白空间。每个 <em>W<sub>i</sub></em> 只需包含可能向 <em>V<sub>i</sub></em> 投射阴影的物体，称为<em>阴影投射体</em>，以 <em>B<sub>C</sub></em> 为例。由于物体的不可见部分不需要渲染进最终图像，我们把 <em>V<sub>i</sub></em> 内部（或部分内部）与阴影相关的物体单独存为<em>阴影接收体</em>，以 <em>B<sub>R</sub></em> 为例。合成整个场景的带阴影图像时，我们只渲染阴影接收体以提升渲染性能。注意从不投射阴影的物体（例如地形）应只包含在接收体中。</p><p>在与场景相关的方法中，<em>W<sub>i</sub></em> 的近平面被移动，以包住 <em>V<sub>i</sub></em> 或任一阴影投射体；<em>W<sub>i</sub></em> 的远平面被移动，以贴合 <em>V<sub>i</sub></em> 或任一阴影接收体。优化后的近、远平面提高了离散深度量化的精度。此外，由于阴影判定时只有阴影接收体需要做深度比较，我们调整 <em>W<sub>i</sub></em> 的 x、y 边界，使其包住 <em>V<sub>i</sub></em> 或任一阴影接收体。与场景相关方法的伪代码见代码清单 10-2。请特别注意深度边界（<code>min.z</code> 与 <code>max.z</code>）是如何选取的。</p><p>当前分割最终的光源视图–投影变换矩阵仍然是 <code>lightViewMatrix * lightProjMatrix * cropMatrix</code>。</p><h4>示例 10-2. 计算与场景相关边界的伪代码</h4><pre><code>Matrix Light::CalculateCropMatrix(ObjectList casters, ObjectList receivers,
+                                  Frustum frustum)
+{
+  // 包围盒
+  BoundingBox receiverBB, casterBB, splitBB;
+  Matrix lightViewProjMatrix = viewMatrix * projMatrix;
+  // 把所有投射体的包围盒合并成更大的 “casterBB”。
+  for (int i = 0; i < casters.size(); i++)
+  {
+    BoundingBox bb = CreateAABB(casters[i]->AABB, lightViewProjMatrix);
+    casterBB.Union(bb);
+  }
+  // 把所有接收体的包围盒合并成更大的 “receiverBB”。
+  for (int i = 0; i < receivers.size(); i++)
+  {
+    bb = CreateAABB(receivers[i]->AABB, lightViewProjMatrix);
+    receiverBB.Union(bb);
+  }
+  // 在光源的裁剪空间中
+  // 求当前分块的包围盒。
+  splitBB = CreateAABB(splitFrustum.AABB, lightViewProjMatrix);
+  // 与场景相关的包围体
+  BoundingBox cropBB;
+  cropBB.min.x = Max(Max(casterBB.min.x, receiverBB.min.x), splitBB.min.x);
+  cropBB.max.x = Min(Min(casterBB.max.x, receiverBB.max.x), splitBB.max.x);
+  cropBB.min.y = Max(Max(casterBB.min.y, receiverBB.min.y), splitBB.min.y);
+  cropBB.max.y = Min(Min(casterBB.max.y, receiverBB.max.y), splitBB.max.y);
+  cropBB.min.z = Min(casterBB.min.z, splitBB.min.z);
+  cropBB.max.z = Min(receiverBB.max.z, splitBB.max.z);
+  // 创建裁剪矩阵。
+  float scaleX, scaleY, scaleZ;
+  float offsetX, offsetY, offsetZ;
+  scaleX = 2.0f / (cropBB.max.x - cropBB.min.x);
+  scaleY = 2.0f / (cropBB.max.y - cropBB.min.y);
+  offsetX = -0.5f * (cropBB.max.x + cropBB.min.x) * scaleX;
+  offsetY = -0.5f * (cropBB.max.y + cropBB.min.y) * scaleY;
+  scaleZ = 1.0f / (cropBB.max.z – cropBB.min.z);
+  offsetZ = -cropBB.min.z * scaleZ;
+  return Matrix(scaleX, 0.0f, 0.0f, 0.0f, 0.0f, scaleY, 0.0f, 0.0f, 0.0f, 0.0f,
+                scaleZ, 0.0f, offsetX, offsetY, offsetZ, 1.0f);
+}</code></pre><h4>10.2.3 第三、四步：生成 PSSM 与合成阴影</h4><p>第三、四步可以按系统硬件以不同方式实现。由于 PSSM 使用多张阴影贴图，生成阴影贴图与合成阴影时可能需要额外的渲染遍。</p><p>为减轻这给渲染性能带来的负担，我们可以采用针对具体硬件的做法。下一节我们给出三种针对具体硬件生成 PSSM 与合成阴影的方法：</p><ul><li>多遍方法（无硬件加速）：该方法不使用硬件加速；生成阴影贴图（第三步）与合成阴影（第四步）都需要多遍渲染。</li><li>在 DirectX 9 级别硬件上部分加速（例如 Windows XP 与 NVIDIA GeForce 6800 GPU）：该方法去掉了合成场景阴影的额外渲染遍。</li><li>在 DirectX 10 级别硬件上完全加速（例如 Windows Vista 与 GeForce 8800 GPU）：这里我们减轻生成阴影贴图时额外渲染遍的负担。为此我们介绍两种不同做法：几何着色器克隆与实例化。</li></ul><p>在三种方法中，分割视锥与计算光源变换矩阵的实现都与前面所述相同。</p><h2>10.3 针对具体硬件的实现</h2><p>为便于理解我们三种针对具体硬件的实现，我们把不同实现的渲染管线可视化，如<a href="https://developer.download.nvidia.com/books/gpugems3/10fig07.jpg" rel="noreferrer noopener">图 10-7</a>所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig07.jpg" alt="10fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig07.jpg" rel="noreferrer noopener">图 10-7</a> 渲染管线的可视化</figcaption></figure><h4>10.3.1 多遍方法</h4><p>在 PSSM 的第一种实现中，我们只是依次渲染每张阴影贴图以及每个分割部分中的阴影。</p><h4>生成阴影贴图</h4><p>一旦得到当前分割部分的光源视图–投影变换矩阵 <code>lightViewMatrix * lightProjMatrix * cropMatrix</code>，就可以渲染相应的阴影贴图纹理。过程与标准阴影贴图相同：把所有阴影投射体渲染到深度缓冲。我们的实现使用 32 位浮点（R32F）纹理格式。</p><p>在多遍实现中，我们不像把 PSSM 存进多张独立的阴影贴图纹理，而是在每一遍渲染中复用同一张阴影贴图纹理，如代码清单 10-3 所示。</p><h4>示例 10-3. 多遍方法渲染管线的伪代码</h4><pre><code>for (int i = 0; i < numSplits; i++)
+{
+  // 计算当前分块的视锥。
+  splitFrustum = camera->CalculateFrustum(splitPos[i], splitPos[i + 1]);
+  casters = light->FindCasters(splitFrustum);
+  // 计算当前分块的光源变换矩阵。
+  cropMatrix = light->CalculateCropMatrix(receivers, casters, splitFrustum);
+  splitViewProjMatrix = light->viewMatrix * light->projMatrix * cropMatrix;
+  // 当前分块所用的纹理矩阵
+  textureMatrix = splitViewProjMatrix * texScaleBiasMatrix;
+  // 渲染当前的阴影贴图。
+  ActivateShadowMap();
+  RenderObjects(casters, splitViewProjMatrix);
+  DeactivateShadowMap();
+  // 为当前分块渲染阴影。
+  SetDepthRange(splitPos[i], splitPos[i + 1]);
+  SetShaderParam(textureMatrix);
+  RenderObjects(receivers, camera->viewMatrix * camera->projMatrix);
+}</code></pre><h4>合成阴影</h4><p>有了上一步生成的 PSSM，现在可以把阴影合成到场景中。在多遍方法中，我们需要在渲染阴影贴图之后立即合成阴影。</p><p>为获得最佳性能，我们应当从前到后渲染各分割部分。不过还需要一些特殊考虑。我们需要把相机的近、远平面调整到相应分割位置以提供裁剪，因为一个分割部分中的物体也可能与其他分割部分重叠。然而在修改近、远平面时，我们也改变了写入深度缓冲的值的范围。这会让深度测试失效，但我们可以通过在视口中使用不同的深度范围来避免这个问题。只需把分割面位置从视图空间转换到裁剪空间，并把它们用作新的深度最小值与最大值。</p><p>此后我们就可以渲染场景的阴影接收体，同时按标准方式采样阴影贴图。这意味着实现多遍方法不需要使用着色器。<a href="https://developer.download.nvidia.com/books/gpugems3/10fig08.jpg" rel="noreferrer noopener">图 10-8</a>比较了 SSM(2Kx2K) 与多遍 PSSM(3; 1Kx1K)。不过正如方法名称所示，生成阴影贴图与渲染场景阴影始终都要多遍渲染。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig08.jpg" alt="10fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig08.jpg" rel="noreferrer noopener">图 10-8</a> SSM 与多遍 PSSM 的比较</figcaption></figure><h4>10.3.2 DirectX 9 级别加速</h4><p>按前述方式实现简单的多遍方法时，我们必须用多遍渲染来合成场景中的阴影。不过借助可编程 GPU，我们可以在单遍渲染中完成这一步。</p><p>我们可以编写一个像素着色器，为每个片元找到并采样正确的阴影贴图。判断片元属于哪个分割部分的运算很简单，因为分割面平行于视平面。我们可以直接用深度值——或如我们的实现那样，用片元的视图空间 <em>z</em> 坐标——来确定正确的阴影贴图。</p><h4>设置</h4><p>由于我们在单遍中渲染场景阴影，就需要同时访问所有阴影贴图。与之前的实现不同，该方法要求阴影贴图分开存放，因此我们为每张阴影贴图创建独立的纹理。</p><p>注意，硬件支持的纹理采样器数量会限制我们能使用的阴影贴图数量。我们也可以把多张阴影贴图打包进单张纹理；不过多数 DirectX 9 级别硬件支持八个纹理采样器，这应该绰绰有余。</p><p>还要注意，我们需要使用「边界颜色」纹理寻址模式，因为有时会在纹理坐标范围之外采样阴影贴图。使用与场景相关的投影时就可能发生这种情况，因为光源子视锥 <em>W<sub>i</sub></em> 不一定覆盖所有接收体。</p><h4>合成阴影</h4><p>渲染场景阴影时，我们使用自定义的顶点着色器与像素着色器，如代码清单 10-4 所示。在顶点着色器中，我们照常变换每个顶点。不过我们还计算：（1）顶点的视图空间位置，因为要用它来确定片元对应的阴影贴图；（2）顶点在每张阴影贴图纹理空间中的位置。我们通过把顶点乘以一个 textureMatrix 来确定顶点位置。这与标准阴影贴图所用的做法相同，只是现在对所有阴影贴图都用。我们把所有变换后的坐标输出到纹理坐标寄存器，供像素着色器使用。</p><p>在像素着色器中，我们遍历所有分割，判断片元的视图空间距离是否小于该分割的结束位置。确定分割索引后，用相应的纹理坐标采样相应的阴影贴图，并做标准的阴影贴图深度测试。</p><h4>示例 10-4. 在 DirectX 9 中合成阴影的顶点着色器与像素着色器</h4><pre><code>
+sampler2D shadowMapSampler[numSplits];
+void VS_RenderShadows(in float4 pos : POSITION, // 物体空间坐标
+                        out float4 posOut : POSITION, // 裁剪空间坐标
+                        out float4 texCoord[numSplits + 1] : TEXCOORD) // 纹理坐标
+{
+  // 计算世界坐标位置。
+  float4 posWorld = mul(pos, worldMatrix);
+  // 变换顶点。
+  posOut = mul(posWorld, viewProjMatrix);
+  // 把观察空间位置存入第一个纹理
+  // 坐标寄存器。
+  texCoord[0] = mul(posWorld, viewMatrix);
+  // 把阴影贴图坐标存入其余的
+  // 纹理坐标寄存器。
+  for (int i = 0; i < numSplits; i++)
+  {
+    texCoord[i + 1] = mul(posWorld, textureMatrix[i]);
+  }
+}
+float4 PS_RenderShadows(float4 texCoord[numSplits + 1] : TEXCOORD) : COLOR
+{
+  float light = 1.0f;
+  // 从第一个纹理坐标寄存器取出观察空间距离。
+  float distance = texCoord[0].z;
+  for (int i = 0; i < numSplits; i++)
+  {
+    if (distance < splitPlane[i])
+    {
+      float depth = texCoord[i + 1].z / texCoord[i + 1].w;
+      float depthSM = tex2Dproj(shadowMapSampler[i], texCoord[i + 1]);
+      // 标准深度比较
+      light = (depth < depthSM) ? 1.0f : 0.0f;
+      break;
+    }
+  }
+  return light;
+}</code></pre><h4>性能</h4><p>我们在 DirectX 9 与 OpenGL 中都实现了这种部分加速的方法。在 DirectX 9 中，我们在像素着色器里实现<em>百分比邻近滤波</em>（PCF）（Reeves et al. 1987，约 25 条指令），在 OpenGL 中则使用硬件加速的 PCF（一条指令）。我们在增加场景中物体数量时把性能与多遍方法作了比较。所有测试中分割数都是四。</p><p>从<a href="https://developer.download.nvidia.com/books/gpugems3/10fig09.jpg" rel="noreferrer noopener">图 10-9</a>所示结果可以看出，DirectX 9 级别的加速提升了性能。但当 PCF 在像素着色器中实现时，着色器变得更复杂。着色器复杂度的增加使性能下降，不过随着场景复杂度提高，这一点变得不那么显著。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig09.jpg" alt="10fig09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig09.jpg" rel="noreferrer noopener">图 10-9</a> GeForce 6800 Ultra（）与 GeForce 8800 GTS（）上的性能结果</figcaption></figure><h4>10.3.3 DirectX 10 级别加速</h4><p>虽然在 DirectX 9 级别硬件上渲染场景阴影得到了加速，生成 PSSM 仍需多遍渲染。换句话说，DirectX 9 只为我们提供了 PSSM 的部分加速。而在 DirectX 10 级别硬件上，生成 PSSM 与渲染场景阴影都可以加速。</p><h4>Direct3D 10 中的特性</h4><p>Direct3D 10 管线在顶点着色器与像素着色器之间引入了<em>几何着色器</em>（GS）这一新的着色阶段。几何着色器对每个图元执行一次，以该图元的顶点为输入，输出若干新图元。它们还提供对图元邻接信息的访问，并具有与顶点着色器相似的指令集（包括对纹理采样的支持）。</p><p>Direct3D 10 的另一项新特性是渲染目标数组，它类似于 Direct3D 9 的多重渲染目标（MRT）。但 MRT 只能让像素着色器为每个渲染目标分别输出，而渲染目标数组（借助几何着色器）可以把完全不同的几何体输出到各个渲染目标。这是通过 GS 输出实现的，我们可以在其中为每个图元单独指定渲染目标索引。</p><p>这些特性让我们能把几何体动态地「克隆」到具有不同变换的不同渲染目标中。现在我们可以提升生成 PSSM 的性能，因为每个阴影投射体只需提交一次。</p><h4>设置</h4><p>首先需要为阴影贴图创建纹理数组。如代码清单 10-5 所示，我们照常使用 32 位浮点纹素格式，但把它定义为「无类型」，因为它既要作为深度缓冲使用，又要作为纹理使用。<code>ArraySize</code> 参数设为分割数，于是每个分割各有一张纹理。此外，必须设置 <code>BindFlags</code>，使我们能把该纹理数组同时绑定为深度–模板视图与着色器资源视图。</p><p>资源视图是 Direct3D 10 的另一项新特性，它允许以不同方式解释同一份资源。在我们的情形中，既要把它当可渲染的深度–模板表面访问该纹理数组，又要当着色器可访问的纹理访问它，因此必须为两者都创建视图。</p><p>如代码清单 10-6 所示，创建着色器资源视图很简单。我们把视图维度设为二维纹理数组，把纹素格式设为单通道浮点颜色。其余设置与创建纹理数组时相同。</p><p>深度–模板视图的创建方式类似，但纹素格式必须设为与深度缓冲兼容的格式，如代码清单 10-7 所示。</p><p>现在我们有了一个阴影贴图数组，可以把它们设为深度–模板目标，并绑定为可采样的纹理。注意我们不需要创建渲染目标，因为我们只关心渲染深度值，而不是颜色信息。</p><p>我们还需要创建所需的着色器，这将在接下来的两个小节中说明。</p><h4>示例 10-5. 创建纹理数组</h4><pre><code>D3D10_TEXTURE2D_DESC DescTex = {};
+DescTex.Width = shadowMapSize;
+DescTex.Height = shadowMapSize;
+DescTex.ArraySize = numSplits;
+DescTex.Format = DXGI_FORMAT_R32_TYPELESS;
+DescTex.Usage = D3D10_USAGE_DEFAULT;
+DescTex.BindFlags = D3D10_BIND_DEPTH_STENCIL | D3D10_BIND_SHADER_RESOURCE;
+DescTex.MipLevels = 1;
+DescTex.SampleDesc.Count = 1;
+device-&gt;CreateTexture2D(...)</code></pre><h4>示例 10-6. 创建着色器资源视图</h4><pre><code>D3D10_SHADER_RESOURCE_VIEW_DESC DescSRV = {};
+DescSRV.Format = DXGI_FORMAT_R32_FLOAT;
+DescSRV.ViewDimension = D3D10_SRV_DIMENSION_TEXTURE2DARRAY;
+DescSRV.Texture2DArray.ArraySize = numSplits;
+DescSRV.Texture2DArray.MipLevels = 1;
+device-&gt;CreateShaderResourceView(...)</code></pre><h4>示例 10-7. 创建深度–模板资源视图</h4><pre><code>D3D10_DEPTH_STENCIL_VIEW_DESC DescDSV = {};
+DescDSV.Format = DXGI_FORMAT_D32_FLOAT;
+DescDSV.ViewDimension = D3D10_DSV_DIMENSION_TEXTURE2DARRAY;
+DescDSV.Texture2DArray.ArraySize = numSplits;
+device-&gt;CreateDepthStencilView(...);</code></pre><h4>生成阴影贴图</h4><p>渲染管线看起来与 DirectX 9 版本相似。主要区别是我们只渲染阴影贴图一次。此外，现在需要把各分割的裁剪矩阵存入一个数组，因为着色器中会用到全部矩阵。</p><p>更重要的是，在为某个分割找出可能投射阴影的物体之后，我们需要每个投射体记录两个变量：<code>firstSplit</code> 与 <code>lastSplit</code>。这两个变量确定该阴影投射体需要被渲染到的分割索引范围，如<a href="https://developer.download.nvidia.com/books/gpugems3/10fig10.jpg" rel="noreferrer noopener">图 10-10</a>所示。注意我们只需存首、尾两个索引，因为连续的包围形状总是与一段连续的分割部分重叠。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig10.jpg" alt="10fig10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig10.jpg" rel="noreferrer noopener">图 10-10</a> 阴影投射体跨越从 到 的分割部分</figcaption></figure><p>开始渲染阴影贴图时，我们需要设置新的视口并更换渲染目标。这如代码清单 10-8 所示，其中变量 pDSV 指向先前创建的深度–模板视图。由于我们只渲染深度信息，必须把渲染目标数量设为 0，并把渲染目标指针设为 <code>NULL</code>。</p><h4>示例 10-8. 启用阴影贴图渲染</h4><pre><code>D3D10_VIEWPORT vp;
+vp.Width = shadowMapSize;
+vp.Height = shadowMapSize;
+vp.MinDepth = 0;
+vp.MaxDepth = 1;
+vp.TopLeftX = 0;
+vp.TopLeftY = 0;
+device-&gt;RSSetViewports(1, &amp;vp);
+device-&gt;OMSetRenderTargets(0, NULL, pDSV);</code></pre><p>然后我们把每个阴影投射体绘制一次，但放在一个特殊的渲染循环中。在该循环中，我们要用投射体中的相应值更新着色器常量 <code>firstSplit</code> 与 <code>lastSplit</code>。由于这些变量是「逐实例」数据，应像物体的世界矩阵那样处理。</p><p>下面我们给出两种把几何体动态克隆到不同分割部分的解法。</p><h4>使用几何着色器克隆</h4><p>在第一种方法中，我们用几何着色器把提交的三角形克隆到不同渲染目标。该技术类似于 Microsoft DirectX SDK 中给出的单遍立方体贴图技术。我们先讲解细节，然后讨论其性能优势。</p><p>采用这种技术时，顶点着色器只用世界矩阵、光源的视图矩阵和光源的投影矩阵变换每个顶点。无论投影者必须渲染到哪些阴影贴图，这次变换对所有投影者都是共用的。针对各个分块的变换改为在几何着色器中应用，如 <a href="https://developer.download.nvidia.com/books/gpugems3/10fig11.jpg" rel="noreferrer noopener">图 10-11</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig11.jpg" alt="10fig11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig11.jpg" rel="noreferrer noopener">图 10-11</a>　几何着色器克隆方法中的 GPU 渲染管线</figcaption></figure><p>换句话说，我们现在用几何着色器把三角形克隆到各个分块对应的渲染目标，然后再用相应的裁剪矩阵变换这些三角形。</p><p>几何着色器的代码见代码清单 10-9，其中我们遍历要渲染的每个分块——即从 <code>firstSplit</code> 到 <code>lastSplit</code>。在这个循环里，我们用分块对应的裁剪矩阵变换每个顶点。我们还设置渲染目标索引，最后把变换后的顶点作为新三角形输出。注意渲染目标索引实际上是逐顶点指定的，但只有首个顶点的值有意义。</p><h4>示例 10-9. 渲染阴影贴图的几何着色器代码</h4><pre><code>
+// 几何着色器输出结构
+   struct GS_OUT
+{
+  float4 pos : SV_POSITION;
+  uint RTIndex : SV_RenderTargetArrayIndex;
+};
+// 几何着色器
+[maxvertexcount(NUMSPLITS * 3)]
+void GS_RenderShadowMap(triangle VS_OUT In[3],
+                        inout TriangleStream<GS_OUT> triStream)
+{
+  // 对每个要渲染的分块
+   for(int split = firstSplit; split <= lastSplit; split++)
+  {
+    GS_OUT Out;
+    // 设置渲染目标索引。
+    Out.RTIndex = split;
+    // 对三角形的每个顶点
+   for(int vertex = 0; vertex < 3; vertex++)
+    {
+      // 用该分块专用的裁剪矩阵变换顶点。
+      Out.pos = mul(In[vertex].pos, cropMatrix[split]);
+      // 把顶点追加到流中
+      triStream.Append(Out);
+    }
+    // 标记三角形结束
+    triStream.RestartStrip();
+  }
+}</code></pre><p>这个阶段不需要像素着色器，因为我们并不关心绘制颜色信息。所以它可以简单地设为 <code>NULL</code>。</p><p>为清楚起见，我们给出的实现对每个矩阵分别做变换。把视图/投影/裁剪矩阵预先相乘后，我们可以用这种方法实现分块方案 PSSM(<em>m</em>)，使每个顶点的变换次数为 (1 + <em>m</em>)。也就是说，每个顶点先用世界矩阵变换一次，再用视图/投影/裁剪矩阵变换 <em>m</em> 次。采用类似设置的常规阴影贴图渲染需要 (<em>m</em> + <em>m</em>) 次变换。不过，如果我们把世界矩阵也预先相乘，两种方法的变换次数就都是 <em>m</em>。几何着色器克隆方法的优势在于减少了 API 开销——因为每个投影者只提交一次，多余绘制调用、渲染目标切换等开销都被消除。</p><h4>使用实例化</h4><p>生成阴影贴图的第二种方法可以用 Direct3D 10 改进的实例化支持来实现。顶点着色器现在可以通过语义 <code>SV_InstanceID</code> 取得正在渲染的实例索引。</p><p>这意味着我们可以用实例化为每个分块克隆几何体，并从实例索引确定分块索引。之后就能在顶点着色器里做裁剪矩阵变换，几何着色器剩下的唯一任务就是设置渲染目标索引，如代码清单 10-10 所示，并在<a href="https://developer.download.nvidia.com/books/gpugems3/10fig12.jpg" rel="noreferrer noopener">图 10-12</a> 中可视化。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig12.jpg" alt="10fig12.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig12.jpg" rel="noreferrer noopener">图 10-12</a>　实例化方法中的 GPU 渲染管线</figcaption></figure><p>要用实例化渲染，需要调用函数 <code>DrawIndexedInstanced()</code>，实例数设为 <code>lastSplit</code> - <code>firstSplit</code> + 1。这是 CPU 侧唯一需要改动的地方；不必设置额外的顶点流。</p><h4>示例 10-10. 用实例化生成阴影贴图的顶点着色器与几何着色器</h4><pre><code>
+   struct VS_IN
+{
+  float4 pos : POSITION;
+  uint instance : SV_InstanceID;
+};
+struct VS_OUT
+{
+  float4 pos : POSITION;
+  uint split : TEXTURE0;
+};
+VS_OUT VS_RenderShadowMap(VS_IN In)
+{
+  VS_OUT Out;
+  // 用世界/观察/投影矩阵变换。
+  Out.pos = mul(In.pos, ...);
+  // 由实例 ID 确定分块索引。
+  Out.split = firstSplit + In.instance;
+  // 用该分块专用的裁剪矩阵变换。
+  Out.pos = mul(Out.pos, cropMatrix[Out.split]);
+  return Out;
+}
+[maxvertexcount(3)]
+void GS_RenderShadowMap(triangle VS_OUT In[3],
+                        inout TriangleStream<GS_OUT> triStream)
+{
+  GS_OUT Out;
+  // 设置渲染目标索引。
+  Out.RTIndex = In[0].split;
+  // 把三角形原样传出。
+  Out.pos = In[0].pos;
+  triStream.Append(Out);
+  Out.pos = In[1].pos;
+  triStream.Append(Out);
+  Out.pos = In[2].pos;
+  triStream.Append(Out);
+  triStream.RestartStrip();
+}</code></pre><p>用这种方法同样消除了多余的 API 开销。不过变换次数与常规阴影贴图渲染相同。实例化方法仍可能比几何着色器克隆更快，因为用几何着色器展开大量数据可能代价很高。</p><p>我们也可以把克隆与实例化两种方法结合起来，让两者各负责一部分分块的几何体生成。例如在分块方案 PSSM(4) 中，可以对两个分块用实例化，对另外两个分块用几何着色器克隆。</p><h4>合成阴影</h4><p>渲染阴影的过程与 DirectX 9 中几乎相同。主要差别在于纹理数组的采样。要按传统方式做，可以用函数 <code>SampleLevel()</code> 从数组中给定的纹理采样。</p><p>使用这个函数很直接，但要注意第二个参数是 <code>float3</code>，前两个浮点数给出 UV 坐标，第三个浮点是纹理索引。mipmap 层级由函数的第三个参数指定。</p><p>用这个函数采样到正确的纹理后，我们照常做深度比较。不过这不是最优方法，尤其是在想用 PCF 的时候。下面给出一种更好的做法，它使用立方体贴图。</p><h4>使用立方体贴图</h4><p>HLSL 4 引入了一个新函数 <code>SampleCmpLevelZero()</code>，它同时完成采样与比较。它还可以配合线性比较滤波使用来获得 PCF，这意味着函数会取四次采样，分别比较，然后对结果做双线性滤波。</p><p>遗憾的是，<code>SampleCmpLevelZero()</code> 目前不能用于 Texture2DArray。但它可以用于 TextureCube。TextureCube 通常用于立方体贴图，本质上是一个包含六张纹理的纹理数组，立方体的每个面一张。</p><p>这意味着我们可以用一个 TextureCube 支持最多六个分块。使用 TextureCube 只需在设置上做少量改动，如代码清单 10-11 所示。阴影贴图的渲染方式与之前相同。</p><p>采样稍显复杂，因为访问立方体贴图时不用标准纹理坐标，改用指向立方体某个面的向量。这个立方体是单位立方体，以原点为中心。面的排序是：从数组索引 0 到 5，各面分别位于 +<em>x</em>、-<em>x</em>、+<em>y</em>、-<em>y</em>、+<em>z</em>、-<em>z</em>。由此可以确定访问每个面的正确方向向量，如代码清单 10-12 所示。</p><p>不过代码清单 10-12 的做法并不必要，因为我们可以把不同情况拆进三个查找数组，如代码清单 10-13 所示，这能略微提高像素着色器的性能。</p><p>另一个问题是不能使用边框颜色寻址模式，因为边框会被直接映射到立方体贴图的另一个面上。不过，如果坐标超出纹理坐标的合法范围就完全跳过采样，我们可以模拟边框颜色寻址模式。这也见代码清单 10-13。</p><p>在我们的测试中，用 TextureCube 配合 <code>SampleCmpLevelZero()</code>，与用 Texture2DArray 在像素着色器中实现四抽样 PCF（约 25 条指令）相比，性能略有提升。不过用 TextureCube 时，即使只需较少的纹理，也总会分配六张，常常造成显存浪费。</p><h4>示例 10-11. 创建 TextureCube 所需的改动</h4><pre><code>
+// 创建纹理数组时
+DescTex.ArraySize = 6;
+DescTex.MiscFlags = D3D10_RESOURCE_MISC_TEXTURECUBE;
+. . .
+// 创建着色器资源视图时
+DescSRV.ViewDimension = D3D10_SRV_DIMENSION_TEXTURECUBE;
+DescSRV.TextureCube.MipLevels = 1;</code></pre><h4>示例 10-12. 从 TextureCube 中选择面</h4><pre><code>
+float3 cubeCoord;
+if (split == 0)
+  cubeCoord = float3(0.5, 0.5 - pos.y, 0.5 - pos.x);
+else if (split == 1)
+  cubeCoord = float3(-0.5, 0.5 - pos.y, pos.x - 0.5);
+else if (split == 2)
+  cubeCoord = float3(pos.x - 0.5, 0.5, pos.y - 0.5);
+else if (split == 3)
+  cubeCoord = float3(pos.x - 0.5, -0.5, 0.5 - pos.y);
+else if (split == 4)
+  cubeCoord = float3(pos.x - 0.5, 0.5 - pos.y, 0.5);
+else if (split == 5)
+  cubeCoord = float3(0.5 - pos.x, 0.5 - pos.y, -0.5);</code></pre><h4>示例 10-13. 用 TextureCube 合成阴影的像素着色器代码</h4><pre><code>
+   static const float3 offset[6] = {
+  float3(0.5, 0.5, 0.5), float3(-0.5, 0.5, -0.5),
+  float3(-0.5, 0.5, -0.5), float3(-0.5, -0.5, 0.5),
+  float3(-0.5, 0.5, 0.5), float3(0.5, 0.5, -0.5)};
+static const float3 mulX[6] = {
+  float3(0, 0, -1), float3(0, 0, 1), float3(1, 0, 0),
+  float3(1, 0, 0), float3(1, 0, 0), float3(-1, 0, 0)};
+static const float3 mulY[6] = {
+  float3(0, -1, 0), float3(0, -1, 0), float3(0, 0, 1),
+  float3(0, 0, -1), float3(0, -1, 0), float3(0, -1, 0)};
+SamplerComparisonState shadowMapSampler
+{
+  ComparisonFunc = Less;
+  Filter = COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+};
+float4 PS_RenderShadows(PS_INPUT In) : SV_Target
+{
+  float light = 1.0f;
+  for(int split = 0; split < numSplits; split++)
+  {
+    if(In.distance > splitEnd[split])
+    {
+      float4 texpos = In.texturePos[split];
+      texpos.xyz /= texpos.w;
+      // 立方体贴图向量查找
+   float3 cubeCoord = offset[split] +
+                          mulX[split] * texpos.x +
+                          mulY[split] * texpos.y;
+      // 不要在边界之外采样。
+   if(min(pos.x, pos.y) > 0 && max(pos.x, pos.y) < 1)
+      {
+        light = shadowMapCube.SampleCmpLevelZero(shadowMapSampler,
+                                                 cubeCoord, texpos.z);
+      }
+      break;
+    }
+  }
+  return light;
+}</code></pre><h2>10.4 进一步的优化</h2><p>要提高 PSSM 的阴影质量，可以使用以下优化：</p><ul><li><strong>滤波技术。</strong> <em>百分比邻近滤波</em>（PCF）对每个像素做多次深度测试，从而帮助阴影贴图抗锯齿，使阴影边界看起来平滑得多。<em>方差阴影贴图</em>（VSM）（Donnelly and Lauritzen 2006）把阴影贴图的纹素视为深度的分布，并以可线性滤波的方式表示该分布。切比雪夫不等式用于近似任意滤波区域上的遮蔽。</li><li><strong>纹理打包。</strong> 在硬件加速实现中，与其把 PSSM 存进多张纹理，用户可以把它们打包进一张纹理。这在可用纹理采样器很少时是一种可行方案。在 DirectX 10 中，则可以改用纹理数组。</li><li><strong>扭曲算法。</strong> 分块方案的一个有趣应用是在各分块中分别施加扭曲算法（例如 PSM、LiSPSM 和 TSM）。</li><li><strong>变化的纹理分辨率。</strong> 我们当前的 PSSM 实现中所有阴影贴图分辨率相同。为减少纹理消耗，用户可以在不同分块层调整每张阴影贴图的尺寸。</li><li><strong>线性化深度分布</strong>（Brabec et al. 2002）。使用线性深度度量代替标准的投影 <em>z</em>，可以提高点光源离散深度量化的精度。</li></ul><h2>10.5 结果</h2><p>本章余下部分展示的 <a href="https://developer.download.nvidia.com/books/gpugems3/10fig13.jpg" rel="noreferrer noopener">图 10-13</a> 至 <a href="https://developer.download.nvidia.com/books/gpugems3/10fig16.jpg" rel="noreferrer noopener">10-16</a> 截图取自 <em>Dawnspire: Prelude</em>，采用 PSSM(3; 1Kx1K) 方案（多遍方法）在 1280x1024 的图像尺寸下渲染。性能在配置为 AMD Athlon64 X2 3800 CPU、1 GB DDR 内存、GeForce 7800 GTX GPU 的 PC 上测得。这些图中的可见三角形数量在 165 K 到 319 K 之间。在我们的实验中，PSSM(3) 与 PSSM(4) 都在性能与视觉质量之间取得了良好权衡（两种方案分别为每秒 31 帧和 27 帧以上）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig13.jpg" alt="10fig13.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig13.jpg" rel="noreferrer noopener">图 10-13</a>　截图自</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig14.jpg" alt="10fig14.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig14.jpg" rel="noreferrer noopener">图 10-14</a>　取自</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig15.jpg" alt="10fig15.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig15.jpg" rel="noreferrer noopener">图 10-15</a>　取自</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/10fig16.jpg" alt="10fig16.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/10fig16.jpg" rel="noreferrer noopener">图 10-16</a>　取自</figcaption></figure><p>在许多应用中，尤其是复杂的大尺度场景，渲染高质量阴影对用户感受到的真实感至关重要。即使没有硬件加速，也值得付出多遍渲染的代价来大幅提升阴影质量。</p><h2>10.6 结论</h2><p>平行分割阴影贴图的基本思想直观，实现也简单，我们的多遍方法就是如此。无需复杂的场景分析，我们就能用实用的分割方案快速确定分割位置。不过，如果不使用硬件加速，多次渲染遍造成的性能下降会阻止这项技术在大众市场应用中广泛使用。</p><p>本章我们给出两种硬件加速方法：在 DirectX 9 级别 GPU 上的部分加速实现，以及在 DirectX 10 级别 GPU 上的完全加速实现。部分加速实现避免了合成阴影所需的额外渲染遍。在 DirectX 10 渲染管线中，我们的完全加速实现降低了渲染阴影贴图与场景阴影两方面额外渲染遍的代价。</p><p>在我们的 PSSM 技术中，还有许多其他方法可以提升性能与阴影质量，但有一点是确定的：随着 GPU 的快速演进，PSSM 是高质量阴影渲染的一条有前景的路径。</p><p>带完整源码的演示见本书附赠 DVD。本章介绍的三种实现方法都包含在内。</p><h2>10.7 参考文献</h2><p>Brabec, Stefan, Thomas Annen, and Hans-Peter Seidel. 2002. "Practical Shadow Mapping." <em>Journal of Graphical Tools</em> 7(4)，第 9–18 页。</p><p>Donnelly, William, and Andrew Lauritzen. 2006. "Variance Shadow Maps."，载 <em>Proceedings of the Symposium on Interactive 3D Graphics and Games 2006</em>，第 161–165 页。</p><p>Lloyd, Brandon, David Tuft, Sung-Eui Yoon, and Dinesh Manocha. 2006. "Warping and Partitioning for Low Error Shadow Maps."，载 <em>Proceedings of the Eurographics Symposium on Rendering 2006</em>，pp. 215–226。</p><p>Martin, Tobias, and Tiow-Seng Tan. 2004. "Anti-aliasing and Continuity with Trapezoidal Shadow Maps."，载 <em>Proceedings of the Eurographics Symposium on Rendering 2004</em>，第 153–160 页。</p><p>Reeves, William, David Salesin, and Robert Cook. 1987. "Rendering Antialiased Shadows with Depth Maps."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 1987)</em> 21(3)，第 283–291 页。</p><p>Stamminger, Marc, and George Drettakis. 2002. "Perspective Shadow Maps."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)，第 557–562 页。</p><p>Tadamura, Katsumi, Xueying Qin, Guofang Jiao, and Eihachiro Nakamae. 2001. "Rendering Optimal Solar Shadows with Plural Sunlight Depth Buffers." <em>The Visual Computer</em> 17(2)，第 76–90 页。</p><p>Williams, Lance. 1978. "Casting Curved Shadows on Curved Surfaces."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 1978)</em> 12(3)，第 270–274 页。</p><p>Wimmer, Michael, Daniel Scherzer, and Werner Purgathofer. 2004. "Light Space Perspective Shadow Maps."，载 <em>Proceedings of the Eurographics Symposium on Rendering 2004</em>，第 143–152 页。</p><p>Zhang, Fan, Hanqiu Sun, Leilei Xu, and Kit-Lun Lee. 2006. "Parallel-Split Shadow Maps for Large-Scale Virtual Environments."，载 <em>Proceedings of ACM International Conference on Virtual Reality Continuum and Its Applications 2006</em>，第 311–318 页。</p><p>Zhang, Fan, Hanqiu Sun, Leilei Xu, and Kit-Lun Lee. 2007. "Hardware-Accelerated Parallel-Split Shadow Maps." <em>International Journal of Image and Graphics</em>。待出版。</p><p><em>所有截图均来自</em> Dawnspire: Prelude <em>（<a href="http://www.dawnspire.com" rel="noreferrer noopener">http://www.dawnspire.com</a>），由 Silent Grove Studios 提供。感谢 Anders Hammervald（<a href="mailto:anders@hammervald.com">anders@hammervald.com</a>）在准备这些图像时给予的真诚帮助。示例图中使用的模型下载自 <a href="http://www.planetquake.com" rel="noreferrer noopener">http://www.planetquake.com</a>。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-10-parallel-split-shadow-maps-programmable-gpus" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-10-parallel-split-shadow-maps-programmable-gpus</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

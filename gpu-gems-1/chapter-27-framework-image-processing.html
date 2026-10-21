@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 27 章　一个图像处理框架 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 27 章　一个图像处理框架」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 27 章　图像处理框架</h1>
+<p><em>Frank Jargstorff<br> NVIDIA</em></p><p>本章介绍一个在 GPU 上做图像处理的 C++ 框架。使用这个框架，程序员可以方便地定义图像滤波器，并把滤波器连接成滤波器图。框架中的大多数类只是充当图形板上一块块结构的句柄，因此图像的实际处理几乎完全由 GPU 完成。框架基于 OpenGL API，使用 Cg 编程语言实现图像处理算法。不过本章所体现的思路同样适用于 Microsoft 的 DirectX API 与 HLSL 编程语言。我们希望这个框架对正在设计类似图像处理系统的读者有用，无论是作为可用的基础，还是作为对沿途必须解决的问题的分析。</p><h2>27.1 引言</h2><p>我们给出的框架有价值，原因有二。第一，GeForce FX 系列这类较新的 GPU 支持日益灵活的顶点与片元着色器编程范式。第二，今天的 GPU 已经强大到在许多类信号处理应用中超过 CPU 的性能。</p><p>用滤波器图组织图像滤波器对视频处理尤为实用，因为视频处理是用同一套滤波器配置处理一长串图像（例如 Microsoft 的 DirectShow 就是一个基于滤波器图的实时视频处理库）。参见图 27-1。滤波器图在批处理场景中也很有用，例如合成电影级画质的帧，或为网络出版处理大批图像（例如 Apple 的 Shake 合成软件或 Adobe 的 ImageReady）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig27-01.jpg" alt="fig27-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig27-01.jpg" rel="noreferrer noopener">图 27-1</a> 一个滤波器图</figcaption></figure><p>GPU 通过 Direct3D 和 OpenGL 这类传统 3D API 来编程。这些 API 层次相当低，最初是为实现 3D 应用而设计的。直接在这些 API 中实现 GPU 图像处理会是件别扭的事。一个充当隔离层、专为图像处理设计的框架，会大幅简化 GPU 上图像处理的实现。为便于编程，框架应封装所有重复性任务，并尽量把程序员与底层图形 API 隔开。下面几节描述这样一个框架的基本版本。该框架起示例作用，力图涵盖最重要的设计与实现层面。不过它并不涉及工业级库中必需的许多更复杂的方案，例如把图像切成瓦片以处理任意大的图像。</p><h2>27.2 框架设计</h2><p>滤波器网络处理两类对象：</p><ul><li>在网络中流动的数据对象。在我们的情形中，流动的数据是图像。</li><li>作用于数据的算子。算子有不同类型。有些算子产生输出图像而不吸收输入图像（例如从磁盘加载图像的算子）。这类算子在网络中充当源，因此称为<em>源算子。</em>另一些算子消耗输入图像而不产生输出图像（例如把图像显示到屏幕上的算子）。由于这类算子充当数据汇，我们称之为<em>汇算子。</em>参见图 27-2。<figure><img src="https://developer.download.nvidia.com/books/gpugems/fig27-02.jpg" alt="fig27-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig27-02.jpg" rel="noreferrer noopener">图 27-2</a> 一个 、一个 ，以及一个</figcaption></figure></li></ul><p>对 C++ 实现来说，这带来两个问题。其一，按良好的设计要求，创建对象的对象也应负责删除这些对象（Meyers 1997）。由于创建和删除图像的操作者通常不是同一个，我们需要为 <code>Image</code> 类提供某种自动内存管理。</p><p>图像是相当简单的数据结构，不含引用，尤其不含对自身的引用。因此，简单的引用计数就足以作为内存管理策略。</p><p>第二个问题是管线应如何更新。也就是说，让数据在图中渗透的机制是什么？有两种选择：把数据沿图向下推，或从结果节点拉取数据，而结果节点再从自己的输入拉取所需数据。由于应用中常用模型-视图-控制器模式（Gamma et al. 1995），我们决定用拉取的方式实现更新。</p><h4>27.2.1 算子与滤波器</h4><p>上一节描述的基本算子直接对应框架设计中的抽象基类。</p><p><code>SourceOperator</code> 基类由两个纯虚函数组成：</p><pre><code>virtual bool dirty() = 0;
+virtual Image image() = 0;</code></pre><p><code>image()</code> 方法返回算子的输出图像。<code>dirty</code> 方法判断最近一次返回的图像是否仍然有效。</p><p><code>SinkOperator</code> 基类只包含一个虚函数和一个指向 <code>SourceOperator</code> 的受保护引用。</p><pre><code>virtual void setSourceOperator(SourceOperator *pSourceOperator);
+
+protected:
+
+SourceOperator *_pSourceOperator;</code></pre><p>汇算子从 <code>_pSourceOperator</code> 所指向的源算子取得输入图像。<code>setSourceOperator()</code> 方法设置这个引用。</p><p><code>ImageFilter</code> 类同时派生自 <code>SourceOperator</code> 与 <code>SinkOperator</code>，如图 27-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig27-03.jpg" alt="fig27-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig27-03.jpg" rel="noreferrer noopener">图 27-3</a> 类图</figcaption></figure><p><code>ImageFilter</code> 重载了 <code>image()</code> 与 <code>dirty()</code> 两个方法，为所有由它派生的滤波器提供默认实现。</p><ul><li><code>image()</code> 方法从输入算子取得输入图像，并绘制一个恰好覆盖整个输出图像的矩形。绘制矩形的代码设置 Cg 顶点程序与片元程序，并把输入算子的图像用作纹理。片元程序决定纹理如何渲染到输出图像上。因此，只需使用不同的 Cg 片元程序，就能实现不同的图像滤波器。</li><li><code>dirty()</code> 方法递归查询上游所有算子的 <code>dirty()</code> 方法。如果发现自己的图像滤波器依赖于某个脏算子的输出，它就返回 <code>true</code>。当算子的任一参数被改变时，该算子就变脏。注意：确保脏标记被正确设置，是算子或滤波器实现者的责任。</li></ul><p><code>image()</code> 方法实现了设置与执行片元、顶点程序所需的一切。它使用 <code>ShaderManager</code> 类获取共享的 Cg 资源。大部分必要而繁琐的 Cg 管线工作都封装在 <code>image</code> 方法中。新滤波器类的实现者只需在类的构造函数中为自己的滤波器设置实际的片元着色器。</p><h4>27.2.2 图像数据</h4><p><code>Image</code> 类充当图像数据的容器。因此它必须支持两个基本功能：取出图像数据，以及把新图像数据绘制进图像。由于 <code>Image</code> 类只是图形板上实际图像的一个句柄，这些功能都是高层支持（相对于设置和读取单个像素颜色值这类底层访问）。</p><p>这个图像数据的高层接口仅由以下三个方法组成：</p><pre><code>GLuint textureID() const;
+void renderBegin();
+void renderEnd();</code></pre><p>这些方法让程序员取得一个指向包含图像数据的纹理的 OpenGL 纹理句柄。</p><p>渲染方法把图像设为当前 OpenGL 渲染上下文，于是这两条命令之间发出的任何 OpenGL 绘制命令都会直接画进图像。借助若干 OpenGL 扩展，这个接口可以做到：当图像反复被绘制并用作纹理时，图像数据从不被来回拷贝，也从不离开显卡内存。</p><p>除此之外，<code>Image</code> 类还有查询图像尺寸和调整图像大小的常规方法：</p><pre><code>int width() const;
+int height() const;
+void setSize(int nWidth, int nHeight);</code></pre><p>本节开头我们说过，<code>Image</code> 类必须通过引用计数实现自动内存管理。实际上，<code>Image</code> 类是一个名为 <code>Buffer</code> 的类的代理（Gamma et al. 1995），后者实现真正的功能。参见图 27-4。<code>Buffer</code> 对象只能通过 <code>Image</code> 对象引用。每个 <code>Buffer</code> 都有一个引用计数器。<code>Image</code> 对象的构造函数、析构函数、拷贝构造函数和赋值运算符都会操作它们所指向的 <code>Buffer</code> 对象的引用计数。当最后一个引用某个 <code>Buffer</code> 的 <code>Image</code> 被析构时，该 <code>Buffer</code> 对象的引用计数降为零，表示这个 <code>Buffer</code> 也应被销毁。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig27-04.jpg" alt="fig27-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig27-04.jpg" rel="noreferrer noopener">图 27-4</a> 与 的类图</figcaption></figure><h4>27.2.3 缺失的部分</h4><p>现在我们有数据类型和一组描述滤波器图的抽象类。但要实现真正的应用，还需要图像输入输出的具体手段。一个简单应用会从磁盘加载图像，也许施加一个滤波器，然后把结果显示在屏幕上。为此，我们需要一个从磁盘加载图像的算子，以及一个把图像渲染到屏幕的显示算子。</p><p><code>LoadOperator</code> 显然是数据源，因此派生自 <code>SourceOperator</code> 类。加载算子接受两个参数：文件名（含路径）和文件类型标识符。算子从文件读取数据，并据此创建 <code>Image</code> 实例。算子每次调用其 <code>image()</code> 方法都返回这个图像。只有当文件名或类型改变时，算子才从磁盘重新加载新图像。参见图 27-5。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig27-05.jpg" alt="fig27-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig27-05.jpg" rel="noreferrer noopener">图 27-5</a> 类图</figcaption></figure><p><code>ImageView</code> 类显示处理后的图像。该类还负责让用户调整图像大小（即放大缩小）并在视口中移动图像（平移）。由于视图只消费处理后的图像，不为管线产生任何输出，它派生自 <code>SinkOperator</code> 类。</p><p>支持这个类的方法如下：</p><pre><code>int imagePositionX() const;
+int imagePositionY() const;
+void setImagePosition(int nX, int nY);
+float zoomFactor() const;
+void setZoomFactor(float nZoomFactor);</code></pre><p>这些位置与缩放因子的 setter 和 getter 不言自明。</p><p>更有意思的是以下两个方法：</p><pre><code>void center();
+void changeZoomFactor(float nPercent);</code></pre><p><code>center()</code> 方法把当前图像居中显示在视口中。<code>changeZoomFactor(nPercent)</code> 方法让程序员按某个百分比增量改变缩放因子。这很方便，因为它允许基于当前尺寸调整大小，而不必查询这一信息。</p><p>即使用户改变应用窗口大小，也要正确显示图像，<code>ImageView</code> 需要更新视口变换。这由一个简单函数实现，它把视口尺寸的任何变化通知给 <code>ImageView</code>。应用的程序员需要确保应用把所有视口变化告知视图类。</p><pre><code>void reshape(int nViewportWidth, int nViewportHeight);</code></pre><p>显示视口的机制由以下两个方法实现：</p><pre><code>void display();
+void update();</code></pre><p><code>display()</code> 方法简单地渲染视图中当前存储的图像。调用 <code>display()</code> 不会触发管线处理。视图中存储的图像通过 <code>update()</code> 方法更新。这个方法只是从管线取一幅新图像。参见图 27-6。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig27-06.jpg" alt="fig27-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig27-06.jpg" rel="noreferrer noopener">图 27-6</a> 类图</figcaption></figure><h2>27.3 实现</h2><p>处理图像相当简单直接。滤波器把一个屏幕对齐的四边形渲染到一个不可见的像素缓冲中。这个屏幕对齐的四边形把输入图像绑定为纹理。每渲染一个像素，就执行一个 Cg 片元程序，由它完成实际的图像处理。由于四边形是拿输入图像作纹理来渲染的，Cg 程序可以通过简单的纹理读取访问输入图像中的像素。</p><p>这就是实现新图像滤波器如此简单的原因。它只需编写一个新的 Cg 片元程序，以及一些 C++ 代码来为 Cg 程序提供必要的（uniform）参数。</p><p>所有确保图像不会被多余拷贝、也不会在系统内存与显卡之间来回搬移的魔法，都隐藏于 <code>Image</code> 类的实现中。</p><p>基本机制是把处理后的图像渲染到一个不可见缓冲中。渲染结束、图像准备好由管线中的下一个滤波器处理后，这个不可见缓冲的内容需要绑定为纹理，供下一条渲染路径使用。</p><h4>27.3.1 <code>Image</code> 类</h4><p>这种渲染到不可见缓冲再把该缓冲用作纹理的机制，可以在 OpenGL 中用两个 ARB 扩展实现：<code>WGL_ARB_pbuffer</code> 与 <code>WGL_ARB_render_texture</code>。</p><p>像素缓冲（或称 <em>pbuffer</em>，用 <code>WGL_ARB_pbuffer</code> 扩展创建）就是 OpenGL 的这种不可见缓冲。像素缓冲允许你做可见帧缓冲能做的一切。既然我们能渲染到位于图形板上的不可见缓冲，就需要找到把这个缓冲用作纹理的办法。这正是渲染到纹理扩展（<code>WGL_ARB_render_texture</code>）让我们能做的。</p><p>为了更好玩，我们决定支持<em>非 2 的幂</em>（NPOT）纹理，因为典型的视频和图像分辨率都不是 2 的幂。OpenGL 通过 <code>NV_texture_rectangle</code> 扩展支持 NPOT 纹理。</p><p>现代 GPU 对颜色值的浮点数据与算术支持越来越好。在表示颜色方面，浮点数相对定点数有巨大优势。在线性颜色空间中，浮点数沿数轴分布不均，这与人类感知系统的特性相符。浮点数在零附近非常密集，数值越大，相邻值之间的步长越大。类似地，我们的感知系统能分辨低强度下的细小亮度变化，而在高强度下越来越不敏感。用浮点算术做图像处理时，还可以避免在处理过程的任何中间步骤把值截断到 0 到 1 的范围。只有最后一步才需要把动态范围「归一化」到固定区间。最简单的情形是简单的仿射映射。但也存在精细的色调映射方案，它们依据局部强度把图像分段，并对每段做不同的映射。这类算法通常力图避免图像中暗部被映射为黑、亮部被映射为白。</p><p>NVIDIA 硬件支持两类浮点数：<code>float</code>（IEEE 32 位浮点）与 <code>half</code>。对于这个框架的实现，我们决定用 <code>half</code> 数据类型表示颜色。<code>half</code> 相对 <code>float</code> 的优点如下：</p><ul><li>在速度与精度之间有良好的权衡。</li><li><code>half</code> 数据类型的内存占用比 32 位 <code>float</code> 小。</li><li>OpenEXR 图像格式使用与 NVIDIA 硬件相同的 16 位浮点数。这让我们能以标准格式加载和保存高动态范围图像而不损失任何质量。（关于这一资源的完整讨论见本书第 26 章「OpenEXR 图像文件格式」。）</li></ul><p>要创建 16 位 pbuffer，我们需要用另一个 OpenGL 扩展：<code>WGL_ARB_pixel_format</code>。这个扩展允许依据缓冲将被用于的任务来查询像素缓冲的像素格式（见下面示例代码）。</p><p>所以，一旦初始化好 WGL 扩展（示例代码见 DVD 或 NVIDIA SDK），我们就可以为 <code>Buffer</code> 类编写构造函数和析构函数。参见代码清单 27-1。</p><h4>例 27-1. 设置 OpenGL 纹理属性与滤波的代码</h4><pre><code>Buffer::Buffer(int nWidth, int nHeight)
+    : _nReferenceCount(0), _nWidth(nWidth), _nHeight(nHeight)
+{
+  // 设置纹理属性
+  glGenTextures(1, &_hTexture);
+  glBindTexture(GL_TEXTURE_RECTANGLE_NV, _hTexture);
+  glTexParameteri(GL_TEXTURE_RECTANGLE_NV, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_RECTANGLE_NV, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_RECTANGLE_NV, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_RECTANGLE_NV, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);</code></pre><p>代码清单 27-1 设置我们将把缓冲绑定到的那张纹理的属性。注意在撰写本文时，浮点纹理除 <code>GL_NEAREST</code> 外不支持任何滤波。</p><p>由于像素缓冲需要自己的设备上下文和渲染上下文，我们现在保存当前上下文：</p><pre><code>
+_hOldDC = wglGetCurrentDC();
+_hOldRenderContext = wglGetCurrentContext();</code></pre><p>现在我们必须查询一个合适的像素格式，如代码清单 27-2 所示。</p><h4>例 27-2. 像素格式选择代码</h4><pre><code>int aIntegerAttributes[15] = {WGL_DRAW_TO_PBUFFER_ARB,
+                              GL_TRUE,
+                              WGL_BIND_TO_TEXTURE_RECTANGLE_FLOAT_RGBA_NV,
+                              GL_TRUE,
+                              WGL_FLOAT_COMPONENTS_NV,
+                              GL_TRUE,
+                              WGL_RED_BITS_ARB,
+                              16,
+                              WGL_GREEN_BITS_ARB,
+                              16,
+                              WGL_BLUE_BITS_ARB,
+                              16,
+                              WGL_ALPHA_BITS_ARB,
+                              16,
+                              0};
+float aFloatAttributes[2] = {0.0f, 0.0f};
+int nPixelFormat;
+unsigned int nPixelFormats;
+if (0 == wglChoosePixelFormatARB(_hOldDC, aIntegerAttributes, aFloatAttributes,
+                                 1, &amp;nPixelFormat, &amp;nPixelFormats))
+{
+  std::cerr &lt; &lt; "Error: Couldn't find a suitable pixel format." &lt; &lt; std::endl;
+  exit(1);
+}</code></pre><p>如你所见，调用 <code>wglChoosePixelFormatARB()</code> 需要不少准备工作。其中最有意思的部分是像素格式必须支持的属性列表。这个属性列表以数组形式指定。数组内容遵循简单的参数-值成对模式。数组必须以零结尾。</p><p><code>wglChoosePixelFormatARB()</code> 方法可以返回一个完整的值数组，但我们决定只请求一个值，通过把第四个参数设为 1 来指定。<code>nPixelFormat</code> 变量接收我们返回的值；<code>nPixelFormats</code> 变量接收硬件支持的、符合我们要求的像素格式总数。由于我们只需要一个格式满足要求，就丢弃这个信息。</p><p>代码清单 27-3 的代码创建实际的缓冲。缓冲属性以数组形式传给创建函数。这些属性告诉创建方法缓冲将如何使用。<code>gnFormatRGBA</code> 包含像素格式编号。我们是用 <code>ARB_pixel_format</code> 扩展找到这个编号的。</p><h4>例 27-3. Pbuffer 创建代码</h4><pre><code>int aPBufferAttributes[7] = {WGL_TEXTURE_TARGET_ARB,
+                             WGL_TEXTURE_RECTANGLE_NV,
+                             WGL_TEXTURE_FORMAT_ARB,
+                             WGL_TEXTURE_FLOAT_RGBA_NV,
+                             WGL_PBUFFER_LARGEST_ARB,
+                             0,
+                             0};
+_hPBuffer = wglCreatePbufferARB(_hOldDC, nPixelFormat, _nWidth, _nHeight,
+                                aPBufferAttributes);</code></pre><p>现在也是保存 pbuffer 设备上下文与渲染上下文的时候。<code>wglShareLists()</code> 命令告诉 OpenGL，应用与该缓冲共享资源（例如纹理等）：</p><pre><code>
+_hDC = wglGetPbufferDCARB(_hPBuffer);
+_hRenderContext = wglCreateContext(_hDC);
+wglShareLists(_hOldRenderContext, _hRenderContext);</code></pre><p>最后一步，我们把缓冲绑定到一张纹理上。缓冲的默认模式就是绑定到纹理；只有需要向它渲染时，我们才解除绑定：</p><pre><code>
+wglMakeCurrent(_hDC, _hRenderContext);
+glBindTexture(GL_TEXTURE_RECTANGLE_NV, _hTexture);
+wglBindTexImageARB(_hPBuffer, WGL_FRONT_LEFT_ARB);
+wglMakeCurrent(_hOldDC, _hOldRenderContext);
+}</code></pre><p>析构函数释放全部资源：</p><pre><code>Buffer::~Buffer()
+{
+  wglReleasePbufferDCARB(_hPBuffer, _hDC);
+  wglDestroyPbufferARB(_hPBuffer);
+  wglDeleteContext(_hRenderContext);
+}</code></pre><p>有了这些，把缓冲切到渲染模式、再切回纹理模式就非常简单了，如代码清单 27-4 所示。</p><h4>示例 27-4. 把切换活动 Pbuffer 与绑定纹理封装成易用的 begin/end 渲染机制</h4><pre><code>void Buffer::renderBegin()
+{
+  glBindTexture(GL_TEXTURE_RECTANGLE_NV, _hTexture);
+  wglReleaseTexImageARB(_hPBuffer, WGL_FRONT_LEFT_ARB);
+  wglMakeCurrent(_hDC, _hRenderContext);
+}
+void Buffer::renderEnd()
+{
+  glBindTexture(GL_TEXTURE_RECTANGLE_NV, _hTexture);
+  wglBindTexImageARB(_hPBuffer, WGL_FRONT_LEFT_ARB);
+  wglMakeCurrent(_hOldDC, _hOldRenderContext);
+}</code></pre><h4>27.3.2 <code>ImageFilter</code> 类</h4><p>如前所述，我们通过把一个与屏幕对齐的四边形渲染到 pbuffer 来实现图像处理。由于实际的图像处理由 Cg 程序完成，我们可以直接用下面这个技巧来实现 <code>ImageFilter</code> 类的 <code>image()</code> 方法。我们定义一个纯虚函数 <code>cgFragmentProgram()</code>，派生类重载它时返回片元程序的句柄。<code>image()</code> 方法绑定这个程序来渲染与屏幕对齐的四边形。从 <code>ImageFilter</code> 基类派生出的具体图像滤波器，只需重载该方法，让它返回自己想用来处理图像的片元程序。</p><p>下面是 <code>image()</code> 方法的简化版本：</p><pre><code>Image oOutputImage;
+Image oInputImage = _pSourceOperator-&gt;image();
+oOutputImage.setSize(oInputImage.width(), oInputImage.height());</code></pre><p>首先，我们为输出图像创建对象，并从滤波器的输入算子取出输入图像。然后指定输出图像的尺寸与输入图像相同。（这意味着，例如缩放滤波器就无法复用这套实现。）见代码清单 27-5。对 <code>renderBegin()</code> 的调用会准备好我们的图像（也就是我们的 pbuffer）以便渲染。随后的代码为简单渲染与屏幕对齐的四边形设置好渲染管线。</p><h4>示例 27-5. 为处理图像设置视口与投影</h4><pre><code>oOutputImage.renderBegin();
+{
+  glViewport(0, 0, (GLsizei)oOutputImage.width(),
+             (GLsizei)oOutputImage.height());
+  glMatrixMode(GL_PROJECTION);
+  glLoadIdentity();
+  gluOrtho2D(0, oOutputImage.width(), 0, oOutputImage.height());
+  glMatrixMode(GL_MODELVIEW);
+  glLoadIdentity();</code></pre><p>接着我们让 Cg 运行时使用一个非常简单的顶点着色器。着色器与 profile 都从 <code>ShaderManager</code> 类取出，如下面的代码片段所示。这个顶点着色器所做的只是按模型视图矩阵变换顶点坐标，并把纹理坐标传给片元着色器。</p><pre><code>
+cgGLEnableProfile(ShaderManager::gVertexIdentityProfile);
+cgGLBindProgram(ShaderManager::gVertexIdentityShader);</code></pre><p>现在我们告诉 Cg 运行时使用哪个片元程序：</p><pre><code>
+cgGLEnableProfile(cgFragmentProfile());
+cgGLBindProgram(cgFragmentProgram());</code></pre><p>然后运行时从输入图像取出 OpenGL 纹理 ID，把它设为片元程序渲染所用的纹理：</p><pre><code>
+cgGLSetTextureParameter(_hoInputImage, oInputImage.textureID());
+cgGLEnableTextureParameter(_hoInputImage);</code></pre><p>下面还有 <code>ImageFilter</code> 类的另一个纯虚函数。派生类应当用它来设置片元程序的附加参数：</p><pre><code>
+setCgParameters();</code></pre><p>然后我们简单地画一个与屏幕对齐的四边形，如下面的代码所示。关于纹理坐标有一点要注意：纹理坐标通常取 [0, 1] 范围，但 <code>NV_texture_rectangle</code> 纹理要求纹理坐标以像素为单位。</p><pre><code>
+glBegin(GL_QUADS);
+glTexCoord2f(0.0f, 0.0f);
+glVertex2f(0.0f, 0.0f);
+glTexCoord2f(nWidth, 0.0f);
+glVertex2f(nWidth, 0.0f);
+glTexCoord2f(nWidth, nHeight);
+glVertex2f(nWidth, nHeight);
+glTexCoord2f(0.0f, nHeight);
+glVertex2f(0.0f, nHeight);
+glEnd();</code></pre><p>最后结束渲染并返回输出图像：</p><pre><code>
+}
+oOutputImage.renderEnd();
+return oOutputImage;
+}</code></pre><h4>27.3.3 实现一个滤波器</h4><p>从通用的 <code>ImageFilter</code> 类派生一个新滤波器，需要完成以下工作：</p><ol type="1"><li>添加滤波器的参数。这需要定义必要的成员变量、setter 方法与 getter 方法。由于每个参数还要传给 Cg 片元程序，用成员代表这些 Cg 参数会比较方便。</li><li>实现 Cg 片元程序。加载该程序的代码应加进滤波器的构造函数。</li><li>重载 <code>setCgParameters()</code> 方法。每次被调用时，该方法把滤波器数据成员中存着的参数值传给 Cg 程序。</li></ol><p>下面讨论中的示例代码来自一个实现高斯模糊的简单滤波器。高斯模糊滤波器用带二维高斯钟形曲线的滤波器核与图像做卷积。为避免处理速度慢到难以忍受，我们把滤波器核的最大尺寸限制为 7x7。</p><h4>滤波器参数</h4><p>模糊程度用 <code>sigma</code> 指定，即高斯分布的标准差。<code>sigma</code> 是从高斯中心到高斯值降到中心值 50% 那一点的距离。每当 <code>sigma</code> 改变，实际滤波器都得跟着改，因此我们决定在 CPU 上计算实际的滤波器核。于是还得把核存成一个 <code>float</code> 数组。<code>GaussFilter</code> 的完整类定义见代码清单 27-6。</p><h4>示例 27-6. 高斯滤波器的类声明</h4><pre><code>class GaussFilter : public ImageFilter
+{
+public:
+
+  // 构造与析构
+  GaussFilter();
+  virtual ~GaussFilter() { ; }
+  // 设置/获取 sigma
+  float sigma() const;
+  void setSigma(float nSigma);
+
+protected:
+
+  virtual void setCgParameters();
+  void recalculateKernel(float nSigma);
+
+private:
+
+  float _nSigma;
+  // 标准差
+  float _aKernel[49];
+  // 滤波核
+  CGparameter _hmModelView;
+  CGparameter _hKernel;
+};</code></pre><p>派生一个新的滤波器类显然开销很小。除 <code>_hmModelView</code> 之外，其余都与高斯滤波器直接相关。模型视图矩阵对应的 Cg 参数，是顶点程序正确变换顶点所必需的。</p><h4>片元程序</h4><p>Gauss 滤波器的 Cg 程序只是计算滤波器核与原图像中像素的卷积。也就是说，对每个像素，它把核覆盖范围内的所有像素分别乘以核中对应的值，再把这些值相加，得到新像素的颜色。<sup><a href="https://developer.download.nvidia.com/books/gpugems/ch27fn01.html" rel="noreferrer noopener">[1]</a></sup> 该程序见代码清单 27-7。</p><h4>示例 27-7. 高斯滤波器的片元程序</h4><pre><code>void gauss(in float2 vUV
+           : TEXCOORD0, out half4 vOut
+           : COLOR, const uniform samplerRECT oImage,
+             const uniform half aKernel[N])
+{
+  half4 vSum;
+  int i, j, k;
+  vOut = half4(0, 0, 0, 0);
+  k = 0;
+  for (i = -RAD; i &lt; = RAD; i++)
+    for (j = -RAD; j &lt; = RAD; j++)
+    {
+      vSum += texRECT(oImage, vUV + half2(i, j)) * aKernel[k];
+      k++;
+    }
+  vOut = vSum;
+}</code></pre><p>常量 <code>N</code> 与 <code>RAD</code> 是为了提高可读性。在我们的情形里，它们的定义如下：</p><pre><code>#define RAD 3 // Filter kernel radius #define N
+49
+    // 滤波核中的元素个数</code></pre><p>在滤波器的默认构造函数中设置 Cg 程序及其参数的代码，见代码清单 27-8。</p><h4>设置 Cg 参数</h4><p>如前所述，在调用时向 Cg 程序提供数据的代码放在 <code>setCgParameters()</code> 方法里，每个从 <code>ImageFilter</code> 派生的类都要重载它。</p><pre><code>void GaussFilter::setCgParameters()
+{
+  cgGLSetParameterArray1f(_hKernel, 0, 0, &amp;(_aKernel[0]));
+  cgGLSetStateMatrixParameter(_hmModelView, CG_GL_MODELVIEW_PROJECTION_MATRIX,
+                              CG_GL_MATRIX_IDENTITY);
+}</code></pre><h4>示例 27-8. <code>GaussFilter</code> 构造函数的实现</h4><pre><code>GaussFilter::GaussFilter() : _nSigma(1.0f)
+{
+  _oCgVertexProgram =
+      cgCreateProgramFromFile(_oCgContext, CG_SOURCE, "VertexIdentity.cg",
+                              _oCgVertexProfile, "vertexIdentity", 0);
+  cgGLLoadProgram(_oCgVertexProgram);
+  _oCgFragmentProgram = cgCreateProgramFromFile(
+      _oCgContext, CG_SOURCE, "Gauss.cg", _oCgFragmentProfile, "gauss", 0);
+  cgGLLoadProgram(_oCgFragmentProgram);
+  _hmModelView = cgGetNamedParameter(_oCgVertexProgram, "mModelView");
+  setSigma(_nSigma);
+}</code></pre><p>好了，就这样——第一个图像滤波器完成了。在图 27-7 中可以看到把这个滤波器应用到一幅图像上的效果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig27-07b.jpg" alt="fig27-07b.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig27-07b.jpg" rel="noreferrer noopener">图 27-7</a> 应用高斯滤波器</figcaption></figure><h2>27.4 一个示例应用</h2><p>为展示这套框架的用处，我们做了一个简单的演示应用。该应用实现了一个模拟夜视的滤波器。当人眼适应黑暗环境、不得不依靠<em>暗视觉，</em>即在低照度下的视觉时，我们大部分辨色能力都会丧失。场景显得模糊，并蒙上一层蓝色。电影制作者利用人眼视觉系统的这一特性，在明亮日光下用蓝色滤镜拍摄夜景。基于 William B. Thompson 等人（2002）的一篇文章，我们实现了这种「好莱坞之夜」的高级版本。</p><p>Thompson 等人 2002 提出的后处理算法，先把彩色图像转成蓝调图像。接着对这幅图像做模糊，以模拟人眼在暗环境中降低的分辨率。然后对图像施加边缘锐化滤波器。据该文所述，这一过程类似于大脑对视觉系统在黑暗中给出的模糊图像所做的处理。</p><p>我们把颜色转换过程实现在一个称为 <code>NightFilter</code> 的算子中。完整的暗视觉滤波器（<code>ScotopicFilter</code>）是一个复合滤波器：它在自身内部实现了一条小的子管线。见图 27-8。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig27-08.jpg" alt="fig27-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig27-08.jpg" rel="noreferrer noopener">图 27-8</a> 暗视觉滤波器管线</figcaption></figure><p>完整的演示应用可以用高斯滤波器、夜视滤波器和暗视觉滤波器处理输入图像。实现方式是搭好三条「管线」，再按用户的选择把其中一条接到视图算子上。</p><p>在图 27-9 中可以看到暗视觉滤波器应用到一幅图像上的效果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig27-09a.jpg" alt="fig27-09a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig27-09a.jpg" rel="noreferrer noopener">图 27-9</a> 暗视觉滤波器应用于来自 的照片。</figcaption></figure><p>该演示应用是 NVIDIA Developer SDK 的一部分，可在本书附带的光盘和网站上获取。</p><h2>27.5 性能与局限</h2><p>本章至此一直没有讨论一些对技术能否进入实际应用至关重要的问题：性能与硬件限制（例如最大纹理尺寸、有限的显存等）。图形硬件的演进速度，使得几乎无法用绝对数字来讨论这些问题。今天的硬件限制，明天很可能就不存在了。</p><p>设计利用 GPU 的算法时，一般应记住几点：GPU 是一个高度专用的第二处理器。为多处理器系统写代码，天然比为普通系统写代码复杂。GPU 首要的用途是渲染 3D 场景。因此，只有契合硬件主要用途的方案才能获得最大收益。</p><p>许多图像处理问题很适合映射到当今的 GPU 上，实测有十倍的加速（Colantoni 等 2003）。其他不太契合的问题，把部分负载卸载到 GPU 上仍能获益。为获得最佳性能，算法应设法让 CPU 与 GPU 两个处理器都处于满负载。</p><p>图像处理算法的实现者过去一直受硬件限制，其中最突出的是内存限制与有限的缓存容量。这些问题通常靠设计专门的方案来克服。许多方案在原有约束消失之后依然有用（例如虚拟内存管理），因为它们性能更好。我们相信 GPU 编程也会以类似的方式发展。</p><h2>27.6 结论</h2><p>本章描述的图像处理框架表明，现代 3D 图形硬件的处理能力可以用于 2D 图像处理任务。框架的设计与实现方式说明，当前的（主要以 3D 为指向的）图形 API 支持干净直接的实现。</p><p>相对于当前硬件仍然存在的限制，可以用巧妙的工程手段克服。未来的硬件与 API 会进一步提升性能，并简化编程工作。</p><h2>27.7 参考文献</h2><p><a id="ch27bib01_01"></a>Colantoni, Philippe, Nabil Boukala, and Jerome Da Rugna. 2003. "Fast and Accurate Color Image Processing Using 3D Graphics Cards."，载 <em>Proceedings of Vision, Modeling, and Visualization 2003</em>。</p><p><a id="ch27bib01_02"></a>Gamma, E., R. Helm, R. Johnson, and J. Vlissides. 1995. <em>Design Patterns: Elements of Reusable Object-Oriented Software</em>. Addison-Wesley 出版。</p><p><a id="ch27bib01_03"></a>Meyers, Scott. 1997. <em>Effective C++: 50 Specific Ways to Improve Your Programs and Designs</em>. Addison-Wesley 出版。</p><p><a id="ch27bib01_04"></a>Thompson, William B., Peter Shirley, and James A. Ferwerda. 2002. "A Spatial Post-Processing Algorithm for Images of Night Scenes."，载 <em>Journal of Graphics Tools</em> 7(1)，第 1–12 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-27-framework-image-processing" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-27-framework-image-processing</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

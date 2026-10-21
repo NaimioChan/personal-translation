@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 12 章　全向阴影贴图 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 12 章　全向阴影贴图」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 12 章　全方向阴影贴图</h1>
+<p><em>Philipp S. Gerasimov<br> iXBT.com</em></p><h2>12.1 引言</h2><p>实时计算机图形中最困难的问题之一是生成高质量阴影。然而，这类阴影的观感又是实现图形真实感最重要的因素之一。在计算机生成的场景中，物体的阴影会增强我们对物体本身以及物体之间关系的感知。在电子游戏中，阴影与光照、音乐和特效一起，在营造真实的游戏氛围方面起着非常重要的作用。例如，在技术最先进的游戏之一、id Software 的 <em>Doom 3</em> 中，阴影是故事情节的主要组成部分。图 12-1 和图 12-2 展示了我们自己演示程序中的阴影示例，该演示随本书的 CD 和网站提供。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig12-01.jpg" alt="fig12-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig12-01.jpg" rel="noreferrer noopener">图 12-1</a> 我们演示程序的截图，显示一个光源在角色上方飞行</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig12-02.jpg" alt="fig12-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig12-02.jpg" rel="noreferrer noopener">图 12-2</a> 演示中角色的特写</figcaption></figure><p>现在的 GPU 让我们能生成过去只有专业 3D 离线渲染程序才能得到的图像。现代 GPU 中的几何处理器每帧能处理数百万个图元，让我们可以设计复杂的世界。随着逐像素着色的出现，我们可以用复杂的数学与基于物理的光照模型生成逼真的材质。</p><p>实时计算机图形中有两种常用的阴影可视化方法：模板阴影和阴影贴图。</p><h4>12.1.1 模板阴影</h4><p>模板阴影方法在 <em>Doom 3</em> 中得到了展示，被游戏开发者广泛使用。它的优点包括：支持它的 GPU 数量众多（唯一必需的硬件特性是支持 8 位模板缓冲）、不依赖光源类型、生成的阴影质量高。然而模板阴影方法也有一些严重缺点：它严重依赖 CPU 的工作，只能产生硬阴影，消耗大量填充率（这意味着即使某个 GPU 支持该技术，也可能跑得很差），而且无法用于硬件剖分的表面。</p><h4>12.1.2 阴影贴图</h4><p>阴影贴图算法于 1978 年由 Lance Williams 引入计算机图形学（Williams 1978）。今天，这个方法被大量含有计算机图形和特效的好莱坞电影使用。阴影贴图把一张动态生成的特殊纹理投影到场景几何体上以计算阴影。它让你能渲染硬阴影和软阴影，以及来自不同类型光源的阴影。此外，它还能用于硬件剖分的表面和 GPU 动画的网格（例如蒙皮网格）。</p><p>包括 NVIDIA 在内的多家 GPU 厂商在硬件中直接支持阴影贴图，并承诺未来会加强这种支持。NVIDIA GeForce3、GeForce4 Ti 以及所有 GeForce FX（及更新）GPU 都通过 DirectX 和 OpenGL 支持硬件阴影贴图。（不过，本章我们不使用原生的硬件阴影贴图功能。）NVIDIA CineFX 架构提供了种种可能——包括支持具有真正浮点精度的长片元程序以及浮点纹理格式——使阴影渲染的质量达到了一个新的层次。</p><h2>12.2 阴影贴图算法</h2><h4>12.2.1 前提条件</h4><p>阴影贴图让我们能可视化来自不同类型光源的阴影，例如平行光、点光源和聚光灯。光源类型决定了我们需要使用的技术。本章聚焦于可视化点光源投射的阴影。点光源在电子游戏中被广泛使用，这些光所照亮的物体投射出的阴影质量非常重要。</p><p>我们还有这些附加条件：</p><ul><li>立方体贴图在计算机图形中传统上用于实现环境反射，它是我们阴影贴图算法的构建基础。</li><li>我们把实现聚焦于兼容 DirectX 9 的图形硬件（例如 NVIDIA GeForce FX 系列的产品，或 ATI 的 Radeon 9500 及更新的产品）。</li><li>我们使用 DirectX 作为图形 API（但我们的算法在 OpenGL 中同样适用）。</li><li>我们利用用高级语言编写的顶点着色器和像素着色器。</li><li>我们使用 HLSL（不过 Cg 也非常适合这项任务）。</li></ul><h4>12.2.2 算法</h4><p>使用全方向阴影贴图有两个主要阶段：创建阴影贴图和投影阴影贴图。在 <em>创建阶段</em>，我们把所有投射阴影的物体到光源距离的平方渲染进阴影贴图纹理（稍后我们会说明为什么用距离的平方）。在 <em>投影阶段</em>，我们渲染所有接收阴影的物体，并比较被渲染像素到光源的距离平方。</p><p>下面的技术会填满立方体贴图的全部六个面，覆盖所有方向：+<em>x</em>、-<em>x</em>、+<em>y</em>、-<em>y</em>、+<em>z</em>、-<em>z</em>。阴影贴图可以预先算好（针对静态场景），也可以每帧重新渲染。我们主要关注每帧重新渲染阴影贴图，以获得完全动态的阴影。所有物体都会从每个光源投射阴影并接收阴影。并且所有物体都会自阴影。我们为所有光源使用单张阴影贴图，通过多遍渲染生成图像，每个光源执行一遍。</p><p>代码清单 12-1 是该算法的伪代码示例。</p><p>因为我们使用多遍算法（即每个光源一遍），所有物体都必须合成到帧缓冲中。为了减少过度绘制、提升性能，我们先渲染一个仅深度的遍。这个标准技术确保后续所有光照遍只在可见像素上进行。渲染到仅深度非常快（许多 GeForce FX GPU 具有双速的「仅深度」渲染特性），所以即使过度绘制很少，它的开销也很小。透明物体不在仅深度遍中渲染，因为透明物体不更新深度缓冲。见代码清单 12-2。</p><h4>示例 12-1. 全方向阴影贴图算法的伪代码</h4><pre><code>for (iLight = 0; iLight < NumberOfLights; iLight++)
+{
+  // 填充阴影贴图。
+  for (iObject = 0; iObject < NumberOfObjects; iObject++)
+  {
+    RenderObjectToShadowMap(iLight, iObject);
+  }
+  // 光照与阴影映射。
+  for (iObject = 0; iObject < NumberOfObjects; iObject++)
+  {
+    LightAndShadeObject(iLight, iObject);
+  }
+}</code></pre><h4>示例 12-2. 仅深度渲染</h4><pre><code>// 清除颜色缓冲与深度缓冲 ClearAllBuffers();
+// 填充 z 缓冲
+for (iObject = 0; iObject < NumberOfObjects; iObject++)
+{
+  RenderObjectToZBufferOnly(iObject);
+}</code></pre><h4>12.2.3 纹理格式</h4><p>所用纹理格式的类型是这个算法中的一个重要因素。我们考虑两种格式：浮点纹理，以及把深度值打包/解包到颜色通道的 32 位整数 RGBA 纹理。</p><p><em>浮点</em> 纹理格式对阴影贴图而言很理想，因为它允许高精度的深度值。然而这些纹理比整数 RGBA 纹理慢得多，且只有有限数量的 GPU 支持。另一方面，<em>32 位整数 RGBA 纹理</em> 速度快，且被大多数 3D 硬件支持。</p><p>不过，为了保持计算的高精度，我们必须把深度值打包进纹理的颜色通道，并在做阴影贴图的深度比较时把每个值解包出来。我们两种方法都会介绍，让你选更方便的那个。</p><h4>12.2.4 阴影贴图的大小</h4><p>阴影贴图的大小影响阴影质量和渲染速度。大小取决于目标硬件的能力、所需的质量，以及阴影相对于相机的位置。当然，阴影贴图越大，结果通常越好。</p><p>因为我们使用立方体贴图纹理，必须记住我们有六个颜色表面外加一个 z 缓冲。对于 32 位纹理和 1024x1024 分辨率，我们需要 4 x (6 + 1) x 1024 x 1024 字节的显存，也就是 28 MB！这凸显了为所有光源使用单张阴影贴图的重要性。</p><p>12.3 节考察我们算法的每一步。</p><h4>12.2.5 几何体的取值范围</h4><p>为了尽量减少渲染瑕疵，我们把所有几何体放进 -0.5...+0.5 的范围（或 0..1）。这提高了计算的精度，尤其是在使用 16 位精度和整数纹理时。我们可以在加载时或顶点着色器中对几何体做缩放，顶点着色器代码类似这样：</p><pre><code>o.vPositionWorld = mul(vPosition, matWorld) * fGeometryScale;</code></pre><h2>12.3 实现</h2><h4>12.3.1 系统需求</h4><p>我们的系统需求如下：</p><ul><li>支持顶点着色器（<code>vs.1.1+</code>）和像素着色器（<code>ps.2.0+</code>）的硬件</li><li>能渲染到立方体贴图的硬件能力</li><li>如果使用浮点纹理：支持单分量浮点立方体贴图纹理格式，例如 <code>D3DFMT_R16F</code> 或 <code>D3DFMT_R32F</code>，并带 <code>D3DUSAGE_RENDERTARGET</code> 标志</li><li>如果使用整数纹理：支持 <code>D3DFMT_A8R8G8B8</code> 立方体纹理格式，并带 <code>D3DUSAGE_RENDERTARGET</code> 标志</li></ul><h4>12.3.2 资源创建</h4><p>我们可以用几个有用的 Direct3D 库函数创建所有需要的对象和纹理（阴影贴图纹理、深度缓冲和着色器）：</p><pre><code>D3DXCreateCubeTexture() D3DXCreateRenderToEnvMap() D3DXCreateEffectFromFile()</code></pre><h4>12.3.3 渲染阶段 1：渲染到阴影贴图</h4><p>接下来，我们渲染到阴影贴图。我们从光源的视角把物体渲染进立方体贴图的每个面，遵循以下要求：</p><ul><li>视场角必须为 90 度。</li><li>每个面的视图矩阵必须正确构建。我们可以从光源视角的上、下、东、西、北、南向量构造这些矩阵。</li></ul><h4>顶点着色器</h4><p>在顶点着色器中，我们把顶点缩放后的世界空间位置写给像素着色器。或者，我们也可以把光照方向写出来，省掉一条计算世界空间光照向量的像素着色器指令。</p><h4>像素着色器</h4><p>我们可以使用浮点纹理或整数纹理。</p><ul><li><p>使用浮点纹理时，我们写出像素到光源距离的平方，像素着色器代码如下：</p><pre><code>
+return dot(vLight, vLight)</code></pre><p>为什么用距离的平方？因为它算起来更快——只是一个点积，不需要开平方。填阴影贴图时我们用距离的平方，在基础渲染遍中访问阴影贴图时也用距离的平方。这省下了两次像素着色器指令。但使用距离平方可能带来精度问题，所以用的时候要小心。</p></li><li>使用整数纹理时，我们需要把距离平方值打包并写入颜色通道。如何把一个浮点数打包进整数纹理？这里有两种做法：<ol type="1"><li><pre><code>Out.r = SquaredDistance * 2 ^ 0 Out.g =
+            SquaredDistance * 2 ^ 8 Out.b =
+                SquaredDistance * 2 ^ 16 Out.a =
+                    SquaredDistance * 2 ^
+                    24 float4 vPack = {1.0f, 256.0f, 65536.0, 16777216.0f};
+return vPack * dot(vLight, vLight);</code></pre></li><li><pre><code>Out.r = floor(fDepth) / 256.0;
+Out.g = frac(fDepth);
+float fDepth = dot(vLight, vLight);
+return float(floor(fDepth) / 256.0, frac(fDepth), frac(fDepth), frac(fDepth));</code></pre></li></ol></li></ul><p>通过把 <code>frac(fDepth)</code> 写入绿色和 alpha 通道，我们省掉了这条像素着色器指令（否则需要额外一条指令来填这些通道）：</p><pre><code>mov r2.gba, r0.g
+            // r0.g 中存放的是 frac(fDepth)</code></pre><p>方法 1 的计算开销更小，但第二种精度更高。</p><h4>12.3.4 渲染阶段 2：基础渲染</h4><p>基础渲染阶段有两个主要部分：</p><ol type="1"><li>仅把物体渲染到 z 缓冲（z-only 通道），这需要以下步骤：<ol type="a"><li>关闭向颜色通道的渲染</li><li>开启向 z 缓冲的渲染</li><li>把所有物体渲染进 z 缓冲（仅此而已）</li></ol></li><li>为每个光源执行一遍着色（光照乘以阴影）</li></ol><h4>12.3.5 光照计算</h4><p>我们需要计算每个像素处来自光源的光照，可以使用任何光照模型（例如逐像素 Phong、Blinn 或 Oren-Nayar）。</p><h4>12.3.6 阴影计算</h4><p>计算阴影需要这些步骤：</p><ol><li>计算当前像素到光源距离的平方。</li><li>把阴影贴图纹理投影到当前像素上。</li><li>取当前像素处的阴影贴图纹理值。</li><li>把算出的距离值与取到的阴影贴图值相比，判断我们是否在阴影中。</li></ol><p>对于浮点纹理，我们只需使用取到的纹理采样的 <em>x</em> 分量。</p><p>下面是像素着色器代码：</p><pre><code>float fDepth = fDistSquared - fDepthBias;
+float3 vShadowSample = texCUBE(ShadowMapSampler, -vLight.xyz);
+float fShadow = (fDepth - vShadowSample.x &lt; 0.0f) ? 1.0f : 0.0f;</code></pre><p><code>fDistSquared</code> 先前已在像素着色器中算好。对于整数纹理，我们必须从取到的纹理采样的颜色通道中解包出该值。</p><ol type="1"><li><pre><code>DepthValue = ShadowSample.r / 1 + ShadowSample.g / 256 +
+             ShadowSample.b / 65536 + ShadowSample.a / 16777216</code></pre></li><li><pre><code>DepthValue = ShadowSample.r * 256 + ShadowSample.g</code></pre></li></ol><p>下面是像素着色器代码：</p><pre><code>float fDepth = fDistSquared - fDepthBias;
+float4 vShadowSample = texCUBE(ShadowMapSampler, -vLight.xyz);
+float fShadow = (fDepth - dot(vShadowSample, vUnpack) &lt; 0.0f) ? 1.0f : 0.0f;</code></pre><h4>12.3.7 技巧与诀窍</h4><ol type="1"><li>计算深度偏移有若干种不同做法：<ul><li><code>fDistSquared - vShadowSample.x</code>——很可能出现瑕疵。</li><li><code>(fDistSquared - DepthBias) - vShadowSample.x</code>——距离平方不是线性的。</li><li><code>(fDistSquared * DepthBias) - vShadowSample.x</code>——这个方法在实践中效果最好。</li></ul></li><li>光照方向：把光照方向的计算移到顶点着色器中。光照方向是线性的，很容易逐顶点计算。</li><li>反向光照方向：从阴影贴图取数时我们需要反向的光照方向。但 <code>texld</code> 像素着色器指令不支持「取反」修饰符，所以如果我们用 <code>texCUBE(ShadowMapSampler, -vLight.xyz)</code>，每次取数都会多出一条「加法」指令。所以我们可以把这个计算移到顶点着色器，改为插值 <code>-vLight.xyz</code> 而不是 <code>vLight.xyz</code>。</li><li>HLSL 和 Cg 着色器的预处理指令：用预处理指令处理不同选项——例如浮点/整数纹理、硬/软阴影、全/半/固定精度——以减少你需要编写的着色器数量。</li><li>像素着色器精度：大多数阴影计算使用半精度。这已经足够，而且在某些硬件上还能带来额外速度。不过如果你看到瑕疵，就改用全精度。</li></ol><h4>12.3.8 完成着色遍（光照 × 阴影）</h4><p>最后一步是根据算出的光照和阴影写出像素颜色值。对每个光源，我们通过对所有物体重复阴影写入和着色遍，把算出的光照累加到后台缓冲中。处理完所有光源后，我们就得到了一个具有动态光照和阴影的场景。</p><h2>12.4 加入软阴影</h2><p>观察我们的场景，会注意到阴影边缘有走样而且「硬」。走样程度取决于阴影贴图的大小和投影时的放大量。为减轻这些瑕疵的观感，我们从阴影贴图中取多个采样并对结果取平均，制造更「柔和」的阴影。由于现实世界的光源很少是完美的点光源，这一操作也会带来更真实的阴影。</p><p>代码清单 12-3 给出了一些示例代码。</p><h4>示例 12-3. 制造更柔和的阴影</h4><pre><code>float fShadow = 0;
+for (int i = 0; i &lt; 4; i++)
+{
+  float3 vLightDirection = -vLight.xyz + vFilter[i];
+  float4 vShadowSample = texCUBE(ShadowMapSampler, vLightDirection);
+  fShadow += (fDepth - vShadowSample.x &lt; 0.0f) ? 0.25f : 0.0f;
+}</code></pre><p>注意我们先比较距离平方，<em>然后</em> 对比较的结果取平均。这叫 <em>percentage-closer filtering</em>，是对多次阴影贴图测试取平均的正确做法。（关于该技术的详细讨论见本书第 11 章「阴影贴图抗锯齿」。）</p><p>如果把 <code>-vLight.xyz + vFilter[i]</code> 的计算移到顶点着色器，我们可以省掉一些像素着色器指令。</p><p>如果我们为 <code>vFilter[i]</code> 选择不同的取值范围，就会得到不同柔和程度的阴影，从轻微的抗锯齿效果到非常模糊的阴影。我们定义的滤波核越大，为避免色带瑕疵所需的采样就越多。显然，采样越多意味着处理更多指令和更多纹理取数，在受着色器限制的情况下会降低性能。尽管这个技术能给阴影带来更「柔和」的观感，但这些阴影当然不是准确的软阴影，因为它们没有考虑遮挡物、接收者与光源大小之间的关系。（关于软阴影的更多内容见第 13 章「使用遮挡区间贴图生成软阴影」。）</p><h2>12.5 结论</h2><p>借助 DirectX 9 级别硬件的新能力，改善视觉质量的新算法变得可能，也更容易实现。使用硬件着色器，我们可以从任意数量的点光源生成逼真、动态的阴影，甚至还能实现基本的「软」阴影。</p><p>在目前第一代 DirectX 9 级别硬件上，这个算法还不够快，无法实用（尽管它确实是实时的）。这是因为要从光源视角渲染很多次，而且「软」阴影效果需要很长的像素着色器。但一如既往，快得多的图形硬件就在眼前，性能的进步将使这些算法可以真正实现在实际发行的游戏中。</p><h2>12.6 参考文献</h2><p><a id="ch12bib01_01"></a>Williams, Lance. 1978. "Casting Curved Shadows on Curved Surfaces." 载 <em>Proceedings of the 5th Annual Conference on Computer Graphics and Interactive Techniques</em>，pp. 270–274。</p><p><em>作者感谢 NVIDIA 的 Chris Wynn 和 John Spitzer，以及 ATI 的 Guennadi Riguer。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-12-omnidirectional-shadow-mapping" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-12-omnidirectional-shadow-mapping</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

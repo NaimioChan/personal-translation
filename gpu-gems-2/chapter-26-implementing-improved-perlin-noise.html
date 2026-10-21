@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 26 章　实现改进的 Perlin 噪声 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 26 章　实现改进的 Perlin 噪声」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 26 章　实现改进的 Perlin 噪声</h1>
+<p><em>Simon Green</em><br> <em>NVIDIA Corporation</em></p><p>本章承接 Ken Perlin 在 <em>GPU Gems</em> 中的一章「实现改进的 Perlin 噪声」（Perlin 2004）。Ken 的那一章讨论如何用 3D 纹理实现过程化噪声的快速近似，而这里我们给出改进噪声算法的实际 GPU 实现，语法上分别采用 Microsoft Direct 3D Effects（FX）和 CgFX，结果与 CPU 参考实现完全一致。</p><h2>26.1 随机而平滑</h2><p>噪声是给过程化纹理添加自然感变化的重要构件。现实世界中没有什么完全均匀，噪声提供了一种可控的方式，把这种随机性加进你的着色器。</p><p>噪声函数有若干重要特性：</p><ul><li>对每个输入位置产生可重复的伪随机值。</li><li>取值范围已知（通常是 [-1, 1]）。</li><li>空间频率是带限的（也就是说，它是平滑的）。</li><li>不出现明显的重复图案。</li><li>空间频率在平移下不变。</li></ul><p>Perlin 的改进噪声算法满足所有这些要求（Perlin 2002）。下面说明它如何能在 GPU 上实现。</p><h2>26.2 存储与计算</h2><p>如今的过程化噪声在着色器中通常用预计算的 3D 纹理实现。直接在像素着色器里实现噪声，相比这种做法有几个好处：</p><ul><li>占用更少的纹理内存。</li><li>周期很大（也就是说，图案重复得不那么频繁）。</li><li>结果与现有的 CPU 实现完全一致。</li><li>可以做到四维噪声，这对带动画的 3D 效果很有用。（当前硬件不支持 4D 纹理。）</li><li>所用的插值质量高于硬件纹理滤波所能提供的，因此噪声看起来更平滑。</li></ul><p>图 26-1a 展示了用 3D 纹理渲染带噪声的物体的结果。注意纹理贴图滤波使用线性插值所造成的瑕疵。相比之下，图 26-1b 用的是本章所述的过程化做法，图像明显更好。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/26_noise_01a.jpg" alt="26_noise_01a.jpg"><figcaption>图 26-1 3D 噪声</figcaption></figure><p>这种做法明显的缺点是计算开销更大。这主要是因为插值必须在着色器里做，用不上 GPU 里的纹理滤波硬件。用最新的编译器，优化后的 3D 噪声实现会编译成约 50 条 Pixel Shader 2.0 指令；幸运的是，这对当前的高端 GPU 并不构成挑战。</p><h2>26.3 实现细节</h2><p>Perlin 的噪声算法包含两个主要阶段。</p><p>第一阶段为 3D 空间中每个整数 (<em>x</em>, <em>y</em>, <em>z</em>) 位置生成一个可重复的伪随机值。这可以有好几种做法，Perlin 的算法用的是哈希函数。哈希函数基于一张置换表，表中按随机顺序包含 0 到 255 的整数。（这张表可以在各实现之间统一，使它们产生相同的结果。）首先按位置的 <em>x</em> 坐标索引该表。然后把 <em>y</em> 坐标加到表中该位置的值上，再用结果去查表。对 <em>z</em> 坐标重复这一过程之后，结果就是每个可能的 (<em>x</em>, <em>y</em>, <em>z</em>) 位置对应的伪随机整数。</p><p>算法的第二阶段用这个伪随机整数去索引一张 3D 梯度向量表。在「改进」算法中只用到八种不同的梯度。把梯度与噪声空间内的分数位置取点积，算出一个标量值。最终的噪声值由空间中相邻八个点的噪声值插值得到。</p><p>Perlin 改进噪声算法的 CPU 实现把置换表和梯度表存在数组里。像素着色器目前不支持对常量内存做索引，所以我们改为把这些表存进纹理，用纹理查找来访问。纹理寻址设为 wrap（重复）模式，这样就不必像 CPU 实现那样为了不越出数组末尾而扩展表。代码清单 26-1 展示了如何在 FX 文件中初始化这些纹理。</p><p>Microsoft Direct 3D Effects 和 CgFX 运行时最有用的特性之一，是一个可以用函数过程化生成纹理的虚拟机。我们利用这一特性，从参考实现所用的同一份数据构建置换纹理和梯度纹理。如果你使用别的着色语言，例如 OpenGL 着色语言，把这段代码放进你的应用应当也很容易。</p><h4>示例 26-1. 初始化噪声置换纹理的源代码</h4><pre><code>// 置换表
+static int permutation[] = {151, /* 254 values elided . . . */, 180};
+// 用 CPU 运行时生成置换表与梯度纹理
+texture permTexture < string texturetype = "2D";
+string format = "l8";
+string function = "GeneratePermTexture";
+int width = 256, height = 1;
+> ;
+float4 GeneratePermTexture(float p : POSITION) : COLOR
+{
+  return permutation[p * 256] / 255.0;
+}
+sampler permSampler = sampler_state
+{
+  texture = <permTexture>;
+  AddressU = Wrap;
+  AddressV = Clamp;
+  MAGFILTER = POINT;
+  MINFILTER = POINT;
+  MIPFILTER = NONE;
+};</code></pre><p>参考实现用位运算代码直接从哈希值生成梯度向量。由于当前的像素着色器硬件不包含整数运算，这种做法不可行，所以我们改为预计算一张包含 16 个梯度向量的小型 1D 纹理。生成这张纹理的代码见代码清单 26-2。</p><p>使用这两张纹理计算噪声值的最终代码见代码清单 26-3。其中包含 Perlin 新的插值函数，它是一个五次埃尔米特多项式，得到的噪声函数是 C<sup>2</sup> 连续的。你也可以改用原来的插值函数，它求值开销更低，但二阶导数不连续。</p><h4>示例 26-2. 计算噪声梯度纹理的源代码</h4><pre><code>// 3D 噪声的梯度
+static float3 g[] = {
+    1,  1, 0,  -1, 1,  0,  1, -1, 0,  -1, -1, 0, 1,  0, 1,  -1,
+    0,  1, 1,  0,  -1, -1, 0, -1, 0,  1,  1,  0, -1, 1, 0,  1,
+    -1, 0, -1, -1, 1,  1,  0, 0,  -1, 1,  -1, 1, 0,  0, -1, -1,
+};
+texture gradTexture < string texturetype = "2D";
+string format = "q8w8v8u8";
+string function = "GenerateGradTexture";
+int width = 16, height = 1;
+> ;
+float3 GenerateGradTexture(float p : POSITION) : COLOR { return g[p * 16]; }
+sampler gradSampler = sampler_state
+{
+  texture = <gradTexture>;
+  AddressU = Wrap;
+  AddressV = Clamp;
+  MAGFILTER = POINT;
+  MINFILTER = POINT;
+  MIPFILTER = NONE;
+};</code></pre><h4>示例 26-3. 计算 3D Perlin 噪声函数的源代码</h4><pre><code>float3 fade(float3 t)
+{
+  return t * t * t * (t * (t * 6 - 15) + 10); // 新曲线
+  //
+  return t * t * (3 - 2 * t); // 旧曲线
+}
+float perm(float x) { return tex1D(permSampler, x / 256.0) * 256; }
+float grad(float x, float3 p) { return dot(tex1D(gradSampler, x), p); }
+// 3D 版本
+float inoise(float3 p)
+{
+  float3 P = fmod(floor(p), 256.0);
+  p -= floor(p);
+  float3 f = fade(p);
+  // 为其中 6 个角做坐标散列（立方体共 8 个角）
+  float A = perm(P.x) + P.y;
+  float AA = perm(A) + P.z;
+  float AB = perm(A + 1) + P.z;
+  float B = perm(P.x + 1) + P.y;
+  float BA = perm(B) + P.z;
+  float BB = perm(B + 1) + P.z;
+  // 并累加立方体 8 个角的混合结果
+  return lerp(
+      lerp(lerp(grad(perm(AA), p), grad(perm(BA), p + float3(-1, 0, 0)), f.x),
+           lerp(grad(perm(AB), p + float3(0, -1, 0)),
+                grad(perm(BB), p + float3(-1, -1, 0)), f.x),
+           f.y),
+      lerp(lerp(grad(perm(AA + 1), p + float3(0, 0, -1)),
+                grad(perm(BA + 1), p + float3(-1, 0, -1)), f.x),
+           lerp(grad(perm(AB + 1), p + float3(0, -1, -1)),
+                grad(perm(BB + 1), p + float3(-1, -1, -1)), f.x),
+           f.y),
+      f.z);
+}</code></pre><p>同一段代码稍加修改也能编译为顶点着色器。顶点着色器支持对常量内存做变量索引，所以不必使用纹理查找。</p><p>为简洁起见，代码清单 26-3 只给出 3D 噪声的实现。本书光盘上的版本包含 4D 版本。</p><h4>26.3.1 优化</h4><p>代码清单 26-3 是对 CPU 参考实现的直接移植。这段代码有若干可优化之处，以更好地利用图形硬件。（优化后的代码连同 4D 噪声的实现一起，都附在随书光盘中。）</p><p>参考实现用六次对置换表的递归查找生成最初的四个哈希值。在 GPU 上实现这一点的直观做法是六次对 1D 纹理的查找，但我们可以改为预计算一张 256x256 像素的 RGBA 2D 纹理，每个纹素中装四个值，这样只需一次 2D 查找。</p><p>我们还可以扩展梯度表并按置换表重排梯度，从而去掉最后一次对置换表的查找。这样就不再用 16 像素的梯度纹理，而是创建一张 256 像素的纹理，其中的梯度按置换表重新排列。这省掉了八次 1D 纹理查找。</p><p>未优化的实现编译后是 81 条 Pixel Shader 2.0 指令，其中 22 次纹理查找。优化之后是 53 条指令，其中只有九次纹理查找。</p><p>由于代码中有很大一部分是标量运算，这里也许还有更多利用向量运算的余地。</p><h2>26.4 结论</h2><p>我们介绍了面向像素着色器的过程化噪声实现。过程化噪声是实现视觉丰富渲染的重要构件，可用于凹凸贴图和其他效果，如图 26-2 所示。虽然在当前 GPU 上运行的大多数实时应用的开发者不会愿意把 50 条像素着色器指令花在一次噪声查找上，但对那些需要与现有 CPU 噪声实现保持一致的高质量离线渲染应用来说，这项技术很有用。随着 GPU 计算能力提高、而内存访问因硬件趋势变得相对更昂贵，这类过程化技术会越来越有吸引力。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/26_noise_2.jpg" alt="26_noise_2.jpg"><figcaption>图 26-2 用于过程化凹凸贴图的像素着色器噪声</figcaption></figure><h2>26.5 参考文献</h2><p><a id="biblio26_01"></a>Ebert, David S., F. Kenton Musgrave, Darwyn Peachey, Ken Perlin, and Steven Worley. 2003. <em>Texturing and Modeling: A Procedural Approach</em>，第 3 版，Morgan Kaufmann 出版。</p><p><a id="biblio26_02"></a>Perlin, Ken. 2004. "Implementing Improved Perlin Noise."，载 <em>GPU Gems</em>，Randima Fernando 编，第 73–85 页。Addison-Wesley 出版。</p><p><a id="biblio26_03"></a>Perlin, Ken. 2002. "Improving Noise."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)，第 681–682 页。更新版可在线获取：<strong><a href="http://mrl.nyu.edu/~perlin/noise/" rel="noreferrer noopener">http://mrl.nyu.edu/~perlin/noise/</a></strong></p><p><a id="biblio26_04"></a>Perlin, Ken. 1985. "An Image Synthesizer."，载 <em>Computer Graphics (Proceedings of ACM SIGGRAPH 85)</em> 19(3)，第 287–296 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-26-implementing-improved-perlin-noise" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-26-implementing-improved-perlin-noise</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

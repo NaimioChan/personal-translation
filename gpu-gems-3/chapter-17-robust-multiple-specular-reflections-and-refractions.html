@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 17 章　稳健的多重镜面反射与折射 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 17 章　稳健的多重镜面反射与折射」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 17 章　稳健的多次镜面反射与折射</h1>
+<p><em>Tamás Umenhoffer<br> 布达佩斯技术与经济大学</em></p><p><em>Gustavo Patow<br> 赫罗纳大学</em></p><p><em>László Szirmay-Kalos<br> 布达佩斯技术与经济大学</em></p><p>本章介绍一种在 GPU 上计算单次与多次反射、折射的稳健算法。为了让片元着色器在寻找二次光线命中点时能访问整个场景的几何描述，我们先把场景渲染进一张<em>分层距离贴图</em>。每一层以一张立方体贴图的形式存放在纹理内存中。这些立方体贴图的纹素不仅包含颜色信息，还包含到参考点的距离与表面法线，因此纹素可以看作场景的采样表示。算法在这份表示中搜索以追踪二次光线。搜索过程从<em>光线步进</em>开始，确保不漏掉任何光线与表面的交点，再用<em>割线搜索</em>保证精度。</p><p>介绍完追踪二次光线的一般机制之后，我们给出应用，包括曲面上的单次与多次反射和折射。为计算多次反射与折射，程序读取距离贴图中存放的法线向量，用来生成反射/折射光线。这些高阶光线由片元着色器追踪，方式与追踪第一次反射光线类似。反射光线的强度按一个简化的菲涅尔公式计算，该公式对金属同样适用。得到的算法实现简单、可实时运行，精度足以渲染自反射。我们提出的方法在实现上需要动态分支支持。</p><h2>17.1 引言</h2><p>图像合成计算通过虚拟相机各像素可见的点的辐亮度。局部光照模型依据位置、法线向量、材质数据等局部属性，再加上全局光源参数来计算辐亮度。每个点独立着色，这为并行计算开启了大量可能。当前 GPU 大量利用这种独立并行的着色思路，其诱人性能正来自局部光照模型所允许的并行架构。不过，对理想反射体与折射体，一个点的辐亮度还取决于其他点的光照，因而点无法独立着色。这意味着，计算一个点的辐亮度会递归地产生新的可见性与颜色计算任务，以确定间接光照的强度。</p><p>求解某点在某个方向上的可见性问题，基本操作是投射一条光线。要得到完整的路径，我们应在命中点继续追踪光线，得到第二个点以及更多散射点。GPU 对同源光线的追踪非常高效：从共同的出发点「拍一张照片」，用片元着色器单元计算可见点的辐亮度。这一摄影过程包括把场景几何光栅化，并利用 z 缓冲找出穿过各像素的光线的首次命中。</p><p>这种方式对主光线很理想，但对辐亮度中镜面反射与折射项所需的二次光线不适用，因为这些光线并不共享同一出发点。要追踪这些光线，片元着色器必须能访问场景。由于片元着色器可以访问全局（即 uniform）参数与纹理，只要把场景几何存进 uniform 参数或纹理，这一要求就能满足。</p><p>场景物体可以编码为表面方程的一组参数，类似经典光线追踪的做法（Havran 2001、Purcell et al. 2002 与 Purcell et al. 2003）。如果场景几何过于复杂，可以用简单的代理几何体，以支持快速的近似求交（Bjorke 2004 与 Popescu et al. 2006）。</p><p>另一方面，场景几何也可以按采样形式存放。这一想法最古老的应用是阴影算法所用的<em>深度贴图</em>（Williams 1978），它存放从光源位置透过一扇窗口所看到的几何体部分在光照空间中的 <em>z</em> 坐标。</p><p>要考虑所有方向，就应使用立方体贴图而非单张深度图像。若在纹素中存放世界空间的欧氏距离，立方体贴图就变得类似<em>球面贴图</em>（Patow 1995 与 Szirmay-Kalos et al. 2005）。这样，一对方向与距离值就指定了该方向上的可见点，无需知道立方体贴图各面的朝向。这条性质在两个方向之间插值时尤为重要，因为它省去了处理立方体贴图面边界的工作。存放距离值的立方体贴图称为<em>距离贴图</em>。</p><p>深度或距离立方体贴图只表示从生成该贴图所用的眼位置直接可见的表面。这个眼位置称为贴图的<em>参考点</em>。为了也包含被参考点遮挡的表面，我们应生成并存放距离贴图的多个层（在纹素中不仅存最近的点，而是存该方向上的所有点）。</p><p>本章介绍一种简单而稳健的光线追踪算法，用于计算与存放在分层距离贴图中的几何体求交。注意这张贴图是场景几何的采样表示。因此追踪光线时，求交计算可以使用这些信息而不必用三角网格。片元着色器可以查纹理，却无法直接访问网格，所以这一替换对 GPU 实现至关重要。在我们的方法中，光线追踪可以支持查找路径上的第二、第三次（等等）命中点，而第一个点由光栅化确定。我们的方法可以看作对<em>环境贴图</em>的扩展，因为它把距离信息放进纹素，以获得更准确的光线-环境求交。</p><p>这套追踪二次光线的稳健机制可用于实时计算多次反射与折射。</p><h2>17.2 追踪二次光线</h2><p>所提出的光线追踪算法处理存放在分层距离贴图中的几何体。分层距离贴图的单层是一张立方体贴图，其中纹素存放该纹素方向上的点的材质属性、距离与法线向量。<em>材质属性</em>对漫反射表面是反射辐亮度，对镜面反射体是垂直入射时的菲涅尔因子。对折射体，折射率也作为材质属性存放。距离从立方体贴图的中心（即参考点）量起。</p><h4>17.2.1 生成分层距离贴图</h4><p>计算距离贴图与计算经典环境贴图类似。我们把场景渲染六次，以参考点为眼、以立方体的各面为窗口矩形。不同之处在于，不只是计算并存放颜色到额外的立方体贴图，还要存距离与法线向量。利用<em>多渲染目标</em>特性，我们可以在单个渲染遍中生成存放颜色的纹理，以及编码法线向量与距离的纹理。</p><p>一般情形下，表示场景的那组层可以用<em>深度剥离</em>得到（Everitt 2001 与 Liu et al. 2006）。为了控制层数，我们可以限制剥离遍数，这样无论远处的物体是否相互遮挡，它们都被放进同一层，如<a href="https://developer.download.nvidia.com/books/gpugems3/17fig01.jpg" rel="noreferrer noopener">图 17-1</a> 所示。如果远处物体的距离显著大于反射物体本身的尺寸，这种近似是可以接受的。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig01.jpg" alt="17fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig01.jpg" rel="noreferrer noopener">图 17-1</a> 具有 3 + 1 层的分层距离贴图</figcaption></figure><p>对比较简单、且与环境相距不太近的反射物体，层的生成可以进一步简化。把参考点放在反射物体的中心，把反射物体的正面与背面分别渲染进两层。注意这种方法可能填不满某一层的所有纹素，因此有些纹素可能不代表任何可见点。如果渲染前用负距离值清空渲染目标，那么不含可见点的无效纹素之后可以通过检查距离的正负来识别。</p><p>场景物体运动时，距离贴图需要更新。</p><h4>17.2.2 在分层距离贴图中追踪光线</h4><p>基本思路借助<a href="https://developer.download.nvidia.com/books/gpugems3/17fig02.jpg" rel="noreferrer noopener">图 17-2</a> 的记号来讨论。点的<em>位置向量</em>用小写字母表示，<em>方向向量</em>用大写字母表示。假定坐标系中心 <strong>o</strong> 就是参考点，我们关心点 <strong>x</strong> 从方向 <strong>R</strong> 受到的光照。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig02.jpg" alt="17fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig02.jpg" rel="noreferrer noopener">图 17-2</a> 从处沿方向追踪光线</figcaption></figure><p>于是发光点位于方程 <strong>x</strong> + <strong>R ·</strong> <em>d</em> 所表示的射线上，其中 <em>d</em> 是待定的光线参数。我们可以检验 <em>d</em> 的任意近似的准确性：在立方体贴图中按方向 <strong>l</strong> = <strong>x</strong> + <strong>R ·</strong> <em>d</em> 读出所存的环境表面距离（|<strong>l</strong>'|），再与射线上近似点 <strong>l</strong> 的距离 |<strong>l</strong>| 比较。若 |<strong>l</strong>| ≈ |<strong>l</strong>'|，就找到了交点。若射线上的点在表面前方，即 |<strong>l</strong>| &lt; |<strong>l</strong>'|，当前近似是<em>低于</em>的。反之，当点 |<strong>l</strong>| 位于表面之后（|<strong>l</strong>| &gt; |<strong>l</strong>'|），该近似是<em>高于</em>的。</p><p>光线参数 <em>d</em> 可用迭代过程求得。过程从光线步进（即<em>线性搜索</em>）开始，再用割线搜索继续。稳健的线性搜索会算出一个粗略的偏高猜测与一个偏低的近似，把光线的第一个交点夹在中间。从这两个近似出发，割线搜索能迅速得到准确的交点。</p><h4>线性搜索</h4><p>可能的交点都在射线上。因此，交点可以通过在射线上步进找到（即检查点 <strong>r</strong>(<em>d</em>) = <strong>x</strong> + <strong>R ·</strong> <em>d</em>，这些点由递增的正参数序列 <em>d,</em> 生成，并找出第一对相邻点，其中一点偏高、另一点偏低）。真正的交点位于这两个猜测之间，用割线搜索（下一小节讨论）求得。</p><p>光线参数 <em>d</em> 的增量定义需要特别考虑，因为现在几何体是采样的，反复检查同一个样本而忽略其他样本并不划算。遗憾的是，在射线上取等长步长并不能保证纹理空间被均匀采样。离参考点越远，射线上单位长度的步长对应纹理空间中越小的步长。要解决这个问题，可以在一段线段上步进，从参考点看去这条线段与射线完全重合，只是两个端点等距。把射线的起点 <strong>r</strong>(0) 与终点 <strong>r</strong>(∞) 分别投影到单位球上，就得到这样的线段端点：新起点 <strong>s</strong> = <strong>x</strong>/|<strong>x</strong>| 与终点 <strong>e</strong> = <strong>R</strong>/|<strong>R</strong>|。交点必须位于从 <strong>s</strong> 到 <strong>e</strong> 之间方向上所见的纹素处，如<a href="https://developer.download.nvidia.com/books/gpugems3/17fig03.jpg" rel="noreferrer noopener"></a>图 17-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig03.jpg" alt="17fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig03.jpg" rel="noreferrer noopener">图 17-3</a> 在射线上步进，在纹理空间中取等长步长</figcaption></figure><p>求交算法在 <strong>s</strong> 与 <strong>e</strong> 的线段上以等长步长搜索这些纹素：</p><table><tbody><tr><td><p>r'(<em>t</em>) = s · (1 - <em>t</em>) + e · <em>t</em>,</p></td><td><p><em>t</em> = 0,<em>t</em>, 2<em>t</em>,..., 1.</p></td></tr></tbody></table><p>光线参数 <em>d</em> 与参数 <em>t</em> 之间的对应关系，可由把 <strong>r</strong>' 投影到射线上得到，由此得出下式：</p><p><img alt="392equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/392equ01.jpg"/></p><p>片元着色器的实现应接收光线起点 <code>x</code> 与方向 <code>R</code>，以及作为 uniform 参数传入的 <code>samplerCUBE</code> 类型的立方体贴图 <code>map</code>，依次生成光线参数 <code>d</code> 与射线上的点 <code>r</code>，并返回偏低的光线参数 <code>dl</code> 与偏高的光线参数 <code>dp</code>。比值 |<strong>l</strong>|/|<strong>l</strong>'| 与 |<strong>p</strong>| / |<strong>p</strong>'| 分别用变量 <code>llp</code> 与 <code>ppp</code> 表示。距离值存放在立方体贴图的 alpha 通道中。代码清单 17-1 给出执行线性搜索的片元着色器算法。</p><p>该算法在单层中找到相邻的一对偏低点与偏高点，在射线上按纹理空间中的等长步长 <code>Dt</code> 前进。步长 <code>Dt</code> 按 <strong>s</strong> 与 <strong>e</strong> 线段长度以及立方体贴图分辨率成比例设置。把纹素步长 <code>Dt</code> 设为大于相邻两个纹素的距离，可以加快算法，但也提高了漏掉薄物体反射的概率。在某个纹素处，距离值从立方体贴图的 alpha 通道取得。注意我们使用函数 <code>texCUBElod()</code>——显式把 mipmap 级别设为 0——而不用 <code>texCUBE()</code>，因为 <code>texCUBE()</code> 与 <code>tex2D()</code> 一样会迫使 DirectX 9 HLSL 编译器展开动态循环（Sander 2005）。</p><p>线性搜索应对每一层都执行。光线参数（<code>dp</code>）最小的那一层含有光线的首次命中。</p><h4>用最小-最大距离值加速</h4><p>为加快某一层内的求交搜索，我们为每张距离贴图计算一个最小距离值与一个最大距离值。追踪光线时，让光线与以参考点为中心、半径分别等于最小值与最大值的球面求交。这两个交点显著缩小了需要步进的光线区间。这个过程让起点 <strong>s</strong> 与终点 <strong>e</strong> 靠得更近，因此更少的步数就能达到同样的精度。见<a href="https://developer.download.nvidia.com/books/gpugems3/17fig04.jpg" rel="noreferrer noopener">图 17-4</a>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig04.jpg" alt="17fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig04.jpg" rel="noreferrer noopener">图 17-4</a> 最小-最大加速</figcaption></figure><h4>示例 17-1. 在 HLSL 中执行线性搜索的片元着色器</h4><pre><code>
+float a = length(x) / length(R);
+bool undershoot = false, overshoot = false;
+float dl, llp;
+// 最近一次欠冲的光线参数与 |l|/|l'|
+float dp, ppp;
+// 最近一次过冲的光线参数与 |p|/|p'|
+float t = 0.0001f;
+while (t < 1 && !(overshoot && undershoot))
+{
+  // 迭代
+  float d = a * t / (1 - t);
+  // 对应于 t 的光线参数
+  float3 r = x + R * d;
+  // r(d)：光线上的点
+  float ra = texCUBElod(map, float4(r, 0)).a; // |r'|
+  if (ra > 0)
+  {
+    // 有效纹素，即前方有可见物
+    float rrp = length(r) / ra; //|r|/|r'|
+    if (rrp < 1)
+    {
+      // 欠冲
+      dl = d;
+      // 把最近一次欠冲存入 dl
+      llp = rrp;
+      undershoot = true;
+    }
+    else
+    {
+      // 过冲
+      dp = d;
+      // 把最近一次过冲存为 dp
+      ppp = rrp;
+      overshoot = true;
+    }
+  }
+  else
+  {
+    // 前方没有可见物：重新开始搜索
+    undershoot = false;
+    overshoot = false;
+  }
+  t += Dt;
+  // 下一个纹素
+}</code></pre><h4>用割线搜索细化</h4><p>线性搜索给出相邻的一对偏低与偏高样本，真正的交点必在二者之间。我们把偏低与偏高的光线参数分别记为 <em>d<sub>p</sub></em> 与 <em>d<sub>l</sub></em> 。射线上对应的两点为 <strong>p</strong> 与 <strong>l</strong>，表面上对应的两点为 <strong>p</strong>' 与 <strong>l</strong>'，如<a href="https://developer.download.nvidia.com/books/gpugems3/17fig05.jpg" rel="noreferrer noopener">图 17-5</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig05.jpg" alt="17fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig05.jpg" rel="noreferrer noopener">图 17-5</a> 用割线步细化</figcaption></figure><p>假设 <strong>p</strong>' 与 <strong>l</strong>' 之间表面是平面的，我们看到光线在点 <strong>r</strong> = <strong>x</strong> + <strong>R ·</strong> <em>d<sub>new</sub></em> 处与之相交，其中</p><p><img alt="394equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/394equ01.jpg"/></p><p></p><p>如果单次割线步不够准确，可以让 <em>d<sub>new</sub></em> 替换掉之前的一个近似 <em>d<sub>l</sub></em> 或 <em>d<sub>p</sub></em> （始终保留一个偏高、一个偏低的近似），然后继续同样的迭代步。注意割线搜索对平面表面一次迭代就能得到精确结果，对平面网格也只需有限步。代码清单 17-2 给出割线搜索的片元着色器实现。</p><h4>示例 17-2. HLSL 中割线搜索的片元着色器实现</h4><pre><code>
+for (int i = 0; i < NITER; i++)
+{
+  // 新交点的光线参数
+  dnew = dl + (dp - dl) * (1 - llp) / (ppp - llp);
+  float3 r = x + R * dnew;
+  // 光线上新的点
+  float rrp = length(r) / texCUBElod(map, float4(r, 0)).a; // |r|/|r'|
+  if (rrp < 0.9999)
+  {
+    // 欠冲
+    llp = rrp;
+    // 存为最近一次欠冲
+    dl = dnew;
+  }
+  else if (rrp > 1.0001)
+  {
+    // 过冲
+    ppp = rrp;
+    // 存为最近一次过冲
+    dp = dnew;
+  }
+  else
+    i = NITER;
+}</code></pre><p>我们把对每层执行的线性搜索，与处理单层的割线搜索一起放进一个 <code>Hit()</code> 函数。现在我们有了在场景中追踪任意光线的通用工具。该函数找到首次命中 <code>l</code>。在这个方向上读取立方体贴图，就能得到该点对应的材质属性与法线向量。</p><h2>17.3 反射与折射</h2><p>先考虑镜面反射。生成分层距离贴图之后，我们渲染反射物体并启用自定义的顶点与片元着色器程序。顶点着色器把反射物体变换到裁剪空间——同时也变换到立方体贴图的坐标系——先施加建模变换，再平移到参考点。视线向量 <code>V</code> 与法线 <code>N</code> 也在该空间中取得。代码清单 17-3 给出反射与折射的顶点着色器。</p><h4>示例 17-3. HLSL 中反射与折射的顶点着色器</h4><pre><code>
+void SpecularReflectionVS(in float4 Pos
+                          : POSITION,
+                            // 模型空间中的顶点
+                            in float3 Norm
+                          : NORMAL,
+                            // 模型空间中的法线
+                            out float4 hPos
+                          : POSITION,
+                            // 裁剪空间中的顶点
+                            out float3 x
+                          : TEXCOORD1,
+                            // 立方体贴图空间中的顶点
+                            out float3 N
+                          : TEXCOORD2,
+                            // 立方体贴图空间中的法线
+                            out float3 V
+                          : TEXCOORD3,
+                            // 视线方向
+                            uniform float4x4 WorldViewProj,
+                            // 模型空间到裁剪空间
+                            uniform float4x4 World,
+                            // 模型空间到世界空间
+                            uniform float4x4 WorldIT,
+                            // World 的逆转置
+                            uniform float3 RefPoint,
+                            // 世界空间中的参考点
+                            uniform float3 EyePos
+                          // 世界空间中的视点
+)
+{
+  hPos = mul(Pos, WorldViewProj);
+  float3 wPos = mul(Pos, World).xyz;
+  // 世界空间
+  N = mul(Norm, WorldIT);
+  V = wPos - EyePos;
+  x = wPos - RefPoint;
+  // 变换到立方体贴图空间
+}</code></pre><p>片元着色器调用 <code>Hit()</code> 函数，得到首次命中 <code>l</code> 及其辐亮度 <code>Il</code> 与法线向量 <code>Nl</code>。如果表面是理想镜面，入射辐亮度应乘以按表面法线 <strong>N</strong> 与反射方向 <strong>R</strong> 之间夹角求值的菲涅尔项。我们使用菲涅尔函数的一种近似（Schlick 1993），它不仅考虑<em>折射率 n</em>，还考虑<em>消光系数 k</em>（这对逼真的金属至关重要）（Bjorke 2004；Lazányi and Szirmay-Kalos 2005）：</p><table><tbody><tr><td><p><em>F</em>(<strong>N,R</strong>) = <em>F<sub>p</sub></em> + (1 - <em>F</em> <sub><em>p</em></sub> )·(1 - <strong>N · R</strong>)<sup>5</sup>,</p></td></tr></tbody></table><p>其中</p><p><img alt="397equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/397equ01.jpg"/></p><p>是垂直入射时的菲涅尔函数（即光子被反射的概率）。注意 <em>F<sub>p</sub></em> 对给定材质是常数。因此该值可以在 CPU 上由折射率与消光系数算出，再作为全局变量传给 GPU。代码清单 17-4 给出单次反射的片元着色器。</p><h4>示例 17-4. HLSL 中单次反射的片元着色器</h4><pre><code>
+float4 SingleReflectionPS(float3 x
+                          : TEXCOORD1,
+                            // 立方体贴图空间中的着色点
+                            float3 N
+                          : TEXCOORD2,
+                            // 法线向量
+                            float3 V
+                          : TEXCOORD3,
+                            // 视线方向
+                            uniform float3 Fp0
+                          // 垂直方向上的菲涅尔
+                          )
+    : COLOR
+{
+  V = normalize(V);
+  N = normalize(N);
+  float3 R = reflect(V, N); // 反射方向
+  float3 Nl;
+  // 交点处的法线向量
+  float3 Il;
+  // 交点处的辐亮度
+  // 追踪光线 x+R*d，得到交点 l、辐亮度 Il、法线 Nl
+  float3 l = Hit(x, R, Il, Nl);
+  // 菲涅尔反射
+  float3 F = Fp0 + pow(1 - dot(N, -V), 5) * (1 - Fp0);
+  return float4(F * Il, 1);
+}</code></pre><p>单次折射的着色器类似，但方向计算应使用折射定律而非反射定律。换句话说，应把 <code>reflect</code> 操作换成 <code>refract</code> 操作，且入射辐亮度应乘以 1-<em>F</em> 而非 <em>F</em>。</p><p>光在到达漫反射表面之前，可能在理想反射体或折射体上被反射或折射多次。如果命中点位于镜面表面上，就需要计算一条反射或折射光线并继续追踪，对二次、三次以及更多次光线重复同一算法。计算反射或折射光线时，我们需要命中表面处的法线向量、菲涅尔函数以及折射率（折射情形）。这些信息可以按每层存进两张立方体贴图。第一张立方体贴图包含材质属性（漫反射表面的反射颜色，或镜面表面的垂直入射菲涅尔项）与折射率。第二张立方体贴图存放法线向量与距离值。</p><p>为了区分反射体、折射体与漫反射表面，我们检查折射率的符号。负值、零与正值分别表示反射体、漫反射表面与折射体。代码清单 17-5 给出计算多次镜面反射/折射的代码。</p><h4>示例 17-5. 计算多次镜面反射/折射的 HLSL 片元着色器</h4><p><em>这个着色器用动态循环组织光线追踪过程。</em></p><pre><code>
+float4 MultipleReflectionPS(float3 x
+                            : TEXCOORD1,
+                              // 立方体贴图空间中的着色点
+                              float3 N
+                            : TEXCOORD2,
+                              // 法线向量
+                              float3 V
+                            : TEXCOORD3,
+                              // 视线方向
+                              uniform float3 Fp0,
+                              // 垂直方向上的菲涅尔
+                              uniform float3 n0
+                            // 折射率
+                            )
+    : COLOR
+{
+  V = normalize(V);
+  N = normalize(N);
+  float3 I = float3(1, 1, 1);
+  // 该路径的辐亮度
+  float3 Fp = Fp0;
+  // 首次命中处 90 度的菲涅尔
+  float n = n0;
+  // 首次命中处的折射率
+  int depth = 0;
+  // 路径长度
+  while (depth < MAXDEPTH)
+  {
+    float3 R;
+    // 反射或折射方向
+    float3 F = Fp + pow(1 - abs(dot(N, -V)), 5) * (1 - Fp);
+    if (n < = 0)
+    {
+      R = reflect(V, N);
+      // 反射
+      I *= F;
+      // 菲涅尔反射
+    }
+    else
+    {
+      // 折射
+      if (dot(V, N) > 0)
+      { // 从内部射来
+        n = 1 / n;
+        N = -N;
+      }
+      R = refract(V, N, 1 / n);
+      if (dot(R, R) == 0)
+        // 不存在折射方向
+        R = reflect(V, N); // 全反射
+      else
+        I *= (1 - F);
+      // 菲涅尔折射
+    }
+    float3 Nl;
+    // 交点处的法线向量
+    float4 Il;
+    // 交点处的辐亮度
+    // 追踪光线 x+R*d，得到交点 l、辐亮度 Il、法线 Nl
+    float3 l = Hit(x, R, Il, Nl);
+    n = Il.a;
+    if (n != 0)
+    {
+      // 交点位于镜面反射表面
+      Fp = Il.rgb;
+      // 90 度的菲涅尔
+      depth += 1;
+    }
+    else
+    {
+      // 交点位于漫反射表面
+      I *= Il.rgb; // 乘以辐亮度
+      depth = MAXDEPTH;
+      // 终止
+    }
+    N = Nl;
+    V = R;
+    x = l; // 交点即为下一个着色点
+  }
+  return float4(I, 1);
+}</code></pre><h2>17.4 结果</h2><p>我们的算法在 DirectX 9 HLSL 环境中实现，并在 NVIDIA GeForce 8800 GTX 显卡上测试。为简化实现，我们用两层表示反射物体（分别含正面与背面），并把所有漫反射表面光栅化到第三层。这一简化免去了实现深度剥离过程，并把层数上限设为三层。要处理更复杂的反射物体，需要整合深度剥离算法。</p><p>所有图像以 800x600 分辨率渲染。立方体贴图分辨率为 6x512x512，每帧更新。我们应仔细选择线性搜索的步长与割线搜索的迭代次数，因为它们会显著影响图像质量与渲染速度。如果把线性搜索的步长设得大于距离贴图相邻两纹素的距离，就能加快算法，但也会提高漏掉薄物体反射的概率。如果渲染进某一层的几何体是光滑的（即由较大的多边形面片构成），线性搜索可以取较大步长，割线搜索只需少数几次迭代就能找到精确解。然而，当层中距离值变化剧烈时，线性搜索应取细步长，以免漏掉距离贴图中的尖峰——那对应着薄的反射物体。</p><p>欠采样瑕疵的另一个来源是层数限制与距离贴图分辨率的限制。反射中我们可能看到场景的某些部分，它们由于遮挡以及相对立方体贴图中心的掠射朝向，在距离贴图中表示得很粗糙或根本没有表示。<a href="https://developer.download.nvidia.com/books/gpugems3/17fig06.jpg" rel="noreferrer noopener">图 17-6</a> 展示了这些瑕疵，并说明通过适当设置线性搜索步长与割线搜索迭代次数可以把它们减轻到何种程度。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig06.jpg" alt="17fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig06.jpg" rel="noreferrer noopener">图 17-6</a> 线性/割线步数分别取 15/1、15/10、80/1 与 80/10 时的走样瑕疵</figcaption></figure><p>注意阶梯状瑕疵通常可以通过增加割线步来消除。绿色与红色框内放大的薄物体需要细的线性步长，因为一旦漏掉，后面的割线搜索并不总能迅速纠正误差。注意在<a href="https://developer.download.nvidia.com/books/gpugems3/17fig06.jpg" rel="noreferrer noopener">图 17-6b</a> 中，割线搜索对桌子比对镜框更成功，因为桌子在距离贴图中占据的纹素更多。<a href="https://developer.download.nvidia.com/books/gpugems3/17fig06.jpg" rel="noreferrer noopener">图 17-6a</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/17fig06.jpg" rel="noreferrer noopener">17-6c</a> 左侧镜子里桌子下方阴影区域反射的走样（在蓝色框中放大），源于距离贴图层数被限制为三层。该区域在层中没有表示，因此连割线搜索也无法算出准确反射（<a href="https://developer.download.nvidia.com/books/gpugems3/17fig06.jpg" rel="noreferrer noopener">图 17-6b</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/17fig06.jpg" rel="noreferrer noopener">17-6d</a>）。这类问题可以通过增加层数来解决。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/17fig07.jpg" rel="noreferrer noopener">图 17-7</a> 展示了盒中一个反射茶壶的图像，分别用所提出的方法和 Maya（作对比）渲染，并把一条路径中的最大反射次数限制为一、二、三。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig07.jpg" alt="17fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig07.jpg" rel="noreferrer noopener">图 17-7</a> 茶壶上的单次与多次反射（）以及与 Maya 7 渲染器软件光线追踪器的比较（）</figcaption></figure><p>注意 GPU 渲染与软件渲染的图像高度相似。还值得一提的是，最大反射次数增加时帧率下降很少。这一情形说明最新 NVIDIA 显卡的动态分支性能优异，也说明即使 GPU 方案也能从光线提前终止中获益。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/17fig08.jpg" rel="noreferrer noopener">图 17-8</a> 展示了一个更复杂的场景，含一个反射球与一面镜子，此时最大光线深度变量从一递增到八。把所有漫反射表面归入单层，会在出现视线相关遮挡的地方造成轻微模糊瑕疵（例如镜面球上灯把手的反射）。用更多层可以消除这些瑕疵，但代价是实现更复杂、渲染更慢。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig08.jpg" alt="17fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig08.jpg" rel="noreferrer noopener">图 17-8</a> 最大深度变量从一递增到八时的多次反射</figcaption></figure><p><a href="https://developer.download.nvidia.com/books/gpugems3/17fig09.jpg" rel="noreferrer noopener">图 17-9</a> 展示了一个既反射又折射光的球。最后，<a href="https://developer.download.nvidia.com/books/gpugems3/17fig10.jpg" rel="noreferrer noopener">图 17-10</a> 包含一段关于复杂环境中反射茶壶的视频截图。该视频在不用最小-最大加速时以 25 fps 渲染。为每层计算一对最小-最大值后，速度提升到 50 fps。最大反射次数设为二。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig09.jpg" alt="17fig09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig09.jpg" rel="noreferrer noopener">图 17-9</a> 既反射又折射的球</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/17fig10.jpg" alt="17fig10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/17fig10.jpg" rel="noreferrer noopener">图 17-10</a> 以 25/50 FPS 渲染的视频截图</figcaption></figure><h2>17.5 结论</h2><p>本章介绍了一种在以分层距离贴图表示的场景中追踪光线的稳健算法。该方法用于在 GPU 上计算单次与多次反射和折射。在光栅化几何表示中追踪光线，而非直接实现经典光线追踪，一个重要优势是这些方法可以集成进游戏引擎，受益于为游戏开发的可见性算法（Wimmer and Bittner 2005），并充分利用最新显卡的潜力。如果渲染进某一层的几何体是光滑的（即由较大的多边形面片构成），这一方法尤其有效。此时线性搜索可以取较大步长，割线搜索只需少数几次迭代就能找到精确解。然而，当层中距离值变化剧烈时，线性搜索应取细步长，以免漏掉薄的反射物体。注意浮雕贴图中也会出现类似问题，已有多套解法（Donnelly 2005；Policarpo and Oliveira 2007——本书第 18 章）。将来我们会考虑把类似的解法整合进我们的技术。</p><p></p><h2>17.6 参考文献</h2><p>Bjorke, Kevin. 2004. "Image-Based Lighting."，载 <em>GPU Gems</em>，Randima Fernando 编，第 307–321 页。Addison-Wesley 出版。</p><p>Donnelly, William. 2005. "Per-Pixel Displacement Mapping with Distance Functions."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 123–136 页。Addison-Wesley 出版。</p><p>Everitt, Cass. 2001. "Interactive Order-Independent Transparency." NVIDIA 技术报告。可在线获取：<a href="http://developer.nvidia.com/object/Interactive_Order_Transparency.html" rel="noreferrer noopener">http://developer.nvidia.com/object/Interactive_Order_Transparency.html</a>。</p><p>Havran, Vlastimil. 2001. "Heuristic Ray Shooting Algorithms." Czech Technical University 博士论文。可在线获取：<a href="http://www.cgg.cvut.cz/~havran/phdthesis.html" rel="noreferrer noopener">http://www.cgg.cvut.cz/~havran/phdthesis.html</a>。</p><p>Krüger, Jens, Kai Burger, and Rüdiger Westermann. 2006. "Interactive Screen-Space Accurate Photon Tracing on GPUs."，载 <em>Eurographics Symposium on Rendering 2006</em>，第 319–329 页。</p><p>Lazányi, István, and László Szirmay-Kalos. 2005. "Fresnel Term Approximations for Metals."，载 <em>Short Paper Proceedings of WSCG</em>，第 77–80 页。</p><p>Liu, Baoquan, Li-Yi Wei, and Ying-Qing Xu. 2006. "Multi-Layer Depth Peeling via Fragment Sort." 技术报告 MSR-TR-2006-81，Microsoft Research。</p><p>Patow, Gustavo. 1995. "Accurate Reflections through a z-buffered Environment Map."，载 <em>Proceedings of Sociedad Chilena de Ciencias de la Computacion</em>。</p><p>Policarpo, Fabio, and Manuel Oliveira. 2007. "Relaxed Cone Stepping for Relief Mapping."，载 <em>GPU Gems 3</em>，Hubert Nguyen 编。Addison-Wesley 出版。（本书第 18 章）</p><p>Popescu, Voicu, Chunhui Mei, Jordan Dauble, and Elisha Sacks. 2006. "Reflected-Scene Impostors for Realistic Reflections at Interactive Rates."，载 <em>Computer Graphics Forum (Proceedings of Eurographics 2006)</em> 25(3)，第 313–322 页。</p><p>Purcell, Timothy J., Ian Buck, William R. Mark, and Pat Hanrahan. 2002. "Ray Tracing on Programmable Graphics Hardware."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)，第 703–712 页。可在线获取：<a href="http://graphics.stanford.edu/papers/rtongfx/" rel="noreferrer noopener">http://graphics.stanford.edu/papers/rtongfx/</a>。</p><p>Purcell, Tim, Craig Donner, Mike Cammarano, Henrik-Wann Jensen, and Pat Hanrahan. 2003. "Photon Mapping on Programmable Graphics Hardware."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，第 41–50 页。</p><p>Sander, Pedro. 2005. "DirectX9 High Level Shading Language." SIGGRAPH 2005 教程。可在线获取：<a href="http://ati.amd.com/developer/SIGGRAPH05/ShadingCourse_HLSL.pdf" rel="noreferrer noopener">http://ati.amd.com/developer/SIGGRAPH05/ShadingCourse_HLSL.pdf</a>。</p><p>Schlick, Christophe. 1993. "A Customizable Reflectance Model for Everyday Rendering."，载 <em>Fourth Eurographics Workshop on Rendering</em>，第 73–83 页。</p><p>Szirmay-Kalos, László, Barnabás Aszódi, István Lazányi, and Mátyás Premecz. 2005. "Approximate Ray-Tracing on the GPU with Distance Impostors."，载 <em>Computer Graphics Forum (Proceedings of Eurographics 2005)</em> 24(3)，第 695–704 页。</p><p>Williams, Lance. 1978. "Casting Curved Shadows on Curved Surfaces."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 1978)</em> 12(3)，第 270–274 页。</p><p>Wimmer, Michael, and Jiri Bittner. 2005. "Hardware Occlusion Queries Made Useful."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 91–108 页。Addison-Wesley。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-17-robust-multiple-specular-reflections-and-refractions" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-17-robust-multiple-specular-reflections-and-refractions</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

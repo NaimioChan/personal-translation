@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 8 章　用距离函数做逐像素置换贴图 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 8 章　用距离函数做逐像素置换贴图」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 8 章　用距离函数做逐像素置换贴图</h1>
+<p><em>William Donnelly</em><br> <em>University of Waterloo</em></p><p>本章介绍距离贴图，一种在像素着色器中为物体增加小尺度置换贴图的技术。我们把置换贴图当作光线追踪问题处理：从基础表面上的纹理坐标出发，计算视线与位移后表面相交处的纹理坐标。为此我们预计算一张三维距离贴图，它给出空间中点到位移后表面的距离度量。有了这张距离贴图，我们就掌握了快速求光线与表面交点所需的全部信息。我们的算法显著提升了场景的观感几何复杂度，同时保持实时性能。</p><h2>8.1 引言</h2><p>Cook（1984）提出置换贴图，作为给表面增加小尺度细节的方法。与只影响着色的凹凸贴图不同，置换贴图调整表面元素的位置。这带来了凹凸贴图无法实现的效果，例如表面特征相互遮挡，以及非多边形的轮廓。图 8-1 是一幅石质表面的渲染，特征之间的遮挡增强了纵深感。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/08_displacement_01a.jpg" alt="08_displacement_01a.jpg"><figcaption>图 8-1　位移后的石质表面</figcaption></figure><p>置换贴图的常见实现是迭代剖分基础表面，把顶点沿基础表面法线向外推，直到生成的多边形接近单个像素的尺寸。Michael Bunnell 在本书第 7 章「带置换贴图的细分曲面自适应剖分」中介绍了这种做法。</p><p>尽管在管线的顶点着色阶段实现置换贴图看起来最合理，但顶点着色器无法生成新顶点，所以这并不可行。于是我们转而考虑依赖像素着色器的技术。使用像素着色器有几个好处：</p><ul><li><strong>当前 GPU 的像素处理能力高于顶点处理能力。</strong>例如，GeForce 6800 Ultra 有 16 条像素着色管线，而顶点着色管线只有 6 条。此外，单条像素管线每个时钟周期能执行的操作通常比单条顶点管线更多。</li><li><strong>像素着色器访问纹理的能力更强。</strong>许多 GPU 不允许在顶点着色器内访问纹理；即便允许，访问方式也受限，而且要付出性能代价。</li><li><strong>像素处理量随距离缩放。</strong>顶点着色器对模型中的每个顶点总要执行一次，而像素着色器只对屏幕上的每个像素执行一次。这意味着计算集中在近处物体上，那正是最需要的地方。</li></ul><p>使用像素着色器的缺点是，我们无法在着色器内改变像素的屏幕坐标。这意味着与基于剖分的做法不同，使用像素着色器的做法无法处理任意大的位移。不过这不是严重限制，因为实践中的位移几乎总是有界的。</p><h2>8.2 前人的工作</h2><p>视差贴图是一种简单办法，通过扩展凹凸贴图来加入视差效果（Kaneko 等 2001）。视差贴图利用表面单点的高度信息，把纹理坐标朝观察者方向或背离观察者方向偏移。虽然这只对平滑变化的高度场有效，是粗糙的近似，但效果出奇地好，尤其考虑到它只需三条额外着色器指令就能实现。遗憾的是，由于该技术固有的假设，它无法处理大位移、高频特征，或特征之间的遮挡。</p><p>Policarpo（2004）提出的浮雕贴图在高度图上使用求根方法。它先把视线变换到纹理空间，然后做线性搜索定位与表面的交点，再用二分搜索找到精确交点。遗憾的是，线性搜索需要固定步长。这意味着要解析小细节就必须增加步数，迫使用户在精度与性能之间权衡。我们的算法没有这种权衡：它会按需自动调整步长，在表面附近给出细细节，同时跳过表面之外的大片空区域。</p><p>视点相关置换贴图（Wang 等 2003）及其扩展——广义置换贴图（Wang 等 2004）——把置换贴图当作光线追踪问题。它们把所有可能的光线求交查询结果存进一个五维贴图，由三个位置坐标和两个角度坐标索引，对应一个三维体积。这张贴图随后用奇异值分解压缩，运行时在像素着色器中解压。由于数据是五维的，它需要大量预处理和存储。</p><p>我们这里介绍的置换渲染算法基于球体追踪（Hart 1996），这是一种为加速隐式曲面光线追踪而发展起来的技术。概念相同，只是我们不把算法用于隐式曲面的光线追踪，而是用于在 GPU 上渲染置换贴图。</p><h2>8.3 距离贴图算法</h2><p>假设我们要把一张置换贴图施加到平面上。可以把该表面看作被一个轴对齐的盒子包围。常规置换算法会渲染盒子的底面并把顶点向上推。我们的算法改为渲染盒子的顶面，然后在着色器内找出观察者真正会看到的位移后表面上的那个点。</p><p>某种意义上，我们计算的是常规置换贴图的逆问题。置换贴图问：「这块几何体映射到图像中的哪个像素？」我们的算法问：「图像中的这个像素，我们看到的是哪块几何体？」前一种做法是光栅化算法所用的，后一种是光线追踪算法所用的。所以我们把距离贴图当作光线追踪问题来处理。</p><p>常见的光线追踪做法是在均匀间隔处采样高度图，检测视线是否与表面相交。遗憾的是会遇到下面的问题：只要采样间距大于一个纹素，我们就无法保证没有漏掉位于采样点之间的交点。图 8-2 说明了这个问题。这些「过冲」会在渲染出的几何中造成缝隙，并导致严重的走样。于是我们有两个选择：要么接受欠采样带来的瑕疵，要么沿视线为每个纹素取一次样。图 8-3 显示我们的算法能渲染出带细细节的物体，而没有任何走样或几何缝隙。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/08_displacement_02.jpg" alt="08_displacement_02.jpg"><figcaption>图 8-2　置换算法的一个困难情形</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/08_displacement_03.jpg" alt="08_displacement_03.jpg"><figcaption>图 8-3　渲染位移后的文字</figcaption></figure><p>从上面的例子可以得出两个结论：</p><ol type="1"><li>我们不能简单地按固定间隔查询高度图。它要么导致欠采样瑕疵，要么导致无法承受的算法。</li><li>我们需要比高度场更多的信息；我们需要知道在任意给定区域可以把采样间隔取到多大而不越过表面。</li></ol><p>为解决这些问题，我们定义表面的距离贴图。对纹理空间中的任意点 <em>p</em> 和表面 <em>S</em>，定义函数 dist(<em>p</em>, <em>S</em>) = min{<em>d</em>(<em>p</em>, <em>q</em>) : <em>q</em> 属于 <em>S</em>}。也就是说，dist(<em>p</em>, <em>S</em>) 是从 <em>p</em> 到表面 <em>S</em> 上最近点的最短距离。于是 <em>S</em> 的距离贴图就是一张三维纹理，为每个点 <em>p</em> 存储 dist(<em>p</em>, <em>S</em>) 的值。图 8-4 给出一个一维高度图示例及其对应的距离贴图。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/08_displacement_04a.jpg" alt="08_displacement_04a.jpg"><figcaption>图 8-4　一个二维距离贴图示例</figcaption></figure><p>这张距离贴图恰好给出了选择采样位置所需的信息。假设有一条光线，起点为 <em>p</em> <sub>0</sub>，方向向量为 <strong>d</strong>，其中 <strong>d</strong> 归一化为单位长度。我们定义新点 <em>p</em> <sub>1</sub>= <em>p</em> <sub>0</sub> + dist(<em>p</em> <sub>0,</sub> <em>S</em>) x <strong>d</strong>。这个点有个重要性质：若 <em>p</em> <sub>0</sub> 在表面之外，则 <em>p</em> <sub>1</sub> 也在表面之外。然后我们重复同样的操作，定义 <em>p</em> <sub>2</sub> = <em>p</em> <sub>1</sub>+ dist(<em>p</em> <sub>1,</sub> <em>S</em>) x<strong>d</strong>，依此类推。每个相继的点都离表面更近一些。因此取足够多的采样后，这些点会收敛到光线与表面最近的交点。图 8-5 展示了该算法的效果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/08_displacement_05.jpg" alt="08_displacement_05.jpg"><figcaption>图 8-5　球体追踪</figcaption></figure><p>值得注意的是，距离函数不只适用于高度场。事实上，距离贴图可以表示任意的体素化数据。这意味着可以用它渲染具有复杂拓扑的小尺度细节。例如，锁子甲就可以用这种方式渲染。</p><h4>8.3.1 任意网格</h4><p>到此为止，我们只讨论了把距离贴图用于平面。我们希望把距离贴图用于一般网格。做法是假设表面局部是平的。基于这一假设，我们可以用表面的局部切线坐标系做与平面情形相同的计算。我们用局部表面切线把视线向量变换到切线空间，就像为切线空间法线贴图变换光线向量那样。一旦把视线变换到切线空间，算法就与平面情形完全一样。</p><p>现在我们知道如何用距离贴图做光线追踪，接下来需要知道如何高效地为任意高度场计算距离贴图。</p><h2>8.4 计算距离贴图</h2><p>计算距离变换是一个研究得很充分的问题。Danielsson（1980）提出了一个运行时间为 <em>O</em>(<em>n</em>) 的算法，其中 <em>n</em> 是贴图中的像素数。思路是建一张三维贴图，每个像素存储到表面最近点的三维位移向量。算法随后在三维域上做少量顺序扫描，依据相邻的位移向量更新每个像素的位移向量。位移算完后，每个像素的距离取其位移的模。该算法的一个实现在本书附带的 CD 上。</p><p>距离变换算法结束后，我们算出了距离贴图中每个像素到表面最近点的距离，以像素为单位。为使这些距离落在 [0, 1] 区间，我们把每个距离除以三维纹理以像素计的深度。</p><h2>8.5 着色器</h2><h4>8.5.1 顶点着色器</h4><p>代码清单 8-1 给出了距离贴图的顶点着色器，它与切线空间法线贴图的顶点着色器非常相似，有两个显著区别。第一，除了把光线向量变换到切线空间，我们还要把视线方向变换到切线空间。这个切线空间视线向量在顶点着色器中用作要在纹理空间中追踪的光线方向。第二个区别是我们引入了一个与感知深度成反比的附加因子。这让我们可以交互式地调整位移的尺度。</p><h4>8.5.2 片元着色器</h4><p>现在有了开始光线步进所需的一切：一个起点（顶点着色器传下来的基础纹理坐标）和一个方向（切线空间视线向量）。</p><p>片元着色器要做的第一件事是把方向向量归一化。注意距离贴图中存储的距离以与像素成比例的单位度量，而方向向量以纹理坐标为单位度量。通常距离贴图在高和宽上远大于深度，所以这两种距离度量差别很大。为确保向量相对于距离贴图所用的距离度量归一化，我们先归一化方向向量，再乘上一个额外的「归一化因子」(<em>depth</em>/<em>width</em>, <em>depth</em>/<em>height</em>, 1)。</p><h4>示例 8-1　顶点着色器</h4><pre><code>v2fConnector distanceVertex(a2vConnector a2v, uniform float4x4 modelViewProj,
+                            uniform float3 eyeCoord, uniform float3 lightCoord,
+                            uniform float invBumpDepth)
+{
+  v2fConnector v2f;
+  // 把位置投影到屏幕空间
+  // 并传递纹理坐标
+  v2f.projCoord = mul(modelViewProj, float4(a2v.objCoord, 1));
+  v2f.texCoord = float3(a2v.texCoord, 1);
+  // 把视线向量变换到切线空间。
+  // 在切线空间中按凹凸深度调整斜率
+  float3 eyeVec = eyeCoord - a2v.objCoord;
+  float3 tanEyeVec;
+  tanEyeVec.x = dot(a2v.objTangent, eyeVec);
+  tanEyeVec.y = dot(a2v.objBinormal, eyeVec);
+  tanEyeVec.z = -invBumpDepth * dot(a2v.objNormal, eyeVec);
+  v2f.tanEyeVec = tanEyeVec;
+  // 把光照向量变换到切线空间。
+  // 稍后我们会用它做切线空间法线贴图
+  float3 lightVec = lightCoord - a2v.objCoord;
+  float3 tanLightVec;
+  tanLightVec.x = dot(a2v.objTangent, lightVec);
+  tanLightVec.y = dot(a2v.objBinormal, lightVec);
+  tanLightVec.z = dot(a2v.objNormal, lightVec);
+  v2f.tanLightVec = tanLightVec;
+  return v2f;
+}</code></pre><p>现在可以开始迭代地推进光线。我们先查询距离贴图，得到一个保守估计：沿光线可以前进多远而不与表面相交。然后把当前位置按该距离前移，得到表面之外的另一个点。如此继续，可生成一列收敛到位移后表面的点。最后，得到交点的纹理坐标后，我们在切线空间中计算法线贴图光照。代码清单 8-2 给出片元着色器。</p><h4>8.5.3 关于滤波的说明</h4><p>采样纹理时，必须注意如何为纹理查找指定导数。一般来说，位移后的纹理坐标存在不连续（例如因为纹理的某些部分被遮挡）。启用 mipmap 或各向异性滤波时，GPU 需要纹理坐标导数的信息。由于 GPU 用有限差分近似导数，这些导数在不连续处取值错误。这会导致 mipmap 层级选择错误，进而在不连续处出现可见的接缝。</p><p>我们不用位移后纹理坐标的导数，而用基础纹理坐标的导数替代。这可行是因为位移后的纹理坐标总是连续的，且变化速率与基础纹理坐标大致相同。</p><p>由于我们不用 GPU 判定 mipmap 层级的机制，可能出现纹理走样。实践中这不成大问题，因为基础纹理坐标的导数是位移后纹理坐标的良好近似。</p><p>注意关于 mipmap 层级的同一论点也适用于对距离贴图的查找。由于纹理坐标在特征边缘附近可能不连续，纹理单元会访问过于粗糙的 mipmap 层级，从而导致距离值错误。我们的解决办法是不带 mipmap 地对距离贴图做线性滤波。由于距离贴图的值从不直接可视化，这里缺少 mipmap 不会造成走样。</p><h2>8.6 结果</h2><p>我们在 OpenGL 与 Cg 中，以及在 Sh（<a href="http://www.libsh.org" rel="noreferrer noopener">http://www.libsh.org</a>）中实现了距离贴图算法。本章的图像由 Sh 实现生成，该实现在随书 CD 上。由于存在大量依赖型纹理读取以及导数指令的使用，该实现只能在 GeForce FX 和 GeForce 6 系列 GPU 上运行。</p><h4>示例 8-2　片元着色器</h4><pre><code>f2fConnector distanceFragment(v2fConnector v2f, uniform sampler2D colorTex,
+                              uniform sampler2D normalTex,
+                              uniform sampler3D distanceTex,
+                              uniform float3 normalizationFactor)
+{
+  f2fConnector f2f;
+  // 在纹理空间中归一化偏移向量。
+  // 这个归一化因子保证我们是相对于
+  // 以像素为单位定义的距离来归一化的。
+  float3 offset = normalize(v2f.tanEyeVec);
+  offset *= normalizationFactor;
+  float3 texCoord = v2f.texCoord;
+  // 沿射线步进
+  for (int i = 0; i < NUM_ITERATIONS; i++)
+  {
+    float distance = f1tex3D(distanceTex, texCoord);
+    texCoord += distance * offset;
+  }
+  // 计算未扰动纹理坐标的导数。
+  // 因为偏移后的纹理坐标会出现不连续，
+  // 从而导致错误的滤波。
+  float2 dx = ddx(v2f.texCoord.xy);
+  float2 dy = ddy(v2f.texCoord.xy);
+  // 在切线空间做凹凸贴图光照。
+  // 'normalTex' 存放重映射到
+  // [0, 1] 范围的切线空间法线。
+  float3 tanNormal = 2 * f3tex2D(normalTex, texCoord.xy, dx, dy) - 1;
+  float3 tanLightVec = normalize(v2f.tanLightVec);
+  float diffuse = dot(tanNormal, tanLightVec);
+  // 把漫反射光照乘以纹理颜色
+  f2f.COL.rgb = diffuse * f3tex2D(colorTex, texCoord.xy, dx, dy);
+  f2f.COL.a = 1;
+  return f2f;
+}</code></pre><p>本章所有例子中，我们用了 256x256x16 的三维纹理尺寸，但这个选择可能高度依赖数据。对复杂数据集，我们还试验了最大到 512x512x32 的贴图。例子中把 <code>NUM_ITERATIONS</code> 设为 16 次迭代。多数情况下这绰绰有余，对较平滑的数据集 8 次迭代就够了。</p><p>我们的片元着色器按 16 次迭代计，在 GeForce FX 上编译为 48 条指令。循环的每次迭代占 2 条指令：一次纹理查找加一次乘加。GeForce FX 和 GeForce 6 系列 GPU 能在单个时钟周期内执行这对操作，也就是说每次迭代只花一个时钟周期。需要注意的是，每次纹理查找都依赖前一次；在限制间接纹理操作数量的 GPU 上，这个着色器需要拆成多遍。</p><p>我们在 GeForce FX 5950 Ultra 和 GeForce 6800 GT 上用几个不同数据集测试了距离贴图实现。图 8-6 是其中一个数据集。在 GeForce FX 5950 Ultra 上，以 1024x768 分辨率着色每个像素时约 30 帧每秒。若把迭代次数减到 8，同样分辨率下约 75 帧每秒。在 GeForce 6800 GT 上，即使以 1280x1024 分辨率、16 次迭代着色每个像素，也能稳定跑到 70 帧每秒。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/08_displacement_06.jpg" alt="08_displacement_06.jpg"><figcaption>图 8-6　用置换贴图渲染的格栅</figcaption></figure><h2>8.7 结论</h2><p>我们介绍了距离贴图，一种基于隐式曲面光线追踪的快速迭代置换贴图技术。我们表明，距离函数中的信息让我们在光线离表面较远时可以迈更大步，同时保证不会因步长过大而在渲染的几何中产生缝隙。所得实现非常高效：几次迭代即收敛，在 GeForce FX 和 GeForce 6 系列 GPU 上每次迭代只耗一个时钟周期。</p><p>未来我们想利用 Shader Model 3 GPU 的动态分支能力，对快速收敛的像素做「提前退出」，以提升本技术的性能。这样我们就能把更多算力用于收敛较慢的像素，从而提高画质。</p><p>我们还希望把本技术适配到曲面。虽然我们的算法可用于任何带合适切线的模型，但在高曲率区域会产生畸变。特别地，广义置换贴图（Wang 等 2004）使用一种四面体投影来处理曲面，这种方法也可以用于我们的算法。这种四面体投影可以在顶点着色器中完成（Wylie 等 2002）。</p><h2>8.8 参考文献</h2><p><a id="biblio08_01"></a>Cook, Robert L. 1984. "Shade Trees."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 84)</em> 18(3)，第 223–231 页。</p><p><a id="biblio08_02"></a>Danielsson, Per-Erik. 1980. "Euclidean Distance Mapping." <em>Computer Graphics and Image Processing</em> 14，第 227–248 页。</p><p><a id="biblio08_03"></a>Hart, John C. 1996. "Sphere Tracing: A Geometric Method for the Antialiased Ray Tracing of Implicit Surfaces." <em>The Visual Computer</em> 12(10)，第 527–545 页。</p><p><a id="biblio08_04"></a>Kaneko, Tomomichi, Toshiyuki Takahei, Masahiko Inami, Naoki Kawakami, Yasuyuki Yanagida, Taro Maeda, and Susumu Tachi. 2001. "Detailed Shape Representation with Parallax Mapping."，载 <em>Proceedings of the ICAT 2001 (The 11th International Conference on Artificial Reality and Telexistence)</em>，Tokyo，2001 年 12 月，第 205–208 页。</p><p><a id="biblio08_05"></a>Policarpo, Fabio. 2004. "Relief Mapping in a Pixel Shader Using Binary Search." 可在线获取：<strong><a href="http://www.paralelo.com.br/arquivos/ReliefMapping.pdf" rel="noreferrer noopener">http://www.paralelo.com.br/arquivos/ReliefMapping.pdf</a></strong></p><p><a id="biblio08_06"></a>Wang, Lifeng, Xi Wang, Xin Tong, Stephen Lin, Shimin Hu, Baining Guo, and Heung-Yeung Shum. 2003. "View-Dependent Displacement Mapping." <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2003)</em> 22(3)，第 334–339 页。</p><p><a id="biblio08_07"></a>Wang, Xi, Xin Tong, Stephen Lin, Shimin Hu, Baining Guo, and Heung-Yeung Shum. 2004. "Generalized Displacement Maps."，载 <em>Eurographics Symposium on Rendering 2004</em>，第 227–234 页。</p><p><a id="biblio08_08"></a>Wylie, Brian, Kenneth Moreland, Lee Ann Fisk, and Patricia Crossno. 2002. "Tetrahedral Projection Using Vertex Shaders."，载 <em>Proceedings of IEEE Volume Visualization and Graphics Symposium 2002</em>，2002 年 10 月，第 7–12 页。</p><p><em>特别感谢 Stefanus Du Toit 在实现距离变换和编写 Sh 实现方面的帮助。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-8-pixel-displacement-mapping-distance-functions" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-8-pixel-displacement-mapping-distance-functions</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

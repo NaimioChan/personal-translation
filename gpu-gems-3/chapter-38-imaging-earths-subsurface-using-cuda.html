@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 38 章　用 CUDA 给地球次表面成像 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 38 章　用 CUDA 给地球次表面成像」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 38 章　用 CUDA 为地球地下成像</h1>
+<p><em>Bernard Deschizeaux<br> CGGVeritas</em></p><p><em>Jean-Yves Blanc<br> CGGVeritas</em></p><h2>38.1 引言</h2><p>地球勘探的主要目标是为油气行业提供地球地下结构的知识，以查明哪里能找到并开采石油。为此要对地球做大规模地震勘探，记录下来的数据经过复杂的迭代处理，以提取地球的地质模型。随后由专家解释这些数据，帮助决定在哪里建设采油设施。</p><p>地震数据处理所用的前沿算法在快速演进，对算力的需求每年都急剧增长。因此 CGGVeritas 一直率先采用新的高性能计算（HPC）技术；在这项工作中，我们探索用 GPU 和 NVIDIA 的 CUDA 编程模型来加速我们的工业应用。</p><p>我们选来测试 CUDA 技术的算法，是地震处理应用中最耗资源的一个，通常要在拥有 2,000 个节点的最新一代 CPU 集群上处理约一周。要让这个算法以其完整能力在我们的行业中具备经济性，它必须快一个数量级。目前只有 GPU 能提供这样的性能突破。</p><p>经过大量分析与测试，我们做出了一个完全并行的原型，用 GPU 硬件把处理管线的一部分加速了十倍以上。本章介绍用 CUDA 在 GPU 上实现这个地震成像应用所用的算法与方法。需要指出，这项工作不是对 CUDA 技术的学术基准测试——它是对在集群中工业使用 GPU 硬件的可行性研究。</p><h2>38.2 地震数据</h2><p>地震勘探的做法是向地下发送压缩波，并记录反射波，以确定地球的地下结构。在海上勘探中，如 <a href="https://developer.download.nvidia.com/books/gpugems3/38fig01.jpg" rel="noreferrer noopener">图 38-1</a> 所示，船只拖曳约十条装有记录系统的缆线，记录系统称为水听器，彼此间隔 25 米。船上还装有气枪，作为压缩波的震源。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/38fig01.jpg" alt="38fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/38fig01.jpg" rel="noreferrer noopener">图 38-1</a> 海上地震数据采集</figcaption></figure><p>为了采集地震数据，船只每 50 米放一次气枪，产生的压缩波穿过水体到达海底，再进入地球地下。当波遇到地球介质中速度或密度的变化时，会一分为二，一部分反射回地表，另一部分折射后继续向地球深处传播（见 <a href="https://developer.download.nvidia.com/books/gpugems3/38fig01.jpg" rel="noreferrer noopener">图 38-1</a>）。因此地下的每一层都会产生一次波的反射，被水听器记录下来。由于声波在水中的传播速度约为 2,500 m/s，在地球中为 3,000 到 5,000 m/s，因此在放炮后记录约四秒的反射波，就能获得约 10 到 20 km 深度的地球信息。</p><p>一次典型的海上勘探覆盖几百平方公里，意味着几百万次放炮和数 TB 的记录数据。并行地为许多研究处理这些数据，是 CGGVeritas 遍布全球的处理中心的核心业务。由于初始信噪比极低、数据量又大，地震数据处理对算力的要求极为苛刻。如 <a href="https://developer.download.nvidia.com/books/gpugems3/38fig02.jpg" rel="noreferrer noopener">图 38-2</a> 中的图片所示，CGGVeritas 的计算设施由数千节点的 PC 集群组成，提供超过 300 teraflops 的算力和 PB 级的磁盘空间。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/38fig02.jpg" alt="38fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/38fig02.jpg" rel="noreferrer noopener">图 38-2</a> 计算能力是我们这一领域的关键要素</figcaption></figure><p>为支撑不断增大的勘探规模和处理复杂度，我们的算力需要每年增长两倍以上（见 <a href="https://developer.download.nvidia.com/books/gpugems3/38fig02.jpg" rel="noreferrer noopener">图 38-2</a> 中的曲线）。此外，散热限制迫使 CPU 厂商把未来的时钟频率限制在 4 GHz 左右。在数据中心里扩大集群规模只在短期内现实可行，这个问题迫使我们寻求新技术。因此我们认为，掌握 GPU 通用计算这类新的计算技术，对地震数据处理的未来至关重要。</p><h2>38.3 地震处理</h2><p>地震处理的目标是把数 TB 的勘探数据转换成地球地下结构的三维体描述。一个典型数据集包含数十亿个向量，每个向量有几千个值，每个向量代表某一位置的检波器在某次放炮中记录的信息。</p><p>地震数据处理的第一步，是把所有勘探数据正确定位到一个全局地理参考系中。例如在海上勘探中，我们需要考虑潮汐与局部水流把采集缆线推离其理论直线位置，也需要计入船位的任何移动。所有数据向量都必须定位在 100 km<sup>2</sup> 的区域内，分辨率为 1 米。数据采集期间使用了许多不同的定位系统，既有相对的也有全局的，所有这些位置信息都包含在这一处理步骤中。</p><p>在修正所有数据元的全局位置之后，下一步是应用信号处理算法，在整个勘探范围内归一化信号并提高信噪比。这里要校正水听器灵敏度的任何变化，这种变化会导致采集缆线不同部位之间响应不均匀。用带限反卷积算法验证整个采集过程已知的冲激响应。这一阶段还执行各种滤波与去除瑕疵的步骤。这一步的主要目标是产生能连贯地表现标准恒定震源下波反射物理特性的数据。</p><p>最后也是最重要、最耗时的步骤，用于校正地下介质速度变化对波在地球中传播的影响。与雷达等其他回波系统不同，我们的系统没有关于压缩波所经介质传播速度的信息。而且介质并不均匀，使波沿曲线而非直线传播，如 <a href="https://developer.download.nvidia.com/books/gpugems3/38fig03.jpg" rel="noreferrer noopener">图 38-3a</a> 所示。因此，对雷达而言相当简单的任务——把回波到达时间换算成反射体的距离——在地震领域是一个极其复杂的反问题。让过程更麻烦的是，一次放炮之后会发生不止一次反射，所以记录到的信号实际上可能是来自不同地方的许多反射的叠加。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/38fig03.jpg" alt="38fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/38fig03.jpg" rel="noreferrer noopener">图 38-3</a> 单个反射体 () 穿过地球的射线追踪，用彩色显示的速度场建模</figcaption></figure><p>由于速度场最初未知，我们通常先假设一个相当简单的速度模型。然后偏移过程给出地球地下更好的图像，使我们能细化速度场。这个迭代过程最终收敛到我们对精确地球反射率模型的最佳近似。</p><p>在处理结束时，数据的三维体要干净得多，也更容易理解。可以提取一些属性来帮助地质学家解释结果。通常介质阻抗就是其中之一，此外还有波速、密度和各向异性。<a href="https://developer.download.nvidia.com/books/gpugems3/38fig04.jpg" rel="noreferrer noopener">图 38-4</a> 概览了数据处理流程前后数据的样子。图中还显示了一幅属性图，表示地震勘探中某一特定深度处的波速。不同岩石类型有不同的速度，因此速度是寻找砂岩等特定岩石的好指标。在 <a href="https://developer.download.nvidia.com/books/gpugems3/38fig04.jpg" rel="noreferrer noopener">图 38-4c</a> 这个具体例子中，低速（蓝色）是砂岩的特征，此处来自一条古河床。作为岩石，砂岩非常多孔，通常是勘探石油的好位置。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/38fig04.jpg" alt="38fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/38fig04.jpg" rel="noreferrer noopener">图 38-4</a> 一个地震处理示例</figcaption></figure><h4>38.3.1 波的传播</h4><p>对于理想的理论地震数据集，记录到的信号 <strong>r<sub>x</sub></strong> 是波从特定震源 <strong>S<sub>i</sub></strong> 出发、由水听器 <strong>G<sub>j</sub></strong> 记录，并经振幅为 <strong>R<sub>x</sub></strong> 的反射后到达三维位置 <strong>x</strong>(<em>x</em>, <em>y</em>, <em>z</em>) 的传播结果，可表示如下：</p><p><strong>公式 1</strong></p><p><a><img alt="836equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/836equ01.jpg"/></a></p><p>其中 <strong>W<sub>s</sub></strong> 是震源信号，<strong>P<sub>ix</sub></strong> 是使波经速度场 <strong>V</strong> 从震源位置 <strong>i</strong> 传播到反射位置 <strong>x</strong> 的算子，<strong>P<sub>xj</sub></strong> 是使反射波从 <strong>x</strong> 传播到记录点位置 <strong>j</strong> 的算子。</p><p>要为一个接收点记录到的完整地震记录建模，需要对公式 1 在所有可能的反射位置上积分，也就是在整个三维 <strong>x</strong> 值体积上积分：</p><p><strong>公式 2</strong></p><p><a><img alt="836equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/836equ02.jpg"/></a></p><p>其中 <strong>S<sub>j</sub></strong> 是位置 <strong>j</strong> 处的地震记录，<strong>RC</strong> <em><sub>earth</sub></em> 是我们要找的地球反射率模型。复杂性现在应该很明显了，因为数亿个数据向量中的每一个都可能以依赖速度场的方式包含整个地球区域的信息。注意实际中速度约为每秒几公里。因此如果我们记录几秒的波反射，只有接收点周围约 10 km 范围内的地球会对信号有贡献。</p><p>用穷举法求解这个反问题并不现实，但利用传播算子的性质可以简化：<strong>P<sub>ij</sub></strong> (<strong>P<sub>ji</sub></strong> (<strong>a</strong>)) = <strong>I</strong>。也就是说，从震源传播到反射点再传回震源位置，应当得到初始结果（即不应有耗散）。由公式 1 可以看出</p><p><strong>公式 3</strong></p><p><a><img alt="837equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/837equ01.jpg"/></a></p><p>而如果我们考虑对某条记录的所有可能贡献，即对所有 <strong>x</strong> 位置的贡献求和，可以写成：</p><p><strong>公式 4</strong></p><p><a><img alt="837equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/837equ02.jpg"/></a></p><p>因此，把记录到的地震信号 <strong>S<sub>j</sub></strong> 当作震源，在所有可能的 <strong>x</strong> 位置处穿过地球传播，得到的结果等于地球反射率模型与传播到地球中任一可能反射位置的初始震源炮记录的卷积。于是很明显，如果我们用下式与这个方程两边做相关</p><p><img alt="837equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems3/837equ03.jpg"/></p><p>并对每个震源把所有接收点的信息加起来，我们就可以提取出地球反射率模型：</p><p><img alt="837equ04.jpg" src="https://developer.download.nvidia.com/books/gpugems3/837equ04.jpg"/></p><p>其中 * 是相关算子，并使用</p><p><img alt="837equ05.jpg" src="https://developer.download.nvidia.com/books/gpugems3/837equ05.jpg"/></p><p>因此，如果我们把震源波穿过地球传播到所有可达位置 <strong>x</strong>，再把结果与反向传播到同一 <strong>x</strong> 位置的地震记录做相关，只需对所有震源和所有接收点的结果求和，就能得到地球反射率模型。注意实际中我们需要考虑传播的频散效应，以及数据是带限的这一事实。另外，由于速度场最初未知，我们需要从一个初始猜测（基于对该地区的专家知识）出发，计算第一个反射模型，然后通过从地质结构角度解释结果来细化速度场。（更多信息见 Yilmaz 2001 和 Sherifs 1984。）</p><h4>38.3.2 使用 SRMIP 算法的地震偏移</h4><p>在我们要用 CUDA 开发的 CGGVeritas 算法 SRMIP 中，波的传播是在频率域中应用有限差分算法完成的。</p><p>如前面所述，地震数据由一连串放炮组成。每次放炮记录为一个三维体（<em>x</em>, <em>y</em>, <em>t</em>），其中 <em>x</em> 和 <em>y</em> 表示接收点位置，<em>t</em> 是记录时间。对时间轴做快速傅里叶变换，把这些数据变换成频率平面。对每个频率平面，我们要把震源波（称为<em>下行波</em>）和地震数据（称为<em>上行波</em>）从地表（深度 = 0）传播到我们希望成像的最大深度。这种传播（也称<em>向下外推</em>）用有限长滤波器做空间卷积，从一个深度推进到下一个深度。</p><p>SRMIP 算法利用了波传播滤波器的圆对称性：把滤波器的径向响应展开为拉普拉斯算子的多项式，而拉普拉斯算子用两个一维滤波器之和来近似（近似二阶导数 <a href="https://developer.download.nvidia.com/books/gpugems3/838equ01.jpg" rel="noreferrer noopener"><img alt="838equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/838equ01.jpg"/></a> 和 <a href="https://developer.download.nvidia.com/books/gpugems3/838equ02.jpg" rel="noreferrer noopener"><img alt="838equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/838equ02.jpg"/></a> ）：</p><p><img alt="838equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems3/838equ03.jpg"/></p><p>并近似精确的外推算子：</p><p><img alt="838equ04.jpg" src="https://developer.download.nvidia.com/books/gpugems3/838equ04.jpg"/></p><p>用一个多项式 <em>G</em>(<em>L</em>)：</p><p><img alt="838equ05.jpg" src="https://developer.download.nvidia.com/books/gpugems3/838equ05.jpg"/></p><p>其中 <strong>w</strong> 是所考虑的频率，<strong>v</strong> 是速度，<em>L</em> 是拉普拉斯算子。</p><p>由于我们要从地表开始对所有深度值迭代地外推波场，滤波器参数化的选择对结果的稳定性至关重要。为优化多项式系数，我们使用 <em>L</em> <sub>∞</sub> 范数，因为稳定性条件在这个范数下表达起来更容易。在我们的 SRMIP 算法中，外推器用切比雪夫多项式表示（详见 Soubaras 1996 和 Hall 1991）：</p><p><img alt="839equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/839equ01.jpg"/></p><p>其中 <em>T<sub>n</sub></em> (<em>x</em>) 是 <em>n</em> 次切比雪夫多项式，定义为 <em>T<sub>n</sub></em> (<em>x</em>) = cos(<em>n</em> arccos <em>x</em>)，可用下面的公式递推计算：</p><table><tbody><tr><td><p><em>T<sub>n</sub></em> (<em>x</em>) = 2<em>xT<sub>n</sub></em> <sub>–1</sub>(<em>x</em>) - <em>T<sub>n</sub></em> <sub>–2</sub>(<em>x</em>).</p></td></tr></tbody></table><p>多项式展开的次数（即参数 <em>N</em>）约为 15，这意味着把波从一个深度传播到下一个深度，需要递推地应用 15 次拉普拉斯算子的切比雪夫多项式滤波器。</p><p>代码清单 38-1 给出的伪代码展示了把波从一个深度传播到下一个深度的外推器实现。出于明显的效率考虑，切比雪夫多项式的迭代计算是直接完成的，并应用到输入波网格的每个点上，从而在内层循环里省下一次运算。</p><p>SRMIP 算法具有很高的并行度。这是因为基本操作只是一个用恒定短滤波器（近似二阶导数）做的一维卷积。切比雪夫递推本身并不并行，但在这里不是问题，因为并行是在相互独立的网格元素之间实现的。注意对于并行实现，某些以更复杂的数据结构为代价减少运算次数的潜在改进——例如让多项式次数或二阶导数滤波器长度随频率变化——并不自动带来好处。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/38fig05.jpg" rel="noreferrer noopener">图 38-5</a> 给出了把 SRMIP 算法应用于地震数据所得结果的一个例子。除了整体的质量提升，可以看到结果在地球结构复杂的地方改善尤为明显。例如地球剖面顶部的盐体，其速度远高于周围其他岩石。因此偏移之前，盐体下方的所有数据都没有正确聚焦，看起来几乎是随机的。偏移之后，由于不同速度介质中的传播得到了正确处理，盐体下方的地球结构显现出来。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/38fig05.jpg" alt="38fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/38fig05.jpg" rel="noreferrer noopener">图 38-5</a> 偏移算法对一个数据集的影响</figcaption></figure><h4>示例 38-1. 外推器的伪代码</h4><p><em>输入 <code>Wave</code> 网格与两个一维拉普拉斯滤波器递推卷积，生成下一个深度处传播后的 <code>Wave1</code> 网格。</em></p><pre><code>T(x, y) = Wave(x, y);
+TT(x, y) = LaplacianWave(x, y);
+Wave1(x, y) = aw / v(1, x, y) * T(x, y) + aw / v(2, x, y) * TT(x, y);
+for (n = 2; n < NMAX; n++)
+{
+  // 用此前保存的 TT 与 T 两个值
+  // 计算切比雪夫多项式 TTT。
+  TTT(x, y) = 2 * LaplacianTT(x, y)–T(x, y);
+  // 把本次迭代的贡献累加到结果中。
+  Wave1(x, y) += aw / v(n, x, y) * TTT(x, y);
+  // 保存切比雪夫结果，供下一次迭代使用。
+  T(x, y) = TT(x, y);
+  TT(x, y) = TTT(x, y);
+};</code></pre><h2>38.4 GPU 实现</h2><p>为 GPU 实现挑选算法可能很难，尤其是在没有 GPU 编程经验的时候。在我们的地震处理流程中有几点重要考虑。例如我们移植到 GPU 的算法，是一个已经在大型集群上并行运行的工业应用的一部分。因此我们的目标是让应用运行在同类集群上，但每个节点都装有显卡。此外，应用中负责所有集群并行化和高效数据管理的重要部分，无法为了适应 GPU 编程模型而改动。</p><p>代码清单 38-2 中的伪代码说明了另一点考虑。显然，GPU 加速的整体收益受限于每个计算内核占总执行时间的百分比。这段代码展示了 SRMIP 程序的总体结构，它在集群的每个节点上独立运行。程序的每个实例（每个处理器核一个）依次处理一组地震炮记录，并对最终图像产生一份贡献。用标准参数对程序做性能剖析显示，65% 的 CPU 时间消耗在波传播上，所有插值例程用了 20%，最后的互相关与求和用了 5%。插值步骤是为了缩短波传播的处理时间而加上的。因此，取决于我们把波传播加速到什么程度，这一步有可能被去掉。</p><h4>示例 38-2. 展示过程主要循环与步骤的算法伪代码</h4><pre><code>
+   // uwave = 上行波；dwave = 下行波
+   // 频率循环约 1000 次迭代
+for (freq = 0; freq < freq_max; freq++)
+{
+  Read_frequency_plane(uwave,dwave,nx,ny);
+  // 深度循环约 1000 次迭代
+  for (z = 0; z < depth_max; z = z+dz)
+  {
+    Read_velocity_scalar_field(velocity,nx,ny,z);
+    // 通过对 z 到 z+dz 施加 N 次（N~15）
+   // 拉普拉斯算子，传播 uwave 与 dwave。
+    for (i=0; i < N ; i++)
+    {
+      convolution(uwave,velocity,nx,ny,z,dz);
+      convolution(dwave,velocity,nx,ny,z,dz);
+    }
+    // 在 z 与 z +dz 之间插值 uwave 与 dwave。
+    interpolate_wave_over_dz(uwave,velocity,nx,ny,z,z+zd);
+    interpolate_wave_over_dz(dwave,velocity,nx,ny,z,z+zd);
+    for (zz = z; zz < Z+dz; z++)
+    {
+      // 在输出网格上插值 uwave 与 dwave。
+      Interpolat_xy(uwave,nx,nx,zz,fnx,fny,final_uwave);
+      Interpolat_xy(dwave,nx,nx,zz,fnx,fny,final_dwave);
+      // 对两个波做卷积并对结果求和。
+      sum_udwave(final_uwave,final_dwave,fnx,fny,zz,result);
+    }
+  }
+}</code></pre><p>除了把 GPU 实现的工作集中在应用中最耗时的部分之外，考虑算法内在的并行量同样重要，甚至更重要。CUDA 编程模型的设计目的就是让用户利用 GPU 的大规模数据并行处理能力，因此要获得高性能，我们必须选择具有显著数据并行的算法。就 SRMIP 算法而言，我们需要处理的典型网格尺寸是 400x400 个元素，这由波传播的空间范围决定。数据网格对应 100 km<sup>2</sup> 区域内 25 m 的间距，因此并行度约为 160,000 个独立操作。这已足够高效地利用现代 GPU。</p><h4>38.4.1 GPU/CPU 通信</h4><p>基于 GPU 的地震处理的一个潜在问题是 GPU/CPU 通信的开销。看硬件演进的大趋势，我们预计 GPU 性能大约每年翻一番。然而 CPU 与 GPU 之间的数据传输（目前用 PCIe）性能提升远没有那么可观。最多只能指望 PCIe 带宽每两到三年提高 2 倍。因此，如果要设计能随未来 GPU 性能而扩展的实现，就必须避免潜在的通信瓶颈。</p><p>通过分析代码的数据流，并考虑 NVIDIA Quadro FX 5600 硬件上可用的较大显存（1.5 GB），我们做出了一套通信方案，把几乎所有相关数据都存放在 GPU 上。如代码清单 38-3 所示，频率平面逐个送到 GPU，GPU 再计算所有深度上要传播的两个波，并在 <em>x</em>、<em>y</em>、<em>z</em> 三个方向上插值结果。只有求和所有贡献后的最终结果需要送回 CPU。</p><h4>示例 38-3. 展示所提出通信方案的伪代码</h4><pre><code>
+// 频率循环约 1000 次迭代
+for (freq=0; freq < freq_max; freq++)
+{
+  Read_frequency_plan(uwave,dwave,nx,ny);
+  // 发送频率方案（约 2 x 1.3 MB）。
+  Send_freqplan_to_GPU(uwave,dwave,nx,ny);
+  // 深度循环约 1000 次迭代
+  for (z=0; z < depth_max; z=z+dz){
+    Read_velocity_field(velocity,nx,ny,z);
+    // 发送速度场（约 0.6 MB）。
+    Send_Velocity_to_GPU(velocity,nx,ny);
+    for (i=0; i < N ; i++)
+    {
+      convolution(uwave...); //（在 GPU 上）
+      convolution(dwave...); //（在 GPU 上）
+    }
+    interpolate_wave_over_dz(uwave...); //（在 GPU 上）
+    interpolate_wave_over_dz(dwave...); //（在 GPU 上）
+    for (zz = z; zz < Z+dz; z++)
+    {
+      // 在输出网格上插值 uwave 与 dwave。
+      Interpolat_xy(uwave...); //（在 GPU 上）
+      Interpolat_xy(dwave...); //（在 GPU 上）
+   // 对两个波做卷积并对结果求和。
+      sum_udwave(uwave,dwave...); //（在 GPU 上）
+    }
+  }
+}
+// 取回结果（约 1.3 GB）
+Receive_image_result(result,nx,ny,nz);</code></pre><p>根据我们的性能剖析，计算一个深度值的 CPU 时间约为 30 ms，整个深度循环的总时间约为半分钟。据此我们可以很容易地算出通信方案所需的吞吐量，并检查是否在 PCIe 带宽限制之内。即使速度场的传输（在内层循环中）也约为 20 MB/s，远低于通信瓶颈，即便 GPU 实现比 CPU 版本高效一个数量级也是如此。</p><p>NVIDIA Quadro FX 5600 上的 1.5 GB 显存在这里很有优势。考虑到标准集群节点只有几 GB 内存要在两到四个处理器核之间共享，CPU 上一个核在内存中处理的大部分数据集应当都能装进 GPU 显存。</p><h4>38.4.2 CUDA 实现</h4><p>NVIDIA 的 CUDA 技术提供了灵活的编程环境，使我们能应对上一节列出的每一点考虑。在分析了核心算法和 GPU 的整体框架之后，我们把 12 个最耗算力的 CPU 例程拆成四个独立内核，用 CUDA 实现。这四个内核大体对应代码清单 38-3 伪代码中所示的四个例程。</p><p>四个目标算法都在网格上做局部计算，即对每个网格元素施加一个小算子。我们把计算网格划分成二维瓦片，与 CUDA 的线程块网格很好地对应。每个内核从全局内存载入一块网格数据，并缓存到共享内存中供后续处理。共享内存的主要优势是带宽远高于 GPU 全局内存。对其中三个内核，我们用标准数组直接从 GPU 内存载入数据。对波传播算法，我们用 CUDA 的纹理扩展作为读取 GPU 内存的路径。借助纹理，我们能利用硬件缓存和自动的边界处理，否则这些在内核代码中难以实现且代价高昂。由于卷积核是递推应用的，需要在迭代之间把输出额外存回一份到纹理中。</p><p>我们算法的 GPU 代码相当直接，因为 CUDA 是基于 C 的语言。不过 G80 架构有几个性能约束，使优化变得有些复杂。例如 G80 每个多处理器有 8,000 个 32 位寄存器，这限制了每个内核的寄存器数量。例如一个内核以 256 个线程并行执行，每个线程只能用 32 个寄存器就到了上限。很多情况下需要按两种方式之一绕开这个问题。第一，简单地降低内核复杂度（即代码规模）以减小寄存器压力，用多趟处理完成算法。第二种、也常常更成功的做法，是调整线程块中的线程数。这时可用的线程数范围不仅受可用寄存器限制，还受我们是否需要足够线程来隐藏内存延迟（例如全局载入）的限制。</p><p>我们在 CUDA 中实现内核的经验是，最高效的线程配置会让载入阶段和处理阶段采用不同的线程划分。载入阶段通常受限于需要以合并方式访问设备内存，这要求线程与数据元素之间有特定的映射。而在处理阶段，我们尽量把工作组织成让线程做尽可能多的处理——每载入一个字节的数据至少做约 30 次运算。</p><h4>38.4.3 波传播内核</h4><p>如前所述，我们的处理时间主要花在波传播算子上。实际上，某一深度处的波用 38.3.2 节和代码清单 38-1 描述的迭代过程外推到下一个深度。迭代循环在 CPU 上执行；GPU 内核主要负责用拉普拉斯滤波器对波网格做卷积。此外，每次迭代时，每个网格位置的速度场被用来索引查找表，并用多项式系数缩放输入波。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/38fig06.jpg" rel="noreferrer noopener">图 38-6</a> 用图示说明了我们如何为数据载入和十字形滤波核卷积划分 CUDA 线程。载入时，一个线程块的各 warp 分布到计算网格的一块二维瓦片区域上。我们用的瓦片尺寸是 48x32 个元素，线程块维度是 48x8，这样 <em>y</em> 分量相同的线程分散开来，每个线程在一列垂直方向上读取四个复数频率系数。每块瓦片覆盖的数据表示实际频率平面的一部分，以及由十字滤波半径决定的一个支撑区域（即边界元素）。把瓦片存入共享内存后，我们同步块内所有线程，进入处理阶段。卷积滤波器的半径为四个元素，因此输出瓦片是 40x24。于是我们重新分配各 warp，使每个线程计算三个元素的滤波结果。这样我们能用块内所有线程做载入，并用大多数线程做处理。效率较低的替代方案是在处理前停用更多线程，让每个线程输出四个元素。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/38fig06.jpg" alt="38fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/38fig06.jpg" rel="noreferrer noopener">图 38-6</a> 卷积内核的两种线程组织策略</figcaption></figure><p>除了为载入和处理阶段给出线程与元素之间的高效映射之外，48x32 的瓦片尺寸还正好落在 GPU 的若干资源约束之内。例如 G80 架构每个多处理器有 16 KB 共享内存。我们的瓦片（复数数据）约占 12 KB，因此这个配置把大部分共享内存用于滤波。稍小一些但仍占用一半以上可用共享内存的瓦片效率更低，因为它会阻止多个线程块并行运行。这个瓦片尺寸的另一个好处涉及全局内存的合并约束。一般来说，如果线程块宽度是 GPU SIMD 宽度的整数倍，判断快速内存访问的对齐要求会更容易，G80 的这个宽度是 16 个线程。最后，机器里需要有足够多的线程来隐藏内存延迟，48x8 的线程块给出 384 个线程，按我们的经验这对 G80 是充足的并行度。</p><p>代码清单 38-4 是我们 SRMIP 算法中波传播内核的 CUDA C 代码。代码结构反映了前面讨论的线程配置。代码中常量项的含义见注释。如前所述，这个内核用 CUDA 的二维纹理扩展载入输入数据。我们也通过二维纹理读取查找表，因为需要对多项式系数做高效的、近乎随机的访问。十字形滤波器存放在 CUDA 的常量内存中。</p><h4>示例 38-4. 我们基于卷积的波传播算法的 CUDA C 代码</h4><pre><code>
+__global__ void Convo(float2 *odata1, float2 *odata2,
+                      int id, int nx, int ny)
+{
+  // TW 是逻辑瓦片宽度（40 个元素）。
+   // TH 是逻辑瓦片高度（24 个元素）。
+   // RW 是含滤波支撑区域在内的瓦片宽度。
+   // IT 是每个线程的输入元素数（4）。
+   // OT 是每个线程的输出元素数（3）。
+   // FR 是卷积滤波半径（4 个元素）。
+   // 计算本地与全局线程位置。
+   int ltidx = threadIdx.x;
+  int ltidy = threadIdx.y * IT;
+  int gtidx = blockIdx.x * TW + ltidx - FR;
+  int gtidy = blockIdx.y * TH + ltidy - FR;
+  int tltid = ltidy * RW + ltidx;
+  float2 term;
+  int i;
+  // 每个线程从全局内存读取 4 个输入值。
+   // 这个循环是为了清晰，为提高效率应当展开。
+   for (i = 0; i < 4; i++) {
+    term = texfetch(itexref, gtidx, gtidy + i);
+    smem[tltid     ] = term.x;
+    smem[tltid + IO] = term.y;
+    tltid += RW;
+  }
+  __syncthreads();
+  // 每个线程为 3 个输出值计算结果。
+   if (ltidx < TW) {
+    int rtlt = (threadIdx.y * OT + FR) * RW + (ltidx + FR);
+    int itlt = rtlt + IO;
+    int gthx = blockIdx.x * TW + ltidx;
+    int gthy = blockIdx.y * TH + threadIdx.y * OT;
+    int rind = gthy * nx + gthx;
+    int index;
+    float vel, floorvel, residus;
+    float2 term0, term1, temp, temp2;
+    // 为连续的 3 行各计算一个元素。
+   if (gthx < nx) {
+      // 这个循环是为了清晰，为提高效率应当展开。
+   for (i = 0; i < 3; i++) {
+        if (gthy < ny) {
+          temp   = texfetch(otexref, gthx , gthy);
+          temp.x = (smem[rtlt-   4] + smem[rtlt+   4])*coeff_X[4] +
+                   (smem[rtlt-   3] + smem[rtlt+   3])*coeff_X[3] +
+                   (smem[rtlt-   2] + smem[rtlt+   2])*coeff_X[2] +
+                   (smem[rtlt-   1] + smem[rtlt+   1])*coeff_X[1] +
+                   (smem[rtlt-4*RW] + smem[rtlt+4*RW])*coeff_Y[4] +
+                   (smem[rtlt-3*RW] + smem[rtlt+3*RW])*coeff_Y[3] +
+                   (smem[rtlt-2*RW] + smem[rtlt+2*RW])*coeff_Y[2] +
+                   (smem[rtlt-  RW] + smem[rtlt+  RW])*coeff_Y[1] +
+                    smem[rtlt     ]*(coeff_X[0]+coeff_Y[0]) - temp.x;
+          temp.y = (smem[itlt-   4] + smem[itlt+   4])*coeff_X[4] +
+                   (smem[itlt-   3] + smem[itlt+   3])*coeff_X[3] +
+                   (smem[itlt-   2] + smem[itlt+   2])*coeff_X[2] +
+                   (smem[itlt-   1] + smem[itlt+   1])*coeff_X[1] +
+                   (smem[itlt-4*RW] + smem[itlt+4*RW])*coeff_Y[4] +
+                   (smem[itlt-3*RW] + smem[itlt+3*RW])*coeff_Y[3] +
+                   (smem[itlt-2*RW] + smem[itlt+2*RW])*coeff_Y[2] +
+                   (smem[itlt-  RW] + smem[itlt+  RW])*coeff_Y[1] +
+                    smem[itlt     ]*(coeff_X[0]+coeff_Y[0]) - temp.y;
+          vel      = texfetch(vtexref, gthx, gthy);
+          floorvel = floorf(vel);
+          index    = floorvel;
+          term0    = texfetch(ltexref, index, id);
+          term1    = texfetch(ltexref, index + 1, id);
+          residus  = vel - floorvel;
+          term0.x  = term0.x + residus*(term1.x - term0.x);
+          term0.y  = term0.y + residus*(term1.y - term0.y);
+          temp2    = texfetch(olktexref, gthx, gthy);
+          temp2.x += term0.x*temp.x - term0.y*temp.y;
+          temp2.y += term0.x*temp.y + term0.y*temp.x;
+          odata1[rind] = temp2;
+          odata2[rind] = temp;
+        }
+        rtlt += RW; itlt += RW;
+        gthy++; rind += nx;
+      }
+    }
+  }
+}</code></pre><h2>38.5 性能</h2><p>由于其战略重要性，我们的波偏移系统使用高度优化的 CPU 代码，尤其是在 Intel 平台上。因此我们的 GPU 与 CPU 性能比较在 CPU 侧有一个扎实的参照。不过要注意，由于这个算法的 CPU 性能不随核数线性扩展（主要因为内存访问瓶颈），我们把 GPU 内核与只启用一个核的最新代 CPU 相比。</p><p>在一个使用典型输入参数的合成数据集上，我们的 CUDA 内核相对优化过的 CPU 代码取得 8 倍到 15 倍的性能。此外，这些内核在真实地震数据集上表现同样好，CUDA 代码已完整集成进我们的工业生产流程。不过需要注意，我们尚未用 CPU 版本所使用的全部输入参数范围测试 GPU 实现。主要原因是 GPU 代码针对特定问题规模和线程配置设计，而 CPU 更容易适应不同种类的用户参数与数据特征。即便如此，无论用什么标准衡量，GPU 性能都是显著的提升。</p><p>把所有内核都纳入这个工业并行应用是一个持续的过程，还有许多问题有待解决。算法如此耗时，即便有 15 倍的加速，几张显卡也满足不了我们的处理需求。集群方案是必须的，而在硬件层面，如何设计包含 GPU 的集群仍是开放问题。整个应用最终能达到多少加速、付出多少硬件代价，是我们未来主要的战略关切。</p><h2>38.6 结论</h2><p>借助 NVIDIA 的 CUDA 技术，我们现在有了一个强大的数据并行编程模型和语言，可以在 GPU 上探索科学计算。一旦掌握，考虑到科学领域内算法行为与数据规模的巨大差异，CUDA 的灵活性会是真正的优势。最重要的是，我们最昂贵的地震算法的 CUDA 实现比其 CPU 版本快一个数量级以上。</p><p>长期来看，由于多核架构的兴起，CPU 预计会继续遵循摩尔定律，而 GPU 的浮点性能应当能每年翻两番。GPU 另一个吸引人的方面是它的快速内存，性能优于 CPU 通常使用的普通 DDR 或 FBDIMM 内存。</p><p>这对我们所有算法都很重要，因为它们在普通集群方案上已经受内存限制。GPU 的主要缺点是 PCIe 的传输速度，而总线性能预计不会像 GPU 性能那样快速增长。</p><p>在搭建基于 GPU 的地震处理集群之前，有几个因素要考虑。第一，用机架式工作站搭建大规模集群根本不现实，因为密度不够，也不划算。此时可以探索两条路径：(1) 带 PCIe 插槽的经典 1U 服务器，配一个装有 GPU 的外部扩展箱（例如 NVIDIA 的 Quadro Plex）；(2) 在主板上集成一个或多个 GPU 的机型。第二，由于 GPU 需要 CPU 来控制，每个节点要选足够强的 CPU 来管理 GPU 而不成为瓶颈。此外还有每个集群节点的 PCIe 带宽是否足以驱动一个或多个 GPU 的问题。最后，考虑到我们算法的规模和处理时间，容错硬件至关重要，以便从故障中恢复、避免浪费数天的处理时间。未来几代 GPU 需要具备这一特性，才能被纳入我们的处理中心。</p><p>尽管关于图形处理器如何用于大规模集群还有许多开放问题，本章的工作表明，GPU 确实有潜力颠覆当前的地震处理生态。</p><h2>38.7 参考文献</h2><p>Hall, D. 1991. 「3-D Depth Migration via McClellan Transforms.」，载 <em>Geophysics</em> 36，第 99–114 页。</p><p>Sherifs, R. E., ed. 1984. <em>Encyclopedic Dictionary of Exploration Geophysics</em>，Society of Exploration Geophysicists 出版。</p><p>Soubaras, R. 1996. 「Explicit 3-D Migration Using Equiripple Polynomial Expansion and Laplacian Synthesis.」，载 <em>Geophysics</em> 61，第 1386–1393 页。</p><p>Yilmaz, O. 2001. <em>Seismic Data Analysis: Processing, Inversion, and Interpretation of Seismic Data (Investigations in Geophysics, No. 10)</em>，Society of Exploration Geophysicists 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-38-imaging-earths-subsurface-using-cuda" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-38-imaging-earths-subsurface-using-cuda</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

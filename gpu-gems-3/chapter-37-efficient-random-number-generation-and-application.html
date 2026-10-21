@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 37 章　用 CUDA 高效生成随机数及其应用 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 37 章　用 CUDA 高效生成随机数及其应用」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 37 章　基于 CUDA 的高效随机数生成与应用</h1>
+<p><em>Lee Howes<br> Imperial College London</em></p><p><em>David Thomas<br> Imperial College London</em></p><p>蒙特卡洛方法为那些难以或无法精确求解的问题提供近似数值解。蒙特卡洛仿真的决定性特征在于使用多次独立试验，每次试验由某种随机过程驱动。随后把各次独立试验的结果组合起来，提取平均答案，依据的是大数定律：随着合并的试验增多，平均答案会收敛到真实答案。独立试验天然可并行，而且通常由密集的数值运算构成，因此 GPU 为蒙特卡洛仿真提供了近乎理想的平台。</p><p>然而蒙特卡洛仿真中的一个关键组件是随机数生成器（RNG），它为每次试验提供独立的随机输入。这些生成器必须满足彼此冲突的目标：既要极快，又要给出与真正随机源无法区分的随机数流。关于 CPU 上的随机数生成已有大量文献，但其中最有效的那些对处理器架构和性能作了基本假设，往往不适合在 GPU 上使用。此前的工作如 Sussman 等 2006 研究过较老几代 GPU 上的随机数生成，而最新一代完全可编程的 GPU 特性不同，需要新的方法。</p><p>本章我们讨论用 CUDA 生成随机数的方法，特别关注高斯随机数的生成，这是许多金融仿真的关键组件。我们描述两种生成高斯随机数的方法：一种用 Box-Muller 方法变换均匀分布的数，另一种用 Wallace 方法直接生成高斯分布的随机数。然后我们用两个 CUDA 期权定价的例子，演示这些随机数生成器如何用于真实仿真。总体来看，一块 GeForce 8 GPU 生成高斯随机数的速度是四路 Opteron 2.2 GHz CPU 的 26 倍，两个金融例子中相应的加速比分别为 59 倍和 23 倍。</p><h2>37.1 蒙特卡洛仿真</h2><p>蒙特卡洛方法由 Ulam 和 von Neumann 在 20 世纪 40 年代提出，目的是模拟核反应（Metropolis 1987）。用一个简单例子说明蒙特卡洛解法：计算 。取一个正方形，在其中内切一个与正方形各边相切的圆。我们知道若圆半径为 <em>r</em>，则圆面积为 <em>r</em> <sup>2</sup>，正方形面积为 4<em>r</em> <sup>2</sup>。如果能算出圆面积与正方形面积之比 <em>p</em>，就能算出 ：</p><p><img alt="806equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/806equ01.jpg"/></p><p>我们可以用蒙特卡洛方法计算比值 <em>p</em>：在正方形内均匀生成 <em>n</em> 个独立随机点。其中有 <em>k</em> 比例的点落在圆内，于是 <em>p</em> ≈ <em>k</em>/<em>n</em>，从而 p ≈ 4<em>k</em>/<em>n</em>。<a href="https://developer.download.nvidia.com/books/gpugems3/37fig01.jpg" rel="noreferrer noopener"></a>图 37-1 显示在圆内放置的随机点，<em>n</em> = 20、200 和 2,000 分别以蓝色圆点、红色叉号和绿色点表示，给出的 估计为 3.4、3.18 和 3.158。点数增加时精度提高，<em>n</em> = 2 x 10<sup>4</sup> 时估计为 3.1492，<em>n</em> = 2 x 10<sup>5</sup> 时为 3.1435。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/37fig01.jpg" alt="37fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/37fig01.jpg" rel="noreferrer noopener">图 37-1</a> 用正方形内的随机点计算圆周率</figcaption></figure><p>显然这不是计算 的高效方法：精度提升的速率很低（精度通常与试验次数的平方根成正比），比标准的迭代方法低效得多。不过它确实说明了蒙特卡洛方法如此流行的三个原因：</p><ol type="1"><li>很容易理解方法如何工作，而对应的精确解法（假设存在）往往并非如此。</li><li>很容易实现，主要障碍是随机数的生成。</li><li>蒙特卡洛方法天然可并行。</li></ol><p>最后一点是重大优势，让蒙特卡洛解法可以轻松扩展到网络集群中的多个节点，或 CPU、GPU 内的多个处理器。</p><p>更贴近实际的蒙特卡洛方法例子在金融领域。这里的做法是抓住一部分市场变量——例如某只股票在时刻 0 的价格 <em>S</em> <sub>0</sub>——再选一个人为的随机模型，让它看起来能较好地刻画以往的股价路径。最常用的模型是几何布朗运动，其中股票在时刻 <em>t</em> 的最终价格建模为 <em>S<sub>t</sub></em> = <em>S</em> <sub>0</sub> <em>e</em> <em><sup>µ+ N</sup></em> ，其中 <em>N</em> 是从高斯分布中抽取的随机样本（Wilmott 2006）。</p><p>一个以程序估计平均股价的做法如代码清单 37-1 所示。随机运行的目标是逼近历史市场的行为，并用结果判断盈利的概率。这类似于 的计算例子：系统趋向于某个点落在圆内的概率，而该概率与面积之比直接相关。这个方法让我们能为一大类没有解析解的金融模型找到解。</p><h4>示例 37-1. 估计平均股价</h4><pre><code>
+float sum = 0;
+for (unsigned i = 0; i &lt; N; i++)
+{
+  sum += S0 * exp(mu + sigma * RandN());
+}
+return sum / N;</code></pre><p>蒙特卡洛方法可以轻松地在多个处理器上并行，常被称为令人尴尬的并行。其中有五个主要步骤：</p><ol><li>给每个处理单元分配一个随机序列。每个处理单元必须使用不同的随机数序列，且应与所有其他处理器使用的序列不相关。</li><li>把仿真参数（例如 <em>S</em> <sub>0</sub>）传播到所有处理单元，并告诉它们要执行多少次仿真运行。</li><li>为每个处理单元生成要使用的随机数流。</li><li>在处理单元上并行执行仿真内核。</li><li>收集各处理单元的仿真输出，合并起来得到近似结果。</li></ol><p>在许多传统架构上，困难的是第 4 步：写出仿真内核的高效实现，因为更快的内核能在给定时间内执行更多仿真试验，从而给出更准确的答案。不过在 GPU 上，数学负担很重的仿真内核往往相对容易实现。真正的挑战是管理不同随机数流到处理器的分配，并高效地生成这些随机数流。<a href="https://developer.download.nvidia.com/books/gpugems3/37fig02.jpg" rel="noreferrer noopener">图 37-2</a> 从高层展示了处理器之间的工作划分。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/37fig02.jpg" alt="37fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/37fig02.jpg" rel="noreferrer noopener">图 37-2</a> 在仿真内核的多次执行之间划分仿真空间</figcaption></figure><h2>37.2 随机数生成器</h2><h4>37.2.1 引言</h4><p>按「随机性」的来源，随机数生成器可以分为三类：</p><ul><li><strong>真随机数生成器（TRNG）。</strong>这类生成器用物理随机源提供真正不可预测的数。TRNG 主要用于密码学，因为对仿真而言它们太慢。</li><li><strong>准随机数生成器（QRNG）。</strong>这类生成器试图用点均匀填充 <em>n</em> 维空间，不让点聚集或成组。QRNG 虽用于蒙特卡洛仿真，但本章不予考虑。</li><li><strong>伪随机数生成器（PRNG）。</strong>PRNG 是最常见的随机数生成器类型，设计目标是看起来和 TRNG 一样随机，却可以用确定性软件实现，因为其状态和转移函数完全可以预测。本章只考虑这一类生成器。</li></ul><p>随机数生成器还有一种正交分类，按所产生的数的分布来组织。常见的库函数，例如 C 的 <code>rand()</code>，从均匀分布中采样，也就是在某个数值范围内每个值出现的可能性相同。</p><p>然而许多蒙特卡洛仿真实际需要不同的分布；常见的例子有正态分布、对数正态分布和指数分布。从非均匀分布产生样本的主要方法是先生成均匀随机数，再施加一个变换，把均匀数转换成所需非均匀分布的样本。</p><p>举例来说，标准指数变量 <em>E</em> 的累积分布函数（CDF）为 <em>F<sub>E</sub></em> (<em>x</em>) = <em>P</em>[<em>x</em> &lt; <em>E</em> ] = 1 - <em>e</em> <sup>-<em>x</em></sup> 。CDF 把来自指数分布的样本 <em>x</em> 映射回小于 <em>x</em> 的值出现的概率，该概率是 0 到 1 之间的值。因此若 <em>E</em> 服从指数分布，则 <em>P</em>[<em>x</em> &lt; <em>E</em> ] 服从均匀分布。这就引出<em>反演法</em>：既然我们知道 <em>F<sub>E</sub></em> (<em>x</em>) 把指数分布转换为均匀分布，那么从逻辑上讲 <a href="https://developer.download.nvidia.com/books/gpugems3/810equ01.jpg" rel="noreferrer noopener"><img alt="810equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/810equ01.jpg"/></a> 就会把均匀分布转换为指数分布。于是若随机变量 <em>U</em> 服从均匀分布，则 <a href="https://developer.download.nvidia.com/books/gpugems3/810equ02.jpg" rel="noreferrer noopener"><img alt="810equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/810equ02.jpg"/></a> 将服从指数分布。</p><p>尽管反演 CDF 在概念上简单，但计算代价往往太高，难以使用。在上面的指数例子中，每个随机数都要调用一次 <code>log()</code>。这或许可以接受，但在许多情况下逆函数可能复杂得多，某些情况下甚至没有闭式解。高斯分布就是如此，而它是最重要的分布之一，因此人们投入了大量精力研究变换均匀分布的其他方法。这些方法不用直接的逆 CDF 变换，而用数学恒等式和统计技巧从均匀分布转换，例如使用成对的均匀随机数。</p><p>于是我们看到希望 PRNG 满足的两项主要通用要求：</p><ul><li><strong>长周期。</strong>每个确定性生成器最终必然循环，目标是让循环周期尽可能长。有一个有力的论点：若一次仿真中所有节点总共使用 <em>n</em> 个随机样本，则生成器的周期至少应为 <em>n</em> <sup>2</sup>。</li><li><strong>良好的统计质量。</strong>生成器的输出在实用意义上应与所需分布的 TRNG 无法区分，且不应表现出任何相关性或图案。生成器质量差会毁掉蒙特卡洛应用的结果，因此生成器必须能通过现有的理论与实践质量测试。可用的统计检验非常多，可用来验证这一要求（Knuth 1969，Marsaglia 1995，L'Ecuyer 2006）。</li></ul><p>本章我们考虑两种生成高斯随机数的方法，它们特别适合新一代 GPU。第一种采用传统技术：先生成均匀随机数，再施加变换产生高斯分布。第二种用较新的技术直接生成随机数，无需均匀随机源。随后我们看这些生成器在两个奇异期权估值的蒙特卡洛仿真中的用法。</p><h4>37.2.2 均匀到高斯的转换生成器</h4><p>产生高斯随机数的传统方法需要两个组件：一个均匀 PRNG 和一个到高斯分布的变换。两者都有很多选择，因此这里简要讨论各自的要求，并对主要选择做简要分析。然后我们根据 GPU 架构的独特要求选出两个组件。</p><p>除了要满足 37.2.1 节讨论的均匀 PRNG 通用要求之外，GPU 的并行特性还提出两项额外要求：</p><ul><li><strong>能在并行节点上生成不同的子流。</strong>每个节点必须分到随机流中不同且不重叠的部分。</li><li><strong>不同节点上的子流之间不能有相关性。</strong>这些子流必须看起来是完全独立的随机数流。</li></ul><h4>可用的均匀 PRNG</h4><h4>线性同余生成器</h4><p>经典的生成器是<em>线性同余生成器</em>（LCG）（Knuth 1969），其转移函数形如 <em>x<sub>n</sub></em> <sub>+</sub> <sub>1</sub> = (<em>ax<sub>n</sub></em> +<em>c</em>) mod <em>m</em>。生成器的最大周期为 <em>m</em>（假设三元组 (<em>a</em>, <em>c</em>, <em>m</em>) 具备某些性质），但这意味着在 32 位整数中周期至多为 2<sup>32</sup>，实在太低。LCG 还有已知的统计缺陷，不适合现代仿真。</p><h4>多重递归生成器</h4><p>LCG 的一个衍生是<em>多重递归生成器</em>（MRG），它以加法方式组合两个或多个生成器。若组合 <em>n</em> 个周期为 <em>m</em> <sub>1</sub>、<em>m</em> <sub>2</sub>、. . .、<em>m<sub>n</sub></em> 的生成器，则合成周期为 LCM(<em>m</em> <sub>1</sub>, <em>m</em> <sub>2</sub>, . . ., <em>m<sub>n</sub></em> )，因此周期至多为 <em>m</em> <sub>1</sub> <em>x</em>, <em>m</em> <sub>2</sub> <em>x</em>, . . ., <em>m<sub>n</sub>x</em>。这类生成器既有良好的统计质量，又有长周期，但互素的模数需要使用 32 位乘除法的复杂算法，因此不适合当前的 GPU（NVIDIA 2007，6.1.1.1 节）。</p><h4>滞后斐波那契生成器</h4><p>分布式蒙特卡洛仿真中常用的一种生成器是<em>滞后斐波那契生成器</em>（Knuth 1969）。它与 LCG 相似，但引入了延迟反馈，转移函数为 <em>x<sub>n</sub></em> <sub>+1</sub> = (<em>x<sub>n</sub></em> ⊗<em>x<sub>n</sub></em> <sub>-</sub> <em><sub>k</sub></em> ) mod<em>m</em>，其中 ⊗ 通常是加法或乘法。然而要取得好的质量，常数 <em>k</em> 必须很大。因此需要 <em>k</em> 个字的内存来保存状态。通常 <em>k</em> 必须大于 1000，而且每个线程都需要自己的状态，所以必须存在全局内存中。因此我们放弃滞后斐波那契方法，但指出由于它简单且所需寄存器少，在某些基于 GPU 的应用中可能有用。</p><h4>梅森旋转</h4><p>软件中最受推崇的随机数生成方法之一是<em>梅森旋转</em>（Matsumoto 和 Nishimura 1998），周期为 2<sup>19,937</sup>，统计质量极佳。然而它有与滞后斐波那契类似的问题：状态很大，而且必须串行更新。于是每个线程都必须在全局 RAM 中有一份独立状态，且每生成一个数就要多次访问。再加上每生成一个数所需的计算量相对较大，这个生成器太慢，除非需要极致的质量。</p><h4>组合 Tausworthe 生成器</h4><p>在内部，梅森旋转用一个二元矩阵把一个比特向量变换成新的比特向量，所用的是极大的稀疏矩阵和大的向量。不过有一批相关生成器使用小得多的向量，量级为两到四个字，并相应地使用更稠密的矩阵。这类生成器的一个例子是<em>组合 Tausworthe 生成器</em>，它用异或把两个或多个由二元矩阵导出的独立流组合起来，得到周期更长、质量好得多的流。每个独立流用代码清单 37-2 所示的 <code>TausStep</code> 以六条按位指令生成。例如 L'Ecuyer 1999 的四分量 LFSR113 生成器需要 6 x 4 + 3 = 27 条指令，产生的流周期约为 2<sup>113</sup>。</p><h4>示例 37-2. 组合 Tausworthe 生成器的单步</h4><pre><code>
+// S1、S2、S3 和 M 都是常量，z 属于
+// 每个线程私有的生成器状态。
+unsigned TausStep(unsigned &z, int S1, int S2, int S3, unsigned M)
+{
+  unsigned b = (((z << S1) ^ z) >> S2);
+  return z = (((z & M) << S3) ^ b);
+}</code></pre><p>然而我们的统计检验显示，即便是四分量 LFSR113，在相对较小的样本量下也会在 5 元组和 6 元组上产生显著相关性。</p><h4>混合生成器</h4><p>我们提出的做法是把简单的组合 Tausworthe 与另一种生成器结合起来；若所有分量的周期互素，则合成生成器的周期将是所有分量周期的乘积，而且一种生成器的统计缺陷应当能掩盖另一种的缺陷。</p><p>我们已经提到过基于 LCG 的生成器，但因创建 MRG 需要素模数而放弃了它们。不过若使用单个模数为 2<sup>32</sup> 的生成器，我们可获得两项重要性质：(1) 由于 32 位算术的截断，模运算在代码清单 37-3 所示的 <code>LCGStep</code> 中是免费的。(2) 得到的 2<sup>32</sup> 周期与组合 Tausworthe 的所有分量周期互素，因此两者可以组合出周期长得多的生成器。</p><h4>示例 37-3. 一个简单的线性同余生成器</h4><pre><code>
+// A 和 C 是常量
+unsigned LCGStep(unsigned &z, unsigned A, unsigned C)
+{
+  return z = (A * z + C);
+}</code></pre><p>我们选定的具体组合是 L'Ecuyer 1996 的三分量组合 Tausworthe「taus88」与 Press 等 1992 的 32 位「Quick and Dirty」LCG，如代码清单 37-4 所示。两者在各自的生成器家族中统计质量都相对较好，组合起来则消除了我们在各单独生成器中观察到的全部统计缺陷。该生成器的状态由四个 32 位值组成，总体周期约为 2<sup>121</sup>。对初始状态的唯一限制是三个 Tausworthe 状态分量应大于 128；除此之外，四个状态分量可初始化为任意随机值。每个线程应收到一组不同的四个状态值，这些值应互不相关，为方便起见可用 CPU 侧的随机数生成器提供。若将使用整个随机流的相当一部分（例如超过 2<sup>64</sup>），可以用跳流来推进四个状态分量，保证随机流相互独立；不过这种情形超出本章范围。</p><h4>示例 37-4. 把 LCG 与 Tausworthe 组合成改进的生成器</h4><pre><code>
+unsigned z1, z2, z3, z4;
+float HybridTaus()
+{
+  // 合成周期为 lcm(p1,p2,p3,p4) ~ 2^121
+   return 2.3283064365387e-10 * (              // 周期
+    TausStep(z1, 13, 19, 12, 4294967294UL) ^  // p1=2^31-1
+    TausStep(z2, 2, 25, 4, 4294967288UL) ^    // p2=2^30-1
+    TausStep(z3, 3, 11, 17, 4294967280UL) ^   // p3=2^28-1
+    LCGStep(z4, 1664525, 1013904223UL)        // p4=2^32
+   );
+}</code></pre><h4>KISS</h4><p>另一个广受推崇的混合生成器是 Marsaglia 的 KISS 家族（L'Ecuyer 2006）。它们组合三类不同的生成器：一个 LCG、一个类似 Tausworthe 的移位型生成器，以及一对带进位乘法生成器。这个生成器虽然统计质量也好，但需要大量 32 位乘法，在当代硬件上损害性能（NVIDIA 2007，6.1.1.1 节），只有 Tausworthe 八成左右的性能。</p><h4>37.2.3 高斯变换的类型</h4><p>现在我们转向从均匀分布到高斯分布的变换。同样，由于高斯分布如此重要，可选的技术很多。</p><h4>Ziggurat 方法</h4><p>软件中最快的方法是<em>ziggurat 方法</em>（Marsaglia 2000）。这个过程用一套复杂的办法把高斯概率密度函数切成轴对齐的矩形，设计目标是让生成一个样本的平均代价最小。但这也意味着对 2% 的生成数必须走更复杂的路径，使用更多均匀样本和函数调用。在软件中这可以接受，但在 GPU 上，慢路径的性能会影响一个 warp 中的所有线程，哪怕只有一个线程走这条路。若 warp 大小为 32、走慢路径的概率为 2%，则任一 warp 走慢路径的概率是 (1 - 0.02)<sup>32</sup>，即 47%！因此由于线程成批执行，ziggurat 设计中所作的假设被破坏，性能优势也随之消失。</p><h4>极坐标方法</h4><p>许多其他方法同样依赖类似 Ziggurat 的循环行为，因此在硬件上也不可用。<em>极坐标方法</em>（Press 等 1992）简单且效率相对高，但每个线程需要循环的概率为 14%。这导致每个生成样本的期望迭代次数从 1.6 次变成计入 warp 影响后的 3.1 次。</p><h4>Box-Muller 变换</h4><p>由于 GPU 对循环和分支如此敏感，结果高斯变换的最佳选择其实是古老的 Box-Muller 变换，其代码见代码清单 37-5。它取两个均匀样本 <code>u0</code> 和 <code>u1</code>，用下列关系把它们变换成两个高斯分布样本 <code>n0</code> 和 <code>n1</code>：</p><p><img alt="816equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/816equ01.jpg"/></p><h4>示例 37-5. Box-Muller 变换</h4><pre><code>
+float2 BoxMuller()
+{
+  float u0 = HybridTaus(), u1 = HybridTaus();
+  float r = sqrt(-2 log(u0));
+  float theta = 2 * PI * u1;
+  return make_float2(r * sin(theta), r * cos(theta));
+}</code></pre><p>Box-Muller 做法在软件中基本被弃用，尤其是因为它对产生的每个样本都要计算正弦和余弦。不过对线程成批执行的 GPU 实现，它有几项重要优势，最明显的是没有分支也没有循环：只有一条代码路径。它也不需要任何查表，或某些方法中那样大量的常量。它的计算负载仍然相当高，但幸运的是这正是 GPU 擅长的：直线代码，塞满数学运算。此外，我们的结果表明 GPU 上的高速正弦和余弦函数能给出令人满意的结果，在很大程度上抵消了 Box-Muller 做法的性能劣势。</p><h4>37.2.4 Wallace 高斯生成器</h4><p><em>Wallace 高斯生成器</em>（Wallace 1996，Brent 2003）是一种新颖的方法，能直接生成高斯样本，无需先使用均匀生成器。核心思想是取一个由 <em>k</em> 个已服从高斯分布的随机数构成的池，对池施加一个变换，产生另一个同样服从高斯的池。每次变换之后就可以输出该池来提供随机数。关键要求是让变换的输出尽可能与输入不相关，同时仍保持分布性质。</p><p>理想情况下，每个新池都通过对前一个池施加不同的 <em>k</em>x<em>k</em> 正交矩阵得到。正交矩阵是保持池中平方和不变的矩阵；换句话说，若把输入池看作一个 <em>k</em> 维向量，正交矩阵会保持该向量的欧氏长度。正交矩阵的常见例子有单位矩阵，以及反射、旋转这类保持尺寸的仿射变换。</p><p>不过这里有个计算问题：生成一个随机 <em>k</em>x<em>k</em> 正交矩阵非常昂贵——比用传统技术只生成 <em>k</em> 个高斯分布的数要贵几个数量级。因此采用的做法是用许多小得多的正交变换来构造正交变换，例如使用 2x2 正交矩阵，即二维旋转。施加 <em>k</em>/2 次二维旋转会保持整个 <em>k</em> 向量的长度，但实现起来便宜得多。缺点是各遍之间的混合程度低得多：用完整的 <em>k</em>x<em>k</em> 矩阵时，新池中的每个值都可受旧池中每个值影响；而若用 2x2 矩阵，新池中的每个值至多依赖旧池中的两个值。</p><p>有两种技术可以缓解混合不足。第一种是在施加分块变换之前对池做随机置换，这样经过足够多遍之后，新池的每个元素都会依赖于前一个池的所有元素。第二种只是在使用池输出数之前对池做多次变换。两种方法都有缺点，因为建立完整的随机置换很昂贵，而执行多遍显然更费时间。实践中常把两者结合：执行少量遍数，并在每一遍对池做某种程度随机的置换。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/37fig03.jpg" alt="37fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/37fig03.jpg" rel="noreferrer noopener">图 37-3</a> Wallace 变换的单步</figcaption></figure><h4>置换池</h4><p>把 Wallace 算法映射到 GPU 上有若干挑战。最重要的要求是随机置换必须足够随机。测试中我们发现置换的质量是产生高质量随机数的关键因素：使用简单的非随机置换产生的随机数无法通过统计检验。基于这些测试，我们认定产生随机置换远比减少 bank 冲突重要，因此设计算法时可以忽略冲突。</p><p>对置换唯一的关键要求是它必须确实是置换。一遍之内任何池值都不能被读取两次（因而从逻辑上讲，任何池值也不能被忽略）。在读取阶段，每个线程必须从 <em>k</em> 个样本的池中读取 <em>d</em> 个样本。于是我们可以把问题定义为建立从 1..<em>k</em>→ 1..<em>d</em>x 1..<em>k</em>/<em>d</em> 的随机映射。前面我们提到过 LCG，它提供了在 [0,<em>m</em>) 范围内指定最大周期生成器的方法。若取 <em>m</em> =<em>k</em>/<em>d</em>，就可以用它作为高质量随机置换的基础。</p><p>我们已经有一个每线程唯一的值：线程 id，其取值在 [0,<em>m</em>) 内。现在若把线程 id 送入一个模 <em>m</em> 的 LCG，每个线程仍然有唯一标识符，但顺序已被伪随机地改变。注意这个 LCG 提供的统计质量低；不过我们发现，在这个上下文中质量低并不是问题。再施加一次 LCG 会得到新的映射，但每个线程在 [0, <em>m</em>) 范围内仍有唯一标识符。地址置换与分块正交变换的结合构成了变换过程的基础。当我们把单个 Wallace 变换步与一个循环结合起来，在整体可见的变换中执行反复的内部变换时，就得到代码清单 37-6 的代码，其中 <code>TransformBlock</code> 对数据执行矩阵运算，此处用的是 Walsh-Hadamard 矩阵（Wallace 1996）。</p><h4>示例 37-6. 用给定遍数和作用于每组值的 Walsh-Hadamard 矩阵变换 Wallace 池</h4><p><em>这里使用给定遍数，并对每组值使用 Walsh-Hadamard 矩阵。执行矩阵运算的块大小可以调整，但为达到最优应使用寄存器，因此这里我们手工展开了计算。</em></p><pre><code>
+void Transform()
+{
+  // K 和 M 都是二进制幂。
+   const unsigned K=...;  // 池的大小
+   const unsigned M=K/D;  // 线程数，以及 LCG 模数
+   float block_0, block_1 , block_2 , block_3;
+  for( int pass = 0; pass < POOL_PASSES; pass++ ) {
+    // 用伪随机置换读入这个池。
+   unsigned s=tid;
+    // M 是二进制幂，不需要 %。
+   // s 正作为 LCG 重新计算。
+    s = (s*A+B) & (M-1); block_0=pool[(s<<3)+0];
+    s = (s*A+B) & (M-1); block_1=pool[(s<<3)+1];
+    s = (s*A+B) & (M-1); block_2=pool[(s<<3)+2];
+    s = (s*A+B) & (M-1); block_3=pool[(s<<3)+3];
+    // 所有池值必须在任何写入之前读取完毕。
+   __syncthreads();
+    // 对块执行 4x4 原地正交变换。
+    TransformBlock(block);
+    // 按线性顺序输出各个块。
+    s=tid;
+    pool[s]=block_0; s+=NT;
+    pool[s]=block_1; s+=NT;
+    pool[s]=block_2; s+=NT;
+    pool[s]=block_3; s+=NT;
+  }
+}
+__device__ void TransformBlock(float *b)
+{
+  float t=(b[0]+b[1]+b[2]+b[3])/2;
+  b[0]=b[0]-t;
+  b[1]=b[1]-t;
+  b[2]=t-b[2];
+  b[3]=t-b[3];
+}</code></pre><h4>初始化池</h4><p>随机数池的初始化必然是与 Wallace 生成器本身分离的过程，因此需要独立的随机数生成器。这个初始化可以在 CPU 上完成：例如把 ziggurat 方法与梅森旋转配合使用。尽管这个生成器不如基于 GPU 的 Wallace 生成器快，但它只需为 Wallace 池提供种子值；线程一旦开始执行，就不再需要新的种子值。事实上软件可以利用这一点，在 GPU 线程使用上一组种子值工作时生成下一组种子值。</p><p>Wallace 的随机数生成思路相比其他做法有两大优势：</p><ol type="1"><li>直接生成正态分布的值</li><li>状态池可以完全并行地操作，从而充分利用处理器本地的共享内存资源</li></ol><h4>37.2.5 把 Wallace 高斯生成器集成进仿真</h4><p>代码清单 37-7 演示了如何把 Wallace 变换与执行多遍、并在每次执行时向全局内存输出多个随机数的代码结合起来。当然，把全局内存输出换成在仿真内直接使用这些值完全没问题。由于我们在每个线程中生成了多个随机数（至少是整个矩阵的大小），就可以在变换中反复使用它们，按需从共享内存取相应的池值。</p><h4>示例 37-7. 用 Wallace 生成器输出到内存</h4><p><em>注意需要一组 chi<sup>2</sup></em> <em>修正值来维持输出数据的统计性质。借助缓存，把这份数据移到常量内存可获得小幅性能提升（本例中约 5%）。常量内存大小有限，因此做这项调整须谨慎。</em></p><pre><code>
+__device__ void generateRandomNumbers_wallace(
+  unsigned seed,  // 初始化种子
+   float *chi2Corrections,  // 校正值集合
+   float *globalPool,  // 输入随机数池
+   float *output  // 输出随机数
+){
+  unsigned tid=threadIdx.x;
+  // 把全局池载入共享内存。
+   unsigned offset = __mul24(POOL_SIZE, blockIdx.x);
+  for( int i = 0; i < 4; i++ )
+    pool[tid+THREADS*i] = globalPool[offset+TOTAL_THREADS*i+tid];
+  __syncthreads();
+    const unsigned lcg_a=241;
+    const unsigned lcg_c=59;
+    const unsigned lcg_m=256;
+    const unsigned mod_mask = lcg_m-1;
+    seed=(seed+tid)&mod_mask ;
+    // 循环反复生成输出
+   for( int loop = 0; loop < OUTPUTS_PER_RUN; loop++ )
+    {
+      Transform();
+      unsigned intermediate_address;
+      i_a = __mul24(loop,8*TOTAL_THREADS)+8*THREADS *
+        blockIdx.x + threadIdx.x;
+      float chi2CorrAndScale=chi2Corrections[
+        blockIdx.x * OUTPUTS_PER_RUN + loop];
+      for( i = 0; i < 4; i++ )
+        output[i_a + i*THREADS]=chi2CorrAndScale*pool[tid+THREADS*i];
+  }
+}</code></pre><p>把 Wallace 与仿真集成时，我们开始看到局限。若仿真需要大量共享内存，Wallace 方法可能不适合集成，因为它同样有共享内存需求。当然，它仍可以输出到全局内存，让仿真读取这些数据，如前所述，但性能很可能更低。我们还会看到可用寄存器数量的限制，因为把 Wallace 变换与仿真循环结合后计算复杂度更大，寄存器需求随之增加。减少同时运行的线程数是这个问题的一种解法；由于计算中算术占比很高，集成 Wallace 生成器后线程数较低，未必构成严重的性能限制——集成带来的好处超过线程数低的弊端。</p><h2>37.3 应用示例</h2><p>为评估上一节的想法，我们现在看两个不同的蒙特卡洛仿真内核。两者都用于期权定价，但计算特性以及（尤其是）存储特性不同。两个算法的目标都是给期权定一个价格，期权简单说就是一方可以选择行使（也可以不行使）的合约。例如合约可以这样写：「两个月后，甲方有<em>期权</em>以 50.00 美元从乙方买入 1 股 S 股票。」这里我们把 50.00 美元称为期权的<em>行权价</em>，股票 S 是<em>标的</em>，因为期权以它为基础。</p><p>这份合约对甲方显然有非负的货币价值：若两个月后股票 S 的交易价高于 50.00 美元，甲就可以行使期权，以更便宜的价格从乙买入股票，再立刻在公开市场上卖出。若交易价低于 50.00 美元，甲选择不行使期权，于是既无盈利也无亏损。乙方的问题是在<em>现在</em>、即把期权卖给甲方时，考虑合约所有可能的结果，为合约定价。</p><p>最常用的股票模型是对数正态随机游走，它假设股票价格的百分比变化服从高斯分布。这保持了股票的两项最重要特征：价格永不为负，且股价波动的幅度与股价的幅度成正比。在这个模型下，乙方可以估计股票 S 价格的概率分布，并尝试估计自己在期权上的期望损失。这个期望损失随后决定了乙应向甲出售期权的价格。</p><p>这类简单期权可以用多种方式定价：闭式 Black-Scholes 定价公式、有限差分方法、二叉树，或蒙特卡洛仿真。在蒙特卡洛定价仿真中，期望损失通过为 S 在两个月后生成成千上万个可能价格来估计，所用的是从对数正态分布中抽取的随机样本。所有这些可能股价上的平均损失就作为期权的价格。更技术性的细节与基础理论见 Wilmott 2006；期权定价的 GPU 实现见 Colb 和 Pharr 2005。</p><p>不过也存在比简单看涨（买入期权）和看跌（卖出期权）复杂得多的期权，通常称为<em>奇异期权</em>。它们可以针对多个标的指定复杂的收益函数，由甲方为对冲某组特定市场情形而构造，再由乙方作为一次性合约卖出。这类期权的价格往往无法找到任何闭式解，而合约的多资产性质又使二叉树和有限差分方法不实用。于是对许多奇异期权定价来说，蒙特卡洛仿真成了唯一可行的选择。</p><h4>37.3.1 亚式期权</h4><p>第一个应用是一份基于两个标的最大值的亚式期权（Wilmott 2006）。亚式期权用标的的平均价格来确定最终行权价，因此价格既取决于标的最终走到哪里，也取决于它走过的路径。这里我们考虑一份基于两个标的之最大值的期权，标的价格服从对数正态随机游走，且相关性结构已知。注意我们忽略折现等一些细节，只关注计算。</p><p>篮子的初始状态为 <em>S</em> <sub>0</sub> = (<em>a</em> <sub>0</sub>, <em>b</em> <sub>0</sub>)。篮子中的资产有一个已知的相关性结构 ，它是一个 2x2 的协方差矩阵，描述一种资产的变动倾向于反映在另一种资产变动上的程度。例如 XXX 的股价与 YYY 的股价高度相关，因此当一方升值时另一方很可能也升值，反之亦然。相关性结构可以约化为三个常数 <em>s<sub>a</sub></em> <sub>,</sub> <em><sub>a</sub></em> 、<em>s<sub>b</sub></em> <sub>,</sub> <em><sub>b</sub></em> 、和 <em>s<sub>a</sub></em> <sub>,</sub> <em><sub>b</sub></em> ，再加上两个常数 m<sub>a</sub> 与 m<sub>b</sub> 以允许趋势增长，资产的演化如下：</p><p><img alt="823equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/823equ01.jpg"/></p><p>期权的收益 <em>P</em> 则由下式定义：</p><p><img alt="823equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/823equ02.jpg"/></p><p><a href="https://developer.download.nvidia.com/books/gpugems3/37fig04.jpg" rel="noreferrer noopener">图 37-4</a> 展示了相关资产行为的一个例子，代码清单 37-8 给出亚式篮子仿真单条路径的代码。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/37fig04.jpg" alt="37fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/37fig04.jpg" rel="noreferrer noopener">图 37-4</a> 亚式篮子仿真一次运行的例子</figcaption></figure><h4>示例 37-8. 亚式篮子仿真单条路径的代码</h4><pre><code>
+__device__ float AsianBasket(unsigned T, float A_0, float B_0, float MU_A,
+                             float SIG_AA, float MU_B, float SIG_AB,
+                             float SIG_BB)
+{
+  float a = A_0, b = B_0, s = 0, sum = 0;
+  for (unsigned t = 0; t &lt; T; t++)
+  {
+    float ra = RNORM();
+    float rb = RNORM();
+    a *= exp(MU_A + ra * SIG_AA);
+    b *= exp(MU_B + ra * SIG_AB + rb * SIG_BB);
+    s = max(a, b);
+    sum += s;
+  }
+  return max(sum / T - s, 0);
+}</code></pre><h4>37.3.2 回望期权的变体</h4><p>第二个应用是<em>回望期权</em>（Wilmott 2006）的一个变体，带有一些特殊之处。具体来说，收益由每个时间步的资产价格与最终资产价格之间正差值之和决定。可以把它想成从终值价格出发，在资产路径上画一条水平线，取线之上、路径之下的面积作为收益。于是若 <em>s</em> <sub>0</sub> . . . <em>s<sub>T</sub></em> 是资产路径，收益 <em>P</em> 将为下式：</p><p><img alt="825equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/825equ01.jpg"/></p><p>这份期权要求存储整条路径的演化，因为只有知道最终价格才能确定收益。</p><p>这份期权中我们还使用了更复杂的资产价格模型，称为 <em>GARCH 模型</em>。这个模型引入时变波动率的思想：基本上，资产变动的大小部分取决于最近一次变动的大小。常见的情形是股价一次大幅变动之后又跟着一次大幅变动，而在较稳定的时期变动幅度较小。资产路径建模如下：</p><p><img alt="825equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/825equ02.jpg"/></p><p><a href="https://developer.download.nvidia.com/books/gpugems3/37fig05.jpg" rel="noreferrer noopener">图 37-5</a> 展示了变动过程与相关资产值，代码清单 37-9 给出回望期权仿真单条路径的代码。实际使用时，代码清单 37-8 和 37-9 所示的单路径函数会被反复调用，使一组不同仿真路径的结果合并成均值与方差结果，如代码清单 37-10 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/37fig05.jpg" alt="37fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/37fig05.jpg" rel="noreferrer noopener">图 37-5</a> 资产的变动</figcaption></figure><h4>示例 37-9. 回望期权仿真单条路径的代码</h4><pre><code>
+// (MAX_T%WARP_SIZE)==0
+const unsigned MAX_T;
+__device__ float LookbackDiff(unsigned T, float VOL_0, float EPS_0, float A_0,
+                              float A_1, float A_2 float MU)
+{
+  __shared__ float path[NUM_THREADS * MAX_T];
+  float vol = VOL_0, eps = EPS_0;
+  float s = S0;
+  int base = __mul24(tid, MAX_T) - NUM_THREADS;
+  // 随机选择一条资产路径。
+  for (unsigned t = 0; t < T; t++)
+  {
+    // 保存当前资产价格。
+    base = base + NUM_THREADS;
+    path[base] = s;
+    // 计算下一次资产价格。
+    vol = sqrt(A_0 + A_1 * vol * vol + A_2 * eps * eps);
+    eps = RNORM() * vol;
+    s = s * exp(MU + eps);
+  }
+  // 回看路径以求出收益。
+  float sum = 0;
+  for (unsigned t = 0; t < T; t++)
+  {
+    base = base - NUM_THREADS;
+    sum += max(path[base] - s, 0);
+  }
+  return sum;
+}</code></pre><h4>示例 37-10. 使用各个仿真内核</h4><p><em>内核运行的结果合并成均值与方差结果，然后返回。这里我们把</em> <em><code>SimKernel()</code> 的参数写得含糊，以便涵盖代码清单 37-8 和 37-9 所述的两个内核。</em></p><pre><code>
+// 从种子数组中取出该线程专属的种子。
+__device__ void
+    InitRNORM(seeds); // 根据所用的生成器，从该线程
+// 的随机数流中产生一个随机数。
+__device__ float
+RNORM(); // 通过调用 RNORM() 执行仿真内核。
+__device__ float SimKernel(parameters);
+__global__ float2 MonteCarloThread(seed, parameters)
+{
+  InitRNORM(seeds);
+  float mean = 0, varAcc = 0;
+  for (float i = 1; i < = PATHS_PER_SIM; i++)
+  {
+    // 模拟一条路径。
+    float res = SimKernel(parameters);
+    // 现在以数值稳定的方式
+    // 更新均值和方差。
+    float delta = res - mean;
+    mean += delta / i;
+    varAcc += delta * (res - mean);
+  }
+  float variance = S / (PATHS_PER_SIM - 1);
+  return make_float2(mean, variance);
+}</code></pre><h4>37.3.3 结果</h4><p>我们在 CUDA 中实现了混合 Tausworthe RNG 配 Box-Muller，以及 Wallace 高斯 RNG，原始 RNG 性能结果见表 37-1 第一列（标为「原始 RNG」）。结果以整块 GPU 每秒产生的高斯样本百万数（MSamples/s）计。Wallace 生成器每秒提供超过 50 亿个样本，达到混合 Tausworthe 生成器的 1.2 倍。不过 Wallace 变换还使用大量共享内存来存储池，此处为 2,048 个字。这使仿真代码中只剩 2,048 个字可用；因此在仿真需要全部共享内存的情况下，只能使用较慢的 Tausworthe 生成器。</p><h4>表 37-1. 所讨论的随机数生成器与仿真的性能结果</h4><table><tbody><tr><td colspan="5"><em>常量 RNG 一行代表不真正产生随机数、而是直接从变量取值的情形，这样仿真代码不会被优化掉。原始 RNG 一列指随机数生成独立执行、直接写入内存，不驱动任何仿真。</em></td></tr><tr><td></td><td></td><td><p><strong>原始 RNG</strong>(MSamples/s)</p></td><td><p><strong>亚式</strong> (MSteps/s)</p></td><td><p><strong>回望</strong>(MSteps/s)</p></td></tr><tr><td><p><strong>GPU</strong></p></td><td><p><strong>Tausworthe 加 Box-Muller</strong></p></td><td><p>4,327</p></td><td><p>1,769</p></td><td><p>1,147</p></td></tr><tr><td><p><strong>Wallace</strong></p></td><td><p>5,274</p></td><td><p>1,877</p></td><td><p>—</p></td></tr><tr><td><p><strong>常量 RNG</strong></p></td><td><p>—</p></td><td><p>5,177</p></td><td><p>2,908</p></td></tr><tr><td><p><strong>四路 Opteron</strong></p></td><td><p><strong>Ziggurat 加 Mersenne Twister</strong></p></td><td><p>206</p></td><td><p>32</p></td><td><p>50</p></td></tr><tr><td><p><strong>常量 RNG</strong></p></td><td><p>—</p></td><td><p>44</p></td><td><p>64</p></td></tr><tr><td></td><td><p><strong>加速比</strong></p></td><td><p>26</p></td><td><p>59</p></td><td><p>23</p></td></tr></tbody></table><p>表中还列出了 2.2 GHz 四路 Opteron 全部四个处理器的性能结果，用的是 Mersenne twister 均匀发生器与 Ziggurat 变换的组合。基于 GPU 的 Wallace 发生器相对四 CPU 机器提供了 26 倍的加速比，但这只衡量了原始的随机数生成速度：能否用这些随机数真正做些什么同样重要。</p><p>表 37-1 的第二列和第三列给出上一节介绍的那两种奇异期权的仿真性能。除了前面提到的两种 GPU 实现和一种基于 GPU 的实现之外，表中另加两行，都标为「Constant RNG」。在这两行里随机数发生器被去掉，同时注意确保仿真的其余代码不会被优化掉，由此可以看出花在生成随机数上的时间与花在使用随机数上的时间之比。</p><p>性能数字以 MSteps/s 报告，它衡量每秒能处理多少个仿真时间步。例如在亚式期权中，每一步对应代码清单 37-8 内层循环的一次迭代。测量亚式期权的性能时，每个仿真执行 256 个时间步，每线程块 256 个线程；因此每秒完成一个线程块就是 65 KSteps/s。在回望期权的情形里，时间步数受能分配给每个线程的共享内存量限制。我们每线程块用 512 个线程，因此回望期权每个仿真被限制在 8 个时间步。</p><p>在亚式期权的情形中，我们看到 Wallace 发生器相对 Tausworthe/Box-Muller 发生器只带来 1.06 倍的有限提升。这种相对变慢看起来源于 Wallace 代码与仿真内核代码之间的相互作用，可能是寄存器分配冲突造成的。即便如此，其性能仍是软件实现的 59 倍。</p><p>在回望期权的情形中不能用 Wallace，因为共享内存要留给仿真内核，性能也远低于亚式期权。有意思的是，软件实现表现出相反的性能：回望期权明显比亚式期权快。不过，用 GPU 而不是基于 CPU 的方案能获得 23 倍的速度提升。</p><h2>37.4 结论</h2><p>现代 GPU 硬件完全有能力用于金融仿真。本章讨论了为这类仿真生成随机数的方法。统计分析表明，Wallace 方法在保持高质量随机数的同时提供了不错的性能。由于资源限制，权衡是必要的，因此 Wallace 方法并不适合所有情形。这些权衡在多数情形下应当是可管理的，而用 CUDA 与 GPU 硬件做金融仿真在未来应是一个可行的选项。</p><h2>37.5 参考文献</h2><p>Brent, Richard P. 2003，「Some Comments on C. S. Wallace's Random Number Generators.」，载 <em>The Computer Journal</em>。</p><p>Colb, C., and M. Pharr. 2005. 「Options Pricing on the GPU.」，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 719–731 页，Addison-Wesley 出版。</p><p>Knuth, D. 1969. <em>The Art of Computer Programming, Volume 2: Seminumerical Algorithms</em>，Addison-Wesley 出版。</p><p>L'Ecuyer, P. 1996. 「Maximally Equidistributed Combined Tausworthe Generators.」，载 <em>Mathematics of Computation</em>。</p><p>L'Ecuyer, P. 1999. 「Tables of Maximally Equidistributed Combined LFSR Generators.」，载 <em>Mathematics of Computation</em>。</p><p>L'Ecuyer, P. 2006. 「TestU01: A C Library for Empirical Testing of Random Number Generators.」，载 <em>ACM Transactions on Mathematical Software</em>。</p><p>Marsaglia, George. 1995. 「The Diehard Battery of Tests of Randomness.」，见 <a href="http://www.stat.fsu.edu/pub/diehard/" rel="noreferrer noopener">http://www.stat.fsu.edu/pub/diehard/</a>。</p><p>Marsaglia, George. 2000. 「The Ziggurat Method for Generating Random Variables.」，载 <em>Journal of Statistical Software</em>。</p><p>Matsumoto, M. and T. Nishimura. 1998. 「Mersenne Twister: A 623-Dimensionally Equidistributed Uniform Pseudorandom Number Generator.」，载 <em>ACM Transactions on Modeling and Computer Simulation</em>。</p><p>Metropolis, N. 1987. 「The Beginning of the Monte Carlo Method.」，载 <em>Los Alamos Science</em>。</p><p>NVIDIA Corporation. 2007. <em>NVIDIA CUDA Compute Unified Device Architecture Programming Guide</em>，0.8.1 版。</p><p>Press, W. H., S. A. Teukolsky, W. T. Vetterling, and B. P. Flannery. 1992. <em>Numerical Recipes in C</em>，第二版，Cambridge University Press 出版。</p><p>Sussman, M., W. Crutchfield, and M. Papakipos. 2006. 「Pseudorandom Number Generation on the GPU.」，载 <em>Graphics Hardware</em>。</p><p>Wallace, C. S. 1996. 「Fast Pseudorandom Generators for Normal and Exponential Variates.」，载 <em>ACM Transactions on Mathematical Software</em>。</p><p>Wilmott, P. 2006. <em>Paul Wilmott on Quantitative Finance</em>，Wiley 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-37-efficient-random-number-generation-and-application" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-37-efficient-random-number-generation-and-application</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

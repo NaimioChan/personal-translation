@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 36 章　GPU 上的 AES 加密与解密 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 36 章　GPU 上的 AES 加密与解密」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 36 章　GPU 上的 AES 加密与解密</h1>
+<p><em>Takeshi Yamanouchi<br> SEGA Corporation</em></p><p>本章我们讨论 GPU 上的整数流处理，这在迄今为止一直是 GPU 上最难完成的任务之一。</p><p>传统上 GPU 几乎只用于浮点运算，因为整数操作只能借助浮点数尾数完成；因此需要按位逻辑运算的处理根本无法进行。另一个问题是我们必须把 GPU 的输出渲染到纹理或像素缓冲区，才能拿到结果。所以要处理流式数据，就得写各种取巧的图形代码。</p><p>然而随着新一代 GeForce 8 系列 GPU 问世，GPU 编程中引入了若干新扩展和函数。第一，新的整数处理特性不仅包括算术运算，还包括按位逻辑运算（如 AND 和 OR）以及右移/左移运算。第二，数组参数和新的纹理缓冲对象提供了引用整数索引表的灵活方式。最后，借助新的「变换反馈模式」，我们现在可以存储结果，无需渲染到纹理或像素缓冲区。</p><p>本章我们给出这些新特性的一项应用：在 GPU 上实现高级加密标准（AES）（NIST 2001）的加密与解密。与先前的尝试（Cook 等 2005）不同，正是得益于这些新特性，我们的实现相比 CPU 实现显示出小幅性能提升。</p><p>此外，在 AES 系统内部，我们考虑了几种分组密码工作模式（Dworkin 2001），以展示 GPU 可以借助并行处理优化性能的实际情形，以及其他无法做到的情形。</p><h2>36.1 整数流处理的新函数</h2><p>在 AES 加密系统的实现中，我们使用 NVIDIA 在 GeForce 8 系列中提供的 OpenGL 新扩展（NVIDIA 2006，OpenGL.org 2007）。本节简要介绍其中一些扩展。</p><h4>36.1.1 变换反馈模式</h4><p>变换反馈模式是 OpenGL 的一种新工作模式。在此模式下，GPU 可以在光栅化阶段之前把输出送到缓冲区。这样我们就能把着色器的输出作为顶点属性存进缓冲对象。<a href="https://developer.download.nvidia.com/books/gpugems3/36fig01.jpg" rel="noreferrer noopener">图 36-1</a> 说明了这一过程。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig01.jpg" alt="36fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig01.jpg" rel="noreferrer noopener">图 36-1</a> 变换反馈模式的处理管线</figcaption></figure><p>在变换反馈模式下渲染，与从缓冲对象做常规渲染相似，只是有以下差别：</p><ul><li>GL 的 <code>target</code> 参数改为 <code>GL_TRANSFORM_FEEDBACK_BUFFER_NV</code>。</li><li>我们需要指定输出属性，以及每个属性是输出到单独的缓冲对象，还是全部交错输出到单个缓冲对象。</li><li>输出缓冲区必须通过新的专用 API 调用绑定，例如 <code>glBindBufferRangeNV()</code> 等。</li><li>图元绘制调用必须包在 <code>glBeginTransformFeedbackNV()</code> 与 <code>glEndTransformFeedbackNV()</code> 调用之间，用法类似 <code>glBeginQuery()</code> 与 <code>glEndQuery()</code>。</li><li>光栅化也可以选择性地禁用，本章就是这么做的，因为我们不需要任何后续管线阶段。这通过以下调用完成：<code>glEnable(GL_RASTERIZER_DISCARD_NV)</code>。</li></ul><h4>36.1.2 GPU 程序扩展</h4><p>我们使用了汇编指令集中引入的两项新特性。</p><p>第一，声明寄存器时，我们可以指定它的类型（如 <code>FLOAT</code> 或 <code>INT</code>），也可以干脆不给类型。我们还可以为每条执行的指令指定类型，声明该指令应如何解释其操作数。这通过在操作码之后加类型指示符实现。类型指示符为：<code>.F</code> 表示 float，<code>.S</code> 表示有符号 int，<code>.U</code> 表示无符号 int：</p><pre><code>TEMP  r0, r1, r2;      // 无类型寄存器
+MOV.U r0, 0x3f800000;  // r0 = 1.0f
+MAD.F r1, r0, 2, -1;   // r1 = 1.0f
+MAD.S r2, r0, 2, -1;   // r2 = 0x7effffff</code></pre><p>第二，我们可以用整数索引、数组参数，或新引入的纹理缓冲对象之一来引用表。</p><pre><code>INT TEMP r0, r1;
+MOV.S r0.x, 10;
+MOV.S r0, 0;                             // 整数索引
+MOV.S r1.x, table[r0.x].x;               // 数组参数
+TXF.S r1.x, r0.x, texture[1], BUFFER;    // 纹理缓冲对象</code></pre><p>在当前的 GeForce 8 系列 GPU 上，纹理缓冲对象方式通常比使用数组参数性能更好。</p><h2>36.2 AES 算法概览</h2><p>AES 算法是目前取代数据加密标准（DES）的标准分组密码算法。早在 1997 年，美国国家标准与技术研究院（NIST）就公开征集可取代 DES 的新密码算法。NIST 对新 AES 的要求大致如下：</p><ul><li>对称密钥密码</li><li>分组密码</li><li>支持 128 位分组长度</li><li>支持 128、192 和 256 位密钥长度</li></ul><p>最终在 2000 年 10 月，Rijndael 算法被选为新标准加密算法的基础（Hironobu 2001）。最初的 Rijndael 算法同时支持固定长度和可变长度的比特密码分组。不过目前 AES 算法的联邦信息处理标准规范只支持固定长度的 128 位分组。</p><p>AES 算法的运作如<a href="https://developer.download.nvidia.com/books/gpugems3/36fig02.jpg" rel="noreferrer noopener">图 36-2</a> 所示。加密步骤用密钥把数据转换成不可读的密文，解密步骤用同一把密钥把密文转换回原始数据。这类密钥是<em>对称密钥</em>；其他算法加密和解密需要不同的密钥。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig02.jpg" alt="36fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig02.jpg" rel="noreferrer noopener">图 36-2</a> AES 密码的运作</figcaption></figure><p>算法涉及的具体步骤可见<a href="https://developer.download.nvidia.com/books/gpugems3/36fig03.jpg" rel="noreferrer noopener">图 36-3</a>。过程相对简单，但要理解其中发生了什么，需要一些简短的密码学说明。在密码学中，AES 这类算法称为<em>乘积密码</em>。对这一类密码，加密按<em>轮</em>进行，每一轮的处理用相同逻辑完成。而且这类乘积密码（包括 AES）每一轮都会更换密钥。每个轮密钥由<em>密钥编排</em>确定，而密钥编排由用户给出的密钥生成。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig03.jpg" alt="36fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig03.jpg" rel="noreferrer noopener">图 36-3</a> AES 算法示意</figcaption></figure><p>一般来说，乘积密码的加密强度可以通过增加处理数据的轮数来提高。AES 标准规定轮数由密钥长度决定，如<a href="https://developer.download.nvidia.com/books/gpugems3/36fig04.jpg" rel="noreferrer noopener">图 36-4</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig04.jpg" alt="36fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig04.jpg" rel="noreferrer noopener">图 36-4</a> 密钥长度与轮数</figcaption></figure><h2>36.3 GPU 上的 AES 实现</h2><p>现在我们知道了 AES 算法该做什么，就来看看把它实现成顶点程序是什么样子。本章给出的代码使用 C 风格宏和注释来改善汇编语言的可读性。这些宏与注释——例如代码清单 36-1 中 <code>ROT8</code> 宏里的那些——会由标准 C 预处理器滤除。</p><h4>示例 36-1. AES 密码顶点程序的开头</h4><pre><code>!!NVvp4.0
+/*
+   * aes.vpt —— AES 加密与解密
+   * Author Yamanouchi_Takeshi@sega.co.jp
+   */
+   // 输入、输出
+ATTRIB  state_in  = vertex.attrib[0];
+OUTPUT  state_out  = result.texcoord[0];
+// 宏
+INT TEMP _tmp0, _tmp1;     // 宏操作
+#define ROT8(_arg) \
+  SHL.U  _tmp0, _arg, 8; \
+  SHR.U  _arg, _arg, 24; \
+  OR  _arg, _arg, _tmp0</code></pre><p>在这个应用中，我们用 CPU 扩展密钥，把密钥编排存进 GPU 程序的局部参数。除了密钥编排，其他参数和表也可以事先直接存好以提升性能，如代码清单 36-2 所示。</p><h4>示例 36-2. 用于参数和常量表的程序参数</h4><pre><code>
+   // 参数
+   // 密码模式，0：加密，1：解密
+INT PARAM mode      = program.local[MODE];
+// 轮数
+INT PARAM num_round = program.local[NUM_ROUND];
+// 加密用的密钥编排
+INT PARAM enc_key[15] = { program.local[ENC_KEY_BEGIN..ENC_KEY_END] };
+// 解密用的密钥编排
+INT PARAM dec_key[15] = { program.local[DEC_KEY_BEGIN..DEC_KEY_END] };</code></pre><h4>36.3.1 输入/输出与状态</h4><p>AES 加密作用于一个二维字节数组，称为<em>状态</em>。在输入步骤中，我们把数据切成连续的 16 字节块，再解包成 4x4 数组压入 GPU 寄存器。最后在输出步骤中，把这些 4x4 数组打包回连续的 16 字节块，把结果流回变换反馈缓冲区，如<a href="https://developer.download.nvidia.com/books/gpugems3/36fig05.jpg" rel="noreferrer noopener">图 36-5</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig05.jpg" alt="36fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig05.jpg" rel="noreferrer noopener">图 36-5</a> 流式数据的输入、状态、输出与寄存器分配</figcaption></figure><p>代码清单 36-3 的代码片段详述了这些步骤。首先我们把打包和解包方法定义为宏。然后有一个 <code>unpack_state_in:</code> 子程序，把输入解包进当前状态矩阵；还有一个 <code>pack_state_out:</code> 子程序，把当前状态矩阵打包回输出流。</p><p><code>state_in</code> 和 <code>state_out</code> 的寄存器各由四个 32 位整数分量组成，正好给我们标准 AES 的 128 位分组大小用于处理。</p><h4>示例 36-3. 状态与输入（解包）/输出（打包）子程序</h4><pre><code>
+// 寄存器
+INT TEMP  s0, s1, s2, s3;       // 状态
+#define UNPACK(_res, _arg) \
+  SHR  _res.w, _arg, 24; \
+  SHR  _res.z, _arg, 16; \
+  SHR  _res.y, _arg,  8; \
+  MOV.U  _res.x, _arg; \
+  AND  _res, _res, 0xff
+#define PACK(_res, _arg) \
+  SHL  _tmp0.w, _arg.w, 24; \
+  SHL  _tmp0.z, _arg.z, 16; \
+  SHL  _tmp0.y, _arg.y,  8; \
+  OR  _tmp0.w, _tmp0.w, _tmp0.z; \
+  OR  _tmp0.w, _tmp0.w, _tmp0.y; \
+  OR  _res, _tmp0.w, _arg.x
+unpack_state_in:
+  // arg0：轮密钥
+  XOR  tmp, state_in, arg0;
+  UNPACK(s0, tmp.x);
+  UNPACK(s1, tmp.y);
+  UNPACK(s2, tmp.z);
+  UNPACK(s3, tmp.w);
+  RET;
+pack_state_out:
+  // arg0：轮密钥
+  PACK(tmp.x, s0);
+  PACK(tmp.y, s1);
+  PACK(tmp.z, s2);
+  PACK(tmp.w, s3);
+  XOR  state_out, tmp, arg0;
+  RET;</code></pre><h4>36.3.2 初始化</h4><p>在初始化阶段，我们做一次 <em>AddRoundKey</em> 操作，即由密钥编排确定的轮密钥对状态做异或。在我们的情形里，解包与轮密钥加法一起放在 <code>unpack_state_in:</code> 子程序中完成。</p><h4>36.3.3 轮</h4><p>AES 算法的一轮由四个操作组成：<em>SubBytes</em> 操作、<em>ShiftRows</em> 操作、<em>MixColumns</em> 操作，以及前面提到的 AddRoundKey 操作。</p><h4>SubBytes 操作</h4><p>SubBytes 操作以黑箱方式独立地替换字节，所用的是称为 <em>S 盒</em> 的非线性替代表，如<a href="https://developer.download.nvidia.com/books/gpugems3/36fig06.jpg" rel="noreferrer noopener">图 36-6</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig06.jpg" alt="36fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig06.jpg" rel="noreferrer noopener">图 36-6</a> SubBytes 操作</figcaption></figure><p>S 盒是一张事先算好的固定表，作为 <code>texture[]</code> 存进纹理缓冲对象（见代码清单 36-2 的代码）。我们的实现把加密表存在 <code>texture[1]</code>，把解密用的变换表存在 <code>texture[2]</code>，可见代码清单 36-4。</p><h4>示例 36-4. 对状态第一行做 SubBytes</h4><pre><code>sub_bytes_shift_rows:
+  // 第一行
+  TXF.U s0.x, s0.x, texture[1], BUFFER;   // texture[1]：s_box
+  TXF.U s1.x, s1.x, texture[1], BUFFER;
+  TXF.U s2.x, s2.x, texture[1], BUFFER;
+  TXF.U s3.x, s3.x, texture[1], BUFFER;</code></pre><h4>ShiftRows 操作</h4><p>ShiftRows 操作把状态的后三行循环移位，从而打乱行数据，如<a href="https://developer.download.nvidia.com/books/gpugems3/36fig07.jpg" rel="noreferrer noopener">图 36-7</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig07.jpg" alt="36fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig07.jpg" rel="noreferrer noopener">图 36-7</a> ShiftRows 操作</figcaption></figure><p>一项简单的优化是把 SubBytes 与 ShiftRows 操作合并成一个子程序，我们称之为 <code>sub_bytes_shift_rows:</code>。把两个操作合而为一的代码接续上一节，见代码清单 36-5。</p><h4>示例 36-5. 对第二、三、四行做 SubBytes 和 ShiftRows</h4><pre><code>
+   // 第二行
+TXF.U tmp, s0.y, texture[1], BUFFER;
+TXF.U s0.y, s1.y, texture[1], BUFFER;
+TXF.U s1.y, s2.y, texture[1], BUFFER;
+TXF.U s2.y, s3.y, texture[1], BUFFER;
+MOV.U s3.y, tmp;
+// 第三行
+TXF.U tmp, s0.z, texture[1], BUFFER;
+TXF.U s0.z, s2.z, texture[1], BUFFER;
+MOV.U s2.z, tmp;
+TXF.U tmp, s1.z, texture[1], BUFFER;
+TXF.U s1.z, s3.z, texture[1], BUFFER;
+MOV.U s3.z, tmp;
+// 第四行
+TXF.U tmp, s3.w, texture[1], BUFFER;
+TXF.U s3.w, s2.w, texture[1], BUFFER;
+TXF.U s2.w, s1.w, texture[1], BUFFER;
+TXF.U s1.w, s0.w, texture[1], BUFFER;
+MOV.U s0.w, tmp;
+RET;</code></pre><h4>MixColumns 操作</h4><p>下一步是 MixColumns 操作，其目的是打乱每一列的数据。这一步通过对每个列向量做矩阵乘法完成，如<a href="https://developer.download.nvidia.com/books/gpugems3/36fig08.jpg" rel="noreferrer noopener">图 36-8</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig08.jpg" alt="36fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig08.jpg" rel="noreferrer noopener">图 36-8</a> MixColumns 操作</figcaption></figure><p>由于乘法是在 AES 的有限域上进行的，我们不能用通常的 MUL 操作。有限域的闭合性在字节范围之内。所以我们把乘以 (0x2, 0x1, 0x1, 0x3) 的结果存在 <code>texture[3]</code> 中。得到的字节按小端形式打包进一个 32 位整数，例如 0x03010102。</p><p>得到的变换矩阵按列移位，因此结果要由 <code>ROT8()</code> 与 <code>ROT24()</code> 宏旋转。最后我们用异或把它们相加并解包进状态，见代码清单 36-6。</p><h4>示例 36-6. MixColumns 与 AddRoundKey</h4><pre><code>mix_columns_add_round_key:
+  // arg0：轮密钥
+  TXF.U mix0.x, s0.x, texture[3], BUFFER;  // texture[3]：mix_col
+  TXF.U mix0.y, s1.x, texture[3], BUFFER;
+  TXF.U mix0.z, s2.x, texture[3], BUFFER;
+  TXF.U mix0.w, s3.x, texture[3], BUFFER;
+  TXF.U mix1.x, s0.y, texture[3], BUFFER;
+  . . .
+  TXF.U mix3.w, s3.w, texture[3], BUFFER;
+  ROT8(mix1);
+  ROT16(mix2);
+  ROT24(mix3);
+  XOR  tmp, arg0, mix0;  // 加轮密钥
+  XOR  tmp, tmp, mix1;
+  XOR  tmp, tmp, mix2;
+  XOR  tmp, tmp, mix3;
+  UNPACK(s0, tmp.x);
+  UNPACK(s1, tmp.y);
+  UNPACK(s2, tmp.z);
+  UNPACK(s3, tmp.w);
+  RET;</code></pre><p>解密时，乘法结果存在 <code>texture[4]</code> 中。系数为 (0xe, 0x9, 0xd, 0xb)。</p><p>简言之，此时 <code>texture[]</code> 的各个分量如下：</p><ul><li><code>texture[1]</code> 存放加密 S 盒数据。</li><li><code>texture[2]</code> 存放解密 S 盒数据。</li><li><code>texture[3]</code> 存放加密 MixColumns 数据。</li><li><code>texture[4]</code> 存放解密 MixColumns 数据。</li></ul><h4>AddRoundKey 操作</h4><p>这个操作从密钥编排确定当前轮密钥，其中寄存器 <code>arg0</code> 充当参数。作为一项优化，我们也可以把 MixColumns 与 AddRoundKey 操作合并成一个子程序，名为 <code>mix_columns_add_round_key:</code>。</p><p>代码清单 36-7 的代码是加密循环。注意在 GeForce 8 系列中控制流操作的代价已大幅下降：降得如此之多，以致为了获得良好性能并不需要展开循环——展开反而会让代码更复杂。</p><h4>示例 36-7. AES 加密循环</h4><pre><code>encrypt:
+  // 输入与第一轮
+  MOV.U  arg0, enc_key[0];
+  CAL  unpack_state_in;
+  // 循环轮次
+  SUB.S  cnt.x, num_round.x, 1;
+  MOV.S  cnt.y, 1;
+  REP.S  cnt.x;
+    CAL  sub_bytes_shift_rows;
+    MOV.U  arg0, enc_key[cnt.y];
+    CAL  mix_columns_add_round_key;
+    ADD.S  cnt.y, cnt.y, 1;
+  ENDREP;
+  // 最后一轮与输出
+  CAL  sub_bytes_shift_rows;
+  MOV.U  arg0, enc_key[cnt.y];
+  CAL  pack_state_out;
+  RET;</code></pre><h4>36.3.4 最后一轮</h4><p>最后一轮没有 MixColumns 操作。AddRoundKey 操作与打包合并成一个子程序，名为 <code>pack_state_out:</code>，做法与我们处理初始化时类似。</p><h2>36.4 性能</h2><p>现在我们有了可用的 AES 实现，来测一下基于 GPU 的加密性能。解密略去，因为在 AES 算法中它的表现与加密相同。我们的测试在一台配置如下的测试机上完成：</p><ul><li>CPU：Pentium 4，3 GHz，2 MB 二级缓存</li><li>内存：1 GB</li><li>显卡：GeForce 8800 GTS 640 MB</li><li>系统：Linux 2.6，驱动 97.46</li></ul><h4>36.4.1 顶点程序与片元程序</h4><p>我们把变换反馈模式管线下顶点程序的性能，与传统渲染管线下片元程序的性能做了比较。片元程序与顶点程序代码相同，只是输入/输出寄存器按需重新定义，从而利用 GPU 的统一架构。</p><p>我们的结果来自处理一份填满随机数的 128 MB <em>明文</em>，并对十次运行的测量取平均。如<a href="https://developer.download.nvidia.com/books/gpugems3/36fig09.jpg" rel="noreferrer noopener">图 36-9</a> 所示，顶点程序的吞吐为 53 MB/s，而片元程序在批次大小为 1 MB 时吞吐为 95 MB/s。我们的实现把大部分处理时间花在引用表上——换句话说，花在取纹理上。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig09.jpg" alt="36fig09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig09.jpg" rel="noreferrer noopener">图 36-9</a> 顶点程序与片元程序</figcaption></figure><h4>36.4.2 与基于 CPU 的加密比较</h4><p><code>openssl</code> 命令带有基准测试，可测定其密码算法在 CPU 上的速度。我们在同一台测试机上测了这些基于 CPU 的加密速度，使用同样的 AES 算法，得到约 55 MB/s 的结果。与基于 CPU 的实现相比，我们基于 GPU 的加密在顶点程序上速度几乎相同，在片元程序上约快 1.7 倍。变换反馈模式让编写数据流式代码变得容易，但目前性能还不够好。</p><h2>36.5 并行化的考量</h2><p>根据我们分组密码的工作模式，有一些考量会影响它对并行的适应性。本节我们看几种不同的模式，以及它们如何影响对并行处理的适应性。</p><h4>36.5.1 分组密码工作模式</h4><h4>电子密码本模式</h4><p>每个分组各自加密的操作称为<em>电子密码本</em>（ECB）模式。在 ECB 加密中，每个分组独立处理，如<a href="https://developer.download.nvidia.com/books/gpugems3/36fig10.jpg" rel="noreferrer noopener">图 36-10</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig10.jpg" alt="36fig10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig10.jpg" rel="noreferrer noopener">图 36-10</a> ECB 模式的加密与解密</figcaption></figure><p>这种工作模式使并行计算密文成为可能，36.4 节的所有测试用的就是它。</p><p>在 ECB 模式下，相同的比特块总会生成相同的密文。尽管密文不能直接阅读，但有可能根据产生的图案猜出内容。<a href="https://developer.download.nvidia.com/books/gpugems3/36fig11.jpg" rel="noreferrer noopener">图 36-11</a> 显示一张以 ECB 模式加密的 256x256 纹理，虽然无法直接阅读，但密码纹理中有明显的图案。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig11.jpg" alt="36fig11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig11.jpg" rel="noreferrer noopener">图 36-11</a> ECB 模式下的明文纹理与密码纹理</figcaption></figure><h4>密码分组链接模式</h4><p><em>密码分组链接</em>（CBC）模式通过把每个密文链接进下一个分组，克服了 ECB 模式的弱点。做法是把当前明文分组与前一个已加密分组链接（异或）。第一个分组没有前一个分组，所以我们改用<em>初始向量</em>（IV），它在初始化时与对称密钥一起传入用于解密。见<a href="https://developer.download.nvidia.com/books/gpugems3/36fig12.jpg" rel="noreferrer noopener">图 36-12</a>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig12.jpg" alt="36fig12.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig12.jpg" rel="noreferrer noopener">图 36-12</a> CBC 模式的加密与解密</figcaption></figure><p>在 CBC 模式下，由于明文在加密前已被打乱，最终结果里不会出现密文图案。所以我们在 <a href="https://developer.download.nvidia.com/books/gpugems3/36fig13.jpg" rel="noreferrer noopener">图 36-13</a> 中看不到 <a href="https://developer.download.nvidia.com/books/gpugems3/36fig11.jpg" rel="noreferrer noopener">图 36-11</a> 里那样的「AES」字母。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig13.jpg" alt="36fig13.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig13.jpg" rel="noreferrer noopener">图 36-13</a> CBC 模式下的密码纹理</figcaption></figure><p>然而，由于 CBC 模式需要每一步的密文来处理下一步，在一个分组的前一分组加密完成之前，无法开始该分组的加密。所以在这个模式的加密阶段不能指望并行处理。</p><h4>36.5.2 用于并行处理的模式</h4><h4>CBC 模式下的解密</h4><p>正如刚才提到的，CBC 模式下加密无法并行处理，因为它需要每一步的结果。不过幸运的是，解密可以用并行处理完成。这是因为加密之后，我们已经知道所有前序密文分组的状态以及解密所需的 IV。</p><p>这里能获得的好处在于：我们往往需要做的解密多于加密，而且很多时候解密要求更高的吞吐速度，例如把以 CBC 模式加密的密码纹理预处理并存入分发文件；这些文件随后可以在加载时并行解密，不会出现可察觉的延迟。</p><h4>计数器模式</h4><p>不过，也有非常需要快速加密的场合，例如安全通信中，加密阶段的并行处理会大幅提升整体性能。这些情况下可以使用<em>计数器</em>（CTR）模式。CTR 算法的流程如<a href="https://developer.download.nvidia.com/books/gpugems3/36fig14.jpg" rel="noreferrer noopener">图 36-14</a> 所示。首先我们给当前分组（称为<em>计数器块</em>）编索引来构成输入块。然后用对称密钥加密它，并与原始明文分组异或。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/36fig14.jpg" alt="36fig14.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/36fig14.jpg" rel="noreferrer noopener">图 36-14</a> CTR 模式的加密与解密</figcaption></figure><p>CTR 的解密可以按同样的步骤完成。这样我们就能独立地加密和解密每个密码分组，从而获得真正并行化的好处。</p><h2>36.6 结论与未来工作</h2><p>得益于 GPU 新增的能力，我们现在可以真正做整数流处理了。作为展示，我们给出了一个大量依赖整数处理的 AES 系统实现。</p><p>我们的实现基于 OpenGL，但为最新一代 NVIDIA GPU 编程还有另一种方式：使用 CUDA（NVIDIA 2007）。作为未来工作，我们计划用 CUDA 实现同一算法，并与 OpenGL 实现比较性能。</p><p>未来工作的另一个方向是，在 AES 加密之外寻找其他能从 GPU 并行处理能力中受益的新领域。</p><h2>36.7 参考文献</h2><p>Cook, Debra L., John Ioannidis, Angelos D. Keromytis, and Jake Luck. 2005. "CryptoGraphics: Secret Key Cryptography Using Graphics Cards."，载 <em>RSA Conference, Cryptographer's Track</em> (CT-RSA)，第 334–350 页。</p><p>Dworkin, M. 2001. "Recommendation for Block Cipher Modes of Operation: Methods and Techniques." NIST Special Publication 800-38A。可在线获取：<a href="http://csrc.nist.gov/publications/nistpubs/800-38a/sp800-38a.pdf" rel="noreferrer noopener">http://csrc.nist.gov/publications/nistpubs/800-38a/sp800-38a.pdf</a>。</p><p>Hironobu, Suzuki. 2001. "Memorandum of DES and AES." 可在线获取（仅日文）：<a href="http://h2np.net/hironobu/docs/DES_and_AES.pdf" rel="noreferrer noopener">http://h2np.net/hironobu/docs/DES_and_AES.pdf</a>。</p><p>NIST. 2001. "Advanced Encryption Standard (AES)." FIPS Publication 197。可在线获取：<a href="http://csrc.nist.gov/publications/fips/fips197/fips-197.pdf" rel="noreferrer noopener">http://csrc.nist.gov/publications/fips/fips197/fips-197.pdf</a>。</p><p>NVIDIA Corporation. 2006. "NVIDIA OpenGL Extension Specifications for the GeForce 8 Series Architecture (G8x)." 可在线获取：<a href="http://developer.download.nvidia.com/opengl/specs/g80specs.pdf" rel="noreferrer noopener">http://developer.download.nvidia.com/opengl/specs/g80specs.pdf</a>。</p><p>NVIDIA Corporation. 2007. "NVIDIA Compute Unified Device Architecture." <a href="http://developer.nvidia.com/cuda/" rel="noreferrer noopener">http://developer.nvidia.com/cuda/</a>。</p><p>OpenGL.org. 2007. "OpenGL Extension Registry." <a href="http://www.opengl.org/registry/" rel="noreferrer noopener">http://www.opengl.org/registry/</a>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-36-aes-encryption-and-decryption-gpu" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-36-aes-encryption-and-decryption-gpu</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

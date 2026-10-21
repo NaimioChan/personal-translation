@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 32 章　着色器接口入门 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 32 章　着色器接口入门」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 32 章　着色器接口入门</h1>
+<p><em>Matt Pharr<br> NVIDIA</em></p><p>Cg 1.2 的发布为 Cg 编程语言引入了一项重要的新特性，称为<em>着色器接口</em>。着色器接口提供的功能类似 Java 或 C# 的接口类以及 C++ 的抽象基类：它们允许编写调用抽象接口的代码，而不必知道该接口的具体实现是什么。用户必须把实现了程序中用到的接口的对象提供给 Cg 运行时，运行时随后负责组合出最终在硬件上运行的着色器代码。</p><p>面向对象语言为开发大型软件系统提供这类抽象机制，动机与此不同：把这项特性加入 Cg，是为了让在运行时用多份源码片段拼装着色器变得容易。着色器接口允许应用通过组合实现了明确功能块的模块化片段来构建着色器，从而在创建着色效果时给应用更大的灵活性，并帮助隐藏硬件配置的限制，同时不降低最终在 GPU 上运行的编译代码的质量与效率。</p><p>例如，考虑编写一个片元程序，它需要计算表面的着色颜色，同时支持多种不同类型的光源：点光源、聚光灯、带阴影贴图与过程化定义的距离开关函数的复杂投影光源等等。一种很低效的做法是往程序里传入「光源类型」参数，再用一串 <code>if</code> 判断决定使用哪种光源模型。另一种做法是用预处理器，让应用借助 <code>#ifdef</code> 保护，根据实际使用的光源模型手动编译一个专用版本的程序。这种做法有些笨重，而且不能优雅地扩展到多个光源——尤其是当光源数量事先也未知时。</p><p>着色器接口为这类问题提供了类型安全的解决方案。它们的做法既减轻了程序员的负担，又不牺牲性能。开发者可以编写通用着色器，把大部分功能以着色器对象接口（例如一个基本的「光源」接口）的形式表达出来。随着这些接口有了新的具体实现，旧着色器无需重写就能使用它们。使用这项特性的应用也不必再实现字符串拼接例程来即时合成 Cg 源码以解决这个问题——从而避开既容易出错又笨重的做法。</p><p>本章介绍着色器接口的基本语法，以及它们如何与 Cg 编译器和运行时配合使用。为了说明着色器接口可能的应用，我们随后给出三个在 Cg 中使用它们的例子：(1) 在两种向量归一化方法之间选择；(2) 在着色器中支持数量可变的光源；(3) 以通用、分层的方式描述材质与纹理。</p><p>Cg 1.2 的另外两项新特性与着色器接口相辅相成，同时提升了着色器的灵活性与效率。第一项是可变长数组，允许程序员声明和使用没有固定大小的数组。数组大小必须在程序执行之前提供给 Cg 运行时。这项特性在编写使用数量可变的光照参数组、蒙皮矩阵等的着色器时特别方便。第二项特性是能把着色器参数标记为常量值；编译器可以利用某个参数是常量这一信息，大幅改进代码优化效果。例如，仅基于常量参数的 <code>if</code> 判断可以在编译期完整求值，编译器可以据判断结果丢弃 <code>if</code> 之后代码块中的全部代码，或者无条件执行它。</p><h2>32.1 着色器接口基础</h2><p>我们从一个简单例子开始：一个片元程序用着色器接口在两种向量归一化方法之间选择，一种基于立方体贴图查找，一种基于数值计算归一化向量。应用可能想根据可用图形硬件的能力，在运行时在这两种向量归一化方法之间选择，以获得最佳性能。这是个简单的例子，但有助于传达着色器接口背后的一些关键想法。</p><p>首先，我们需要描述一个用于向量归一化的通用接口。关键字 <code>interface</code> 引入一个新接口，它必须用一个合法标识符命名。接口提供的方法随后在花括号之间声明，接口声明以分号结束。</p><pre><code>interface Normalizer { float3 nrm(float3 v); };</code></pre><p>接口内部可以声明多个方法，适用通常的函数重载规则。例如，我们也可以声明一个 <code>half3 nrm(half3)</code> 函数，编译器会根据传入向量的类型选择合适的那个。</p><p>有了这个声明，我们就可以编写一个把 <code>Normalizer</code> 接口实例作为参数的 Cg 程序。代码清单 32-1 展示了一个非常简单的片元程序，它从单个点光源计算漫反射光照项。<code>Normalizer</code> 接口中的 <code>nrm()</code> 函数被调用了两次：一次用于归一化从光源位置指向被着色点的光线向量，一次用于归一化顶点着色器传来的插值法线。</p><p>借助着色器对象接口，这段着色器可以基于<em>某种</em>绑定到 <code>normalizer</code> 的 <code>Normalizer</code> 实现来编写，而不必知道运行时实际会如何做归一化。</p><p>接下来我们需要定义该接口的一两个实现。首先是 <code>StdNormalizer</code>，它用 Cg 标准库例程 <code>normalize()</code> 对向量做归一化，该例程用向量的长度去除它的各分量。我们定义一个新结构体，并在结构体名后用冒号加上它所提供接口的名字，以此表明它实现了 <code>Normalizer</code> 接口。既然承诺实现该接口，结构体就必须为接口中声明的所有函数给出实现。与 Java 和 C# 一样，方法的实现必须定义在结构体定义内部。</p><h4>示例 32-1　用着色器接口隐藏向量归一化技术细节的简单片元程序</h4><pre><code>float4 main(float3 Pworld
+            : TEXCOORD0, float3 Nworld
+            : TEXCOORD1, float3 Kd
+            : COLOR0, uniform float3 Plight, uniform Normalizer normalizer)
+    : COLOR
+{
+  float3 L = normalizer.nrm(Plight - Pworld);
+  float3 C = Kd * max(0, dot(L, normalizer.nrm(Nworld)));
+  return float4(C, 1);
+}</code></pre><pre><code>struct StdNormalizer : Normalize
+{
+  float3 nrm(float3 v) { return normalize(v); }
+};</code></pre><p>我们也可以定义一个用立方体贴图归一化向量的着色器对象，其中纹理的各个面已被初始化，使其保存对应方向上的归一化向量。在下一段代码中，<code>CubeNormalizer</code> 在其结构体内声明了一个 <code>samplerCUBE</code> 参数来保存这张立方体贴图，它对 <code>nrm()</code> 的实现则按通常方式使用它。</p><pre><code>struct CubeNormalizer : Normalize
+{
+  samplerCUBE normCube;
+  float3 nrm(float3 v) { return texCUBE(normCube, v).xyz; }
+};</code></pre><p>对于像前面代码中 <code>normalizer</code> 这样带接口参数的程序，我们需要用 Cg 运行时在程序执行前指定接口的某个具体实现。首先，我们要告诉运行时在我们调用 <code>cgCreateProgram()</code> 或 <code>cgCreateProgramFromFile()</code> 时不要像默认那样立刻尝试编译传入的程序。否则编译会失败，因为接口还没有绑定到具体实现。<code>cgSetAutoCompile()</code> 例程控制这一行为；这里我们把它设为在我们明确要求之前不编译程序。（<code>cgSetAutoCompile()</code> 还有其他设置，可以按需自动重新编译程序，不过可能要付出多余重编译的代价。）</p><pre><code>cgSetAutoCompile(context, CG_COMPILE_MANUAL);
+CGprogram prog =
+    cgCreateProgramFromFile(context, CG_SOURCE, "frag.cg", profile, NULL, NULL);</code></pre><p><code>cgCreateProgramFromFile()</code> 返回的 <code>CGprogram</code> 句柄此时还不能载入 GPU；我们需要先把一个 <code>StdNormalizer</code> 结构体实例连接到程序的 <code>normalizer</code> 参数上。幸运的是，运行时允许我们完全通过 Cg 运行时 API 调用创建 <code>StdNormalizer</code> 结构体实例。我们用 <code>cgGetNamedUserType()</code> 调用把字符串类型名「StdNormalizer」转成 <code>CGtype</code> 值，再用该类型调用 <code>cgCreateParameter()</code>，凭空创建一个 <code>StdNormalizer</code> 实例。</p><pre><code>CGtype nrmType = cgGetNamedUserType(prog, "StdNormalizer");
+CGparameter stdNorm = cgCreateParameter(context, nrmType);</code></pre><p>如果 <code>StdNormalizer</code> 的结构体内部带有参数，我们现在就可以用 <code>cgSetParameter*()</code> 例程或配置相关的参数设置例程来初始化它们，包括把纹理单元绑定到采样器的例程，不过对 <code>StdNormalizer</code> 我们不必操心这些。（但对 <code>CubeNormalizer</code> 结构体的 <code>normCube</code> 参数，我们确实需要绑定一张合适的立方体贴图。）</p><p>创建好 <code>StdNormalizer</code> 实例之后，剩下的就是从 <code>main()</code> 例程的参数表中取得该接口的参数句柄，并把刚创建的 <code>StdNormalizer</code> 连接到它上面。</p><pre><code>CGparameter normIface = cgGetNamedParameter(prog, "normalizer");
+cgConnectParameter(stdNorm, normIface);</code></pre><p>现在程序已完全确定，没有未绑定实现的接口参数。最后我们手动编译该程序。完成之后，就可以按常规方式使用程序，把它载入 GPU 并用于渲染。</p><pre><code>cgCompileProgram(prog);</code></pre><p>如果之后想为这个程序实例换入另一个 <code>Normalizer</code> 实现，只需再次调用 <code>cgConnectParameter()</code> 连接新参数并重新编译新程序。此外，如果同一个 <code>CGcontext</code> 中有多个程序，它们都能共享同一个 <code>StdNormalizer</code> 实例，只需通过多次调用 <code>cgConnectParameter()</code> 把它连接到多个参数上——不必创建多个 <code>StdNormalizer</code> 实例。</p><h2>32.2 灵活的光源描述</h2><p>着色器接口更有意思的一个应用，是用它们来处理编写支持任意类型光源的 Cg 程序这一问题。结合 Cg 1.2 的另一项新特性——可变长数组，着色器接口为编写支持任意数量光源（且每个光源可以是完全不同类型的光源）的通用问题提供了一个干净的解决方案。</p><p>此前，这个问题的一种解法是为每个光源渲染一次场景，再把各通道的结果相加得到最终图像。这种做法效率低，因为它需要多次运行顶点程序，而且每次都要在片元程序中做不必要的重复计算。它也很笨重，因为新增一种光源就意味着要为已有每一个表面着色器针对新光照模型写一个新版本。有了着色器接口，如果我们用同一个光源接口实现了多种不同的表面反射模型，那么新增一种光源就不需要修改任何已有着色器的源码。</p><p>一个基本的通用接口，为多种不同类型光源的行为提供了良好的抽象：它把被着色点 <code>P</code> 传给光源。光源则负责初始化变量 <code>L</code>（给出 <code>P</code> 处入射光的方向），并返回到达 <code>P</code> 的光量。图 32-1 显示了以此方式从光源计算照明的典型设置。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig32-01.jpg" alt="fig32-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig32-01.jpg" rel="noreferrer noopener">图 32-1</a> 光照计算的基本设置</figcaption></figure><pre><code>interface Light { float3 illuminate(float3 P, out float3 L); };</code></pre><p>有了这个接口，我们就可以定义一个实现它的简单阴影贴图聚光灯。这个聚光灯持有一张用于阴影贴图的 <code>sampler2D</code>，并用立方体贴图描述光的角向分布。光源的 3D 位置和它的颜色补全了光源的定义。本例中我们假定光源位置与被着色点的位置已在同一坐标系中表达，这样就不必操心把它们变换到共同坐标系。</p><p>这个光源的实现相当直接；光方向 <code>L</code> 用光源位置很容易算出，而到达 <code>P</code> 的光量是三者之积：光源颜色、阴影贴图查找得到的可见性因子，以及沿指向受光点的方向对聚光灯强度所做的纹理查找。见代码清单 32-2。</p><h4>示例 32-2　作为 <code>Light</code> 接口实现定义的 <code>SpotLight</code> 光源</h4><pre><code>struct SpotLight : Light
+{
+  sampler2D shadow;
+  samplerCUBE distribution;
+  float3 Plight, Clight;
+  float3 illuminate(float3 P, out float3 L)
+  {
+    L = normalize(Plight - P);
+    return Clight * tex2D(shadow, P).xxx * texCUBE(distribution, L).xyz;
+  }
+};</code></pre><p>用这个接口可以轻松实现各种各样的光源类型：点光源、方向光、把纹理投影到场景中的光源、线性或平方衰减的光源、用 1D 纹理贴图定义衰减的光源，以及许多其他类型。</p><p>在代码清单 32-3 的片元程序中，Cg 代码遍历照亮表面的所有光源，调用每个光源的 <code>illuminate()</code> 函数，然后累加每个光源的基本漫反射着色项。Cg 新的可变长数组特性让我们能在数组名 <code>lights</code> 之后用 <code>[]</code> 语法表示数组长度，从而声明长度不确定的数组。稍后我们会看到，在着色器最终执行之前，可以用 Cg 运行时在运行时设定可变长数组的元素个数。还要注意数组有一个 <code>length</code> 成员，给出其中的元素个数；这让我们能对可变长数组中的所有元素写循环，即使在不原生支持可变循环次数的配置上也可以。</p><h4>示例 32-3　接受任意数量 <code>Light</code> 接口参数的片元着色器</h4><pre><code>float4 main(float3 Pworld
+            : TEXCOORD0, float3 Nworld
+            : TEXCOORD1, float2 uv
+            : TEXCOORD2, uniform sampler2D diffuse, uniform Light lights[])
+    : COLOR
+{
+  float3 C = float3(0, 0, 0);
+  Nworld = normalize(Nworld);
+  float3 Kd = tex2D(diffuse, uv).xyz;
+  for (int i = 0; i &lt; lights.length; ++i)
+  {
+    float3 L, Cl;
+    Cl = lights[i].illuminate(Pworld, L);
+    C += Kd * Cl * max(0, dot(Nworld, L));
+  }
+  return float4(C, 1);
+}</code></pre><p>在这个着色器能用于程序之前，必须用 Cg 运行时做两件事。第一，必须设定可变长 <code>lights[]</code> 数组的最终长度；第二，必须把数组中每个接口实例绑定到一个实现了 <code>Light</code> 接口的结构体实例上。对于第一个问题，Cg 运行时有一个设置可变长数组长度的例程：</p><pre><code>void cgSetArraySize(CGparameter param, int size);</code></pre><p>第二个问题按前一个例子的方式解决：调用 <code>cgCreateParameter()</code> 创建各个光源实例，再调用 <code>cgConnectParameter()</code> 把实例连接到光源接口数组中对应每个光源的条目。与前一个例子一样，同一个光源实例可以由同一 Cg 上下文中的多个程序共享。</p><p>由于这个着色器使用了着色器接口和可变长数组，我们可以编写能与 <code>Light</code> 接口的任何实现配合的着色器，也能轻松编写不需要硬编码绑定光源数量的着色器。我们以干净的方式写出了非常灵活的 Cg 程序，而且不必在运行时付出效率代价。只有在具体的光源数量及其各自类型确定之后，才会为程序生成最终的 GPU 指令，因此使用着色器对象和可变长数组特性没有性能代价。</p><p>注意，如果我们改用每个光源重渲染一次场景的方式解决这个问题，那么每一通道都得重新归一化 <code>Nworld</code>，并为 <code>Kd</code> 重做纹理查找。如果片元程序执行比这里更复杂的纹理操作，性能代价会相应更差。</p><h2>32.3 材质树</h2><p>最后一个例子展示接口的组合如何引出有趣的材质描述方式。图形学中描述复杂材质与纹理最成功的方法之一，是把它们分解成树或网络：把一组节点连起来，通过各节点执行较简单操作来计算复杂的着色模型。（Maya 的 HyperShade 和 3ds max 的材质编辑器是这种做法的两个著名例子。）这不仅是在内容创作应用中描述复杂材质的便捷方式，也是在应用中组织材质与纹理库的优雅方式，让它们在运行时构建表面描述时拥有很大灵活性。在着色器接口加入 Cg 之前，没有干净的办法在 Cg 程序中表达以这种方式描述的材质。</p><p>本节展示着色器接口如何让这种材质描述方法干净地映射到 Cg。这里我们区分<em>材质</em>与<em>纹理</em>：材质代表表面如何响应光照的完整过程化描述，纹理代表一个函数，它在某一点计算某个值，材质用它来体现表面属性在表面上的变化。</p><p>首先，我们需要定义一个材质接口。材质的职责是计算给定点处反射光的颜色，并考虑材质属性与来自光源的照明。它需要关于表面局部几何的信息（至少包括被着色点 <code>P</code>、该位置处的表面法线 <code>N</code> 和纹理坐标 <code>uv</code>），以及入射视线方向 <code>I</code> 和照亮该点的光源信息。注意我们把 <code>Light</code> 接口的可变长数组 <code>lights[]</code> 传给了材质接口的 <code>color()</code> 方法。</p><pre><code>interface Material
+{
+  float3 color(float3 P, float3 N, float3 I, float2 uv, Light lights[]);
+};</code></pre><p>使用 <code>Material</code> 计算着色的片元程序很简单；我们只需要少量胶水代码，把正确的插值参数传入材质，并把结果作为片元颜色返回，如代码清单 32-4 所示。</p><h4>示例 32-4　把几乎全部计算都委托给 <code>Material</code> 接口实现的片元着色器</h4><pre><code>float4 main(float3 Pworld
+            : TEXCOORD0, float3 Nworld
+            : TEXCOORD1, float3 Iworld
+            : TEXCOORD2, float2 uv
+            : TEXCOORD3, uniform Light lights[], uniform Material material)
+    : COLOR
+{
+  Nworld = normalize(Nworld);
+  float3 C = material.color(Pworld, Nworld, Iworld, uv, lights);
+  return float4(C, 1);
+}</code></pre><p>我们可能先实现一个基本的 <code>DiffuseMaterial</code>，把漫反射颜色 <code>Kd</code> 来自何处的信息抽象出去。这样我们就不必为常量 <code>Kd</code> 的表面、由纹理贴图定义的 <code>Kd</code>、由过程化棋盘函数定义的 <code>Kd</code> 等等分别准备不同的 <code>DiffuseMaterial</code> 对象，而是定义一个 <code>Texture</code> 接口来隐藏这些可能变化的颜色值如何计算的细节。</p><pre><code>interface Texture { float3 eval(float3 P, float3 N, float3 uv); };</code></pre><p>现在 <code>DiffuseMaterial</code> 只需调用该接口的 <code>eval()</code> 函数，然后做通常的漫反射计算，如代码清单 32-5 所示。</p><p>以这种方式设计材质，我们就很容易把 <code>DiffuseMaterial</code> 与我们将来可能开发的任何 <code>Texture</code> 配合使用，无需修改其源码。随着我们积累起大量不同的 <code>Material</code> 实现（例如实现复杂 BRDF 模型的材质），这种正交性会越来越重要。</p><h4>示例 32-5　表达为通用 <code>Material</code> 接口实现的漫反射着色模型——<em>用</em> <code>Texture</code> <em>接口的一个实例来计算着色点处的漫反射系数。</em></h4><pre><code>struct DiffuseMaterial : Material
+{
+  Texture diffuse;
+  float3 color(float3 P, float3 N, float3 I, float2 uv, Light lights[])
+  {
+    float3 Kd = diffuse.eval(P, N, uv);
+    float3 C = float3(0, 0, 0);
+    for (float i = 0; i &lt; lights.length; ++i)
+    {
+      float3 L;
+      float3 Cl = lights[i].illuminate(P, L);
+      C += Kd * max(0, dot(N, L));
+    }
+    return C;
+  }
+};</code></pre><p>要把这个 <code>DiffuseMaterial</code> 连接到代码清单 32-4 中 <code>main()</code> 的 <code>material</code> 参数上，我们需要先创建一个 <code>DiffuseMaterial</code> 结构体实例，再把 <code>Texture</code> 接口某个实现的实例连接到它的 <code>diffuse</code> 参数上。然后就可以把 <code>DiffuseMaterial</code> 连接到 <code>main()</code> 的 <code>material</code> 参数。</p><p>一个现成可用的 <code>Texture</code> 自然实现是 <code>ImageTexture</code>，它从 <code>sampler2D</code> 返回颜色。</p><pre><code>struct ImageTexture : Texture
+{
+  sampler2D map;
+  float3 eval(float3 P, float3 N, float3 uv) { return tex2D(map, uv).xyz; }
+};</code></pre><p>为方便起见，我们可能还想要一个总是返回常量颜色的纹理。这样当颜色是常量时，我们总能使用通用的 <code>DiffuseMaterial</code>，而不必另写一个 <code>Material</code> 实现。幸运的是，这样组织代码没有运行时性能代价。</p><pre><code>struct ConstantTexture : Texture
+{
+  float3 C;
+  float3 eval(float3 P, float3 N, float3 uv) { return C; }
+};</code></pre><p>更有意思的是，我们可以定义一个自身使用 <code>Texture</code> 接口来完成工作的 <code>Texture</code> 实现。在下面这段代码中，<code>BlendTexture</code> 按第三个 <code>Texture</code> 指定的混合量在两个 <code>Texture</code> 之间混合。当然，这里的三个 <code>Texture</code> 每一个都可以是完全不同的类型：一个可能从 2D 图像贴图中查找值，一个可能总是返回常量值，第三个可能过程化地计算值。</p><pre><code>struct BlendTexture : Texture
+{
+  Texture map1, map2, amt;
+  float3 eval(float3 P, float3 N, float3 uv)
+  {
+    return lerp(map1.eval(P, N, uv), map2.eval(P, N, uv), amt.eval(P, N, uv));
+  }
+};</code></pre><p>着色器接口让我们能以通用方式实现 <code>BlendTexture</code>，无需事先知道某个 <code>BlendTexture</code> 实例会用到哪些具体的 <code>Texture</code> 类型。与在 <code>DiffuseMaterial</code> 中初始化 <code>Texture</code> 接口参数一样，我们需要用 Cg 运行时把实现了 <code>Texture</code> 接口的结构体实例连接到 <code>map1</code>、<code>map2</code> 和 <code>amt</code>。要扩展系统中可用的纹理类型也很容易，只需实现新的 <code>Texture</code> 类型，并扩展应用以创建它们并按需连接到接口参数上。无需修改任何已有的类型。</p><p>既然已经开始编写自身持有接口的接口实现，我们就可以把这个想法用到许多其他地方。例如，我们可以实现一个 <code>Material</code>，把雾的大气模型应用到任何其他 <code>Material</code> 上，如代码清单 32-6 所做的那样。</p><p>这样我们就不必为所有材质都加上雾的支持。只需用 <code>FogMaterial</code> 做一次，把一个 <code>FogMaterial</code> 实例连接到程序 <code>main()</code> 函数的参数上，并把 <code>FogMaterial</code> 的 <code>base</code> 实例变量设为原本没有雾的材质。</p><h4>示例 32-6　修改另一个 <code>Material</code> 返回值并混入雾项的 <code>Material</code></h4><pre><code>struct FogMaterial : Material
+{
+  Material base;
+  float3 fogAtten, fogColor;
+  float3 color(float3 P, float3 N, float3 I, float2 uv, Light lights[])
+  {
+    float3 C = base.color(P, N, I, uv, lights);
+    float fogFactor = exp(-P.z * fogAtten);
+    return lerp(C, fogColor, fogFactor);
+  }
+};</code></pre><h2>32.4 结论</h2><p>着色器接口和可变长数组并没有让 Cg 能写出此前写不出的程序。但它们让应用更容易在运行时用代码片段拼装着色器，从而大大简化了许多经典过程化着色做法的实现。它们以高效的方式提供这些功能，在 GPU 上没有性能损失；唯一的代价是编译时的一些运行时与编译器开销。</p><p>本章描述了这项功能的几个例子。应用可能要求更复杂的光源接口——例如，加入一种方式来表达只贡献漫反射、不产生镜面高光的光源，如 Barzel 1997 所述。应用也可能要求更复杂的纹理接口，带有被着色点处表面偏导数的信息。可以在我们这里例子所用的接口上加入许多推广。</p><p>例如，<code>Texture</code> 接口可以推广，把纹理坐标从何而来的决定也抽象出去：增加一个描述纹理坐标生成的接口（例如球面映射、柱面映射等）。该接口的一个纹理坐标变换实现，可以通过矩阵、过程或纹理贴图查找来变换生成的纹理坐标。</p><p>还可以实现许多有用的 <code>Material</code> 接口，例如双面材质，根据看到的是表面哪一侧在两个其他材质之间选择；或者混合材质，按某个 <code>Texture</code> 或菲涅尔反射项在两个材质之间混合。用这些接口以通用方式表达凹凸贴图大概也会很有用。</p><p>《Cg 1.2 用户手册》对着色器接口与可变长数组的语言语法有详尽说明，也描述了为这些特性新增的 Cg 运行时调用。</p><h2>32.5 参考文献</h2><p><a id="ch32bib01_01"></a>Barzel, Ronen. 1997. "Lighting Controls for Computer Cinematography." <em>Journal of Graphics Tools</em> 2(1), pp. 1–20. <em>本文描述了一个带许多有用参数的复杂光源模型。</em></p><p><a id="ch32bib01_02"></a>Cook, Robert. 1984. "Shade Trees." <em>Computer Graphics (Proceedings of SIGGRAPH 84)</em> 18(3), pp. 223–231. <em>本文首次提出用着色节点树分层描述着色模型的思想。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-v-performance-and-practicalities/chapter-32-introduction-shader-interfaces" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-v-performance-and-practicalities/chapter-32-introduction-shader-interfaces</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

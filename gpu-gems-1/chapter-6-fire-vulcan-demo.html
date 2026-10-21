@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 6 章　「Vulcan」演示中的火焰 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 6 章　「Vulcan」演示中的火焰」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 6 章　「Vulcan」演示中的火焰</h1>
+<p><em>Hubert Nguyen<br> NVIDIA</em></p><p>本章介绍 NVIDIA 演示团队为推出 GeForce FX 5900 Ultra 而制作的「Vulcan」演示。受<em>《指环王》</em>电影中炎魔的启发，我们的目标是展示一个喷涌着熊熊烈焰的怪物，如图 6-1 所示。火焰与烟雾必须规模巨大，有时甚至要铺天盖地。我们写这一章的目标是分享创造该效果的经验，并讨论可能的改进。最终希望这次探索能帮助你在自己的应用中做出更精细的火焰效果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-01.jpg" alt="fig06-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-01.jpg" rel="noreferrer noopener">图 6-1</a>　「Vulcan」演示的屏幕截图</figcaption></figure><h2>6.1 创造逼真的火焰</h2><p>着手做演示时，我们先试了两种看起来有希望的方案：完全过程化的火焰，以及屏幕空间基于二维扭曲的火焰。</p><p>完全过程化的做法占用内存很少，却做出了吸引人的火焰效果。要产生轮廓分明的火焰，我们必须显示数千个粒子，而处理所有这些顶点和像素给 CPU 和 GPU 带来沉重负担。图 6-2 是该效果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-02.jpg" alt="fig06-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-02.jpg" rel="noreferrer noopener">图 6-2</a>　用五千个粒子制造火焰</figcaption></figure><p>基于二维扭曲的火焰用一个由 GPU 生成的扰动函数改变火焰形状，赋予它真实的运动。扭曲涉及若干次渲染到纹理的遍以及二维纹理坐标的偏移。虽然它比粒子系统技术更耗内存（因为必须分配若干渲染目标），但这个效果用来做烛火一类的小火苗非常完美。见图 6-3。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-03.jpg" alt="fig06-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-03.jpg" rel="noreferrer noopener">图 6-3</a>　用二维流动创造的火焰</figcaption></figure><p>该效果与屏幕对齐的特性使它对照相机视角敏感（俯视与仰视需要额外约束），对一般运动也敏感（在二维里时，朝向相机靠近或远离往往效果不好）。把烟雾整合进来也是件难事。</p><p>两种过程化技术都有明显优势，但它们都没能达到我们的目标：在实时、用户可操控的环境中做出可信的、带烟雾的熊熊大火。于是我们转向视频纹理精灵，让火更真实。见图 6-4。尽管完全过程化、基于物理的火焰生成显然是未来的方向，一些前沿电影（如<em>《指环王》</em>）仍然使用由精灵火焰组成的特效。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-04.jpg" alt="fig06-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-04.jpg" rel="noreferrer noopener">图 6-4</a>　三个视频纹理火焰粒子</figcaption></figure><h2>6.2 实现动画精灵</h2><p>要造出包裹 Vulcan 角色的火焰，首先得决定火从哪里冒出来。我们用建模工具在角色身上放置发射器。每个发射器可调尺寸、密度（即每秒粒子数）、纹理、粒子寿命等等。这种灵活性很有用，因为它让我们能按需要微调火焰外观。然后我们就能生成一些粒子并绘制火焰，如图 6-5 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-05.jpg" alt="fig06-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-05.jpg" rel="noreferrer noopener">图 6-5</a>　生成火焰</figcaption></figure><h4>6.2.1 让火焰与烟雾动起来</h4><p>由于纹理内存的消耗随所用视频纹理数量迅速增长，我们不得不把自己限制在三个动画上：两个用于火焰，一个用于烟雾。每个 64 帧，共 192 帧动画专供火焰与烟雾，另有 64 帧留给其他用途，比如演示中飞动的火星。三维纹理要求切片数（这里即帧数）为 2 的幂，所以我们用了 256 帧。若想再加，最小增幅就是加到 512 帧——使该效果的纹理内存占用翻倍。见图 6-6。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-06a.jpg" alt="fig06-06a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-06a.jpg" rel="noreferrer noopener">图 6-6</a>　用于制作火焰效果的视频素材</figcaption></figure><h4>自制烟雾发生器</h4><p>起初我们想和火焰一样用视频素材做烟雾，但很难找到合适的一缕烟素材，光照、颜色等都要恰到好处。</p><p>最后我们改用粒子系统来做烟雾发生器，因为想要的光照可以用多种技术实现，比如光线投射。我们调整光照以契合火焰环境，最重要的是保持对颜色的控制。我们让烟粒子绕 <em>x</em> 轴翻滚，使烟雾看起来在自我折叠。这个细节没有额外开销，却大大提升了整体烟雾效果。结果是真实火焰素材与过程化烟雾的良好结合。见图 6-7 与图 6-8。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-07.jpg" alt="fig06-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-07.jpg" rel="noreferrer noopener">图 6-7</a>　程序化生成的烟雾</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-08.jpg" alt="fig06-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-08.jpg" rel="noreferrer noopener">图 6-8</a>　演示中的实时烟雾</figcaption></figure><p>如果我们用了简单的烟雾光照算法，也许能直接在演示中使用过程化烟雾。但考虑到烟雾光照是个复杂的问题，时间不足使我们没能探索这一可能。</p><h4>6.2.2 给火焰增加变化</h4><p>考虑到能分配给该效果的动画帧数很少，我们预计动画中同一图像的重复会是个严重问题。隐藏重复、人为增加变化有简单的办法。我们从单一动画起步，用两个或更多时效果更好。此外，我们给粒子在一系列属性上加了随机百分比差异：尺寸、位置、衰减速率、动画起始帧、整体透明度等等。</p><p>我们还决定不用硬件点精灵，而是自己生成四边形。这项技术让我们能自定义纹理坐标，在一个或两个轴上翻转动画。演示中我们用了水平和垂直翻转（沿 <em>u</em> 与 <em>v</em> 轴）。效果不错，但若能任意旋转会更好。见图 6-9。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-09.jpg" alt="fig06-09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-09.jpg" rel="noreferrer noopener">图 6-9</a>　由自定义纹理坐标产生的变化</figcaption></figure><p>因为我们有第二个动画（取自图 6-6 所示的视频片段），所以混合了两种精灵：A 与 B。用不同比例的 A、B 类型增加了火焰的多样性，也有助于控制效果的外观。见图 6-10。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-10a.jpg" alt="fig06-10a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-10a.jpg" rel="noreferrer noopener">图 6-10</a>　改进演示中的火焰</figcaption></figure><h4>6.2.3 存储动画</h4><p>我们发现把火焰存进体积纹理（也叫三维纹理）很有帮助。这样做能产生帧间混合，弥补动画帧数不足。而且处理起来方便，只要递增 <em>z-</em> 纹理坐标就能「播放」动画。整个动画在应用看来就是一张纹理，如果粒子已排序，这非常好。体积纹理要求所有方向（宽、高、深）都是 2 的幂。我们的情形里用的是压缩的 256x256x256 B8G8R8A8 纹理，占 16 MB。如果可用内存不多（因为跑在低端卡或主机上），可以试着缩小体积；我们把体积尺寸减到 64x64x256，结果看起来依然很好。</p><h4>6.2.4 混合火焰与烟雾</h4><p>刚开始实现火焰时，和许多游戏开发者一样，我们用了<em>加法混合</em>，因为它允许把精灵各自独立绘制（即不分先后顺序）。视觉上加法混合很容易辨认，因为它会让颜色饱和，从而把大部分颜色控制权从美术手里拿走——而我们希望尽可能把控制权交给美术。饱和让火焰看起来像卡通，不真实。而且加法混合使火焰与烟雾的混合更难处理——尤其是在渲染到 A8R8G8B8 目标有限的范围与精度时。</p><p>改用 alpha 混合解决了这两个问题，代价是每帧要对几百个粒子排序。排序对性能的影响最终可以忽略。见图 6-11 与图 6-12。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-11a.jpg" alt="fig06-11a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-11a.jpg" rel="noreferrer noopener">图 6-11</a>　混合火焰与烟雾</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-12a.jpg" alt="fig06-12a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-12a.jpg" rel="noreferrer noopener">图 6-12</a>　控制颜色</figcaption></figure><h2>6.3 粒子运动</h2><p>我们原以为粒子的运动不过是简单地向上飘。然而把粒子运动做对所需的精力超出预期。因为视频纹理承载了我们想要的效果（即火焰）的大部分视觉线索，我们用的粒子极少——只有几百个。粒子少对几何性能是好事，但当火源移动时就成了问题。粒子数量不足以填补拖尾火焰中的空隙，孤零零悬在空中的粒子会毁掉效果。</p><p>我们想看到的是连续的火流。为了保持火焰的连续性，我们决定用权重把粒子绑定到发射器上。原理很简单：粒子生成时，它与发射器强烈绑定。发射器移动，粒子随之移动。随着粒子变老，发射器的影响衰减，粒子便在空中自由游走。见图 6-13。这个办法足以让运动显得可信，性能代价极小。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-13a.jpg" alt="fig06-13a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-13a.jpg" rel="noreferrer noopener">图 6-13</a>　为可信的火焰给粒子加权</figcaption></figure><p>若能用流体动力学解来驱动烟雾运动，那会更好。角色移动时，他会更新一个流体动力学解，反过来影响烟雾运动。我们花了很多精力探索这种可能。最终，流体动力学本身是有效的，只要不应用在大范围上也可以很快。我们计划在角色的根局部空间中做仿真，让流体解「跟随」他。遗憾的是，粒子数量太少而尺寸太大，使我们无法利用流体动力学产生的细腻运动。将来若有更多（且更小的）粒子，我们会重新考虑这个方案。</p><h2>6.4 性能</h2><p>性能从一开始就是首要考虑。使用大尺寸的视频纹理公告板消耗了巨大的像素处理能力。如图 6-14 所示，精灵的平均尺寸相对屏幕而言很大。显然，我们试着设置混合，让零 alpha 的像素被 alpha 测试剔除（GeForce FX 硬件会自动这么做），但每帧仍剩数百万次帧缓冲混合与纹理操作，我们通过下列方法减少了它们。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-14a.jpg" alt="fig06-14a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-14a.jpg" rel="noreferrer noopener">图 6-14</a>　精灵尺寸与性能</figcaption></figure><h4>6.4.1 分层合成</h4><p>我们用分层合成找到了解法。火焰源图像只有 256x256，所以我们可以把它渲染进一个低分辨率缓冲（屏幕分辨率的四分之一）。这样渲染火焰时混合操作减少到四分之一。见图 6-15。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-15.jpg" alt="fig06-15.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-15.jpg" rel="noreferrer noopener">图 6-15</a>　使用分层合成</figcaption></figure><p>对整体画质的影响很小，对性能的影响却很大。现在可以把相机放在火焰中间，仍能保持不错的帧率。见图 6-16。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-16a.jpg" alt="fig06-16a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-16a.jpg" rel="noreferrer noopener">图 6-16</a>　精灵的最坏情形</figcaption></figure><h4>6.4.2 自定义精灵</h4><p>既然我们自己生成精灵，那就索性用它们来提升性能。在「Vulcan」演示中，有些粒子因为形状是方的，有多达三分之一的纹理面积被占着却没用。最终，读取这些无用的纹素是浪费，即便它们不会被混合进帧缓冲。我们可以不做方形精灵，而做矩形精灵，对某些火焰更贴合。更好的做法是做一遍处理，「分析」每一帧，生成最贴合它的矩形，再加一个二维偏移把精灵相对粒子位置居中。见图 6-17。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-17a.jpg" alt="fig06-17a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-17a.jpg" rel="noreferrer noopener">图 6-17</a>　DirectX 9 点精灵的生成规则</figcaption></figure><h2>6.5 渲染后效果</h2><p>使用实时合成迫使我们把场景渲染进纹理。我们决定把这个限制变成优势，加入渲染后效果。我们试了辉光、胶片颗粒和热浪扭曲。有些效果没进最终演示，因为我们更愿意把像素处理能力让给别的效果，比如 2048x2048 的阴影贴图。从概念上说，许多二维滤镜都可以作为渲染后效果以线性代价加入，例如颜色校正矩阵，就像我们在「Toys」演示中所做的那样。</p><p>因为火焰渲染在渲染目标里，我们需要让它相对角色做 z 测试。理想情况下我们会与渲染场景共享深度缓冲，但两个渲染目标尺寸不同，因此无法共享深度缓冲。作为替代，我们用一个低分辨率模型渲染进火焰渲染目标的深度缓冲。见图 6-18。这给顶点性能带来一点压力，但像素处理上省下的开销足以抵偿。最终演示里只保留了辉光效果，因为它对视觉的贡献最大。见图 6-19。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-18.jpg" alt="fig06-18.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-18.jpg" rel="noreferrer noopener">图 6-18</a></figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-19.jpg" alt="fig06-19.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-19.jpg" rel="noreferrer noopener">图 6-19</a>　渲染流程图</figcaption></figure><h4>6.5.1 辉光</h4><p>我们做辉光的办法，是把场景的模糊版本有选择地叠加到原图上。模糊用的是两遍盒式滤波。第一遍在 <em>x</em> 轴上做八像素宽的模糊，然后在 <em>y</em> 轴上做八像素宽的模糊。我们利用模糊图像的 alpha 通道来选择哪些物体要被模糊。</p><p>见图 6-20，它展示了模糊与合成过程。本书第 21 章「实时辉光」对此有更详细的讨论。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-20.jpg" alt="fig06-20.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-20.jpg" rel="noreferrer noopener">图 6-20</a>　各渲染步骤中计算出的图像</figcaption></figure><h4>6.5.2 热浪扭曲</h4><p>尽管热浪扭曲的代码全都写好了，我们最终还是决定不用。场景太暗，这个效果不够有趣，不值得为它多花那些资源。</p><p>我们的热浪扭曲做法很直接：把「热」粒子的粒子系统渲染进一张纹理目标。在最终合成时，我们把每个「热渲染目标」像素的（红、绿）值当作逐像素的（<em>u</em>、<em>v</em>）二维纹理坐标偏移，在取「渲染场景」纹理目标的纹素时使用。这样产生的噪声效果看起来就像热浪扭曲。见图 6-21。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-21a.jpg" alt="fig06-21a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-21a.jpg" rel="noreferrer noopener">图 6-21</a>　热浪扭曲</figcaption></figure><p>许多游戏开发者以逐顶点的方式做热浪扭曲，这对我们也是一种可能。例如，可以从同一张「热渲染」读取数值，再用这些值扰动一张剖分过的二维网格，使图像变形。见图 6-22。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-22.jpg" alt="fig06-22.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-22.jpg" rel="noreferrer noopener">图 6-22</a>　开发阶段的逐像素热浪扭曲</figcaption></figure><h4>6.5.3 颗粒</h4><p>电影业常用颗粒给计算机生成的特效配上与胶片相同的颗粒感。在我们的演示里，我们用颗粒来「柔化」渲染，确实有效。但我们担心观众不喜欢颗粒，或者更糟，把它当成「锯齿」，于是去掉了。颗粒纹理直接用 Photoshop 的 Noise 滤镜生成。见图 6-23 与图 6-24。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-23.jpg" alt="fig06-23.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-23.jpg" rel="noreferrer noopener">图 6-23</a>　放大查看颗粒</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig06-24.jpg" alt="fig06-24.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig06-24.jpg" rel="noreferrer noopener">图 6-24</a>　存储颗粒图案的纹理</figcaption></figure><h4>6.5.4 最终程序</h4><p>代码清单 6-1 给出把各个层汇聚成最终图像的着色器。</p><h4>示例 6-1　最终着色器</h4><pre><code>struct v2fConnector
+{
+  float2 tex1024x768 : TEXCOORD0;
+  float2 colorTexGrain : TEXCOORD1;
+  float2 tex256x192 : TEXCOORD2;
+  float2 tex512x384 : TEXCOORD3;
+  float2 texNormalized : TEXCOORD4;
+};
+struct f2fConnector
+{
+  float4 COL;
+};
+f2fConnector main(v2fConnector v2f, uniform texobjRECT renderedflames,
+                  // “火焰”
+                  uniformtexobjRECT renderedscene,
+                  // “场景”
+                  uniformtexobj2D grain,
+                  // “颗粒”
+                  uniformtexobjRECT heat,
+                  // “热”
+                  uniformtexobjRECT blur)
+// “BlurY”、“Blur Alpha”
+{
+  f2fConnector f2f;
+  // 取热扰动偏移
+  half4 HeatDistort = f4texRECT(heat, v2f.tex512x384) * float4(17, 23, 0, 1);
+  // 用热扰动取场景渲染结果
+  half4 Scene = f4texRECT(renderedscene, v2f.tex1024x768 + HeatDistort.xy);
+  // 取场景的模糊版本
+  half4 BlurredScene = f4texRECT(blur, v2f.tex256x192);
+  // 取火焰与烟雾
+  half4 FlamesSmoke = f4texRECT(renderedflames, v2f.tex512x384);
+  // 从模糊后的场景中提取亮部
+  half4 Glow = BlurredScene * BlurredScene.a + Scene;
+  // 计算最终颜色输出
+  half4 Fcompoblur = lerp(Scene, BlurredScene, HeatDistort.a);
+  half4 Fcomposited = lerp(Fcompoblur, FlamesSmoke, FlamesSmoke.a);
+  f2f.COL = Fcomposited + Glow;
+  return f2f;
+}</code></pre><h2>6.6 结论</h2><p>最终我们达成了目标，显示出相当逼真的火焰。用基于视频的素材被证明是个好方案。尽管这项技术相当耗内存，它的可伸缩性足以用在内存较少的 GPU 上。许多游戏永远都需要火焰效果，希望本章能启发你在自己的应用中做出更高级的火焰效果。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-6-fire-vulcan-demo" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-6-fire-vulcan-demo</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

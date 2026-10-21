@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 41 章　用几何着色器做紧凑、变长的 GPU 反馈 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 41 章　用几何着色器做紧凑、变长的 GPU 反馈」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 41 章　用几何着色器实现紧凑、变长的 GPU 反馈</h1>
+<p><em>Franck Diard<br> NVIDIA Corporation</em></p><h2>41.1 引言</h2><p>现代图形硬件虽然是为高性能计算机图形设计的，但 GPU 正越来越多地被用于图像处理、技术计算等其他领域，以利用其大规模并行架构。</p><p>几代 GPU 逐步提供了更好的指令集，为片元程序加入了分支和纹理取数，使 GPU 成为执行数据并行算法的绝佳机器。另一方面，压缩或数据搜索这类输出动态的算法并不适合映射到 GPU。</p><p>有了 Cg 这样的高级着色语言，GPU 编程如今非常容易。但 GPU 着色器程序运行在非常受限的上下文中：顶点着色与像素着色。这些执行环境是为性能设计的，对更传统的串行或动态编程帮助不大。</p><p>本章演示如何利用符合 Microsoft DirectX 10（DX10）规范的图形硬件（Microsoft 2007）中的几何着色器（GS）单元，在 GPU 上实现一些输入和输出都可变的算法。几何着色器作为顶点处理与片元处理之间的额外阶段引入，它会在送往渲染管线的几何流中增删一些元素。不过，如果我们以偏离其原始用途的方式使用这个单元，就能借助 GPU 实现一大类通用算法，而不限于处理几何体的常规用法。</p><h2>41.2 为何使用几何着色器？</h2><p>几何着色器之所以独特，是因为可以通过编程让它完成顶点着色器（VS）和像素着色器（PS）单元都无法高效完成的一些任务。这一能力使得一类新的常规算法可以在 GPU 上执行。例如在计算机视觉领域，这种新的编程技术可用于避免把图像回读到 CPU。GS 只需回送几个标量到系统内存，就能提高吞吐量和可扩展性。</p><p>假设我们要写一段由 GPU 执行的着色代码，它扫描一张纹理输入，并向帧缓冲写入 2<em>n</em> + 1 个实数，其中 <em>n</em> 是在读取输入纹理内容的过程中动态算出的。算法的输出是一组二维位置——即 <em>x</em> 与 <em>y</em> 标量对——外加作为标量的点对数量。</p><p>这个输出无法用像素着色器实现，原因有两个：</p><ul><li>像素着色器会对输出缓冲的所有像素重复同一算法，而这个尺寸事先未知。</li><li>处理输出缓冲中某个像素的片元处理器看不到其他线程（无论相邻与否）在处理其他像素时的上下文，因此无法做出全局性、自适应的决定。</li></ul><p>顶点着色器对这类算法也帮助不大。以一个处理数据输入流的压缩程序为例。顶点程序可以只发送一个几何图元（例如一个平面三角形），然后循环遍历输入数据进行压缩。但程序必须恰好向光栅化器传递一个三角形，才能把不同的字节（压缩码）写入输出缓冲。这做不到，因为程序会把同一份代码写入该几何元素光栅化出的所有像素。</p><p>所以，顶点着色器虽然能运行一个通过取纹素来收集输入数据统计信息的程序，但它只有两个选择：</p><ul><li>它可以杀掉这个图元（这毫无用处）。</li><li>它可以向管线下游传递一个图元，使光栅化在对应的所有像素上写入同一份代码。要想向输出缓冲写入 <em>n</em> 份不同的代码，VS 就得接收 <em>n</em> 个几何元素。但这样就会运行 <em>n</em> 个顶点着色器程序，它们都做同样的事，而且因为它们运行在彼此隔离的独立 GPU 线程中，无法做出任何自适应决定。</li></ul><h2>41.3 用几何着色器实现动态输出</h2><p>与片元着色器或顶点着色器不同，几何着色器能基于自适应的、依赖数据的执行方式输出变长结果。在一次遍历中，GS 可以分析输入数据（例如纹理内容）并输出变长编码（单个 GS 线程可以发射许多标量）。这样，GS 单元就能实现满足下列条件的小型算法：</p><ul><li>输出尺寸事先未知。</li><li>输出尺寸已知，但尺寸跨越多个像素。</li></ul><p>只需向 GS 发送一个顶点就能执行这些算法。如果一些输入数据可以作为静态 Cg 程序参数放在颜色中传入，那么这个顶点就在单个 GPU 线程中处理。该线程可以构建统计信息、按需取任意多个纹素、执行数学运算，并通过发射自适应数量的标量来写出变长输出。</p><p>GS 单元可以用两种方式写出结果：</p><ul><li>发射顶点，由光栅化器把标量值写到渲染目标中的任意位置。</li><li>发射标量，由它们增量地加入流输出缓冲——这是 DX10 的一项特性，它把 GS 单元的输出重定向到 GPU 可访问内存中的一维缓冲。（更多信息请参阅 DX10 规范 [Microsoft 2007]。）</li></ul><p>几何着色器能把任意数据块写入输出缓冲的任意位置（一维或二维），并以任意速率（每个输入顶点输出的标量数）写入，方式是向光栅化器传递数据包。在<a href="https://developer.download.nvidia.com/books/gpugems3/41fig01.jpg" rel="noreferrer noopener">图 41-1</a> 中，GS 随程序推进不断发射顶点并向下游渲染管线传递。二维坐标由 GS 程序设定，它每次发射要写入的值时就把 <em>x</em> 坐标递增。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/41fig01.jpg" alt="41fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/41fig01.jpg" rel="noreferrer noopener">图 41-1</a>　送到 GS 的单个顶点发射出多个顶点</figcaption></figure><p>如果程序的输出送往帧缓冲，这少量输出字节可以用 <code>glReadPixels()</code> 函数回读。若渲染目标位于系统内存，光栅化器只会向系统内存写入少量字节，CPU 可以直接取出这些位。与把整个输入数据搬到系统内存让 CPU 分析相比，这种做法在总线上有很好的优化。</p><p>这些被发射顶点的「position」与「color」（一包标量）由 GS 程序计算并交给光栅化器。顶点的 <em>x</em>、<em>y</em> 坐标告诉光栅化器该把帧缓冲颜色包中存放的标量写到哪里。要让这套机制工作，GS 发射的代码必须不被变换与裁剪单元改动，因此模型/视图变换被设为「identity」，不允许滤波、使用像素着色器或光照效果。</p><p>符合 DX 规范的硬件的流输出特性也可用于输出。此时 GS 程序不必跟踪所输出像素的二维位置。流输出很紧凑，因为它不使用「位置」分量；但这个特性可能不太方便，因为它只是在线性缓冲中做增量输出。此外，每个 GS 线程都需要切换自己的流输出缓冲，当我们期望多个 GS 线程并行执行时并不高效。如果流输出的结果被直接存到帧缓冲中的某个二维位置，它就能方便地作为下一处理阶段的输入纹理使用，在实现即时纹理压缩时很有用。</p><p>如果 CPU 需要取回输出的编码数量，可以从输出数据的已知位置读取这个量，例如在 GS 线程末尾把确切的发射编码数写在第一个标量处。或者，也可以通过遮挡查询取回这个数量。</p><h2>41.4 算法与应用</h2><h4>41.4.1 构建直方图</h4><p>高效地构建直方图在许多图像处理算法中都有用，包括对比度校正和对高动态范围（HDR）图像做色调映射。直方图计算的输出是一个固定尺寸的数据集，尺寸通常与输入的范围相匹配。例如，8 位亮度图像的直方图是一个包含 256 个标量值的数组。这样的输出尺寸使像素着色器程序无法实现，因为输出会跨越多个像素。GS 实现（如代码清单 41-1 所示）只需用一个 Cg 程序（2.0 版）就能完成。</p><h4>示例 41-1. 在几何着色器中构建直方图</h4><pre><code>
+POINT void histoGS( AttribArray<float4> position : POSITION,
+                    AttribArray<float4> color : COLOR,
+                    uniform samplerRECT texIn)
+{
+  float h[256], lum, i, j;
+  float3 c;
+  for (int j=0; j<256; j++) h[j] = 0; //直方图初始化
+   float sx=color[0].x, sy=color[0].y; //从顶点颜色中
+   //读取块大小。
+   // 计算此像素的亮度值。
+  c.x=255.0*0.30; c.y=255.0*0.59; c.z=255.0*0.11;
+  for (j=0; j<sy; j++)
+    for (i=0; i<sx;  i++)
+    {
+      lum=dot(texRECT(texIn, float2(i, j)).xyz, c.xyz);
+      h[lum]++;
+    }
+  // 写出直方图。
+   float4 outputPos : POSITION = position[0];
+  outputPos.x=0; outputPos.y=0;
+  for (int j=0; j<64; j++)
+  {
+    outputPos.x = -1 + j/128.0;  // 移动输出像素
+    emitVertex(outputPos, float4(h[j*4], h[j*4+1],
+               h[j*4+2], h[j*4+3]) : COLOR);
+  }
+}</code></pre><p>如代码清单 41-1 所示，GS 在一次遍历中构建这个直方图，并把结果输出到浮点渲染目标（类型为 <code>GL_FLOAT_RGBA_NV</code>）。GS 还会跟踪所发射像素的 <em>x</em> 坐标。</p><p>这种情况下触发器是一个简单的 OpenGL 程序，它需要一些特殊设置，因为我们作为颜色传入的只是进出着色程序的全范围浮点数，如代码清单 41-2 所示。</p><h4>示例 41-2. 避免截断的 OpenGL 设置</h4><pre><code>glClampColorARB(GL_CLAMP_VERTEX_COLOR_ARB, FALSE);
+glClampColorARB(GL_CLAMP_FRAGMENT_COLOR_ARB, FALSE);
+glClampColorARB(GL_CLAMP_READ_COLOR_ARB, FALSE);</code></pre><p>可以只发送一个顶点来产生一个 GS 线程，让它读取整张输入图像并在一次遍历中输出直方图值。不过 GPU 天生是并行的，所以若把直方图计算分到多个 GS 线程上执行、每个线程处理输入图像的一个分区，就能提升性能。只需发送多个顶点来触发更多 GS 线程，这种技术很容易实现。</p><p>每个顶点的颜色包含输入区域的坐标与边界。可以给每个 GS 线程编程，让它把自己的直方图输出到帧缓冲中的 <em>n</em> 个不同位置（256 个标量 = 64 个 RGBA32F 像素）。随后可在 CPU 上回读这些输出（<em>n</em> x 256 个浮点数）并求和。不过这里还有一点优化空间。由于输出的直方图各箱只是简单相加，我们可以让 <em>n</em> 个线程把结果输出到同一个帧缓冲位置，并以 <code>GL_ONE</code>/<code>GL_ONE</code> 为参数启用 <code>GL_BLEND</code> 函数。这样浮点值会自动累加，只需向 CPU 回读一个 256 个浮点数的向量。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/41fig02.jpg" rel="noreferrer noopener">图 41-2</a> 演示了一个使用多线程的 GS 直方图算法，其中每个线程处理输入图像的一个独立分区，所有线程都把结果写到同一个输出数组。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/41fig02.jpg" alt="41fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/41fig02.jpg" rel="noreferrer noopener">图 41-2</a>　用 GS 计算直方图</figcaption></figure><h4>41.4.2 压缩器</h4><p>为直方图描述的 GS 编程技术也可用于类 DXT 的压缩方案，这类方案的输出块尺寸事先已知。DXT 是一种以 4x4 像素块为输入的压缩算法。它选出两种最具代表性的颜色，输出为两个 16 位（565）颜色值；此外还输出十六个 2 位索引，用于在一张包含这两种选定颜色和两种插值颜色的表中查找。输入为 128 字节，输出为 16 字节，因此在丢弃 alpha 时该算法提供 6:1 的有损压缩。</p><p>GS 程序可以取 16 个像素，然后向帧缓冲写入 16 字节。这个程序还能同时使用多个 GPU 线程，因为各输入数据块彼此独立。事实上，像素着色器能实现规则的 DXT 压缩器，因为它有 8 字节的固定尺寸输出，压缩后的瓦片可以用一个颜色分量为 <code>GL_UNSIGNEDINT32</code> 类型的像素写出。但 PS 不能用于某些压缩算法——例如某些需要写出超过 128 位输出的 DCT 压缩块。</p><h4>变长输出</h4><p>到目前为止我们给出的 GS 算法都是固定尺寸输出。不过现代 GPU 上的像素着色器在处理变长类型的算法时也很有效，特别是对二维像素数组做图像处理。相比之下，计算机视觉算法通常产生变长输出。</p><p>虽然有些视觉应用已经被移植到 PS，但由于三维图形与视觉在输入、输出空间上的差异，它们通常更难被加速。</p><ul><li>三维图形渲染以变长、紧凑、参数化的表示（例如顶点、光源位置、纹理和几何体）作为输入，输出一个固定尺寸的像素矩阵。</li><li>计算机视觉算法以静态的像素矩阵作为输入，输出变长、紧凑、参数化的表示，例如直线，或相机位置的估计。这些结果随后被送回其他设备（最可能是 CPU）做进一步处理。</li></ul><p>GPU 无法高效执行需要变长输出的处理阶段，这妨碍了它在计算机视觉领域的采用。以往包含许多视觉算法的 GPU 实现，都用 PS 做规则的数据并行处理，然后通过总线把图像缓冲拷回系统内存，交由 CPU 进一步处理（更多 GPU 上计算机视觉算法的例子见 Fung 2005）。这些额外步骤的负面效果是：总线饱和、系统内存占用增加、CPU 负载增加，以及 GPU 停顿。</p><p>下面几节我们描述如何把 GS 单元用于变长输出的算法，使 GPU 成为计算机视觉更可行的计算目标。</p><h4>41.4.3 Hough 变换</h4><p>Hough 变换是一种检测图像中直线的经典计算机视觉算法，常用于帮助机器人识别导航所需的基本几何形状，或用于工业质量控制。简单说，这个算法会构建一张图中所有可能存在的直线构成的地图，每条直线用点对 (<em></em>, <em>d</em>) 表示（<em></em> ∊ [0, 2<em>p</em>[ 且 <em>d</em> ≥ 0）。图像空间中的一个点对 (<em>x</em>, <em>y</em>) 对应 Hough 空间中的一条连续正弦曲线，代表经过该点的所有直线。Hough 空间中的一个点对 (<em>q</em>, <em>d</em>) 对应图像空间中的一条直线。</p><p>Fung 等 2005 提出了一种基于 Hough 变换的直线检测算法的 GPU 实现。但在他们的框架中，CPU 仍然参与某些处理阶段，例如在 Hough 图中搜索极大值。GS 编程允许把直线检测程序的所有阶段都映射到 GPU 上运行。</p><p>使用 Hough 变换的基本直线检测算法可以这样编程：</p><ol type="1"><li>视频 GPU 硬件单元解码一帧并写入帧缓冲。</li><li>一个像素着色器遍施加带阈值的卷积核，找出梯度较大的像素。</li><li>一个像素着色器遍计算 Hough 图（细节见本节后文）。</li><li>一个几何着色器遍在 Hough 图中寻找 <em>n</em> 个局部极大值，从而识别初始图像中的 <em>n</em> 条参数化直线，并写出由直线坐标构成的动态输出。</li></ol><p>这种基于 GS 的做法的好处是：只有代表这 <em>n</em> 条直线的几字节数据被拷回 CPU——在带宽上节省很多，并显著减轻 CPU 负担。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/41fig03.jpg" rel="noreferrer noopener">图 41-3b</a> 展示了由 <a href="https://developer.download.nvidia.com/books/gpugems3/41fig03.jpg" rel="noreferrer noopener">图 41-3a</a> 计算出的 Hough 图。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/41fig03.jpg" alt="41fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/41fig03.jpg" rel="noreferrer noopener">图 41-3</a>　生成 Hough 图</figcaption></figure><p>下一步是运行一个算法在这张图中搜索极大值，而不在 CPU 上回读图像。用一个小的 GS 程序（发送一个顶点即可触发）就能轻松完成：它寻找局部极大值，并为每个极大值发射四个包含直线参数的标量。在这个例子里，完整算法会输出六个点供 CPU 回读。要得到更多参数，GS 程序可以取输入图像中属于这条直线的像素，统计其中被点亮的数量，从而算出每一段的起点位置和长度。</p><p>Fung 等 2005 开发的实现从图像空间走向 Hough 空间，用 VS 为每个感兴趣的像素绘制由 <em>m</em> 个顶点构成的正弦曲线。源图像需要放在系统内存中并由 CPU 扫描（<em>m</em> 是 <em></em> 的采样数），以便向 GPU 发送大量顶点。</p><p>不过有一种简单办法，可以完全在 GPU 侧用 PS 程序构建这张图，只需绘制一个覆盖整个渲染目标的四边形来触发。这种做法从 Hough 空间走向图像空间。<a href="https://developer.download.nvidia.com/books/gpugems3/41fig04.jpg" rel="noreferrer noopener">图 41-4</a> 展示了 Hough 图中一个点，它对应图像空间中的一条直线。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/41fig04.jpg" alt="41fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/41fig04.jpg" rel="noreferrer noopener">图 41-4</a></figcaption></figure><p>像素着色器代码（收录于本书附带的 DVD）找出属于 Hough 图中某一点所代表直线的所有图像像素。于是对 Hough 图的每个采样，都通过渲染一个四边形来运行一次 PS 程序。这个程序求直线与图像矩形的交点并对直线做光栅化，取纹素并求和，把单个浮点数（投票值）写入渲染目标（即 Hough 图）。用 PS 单元完成这个过程后，我们用一个简单的 GS 程序扫描整张 Hough 图，为每个局部极大值输出一个二维位置（每点两个标量）。搜索结束后，输出点的数量被写入输出缓冲，CPU 程序可以从那里取回。像素的前两个分量包含局部极大值在 Hough 图中的位置。代码清单 41-3 给出动态输出局部极大值位置的 GS 程序。</p><h4>示例 41-3. 动态输出局部极大值位置的 GS 程序</h4><pre><code>
+POINT void outputMaxPositionsGS(AttribArray<float4> position : POSITION,
+                                AttribArray<float4> color : COLOR,
+                                uniform samplerRECT texIn,
+                                uniform float BlockSize)
+{
+  int index=1;
+  float sx=color[0].x, sy=color[0].y; // 从顶点颜色中
+   // 读取块大小。
+   float4 outputPos : POSITION = position[0];  outputPos.y=0;
+  for (int j=0; j<sy; j++)
+    for (int i=0; i<sx;  i++)
+      if(texRECT(texIn, float2(i, j)).r==1.0)
+      {
+        outputPos.x = -1 + index/128;
+        emitVertex(outputPos, float4(i, j, 0, 0) : COLOR);
+        index++;
+      }
+  // 输出找到的点数
+  outputPos.x = -1 ;
+  emitVertex(outputPos, float4(index-1, 0, 0, 0) : COLOR);
+}</code></pre><p>在代码清单 41-3 中，GS 程序的输入数据已做过预处理以提高效率。我们先运行一个像素着色器（如代码清单 41-4 所示），它为每个像素在邻域内所有像素中找出局部极大值，若当前像素是极大值则输出 1，否则输出 0。代码清单 41-3 中的 GS 代码非常精简以获得最高效率，因为默认情况下它只在一个 GPU 线程上运行。</p><h4>示例 41-4. 搜索局部极大值的 PS 程序（为 GS 做准备）</h4><pre><code>
+float4 findMaxFirstPassPS(float2 uv : TEX0,
+                          uniform samplerRECT texIn) : COLOR
+{
+  float lum, max;
+  float2 t, tcenter;
+  float4 valueOut = float4(0, 0, 0, 1);
+  for (int j=-KSIZE; j<KSIZE+1; j++) // KSIZE 是窗口的大小。
+  {
+    t[1]=uv[1]+j;
+    for (int i=-KSIZE; i<KSIZE+1; i++)
+    {
+      t[0]=uv[0]+i;
+      lum=texRECT(texIn, t).r;
+      if (lum>max)
+      {
+        max=lum;
+        tcenter=t;
+      }
+    }
+  }
+  if (tcenter.x==uv.x && tcenter.y==uv.y)
+    valueOut = float4(1, 0, 0, 0);
+  return valueOut;
+}</code></pre><h4>41.4.4 角点检测</h4><p>另一项经典的计算机视觉技术是用于跟踪兴趣点的<em>角点检测</em>。这个算法也能用 GS 单元高效实现。通常输入图像先由一组卷积核处理，这些卷积核在 PS 单元上并行执行得非常好。特征提取用到许多滤波器（Canny 1986、Trajkovic 与 Hedley 1998、Tomasi 与 Kanade 1991、Harris 与 Stephens 1988），GPU 像素着色器处理这类计算密集型任务非常高效。算法的最终结果通常是一组动态的二维位置。</p><p>这些算法的实现（例如 Sinha 等 2006）通常要把包含图像梯度、特征值等浮点数据的临时缓冲在 CPU 上回读，以生成代表角点的二维点列表。角点数量事先未知，是通过分析系数的局部邻域算出来的。GS 特别适合加速这一步，因为它能向 CPU 提供动态而紧凑的反馈。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/41fig05.jpg" rel="noreferrer noopener">图 41-5</a> 给出一个角点检测的例子。为提高并行处理程度，我们可以把输入空间划分成若干子矩形，每个子矩形由一个 GS 线程处理，该线程把动态输出写在帧缓冲中不同的行（即所发射顶点不同的 <em>y</em> 坐标）上。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/41fig05.jpg" alt="41fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/41fig05.jpg" rel="noreferrer noopener">图 41-5</a>　角点检测算法的输出</figcaption></figure><h2>41.5 优势：GPU 局部性与 SLI</h2><p>把数据分析搬到 GPU 的主要优势是数据局部性（减少 CPU/GPU 之间的交换）和减轻 CPU 负担。此外，如果某个算法（例如对实时视频做计算机视觉）的结果只是少数几个向量，性能就能随 GPU 数量线性扩展，因为增加 GPU 并不会显著增加 CPU 处理量。<a href="https://developer.download.nvidia.com/books/gpugems3/41fig06.jpg" rel="noreferrer noopener">图 41-6</a> 展示了一个用 SLI 互连连接四块 GeForce 8800 GTX 的示例配置。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/41fig06.jpg" alt="41fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/41fig06.jpg" rel="noreferrer noopener">图 41-6</a>　装载四块 GeForce 8800 GTX 的 NVIDIA SLI 系统</figcaption></figure><p>考虑输入数据来自硬盘视频解码的情形。多块 GPU 并行解码输入视频流，写入各自的帧缓冲。每 <em>g</em> 帧，每块 GPU 会用像素引擎运行某种图像滤波算法。然后各自用 GS 程序在滤波后的数据中寻找某些特征。这种做法是最优的，因为每块 GPU 只向系统内存回送几字节，而 CPU 能很快处理完，因为它完全空闲。反之，如果我们在 CPU 上处理某些阶段，从 SLI 可扩展性中得到的好处就会少得多，因为 CPU 和总线可能饱和成为瓶颈。在某些 SLI 设备（如 NVIDIA Quadro Plex）中，多 GPU 解码帮助更大，因为各 GPU 共享到系统内存的同一条 PCIe 通路。</p><p>在这个视频应用的情形里，用 GS 单元运行快速简单的程序与视频引擎配合得特别好，因为程序可以并行运行，而它们处理的数据在帧缓冲中共享，无需额外拷贝。</p><h2>41.6 性能与限制</h2><h4>41.6.1 指导原则</h4><p>对于需要在生成变长输出之前先算统计信息的算法，用一个执行线程来编程很省事。但另一方面，只用一个执行线程会降低 GPU 的效率。只要可能，GS 算法就应划分输入空间并使用多个线程，以利用 GPU 的大规模并行性。此外，所有逐像素计算都应作为预处理用像素着色器完成并存入临时缓冲。这样，即便只有一个 GS 线程在 PS 预处理过的数据上工作，效果也很可能好于通过总线把图像数据传回系统内存、在 CPU 上处理图像。</p><p>按 DirectX 10 规范，GS 能写出的标量最多为 1,024 个（4,096 字节）。基于这一限制，必须划分输入空间并由不同 GS 线程处理，使每个线程发射的标量不超过 1,024 个。因此，如果算法允许，增加 GS 线程数量以降低每线程输出要求也是有益的。</p><p>最后，视 GPU 而定，GS 程序可以通过合并纹理取数与数学运算来优化。例如扫描输入纹理时，最好按 64x64 这样的瓦片遍历（具体尺寸随硬件而异），而不是线性遍历，以利用纹理缓存。</p><h4>41.6.2 Hough 图极大值检测的性能</h4><p>本节我们把一种在 CPU 与 GPU 之间分工、在 1024x1024 的 Hough 图中寻找局部极大值的实现，与一种完全基于 GPU 的算法实现做比较。完整程序执行以下步骤：</p><ol><li>把源图像加载到 GPU 上。</li><li>用像素着色器计算 Hough 图。</li><li>找出局部极大值：<ol type="a"><li>在 7x7 像素邻域内搜索局部极大值。</li><li>按步骤 3a 扫描中间缓冲中的局部极大值输出。</li></ol></li></ol><p>表 41-1 给出两种 GPU 配置（一块和四块 GPU）与两种算法实现（CPU 与 GPU）下的帧率和总线占用率。CPU 实现把步骤 3b 放在 CPU 上运行，其中包括把步骤 3a 的输出回读到系统内存。如数据所示，完整的 GPU 实现（步骤 3a 与 3b）反馈极小，速度明显更快，并且随 GPU 数量良好扩展。</p><h4>表 41-1. 单 GPU 与四 GPU 下 Hough 图局部极大值检测的 CPU 与 GPU 实现对比</h4><table><tbody><tr><td><em>这些实验所用硬件为一块 GeForce 8800 GTX 和一颗 2.4 GHz 的 Intel Core 2。</em></td></tr><tr><td></td><td><p><strong>帧率</strong></p></td><td><p><strong>总线带宽</strong></p></td><td><p><strong>帧率</strong>（4 块 GPU）</p></td><td><p><strong>总线带宽</strong>（4 块 GPU）</p></td></tr><tr><td><p><strong>CPU</strong></p></td><td><p>58 fps</p></td><td><p>232 MB/s</p></td><td><p>58 fps</p></td><td><p>232 MB/s</p></td></tr><tr><td><p><strong>GPU</strong></p></td><td><p>170 fps</p></td><td><p>&lt;1MB/s</p></td><td><p>600 fps</p></td><td><p>&lt;1MB/s</p></td></tr></tbody></table><h2>41.7 结论</h2><p>我们演示了几何着色单元的基本用法，并说明如何用它在线程内提供大尺寸或变长的输出，或两者兼有。我们的技术让一些原本在 CPU 上实现的算法能在 GPU 上执行，从而向应用提供紧凑而动态的反馈。</p><p>GS 单元的能力使一些多阶段计算机视觉算法可以完全留在 GPU 上，从而最大化总线效率、减轻 CPU 负担，并改善 SLI 扩展性。</p><h2>41.8 参考文献</h2><p>Canny, J. F. 1986. "A Computational Approach to Edge Detection." <em>IEEE Transactions on Pattern Analysis and Machine Intelligence</em> 8(6)，第 679–698 页。</p><p>Fung, James. 2005. "Computer Vision on the GPU."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 649–665 页。Addison-Wesley 出版。</p><p>Fung, James, Steve Mann, and Chris Aimone. 2005. "OpenVIDIA: Parallel GPU Computer Vision."，载 <em>Proceedings of the ACM Multimedia 2005</em>，第 849–852 页。</p><p>Harris, Chris, and Mike Stephens. 1988. "A Combined Corner and Edge Detector."，载 <em>Proceedings of Fourth Alvey Vision Conference</em>，第 147–151 页。</p><p>Microsoft Corporation. 2007. DirectX 网站。<a href="http://www.microsoft.com/directx/" rel="noreferrer noopener">http://www.microsoft.com/directx/</a>。</p><p>Sinha, Sudipta N., Jan-Michael Frahm, Marc Pollefeys, and Yakup Genc. 2006. "GPU-Based Video Feature Tracking and Matching." 技术报告 06-012，UNC Chapel Hill 计算机科学系。</p><p>Tomasi, C., and T. Kanade. 1991. "Detection and Tracking of Point Features." 技术报告 CMU-CS-91-132，Carnegie Mellon University。</p><p>Trajkovic, M., and M. Hedley. 1998. "Fast Corner Detection." <em>Image and Vision Computing</em> 16，第 75–87 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-41-using-geometry-shader-compact-and-variable-length" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-41-using-geometry-shader-compact-and-variable-length</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

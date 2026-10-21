@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 9 章　用全局光照做交互式电影化重打光 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 9 章　用全局光照做交互式电影化重打光」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 9 章　带全局光照的交互式电影化重光照</h1>
+<p><em>Fabio Pellacini<br> Dartmouth College</em></p><p><em>Miloš Hašan<br> Cornell University</em></p><p><em>Kavita Bala<br> Cornell University</em></p><h2>9.1 引言</h2><p>电影化光照设计是美术用来定义剧情片每一帧外观的流程，靠仔细设置光照着色器的全部参数来实现。为电影化光照交互式地渲染高质量图像正成为一种必需，但由于制作渲染所用的数据集复杂，这仍然是挑战。</p><p>为了更快得到用户反馈，人们开发了重光照引擎，利用的是光照美术在光照设计期间往往只想改变光源参数，而不动相机、物体或材质这一事实。重光照引擎用深层帧缓冲缓存所有可见点的位置、法线与材质参数，然后交互式地重新计算它们上面的光照。这种做法类似于游戏中使用的延迟着色技术，不同之处在于缓存是离线算好的。深层帧缓冲在大多数重光照引擎中已很常见，而用 GPU 交互式计算最终光照最早由 Gershbein 与 Hanrahan 2000 引入，并在 Lpics 系统（Pellacini 等 2005）中扩展为支持制作场景的几何与着色复杂度。尽管这些系统能对电影场景做交互式重光照，它们仍限于直接光照，无法支持间接效果。</p><p><em>直接到间接传递算法</em>（Hašan 等 2006）把重光照引擎扩展为支持带多次反弹间接光照的电影化重光照。重光照的实现方式，是把一组聚集采样点的直接光照传递到可见采样点，这一步可以用离线预计算的大型传递矩阵来算。我们的实现能对多达两百万多边形的场景、漫反射与光泽材质以及任意直接光照着色器，以每秒 10 到 20 帧的速度得到高质量多次反弹间接光照。预计算最多耗时 3 小时。这里我们回顾该框架背后的原理，描述实现细节，并讨论权衡。</p><h2>9.10 结论</h2><p>本章我们展示了一个用于电影化光照设计的 GPU 重光照引擎，它扩展了传统的帧缓冲做法。该引擎支持几何复杂度高的场景、光泽材质，以及用过程化着色器表达的灵活直接光照模型，并支持多次反弹间接光照。</p><h2>9.11 参考文献</h2><p>Gershbein, Reid, and Patrick M. Hanrahan. 2000. "A Fast Relighting Engine for Interactive Cinematic Lighting Design."，载 <em>Proceedings of SIGGRAPH 2000</em>。</p><p>Hašan, Miloš, Fabio Pellacini, and Kavita Bala. 2006. "Direct-to-Indirect Transfer for Cinematic Relighting."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2006)</em> 25(3)。</p><p>Jensen, Henrik W. 2001. <em>Realistic Image Synthesis Using Photon Mapping</em>. AK Peters.</p><p>Ng, Ren, Ravi Ramamoorthi, and Pat Hanrahan. 2003. "All-Frequency Shadows Using Non-linear Wavelet Lighting Approximation."，载 ACM Transactions on Graphics (Proceedings of SIGGRAPH 2003) 22(3)。</p><p>Pellacini, Fabio, and Kiril Vidimče. 2004. "Cinematic Lighting."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 167–183. Addison-Wesley。</p><p>Pellacini, Fabio, Kiril Vidimče, Aaron Lefohn, Alex Mohr, Mark Leone, and JohnWarren. 2005. "Lpics: A Hybrid Hardware-Accelerated Relighting Engine for Computer Cinematography."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2005)</em> 24(3)。</p><p>Stollnitz, Eric, Tony DeRose, and David Salesin. 1995. "Wavelets for Computer Graphics: A Primer. Part 1." 在线地址 <a href="http://grail.cs.washington.edu/pub/stoll/wavelet1.pdf" rel="noreferrer noopener">http://grail.cs.washington.edu/pub/stoll/wavelet1.pdf</a>。</p><h2>9.2 算法概览</h2><p>我们想计算从当前相机可见的一组点（深层帧缓冲中的像素，我们称之为<em>视图采样点</em>）上的直接与间接光照。直接光照分量算起来很直接：深层帧缓冲包含每个视图采样点的位置、法线与材质参数，阴影用阴影贴图计算。</p><p>要计算间接光照，我们需要一组分布在整个场景中的点，称为<em>聚集采样点</em>。注意聚集采样点遍布各处，而不只在场景的可见部分，因为间接光照可能来自不直接可见的表面。</p><p>算法的基本思想是：视图采样点上的间接光照，可以由聚集采样点上的直接光照经线性变换得到——这正是<em>直接到间接传递</em>这个名字的由来。如果把视图采样点与聚集采样点排成向量，这个线性变换就可以看作一个大矩阵，可以离线预计算，并在每次光照变化时与直接光照相乘。<a href="https://developer.download.nvidia.com/books/gpugems3/09fig01.jpg" rel="noreferrer noopener">图 9-1</a> 给出了整个算法的高层概览，它可用下面这个等式概括：</p><table><tbody><tr><td><p><strong>V</strong> <sub><em>f</em></sub> = <strong>V</strong> <sub><em>d</em></sub> + <strong>V</strong> <sub><em>i</em></sub> = <strong>V</strong> <sub><em>d</em></sub> + <strong>T</strong> · <strong>g</strong> <sub><em>d</em></sub> <strong>,</strong></p></td></tr></tbody></table><figure><img src="https://developer.download.nvidia.com/books/gpugems3/09fig01.jpg" alt="09fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/09fig01.jpg" rel="noreferrer noopener">图 9-1</a>　直接到间接传递概览</figcaption></figure><p>其中 <strong>v</strong> <em><sub>f</sub></em> 是最终结果，<strong>v</strong> <em><sub>d</sub></em> 是视图采样点上的直接光照，<strong>v</strong> <em><sub>i</sub></em> 是视图采样点上的间接光照，<strong>T</strong> 是传递矩阵，<strong>g</strong> <em><sub>d</sub></em> 是聚集点云上的直接光照。注意聚集采样点只有漫反射，因此该算法无法处理焦散。</p><p>遗憾的是，算法以这种最朴素的形式并不实用。原因之一是传递矩阵非常大。若使用 640x480 的图像和 65,536 个聚集采样点，将得到一个 190 亿个元素的矩阵，既难以存储也难以相乘。更糟的是，矩阵的每一列本质上都是一张带单个点光源和完整全局光照的图像，因此朴素地做预计算要花很长时间。所以我们引入几个新想法。首先，把传递矩阵 <strong>T</strong> 拆成最终聚集分量 <strong>F</strong> 与多反弹分量 <strong>M</strong>，使间接光照按如下方式计算</p><table><tbody><tr><td><p><strong>V</strong> <sub><em>i</em></sub> = <strong>F</strong> · (<strong>M</strong> + <strong>I</strong>)· <strong>g</strong> <sub><em>d</em></sub> .</p></td></tr></tbody></table><p>使用这个等式的好处是：最终聚集矩阵 <strong>F</strong> 的元素可以解析地定义并以高精度存储；多反弹矩阵 <strong>M</strong> 则可以用较低精度预计算与存储，因为它对画质的影响不像最终聚集那样直接。接下来，我们对矩阵的各行施加 Haar 小波变换（Stollnitz 等 1995），并剔除不重要的系数，得到稀疏表示。最后，我们把稀疏矩阵乘法映射到 GPU 上，随着直接光照变化实时更新间接光照。</p><p>本章余下部分更详细地说明如何实现这些想法。</p><h2>9.3 聚集采样点</h2><p>这里讨论如何计算聚集采样点并把它们映射到一张方形纹理中。每个聚集采样点包含位置、法线与漫反射颜色。它代表的表面积也应存储，但只在预计算时需要，因此不必送到 GPU。把聚集采样点的数目取为 4 的幂是有利的，因为后面做小波投影时需要把它们映射到 2 的幂的方形纹理。我们的实现使用 65,536（256x256）个采样点；我们发现这是能给出足够质量的最小数目。</p><p>代码清单 9-1 给出了创建聚集采样点的一种简单分治做法。思路是把采样预算分配到一组网格三角形上，办法是递归地同时切分预算与集合，直到只剩一个采样点或只剩一个三角形。简单的分治方法对房间这类场景效果不错，但对大型环境效率会下降，此时以非均匀方式选取聚集采样点可以提高整个算法的精度。Hašan 等 2006 给出了更复杂的、基于重要性采样的聚集点选取变体，即使对大型环境也足够稳健。</p><h4>示例 9-1　分治计算聚集采样点的伪代码</h4><pre><code>GatherSample[] createGather(Triangle[] triangles, int budget)
+{
+  if (triangles.length == 1)
+  {
+    // 取出落在同一个三角形内的所有样本。
+    // 把面积分摊到这些样本上。
+    float area = triangles[0].area / budget;
+    return sampleTriangle(triangles[0], budget, area);
+  }
+  else if (budget == 1)
+  {
+    // 随机挑一个三角形，在其上取一个样本。
+    Triangle t = pickRandomAreaWeighted(triangles);
+    float area = getTotalArea(triangles);
+    return sampleTriangle(t, 1, area);
+  }
+  else
+  {
+    // 拆分三角形（例如按某个平面）。
+    (ts1, ts2) = split(triangles);
+    // 按总面积分配预算。
+    area1 = getTotalArea(ts1);
+    area2 = getTotalArea(ts2);
+    int b1 = (int)(budget * area1 / (area1 + area2));
+    b1 = max(b1, 1);
+    b1 = min(b1, budget - 1);
+    int b2 = budget - b1;
+    // 递归继续。
+    return union(createGather(ts1, b1), createGather(ts2, b2));
+  }
+}</code></pre><p>我们已经创建了聚集采样点集合，但还得把它们「摊平」——也就是定义到 2 的幂纹理的映射。（在这个映射中，对应 Haar 小波基函数的子块采样点应当彼此相似；这一点后面会变得重要。）解法是另一个分治算法。我们需要一个函数 <code>splitSamples()</code>，它接收一组聚集采样点（大小为偶数），按采样点的位置与法线把它们一致地切成两个等大的子集。该函数的一个示例实现基于「k 均值聚类」，可见 Hašan 等 2006。不过只要同时考虑位置与法线，更简单的技术应该也能用。假定我们有这样一个函数，就可以轻松实现映射，如代码清单 9-2 所示。</p><h4>示例 9-2　把聚集采样点摊平进纹理的伪代码</h4><pre><code>float dist(GatherSample x, GatherSample y)
+{
+  // 距离应同时取决于位置和法线。
+  // 常量 “sceneBoundingBoxDiagonal” 应预先算好。
+  return 400 * length(x.pos - y.pos) ^ 2 + sceneBoundingBoxDiagonal ^
+         2 * length(x.normal - y.normal) ^ 2;
+}
+(Gathersample[], GatherSample[]) splitSamples(GatherSample[] samples)
+{
+  // 用上面的距离函数分成 2 个簇。
+  // （例如）使用 k-means 算法。
+  return kMeans(samples, 2, dist);
+}
+SquareTexture flattenGather(GatherSample[] samples)
+{
+  int n = samples.length;
+  assert isPowerOf4(n);
+  // 必须是 4 的幂
+  SquareTexture result = new SquareTexture();
+  map(samples, result, 0, 0, n);
+  return result;
+}
+void map(GatherSample[] smp, SquareTexture t, int x, int y, int a)
+{
+  // 平凡情况
+  if (a == 1)
+  {
+    t(x, y) = smp[0];
+    return;
+  }
+  // 分成 4 个子集。
+  (s1, s2) = splitSamples(smp);
+  (s11, s12) = splitSamples(s1);
+  (s21, s22) = splitSamples(s2);
+  // 递归映射。
+  map(s11, x, y, a / 2);
+  map(s12, x + a / 2, y, a / 2);
+  map(s21, x, y + a / 2, a / 2);
+  map(s22, x + a / 2, y + a / 2, a / 2);
+}</code></pre><h2>9.4 单次反弹间接光照</h2><p>如前所述，矩阵 <strong>T</strong> 的每个元素都包含多次反弹的间接光照。但这样的矩阵直接预计算代价极高。为简单起见，我们先做单次反弹间接光照，之后再说明如何处理多次反弹。对于单次反弹，预计算 <strong>T</strong> 的元素相对简单，如代码清单 9-3 所示。</p><p>此时我们可以试着跑一下算法，用 256x256 的图像和 1,024 个聚集采样点。如果把每个矩阵元素存为三个浮点数，矩阵大小将是 256 x 256 x 1024 x 3 x 4 = 768 MB——对实时性能来说太笨重了。而为了更高画质，我们可能想要 65,536 个聚集采样点和 640x480 的视图分辨率，那需要约 190 亿个元素的传递矩阵。显然，我们需要一个好的压缩方案，这正是接下来要讨论的。</p><h4>示例 9-3　计算矩阵元素的伪代码</h4><pre><code>RgbColor evalElement(ViewSample v, GatherSample g, Vector3 cameraPos)
+{
+  Vector3 out = (cameraPos - v.position).normalize();
+  Vector3 in = (g.position - v.position).normalize();
+  // 求值表面着色器（或称 “brdf”）。
+  // 假定已包含余弦项。
+  RgbColor color = v.evalBrdfCosine(in, out);
+  // 把聚集得到的样本当作一个余弦发光的光源。
+  color *= max(dot(g.normal, -in), 0);
+  color *= g.area;
+  // 1/r^2 距离衰减项
+  color /= (g.position - v.position).lengthSquared();
+  // 投射阴影射线检查可见性。
+  if (!color.isZero()) color *= visibility(v.position, g.position);
+  // 需要钳制，以免拐角处的 1/r^2 项急剧放大
+  color.clamp(CLAMP_CONST);
+  return color;
+}</code></pre><h2>9.5 用小波压缩</h2><p>压缩光照中出现的大型矩阵有几种途径。例如，预计算辐亮度传递技术引入了球谐函数与小波来解决这个问题，但它们传统上只考虑远处光照，而非真正的局部光照。我们的算法把这些技术扩展到直接到间接传递矩阵。我们选择小波，是因为在需要保留锐利光照细节时它们表现良好。在我们的情形中，这些细节可能是锐利的次级阴影或光泽反射。建议不熟悉小波的读者参阅 Stollnitz 等 1995。</p><p>与 Ng 等 2003 一样，我们把 <strong>T</strong> 的各行投影到二维 Haar 小波上，结果得到许多接近零的系数。这让我们可以丢弃其中大部分系数，每行只保留少数几个（比如每行 100 个），从而把矩阵变稀疏。</p><p>问题是要保留哪些系数。应该保留绝对值最大的那些吗？我们发现这并非最优，而应当按对应小波基函数的支撑域面积（其非零元素个数）给系数加权。小波变换代码见代码清单 9-4。</p><p>矩阵的一行算好并变换之后，需要保留最重要的系数，把结果存成稀疏向量，如代码清单 9-5 所示。</p><p>现在预计算单次反弹间接光照的整个稀疏矩阵所需的一切都齐了。对每个视图采样点，我们计算 <strong>T</strong> 的对应行，做变换，剔除不重要的系数，把得到的稀疏向量输出到文件（这样就不必存在内存里）。</p><h4>示例 9-4　二维 Haar 小波变换的伪代码</h4><pre><code>SquareTexture waveletTransform(SquareTexture a)
+{
+  int n = a.size();  // 纹理为 n x n
+  assert isPowerOf2(n);  // 仅适用于二次幂尺寸的纹理
+  SquareTexture b = new SquareTexture(n);
+  for (int side = n; side >= 2; side /= 2)
+    for (int i = 0; i < side; i += 2)
+      for (int j = 0; j < side; j += 2)
+      {
+         b(i/2, j/2) = 0.5 *  // 盒式滤波
+                       (a(i,j) + a(i+1, j) + a(i, j+1) +
+                        a(i+1, j+1));
+         b(i/2, j/2 + side/2) = 0.5 *  // 水平方向
+                                (a(i,j) - a(i+1, j) + a(i, j+1) -
+                                 a(i+1, j+1));
+         b(i/2 + side/2, j/2) = 0.5 *  // 垂直方向
+                                (a(i,j) + a(i+1, j) - a(i, j+1) -
+                                 a(i+1, j+1));
+         b(i/2 + side/2, j/2 + side/2) = 0.5 *  // 对角方向
+                                         (a(i,j) - a(i+1, j) -
+                                          a(i, j+1) + a(i+1, j+1));
+      }
+  }
+  return b;
+}</code></pre><h4>示例 9-5　小波系数剔除的伪代码</h4><pre><code>struct WaveletCoefficient
+{
+  int index,
+  RgbColor value;
+  // 假设有 64k 个聚集采样点
+  int getX() { return index % 256; }
+  int getY() { return index / 256; }
+  // 也可以改用查找表。
+  int getLevel() { return ceil(log(1 + max(getX(), getY()))); }
+  int getArea() { return 4^(9 - getLevel()); }
+}
+type SparseVector = List<WaveletCoefficient>;
+SparseVector keepImportantCoeffs(SquareTexture a)
+{
+  int n = a.size();  // 纹理为 n x n。
+  SparseVector sv = new SparseVector();
+  // 把 2D 数组转成系数列表。
+  for (int i = 0; i < n; i++)
+    for (int j = 0; j < n; j++)
+    {
+       WaveletCoefficient w = new WaveletCoefficient();
+       w.index = i * 256 + j;
+       w.value = a(i, j) * w.getArea();  // 按面积加权
+       sv.add(w);
+    }
+  sortDescendingByAbsoluteValue(sv);
+  sv.keepSubList(0, 100);  // 保留最重要的 100 个系数。
+   // 撤销面积加权。
+  for (WaveletCoefficient w: sv) w.value /= w.getArea();
+  return result;
+}</code></pre><h2>9.6 加入多次反弹</h2><p>为了让多次反弹可控，我们把传递矩阵拆成两部分：多反弹矩阵编码聚集点云内部的直接到间接传递，最终聚集矩阵编码从聚集采样点到视图采样点的传递。这样拆分的好处是可以用较低精度计算多反弹矩阵。拆分可用下面的等式概括：</p><table><tbody><tr><td><p><strong>V</strong> <sub><em>i</em></sub> = <strong>F</strong> . (<strong>M</strong> + <strong>I</strong>)· <strong>g</strong> <sub><em>d</em></sub> ,</p></td></tr></tbody></table><p>其中 <strong>F</strong> 是最终聚集矩阵，<strong>M</strong> 是多次反弹矩阵，<strong>I</strong> 是单位矩阵。如果把聚集点云上的（多次反弹）间接光照记作 <strong>g</strong> <sub><em>i</em></sub>，这个等式也可以写成</p><table><tbody><tr><td><p><strong>g</strong> <sub><em>i</em></sub></p></td><td><p>=</p></td><td><p><strong>M</strong> · <strong>g</strong> <sub><em>d</em></sub></p></td></tr><tr><td><p><strong>V</strong> <sub><em>i</em></sub></p></td><td><p>=</p></td><td><p><strong>F</strong> · (<strong>g</strong> <sub><em>d</em></sub> + <strong>g</strong> <sub><em>i</em></sub> )·</p></td></tr></tbody></table><p>我们可以承受以较低精度计算矩阵 <strong>M</strong>，因为它对图像的贡献往往不直接可见。做法是使用光子映射算法（Jensen 2001）的一个修改版本。我们把每个聚集采样点当作一个朗伯发光的小面光源，然后从聚集采样点发射约一百万光子（每个约 15 个）。更多光子可能提高精度，代价是预计算时间更长；但如前所述，这个矩阵并不需要很高精度。每个光子携带其来源聚集采样点的 ID。第二遍对每个聚集采样点做 <em>k</em> 最近邻计算（<em>k</em> 约为 1,000），这 <em>k</em> 个光子被当作对应行的一个稀疏、<em>k</em> 元素的近似，即矩阵 <strong>M</strong>。更多细节见 Hašan 等 2006。</p><p>多反弹矩阵本来就是稀疏的，所以我们也可以选择完全不压缩它。不过套用与最终聚集矩阵相同的小波压缩技术可以提升性能。我们可以每行用更少的系数（我们用 40 个，同样要说明这个数目对画质影响不大，因为最终聚集会把误差糊掉）。这意味着矩阵每行将有 40 个非零元素而不是 1,000 个。包含多次反弹与小波压缩的完整重光照算法可以概括为</p><table><tbody><tr><td><p><strong>V</strong> <sub><em>i</em></sub> = <strong>F</strong> · (<strong>M</strong> + <strong>I</strong>) · <strong>g</strong> <sub><em>d</em></sub> = <strong>F</strong> <sup><em>w</em></sup> · <em>wt</em> (<strong>M <sup><em>w</em></sup></strong> · <em>wt</em>(<strong>g</strong> <sub><em>d</em></sub> ) + <strong>g</strong> <sub><em>d</em></sub> ),</p></td></tr></tbody></table><p>其中 <strong>F</strong> <em><sup>w</sup></em> 与 <strong>M</strong> <em><sup>w</sup></em> 分别是小波投影后的最终聚集矩阵与多次反弹矩阵，<em>wt</em> 是小波变换算子。代码清单 9-6 用伪代码概括了完整重光照算法（针对一个光源），<a href="https://developer.download.nvidia.com/books/gpugems3/09fig02.jpg" rel="noreferrer noopener">图 9-2</a> 展示了该算法的应用。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/09fig02.jpg" alt="09fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/09fig02.jpg" rel="noreferrer noopener">图 9-2</a>　完整重光照算法</figcaption></figure><h4>示例 9-6　完整重光照算法的伪代码</h4><pre><code>Texture computeLighting(light, viewSamples, gatherSamples)
+{
+  // 视图采样点与聚集采样点上的直接光照
+  viewDirect = computeDirectIllumination(light, viewSamples);
+  gatherDirect = computeDirectIllumination(light, gatherSamples);
+  // 聚集采样点上的多次反弹间接光照
+  gatherDirectWavelet = waveletTransform(gatherDirect);
+  gatherIndirect =
+      sparseMultiply(multiBounceWaveletMatrix, gatherDirectWavelet);
+  gatherFull = gatherDirect + gatherIndirect;
+  // 从聚集采样点到视图采样点的最后一次反弹
+  gatherFullWavelet = waveletTransform(gatherFull);
+  viewIndirect = sparseMultiply(finalGatherWaveletMatrix, gatherFullWavelet);
+  // 合成为最终图像。
+  viewFull = viewDirect + viewIndirect;
+  return viewFull;
+}</code></pre><h2>9.7 打包稀疏矩阵数据</h2><p>存储稀疏矩阵有很多方式。最常见的三种是：</p><ol type="1"><li><strong>按行</strong>——为每一行存一个非零元素列表</li><li><strong>按列</strong>——为每一列存一个非零元素列表</li><li><strong>无序三元组列表</strong>——行、列、值</li></ol><p>这些方法对 GPU 实现都不特别高效，所以问题是能不能做得更好。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/09fig03.jpg" rel="noreferrer noopener">图 9-3</a> 展示了压缩后最终聚集矩阵的各列。你可以把这些列看作被「小波光源」照亮的图像。可以看到其中很多是零，而且非零元素往往成簇。这种情况提示我们，应当用一种简单的基于图像的技术来存数据；也就是把这些图像中的非零元素切出来，装进一个或多个矩形。最简单的做法是切一个紧贴非零元素的单一矩形，但我们也可以用多于一个矩形来提高存储效率。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/09fig03.jpg" alt="09fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/09fig03.jpg" rel="noreferrer noopener">图 9-3</a>　变换后单次反弹矩阵的示例列</figcaption></figure><p>最后，我们把这些矩形块打包进 4,096x4,096 的纹理图集。这比给每块单独用一张纹理高效得多，因为状态切换次数少了很多。<a href="https://developer.download.nvidia.com/books/gpugems3/09fig04.jpg" rel="noreferrer noopener">图 9-4</a> 展示了这种打包。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/09fig04.jpg" alt="09fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/09fig04.jpg" rel="noreferrer noopener">图 9-4</a>　打包稀疏最终聚集矩阵</figcaption></figure><h2>9.8 基于 GPU 的重光照引擎</h2><p>所有预计算都在 CPU 上运行，而交互式重光照引擎我们完全在 GPU 上实现，使用 OpenGL API 与运行在着色器模型 3 显卡（我们的情形是 GeForce 7800）上的 GLSL。针对单个光源的完整算法在 9.8.2 节的代码清单 9-7 中用伪代码概括。算法看起来复杂，但只有三个操作需要实现：直接光照计算、方形图像的小波变换、稀疏矩阵乘法。本章余下部分我们逐一描述这三个操作的实现。</p><h4>9.8.1 直接光照</h4><p>我们评估直接光照的方式与 Lpics 重光照引擎（Pellacini 等 2005）相同。我们对深层帧缓冲数据做延迟着色，这些数据用四个纹理矩形存储，分别编码位置、法线以及漫反射与镜面系数。视图采样点与聚集采样点各用一套纹理。为节省 GPU 内存，法线与漫反射分量用每通道 8 位（bpc）编码，位置与镜面系数则保持每通道 16 位浮点。</p><p>我们通过绘制一个覆盖所需分辨率的四边形来对深层帧缓冲做着色。用 GLSL 着色器定义直接光照模型。在我们的实现中，表面反射使用 Phong 着色；也可以用更复杂的 uber 着色器来表达材质。我们用许多不同的光照模型测试过算法，包括点光源与聚光灯、投影灯，以及受 uber-light 电影化光着色器启发的光源（Pellacini 与 Vidimče 2004）。为避免代码重复，我们用预处理器宏把所有可能的光源类型都包含进来，然后为每个光源绑定相应的着色器变体。</p><p>我们用阴影贴图支持锐利阴影。对聚光灯与投影灯使用标准阴影贴图，对点光源使用六张。我们还为面光源实现了一种较慢的方法，用多张阴影贴图对其阴影做均匀采样。阴影贴图用帧缓冲对象渲染。场景中的每个物体都用顶点缓冲对象把三角形直接存在显存里。对物体做视锥剔除可以进一步加速阴影贴图的渲染。虽然这个实现还有很大改进空间，但在我们的情形下已经够用，因为大部分计算时间仍花在乘法上。</p><p>为提高画质，我们以每像素 2x2 的采样对直接光照做超采样抗锯齿。间接光照按像素计算，再上采样到直接光照的分辨率，同时尽量避免光线跨边缘泄漏。做法是在每个像素周围 3x3 区域内搜索（依据法线与位置）最近邻并取用它。最后把直接与间接贡献相加，用 2x2 盒式滤波器降采样。</p><h4>9.8.2 小波变换</h4><p>我们用简单的递归算法对方形图像做 Haar 二维小波变换。如前面代码清单 9-4 所示，变换本质上是一串滤波操作。要在 GPU 上实现，我们把外层 for 循环改成多遍做法，并让每一遍用片元着色器实现滤波操作。代码清单 9-7 给出递归算法的伪代码，代码清单 9-8 给出片元着色器代码。</p><h4>示例 9-7　CPU 侧小波变换循环的伪代码</h4><pre><code>SquareTexture waveletTransform(SquareTexture source)
+{
+  int size = source.size();
+  // 我们的实现中为 256
+  SquareTexture result = new SquareTexture(size);
+  bindBuffer(result);
+  while (size > = 2)
+  {
+    glViewport(0, 0, size, size);
+    bindProgram(waveletFragmentShader, source);
+    drawQuadWithTextureCoordinates(0, 0, size, size);
+    unbindProgram();
+    size /= 2;
+    // 每趟尺寸减半
+    copyToTexture(source);
+  }
+  unbindBuffer();
+  return result;
+}</code></pre><h4>示例 9-8　小波变换的片元着色器</h4><pre><code>
+void main(uniform samplerRect source, uniform float size)
+{
+  vec2 loc = 0;
+  vec4 weights = 0;
+  vec2 curLoc = floor(gl_TexCoord[0].xy);
+  float halfSize = floor(size / 2);
+  // 确定要计算哪个系数，
+  // 并设置相应的权重。
+  if (curLoc.x > = halfSize)
+  {
+    if (curLoc.y > = halfSize)
+    {
+      loc = curLoc - vec2(halfSize, halfSize);
+      weights = vec4(+1, -1, -1, +1);
+    }
+    else
+    {
+      loc = curLoc - vec2(halfSize, 0);
+      weights = vec4(+1, -1, +1, -1);
+    }
+  }
+  else
+  {
+    if (curLoc.y > = halfSize)
+    {
+      loc = curLoc - vec2(0, halfSize);
+      weights = vec4(+1, +1, -1, -1);
+    }
+    else
+    {
+      loc = curLoc;
+      weights = vec4(+1, +1, +1, +1);
+    }
+  }
+  // 查找源像素。
+  vec4 s00 = textureRect(source, 2 * loc + vec2(0, 0));
+  vec4 s01 = textureRect(source, 2 * loc + vec2(0, 1));
+  vec4 s10 = textureRect(source, 2 * loc + vec2(1, 0));
+  vec4 s11 = textureRect(source, 2 * loc + vec2(1, 1));
+  // 计算该系数的加权平均值。
+  vec4 c = 0.5 * (weights.x * s00 + weights.y * s10 + weights.z * s01 +
+                  weights.w * s11);
+  gl_FragColor = c;
+}</code></pre><h4>9.8.3 稀疏矩阵乘法</h4><p>在速度与内存两方面，稀疏矩阵乘法都是重光照算法中开销最大的部分。如上一节所述，我们把矩阵系数存在打包进 4,096x4,096 纹理图集的矩形图像块里。为获得最高性能，我们把乘法理解为按列（按图像）累加，从而把乘法转换成一长串混合操作。具体来说，我们把每块中的数值乘以对应小波光源在最终图像中的强度后累加。此外，这种基于图像的策略让我们能利用光照向量的稀疏性，跳过所有光强低于阈值的块。我们称之为<em>即时剔除</em>。</p><p>对每个块，我们构造一个与相机对齐的四边形，其顶点设为该块的图像坐标。在每个四边形顶点上存图集纹理坐标。纹理数据用每通道 8 位量化，并在每个四边形的顶点上存一个缩放值与一个偏移值。我们把所有四边形存进一个顶点缓冲对象，以免渲染时还要向 GPU 传输。做稀疏矩阵乘法时，我们绘制所有四边形，用着色器把小波光系数（每四边形为常量）与纹理图集中存放的（缩放、偏移后的）矩阵系数相乘。通过帧缓冲混合，把源与目标权重都设为 1 来累加结果。代码清单 9-9 列出了乘法所用的顶点与片元着色器代码。</p><p>为支持小波光源的即时剔除，我们把图像范数存进四边形顶点数据，并在顶点着色器中乘以小波光系数。若乘积小于给定的 epsilon，就在顶点着色器中直接把该四边形送到屏幕外，从而剔除它。这样无需任何 CPU 干预就能大幅加速这一操作。</p><h4>示例 9-9　稀疏矩阵乘法的顶点与片元着色器代码</h4><pre><code>
+// Vertex Shader ----------------------------------------
+void main(uniform float waveletEpsilon, // 用于即时剔除
+          uniform sampler2D waveletLightCoefficients,
+          uniform vec2 waveletLightCoefficientsSize)
+{
+  gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
+  gl_TexCoord[0] = gl_MultiTexCoord0;
+  // 块的图集纹理坐标
+  gl_TexCoord[1] = gl_MultiTexCoord1;
+  // 光照系数坐标
+  gl_TexCoord[2] = gl_MultiTexCoord2;
+  // 块的缩放/偏移
+  float boxNorm = gl_MultiTexCoord2.y; // 该块的列范数
+  vec3 waveletCoefficient =
+      texture2D(sourceVertex, gl_MultiTexCoord1.xy / sourceVertexSize).xyz;
+  float sourceNorm = dot(waveletCoefficient, waveletCoefficient);
+  // 把剔除阈值与下面两项的乘积比较：
+  // 小波光照系数乘以列范数
+  if (boxNorm * sourceNorm < waveletEpsilon)
+  {
+    gl_Position = vec4(-10, 0, 0, 1); // 丢弃该顶点
+  }
+} // Fragment shader --------------------------------------
+void main(uniform samplerRect waveletLightCoefficients,
+          uniform samplerRect transferCoefficients)
+{
+  // 读取小波光照强度。
+  vec3 l = textureRect(waveletLightCoefficients, gl_TexCoord[1].xy).xyz;
+  // 读取矩阵系数。
+  vec3 w = textureRect(transferCoefficients, gl_TexCoord[0].xy).xyz;
+  // 对矩阵系数做缩放和偏移，以支持 8 位压缩。
+  w = gl_TexCoord[2].z + (gl_TexCoord[2].w - gl_TexCoord[2].z) * w;
+  // 对结果缩放后返回。
+  gl_FragColor = vec4(l * w, 1);
+}</code></pre><h2>9.9 结果</h2><p>我们在 3.2 GHz Pentium 4、2 GB 内存配 NVIDIA GeForce 7800（256 MB 显存）上测试了算法。测试的视频分辨率为 640x480，逐像素间接光照由 65,536 个聚集采样点算出，直接光照做了 2x2 超采样。我们测试场景的图像（分别用全向光与聚光灯照明）见 <a href="https://developer.download.nvidia.com/books/gpugems3/09fig05.jpg" rel="noreferrer noopener">图 9-5</a>，其中有大片区域完全是间接光照。<a href="https://developer.download.nvidia.com/books/gpugems3/09fig06.jpg" rel="noreferrer noopener">图 9-6</a> 展示了同样的场景改用任意直接光照着色器照明，同时仍能为光照设计者提供带全局光照的交互反馈。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/09fig05.jpg" alt="09fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/09fig05.jpg" rel="noreferrer noopener">图 9-5</a>　在我们的系统中用点光源与聚光灯渲染的场景</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/09fig06.jpg" alt="09fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/09fig06.jpg" rel="noreferrer noopener">图 9-6</a>　我们的算法可以支持任意光照效果</figcaption></figure><p>对所有测试场景（三角形数约从 60,000 到 210 万），我们都能以交互速率算出准确的间接光照：不做即时小波剔除时约每秒 7 到 15 帧，做剔除时约每秒 9 到 25 帧，两者几乎察觉不出差别。由于算法完全在 GPU 上运行，我们发现性能主要取决于 GPU。重光照时间主要花在传递计算上，偶尔花在阴影贴图渲染上。CPU 预计算的瓶颈是最终聚集矩阵，最多耗时 2.6 小时；其余预计算阶段合计应远低于 20 分钟。GPU 内存需求主要来自传递矩阵，量化后约 100 MB（最终聚集用 100 个系数，多反弹矩阵用 40 个）。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-9-interactive-cinematic-relighting-global" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-9-interactive-cinematic-relighting-global</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

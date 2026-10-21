@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 17 章　环境光遮蔽 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 17 章　环境光遮蔽」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 17 章　环境光遮蔽</h1>
+<p><em>Matt Pharr<br> NVIDIA</em></p><p><em>Simon Green<br> NVIDIA</em></p><p>实时计算机图形界最近开始体会到，用环境贴图中的复杂光照分布来照亮物体、而不是用少量简单光源，能带来真实感的提升。现实世界中，光从各个方向到达表面，并非只来自指向点光源或平行光的少数几个方向，这明显影响物体的外观。近来发展出多种技术来捕捉真实世界的光照（例如电影片场上的），并用它渲染物体，仿佛物体原始环境中的光所照亮，从而使计算机图形能与真实场景更无缝地融合。对完全合成的场景，这些技术可用于提升渲染图像的真实感：先渲染场景的环境贴图，再用它照亮场景内的角色和其他物体。这些技术不把贴图只用于完美的镜面反射，而是用它计算光泽表面和漫反射表面的光照。</p><p>本章介绍一种简单的实时光照环境技术。它只适用于漫反射表面，但足够高效，可用于实时。此外，该方法能准确考虑几何体遮挡环境所产生的阴影。与近来研究文献中一些更复杂的技术相比，这一技术计算出的着色值有若干可能的误差来源，但实现起来相对容易。（要让它工作，你不需要理解并实现一个球谐函数库！）这里描述的做法在许多情况下效果极佳，且能在现代硬件上交互运行。</p><p>该方法基于一个与视角无关的预处理：用光线追踪器计算遮挡信息，再在运行时用这些信息快速近似环境中的漫反射着色。这项技术最初由 Hayden Landis（2002）和 Industrial Light &amp; Magic 的同事提出；它已用于 ILM 的多个制作（用的是非实时渲染器！）。</p><h2>17.1 概述</h2><p>我们介绍的环境光照技术被命名为<em>环境光遮蔽</em>光照。理解这种做法的一种方式，是把它看作一个「智能」环境项，它根据模型表面每一点能看到多少外部环境而在表面上变化。另一种方式，是把它看作一个能高效支持复杂入射光分布的漫反射项。本章我们采用后一种解释。</p><p>这一技术的基本思路是：如果预处理一个模型，算出其上每一点能看到多少外部环境、又有多少环境被模型其他部分遮挡，那么在渲染时就能用这些信息计算漫反射着色项的值。结果是模型的缝隙被真实地压暗，暴露的部分真实地接收到更多光因而更亮。与使用标准着色模型相比，结果看上去真实得多。</p><p>这一做法还可以扩展到用环境光照作为照明来源：用一张表示来自各个方向入射光的环境贴图，确定到达物体每一点的光的颜色。为支持这一功能，除了记录模型上各点能看到多少环境，我们还要记录大部分可见光来自哪个方向。这两个量实际上定义了伸向场景的一个无遮挡方向锥，把它们结合起来，就能对着色点感兴趣的方向锥做一次极度模糊的环境贴图查询，以模拟该锥内的整体入射照明。</p><h2>17.2 预处理步骤</h2><p>给定一个待着色的任意模型，这一技术需要在模型每一点知道两件事：(1) 该点的「可及度」——该点上方半球有多大比例未被模型其他部分遮挡；(2) 无遮挡入射光的平均方向。图 17-1 以 2D 说明了这两个概念。给定表面上一点 <em>P</em>，其法线为 <strong>N</strong>，这里 <em>P</em> 上方半球大约三分之二被场景中其他几何体遮挡，三分之一未被遮挡。入射光的平均方向记为 <strong>B</strong>，它略微偏向法线方向 <strong>N</strong> 的右侧。粗略地说，<em>P</em> 处入射光的平均颜色可以通过对 <strong>B</strong> 向量周围无遮挡方向锥内的入射光求平均得到。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig17-01.jpg" alt="fig17-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig17-01.jpg" rel="noreferrer noopener">图 17-1</a> 计算可及度与平均方向</figcaption></figure><p>这个 <strong>B</strong> 向量和可及度值只依赖于模型、不依赖于光照，可以用光线追踪器离线预处理算出。本章的示例中，我们用的模型剖分得很细，所以在每个三角形中心计算这些值，再把相邻面值的平均存到各顶点上。然后把这些逐顶点值传入顶点着色器，让它们在每个像素处插值后供片元着色器使用。另一种做法是把它们存进纹理贴图；如果模型的剖分更粗，那样会更好。</p><p>代码清单 17-1 中的伪代码展示了我们的基本做法。在每个三角形中心，我们在以表面法线为中心的半球内生成一组射线。把这些射线射向场景，记录哪些与模型相交——说明该方向上的环境光到不了——哪些未被遮挡。我们计算无遮挡射线的平均方向，得到入射光平均方向的近似。（当然，算出的方向本身也可能被遮挡；这个问题我们直接忽略。）</p><h4>例 17-1　计算环境光遮蔽量的基本算法</h4><pre><code>For each triangle
+{
+  Compute center of triangle Generate set of rays over the hemisphere there
+      Vector avgUnoccluded = Vector(0, 0, 0);
+  int numUnoccluded = 0;
+  For each ray
+  {
+If (ray doesn't intersect anything) {
+avgUnoccluded += ray.direction;
+++numUnoccluded;
+  }
+}
+avgUnoccluded = normalize(avgUnoccluded);
+accessibility = numUnoccluded / numRays;
+}</code></pre><p>生成这些射线的一个简便办法是<em>拒绝采样</em>：在 <em>x</em>、<em>y</em>、<em>z</em> 均为 –1 到 1 的 3D 立方体内随机生成射线，拒绝那些不在法线周围单位半球内的。通过这一检验的方向就具有所需的分布。这种做法见代码清单 17-2 的伪代码。也可以使用更复杂的蒙特卡洛采样算法，以获得分布更好的采样方向集。</p><h4>例 17-2　用拒绝采样计算随机方向的算法</h4><pre><code>while (true)
+{
+  x = RandomFloat(-1, 1); // 介于 -1 与 1 之间的随机浮点数
+  y = RandomFloat(-1, 1);
+  z = RandomFloat(-1, 1);
+  if (x * x + y * y + z * z > 1)
+    continue; // 忽略落在单位球外
+  // 的采样
+  if (dot(Vector(x, y, z), N) < 0)
+    continue;
+  // 忽略 “朝下” 的方向
+  return normalize(Vector(x, y, z)); // 成功！
+}</code></pre><h2>17.3 硬件加速的遮挡计算</h2><p>可以用图形硬件代替软件光线追踪来加速遮挡信息的计算。阴影贴图提供了一种快速的图像空间方法来判定某点是否处于阴影中。（GeForce FX 有专门的硬件支持，能高速光栅化阴影映射所需的仅深度图像。）我们不必从表面每一点发射射线，可以反过来思考：用大量带阴影贴图的光源在一个大球面上把物体围住。表面上某点的遮挡量就是各光源阴影贡献的平均值。我们可以用浮点累积缓冲计算这个平均值。对 <em>n</em> 个光源，我们渲染场景 <em>n</em> 次，每次把投影光源移到球面上不同位置。把这些黑白图像累积起来，形成最终的遮挡图像。在极限情况下，这相当于模拟覆盖整个天空的大面光源。</p><p>要得到好的结果需要大量光源（128 到 1024 个），但现代图形硬件的性能意味着这一技术仍可能比光线追踪快。光源在球面上的分布也影响最终质量。最直白的方法是用极坐标，把光源按等间距的经度和纬度分布，但这容易在极点处聚集过多采样。应当改用球面上的均匀分布。如果物体站在地面上，就不需要整个半球的光源——用一个穹顶或半个球面即可。</p><p>另一个影响最终结果质量的问题是阴影贴图瑕疵。它们常表现为表面在受光到阴影过渡处的条带。把阴影项乘以一个关于法线和光照方向的函数——该函数保证背向光源的那一侧表面始终为黑——可以缓解这个问题。</p><p>这一方法的一个缺点是对每个光源需要两遍：一遍生成阴影贴图，一遍渲染带阴影的场景，再加上累积图像的开销。对 <em>n</em> 个光源，这意味着需要 2<em>n</em> 遍。把多个阴影贴图的效果在单遍中累积起来可能更快。由于当前硬件支持八套纹理坐标，可以在着色器中一次累积八个阴影。这意味着总共只需渲染 <em>n</em> + <em>n</em>/8 次场景。</p><p>这一做法还可以扩展，用来求平均无遮挡方向，即<em>弯曲法线</em>。我们可以用着色器计算指向光源的方向乘以阴影值，再把结果写入 RGB 输出颜色。遮挡信息可以存在 alpha 通道中。我们按与遮挡值相同的方式累积这些 RGB 法线值，最后对结果归一化，得到平均无遮挡法线。注意半精度（16 位）浮点累积缓冲的精度可能不足以准确表示这些向量的和。</p><p>到目前为止，我们描述的技术在相机空间中生成遮挡图像，但很多时候我们想要生成存储遮挡信息的纹理。如果我们用的物体具有唯一的纹理坐标（即纹理覆盖其整个表面且无重叠），这就相对容易。我们可以用一个顶点程序展开模型，把 UV 纹理坐标当作屏幕空间位置。计算照常进行，只是我们渲染的不是物体本身，而是展开后的矩形网格。一旦生成这张遮挡纹理，就可以像本章其余部分所述那样在实时渲染中使用。</p><h2>17.4 用环境光遮蔽贴图渲染</h2><p>作为示例，我们把这一方法用在一个置于平面上的复杂模型上。（这个场景没有纹理贴图，以便更清楚地看到方法的效果。不过纹理化很容易并入这一技术。）我们为 150,000 个三角形各用 512 条射线计算可及度值和平均无遮挡方向；在 AMD Athlon 1800XP CPU 上用软件光线追踪器预处理约花了四分钟。然后把这些信息写进磁盘文件，供演示程序使用。作为对比，图 17-2 显示该模型用一个简单漫反射着色模型、由点光源照明的图像，没有阴影。注意那种典型的计算机图形不真实感和着色复杂度的匮乏。例如，生物的下腹部和它远侧那条腿的内侧都太亮了。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig17-02.jpg" alt="fig17-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig17-02.jpg" rel="noreferrer noopener">图 17-2</a> 用简单漫反射着色模型着色的场景</figcaption></figure><p>在图 17-3 中，我们把颜色设为光线追踪预处理算出的各点可及度来给模型着色。注意模型腿部下方的缝隙和腹部各点比背部这样几乎完全暴露的区域更暗。图 17-2 中因表面法线相对于点光源位置的朝向变化而产生的明暗骤变被抹平了，呈现出真实的「阴天天空光」效果。地面上生物下方有一片非常柔和的阴影，这是生物躯体减少了到达其下方各点的光量所致。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig17-03.jpg" alt="fig17-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig17-03.jpg" rel="noreferrer noopener">图 17-3</a> 用可及度信息着色的场景</figcaption></figure><p>这片阴影有助于让模型落在地面上，表明它确实在地面上，而不是像图 17-2 那样可能显得漂浮在上方。</p><p>最妙的是，用可及度值着色甚至不需要先进的可编程图形硬件；用很老的图形硬件就能做到，只要随模型每个顶点传入合适的颜色值。因此它能在各种 GPU 架构上以峰值性能运行。如果这个模型有漫反射纹理贴图，着色时只要把纹理值乘以可及度即可。</p><h4>17.4.1 环境光照</h4><p>如果有可编程图形硬件，我们可以更精细地利用可及度信息，生成更复杂的着色效果。这里我们用场景环境贴图中捕捉到的光照，计算模型处在一个复杂真实环境中会是什么样子的近似。本示例用的是一张佛罗伦萨伽利略墓的环境贴图，如图 17-4 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig17-04.jpg" alt="fig17-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig17-04.jpg" rel="noreferrer noopener">图 17-4</a> 佛罗伦萨伽利略墓的环境贴图，经纬度格式</figcaption></figure><p>这张环境贴图的参数化方式与如今交互图形中广泛使用的立方体贴图和球体贴图不同。它被称为 <em>lat-long</em> 贴图，即经纬度贴图（<em>latitude-longitude</em>），因为其参数化类似于描述地球位置所用的经纬度。它用球面的球坐标参数化把方向映射到贴图上的点：垂直方向 <em></em> 从 0 到 <em></em>，水平方向 <em></em> 从 0 到 2<em></em>，<em>x</em> = sin <em></em> cos <em></em>，<em>y</em> = sin <em></em> sin <em></em>，<em>z</em> = cos <em></em>。给定方向 (<em>x</em>, <em>y</em>, <em>z</em>)，反解这些方程得到 (<em></em>, <em></em>) 值，再除以 (2<em></em>, <em></em>) 映射到贴图中的纹理坐标。我们使用这类环境贴图，是因为它让我们能做极度模糊的查询而不出瑕疵；可惜跨立方体多个面的模糊立方体贴图查询，当前硬件处理不正确。</p><p>用这类环境贴图着色的程序，基本思路是这样：我们希望利用已有的信息，算出着色点处有多少光到达表面的良好近似。影响这个值的因素有两个：(1) 该点上方半球中哪些部分未被该点与环境贴图之间的几何体遮挡；(2) 沿这些方向的入射光是什么。图 17-5 显示了这一场景的两种情况。左侧，着色点只能看到其上方方向的一小部分，用方向向量 <strong>B</strong> 和表示方向锥的圆圈标出；这里的可及度非常低。右侧，更多的光沿更大范围的方向到达该点。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig17-05.jpg" alt="fig17-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig17-05.jpg" rel="noreferrer noopener">图 17-5</a> 近似不同量的可见性</figcaption></figure><p>预处理算出的可及度值告诉我们半球有多大比例能看到环境贴图，平均可见方向则给出估计入射光所围绕的方向的近似。尽管这个方向可能指向实际被遮挡的方向（例如半球中有两块分离的区域未被遮挡而其余被遮挡时，平均方向可能落在两者之间），实践中它通常效果不错。</p><p>我们用的基本片元着色器见代码清单 17-3。入射光的平均方向通过 <code>B</code> 变量传入，半球未被遮挡的比例通过 <code>accessibility</code> 传入；<code>envlatlong</code> 采样器绑定到图 17-4 的环境贴图。</p><h4>例 17-3　用可及度值与环境贴图着色的片元着色器</h4><pre><code>half4 main(half3 B
+           : TEXCOORD0, half accessibility
+           : TEXCOORD1, uniform sampler2D envlatlong)
+    : COLOR
+{
+  half2 uv = latlong(B);
+  half2 blurx, blury;
+  computeBlur(uv, accessibility, blurx, blury);
+  half3 Cenv = tex2D(envlatlong, uv, blurx, blury).xyz;
+  return half4(accessibility * Cenv, 1);
+}</code></pre><p>着色器有三个主要步骤。首先，调用代码清单 17-4 中的 <code>latlong()</code> 函数，计算经纬度环境贴图中的 (<em>u</em>, <em>v</em>) 纹理坐标。其次，代码清单 17-5 中的 <code>computeBlur()</code> 函数确定对着色点在贴图上模糊的区域。最后，用 <code>tex2D()</code> 函数的一个允许传入导数的变体做模糊环境贴图查询。导数指定做纹理滤波的贴图区域，给出该锥内的平均光颜色。结果按可及度值缩放后返回。借助 mipmap，在图形硬件中计算环境贴图大片区域的模糊可以非常高效。</p><h4>例 17-4　<code>latlong()</code> 函数定义</h4><pre><code>#define PI 3.1415926
+half2 latlong(half3 v)
+{
+  v = normalize(v);
+  half theta = acos(v.z); // +z 为向上方向
+  half phi = atan2(v.y, v.x) + PI;
+  return half2(phi, theta) * half2(.1591549, .6366198);
+}</code></pre><p>为清晰起见，我们把片元着色器用到的两个子程序分别列出。首先是 <code>latlong()</code>，它接收一个 3D 方向，求出该方向在经纬度贴图中应映射到的 2D 纹理位置。由于硬件不直接支持经纬度贴图，这个计算需要我们自己完成。</p><h4>例 17-5　<code>computeBlur()</code> 函数定义</h4><pre><code>void computeBlur(half2 uv, half accessibility, out half2 blurx, out half2 blury)
+{
+  half width = sqrt(accessibility);
+  blurx = half2(width, 0);
+  blury = half2(0, width);
+}</code></pre><p>不过，由于反三角函数计算代价高，在我们的实现中把 <code>theta</code> 和 <code>phi</code> 值以带符号八位分量的形式存进一张 256x256 的立方体贴图纹理，用一次立方体贴图查询代替整个 <code>latlong()</code> 函数。这一改动使编译结果省下约五十条片元程序指令，而最终图像质量毫无损失。</p><p>这个着色器另一个麻烦之处是算出要对环境贴图滤波多大范围。（回想图 17-5，左侧的点接收光的方向锥比右侧的点小。）我们在 <code>computeBlur()</code> 函数中对滤波区域做了非常粗略的近似；它只捕捉了一阶效应——可及度越高，滤波区域应越大。</p><p>把这个着色器应用到模型上的结果见图 17-6。该着色器编译后约十条 GPU 指令，场景在现代 GPU 上以实时帧率渲染。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig17-06.jpg" alt="fig17-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig17-06.jpg" rel="noreferrer noopener">图 17-6</a> 用可及度信息与环境贴图照明着色的场景</figcaption></figure><h2>17.5 结论</h2><p>我们这里描述的环境光照技术用了许多近似，但实践中效果很好，并已在电影特效渲染中证明了自己。该方法把问题分成两部分：一个相对昂贵的预处理，只算出渲染时快速着色所需的恰当信息。预处理不依赖于光照环境贴图，因此场景中的动态光照可以方便地使用。由于用的是场景环境贴图极度模糊后的版本，它不必每帧重新渲染。用这一方法着色的物体，其视觉外观比使用标准图形光照模型真实得多。</p><p>带纹理贴图的表面和标准光源很容易并入这一方法。若再加上少量标准点光源或平行光来投硬阴影、提供「主」光并产生镜面高光，效果会更好。</p><p>虽然环境光照的许多应用都着眼于「高动态范围」环境贴图的优势（即纹素值为浮点、从而能编码大范围强度的贴图），这一方法即便用在标准的每通道八位纹理贴图上效果也不错。因为它只模拟漫反射表面的反射——把许多方向上的照明求平均——所以准确表示来自少数方向的强光就不那么重要，而那对更光泽的反射是必需的。</p><p>本章没有讨论动画。动画角色模型从一个姿势变到另一个姿势时，整个模型上的遮挡显然会变化。我们认为，对一系列参考姿势计算遮挡信息，再按角色姿势在结果之间插值，实践中会效果不错，但我们没有在这里实现这一改进。不过 NVIDIA 的「Ogre」演示成功使用了这一做法。见图 17-7。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig17-07a.jpg" alt="fig17-07a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig17-07a.jpg" rel="noreferrer noopener">图 17-7</a> Ogre 角色</figcaption></figure><h2>17.6 延伸阅读</h2><p><em>本节以更一般的方式介绍环境光照的其他做法。特别是，环境光遮蔽可以在球谐光照技术的框架下理解；它是一种极端简化，只用一阶球谐函数来表示反射。</em></p><p><a id="ch17bib01_01"></a>Landis, Hayden. 2002. "Production-Ready Global Illumination." 课程 16 讲义, SIGGRAPH 2002. 在线资源：<strong><a href="http://www.renderman.org/RMR/Books/sig02.course16.pdf.gz" rel="noreferrer noopener">http://www.renderman.org/RMR/Books/sig02.course16.pdf.gz</a></strong> 。<em>本章描述并由我们用 Cg 实现的想法，是 Hayden Landis 与 ILM 其他人提出的。Hayden 在这些讲义中记录了这一做法，这种着色技术发明者的完整名单见文末。</em></p><p><a id="ch17bib01_02"></a>Zhukov, S., A. Iones, and G. Kronin. 1998. "An Ambient Light Illumination Model." 载 <em>Proceedings of Eurographics Rendering Workshop '98</em>, pp. 45–56。 <em>Zhukov 等人在本文中描述了一种基于光线追踪预处理的类似「智能环境光」方法，不过他们没有把它用于环境光照。</em></p><p><a id="ch17bib01_03"></a>Blinn, J. F., and Newell, M. E. 1976. "Texture and Reflection in Computer Generated Images." <em>Communications of the ACM</em> 19(10)(October 1976), pp. 542–547。 <em>用环境贴图为镜面物体照明的想法最早在本文中描述。</em></p><p><a id="ch17bib01_04"></a>Miller, Gene S., and C. Robert Hoffman. 1984. "Illumination and Reflection Maps: Simulated Objects in Simulated and Real Environments." Advanced Computer Graphics Animation 课程讲义, SIGGRAPH 84. <em>用于为非镜面物体照明的应用最早在这些课程讲义中描述。</em></p><p><a id="ch17bib01_05"></a>Debevec, Paul. 1998. "Rendering Synthetic Objects into Real Scenes: Bridging Traditional and Image-Based Graphics with Global Illumination and High Dynamic Range Photography." 载 <em>Proceedings of SIGGRAPH 98</em>, pp. 189–198。 <em>这篇论文发表后，对环境光照的兴趣大幅增长。</em></p><p><a id="ch17bib01_06"></a>Cohen, Michael, and Donald P. Greenberg. 1985. "The Hemi-Cube: A Radiosity Solution for Complex Environments." <em>本文首次描述了用于辐射度的半立方体算法，这是遮挡预处理的另一种做法，能轻松地在其中利用图形硬件。</em></p><p><em>Ramamoorthi 与 Hanrahan 以及 Sloan 等人近来的一系列 SIGGRAPH 论文，为基于球谐函数的快速环境光照确立了关键数学原理与算法。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-17-ambient-occlusion" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-17-ambient-occlusion</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

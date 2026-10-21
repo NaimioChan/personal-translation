@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 26 章　按颜色做物体检测：用 GPU 处理实时视频图像 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 26 章　按颜色做物体检测：用 GPU 处理实时视频图像」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 26 章　基于颜色的物体检测：用 GPU 做实时视频图像处理</h1>
+<p><em>Ralph Brunner<br> Apple</em></p><p><em>Frank Doepke<br> Apple</em></p><p><em>Bunny Laden<br> Apple</em></p><p>本章介绍一种基于 GPU 的技术：找出场景中某个唯一颜色物体的位置，再利用该位置信息做视频特效。这项技术以非典型的方式使用像素着色器：计算质心与面积，而不是做逐像素效果。</p><p>物体检测与跟踪在机器人、监控等领域都有应用。随着拥有摄像头的电脑用户不断增多，用 GPU 为游戏跟踪物体、实现新的用户交互模式的可能性也在增加。本章讨论物体检测的一种用途：在跟踪到的物体上叠加一张图像。可以看到，这个实现的计算需求很低，我们每一视频帧都能处理整幅图像区域，不需要任何复杂的感兴趣区域跟踪方法。把质心计算交给 GPU，CPU 就空出来做视频解码与编码等其他任务。</p><p>由于我们的程序在 Mac OS X 上使用 Core Image 图像处理框架，本章先简要介绍 Core Image、我们为何使用它以及它如何工作。接着概述基于颜色的物体跟踪，然后描述处理视频图像的计算与内核例程。</p><h2>26.1 图像处理的抽象</h2><p>Core Image 是内建于 Mac OS X 的图像处理框架。它利用 GPU 完成实时、像素精确的图像处理。我们选择用 Core Image 而不是内核级技术来解决物体检测与跟踪问题，是因为 Core Image 能做到以下几点：</p><ul><li>把 GPU 执行的底层工作抽象成易用的高层编程接口。你不必了解特定硬件的底层实现细节，也能看懂并改造本章介绍的技术。Core Image 会替你处理所有硬件相关的优化，必要时还会转换图像格式。</li><li>只在必要时处理。Core Image 以惰性为前提，因此效率极高。它不做不必要的数据处理，一旦要处理，也走最简单的路径。对图像施加滤镜时，只有当需要把像素画到目标上时 Core Image 才处理像素。如果依次施加多个滤镜，Core Image 可能改变处理顺序或合并操作，以尽可能优化的方式完成处理。</li></ul><p>我们用 Core Image 为物体跟踪问题构建了几个自定义滤镜。在阅读具体细节之前，你应先大致了解处理路径、Core Image 滤镜的组成部分以及相关术语。</p><p>用于物体跟踪的自定义 Core Image 滤镜由 Objective-C 部分和 C 部分组成。滤镜的 Objective-C 部分执行图像处理所需的所有高层任务，并调用操作像素的底层例程。滤镜按以下步骤生成输出图像：</p><ol><li>设置一个或多个称为<em>采样器</em>的对象，从源图像取像素。必要时，采样器可以在把像素交给处理之前先对像素施加变换。</li><li>施加<em>内核例程</em>来处理采样器提供的像素。内核例程执行逐像素处理，总是输出一个四元素向量。通常这个向量表示 RGBA（红、绿、蓝、alpha），但正如本章将看到的，并不总是如此。一个滤镜可以依次施加一个或多个内核例程，也可以重复施加同一个内核。施加多个内核例程的滤镜称为<em>多遍滤镜</em>。</li><li>把结果图像写入目标，最常见的目标是屏幕。</li></ol><p>Core Image 滤镜的 C 部分包含在 GPU 上执行逐像素处理的内核例程。内核例程使用 Core Image 内核语言，它是 OpenGL 着色语言的扩展。该扩展定义了一些函数、数据类型和关键字，使指定图像处理操作变得容易。你可以把 Core Image 内核语言的符号与 Core Image 支持的那部分 OpenGL 着色语言例程一起使用。</p><p>本章不会展示 Objective-C 部分的代码，它在本书附带 DVD 的示例中。本章会展示构成 Core Image 滤镜 C 部分的大部分内核例程代码。</p><p>现在你对 Core Image 滤镜的构成已有一些了解，接下来看看 Core Image 如何处理图像。处理过程示意见 <a href="https://developer.download.nvidia.com/books/gpugems3/26fig01.jpg" rel="noreferrer noopener">图 26-1</a>。滤镜先汇集源图像（可能有多张），然后为每个源设置一个采样器，定义采样器从源取到像素后可能需要的变换。设置采样器很直接，多数情况下就是创建并命名一个采样器对象，再把它挂到某个图像源上。接着滤镜调用一个例程来施加内核，并传入以下内容：</p><ul><li>要施加的内核例程的名字。</li><li>内核所需的采样器。</li><li>内核所需参数的列表。</li><li>控制 Core Image 如何求值该内核的选项字典（键值对）。例如，你可能想指定输出图像的尺寸。</li></ul><figure><img src="https://developer.download.nvidia.com/books/gpugems3/26fig01.jpg" alt="26fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/26fig01.jpg" rel="noreferrer noopener">图 26-1</a> Core Image 中的像素处理路径</figcaption></figure><p>施加内核时，Core Image 会建立一条计算路径，从目标开始回溯到源。这看起来有点反，但这种前瞻行为相当高效，因为它让 Core Image 能把处理限制在计算最终结果所必需的像素上。看 <a href="https://developer.download.nvidia.com/books/gpugems3/26fig01.jpg" rel="noreferrer noopener">图 26-1</a>，你会发现需要处理的只是两张源图像中相互重叠的那些像素。通过前瞻，Core Image 确定出一个定义域：该区域之外的所有像素都是透明的。不会被看到的像素就不必处理。前瞻的替代做法是处理每一个像素，最后再剔除不需要的。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/26fig01.jpg" rel="noreferrer noopener">图 26-1</a> 中各源图像的阴影区域是<em>感兴趣区域</em>（ROI）。ROI 定义了源图像中采样器取像素信息供内核处理的区域。ROI 与定义域之间的关系决定了滤镜在施加内核之前是否需要额外的设置工作。二者可能有以下关系：</p><ul><li>它们可以<em>完全重合</em>：源与目标之间是一一映射。例如，色相滤镜把 ROI 中工作空间坐标 (<em>r</em>, <em>s</em>) 处的像素处理为定义域中工作空间坐标 (<em>r</em>, <em>s</em>) 处的像素。</li><li>它们可以<em>相互依赖</em>，但以某种方式调制。最有趣的一些滤镜——例如模糊和畸变——在计算一个目标像素时会用到许多源像素。例如，畸变滤镜可能用 ROI 中工作坐标空间里的像素 (<em>r</em>, <em>s</em>) 及其邻域像素，生成定义域中的单个像素 (<em>r</em>, <em>s</em>)。</li><li>它们可以<em>彼此独立</em>。此时定义域由采样器提供的查找表中的值算出。映射或表中值的位置与源图像、目标中的工作空间坐标无关。着色图像中位于 (<em>r</em>, <em>s</em>) 的值，不必是产生定义域中工作空间坐标 (<em>r</em>, <em>s</em>) 处像素的那个值。许多滤镜把着色图像或查找表提供的值与图像源结合使用。例如，色带或近似 <code>arcsin()</code> 函数之类的表所提供的值，与工作坐标的概念无关。</li></ul><p>除非另行指定，Core Image 假定 ROI 与定义域重合。物体跟踪问题需要某些滤镜，我们必须为它们定义感兴趣区域。</p><h2>26.2 基于颜色的物体检测</h2><p>如果你看过网球比赛的观众席，就明白颜色跟踪是怎么回事。绿色网球在球场两边来回飞，观众的头也跟着左右转。本节将介绍如何处理一颗运动球的视频输入，并在球上叠加一张鸭子的图像，如 <a href="https://developer.download.nvidia.com/books/gpugems3/26fig02.jpg" rel="noreferrer noopener">图 26-2</a> 所示。我们在一台配备 NVIDIA GeForce 7300 GT 显卡的 Macintosh 电脑上实时（每秒 30 帧）处理 1280x720 视频。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/26fig02.jpg" alt="26fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/26fig02.jpg" rel="noreferrer noopener">图 26-2</a> 从抛球到抛鸭子</figcaption></figure><p>如 <a href="https://developer.download.nvidia.com/books/gpugems3/26fig03.jpg" rel="noreferrer noopener">图 26-3</a> 所示，用颜色检测物体再跟踪它需要完成这些任务：</p><ol><li>把每个像素与目标颜色值比较，生成掩码图像。落在范围内的像素转为白色，落在范围外的转为黑色。</li><li>求目标颜色的质心。被跟踪颜色的质心确定了叠加图像的中心位置。我们用多遍像素处理内核来计算位置。这一阶段的输出是一张 1x1 像素的图像，前两个分量（<code>pixel.rg</code>）是质心坐标，第三个分量（<code>pixel.b</code>）是面积。我们稍后用面积估计物体到摄像机的距离。</li><li>把图像合成到检测到的物体上。假设物体形状相对画面不变，那么被跟踪颜色面积的变化与物体到观察者距离的平方成正比。我们用这一信息缩放叠加图像，使叠加图像大小相应增减。（对不断膨胀的气球或不断扩展的液面这类物体，该假设不成立，但对我们示例中的球体效果良好。）</li></ol><figure><img src="https://developer.download.nvidia.com/books/gpugems3/26fig03.jpg" alt="26fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/26fig03.jpg" rel="noreferrer noopener">图 26-3</a> 跟踪颜色所需的各项任务</figcaption></figure><p>下面各节将更详细地讨论每一项任务。</p><h4>26.2.1 创建掩码</h4><p>我们用 Mask from Color 滤镜创建掩码，它有两个输入参数：输入颜色和输入阈值。输入颜色定义要跟踪的颜色。输入阈值定义输入颜色周围参与跟踪计算的颜色值范围，如 <a href="https://developer.download.nvidia.com/books/gpugems3/26fig04.jpg" rel="noreferrer noopener">图 26-4</a> 所示。选阈值有点像门手艺。你要保证它足够小，以免引入多余噪声（见后面的 <a href="https://developer.download.nvidia.com/books/gpugems3/26fig05.jpg" rel="noreferrer noopener">图 26-5</a>），同时又要足够大，以容纳待跟踪物体颜色的光照变化。回想一下，Core Image 滤镜（此处即 Mask from Color）执行的是设置采样器和施加内核例程这些高层任务。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/26fig04.jpg" alt="26fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/26fig04.jpg" rel="noreferrer noopener">图 26-4</a> 锁定颜色</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/26fig05.jpg" alt="26fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/26fig05.jpg" rel="noreferrer noopener">图 26-5</a> 掩码后的图像</figcaption></figure><p>Mask from Color 滤镜调用代码清单 26-1 中的 <code>maskFromColor()</code> 内核例程来计算掩码。在详细描述这个内核例程之前，先回顾代码清单 26-1 中用到的 Core Image 内核语言关键字，从两个数据类型开始：<code>sampler</code> 和 <code>__color</code>。前面已经介绍过采样器；<code>sampler</code> 关键字指定的对象从源图像（或在适当情况下从查找表）取样本。<code>__color</code> 数据类型指定的颜色值向量，Core Image 必须把它匹配到当前工作色彩空间。</p><p><code>kernel</code> 关键字标记一个内核例程；它放在返回类型之前，返回类型总是 <code>vec4</code> 数据类型。内核例程的所有参数都隐式标记为 <code>uniform</code>。不能把参数标记为 <code>out</code> 和 <code>inout</code>，这是不允许的。</p><p>清单中包含几个 Core Image 内核语言特有的函数。<code>samplerCoord()</code> 函数返回当前像素在采样器空间中的位置（一个二元素向量）。它负责源到工作坐标空间的所有坐标映射（例如旋转和缩放）。<code>sample()</code> 函数返回采样器在给定位置产生的像素值，位置以采样器空间给出。</p><h4>示例 26-1. 颜色掩码滤镜所用的例程</h4><pre><code>
+vec3 normalizeColor(vec3 color)
+{
+  return color / max(dot(color, vec3(1.0 / 3.0)), 0.001);
+}
+kernel vec4 maskFromColor(sampler image, __color color, float threshold)
+{
+  float d;
+  vec4 p;
+  // 计算当前像素颜色与参考颜色之间的距离。
+  p = sample(image, samplerCoord(image));
+  d = distance(normalizeColor(p.rgb), normalizeColor(color.rgb));
+  // 若颜色差大于阈值，则返回黑色。
+  return (d > threshold) ? vec4(0.0) : vec4(1.0);
+}</code></pre><p>在调用代码清单 26-1 中的 <code>maskFromColor()</code> 内核例程之前，Mask from Color 滤镜会创建并设置一个采样器对象，从视频输入图像取像素。然后它把采样器对象、目标颜色和阈值传给 <code>maskFromColor()</code> 内核例程。该内核例程先归一化颜色值，以补偿光照条件造成的物体明暗变化，再计算当前像素颜色与目标颜色之间的距离。若该颜色值小于阈值，内核例程返回 (1.0, 1.0, 1.0, 1.0)，否则返回 (0.0, 0.0, 0.0, 0.0)。针对 <a href="https://developer.download.nvidia.com/books/gpugems3/26fig02.jpg" rel="noreferrer noopener">图 26-2</a> 中输入图像返回的掩码见 <a href="https://developer.download.nvidia.com/books/gpugems3/26fig05.jpg" rel="noreferrer noopener">图 26-5</a>。</p><h4>26.2.2 求质心</h4><p>我们以掩码图像中所有坐标的加权平均来计算掩码区域的质心。设 <em>m</em>(<em>x</em>, <em>y</em>) 为掩码图像在坐标 (<em>x</em>, <em>y</em>) 处的值，则计算质心的公式为</p><p><strong>公式 1</strong></p><p><a><img alt="equ26-1.jpg" src="https://developer.download.nvidia.com/books/gpugems3/equ26-1.jpg"/></a></p><p>我们的实现是代码清单 26-2 中的 <code>coordinateMask()</code> 内核例程，它先创建一张包含以下三个分量的图像：</p><table><tbody><tr><td><p>(<em>x</em> · <em>m</em>(<em>x</em>, <em>y</em>),</p></td><td><p><em>y</em> · <em>m</em>(<em>x</em>, <em>y</em>),</p></td><td><p><em>m</em>(<em>x</em>, <em>y</em>)).</p></td></tr></tbody></table><p>该例程使用 Core Image 内核语言函数 <code>destCoord()</code>，它返回当前正在计算的像素在工作空间坐标中的位置。</p><h4>示例 26-2. 创建掩码的例程</h4><pre><code>
+kernel vec4 coordinateMask(sampler mask, vec2 invSize)
+{
+  vec4 d;
+  // 构造向量 (x,y, 1,1)，把坐标
+  // 归一化到 0-1 范围。
+  d = vec4(destCoord() * invSize, vec2(1.0));
+  // 返回该向量乘以掩码值
+  return sample(mask, samplerCoord(mask)) * d;
+}</code></pre><p>注意，如果把 <code>coordinateMask()</code> 内核例程算出的所有像素值求和，结果的前两个分量就对应公式 1 的分子，第三个分量对应该公式的分母。我们的实现不求总和，而是先求这些像素的均值，再乘以（缩放）像素数得到总和。</p><p>我们通过反复降采样来计算图像的平均值，从 <em>n</em>x<em>n</em> 像素降到 1x1 像素，如 <a href="https://developer.download.nvidia.com/books/gpugems3/26fig06.jpg" rel="noreferrer noopener">图 26-6</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/26fig06.jpg" alt="26fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/26fig06.jpg" rel="noreferrer noopener">图 26-6</a> 降采样图像以计算平均像素值</figcaption></figure><p>我们用代码清单 26-3 中的 <code>scaleXY4()</code> 内核例程，在单遍内沿水平和垂直方向各降采样四倍。注意该例程只有四条采样指令，却收集了 16 个像素的值。在采样位置之间取纹素利用了线性插值硬件，一次操作即可取得一个 2x2 像素块的平均值。</p><h4>示例 26-3. 按四倍降采样的例程</h4><pre><code>
+kernel vec4 scaleXY4(sampler image)
+{
+  vec4 p0, p1, p2, p3;
+  vec2 d;
+  // 取我们要计算的坐标处的位置，
+  // 并将其放缩 4 倍。
+  d = 4.0 * destCoord();
+  // 取当前像素周围的像素。
+  p0 = sample(image, samplerTransform(image, d + vec2(-1.0, -1.0)));
+  p1 = sample(image, samplerTransform(image, d + vec2(+1.0, -1.0)));
+  p2 = sample(image, samplerTransform(image, d + vec2(-1.0, +1.0)));
+  p3 = sample(image, samplerTransform(image, d + vec2(+1.0, +1.0)));
+  // 对取到的像素求和，再乘以 0.25。
+  return 0.25 * (p0 + p1 + p2 + p3);
+}</code></pre><p><code>samplerTransform()</code> 函数是另一个 Core Image 内核语言函数。它返回源（第一个参数）坐标空间中与工作空间坐标（第二个参数）所定义位置相关联的位置。</p><p>如果图像不是正方形，最终就得不到 1x1 的图像。这种情况下，你需要在水平或垂直方向按二倍降采样，直到结果缩为单个像素。</p><p>如果图像的宽度或高度不是 2 的幂，该方法计算平均值的区域会比实际图像更大。由于图像在定义域之外为零，结果只是差一个常数因子：图像面积除以降采样后的面积。我们提供的实现用 Core Image 内置的 <code>CIColorMatrix</code> 滤镜适当缩放结果，因此该滤镜对任意图像尺寸都能正确工作。</p><p>在降采样各遍结束时，我们用代码清单 26-4 中的 <code>centroid()</code> 内核例程做一次除法运算得到质心。这一阶段的输出是一张 1x1 像素的图像，前两个分量（<code>pixel.rg</code>）是质心坐标，第三个分量（<code>pixel.b</code>）是面积。</p><h4>示例 26-4. 输出质心与面积的内核例程</h4><pre><code>
+kernel vec4 centroid(sampler image)
+{
+  vec4 p;
+  p = sample(image, samplerCoord(image));
+  p.xy = p.xy / max(p.z, 0.001);
+  return p;
+}</code></pre><h4>26.2.3 把图像合成到输入信号上</h4><p>为展示质心计算的结果，我们用代码清单 26-5 中的 <code>duckComposite</code> 内核例程，把一张图像（此处是鸭子）合成到视频信号之上。我们还按距离估计值缩放合成后的图像，这个估计值就是上一阶段面积的平方根。注意 Core Image 默认以预乘 alpha 存储图像数据，这使此处的合成变得简单（见代码清单 26-5 最后一行）。</p><h4>示例 26-5. 叠加图像的内核例程</h4><pre><code>
+kernel vec4 duckComposite(sampler image, sampler duck, sampler location,
+                          vec2 size, vec2 offset, float scale)
+{
+  vec4 p, d, l;
+  vec2 v;
+  p = sample(image, samplerCoord(image));
+  // 取质心位置。
+  l = sample(location, samplerTransform(location, vec2(0.5, 0.5)));
+  // 平移到质心位置，并按距离估计值
+  // 放缩图像，此处的距离估计值即
+  // 面积的平方根。
+  v = scale * (destCoord() - l.xy * size) / sqrt(l.z) + offset;
+  // 取鸭子图像中对应的像素，合成到
+  // 视频之上。
+  d = sample(duck, samplerTransform(duck, v));
+  return (1.0 - d.a) * p + d * p.a;
+}</code></pre><h2>26.3 结论</h2><p>本章介绍了一种用颜色检测并跟踪物体的技术。我们使用 Core Image 图像处理框架，因为作为高层框架，它让本章的技术能在多种图形硬件上工作，无需做硬件相关的改动。该技术性能良好；在配备 NVIDIA GeForce 7300 GT 显卡的 Macintosh 电脑上，它能实时处理高清视频。</p><p>有两种情况会限制该技术的效果：隔行视频和较低的浮点精度。隔行视频信号先显示一帧的奇数行，再显示偶数行。连接到电脑的视频摄像机通常会在显示前对信号去隔行。去隔行会劣化信号，因此可能干扰物体跟踪。使用逐行扫描视频（各行依次显示）可以提高检测与跟踪的成功率。如果没有支持逐行扫描的设备，可以只用奇数场或偶数场做质心与面积计算。</p><p>虽然大多数现代显卡都有很高的浮点精度，精度较低的显卡会让中值滤波产生条带结果，从而使叠加图像或你施加的任何效果出现抖动。要获得平滑结果，应使用具备完整 32 位 IEEE 浮点精度的显卡。</p><h2>26.4 延伸阅读</h2><p>Apple, Inc. 2006. "Core Image Kernel Language Reference."，可在线获取：<a href="http://developer.apple.com/documentation/GraphicsImaging/Reference/CIKernelLangRef/" rel="noreferrer noopener">http://developer.apple.com/documentation/GraphicsImaging/Reference/CIKernelLangRef/</a>。</p><p>Apple, Inc. 2007. "Core Image Programming Guide."，可在线获取：<a href="http://developer.apple.com/documentation/GraphicsImaging/Conceptual/CoreImaging/" rel="noreferrer noopener">http://developer.apple.com/documentation/GraphicsImaging/Conceptual/CoreImaging/</a></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-26-object-detection-color-using-gpu-real-time-video" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-26-object-detection-color-using-gpu-real-time-video</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

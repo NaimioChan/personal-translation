@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 39 章　用渐进细化辐射度做全局光照 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 39 章　用渐进细化辐射度做全局光照」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 39 章　用渐进细化辐射度实现全局光照</h1>
+<p><em>Greg Coombe</em><br> <em>北卡罗来纳大学教堂山分校</em></p><p><em>Mark Harris</em><br> <em>NVIDIA Corporation</em></p><p>随着强大图形硬件的出现，人们开始把目光越过局部光照模型，转向更复杂的全局光照模型，例如由光线追踪和辐射度带来的那些模型。全局光照纳入阴影与互反射这类物体间效果，能达到一种令人信服的视觉真实感，这是局部光照模型难以实现的。</p><p>本章描述一种完全在 GPU 上完成全部计算的辐射度方法。辐射度能量存储在纹素中，用片元程序计算形状因子与物体间可见性。我们把渐进细化辐射度表述为一次「聚集读」操作，从而避开向内存任意位置写入的问题——聚集读具有规则的内存访问模式，适合在当前 GPU 上运行。</p><p>图 39-1 展示了用我们的系统渲染的图像，其中可见全局光照能带来的引人注目的效果，例如软阴影与间接光照。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/39_radiosity_01.jpg" alt="39_radiosity_01.jpg"><figcaption>图 39-1 用 GPU 加速辐射度解算的场景</figcaption></figure><h2>39.1 辐射度基础</h2><p>辐射度是求解全局光照问题的一种有限元方法（Cohen 与 Wallace 1993）。它把场景分解成许多小元素，计算元素之间传递了多少能量。每对元素之间传递的能量比例由一个称为<em>形状因子</em>的公式描述。下面是形状因子公式的一个简单版本（Cohen 与 Wallace 1993），给出场景中表面上两个微元之间的形状因子：</p><p><img alt="ch39_eqn001.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch39_eqn001.jpg"/></p><p>该公式由两部分组成：一个可见性项和一个几何项。几何项说明元素 <em>i</em> 与 <em>j</em> 之间传递的能量比例是两者距离与相对朝向的函数。可见性项 <em>V</em>(<em>i</em>, <em>j</em>) 对相互遮挡的元素取 0，对彼此完全可见的元素取 1。</p><p>这个公式只有在 <em>i</em> 与 <em>j</em> 是无穷小面积（或相距足够远可以这样处理）时才准确。然而为提升计算速度，我们想使用大面积元素，这就破坏了该假设。处理大面积元素的一种办法是对元素面积显式积分。由于那样计算代价高昂，我们可以用定向圆盘近似这些大元素（Wallace 等 1989）。这种做法如图 39-2 所示，这种情况下的形状因子为：</p><p><img alt="ch39_eqn002.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ch39_eqn002.jpg"/></p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/39_radiosity_02.jpg" alt="39_radiosity_02.jpg"><figcaption>图 39-2 定向圆盘形状因子</figcaption></figure><h4>39.1.1 渐进细化</h4><p>经典辐射度算法（Goral 等 1984）构造并求解一个由两两形状因子组成的大型线性方程组。这些方程把某个元素的辐射度描述为来自其他每个元素的能量按其形状因子与该元素反射率 <em>r</em> 加权后的函数。因此经典线性方程组需要 <em>O</em>(<em>N</em> <sup>2</sup>) 的存储，对大场景而言难以承受。渐进细化算法（Cohen 等 1988）在运行中即时计算这些形状因子，从而避开这些存储需求。它的做法是反复把能量从一个元素「发射」到场景中所有其他元素。</p><p>渐进细化的运作方式如下（图 39-3 说明了该算法的两次迭代）。场景中每个元素维护两个能量值：<em>累积</em>能量值与<em>剩余</em>（或「未发射」）能量。我们选择场景中某个元素作为「发射者」，并测试从该发射者看去其他每个元素的可见性。如果某个接收元素可见，我们就按对应的形状因子与发射者的剩余能量计算从发射者传递到接收元素的能量。这份能量乘以接收者的反射率（即入射能量中被反射出去的比例，通常用 RGB 颜色表示）。所得值加到接收元素的累积值与剩余值上。既然发射者已把全部能量发射出去，它的剩余能量被置零，然后选择下一个发射者。重复这一过程，直到所有元素的剩余能量都降到阈值以下。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/39_radiosity_03.jpg" alt="39_radiosity_03.jpg"><figcaption>图 39-3 渐进细化解的两次迭代</figcaption></figure><p>起初，每个光源元素的剩余能量被设为指定值，其他所有能量值都设为零。第一次迭代之后，接收到最大剩余功率（<em>功率</em> = <em>能量</em> x <em>面积</em>）的场景多边形成为下一个发射者。选择最大剩余功率可以保证解快速收敛（Cohen 等 1988）。</p><h2>39.2 GPU 实现</h2><p>为了在 GPU 上实现该算法，我们用纹素作为辐射度元素（Heckbert 1990）。每个场景多边形有两张纹理：一张辐射度纹理和一张剩余纹理。用纹理作为辐射度元素类似于对场景做均匀细分，纹理分辨率决定了辐射度解的粒度。</p><p>如果你坐下来实现渐进细化辐射度，可能首先会尝试从发射者的视角渲染场景，然后把能量「泼溅」到所有可见多边形的纹理中。这是我们最初的做法，性能很差。问题在于这种做法要求 GPU 向多张纹理的任意位置写入。这类「分散写」操作在当前图形硬件上难以实现。</p><p>于是我们反过来做：遍历接收多边形，逐个测试每个元素的可见性。这利用了 GPU 的数据并行特性，在许多纹素上执行同一个小内核程序。这种做法把聚集式辐射度的高质量重建与发射式辐射度的快速收敛、低存储需求结合起来。</p><p>辐射度解的每次「发射」包含两遍：可见性遍与重建遍。可见性遍从发射者的视角渲染场景，并把场景存入一个项目缓冲。重建遍把每个潜在接收多边形正交地绘制到与纹理分辨率相同的帧缓冲中。这在辐射度纹理的纹素与帧缓冲中的片元之间建立了一一对应关系。片元程序测试可见性并计算解析形状因子。我们算法的伪代码见代码清单 39-1。接下来两节更详细地描述可见性与形状因子计算。</p><h4>示例 39-1. 我们算法的伪代码</h4><pre><code>initialize shooter residual E while not converged
+{
+render scene from POV of shooter
+for each receiving element
+{
+  if element
+    is visible
+    {
+      compute form factor FF E =
+          *FF * E add E to residual texture add E to radiosity texture
+    }
+}
+shooter's residual E = 0 compute next shooter
+}</code></pre><h4>39.2.1 用半球投影实现可见性</h4><p>形状因子公式中的可见性项通常用 hemicube 计算（Cohen 与 Greenberg 1985），如图 39-4 所示。场景被渲染到立方体贴图的五个面上，然后用它测试可见性。我们可以改用顶点程序把顶点投影到半球上，从而避免渲染场景五次。这种<em>半球投影</em>又称<em>球极投影</em>，让我们只在一个渲染遍中计算可见性。该技术的 Cg 代码见代码清单 39-2，它与抛物线投影（Heidrich 与 Seidel 1998）类似。注意 <em>z</em> 值与 (<em>x</em>, <em>y</em>) 位置分开投影，这样可以保持正确的深度顺序并避免精度问题。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/39_radiosity_04.jpg" alt="39_radiosity_04.jpg"><figcaption>图 39-4 Hemicube 与半球投影</figcaption></figure><h4>示例 39-2. 半球投影的 Cg 代码</h4><pre><code>void hemiwarp(float4 Position
+              : POSITION, // 世界空间中的位置
+                uniform half4x4 ModelView,
+                // 模型视图矩阵
+                uniform half2 NearFar,
+                // 近、远平面
+                out float4 ProjPos
+              : POSITION)
+// 投影后的位置
+{
+  // 把几何体变换到相机空间
+  half4 mpos = mul(ModelView, Position);
+  // 投影到单位半球上的一个点
+  half3 hemi_pt = normalize(mpos.xyz);
+  // 计算 (f-n)，但让硬件把 z 除以它
+  // 放到 w 分量里（所以 x 和 y 要预乘）
+  half f_minus_n = NearFar.y - NearFar.x;
+  ProjPos.xy = hemi_pt.xy * f_minus_n;
+  // 用 OpenGL 正交投影单独计算深度投影
+  ProjPos.z = (-2.0 * mpos.z - NearFar.y - NearFar.x);
+  ProjPos.w = f_minus_n;
+}</code></pre><p>半球投影顶点程序计算投影后元素的位置，片元程序把每个元素的唯一 ID 作为颜色渲染出来。之后需要确定可见性时，我们用片元程序把接收者的 ID 与项目缓冲中投影位置处的 ID 做比较。该查询的 Cg 代码见代码清单 39-3。</p><h4>示例 39-3. 可见性测试的 Cg 代码</h4><pre><code>bool Visible(half3 ProjPos, // 元素在相机空间中的位置
+             uniform fixed3 RecvID,
+             // 接收者的 ID，供条目缓冲使用
+             sampler2D HemiItemBuffer)
+{
+  // 把纹素元素投影到半球上
+  half3 proj = normalize(ProjPos);
+  // 向量范围是 [-1,1]，缩放到 [0..1] 以便纹理查找
+  proj.xy = proj.xy * 0.5 + 0.5;
+  // 在半球条目缓冲中查找投影点
+  fixed3 xtex = tex2D(HemiItemBuffer, proj.xy);
+  // 把条目缓冲中的值与片元的 ID 比较
+  return all(xtex == RecvID);
+}</code></pre><p>这个过程很像阴影贴图，只是用多边形 ID 而不是深度。使用 ID 避免了深度精度问题，但失去了内置阴影贴图硬件的好处（例如百分比靠近过滤）。</p><p>半球投影的一个缺点是：虽然多边形边在半球上投影为曲线，光栅化却只能产生直边。如图 39-5 所示。为应对这一限制，场景多边形必须在更高的剖分层级上剖分，才能更接近曲线边。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/39_radiosity_05.jpg" alt="39_radiosity_05.jpg"><figcaption>图 39-5 半球投影时剖分不足造成的光栅化瑕疵</figcaption></figure><h4>39.2.2 形状因子计算</h4><p>确定可见性之后，我们用发射者-接收者形状因子计算从发射者传递到接收者的能量。形状因子计算通常是辐射度计算中最耗时的部分。我们在片元程序中实现它，以利用片元处理器的计算能力。</p><p>代码清单 39-4 给出用 Cg 实现的形状因子计算代码。</p><h4>示例 39-4. 形状因子计算的 Cg 代码</h4><pre><code>half3 FormFactorEnergy(half3 RecvPos,
+                       // 该元素的世界空间位置
+                       uniform half3 ShootPos,
+                       // 发射者的世界空间位置
+                       half3 RecvNormal,
+                       // 该元素的世界空间法线
+                       uniform half3 ShootNormal,
+                       // 发射者的世界空间法线
+                       uniform half3 ShootEnergy,
+                       // 来自发射者残差纹理的能量
+                       uniform half ShootDArea,
+                       // 发射者的微元面积
+                       uniform fixed3 RecvColor)
+// 该元素的反射率
+{
+  // 从发射者指向接收者的归一化向量
+  half3 r = ShootPos - RecvPos;
+  half distance2 = dot(r, r);
+  r = normalize(r);
+  // 接收者与发射者相对 r 的角度
+  half cosi = dot(RecvNormal, r);
+  half cosj = -dot(ShootNormal, r);
+  // 计算圆盘近似的形状因子
+  const half pi = 3.1415926535;
+  half Fij = max(cosi * cosj, 0) / (pi * distance2 + ShootDArea);
+  Fij *= Visible();
+  // 返回可见性，0 或 1
+  // 用接收者的反射率调制发射者的能量
+  // 以及发射者的面积。
+  half3 delta = ShooterEnergy * RecvColor * ShootDArea * Fij;
+  return delta;
+}</code></pre><h4>39.2.3 选择下一个发射者</h4><p>渐进细化技术通过从剩余功率最高的场景元素发射来实现快速收敛。为找出下一个发射者，我们用一个简单的 z 缓冲排序。先为每个元素的剩余纹理创建 mipmap 金字塔。这个 mipmap 金字塔的顶层代表整张纹理的平均能量，把它乘以纹理分辨率就得到纹理中能量的总和。这类归约在 Buck 与 Purcell 2004 以及本书第 31 章「把计算概念映射到 GPU」中有更详细的描述。</p><p>这个标量值乘以多边形的面积，得到多边形的总功率。接着我们把一个屏幕对齐四边形绘制到 1 x 1 的帧缓冲中，以功率的倒数作为深度，以唯一的多边形 ID 作为颜色。每个剩余纹理都这样渲染一遍，z 缓冲会自动选出功率最高的多边形。我们读回这个 1 像素的帧缓冲，得到下一个发射者的 ID。这项技术还让我们能测试收敛：把远裁剪面设为收敛阈值的倒数，如果没有片元被写入，说明解已收敛。</p><h2>39.3 自适应细分</h2><p>到此为止，我们一直假定辐射度纹素与场景几何体一一对应地映射。这意味着场景是均匀且静态地剖分的（依据纹理分辨率）。然而均匀剖分无法适应光照空间频率的变化。我们希望在高频光照区域（例如阴影边界）有更多元素，在低频区域（例如平坦墙面）有更少元素。</p><h4>39.3.1 纹理四叉树</h4><p>应对这些问题的一种常用技术是自适应网格剖分方案（Heckbert 1990）。用这种技术可以看到场景几何体被自适应细分，光照变化较大的区域得到更多元素。在我们的系统中，每个场景多边形充当一棵四叉树的根，辐射度数据存储在叶节点的小尺寸（16x16）纹理中。这个层次可以看作先做粗粒度的自适应几何细分，再做细粒度的均匀纹理细分。图 39-6 说明了场景多边形如何依据光照变化细分成更小的四边形。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/39_radiosity_06.jpg" alt="39_radiosity_06.jpg"><figcaption>图 39-6 四叉树细分适应光照的频率</figcaption></figure><p>用这种做法，我们可以复用为均匀情形开发的许多代码。可见性与发射在每个叶节点（而不是每个场景多边形）上计算，辐射度以类似方式重建。唯一的区别是，在计算辐射度的同时，我们还必须确定何时细分四叉树。</p><h4>39.3.2 四叉树细分</h4><p>每次重建遍之后，用一个片元程序评估叶纹理是否需要细分。判断四叉树节点何时应当分裂有几种不同的技术。我们使用的技术是当辐射度的梯度超过某个阈值时分裂节点（Vedel 与 Puech 1991）。使用梯度而不是数值，可以避免在能用线性插值充分表示函数的区域过度细分。</p><p>辐射度的梯度在片元程序中求值，梯度不连续的片元被丢弃。我们用硬件遮挡查询统计这些被丢弃的片元。如果被丢弃的片元数量超过阈值，当前节点就细分，并递归重复该过程。当判定辐射度已足够平滑，或达到最大深度时，递归终止。</p><h2>39.4 性能</h2><p>有几种优化技术可以让小模型达到交互帧率。我们在可见性遍中使用遮挡查询，避免在不可见的表面上重建辐射度。我们还以低于纹理分辨率的分辨率发射，这称为<em>子结构</em>（Cohen 等 1986）。这可以利用为选择下一发射者而创建的 mipmap 完成。</p><p>如果某个多边形被选为下一个发射者，那么该多边形的所有元素依次发射其辐射度。这样把 mipmapping 与排序的开销分摊到多次发射上。我们还会把多个发射者合并成一批，以减少状态切换。</p><p>使用这些技术，我们能把 10,000 元素版本的康奈尔盒场景计算到 90% 收敛，速度约为每秒 2 帧。</p><p>对实时应用，这项技术可以与标准渲染技术结合以获得更高性能。我们可以假定间接光照是低频的，从而把光照拆成间接光照与直接光照。这让我们能大幅降低纹理分辨率，从而加快计算。辐射度用低分辨率纹理计算，通过在第一次迭代后把累积辐射度置零来去除直接光照。直接光照用逐像素光照和阴影体等技术单独计算。把间接光照加到直接光照上，就得到最终图像。</p><h2>39.5 结论</h2><p>我们提出了用渐进细化辐射度在图形硬件上实现全局光照的方法。通过利用片元处理器与光栅化硬件的计算能力来计算形状因子，我们能让元素数量较少（约 10,000）的场景达到交互帧率。元素数量很多的场景，例如图 39-7 所示，目前只能以非交互帧率渲染。随着图形硬件计算速度持续提升，我们预计全局光照会成为光照计算的常见组成部分。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/39_radiosity_07.jpg" alt="39_radiosity_07.jpg"><figcaption>图 39-7 用我们的系统渲染的一百万元素场景</figcaption></figure><p>我们用了几项 GPU 技巧来加速该算法，包括半球投影和 z 缓冲排序。它们可能在我们实现之外也有有趣的用途，例如环境映射或穿透深度估计。</p><p>辐射度的一个局限是它只表示漫反射表面。尝试把这种做法扩展到非漫反射表面会很有意思。一种做法可以是把入射光照与任意 BRDF 做卷积，再用低系数多项式或球谐函数近似结果（Sillion 等 1991）。</p><h2>39.6 参考文献</h2><p><a id="biblio39_01"></a>Buck, I., and T. Purcell. 2004. "A Toolkit for Computation on GPUs."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 621–636，Addison-Wesley 出版。</p><p><a id="biblio39_02"></a>Cohen, M., S. E. Chen, J. R. Wallace, and D. P. Greenberg. 1988. "A Progressive Refinement Approach to Fast Radiosity Image Generation."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 88)</em> 22(4)，pp. 75–84。</p><p><a id="biblio39_03"></a>Cohen, M., and D. P. Greenberg. 1985. "The Hemi-Cube: A Radiosity Solution for Complex Environments."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 85)</em> 19(3)，pp. 31–40。</p><p><a id="biblio39_04"></a>Cohen, M., D. P. Greenberg, D. S. Immel, and P. J. Brock. 1986. "An Efficient Radiosity Approach for Realistic Image Synthesis."，载 <em>IEEE Computer Graphics and Applications</em> 6(3)，pp. 26–35。</p><p><a id="biblio39_05"></a>Cohen, M., and J. Wallace. 1993. <em>Radiosity and Realistic Image Synthesis</em>. Morgan Kaufmann 出版。</p><p><a id="biblio39_06"></a>Goral, C. M., K. E. Torrance, D. P. Greenberg, and B. Battaile. 1984. "Modelling the Interaction of Light Between Diffuse Surfaces."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 84)</em> 18(3)，pp. 213–222。</p><p><a id="biblio39_07"></a>Heckbert, P. 1990. "Adaptive Radiosity Textures for Bidirectional Ray Tracing."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 90)</em> 24(4)，pp. 145–154。</p><p><a id="biblio39_08"></a>Heidrich, W., and H.-P. Seidel. 1998. "View-Independent Environment Maps."，载 <em>Eurographics Workshop on Graphics Hardware 1998</em>，pp. 39–45。</p><p><a id="biblio39_09"></a>Sillion, F. X., J. R. Arvo, S. H. Westin, and D. P. Greenberg. 1991. "A Global Illumination Solution for General Reflectance Distributions."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 91)</em> 25(4)，pp. 187–196。</p><p><a id="biblio39_10"></a>Vedel, C., and C. Puech. 1991. "A Testbed for Adaptive Subdivision in Progressive Radiosity."，载 <em>Second Eurographics Workshop on Rendering</em>。</p><p><a id="biblio39_11"></a>Wallace, J. R., K. A. Elmquist, and E. A. Haines. 1989. "A Ray Tracing Algorithm for Progressive Radiosity."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 89)</em> 23(4)，pp. 315–324。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-39-global-illumination-using-progressive" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-39-global-illumination-using-progressive</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

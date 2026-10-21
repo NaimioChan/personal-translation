@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 36 章　GPGPU 应用中的流归约操作 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 36 章　GPGPU 应用中的流归约操作」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 36 章　GPGPU 应用的流归约操作</h1>
+<p><em>Daniel Horn</em><br> <em>Stanford University</em></p><p>许多基于 GPGPU 的应用依赖片元处理器。片元处理器作用于一大组输出内存位置，每个位置消耗固定数量的输入元素，并在这些元素上运行一个小程序，以在该位置产生单个输出元素。由于片元程序必须把结果写到预先指定的内存位置，它无法根据自己的输入数据来改变输出的数据量。（关于片元处理器能力与限制的更多细节，见本书第 30 章「GeForce 6 系列 GPU 架构」。）</p><p>许多算法在这些限制下难以实现——具体来说，是把许多数据元素归约为少数数据元素的算法。按固定比例归约数据在 GPU 上已被仔细研究过（Buck et al. 2004）；这类操作所需时间与待归约数据的规模成线性。但非均匀归约——即按内容逐个元素地过滤掉数据的归约——研究得还不够透彻，而不少有意思的应用却需要它。我们把这种非均匀归约的技术称为<em>数据过滤</em>。</p><p>本章介绍一种数据过滤算法，它使 GPU 程序能高效地生成数量可变的输出数据。</p><h2>36.1 通过压实实现过滤</h2><p>假设我们有一个取任意值的数据集，想提取出所有正值。在当前 GPU 上，对流做过滤的片元程序必须为每个不该保留在最终输出流中的输出产生空记录。空记录用程序真要输出值时才绝不会生成的某个值表示。（在后面的例子中，我们用浮点无穷大来充当此值。浮点无穷大可以通过计算 1.0/0.0 生成，并可用 <code>isinf()</code> 标准库函数检测。）下面的例子使用 Brook 编程语言：</p><pre><code>kernel void positive(float input<>, out float output<>, float inf<>)
+{
+  if (input > 0)
+    output = input;
+  else
+    output = inf; // 在 ATI GPU 上，inf 1./0 必须以流的形式传入
+}</code></pre><p>随后必须对输出做压实，把空记录挪到末尾。最直观的压实方法是借助稳定排序去掉空记录；但用双调排序来做，运行时间会是 <em>O</em>(<em>n</em> (log <em>n</em>)<sup>2</sup>)（Buck and Purcell 2004）。我们在这里改为介绍一种技术：先用一次扫描（Hillis and Steele 1986）得到空记录的运行计数，再用一次搜索与聚集读完成压实，最终运行时间为 <em>O</em>(<em>n</em> log <em>n</em>)。</p><h4>36.1.1 运行和扫描</h4><p>给定一个夹杂着空记录的数据列表，要确定某个非空记录该重定向到哪里，只需数出该非空记录左边有多少空记录，然后把该记录向左移这么多个位置即可。在并行系统上，求空记录运行计数的代价实际上是 <em>O</em>(<em>n</em> log <em>n</em>)。做运行和的多遍技术称为扫描。它先数出当前记录及其左边正好一个索引处相邻记录中的空记录数，得到每条记录 0 到 2 之间的一个数。这个数被存入一条流，供后续处理。</p><pre><code>kernel void StartScan(float4 value[], out float count&lt;&gt;, iter float here&lt;&gt;,
+                      iter float left_1&lt;&gt;)
+{
+  count = isinf(value[here].x) ? 1 : 0;
+  if (here &gt; = 1)
+    count += isinf(value[left_1].x) ? 1 : 0;
+}</code></pre><p>现在流中每条记录都存有它所在位置及其左边位置上的空记录数。算法可在另一遍中利用这一点：流与向左两个索引处的记录相加，并把结果存入一条新流。此时新流中每条记录实际上已经加上了它左边零个、一个、两个和三个记录处的空记录数，因为前一条流中向左两个位置的那条记录在第一遍里已经加过了第三项。后续各步把各自的值与向左 2 的幂次索引处的记录相加，直到该 2 的幂超过输入数组的长度。这一过程如图 36-1 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/36_reduction_01.jpg" alt="36_reduction_01.jpg"><figcaption>图 36-1 迭代地统计流中的空记录</figcaption></figure><pre><code>kernel void Scan(float input[], out float count&lt;&gt;, iter float here&lt;&gt;,
+                 iter float left_2toi&lt;&gt;, float twotoi)
+{
+  count = input[here];
+  if (here &gt; twotoi)
+    count += input[left_2toi];
+}</code></pre><p>把这个多遍计数核执行 log <em>n</em> 次之后，每条记录都知道要向左边多少个节点发送自己的项。流最右端的值表示整个流中共有多少条空记录，因而也就是压缩后输出的长度——它等于总长度减去运行和流中的最后一个值。然而当前的片元处理器无法发送记录，即无法分散写，只能通过纹理取数（聚集读）来接收它们。虽然顶点处理器可以通过把输入点流渲染到帧缓冲的不同位置来实现分散写，但这样做并没有高效利用光栅化器。</p><h4>36.1.2 通过搜索/聚集读实现分散写</h4><p>为绕开片元处理器缺少分散写的问题，我们可以用并行搜索算法完成过滤过程。所幸运行和总是单调递增的，因此运行和扫描步骤的结果是一组有序递增的数，我们可以对它做搜索，找到正确的取数位置。</p><p>每条记录都可以做一次并行二分搜索，同样共需 <em>O</em>(log <em>n</em>) 时间，借助运行和找到应当从其取数的记录。这样 <em>n</em> 次并行搜索的总时间为 <em>O</em>(<em>n</em> log <em>n</em>)。如果运行和等于当前记录到被考察记录的距离，那么被考察记录显然希望把自己的数据搬到当前记录上；于是当前记录直接向它取数即可得到同样的效果。如果运行和小于距离，说明候选记录偏右太远，在算法的后续步骤中必须向左移动。如果运行和大于距离，说明候选记录在下一轮迭代中必须向右移动。每轮迭代把候选记录移动的距离减半，直到当前记录把搜索范围缩小到真正的答案。这种搜索取代了重定向记录（一次分散写）的必要性，且不增加 <em>O</em>(<em>n</em> log <em>n</em>) 的渐近运行时间。见代码清单 36-1。</p><h4>示例 36-1. 在 Brook 内核中实现对被位移值的搜索</h4><pre><code>kernel void GatherSearch(float scatterValues[], out float outGuess<>,
+                         float4 value[], float twotoi, float lastguess<>,
+                         iter float here<>)
+{
+  float guess = scatterValues[here + lastguess];
+  float4 finalValue = value[here + lastguess];
+  if (guess > lastguess)
+    outGuess = lastguess + twotoi; // 过低
+  else if (guess == lastguess && !isinf(finalValue.x))
+    outGuess = lastguess; // 正确
+  else
+    outGuess = lastguess - twotoi; // 过高
+}
+kernel void RelGather(out float4 outp<>, float gatherindex<>, float4 value[],
+                      iter float here<>)
+{
+  outp = value[here + gatherindex];
+}</code></pre><p>最后从搜索定位到的索引处取数，得到最终结果。由于流的大小已经正确，取到的值就构成了过滤后的流。</p><h4>优化</h4><p>在支持数据相关循环或大量指令的 GPU 上，有一项优化可以让并行搜索的代价相对扫描而言可以忽略。扫描要求每一遍结束后才能使用该遍得到的结果；而搜索的各遍之间没有数据依赖，因此可以借助依赖纹理读取在单遍内完成。见代码清单 36-2。</p><h4>示例 36-2. 用循环搜索被位移的值</h4><pre><code>kernel void GatherSearch(float scatterValues[], out float4 output<>,
+                         float4 value[],
+                         float halfN, /* ceil(numNullElements/2+.5) */
+                         float logN,
+                         /* ceil(log(numNullElements)/log(2)) */
+                         iter float here<>)
+{
+  float lastguess = halfN;
+  float twotoi = halfN;
+  float i;
+  for (i = 0; i < logN; ++i)
+  {
+    float4 finalValue = value[here + lastguess];
+    float guess = scatterValues[here + lastguess];
+    twotoi /= 2;
+    if (guess > lastguess)
+      lastguess = lastguess + twotoi; // 过低
+    else if (guess == lastguess && !isinf(finalValue.x))
+      lastguess = lastguess; // 正确
+    else
+      lastguess = lastguess - twotoi; // 过高
+  }
+  if (scatterValues[here] == 0)
+    output = value[here];
+  else
+    output = value[here + lastguess];
+}</code></pre><p>在不支持数据相关循环上限的 GPU 上，可以针对给定应用把代码清单 36-2 中的内核按 log<sub>2</sub> <em>n</em> 的每个可能取值分别编译。</p><h4>36.1.3 过滤性能</h4><p>为了衡量扫描/搜索算法是否比双调排序更快，我们用 Brook 以相同的编程风格实现两种算法，并采用一维到二维的地址转换。扫描几乎正好比双调排序快 0.5 x log<sub>2</sub> <em>n</em> 倍，因为双调排序需要多 0.5 x (log<sub>2</sub> <em>n</em> - 1) 遍，而指令数量与内存访问模式都很接近。在表 36-1 中，可以看到在各种硬件上过滤每个元素需要多少微秒。</p><h4>表 36-1. 现代硬件上各种压缩方法的计时</h4><table><thead><tr><td><p><em>单位：每记录微秒数（越低越好）。</em></p></td></tr><tr><td></td><td></td><td><p>记录数</p></td></tr><tr><td></td><td></td><td><p>64k</p></td><td><p>128k</p></td><td><p>256k</p></td><td><p>512k</p></td><td><p>1024k</p></td><td><p>2048k</p></td><td><p>4096k</p></td></tr></thead><tbody><tr><td><p><strong>6800 Ultra</strong></p></td><td><p>扫描/搜索</p></td><td><p>0.138</p></td><td><p>0.131</p></td><td><p>0.158</p></td><td><p>0.151</p></td><td><p>0.143</p></td><td><p>0.167</p></td><td><p>0.161</p></td></tr><tr><td><p><strong>6800 Ultra</strong></p></td><td><p>双调排序</p></td><td><p>1.029</p></td><td><p>0.991</p></td><td><p>1.219</p></td><td><p>1.190</p></td><td><p>1.455</p></td><td><p>1.593</p></td><td><p>1.740</p></td></tr><tr><td><p><strong>X800</strong></p></td><td><p>扫描/搜索</p></td><td><p>0.428</p></td><td><p>0.267</p></td><td><p>0.288</p></td><td><p>0.355</p></td><td><p>0.182</p></td><td><p>0.169</p></td><td><p>0.168</p></td></tr><tr><td><p><strong>X800</strong></p></td><td><p>双调排序</p></td><td><p>0.762</p></td><td><p>0.912</p></td><td><p>0.968</p></td><td><p>1.051</p></td><td><p>1.175</p></td><td><p>1.269</p></td><td><p>1.383</p></td></tr></tbody></table><p>显然，这里展示的扫描/搜索过滤方法比排序更高效。虽然每元素的开销并不像 CPU 上的同一操作那样随数据量保持恒定，但随着数据量指数增长，开销并没有增加多少。注意在 NVIDIA GeForce 6800 Ultra 上用了循环结构来执行并行搜索，这使它在那个硬件上比双调排序多了一层优势。</p><h2>36.2 动机：碰撞检测</h2><p>为了看清这种过滤惯用法的用处，考虑基于树遍历的搜索算法，例如北卡罗来纳大学的 RAPID 层次包围体碰撞检测方案（Gottschalk 等 1996）。其基本思想是同时遍历两个模型的两棵包围体树，找出相互重叠的包围体，最终抵达含有可能接触的三角形的重叠叶节点。刚体网格之间的快速碰撞检测对许多图形应用都很重要。例如触觉渲染、路径规划和场景交互都需要这种形式的碰撞检测。</p><p>我们先把一个做碰撞检测的算法移植到流语言 Brook（Buck 等 2004）。碰撞检测方案的输入是两个三角化 3D 模型以及两者之间的刚性变换，输出是一组相互重叠的三角形对。离线计算为每个 3D 模型创建一棵包围盒树，从包含整个模型的顶层包围盒开始。树的创建方式是：每个包围盒节点要么内部含有两个更小的包围盒，要么是叶节点，含有指向输入模型中某个三角形的指针。这棵树可以下载到 GPU 上做在线碰撞检测处理。每个包围盒包含一个刚性变换、一个尺寸，以及指向其子节点的指针。在 Brook 中，对每个模型我们可以构造两个结构流：一个存放三角形列表，另一个存放包围这些三角形的包围盒层次。见代码清单 36-3。</p><h4>示例 36-3. 碰撞检测的数据结构</h4><pre><code>typedef struct Tri_t
+{
+  float3 A, B, C;
+} Tri;
+typedef struct bbox_t
+{
+  float4 Rotationx; // 包围盒坐标系的 x 轴
+  // Rotationx.w 取 -1 表示左手坐标系
+  float3 Rotationy; // 包围盒坐标系的 y 轴
+  // float3 Rotationz; 因为 Rotationx 与 Rotationy 正交
+  // use cross(Rotationx,Rotationy)*Rotationx.w;
+  float3 Translation;
+  // 包围盒的底角
+  float4 Radius; // 包围盒的尺寸
+  // Radius.w 存放该节点是否为叶节点的布尔值
+  float2 Children;
+  // 若是叶节点，Children.xy 是指向模型中三角形的索引
+  // 若是节点，Children.xy 是左子节点的索引，
+  //
+  Children.xy + float2(1, 0) is right child
+} BBox;</code></pre><p>为了确定两个模型中哪些三角形重叠，我们广度优先地处理包围盒树。我们处理一个候选对流，其中因包围盒不相交而可以被直接排除的对会从流中丢弃。无法排除的对则被拆分成一组子节点对。重复这一过程，直到只剩下叶节点。该过程需要从流中删除一些对并插入另一些对。如果从一条长度足够大的最大流开始、忽略不发生碰撞的元素，是不切实际的，因为那样就失去了树遍历与剪枝过程带来的好处。</p><p>例如，为了确定模型 <em>A</em> 和 <em>B</em> 中哪些三角形重叠，我们从输入模型两棵树各自的根——也就是最大的包围盒——开始。设模型 <em>A</em> 是较小的模型，包围盒根为 <em>R<sub>a</sub></em>，模型 <em>B</em> 是较大的模型，包围盒根为 <em>R<sub>b</sub></em>。我们先检查 <em>R<sub>a</sub></em> 是否与 <em>R<sub>b</sub></em> 重叠；如果不重叠，就一定没有碰撞，因为整个模型分别包含在 <em>R<sub>a</sub></em> 和 <em>R<sub>b</sub></em> 之中。假设 <em>R<sub>a</sub></em> 与 <em>R<sub>b</sub></em> 重叠，我们取较大包围盒的两个子节点 <em>C<sub>b</sub></em> 和 <em>D<sub>b</sub></em>，依次与 <em>R<sub>a</sub></em> 比较是否重叠。我们可以重复这一过程，用 <em>R<sub>a</sub></em> 的子节点 <em>C<sub>a</sub></em> 和 <em>D<sub>a</sub></em> 与来自 <em>C<sub>b</sub></em> 和 <em>D<sub>b</sub></em> 的潜在碰撞对象做检查，每个阶段都把每个包围盒拆成它的两个分量，直到抵达指向实际三角形的叶节点。最后，我们比较每个重叠叶节点内的三角形对，检查是否碰撞。见图 36-2。平均而言，用这种方法处理的叶节点远少于三角形对的数量，但也很容易设想出一对退化模型，使得两个模型中的每个三角形都必须与其他每个三角形逐一检查。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/36_reduction_02_new.jpg" alt="36_reduction_02_new.jpg"><figcaption>图 36-2 用两棵包围盒树做碰撞检测</figcaption></figure><p>这样一来，用于保存遍历节点层次所需的动态状态的数据结构可以如下：</p><pre><code>typedef struct traverser_t
+{
+  float4 index; // index.xy 是第一个模型中的索引
+  // index.zw 是第二个模型中的索引
+  float3 Translation;
+  float3 Rotationx;
+  float3 Rotationy;
+  float3 Rotationz;
+} Traverser;</code></pre><p>在代码清单 36-4 中，我们考察一些 CPU 伪代码，用前面的数据结构检查两个给定模型的碰撞。</p><h4>把碰撞检测移植到 GPU</h4><p>现在我们已经有了在成对的树中搜索三角形相交的系统方法，剩下的问题是如何在图形硬件上把它最好地实现为片元程序。为此，树上的广度优先搜索可以这样表示：在算法的任一阶段，一个候选包围盒节点对流可以并行检查是否碰撞。明显不碰撞的候选对必须被过滤掉，重叠的包围盒对必须拆分，较大包围盒的每个子节点各得一份。可以对过滤并拆分后的候选对再做一遍，直到只剩下叶节点。这些叶节点可以检查是否发生真实的几何碰撞。</p><h4>示例 36-4. 碰撞检测伪代码</h4><pre><code>bool collide(BBox mA[], BBox mB[], Triangle tri[], Traverser state)
+{
+  BBox A = mA[state.index.xy] BBox B =
+      mB[state.index.zw] if (bb_overlap(state, A.Radius, B.Radius))
+  {
+    if (isLeaf(A) && isLeaf(B))
+    {
+      return tri_overlap(tri[A.Children], tri[B.Children])
+    }
+    else
+    {
+      if (AisBigger(A, B))
+      { // 更大或非叶节点
+        state = Compose(state, A.Translation, A.Rotationx, A.Rotationy);
+        state.index.xy = LeftChild(A);
+        bool ret = collide(mA, mB, tri, state);
+        state.index.xy = RightChild(A);
+        return ret || collide(mA, mB, tri, state);
+      }
+      else
+      { // B 比 A 大，或 A 是叶节点
+        state = invCompose(state, B.Translation, B.Rotationx, B.Rotationy);
+        state.index.zw = LeftChild(B);
+        bool ret = collide(mA, mB, tri, state);
+        state.index.zw = RightChild(B);
+        return ret || collide(mA, mB, tri, state);
+      }
+    }
+  }
+  return false;
+}</code></pre><p>因此，给定一个过滤算子图元，整个碰撞检测算法本身这样运行，如图 36-2 所示。从所考察模型的一对顶层包围盒开始，检查每个活跃的包围盒对是否碰撞。接着用 36.1 节描述的过滤图元把不碰撞的包围盒对过滤掉。剩下的、指向各自模型中三角形的叶包围盒对构成一张短列表，检查是否发生物理碰撞。剩下的非叶对列表长度翻倍，较大的那个包围盒的每个子节点各得一份。然后对这个翻倍后的列表重复该算法，直到它被过滤到长度为零。</p><h2>36.3 细分曲面的过滤</h2><p>我们提出的过滤惯用法不仅可用于碰撞检测这样的树搜索，也可用于不平衡的树、图，以及网格等其他稀疏数据集。随着片元程序的计算能力不断提高，硬件加速的自适应细分曲面剖分算法提供了一种有趣的可能。细分曲面的工作方式如下：给定带连接信息的输入网格，产生一个三角形数量为原来四倍的输出网格。每个三角形随后被拆成四个更小的三角形，这些三角形的顶点位置依据相邻顶点位置更新。结果是更光滑的网格。重复该算法会使网格收敛到一个光滑的极限曲面。</p><p>自适应细分曲面的工作方式类似，但有一个前提：某些三角形可以根据图像空间尺寸、曲率或任意逐边约束被冻结，因而不被分割。这种情况下，我们考察 Loop 细分方案（Loop 1987），它利用相邻多边形的邻域信息计算平滑后的顶点位置。这一过程可以重复，直到达到所需的多边形数量。在极限情况下，Loop 细分保证有六个邻居、即价为六的顶点处 C<sup>2</sup> 连续，保证价不为六的顶点处 C<sup>1</sup> 连续。C<sup>1</sup> 连续的曲面没有锐利尖角，C<sup>2</sup> 连续的曲面沿曲面没有曲率的剧烈变化。Loop 细分从不产生价高于原模型的顶点，因此原模型决定了可能出现的最高价。</p><h4>36.3.1 流式架构上的细分</h4><p>我们用 36.1 节介绍的过滤过程在 Brook 中实现自适应细分曲面。自适应细分方案要求在算法的每个阶段过滤已完成的三角形，并且需要通信来确定哪些邻居被过滤掉。</p><p>在操作越来越稀疏的三角形流的流式应用中，比较稳妥的做法是让每个三角形自包含，自己记录相邻顶点的坐标，而不是保存并更新指向邻居的索引。经由邻居列表的纹理间接寻址，加上细分继续时跟踪邻居列表更新这一尚未解决的问题，使得跟踪指向邻居的指针成为一件困难的事。相反，直接跟踪邻居的坐标只多用四分之一的存储，并且大幅减少依赖纹理查询，因而性能更快。</p><p>该算法操作一个三角形流，每个顶点三个坐标，另有一个布尔值指示该顶点所接触的任一边是否已完成细分。伴随这个三角形流的是一个相邻顶点流，由按顺时针顺序排列的九个顶点组成，如图 36-3 所示。因此为了代码简洁，我们假定最高价为六，尽管算法本身一般并不施加这样的限制。三角形被分割后，邻居列表中的浮点数会根据分割过程中新产生的三个相邻顶点指向不同的项。另有一个独立的分割三角形结构，用来保存原三角形内六个经过分割与扰动后的顶点。见代码清单 36-5。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/36_reduction_03.jpg" alt="36_reduction_03.jpg"><figcaption>图 36-3 三角形 ABC 及其邻居</figcaption></figure><h4>示例 36-5. 细分所用的数据结构</h4><pre><code>typedef struct STri_t
+{
+  float4 A; // A.w 表示边 AB 是否可以停止细分
+  float4 B; // B.w 同样表示 BC 是否可以停止细分
+  float4 C; // C.w 表示 AC 是否已足够小、可以停止细分
+} STri;
+// 存放给定三角形的邻居。
+// 额外的 w 分量存放：
+// a）相应边是否可以让该三角形停止细分。
+//
+This could be altered to any per -
+    edge qualifier.
+    // b）或者在三角形中间分裂时，重新计算出的
+    //
+    averaged neighbor list when a triangle is split typedef struct Neighbor_t
+{
+  float4 AB;
+  // AB.w = avg(AB,B).x
+  float4 BBC; // BBC.w = avg(AB,B).y
+  float4 ABB; // ABB.w = avg(AB,B).z
+  float4 BC;
+  // BC.w = avg(BC,C).x
+  float4 ACC; // ACC.w = avg(BC,C).y
+  float4 BCC; // BCC.w = avg(BC,C).z
+  float4 AC;
+  // AC.w = avg(AC,A).x
+  float4 AAB; // AAB.w = avg(AC,A).y
+  float4 AAC; // AAC.w = avg(AC,A).z
+} Neighbor;</code></pre><p>初始数据以两个流给出：一个是由三角形构成的封闭网格流，另一个是构成第一个流的那些三角形的邻居流。依次检查每条三角形边是否完成，并对流做过滤，取出已完成的三角形。这些三角形被保存下来用于渲染，再对列表施加反向过滤，确定哪些三角形还需要继续细分。对非自适应细分，过滤阶段可以换成一个多边形数量检查，从而整体终止细分。</p><p>当一个三角形已完成而它的邻居尚未完成时，在一个三角形的边与另一个三角形的顶点相接处会出现 T 形接缝。这些接缝需要修补，以保持网格封闭的状态。在每个阶段，可以通过测量某个顶点的两条边是否已满足退出条件来检测 T 形接缝，即使所考察的三角形仍在细分中也一样。检测到 T 形接缝时，我们的实现选择在那里放一个狭长三角形，填补带 T 形接缝的多边形之间可能出现的光栅化缝隙。其他技术，例如 Red-Green 三角化（Seeger 等 2001），可以做出更悦目的过渡，但这样选择是为了简单。</p><p>最后进入细分计算阶段。三角形流中的每个顶点按邻居加权，并按 Loop 细分规则分割，每个三角形得到六个顶点：三个靠近原三角形的角点，三个新的靠近原三角形各边的中点。邻居也同样分割，得到的 12 个顶点分摊到九个 <code>float4</code> 值中。为在这份数据上递归，我们构造新的流，长度是分割后的三角形流与分割后的邻居流的四倍。新值依据输出索引除以四的余数，按顺序放进对应的原有 <code>Neighbor</code> 与 <code>Triangle</code> 结构。此时计算出声明所考察三角形的边是否满足逐边约束的布尔值，为下一轮的过滤阶段提供提示。重复该算法，直到达到最大深度，或所有三角形都已作为完成被过滤掉。</p><h4>GPU 上流式处理的特殊细节</h4><p>有几点需要注意：围绕某个顶点的每个三角形必须对该顶点最终落在何处做出相同的决定。这要求遵循一些谨慎的做法。第一，网格中现有的顶点必须由所有邻居独立加权。由于浮点加法不满足结合律，必须先由小到大排序再相加。这样，含有该顶点的每个三角形都会对该顶点的最终位置做出相同的决定。第二，某些优化编译器在优化时并不总是遵守 IEEE 浮点标准，可能以破坏浮点加法交换性的方式重排浮点运算。另一些编译器，如 Cg 编译器，提供了命令行开关来控制这一行为。</p><h2>36.4 结论</h2><p>本章展示了过滤惯用法在图形硬件上的用处。这一范式以一次扫描加一次搜索为代价，通过过滤数据集，使许多新应用成为可能。随着顶点程序近期加入分支与循环，搜索正变得更快；而算法中扫描阶段的改进在很大程度上取决于新硬件。具体来说，一个能快速为片元产生唯一递增值的中心运行和寄存器，以及把片元发送到帧缓冲其他位置的能力，将带来线性时间的扫描阶段，并直接输出合适的值。不过，使用运行和寄存器会破坏被过滤片元的任何顺序。然而在本章介绍的算法中，顺序大多并不必要。</p><p>未来的硬件很有希望原生支持保序过滤，这为提升通用可编程性能提供了令人兴奋的可能。</p><p>还有许多其他应用能从这一惯用法中受益。例如蒙特卡洛光线追踪在每次与表面相交时产生零条、一条或多条光线。可以用本章描述的过滤惯用法遍历场景来传播光线，在必要时终止它们，并在相交之后产生更多光线。Marching Cubes 接收大型 3D 数据集，把它裁剪成感兴趣的 2D 曲面，用测得的密度值对三角形顶点加权。一个利用过滤的 Marching Cubes 算法示例随 Brook 实现一起提供，可在 Brook 网站（Buck 等 2004）在线获取。此外，正如我们的碰撞检测应用所示，过滤让 GPU 得以遍历树形数据结构。同样的方法也可用于其他在树上操作的应用。</p><h2>36.5 参考文献</h2><p>想进一步了解 GPU 上的碰撞，可以参阅已发表的关于如何在 GPU 上做碰撞检测的论文。大多数算法在图像空间工作，选取能把两个物体渲染得使碰撞物体重叠的视角。这些算法在实践中很快，但往往严重依赖精细采样，以便在初期剔除足够多的工作。它们需要 <em>O</em>(<em>n</em>) 时间，其中 <em>n</em> 是其物体中多边形的总数（Govindaraju 等 2003）。</p><p>层次方案平均而言渐近更快。Gress 与 Zachmann（2003）也设计了一种对象空间的层次碰撞检测方案，而不是轴对齐包围盒的平衡树。他们对各自的碰撞树做广度优先搜索，但在每一层用遮挡查询统计该层重叠包围盒的数量。他们分配一张尺寸合适的纹理，并用逐步构建的平衡树结构在顺序过滤后的包围盒列表中搜索。这一技术需要 <em>O</em>(log <em>n</em>) 遍额外的数据遍历才能有效完成过滤，模拟了本章介绍的技术，但它的适用范围仅限于平衡树上的碰撞检测，而不是更通用的过滤技术。</p><p>同样，关于细分曲面的剖分，Owens 等（2002）介绍了在 Imagine 处理器上用类似本章技术的自适应 Catmull-Clark 四边形细分，但该算法利用了 Imagine 处理器架构中的条件移动操作（Khailany 等 2001），该操作在硬件层面提供数据过滤。</p><p><a id="biblio36_01"></a>Buck, I., T. Foley, D. Horn, J. Sugarman, and P. Hanrahan. 2004. "Brook for GPUs: Stream Computing on Graphics Hardware." <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2004)</em> 23(3). 可在线获取：<strong><a href="http://graphics.stanford.edu/projects/brookgpu/" rel="noreferrer noopener">http://graphics.stanford.edu/projects/brookgpu/</a></strong></p><p><a id="biblio36_02"></a>Buck, I., and T. Purcell. 2004. "A Toolkit for Computation on GPUs."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 621–636。</p><p><a id="biblio36_03"></a>Gottschalk, S., M. C. Lin, and D. Manocha. 1996. "OBB-Tree: A Hierarchical Structure for Rapid Interference Detection."，载 <em>Proceedings of SIGGRAPH</em> <em>96</em>，pp. 171–180。</p><p><a id="biblio36_04"></a>Govindaraju, N. K., S. Redon, M. C. Lin, and D. Manocha. 2003. "CULLIDE: Interactive Collision Detection Between Complex Models in Large Environments Using Graphics Hardware."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 25–32。</p><p><a id="biblio36_05"></a>Gress, A., and G. Zachmann. 2003. "Object-Space Interference Detection on Programmable Graphics Hardware."，载 <em>Proceedings of the SIAM Conference on Geometric Design and Computing</em>，pp. 13–17。</p><p><a id="biblio36_06"></a>Hillis, W. D., and G. L. Steele, Jr. 1986. "Data Parallel Algorithms." <em>Communications of the ACM</em> 29(12)，第 139 页。</p><p><a id="biblio36_07"></a>Khailany, B., W. J. Dally, et al. 2001. "Imagine: Media Processing with Streams." <em>IEEE Micro</em>, March/April 2001.</p><p><a id="biblio36_08"></a>Loop, C. 1987. "Smooth Subdivision Surfaces Based on Triangles." 硕士论文，犹他大学数学系。</p><p><a id="biblio36_09"></a>Owens, J. D., B. Khailany, B. Towles, and W. J. Dally. 2002. "Comparing Reyes and OpenGL on a Stream Architecture."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware</em>，pp. 47–56。</p><p><a id="biblio36_10"></a>Seeger, S., K. Hormann, G. Hausler, and G. Greiner. 2001. "A Sub-Atomic Subdivision Approach."，载 <em>Proceedings of the Vision, Modeling, and Visualization Conference</em>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-iv-general-purpose-computation-gpus-primer/chapter-36-stream-reduction" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-iv-general-purpose-computation-gpus-primer/chapter-36-stream-reduction</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 34 章　GPU 流程控制惯用法 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 34 章　GPU 流程控制惯用法」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 34 章　GPU 流控惯用法</h1>
+<p><em>Mark Harris</em><br> <em>NVIDIA Corporation</em></p><p><em>Ian Buck</em><br> <em>Stanford University</em></p><p>流控制是教给初学者的最基本概念之一。分支和循环是如此基础的东西，要为有限支持它们的平台写软件，不免让人发怵。最新的 GPU 以多种形式支持顶点程序与片元程序中的分支，但其高度并行的特性要求我们在用法上格外小心。本章考察当前 GPU 上分支的一些局限，并介绍 GPGPU 程序中多种做迭代与决策的技术。</p><h2>34.1 流控制的挑战</h2><p>先从 GPU 上最明显的流控制形式谈起。当前所有 GPU 高层着色语言都支持传统的 C 风格显式流控制结构，如 if-then-else、for 和 while。但这些结构在底层实现上与 CPU 上的实现大不相同。</p><p>例如，考虑下面的代码：</p><pre><code>if (a)
+  b = f();
+else
+  b = g();</code></pre><p>CPU 可以轻松地依据布尔值 <code>a</code> 分支，选择求值 <code>f()</code> 或 <code>g()</code> 函数。这个分支的性能特征相对容易理解：CPU 一般有很长的指令流水线，因此 CPU 能否准确预测某个分支是否被采取就很重要。如果预测成功，分支一般只带来很小的代价。如果预测不正确，CPU 可能因流水线被冲刷而停顿若干周期，并且必须从正确的目标地址重新填充流水线。只要函数 <code>f()</code> 与 <code>g()</code> 的指令数还算合理，这些开销就不算太高。</p><p>最新的 GPU（例如 NVIDIA GeForce 6 系列）也有类似的分支指令，只是性能特征略有不同。较老的 GPU 没有这种形式的分支，必须用其他策略来模拟这些操作。</p><p>并行架构中最常见的两种控制机制是单指令多数据（SIMD）和多指令多数据（MIMD）。在 SIMD 并行架构中，所有处理器在同一时间执行同一条指令；在 MIMD 并行架构中，不同处理器可以同时执行不同的指令。当前 GPU 实现分支有三种方法：MIMD 分支、SIMD 分支和条件码。</p><p>MIMD 分支是理想情形，不同处理器可以像 CPU 那样无代价地走不同的数据相关分支。NVIDIA GeForce 6 系列在顶点处理器中支持 MIMD 分支。</p><p>SIMD 分支允许在程序内分支和循环，但由于所有处理器必须执行相同的指令，分支发散会导致性能下降。例如，设想一个片元程序用随机输入数构成的条件做分支，来决定每个片元的输出值。片元会随机走不同分支，这可能让那些为不进入该分支的片元运行线程的处理器停顿，直到其他处理器把进入该分支的片元线程跑完。最终结果是，许多片元要花掉两个分支合起来的时间，再加上分支指令本身的开销。在分支条件在「空间」上相当一致的情形下，SIMD 分支很有用，但大量不一致的分支会很贵。NVIDIA GeForce FX 系列 GPU 在顶点处理器中支持 SIMD 分支，NVIDIA GeForce 6 系列 GPU 则在片元处理器中支持它。</p><p>条件码（谓词化）用于较老的架构，用来模拟真正的分支。编译到这类架构上的 if-then 语句必须在所有片元上既求值进入分支的指令，也求值不进入分支的指令。程序先求值分支条件并设置条件码。分支每一部分的指令都必须先检查条件码的值，再把结果写入寄存器。因此，只有进入分支的那部分指令才真正写出输出。于是在这类架构上，所有分支的代价都等于分支两部分之和，再加上求值分支条件的开销。在这类架构上应尽量少用分支。NVIDIA GeForce FX 系列 GPU 在片元处理器中用条件码模拟分支。</p><h2>34.2 基本流控制策略</h2><h4>34.2.1 谓词化</h4><p>在 GPU 上实现分支最简单的做法是前面讨论过的谓词化。采用谓词化时，GPU 实际上把分支两边都算一遍，然后根据布尔分支条件的取值丢弃其中一份结果。这种做法的缺点是，如果 <code>f()</code> 与 <code>g()</code> 是很大的函数，把两边都算一遍会很贵。谓词化对小分支可能有效，但更复杂的分支就需要别的策略。</p><h4>34.2.2 把分支上移到管线更早的阶段</h4><p>由于显式分支在 GPU 上不好处理，手头备上若干技术很有用。一个有用的策略是把流控制决策沿管线上移到更早的阶段，在那里可以更高效地求值。</p><h4>静态分支解析</h4><p>在 CPU 上对流或数组数据做计算时，大多数程序员都知道应尽量避免在计算的内层循环里分支。这样做会因分支预测错误而导致流水线停顿。例如，考虑在离散空间网格上求解偏微分方程（PDE）。要在有限区域上正确求解 PDE，需要边界条件。朴素的 CPU 实现会遍历整个网格，在每个单元处判断它是否为边界单元，再按判断结果施加相应的计算。更好的实现把处理分成多个循环：一个遍历网格内部（不含边界单元），一个或多个遍历边界边。这种<em>静态分支解析</em>使循环内的代码高效且不含分支。</p><p>在大多数 GPU 上，同样的优化更为重要。此时计算被分成两个片元程序：一个处理内部单元，一个处理边界单元。内部程序作用于一个四边形覆盖到的片元，该四边形只覆盖输出缓冲中除最外一圈单元宽边缘之外的部分。边界程序作用于沿边缘像素绘制的线段所生成的片元。</p><h4>预计算</h4><p>在上面的例子里，分支的结果在很大一片输入（或输出）取值范围内都是常量。类似地，有时分支的结果在一段时间内或若干次迭代内保持不变。此时我们可以只在结果发生变化时才求值分支，并把结果存下来供后续多次迭代使用。这可能带来很大的性能提升。</p><p>NVIDIA SDK 中的「gpgpu_fluid」示例用这项技术避免在计算流场中任意障碍物边缘处的边界条件时分支。在这个例子里，周围没有障碍物的流体单元可以照常处理，但周围有障碍物的单元需要更多工作。这些单元必须检查相邻单元，判断障碍物在哪个方向，再用这个方向去查找计算中要用的更多数据。在该示例中，只有用户「涂画」障碍物时障碍物才会变化。因此我们可以预先算出偏移方向，存进一张偏移纹理反复使用，直到用户再次改变障碍物。</p><h4>34.2.3 z 剔除</h4><p>预计算分支结果还能再推进一步，用 GPU 的另一项功能把不必要的工作完全跳过。现代 GPU 有一系列功能，专门避免为最终看不见的像素着色。其中之一就是 z 剔除。z 剔除是一项技术：把传入片元的深度（z）与 z 缓冲中对应片元的深度作比较，若传入片元未通过深度测试，就在片元处理器计算其像素颜色之前丢弃它们。于是只有通过深度测试的片元才被处理，省下工作，应用跑得更快。</p><p>这项技术也能用于通用计算。在前面流体中障碍物的例子里，有些单元完全「被陆地围住」：所有相邻单元都是障碍单元。我们不需要对这些单元做<em>任何</em>计算。要跳过这些单元，我们在用户涂画新障碍物时先做一些准备工作：运行一个片元程序检查每个片元的相邻单元。该程序只绘制被陆地围住的片元，其余全部用 <code>discard</code> 关键字丢弃。（<code>discard</code> 关键字在 Cg 和 GLSL 中可用，HLSL 中的对应物是 <code>clip()</code>。）该程序的 Cg 代码见代码清单 34-1。紧随其后的伪代码（代码清单 34-2）演示如何设置 z 剔除，并用它跳过对被陆地围住单元的处理。</p><p>这两段清单中的代码所做的事是：预处理遍在 z 缓冲中设置一个「掩码」，被陆地围住的单元深度为 0.0，其余单元深度为 1.0。因此，当我们在 <em>z</em> = 0.5 处绘制一个四边形时，被陆地围住的单元会被 z 缓冲中的 0.0 「挡住」，从而被 GPU 自动剔除。如果障碍物相当大，就能通过不处理这些单元省下大量工作。</p><h4>示例 34-1. 为后续各遍的 z 剔除设置 z 深度值的 Cg 代码</h4><pre><code>half obstacles(half2 coords : WPOS, uniform samplerRECT obstacleGrid) : COLOR
+{
+  // 取相邻的边界值（通或断）
+  half4 bounds;
+  bounds.x = texRECT(obstacleGrid, coords - half2(1, 0)).x;
+  bounds.y = texRECT(obstacleGrid, coords + half2(1, 0)).x;
+  bounds.z = texRECT(obstacleGrid, coords - half2(0, 1)).x;
+  bounds.w = texRECT(obstacleGrid, coords + half2(0, 1)).x;
+  bounds.x = dot(bounds, (1).xxxx); // 把它们相加
+  // 丢弃不是内陆的格子
+  if (bounds.x < 4)
+    discard;
+  return 0;
+}</code></pre><h4>示例 34-2. 应用端伪代码</h4><p><em>第一遍中我们设置 z 值。第二遍中，我们在 z 测试通过的像素处执行片元程序。</em></p><pre><code>// 应用程序代码——预处理通道
+ClearZBuffer(1.0);
+Enable(DEPTH_TEST);
+DepthFunc(LESS);
+BindFragmentProgram("obstacles");
+DrawQuad(Z = 0.0);
+// 应用程序代码——需要跳过内陆格子的那些通道
+Enable(DEPTH_TEST);
+Disable(DEPTH_WRITE); // 要读深度，但不修改它
+DepthFunc(LESS);
+// 为每个通道绑定常规片元程序
+DrawQuad(Z = 0.5);</code></pre><p>这项技术有一个注意点：GPU 执行 z 剔除的分辨率往往比逐片元更粗。只有当帧缓冲中一小块连续区域内的所有片元都未通过深度测试时，GPU 才跳过着色操作。这一区域的确切大小因 GPU 而异，但一般来说，只有当你的分支具有一定局部性时，z 剔除才能带来性能改善。</p><p>为了说明这一点，我们可以比较 z 剔除在随机布尔条件与高空间局部性的布尔条件下的性能。对随机布尔情形，我们用随机值填满一张纹理。对高空间局部性的布尔情形，我们只是把一块矩形区域设为固定的布尔值。</p><p>如图 34-1 所示，分支局部性充足时 z 剔除最为有效。好消息是，如果进入分支的概率很低（即很少片元通过深度测试）或很高，这种局部性自然就存在。若不存在局部性，z 剔除并不比谓词化好多少。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/34_flow_control_01.jpg" alt="34_flow_control_01.jpg"><figcaption>图 34-1 使用 z 剔除时不同类型分支的代价</figcaption></figure><p>不过要注意，z 剔除与片元程序内的分支非常不同。z 剔除让片元程序根本不执行。因此，z 剔除是一个强大的手段，可依据静态的、预先求值的条件跳过大量不必要的工作。若要用片元程序分支达到同样效果，就得让程序执行、求值条件、再让程序提前退出。所有这些比干脆跳过片元程序需要更多的处理器周期。</p><h4>34.2.4 分支指令</h4><p>第一批支持片元分支指令的 GPU 是 NVIDIA GeForce 6 系列。这些指令在 Microsoft DirectX Pixel Shader 3.0 指令集和 OpenGL 的 <code>NV_fragment_program2</code> 扩展中都可用。随着越来越多的 GPU 支持分支指令，用谓词化来实现分支应当不再必要。但要注意，影响早期 z 剔除的局部性问题同样适用于这些分支指令。GPU 以成组的片元并行执行片元程序，每组只能走一个分支。做不到时，GPU 实际上会退回到谓词化。图 34-2 给出用分支指令实现的「时间–概率」测试结果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/34_flow_control_02.jpg" alt="34_flow_control_02.jpg"><figcaption>图 34-2 有 Pixel Shader 3.0 时不同类型分支的代价</figcaption></figure><p>可以看到，分支效率同样受制于空间局部性这一注意点。不过与 z 剔除一样，如果分支概率很低或很高，分支指令就相当有效。</p><h4>34.2.5 选择分支机制</h4><p>为程序选择有效的分支机制，主要取决于分支内代码的多少以及现有状态的数量。对短分支——两到四个操作——谓词化更可取，因为 z 剔除或分支指令的开销可能抵消掉一切好处。对嵌在较大程序中的分支，应考虑用分支指令而非 z 剔除。分支指令虽然对局部性问题更敏感，但用 z 剔除需要保存全部程序状态、另起一遍执行分支，再恢复程序状态继续执行。对大型程序，这些保存与恢复会让 z 剔除变得低效。不过，如果我们能有效地把程序中的分支部分隔离开，z 剔除能提供最好的性能。</p><h2>34.3 用遮挡查询做数据相关的循环</h2><p>GPU 另一项为避免绘制不可见内容而设计的功能，是硬件<em>遮挡查询</em>。这项功能让你能查询一次渲染调用更新了多少像素。这类查询是流水化的，也就是说它们提供了一种在不使管线停顿的情况下从 GPU 取回少量数据（一个整数计数）的途径——而回读真实像素就会造成停顿。由于在 GPGPU 中我们几乎总是绘制像素覆盖范围已知的四边形，可以用遮挡查询配合 34.2.3 节讨论的 <code>discard</code> 关键字，得到被更新和被丢弃的片元计数。这让我们能实现由 CPU 控制、基于 GPU 处理结果的全局决策。</p><p>设想有一个计算，需要对流中的元素迭代进行，直到所有元素都满足终止条件。要在 GPU 上实现它，我们写一个执行计算的片元程序，再写一个检查终止条件的片元程序。后一个程序把满足终止条件的片元 <code>discard</code> 掉。然后我们在 CPU 上写一个如下伪代码的循环，它会一直执行到所有流元素都满足终止条件。</p><pre><code>int numberNotTerminated = streamSize;
+while (numberNotTerminated &gt; 0)
+{
+  gpuRunProgram(computationProgram);
+  gpuBeginQuery(myQuery);
+  gpuRunProgram(terminationProgram);
+  gpuEndQuery(myQuery);
+  numberNotTerminated = gpuGetQueryResults(myQuery);
+}</code></pre><p>这项技术也可用于细分算法，例如本书第 39 章「使用渐进精化辐射度的全局光照」中的自适应辐射度求解。</p><h2>34.4 结论</h2><p>最新一代 GPU 在片元处理器层面支持分支，使分支在 GPGPU 程序中容易用得多。诸如 <code>if</code>、<code>for</code>、<code>while</code> 这类高层语言构造直接编译为 GPU 汇编指令，开发者不必再像在早期 GPU 上那样被迫使用 z 剔除、遮挡查询这类更复杂的策略。</p><p>不过，GPU 上不一致的分支仍然有代价。采用基于预计算的技术、把计算上移到管线更早的阶段——上移到顶点处理单元或 CPU，如 34.2.2 节所述——仍将是有用的 GPGPU 策略。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-iv-general-purpose-computation-gpus-primer/chapter-34-gpu-flow-control-idioms" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-iv-general-purpose-computation-gpus-primer/chapter-34-gpu-flow-control-idioms</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 9 章　高效的阴影体渲染 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 9 章　高效的阴影体渲染」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 9 章　高效的阴影体渲染</h1>
+<p><em>Morgan McGuire<br> Brown University</em></p><h2>9.1 引言</h2><p>保安的影子先他一步进了金库——这提前的警示足够让窃贼躲到天花板上。异形掠食者贴在墙上，藏在旁边炮塔的阴影里，随时准备扑向松懈的星际战士。骑士的火把和德鲁伊的法杖照亮墓室中的雕像时，古老的大理石神祇投下的黄色与红色影子在四壁上摇曳。这些只是当今游戏中实时阴影用法的几个生动例子。</p><p>如今新的 3D 游戏都要求有实时阴影。玩家已经习惯了真实光照在感知、策略和电影感上带来的好处。与其他效果不同，阴影不是被渲染出来的物体，而是屏幕上因在光照计算中接收到的光较少而比别处更暗的区域。为渲染引擎加入阴影，难就难在实时找出这些区域。本章介绍如何用<em>阴影体</em>——id Software 的 <em>Doom 3</em> 等游戏所用的阴影方法——在模板缓冲中标记处于阴影中的像素。见图 9-1。一旦每个像素被判定为处于阴影中还是受光照，只要改动负责光照的像素程序，把受阴影像素的光照贡献置零即可。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-01.jpg" alt="fig09-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-01.jpg" rel="noreferrer noopener">图 9-1</a> id Software 某作品中的一个场景</figcaption></figure><h4>9.1.1 何处使用阴影体</h4><p>阴影体技术能由点光源、聚光灯和平行光产生锐利、逐像素精确的阴影。单个物体可以被多个光源照亮，光源可以有任意颜色和衰减。阴影从三角形网格投射到深度缓冲中的任何内容上。这意味着<em>被投影</em>的物体可以是网格、公告板、粒子系统，甚至是带有深度缓冲的预渲染场景。</p><p>与其他算法相比，阴影体能很好地处理许多难以投影的场景。图 9-2 就是这样一个棘手的场景。唯一的光源是南瓜灯内部的一个点光源。除了光从南瓜的孔洞中透出所照亮的几块三角形地面，整个场景都处于阴影中。这是个困难情形，原因有几个。它颠倒了我们通常的假设——场景大部分受光、阴影很小——很少有阴影把整个场景包住。受光面积相对于造成它们的南瓜孔洞来说非常大。虽然光只从前侧和底部透出，但光源是全向的，必须从各个角度考虑阴影。最后，投影者不只是靠近光源：它把光源包在里面了。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-02.jpg" alt="fig09-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-02.jpg" rel="noreferrer noopener">图 9-2</a> 一个难以投影的场景：光源在南瓜灯内部</figcaption></figure><p>阴影体并不适合所有场景。该技术要构造一个 3D 体积，把物体投下的所有阴影都包住。这个体积由投影者的网格构造；然而有些投影者并没有能准确表示其形状的网格。例子包括公告板、粒子系统，以及用 alpha 遮罩贴图的网格（例如树叶）。这些投影者按其实际网格产生阴影，而实际网格与物体的真实外观并不一致。例如，一块公告板做的烟云会投下矩形阴影。</p><p>另一个有问题的物体是其网格中含有只有一个相邻面的边，通常称为<em>裂缝</em>。在现实世界里，往裂缝里看，你会看到物体的内部。当然，在渲染引擎里，你会穿过物体看到另一侧，因为内侧贴的是渲染时被剔除的背面多边形。这样的物体作为投影者毫无意义。从某些角度看，它投下实心阴影；从另一些角度看，光从孔洞透过去，从另一侧照出来。更糟的是，针对阴影体的某项优化在这些物体上会失效，在空处留下一条巨大的黑影，如图 9-3 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-03.jpg" alt="fig09-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-03.jpg" rel="noreferrer noopener">图 9-3</a> 模型中的裂缝让阴影「漏」到空中</figcaption></figure><p>这一做法的另一个潜在限制是：它要求场景中的<em>所有东西</em>都投射阴影。当角色的影子投到墙上时，它同时也投到了墙后的一切之上。观察者看不到墙那一侧的阴影，唯一的原因是墙自身投下的阴影与它重叠了。如果你让角色投射阴影而不让场景几何体投射阴影，阴影看上去就会穿过实心物体。</p><p>对阴影体性能最理想的场景是俯视视角，很多即时战略、体育和地面冒险游戏就是这种视角。这类场景由几个朝下的平行光照亮，相机在所有物体上方俯视地面。性能最差的情形是：场景中有多个点光源，处在一大堆投影物体中间——比如一大队举着火把的冒险者待在有柱子的地下房间里。</p><h2>9.2 程序结构</h2><p>阴影体技术分两部分：从轮廓边构造阴影体，以及把它们渲染到模板缓冲。这两部分要对每个光源重复执行，得到的图像相加成为最终的帧（这一过程称为<em>多遍渲染</em>）。基本算法容易理解和实现，但对大场景来说很慢。为此，一系列优化降低了所需的几何处理量和填充率。</p><p>我们先从程序结构的高层视角开始，接着详细讨论每一步，然后看几种优化。最后，我们通过考察几个关于阴影体的研究项目来展望未来。</p><h4>9.2.1 多遍渲染</h4><p>从数学上说，某一点的光照是若干项之和。单个光源的 Phong 光照公式就是如此：它是环境光、自发光（内部辉光）、漫反射和镜面反射分量之和。有多个光源的场景只有一个环境项和一个自发光项，但每个光源各有一个漫反射项和一个镜面反射项。在<em>不</em>做阴影渲染时，多个光源可以在单个渲染遍里全部完成。通常的做法是启用多个硬件光源，或者实现一个为每个光源写代码的像素着色器。</p><p>在<em>有</em>阴影渲染时，某个给定光源的贡献在某些点上为零，因为这些点处于阴影中。为此，每个光源的漫反射和镜面反射贡献放在单独的渲染遍里计算。最终图像是初始遍（计算环境光与自发光照明）与各个光照遍之和。由于初始遍把深度值写入了 z 缓冲，后续各遍的过度绘制为零，在填充率上可以便宜得多。在后续各遍中渲染的物体也很适合做遮挡剔除。</p><p>阴影体虽然无法产生面光源投下的软阴影，但可以利用多遍渲染来营造类似效果：在一个面光源的表面上分布多个较暗的聚光灯。可惜对于复杂场景，要让效果好看所需的光源数量太多，这种方法就慢得无法实用。（Assarsson 等人在 2003 年描述的一项新技术，提出了用阴影体渲染软阴影的更高效做法。）</p><p>各光照遍通过 alpha 混合合成。具体做法是：把环境光／自发光遍渲染到后备缓冲，启用深度写入，混合函数设为 <code>glBlendFunc(GL_ONE, GL_ZERO)</code>。这一步初始化深度缓冲，并生成基础照明。</p><p>然后对光照遍关闭深度写入，把混合函数改为 <code>glBlendFunc(GL_ONE, GL_ONE)</code>。这种混合模式把新渲染的像素加到已有的像素上。预先初始化的深度缓冲避免了过度绘制。另外一定要把深度测试设为 <code>glDepthFunc(GL_LEQUAL)</code>，以免后续各遍之间出现 z 冲突。</p><p>在这些设置下，为每个光源执行一遍。每一遍都清除模板缓冲，在其中标记阴影区域，然后计算非阴影区域的光照并累加到帧缓冲。</p><p>程序渲染部分的整体结构如图 9-4 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-04.jpg" alt="fig09-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-04.jpg" rel="noreferrer noopener">图 9-4</a> 程序结构图</figcaption></figure><p>该流程的一个简化版本见代码清单 9-1。简化之处在于「标记阴影」这一步被简化为最坏情况：图中每个条件都返回<em>真</em>。详细走完这段代码之后，我们会把较短的分支作为优化加回来。会被这些优化改动的代码段做了标记，便于日后查找。</p><h4>例 9-1　程序结构伪代码</h4><pre><code>static const float black[] = {0.0f, 0.0f, 0.0f, 0.0f};
+glPushAttrib(GL_ALL_ATTRIB_BITS);
+setupCamera();
+// -- 环境光 + 自发光通道 --
+// 清除深度缓冲与颜色缓冲
+glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+glBlendFunc(GL_ONE, GL_ZERO);
+glEnable(GL_BLEND_FUNC);
+glDepthMask(0xFF);
+glDepthFunc(GL_LEQUAL);
+glEnable(GL_LIGHTING);
+glDisable(GL_LIGHT0);
+glLightModelfv(LIGHT_MODEL_AMBIENT, globalAmbient);
+drawScene();
+// 光照通道
+glLightModelfv(LIGHT_MODEL_AMBIENT, black);
+glEnable(GL_LIGHT0);
+glBlend(GL_ONE, GL_ZERO);
+glDepthMask(0x00);
+glEnable(GL_LIGHT0);
+glEnable(GL_STENCIL_TEST);
+glEnable(GL_STENCIL_TEST_TWO_SIDE_EXT);
+for (int i = numLights - 1; i > = 0; --i)
+{
+  // （“XY”裁剪优化会在这里设置裁剪
+  // 区域。）
+  //-- 标记所有投射者的阴影 --
+  // 清除模板缓冲并切换到只写模板的渲染
+  glClear(GL_STENCIL_BUFFER_BIT);
+  glColorMask(0, 0, 0, 0);
+  glDisable(GL_LIGHTING);
+  glStencilFunc(GL_ALWAYS, 0, ~0);
+  glStencilMask(~0);
+  loadVertexShader();
+  for (int c = 0; c < numCasters; ++c)
+  {
+    // （“点光源与聚光灯”优化只对位于光源
+    // 范围内的投射者标记阴影）
+    setVertexParam("L", object->cframe.inv() * light[i]);
+    object[c]->markShadows(light[i].direction);
+  }
+  unloadVertexShader();
+  //-- 叠加照明 -
+  // 配置光照设置
+  configureLight(light[i]);
+  glEnable(GL_LIGHTING);
+  glStencilFunc(GL_EQUAL, 0, ~0);
+  glActiveStencilFaceEXT(GL_FRONT);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+  glActiveStencilFaceEXT(GL_BACK);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+  glDepthFunc(GL_EQUAL);
+  glColorMask(1, 1, 1, 1);
+  glCullFace(GL_BACK);
+  // （“点光源与聚光灯”优化只为
+  // 光源范围内的物体叠加照明）
+  drawScene();
+}
+glPopAttrib();</code></pre><h4>9.2.2 顶点缓冲结构</h4><p>网格的阴影由其轮廓投出。为了快速找到轮廓边并把它们拉伸成阴影体，网格需要比传统只使用面三角形的渲染框架更多的信息。</p><p>在我们的系统中，网格的顶点缓冲为每个顶点保存两份拷贝。设有 <em>n</em> 个原始顶点。顶点缓冲的第 0 到第 <em>n</em> - 1 个元素是常规顶点，形式为 (<em>x</em>, <em>y</em>, <em>z</em>, 1)。第 <em>n</em> 到第 2<em>n</em> - 1 个元素是第一份的拷贝，但形式为 (<em>x</em>, <em>y</em>, <em>z</em>, 0)。第一份可用于常规渲染。两份都用于阴影判定，其中顶点着色器会把第二份变换到无穷远。</p><p>物体还必须有邻接信息和逐面法线。对每个面，我们需要知道三个逆时针方向的顶点索引和表面法线。对每条边，我们需要两个相邻面的索引和两个顶点的索引。如前所述，模型必须是封闭的，不能有裂缝。就邻接信息而言，这意味着每条边恰好有两个相邻面，这两个面含有相同的顶点但顺序相反。按约定，令边的第一个面索引为按正向遍历该边顶点的那个面，第二个索引为按反向遍历顶点的那个面。注意模型中可能存在不属于任何边或面的顶点。这是因为制作 3D 模型时，把纹理坐标不同的顶点放在同一位置是常见做法。对邻接信息，我们只关心原始几何体，忽略为渲染目的随模型存储的纹理坐标、法线、顶点颜色等。</p><h4>9.2.3 在无穷远处工作</h4><p>与你可能写过的其他 OpenGL 程序不同，阴影体大量使用无穷远处的坐标。阴影体本身既包含有限几何体，也包含无穷远处的几何体。算法是为点光源实现的，平行光则当作无穷远处的点光源处理。远裁剪面必须位于无穷远，这样才不会截掉无限的阴影体；透视投影也必须相应配置。</p><p>OpenGL 通过齐次坐标为在无穷远处工作提供完整支持。本节回顾齐次顶点（用于几何体和光源），并说明如何配置无限远透视矩阵。</p><p>有限的齐次点表示为 (<em>x</em>, <em>y</em>, <em>z</em>, 1)，即 <em>w</em> 分量等于 1。这隐含地表示 3D 位置为 (<em>x</em>/1, <em>y</em>/1, <em>z</em>/1) 的点。透视投影矩阵利用 <em>w</em> 分量除以一个非 1 的值，产生形如 (<em>x</em>, <em>y</em>, <em>z</em>, -<em>z</em>) 的顶点，经齐次除法后变成 (<em>x</em>/-<em>z</em>, <em>y</em>/-<em>z</em>, -1)。当 <em>w</em> 分量为零时会怎样？我们得到一个形如 (<em>x</em>/0, <em>y</em>/0, <em>z</em>/0) 的点。这个点「在无穷远处」。当然，如果真把每个分量除以 0 算出这个点，它会变成 (∞, ∞, ∞)，这丢掉了重要信息——该点趋向无穷远的方向。(<em>x</em>, <em>y</em>, <em>z</em>, 0) 这种表示用 <em>w</em> = 0 标记该点「在无穷远处」，同时保留了方向信息 (<em>x</em>, <em>y</em>, <em>z</em>)。</p><p>直观上，无论场景的物理尺度如何，无穷远处的点表现得就像在极远处。如同夜空中的星星，无穷远处的点随观察者位置变化而保持不动，但会随观察者朝向而旋转。OpenGL 能正确渲染 <em>w</em> = 0 的点。同样像星星，它们看上去像是渲染在以观察者为中心、「位于无穷远」的球面上。注意对无穷远处的点，只有<em>方向</em> (<em>x</em>, <em>y</em>, <em>z</em>) 重要，各分量的大小并不重要。因此 OpenGL 用 <em>w</em> = 0 把平行光表示为位置是指向光源的向量的点光源，也就不奇怪了：平行光就是沿特定方向移到无穷远的点光源。</p><p>本章通篇用 <em>w</em> = 0 表示无穷远处的点。我们不仅使用无穷远处的点光源，还把阴影体拉伸到无穷远。上一节中我们把 <em>w</em> = 0 用作顶点缓冲后一半的记号。这是因为那些顶点会被移到无穷远（它们是阴影体的无限端）。不过在实际变换到无穷远之前，顶点着色器会先让它们相对于光源移动。</p><p>渲染这些无穷远处的物体时，不能让它们被远平面裁掉。因此需要把远裁剪面移到无穷远。做法是求标准投影矩阵在远平面趋于无穷远时的极限：</p><p><img alt="ch09_eqn001.jpg" src="https://developer.download.nvidia.com/books/gpugems/ch09_eqn001.jpg"/></p><p>在代码上，这只是计算透视投影矩阵的方式略有改变。按代码清单 9-2 所示创建投影矩阵，而不使用 <code>glFrustum</code> 即可。</p><h4>例 9-2　仿照 <code>glFrustum</code> 风格的无限远投影矩阵</h4><pre><code>void perspectiveProjectionMatrix(double left, double right, double bottom,
+                                 double top, double nearval, double farval)
+{
+  double x, y, a, b, c, d;
+  x = (2.0 * nearval) / (right - left);
+  y = (2.0 * nearval) / (top - bottom);
+  a = (right + left) / (right - left);
+  b = (top + bottom) / (top - bottom);
+  if ((float)farval > = (float)inf)
+  {
+    // 无限视锥体
+    c = -1.0;
+    d = -2.0 * nearval;
+  }
+  else
+  {
+    c = -(farval + nearval) / (farval - nearval);
+    d = -(2.0 * farval * nearval) / (farval - nearval);
+  }
+  double m[] = {x, 0, 0, 0, 0, y, 0, 0, a, b, c, -1, 0, 0, d, 0};
+  glLoadMatrixd(m);
+}</code></pre><p>代码清单 9-3 中的 Cg 顶点着色器把 <em>w</em> = 1 的点正常变换，把 <em>w</em> = 0 的点送到远离光源的无穷远处。</p><h4>例 9-3　把 <em>w</em> = 0 的顶点拉伸到远离光源处的顶点着色器</h4><pre><code>VOut main(const float4x4 uniform in MVP, const float4 uniform in L,
+          const VIn in vin)
+{
+  VOut vout; // （“平行光”优化通过对点光源与平行光
+  // 采用不同的渲染循环，省去了
+  // 顶点着色器。）
+  vout.pos = MVP * (vin.pos.w == 0 ? float4(vin.pos.xyz * L.w - L.xyz, 0)
+                                   : vin.posvin.pos);
+  return vout;
+}</code></pre><p>在不支持顶点着色器分支的老显卡上，分支运算符（<code>?</code>）可以换成对 <code>lerp</code> 函数的调用。注意中间一行把点位置乘以 <code>L.w</code>，这使得点位置对平行光不再有影响。这是因为对平行光而言，从光源到某点的向量与该点位置无关。代码清单 9-1 中调用 <code>setVertexParam</code> 设置的是物体空间的光向量。<code>loadVertexProgram</code>、<code>unloadVertexProgram</code> 和 <code>setVertexParam</code> 的实现取决于所用的顶点着色器运行时。</p><h2>9.3 详细讨论</h2><p><code>markShadows</code> 的目标是把模板缓冲中受光照的像素置零、处于阴影中的像素置为非零值。它的做法是构造阴影体——包住阴影区域的几何体——并把它渲染到模板缓冲。这里我们先简要看看其数学依据，然后详细讨论实现。</p><h4>9.3.1 数学原理</h4><p>图 9-5 显示一个简单场景：单个点光源（灯泡图标）、一个投影的盒子、一个接收阴影的地面，以及左侧的观察者。观察者前面的线代表图像平面，这对 9.5 节的讨论很重要。蓝色箭头代表从光源发出的光线（为清晰起见只画了几条）。最左和最右的光线打到地面处，地面是亮的。中间的光线打在投影者身上被挡住了。在这些光线被挡住的地方，投影者下方的地面是暗的（处于阴影中）。图中外侧光线与内侧光线之间某些位置是关键线，以虚线画出。这些线标出阴影的边界。注意它们穿过光源中心和投影者的边缘。图是 2D 的；在 3D 中它们不是线而是四边形。这些线就是阴影体的侧面。比投影者更远、且夹在这些面之间的所有点都在阴影中。其余点都受光照。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-05.jpg" alt="fig09-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-05.jpg" rel="noreferrer noopener">图 9-5</a> 一个简单场景</figcaption></figure><p>图 9-6 明确画出了阴影体。阴影体有三部分。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-06.jpg" alt="fig09-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-06.jpg" rel="noreferrer noopener">图 9-6</a> 简单场景的阴影体</figcaption></figure><ul><li><em>侧面</em>由投影者的边向外拉伸到无穷远形成四边形构成。投影者与光源之间的物体不应处于阴影中，所以必须在顶部把体积封闭。由于物体投下的阴影与其轮廓投下的阴影相同，我们只需拉伸轮廓边。所谓轮廓边，就是从光源角度看，其中一个相邻面是背面（<strong>N</strong> · <strong>L</strong> &lt; 0）、另一个相邻面是正面（<strong>N</strong> · <strong>L</strong> &gt; 0）的边。</li><li><em>光盖</em>是在靠近光源一侧封闭体积的几何体。它由投影者朝向光源的多边形（即从光源角度看是正面的多边形）构成。阴影向远离光源的方向无限延伸，但从数学上必须在后端把几何体封闭起来，才能构成体积。</li><li><em>暗盖</em>由投影者背向光源的多边形（即从光源角度看是背面的多边形）扩张到无穷远构成。在图 9-6 中它们被画成一条曲线，因为可以把无穷远处的多边形看作位于包围整个场景的极大球面上。</li></ul><p>这些图虽然只是简单场景的 2D 示意，但要记住阴影体是 3D 的，如果投影者形状复杂，其几何体也会很复杂。作为对照，真实 3D 阴影体的几何形状见图 9-2、图 9-7 和图 9-10。如果有多个投影者（通常如此），阴影体会包含许多独立部分，这些部分甚至可能互相重叠。这些都不是问题；算法处理一个三角形和整个场景一样好，我们不需要为此做任何特别处理。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-07.jpg" alt="fig09-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-07.jpg" rel="noreferrer noopener">图 9-7</a> 来自某作品的带阴影角色</figcaption></figure><p>下面是用阴影体做阴影判定的数学思路。渲染时，每个像素对应 3D 空间中的一个点。如果该点在阴影体内，我们希望把该像素的模板缓冲设为非零值（处于阴影中）；否则设为零（受光照）。把这个待判定的点记为 <em>P</em>。考虑从 <em>P</em> 出发、沿负视线方向 -<strong>V</strong> 射向无穷远的射线与阴影体的交点。交点有两类。射线从阴影体外进入内部时是<em>进入</em>交点，设相交的阴影面的表面法线为 <strong>M</strong>，则进入交点处 <strong>M</strong> · <strong>V</strong> &gt; 0。射线离开阴影体时是<em>离开</em>交点，此时 <strong>M</strong> · <strong>V</strong> &lt; 0（忽略 <strong>M</strong> · <strong>V</strong> = 0 的掠射交点）。关键思路是统计两类交点出现的次数：</p><blockquote><p><strong>点 <em>P</em> 处于阴影中，当且仅当沿射向无穷远的射线，进入交点多于离开交点。</strong></p></blockquote><p>在透视投影下，沿负视线方向行进的射线恰好落在一个像素之内。我们利用这一点，借助模板缓冲在硬件上完成交点计数，从而让方法变得很快。</p><h4>9.3.2 代码</h4><p>下面说明如何在硬件上高效实现上述观察。把模板缓冲初始化为零，并启用回绕式递增和递减操作（如果显卡支持）。（若不支持回绕，就把所有模板值初始化为 128 或其他值以避免下溢。）关闭颜色渲染，把阴影体几何体渲染到模板缓冲。因为我们统计的是从每个可见点出发、<em>远离</em>观察者的射线上的交点，所以把硬件设置为在深度测试<em>失败</em>时改变模板值。每个通过不了深度测试的正面像素使模板值减一，每个通过不了深度测试的背面像素使模板值加一。</p><p>注意，我们在渲染阴影体之前刚关闭了颜色渲染，而深度写入则是在环境光照遍之后就关掉了。颜色写入和深度写入都已关闭，所以渲染阴影体只影响模板缓冲。必须关闭颜色写入，因为我们不想在最终图像中看到阴影体，只想看到阴影（它基于模板计数）。必须关闭深度写入，是因为我们假定 z 缓冲中的深度值代表可见表面的深度（而非阴影体的深度）。由于关闭了深度写入，各阴影面之间互不影响，因此渲染顺序无关紧要。</p><p>渲染之后，如果某像素处渲染的正面和背面数量相同，模板值为零；若数量不同则为非零。进入交点总由正面产生，离开交点总由背面产生。因此渲染后的模板计数就是进入交点数减去离开交点数——正是阴影判定所需要的结果。</p><h4>9.3.3 <code>markShadows</code> 方法</h4><p><code>Object</code> 类上 <code>markShadows</code> 方法的代码见代码清单 9-4。</p><p>首先，我们把光向量从世界空间变换到物体空间。对点光源或聚光灯，该向量是位置 (<em>x</em>, <em>y</em>, <em>z</em>, 1)。对平行光，其形式为 (<em>x</em>, <em>y</em>, <em>z</em>, 0)，其中 (<em>x</em>, <em>y</em>, <em>z</em>) 是<em>指向</em>光源的向量。一般来说，<em>w</em> = 0 的齐次向量可以看作无穷远球面上的一个点。因此平行光等同于位于无穷远处的点光源。</p><h4>例 9-4　<code>markShadows</code> 方法</h4><pre><code>// 面 f 背对光源时 isBackface[f] = true
+// std::vector<bool> backface;
+void Object::markShadows(const Vector4 &wsL)
+{
+  // （当视口未被该物体的阴影覆盖时，
+  // 这一节会被“去盖”优化改写。）
+  // 正面递减、背面递增
+  // （即 z-fail 渲染）
+  glActiveStencilFaceEXT(GL_FRONT);
+  glStencilOp(GL_KEEP, GL_DECR_WRAP_EXT, GL_KEEP);
+  glActiveStencilFaceEXT(GL_BACK);
+  glStencilOp(GL_KEEP, GL_INCR_WRAP_EXT, GL_KEEP);
+  glCullFace(GL_NONE);
+  // （“Z 边界”优化会在这里设置深度边界。）
+  // 把光源变换到物体空间，并计算光源的背面
+  obj->findBackfaces(cframe.inv() * wsL);
+  // 为顶点缓冲渲染做准备
+  glVertexBuffer(vertexBuffer);
+  renderShadowCaps();
+  renderShadowSides();
+  glVertexBuffer(NULL);
+}</code></pre><p>有了这个物体空间的光向量，我们计算朝向光源的面和背向光源的面。朝向信息只是临时需要，存在一个全局数组里。然后选用（双倍长度的）顶点缓冲，把阴影的光盖和暗盖作为三角形渲染。最后把阴影体的侧面作为四边形渲染。</p><h4>9.3.4 <code>findBackfaces</code> 方法</h4><p><code>findBackfaces</code> 方法遍历每个面并计算 <strong>N</strong> · <strong>L</strong>，如代码清单 9-5 所示。</p><h4>例 9-5　<code>findBackfaces</code> 方法</h4><pre><code>void Object::findBackfaces(const Vector4 &osL) // 物体空间中的
+// 光照向量
+{
+  backface.resize(face.size());
+  for (int f = 0; f < face.size(); ++f)
+  {
+    Vector3 L = L.xyz() - vertex[face[f].vertex[0]] * L.w;
+    backface[f] = dot(face[f].normal, L) < 0;
+  }
+}</code></pre><p>对有限的点光源，需要指向具体多边形的向量，所以我们用光源位置减去某个面顶点的位置。对平行光，直接使用光照方向不变。为了性能，这两种情形可以放在两个循环里分别处理；本例中把它们合在一起只是为了简短。注意这些向量都不需要是单位长度，因为我们只关心 <strong>N</strong> · <strong>L</strong> 的符号，不关心大小。</p><p>如果模型有动画，面法线必须每帧根据动画后的顶点重新计算。这就排除了在硬件中做矩阵蒙皮或顶点混合的可能，因为那样修改后的几何体在 CPU 上就取不到了。本章末尾我们会讨论一些把阴影体与硬件顶点位移结合起来的研究方案。</p><h4>9.3.5 光盖与暗盖</h4><p>有了背面数组，就能计算盖和阴影体侧面。每种情况都是先累积一个顶点索引列表，然后用 <code>glDrawElements</code> 从顶点缓冲渲染这些索引。索引临时存放在另一个名为 <code>index</code> 的全局数组中。</p><p>光盖和暗盖的代码见代码清单 9-6。</p><h4>例 9-6　<code>renderShadowCaps</code> 方法</h4><pre><code>// 顶点缓冲的索引 std::vector<unsigned int>
+index;
+void Object::renderShadowCaps()
+{ // （“剔除”优化会修改这个
+  // 方法，
+  // 以便分别剔除亮盖与暗盖。）
+  index.resize(0);
+  for (int f = face.size() - 1; f > = 0; --f)
+  {
+    if (backface[f])
+    {
+      // 暗盖（顶点相同，但位于无穷远）
+      for (int v = 0; v < 3; ++v)
+      {
+        index.pushBack(face[f].vertex[v] + n);
+      }
+    }
+    else
+    {
+      // 亮盖
+      for (int v = 0; v < 3; ++v)
+      {
+        index.pushBack(face[f].vertex[v]);
+      }
+    }
+  }
+  glDrawElements(GL_TRIANGLES, index.size(), GL_UNSIGNED_INT, index.begin());
+}</code></pre><p>光盖就是朝向光源的多边形。要生成暗盖，我们取背向光源的面，把它们送到远离光源的无穷远处。为此，我们从第二份顶点渲染，顶点着色器会替我们把它们送到无穷远。</p><p>图 9-7 显示一个动画的 <em>Quake 3</em> 角色站在白色地面上，由一个白色点光源照亮。角色的阴影体在图的右侧以黄色显示。注意暗盖的形状——即阴影体远离角色的那部分——与角色形状相同，只是被放大了。光盖看不见，因为它在角色内部。在光盖与暗盖之间延伸的多边形是侧面，它们由轮廓边构造。</p><h4>9.3.6 侧面</h4><p>阴影体的侧面是第一份与第二份顶点之间的四边形——也就是物体与无穷远之间的部分。我们遍历网格的<em>边</em>。回想一下，只有轮廓上的边需要拉伸成四边形；其他边不影响阴影体。</p><p>轮廓边出现在物体的一个背光面与一个朝光面相接处。做这种分类所需的信息我们都有。边里存了两个相邻面的索引，而背面数组告诉我们哪些面索引对应背光面。见代码清单 9-7。</p><p>为网格构造边信息时，必须保证边的朝向一致，这样得到的阴影面四边形绕序才正确。在阴影面上，顶点必须逆时针绕，使表面法线指向阴影体外。为保证这一点，我们采用这样的约定：从顶点 <code>v0 = edge[e].vertex[0]</code> 到顶点 <code>v1 = edge[e].vertex[1]</code> 的有向边，在索引为 <code>edge[e].face[0]</code> 的网格面中是逆时针的，在索引为 <code>edge[e].face[1]</code> 的网格面中是顺时针（反向）的。</p><p>阴影四边形的边方向必须与背面一致。因此，如果面 <code>edge[e].face[0]</code> 是背面，阴影面就包含从 <code>v0</code> 到 <code>v1</code> 的边；否则包含从 <code>v1</code> 到 <code>v0</code> 的边。图 9-8 显示了边从 <code>v0</code> 指向 <code>v1</code> 时，朝光面与阴影四边形的绕序方向。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-08.jpg" alt="fig09-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-08.jpg" rel="noreferrer noopener">图 9-8</a> 绕序方向</figcaption></figure><h4>例 9-7　<code>renderShadowSides</code> 方法</h4><pre><code>void Object::renderShadowSides()
+{
+  index.resize(0);
+  for (int e = edges.size() - 1; e > = 0; --e)
+  {
+if (backface[edge[e].face[0]] != backface[edge[e].face[1])
+{
+  // 这是一条轮廓边
+  int v0, v1;
+if (backface[edge[e].face[0]))
+  {
+    // 与面 0 的绕序一致
+    v0 = edge[e].vertex[0];
+    v1 = edge[e].vertex[1];
+  }
+else
+{
+  // 与面 1 的绕序一致
+  v1 = edge[e].vertex[0];
+  v0 = edge[e].vertex[1];
+}
+// （“平行光”优化会修改这段代码。）
+index.pushBack(v0);
+index.pushBack(v1);
+index.pushBack(v1 + n);
+index.pushBack(v0 + n);
+}
+  }
+  // （“平行光”优化会把它改成使用
+  // GL_TRIANGLES 而不是 GL_QUADS。）
+  glDrawElements(GL_QUADS, index.size(), GL_UNSIGNED_INT, index.begin());
+}</code></pre><p>至此我们走完了整套阴影渲染流程。我们建立的系统能在模板缓冲中把像素判定为处于阴影中或不受阴影，然后只给不受阴影的像素加光照。该系统能处理多种不同光源和复杂的投影者几何体，也能与投影阴影、阴影贴图等其他阴影算法配合使用。程序可以改成只给通过<em>全部</em>阴影测试的区域加光照。</p><p>利用阴影体算法在某些常见情形下可以简化的特点，我们能显著加快这一过程。本章余下部分介绍加快阴影体构造与渲染的方法。在实践中，下面这些方法能把基础算法的速度提高到四倍。</p><h2>9.4 调试</h2><p>要看自己生成的阴影体是否正确，可以临时启用颜色渲染，再用加性 alpha 混合绘制阴影体。打开面剔除，正面用一种颜色、背面用另一种颜色。这些形状除了调试还有别的用途：你可能想在游戏过程中渲染可见的阴影体来做出效果，比如穿过云层或树丛的光束。</p><p>记住，使用模板操作时，OpenGL 要求启用模板<em>测试</em>，即使它被设为 <code>GL_ALWAYS_PASS</code>。另外别忘了模板掩码：<code>glStencilMask(~0)</code>。这两项前提漏掉任何一个，你的写操作都会被忽略。</p><p>用断言检查每条边是否恰好有两个相邻面。如果模型有裂缝，就会在空中出现图 9-3 里那种阴影条带。3ds max 之类的软件建模工具能自动修复裂缝（称为<em>顶点焊接</em>）——用起来！</p><h2>9.5 几何优化</h2><p>为清晰和简单起见，本章前半部分以通用形式描述基础阴影体算法，把平行光、点光源和聚光灯一视同仁。我们在代码清单 9-5 中用了数学技巧 <code>L.xyz() - V * L.w</code>，代码清单 9-3 的顶点着色器里也用了类似技巧。这些代码用一个表达式就算出两类光源的光向量。我们可以把两类光源在顶点着色器中以及整个阴影体生成过程中分开处理，以此提升性能。平行光产生的阴影体比点光源的简单，所以这里能省下很多（代价是代码更复杂）。</p><p>我们还可以用保守包围体来剔除阴影几何体，从而改善几何处理性能。本节介绍这些优化。</p><h4>9.5.1 平行光</h4><p>对平行光，光向量就是 <code>L.xyz</code>。由于光向量在所有顶点处相同，暗盖的所有顶点都在同一个点，即 <code>-L</code>。这意味着不存在暗盖：阴影体的（平行）侧面在无穷远处汇聚成一点，因此不需要盖。</p><p>由于汇聚成一点，侧面是三角形而不是四边形。<code>renderShadowSides</code>（代码清单 9-7）中的 push 语句变成：</p><pre><code>index.pushBack(v0);
+index.pushBack(v1);
+index.pushBack(n);</code></pre><p>这些语句不仅索引更少，对顶点缓存也更友好。这是因为同一个顶点编号 <em>n</em> 被多次传入（我们也可以传索引大于等于 <em>n</em> 的<em>任何</em>一个顶点，因为它们都变换到同一个点）。另一种做法是完全去掉顶点着色器，在每个阴影遍之前额外加一个索引为 2<em>n</em>、设为负光向量的顶点。</p><h4>9.5.2 点光源与聚光灯</h4><p>点光源通常按距离衰减。超过一定距离后，点光源发出的光可以忽略不计（当它降到 1/255 以下时，在八位帧缓冲里根本看不出结果）。聚光灯按角度衰减，有时也按距离衰减。在聚光灯锥体之外，它们不提供任何光照。</p><p>如果物体在任一类光源的有效范围之外，它就不需要投射阴影，因为它后面的任何物体也在范围之外。检测这种情况，可用投影者的包围盒去测试距离衰减光源的包围球，或角度衰减光源的锥体。物体在范围之外时，不为它标记阴影。同样，光源范围之外的物体也不需要光照遍。</p><h4>9.5.3 剔除阴影体</h4><p>和常规几何体一样，剔除视图视锥之外的阴影几何体可以提高阴影体的顶点处理速度。注意<em>投影者</em>可能在视图视锥之外却仍在可见物体上投下阴影，所以剔除投影者和剔除阴影几何体是完全独立的两件事。</p><p>侧面和盖要分开剔除。对每一部分，用一个几何图元近似阴影几何体，再用视图视锥剔除该图元。光盖可以用与投影者几何体相同的包围体，因为盖在投影者内部。暗盖用的是同一套几何体，只是被送到远离光源的无穷远处。</p><p>例如，假设有投影者的包围盒。对包围盒的每个顶点 <strong>v</strong>，用公式 <strong>v'</strong> = <strong>MV</strong> * (<strong>v</strong> * <strong>L</strong> <em><sub>w</sub></em> - <strong>L</strong> <em><sub>xyz</sub></em> 把它变换到无穷远，其中 <strong>L</strong> 是物体空间的光向量，<strong>MV</strong> 是模型视图矩阵。然后用变换后的包围盒去测试视图视锥。如果盒子被剔除，暗盖也可以剔除。阴影体侧面最容易用平行光的圆柱体、点光源的截锥体来界定。</p><p>虽然任何剔除都有帮助，但剔除盖尤其能加快顶点处理，因为盖的顶点数比侧面多得多。对点光源，暗盖可能非常巨大；剔除它还能省下大量填充率。这就是卡通片里小猫站在手电筒前投出狮子般巨大阴影的效果。图 9-7 展示了这种放大效应：模型的暗盖比模型本身大好几倍。</p><h4>9.5.4 无盖性能</h4><p>即使在盖本来不会被剔除的情况下，还有另一种技术可以在视口不受阴影这一特殊情形下去掉盖。</p><p>在数学表述中，我们用的是从某点出发、<em>远离</em>观察者射向无穷远的射线。在实现中，这些射线是通过把多边形渲染到模板缓冲来模拟的。我们把远裁剪面移到无穷远，并让射线<em>远离</em>观察者，这样就不会因为裁剪而漏掉该点与无穷远之间的交点。</p><p>也可以朝反方向计数。要统计<em>远离</em>观察者方向的交点，在深度测试<em>失败</em>时递增或递减模板缓冲；要统计<em>朝向</em>观察者的交点，在深度测试<em>通过</em>时递增或递减。当视口不在阴影体内时，从不受阴影的点<em>到</em>图像平面的线段上的交点数为零。这是因为从不受阴影的点到不受阴影的视口，线段必然穿过相同数量的进入交点和离开交点。如果该点处于阴影中，交点数就非零。当然，只有在视口本身不在阴影中时才能朝这个方向计数；否则计数会偏差，差的是包围每个视口像素的阴影体数量。图 9-7 展示了可以用这一优化的情形，因为向场景深处延伸的阴影并没有把视口包住。图 9-2 则是<em>不能</em>用它的例子，因为视口处在南瓜投下的阴影中——实际上场景里<em>所有</em>东西都在阴影中，只有光从眼睛透出的那几块三角形地面例外。</p><p>朝观察者计数的好处是不需要渲染光盖和暗盖。光盖总是通不过深度测试，因为它在投影者内部，所以没理由渲染它。由于我们是从可见点朝观察者计数，位于无穷远的暗盖不可能产生交点，也就无从改变结果，因此不需要渲染它。</p><p>这一优化需要对代码做两处改动：</p><ol type="1"><li>我们需要（保守地）检测视口是否在阴影体内。这个检测对每个投影者单独进行；我们可以为每个投影者独立选择计数方向，结果依然正确。</li><li>如果视口不在阴影体内，需要把模板操作中递增／递减的方向反过来（只对该投影者）。</li></ol><p>图 9-9 显示了视口的<em>遮挡金字塔</em>。锥尖在光源处（如果是平行光则在无穷远），底面是视口。如果投影者的包围盒与这个金字塔相交，视口就可能处于阴影中，这一优化就不能用。这种情况下必须用常规的深度失败操作渲染，并在盖可见时把两个盖都画出来。如果包围盒不与金字塔相交，就可以改变模板操作。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-09.jpg" alt="fig09-09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-09.jpg" rel="noreferrer noopener">图 9-9</a> 遮挡金字塔</figcaption></figure><p>遮挡金字塔可以位于视口的任一侧。如果投影者与绿色金字塔相交，就不能使用「无盖」优化。</p><p>对朝观察者计数，模板操作设置如下：</p><pre><code>// 正面递增、背面递减
+// （即 z-pass 渲染）
+glActiveStencilFaceEXT(GL_FRONT);
+glStencilOp(GL_KEEP, GL_KEEP, GL_INCR_WRAP_EXT);
+glActiveStencilFaceEXT(GL_BACK);
+glStencilOp(GL_KEEP, GL_KEEP, GL_DECR_WRAP_EXT);</code></pre><p>因为这是「无盖」渲染，把渲染阴影体盖的代码从这一情形中完全去掉。</p><h2>9.6 填充率优化</h2><p>填充率是阴影体的软肋。阴影体覆盖大量像素，过度绘制很多。对点光源尤其麻烦，因为它产生的阴影离投影者越远就<em>越大</em>。所幸点光源也有很大的优化空间，因为它们的衰减造成一个范围，超出该范围光照实际上为零。我们已经讨论过不为范围之外的投影者标记阴影，也不对范围之外的物体渲染光照。现在我们来看三种降低范围<em>之内</em>投影者所需填充率的办法：有限体积、XY 剪裁与 z 边界。</p><h4>9.6.1 有限体积</h4><p>点光源的范围构成一个球。球外的物体接收不到光照，所以没必要在球外投射阴影。我们可以不把阴影体拉伸到无穷远，而是按球的半径延伸，从而省下渲染无限多边形的填充率。这对顶点着色器是个直接的改动，能收回可观的填充率。这一方法下暗盖更容易出现在屏幕上，因此因暗盖不易被剔除，几何处理量可能增加。</p><p>另一种做法仍然创建延伸到无穷远的多边形，但在 2D 中把它们剪裁到光源半径，如下一项优化所述。</p><h4>9.6.2 XY 剪裁</h4><p>范围球投影到屏幕上是一个椭圆。只有该椭圆内的像素才可能受光照，椭圆之外的阴影多边形或光照我们都不需要渲染。然而硬件支持的是矩形剪裁区域，不是椭圆。我们本可以求投影椭圆的包围盒，但更方便的是用包围光源范围的 3D 包围盒投影后的 2D 包围盒。固定功能管线只支持径向衰减，而美术可以在光源周围的一个立方体体积上指定任意衰减函数，从而得到更可控的效果，<em>Doom 3</em> 就是这么做的。衰减在盒内可以任意下降，所以我们就用这个盒子作为光源范围。把光源的盒子剪裁到视图视锥。如果它没有被完全剪掉，就把剩余多面体的所有顶点投影到视口上并求包围。最终的 2D 包围就是所用的矩形剪裁区域。用 <code>glScissor</code> 命令设置剪裁区域：</p><pre><code>glScissor(left, top, width, height);
+glEnable(GL_SCISSOR_TEST);</code></pre><p>图 9-10 显示一个 <em>Quake 3</em> 角色站在建筑外面。这就是图 9-7 的场景，只是相机后移了。单个点光源由角色和建筑产生阴影体（以黄色显示），若不把它们剪裁到光源的有效边界，这些阴影体会铺满屏幕。剪裁区域在图的右半部分以白色方框显示。图左半部分是可见场景，这里剪裁的效果看不出来，因为光源照不到建筑远处的部分。对这个场景，只渲染剪裁区域内的阴影体像素能把填充率开销减半。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-10.jpg" alt="fig09-10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-10.jpg" rel="noreferrer noopener">图 9-10</a> 中的剪裁</figcaption></figure><h4>9.6.3 z 边界</h4><p>如果某像素处的点落在光源范围之外——因为它比范围边界更近或更远——该点不可能受光照，因此不需要在这个像素上做阴影标记或光照遍。把这两类遍限制在特定深度范围，就意味着只为真正受光源影响的那些像素付出填充率，而这可能比光源 2D 边界内的像素更少。</p><p><code>glDepthBoundsEXT</code> 函数让我们设置这一行为：</p><pre><code>glEnable(GL_DEPTH_BOUNDS_TEST_EXT);
+glDepthBoundsEXT(zMin, zMax);</code></pre><p>这一设置会阻止渲染那些深度缓冲<em>已经</em>含有 <code>[zMin, zMax]</code> 范围之外值的像素——也就是说，该像素上可见的点（在环境光遍中渲染的）在范围之外。这与剪裁平面不同，剪裁平面阻止的是从超出边界的多边形渲染出新像素。</p><p>图 9-11 显示观察者看着一个被点光源照亮的物体。投影者的阴影向下投向崎岖的地面斜坡。地面上粗绿线的部分不可能被投影者遮蔽。深度边界测试省下了渲染阴影体橙色部分的填充率，因为它们后面的可见像素（粗绿线部分）在边界之外。注意阴影体本身在边界之内，但这无关紧要——深度边界作用于环境光遍中渲染的像素，而非阴影几何体。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig09-11.jpg" alt="fig09-11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig09-11.jpg" rel="noreferrer noopener">图 9-11</a> 深度边界</figcaption></figure><p>注意深度边界比单纯的光源范围更严格。它是由视图视锥、光源范围和阴影体包围三者之交所定义的深度范围。OpenGL 函数的参数是投影后的相机空间值。如果交集的几何体由顶点存放在数组 <code>std::vector&lt;Vector4&gt; boundVert</code> 中的多面体定义，参数这样计算：</p><pre><code>float zMin = 1.0f;
+float zMax = 0.0f;
+for (int v = boundVertex.size() - 1; v > = 0; --v)
+{
+  float z = 1.0f / (projectionMatrix * boundVert[v]).w;
+  zMin = min(zMin, z);
+  zMax = max(zMax, z);
+}</code></pre><h2>9.7 阴影的未来</h2><p>目前这种高度优化的阴影体方法是过去几十年产业界与学术界共同贡献的结果。基础方法由 Frank Crow 在 SIGGRAPH 1977 上提出，并逐步成熟为本章所述的方法。阴影体的历史以及若干研究者与开发者的个人贡献，总结在 NVIDIA 开发者网站上的技术报告中（Everitt and Kilgard 2002；McGuire et al. 2003）。McGuire et al. 2003 对本章所述方法给出了形式化描述与分析。</p><p>通过新的优化来提升阴影体生成的性能，至今仍是活跃的研究领域。轮廓判定一直在 CPU 上完成，这是一大限制。它排除了在顶点着色器里做矩阵蒙皮或其他形变的可能，并且使渲染在 CPU 操作上串行化。</p><p>已经有人提出若干方案，直接在可编程图形硬件上做轮廓判定。Michael McCool（2001）提出了一种从阴影贴图计算投影者轮廓的方法。Brabec 和 Seidel（2003）把编码为颜色的几何体送入像素处理器，在其中计算轮廓，然后读回帧缓冲，用作阴影渲染的顶点缓冲。John Hughes 和我最近描述了如何借助一张专门预计算的网格，完全在顶点着色器中找出轮廓并把它们拉伸成阴影体侧面（McGuire and Hughes 2003）。</p><p>用阴影体从面光源得到好看且高性能的软阴影，是另一个开放的研究课题。Ulf Assarsson 和 Tomas Akenine-Möller 在这个问题上研究了一段时间。他们与 Michael Dougherty、Michael Mounier 合作的最新论文（Assarsson et al. 2003）描述了如何为半影（软阴影区域）的内外边界构造显式几何体，并大量使用可编程硬件。</p><p>有几个人提出把各条轮廓边连接成连续的条带，这样就可以用四边形条带（对点光源）和三角扇（对平行光）来渲染阴影体侧面。Alex Vlachos 和 Drew Card（2002）在研究另一个简化思路：剔除和剪裁嵌套的阴影体，因为它们不会影响最终结果。</p><p>这些方法都还是实验性的，尚待在真实游戏引擎中打磨和验证。如果你想超越当前阴影体方法的能力，这些都是不错的起点。希望未来的研究与图形硬件能改进并加速这些方法。</p><h2>9.8 参考文献</h2><p><a id="ch09bib01_01"></a>Assarsson, U., M. Dougherty, M. Mounier, and T. Akenine-Möller. 2003. "An Optimized Soft Shadow Volume Algorithm with Real-Time Performance." 载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>。</p><p><a id="ch09bib01_02"></a>Brabec, S., and H. Seidel. 2003. "Shadow Volumes on Programmable Graphics Hardware." 载 Eurographics 2003（Computer Graphics Forum）。</p><p><a id="ch09bib01_03"></a>Everitt, Cass, and Mark Kilgard. 2002. "Practical and Robust Stenciled Shadow Volumes for Hardware-Accelerated Rendering." NVIDIA Corporation. 在线资源：<strong><a href="http://developer.nvidia.com/object/robust_shadow_volumes.html" rel="noreferrer noopener">http://developer.nvidia.com/object/robust_shadow_volumes.html</a></strong></p><p><a id="ch09bib01_04"></a>McCool, Michael. 2001. "Shadow Volume Reconstruction from Depth Maps." <em>ACM Transactions on Graphics</em>, 2001 年 1 月, pp. 1–25。</p><p><a id="ch09bib01_05"></a>McGuire, Morgan, and John F. Hughes. 2003. "NPR on Programmable Hardware." 将发表于 <em>Proceedings of NPAR 2004</em>, June 7–9, Annecy, France。</p><p><a id="ch09bib01_06"></a>McGuire, Morgan, John F. Hughes, Kevin Egan, Mark Kilgard, and Cass Everitt. 2003. "Fast, Practical and Robust Shadows." 在线资源：<strong><a href="http://developer.nvidia.com/object/fast_shadow_volumes.html" rel="noreferrer noopener">http://developer.nvidia.com/object/fast_shadow_volumes.html</a></strong> 。早期版本曾以 <em>Brown Univ. Tech. Report</em> CS03-19 发表。</p><p><a id="ch09bib01_07"></a>Vlachos, Alex, and Drew Card. 2002. "Computing Optimized Shadow Volumes." 载 <em>Game Programming Gems 3</em>，Dante Treglia 编，Charles River Media 出版。</p><p><em>Tekkaman Blade 机器人模型由 Michael Mellor 制作（<a href="mailto:mellor@iaccess.com.au">mellor@iaccess.com.au</a>）；Tick 模型由 Carl Schell 制作（<a href="mailto:carl@cschell.com">carl@cschell.com</a>）。两者均可在 <a href="http://www.polycount.com" rel="noreferrer noopener">http://www.polycount.com</a> 下载。教堂模型由 Sam Howell 制作（<a href="mailto:sam@themightyradish.com">sam@themightyradish.com</a>），承蒙 Sam Howell 与 Morgan McGuire 提供。“The Tick” 角色是 New England Comics 的商标。Quake 2、Quake 3 和 Doom 3 是 id Software 的商标。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-9-efficient-shadow-volume-rendering" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-9-efficient-shadow-volume-rendering</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

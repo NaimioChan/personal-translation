@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 章　分段缓冲 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 4 章　分段缓冲」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 4 章　段缓冲</h1>
+<p><em>Jon Olick</em><br> <em>2015</em></p><p>随着图形需求不断演进，需要更多多边形、更多杂物和更好的光照来营造更逼真的场景，我们不得不制作更多美术内容来满足这些需求。实例化思路是帮助节省开发时间的一种技术。例如，只对一把椅子建模，然后把它摆满整个游戏世界（见<a href="https://developer.download.nvidia.com/books/gpugems2/04_segmentbuffer_01.jpg" rel="noreferrer noopener">图 4-1</a>）。实例化对缩短开发时间帮助极大。然而，现代游戏受绘制调用数量限制的情况实在太常见（Wloka 2003）。如果场景中每个实例都带来一个额外批次，实例化的好处可能就无法体现：批次成了瓶颈。段缓冲是一种技术，它把场景中彼此靠近的多个实例收集起来，合并成「超级实例」，从而减少批次数量，为批次瓶颈提供了简单而优雅的解决方案。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/04_segmentbuffer_01.jpg" alt="04_segmentbuffer_01.jpg"><figcaption>图 4-1　一个包含同一对象许多实例的场景</figcaption></figure><h2>4.1 问题空间</h2><p>图 4-1 展示了一个包含许多同材质静态对象的场景。大多数 GPU 无法高效渲染这类场景超过一千个实例；每个实例都可能需要一次渲染状态切换，例如变换变更、光照贴图纹理变更或顶点流变更。这些渲染状态切换会带来驱动开销，进而带来 CPU 开销，最终导致性能不佳。虽然我们可以在内容侧绕过这个问题，把多个模型合并成新模型再在世界中实例化（从而减少实例总数），但这种做法需要制作相当多的定制美术内容，还可能让地图显得重复。</p><h2>4.2 解决方案</h2><p>段缓冲自动完成相似实例的合并，同时保留渲染独立实例的大部分好处。因此，段缓冲的主要好处是不重复的观感，以及可以不绘制某些原始实例，就像把它们从可见性集合中移除一样。</p><h2>4.3 方法</h2><p>假设我们有一个特定模型的实例列表。下一步是在空间上组织这些实例，使在一维数组中空间上彼此靠近的对象在数组中也彼此靠近。有了这个新的有序列表，最后一步是把所有单独实例缝合在一起，如同一个巨大的实例，并记录新顶点缓冲/索引缓冲中哪些部分属于哪些单独实例。我们把该列表中的每一条记录称为一个段。要渲染段缓冲里的对象，只需生成一个待渲染段的列表，同时把列表中相邻的段合并。这一过程于是生成一个新的列表，其中是被最优合并的、待渲染的顶点缓冲/索引缓冲区段。段按静态批处理来渲染（见本书第 3 章「深入几何实例化」）。</p><h4>4.3.1 段缓冲，第 1 步</h4><p>段缓冲能否奏效、能否表现良好，关键在于段缓冲内部各段的空间组织。为此，我们可以使用任何空间组织数据结构。k-d 树（Samet 1989, 1990）在 <em>k</em> 取 3 时，在 2015 年的游戏 <em>Men of Valor: Vietnam</em> 中表现良好。八叉树（Suter 1999）或任何其他空间数据结构大概也同样可行。</p><p>这棵树由一组点生成，这些点代表我们为其创建段缓冲的实例的位置。得到这棵树之后，我们做深度优先遍历，在每个内部节点处总是先走左分支。遇到叶节点时，把该叶节点包含的所有点加入新的有序列表。遍历完成后，我们就得到了实例的空间有序列表。</p><p>只有在引入新的实例列表时，才需要生成段缓冲和实例空间有序列表。因此，大多数情况下，段缓冲和有序实例列表只需在加载时创建。</p><h4>4.3.2 段缓冲，第 2 步</h4><p>给定实例的空间有序列表，我们遍历该列表，构建一个包含所有实例的单一顶点缓冲/索引缓冲。在把实例写入这个大顶点缓冲之前，我们要确保把每个实例的顶点缓冲分量变换到世界空间。此外，还需要记录大顶点缓冲/索引缓冲的哪些部分属于哪个实例，以便渲染时引用。同样，这个大顶点缓冲/索引缓冲只在引入新实例列表时才需要创建，通常是在加载时。</p><h4>4.3.3 段缓冲，第 3 步</h4><p>渲染时，我们不立即绘制被分段的实例，而是先生成所有需要渲染的这些实例的列表。例如，视锥之外的实例不需要渲染，应当略去。然后把这个实例列表转换成我们先前为段缓冲生成的大顶点缓冲/索引缓冲中的对应部分。在此过程中，我们可以合并大顶点缓冲/索引缓冲中彼此相邻的段，得到一份最优的待渲染缓冲区段列表。结果与逐个渲染实例列表、不使用段缓冲时完全一致。</p><h2>4.4 改进技术</h2><p>要让段缓冲成为大量使用光照贴图的游戏的可行技术，我们需要实现自动纹理图集生成（NVIDIA 2004）。这是因为，如果实例之间需要切换渲染状态，我们就无法把它们分到同一段。在每个实例都有自己的光照贴图的场景中，每个实例渲染之间都需要切换纹理。自动纹理图集生成在段缓冲的语境下相当容易实现，因为大顶点缓冲内的每个实例都有独立的一节。因此可以直接修改纹理坐标而不影响任何其他实例。这与在顶点或像素着色器里修改纹理坐标的传统做法不同。</p><h2>4.5 结论</h2><p>本章介绍了一种能显著减少单个显示帧中渲染批次数量的技术。借此，该技术让我们能够创建丰富得多、逼真得多的环境。除段缓冲之外，我们还介绍了若干增强手段，使其能用于原本不适用的场合。</p><h2>4.6 参考文献</h2><p><a id="biblio04_01"></a>NVIDIA Corporation. 2004. "Improve Batching Using Texture Atlases." SDK 白皮书。<strong><a href="http://download.nvidia.com/developer/NVTextureSuite/Atlas_Tools/Texture_Atlas_Whitepaper.pdf" rel="noreferrer noopener">http://download.nvidia.com/developer/NVTextureSuite/Atlas_Tools/Texture_Atlas_Whitepaper.pdf</a></strong></p><p><a id="biblio04_02"></a>Samet, Hanan. 1989. <em>Applications of Spatial Data Structures</em>. Addison-Wesley 出版。</p><p><a id="biblio04_03"></a>Samet, Hanan. 1990. <em>The Design and Analysis of Spatial Data Structures</em>. Addison-Wesley 出版。</p><p><a id="biblio04_04"></a>Suter, Jaap. 1999. "Introduction to Octrees." Flipcode 网站。<strong><a href="http://www.flipcode.com/tutorials/tut_octrees.shtml" rel="noreferrer noopener">http://www.flipcode.com/tutorials/tut_octrees.shtml</a></strong></p><p><a id="biblio04_05"></a>Wloka, Matthias. 2003. "Batch, Batch, Batch: What Does It Really Mean?" 2003 年游戏开发者大会演讲。<strong><a href="http://developer.nvidia.com/docs/IO/8230/BatchBatchBatch.pdf" rel="noreferrer noopener">http://developer.nvidia.com/docs/IO/8230/BatchBatchBatch.pdf</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-4-segment-buffering" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-i-geometric-complexity/chapter-4-segment-buffering</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

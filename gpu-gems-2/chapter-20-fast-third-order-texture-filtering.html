@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 20 章　快速三阶纹理滤波 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 20 章　快速三阶纹理滤波」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 20 章　快速三阶纹理滤波</h1>
+<p><em>Christian Sigg</em><br> <em>ETH Zurich</em></p><p><em>Markus Hadwiger</em><br> <em>VRVis Research Center</em></p><p>当前的可编程图形硬件使我们能在片元着色器中实现通用卷积滤波，以做高质量纹理滤波，例如三次滤波（Bjorke 2004）。然而这些做法通常伴随着几个缺点：需要做大量纹理查询，尤其还有无法用 mipmap 对查询做抗锯齿。本章针对一维、二维和三维中三次 B 样条核及其一阶、二阶导数的滤波来处理这些问题。</p><p>高阶滤波的主要性能瓶颈是需要大量输入纹理采样，这些采样通常通过对输入纹理反复做最近邻采样来获得。为减少输入采样数，我们基于线性纹理取数来做三次滤波，这大幅减少了纹理访问次数，在二维和三维滤波中尤其明显。具体来说，我们用仅仅八次三线性纹理取数就能求出一个有 64 个求和项的三变量三次滤波。</p><p>在片元着色器中做自定义滤波的做法依赖于知道输入纹理的分辨率，这通常使得无法正确滤波带 mipmap 的纹理。我们描述一种把高阶滤波方案适配到带 mipmap 纹理的通用做法。</p><p>除数值重建之外，往往还需要高质量的导数重建，例如在体绘制中。我们把基本滤波方法扩展到连续一阶与二阶导数的重建。这些滤波器的一个强大应用是用三变量三次 B 样条即时计算隐式曲面曲率，这种做法已被用于离线高质量体绘制，包括非真实感风格（Kindlmann 等 2003）。</p><h2>20.1 高阶滤波</h2><p>OpenGL 与 Direct3D 都提供两种纹理滤波：最近邻采样和线性滤波，分别对应零阶与一阶滤波方案。所有 GPU 都原生支持这两种。不过高阶滤波模式往往带来更好的图像质量。此外，要计算纹理数据的连续导数，也必须用高阶方案。</p><p>我们展示如何在当前可编程图形硬件上实现高效的三阶纹理滤波。下面的讨论主要考虑一维情形，但它可以直接推广到更高维度。</p><p>要在纹理坐标 <em>x</em> 处用三次滤波重建纹理（如图 20-1a 所示），我们必须求卷积和</p><p><a id="ch20equ01"></a><strong>公式 1</strong></p><p><a><img alt="0314equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0314equ01.jpg"/></a></p><p>它由四个带权重的相邻纹素 <em>f<sub>i•</sub></em> 构成。权重 <em>w<sub>i</sub></em> (<em>x</em>) 取决于所用的滤波核。尽管滤波器有许多类型，本章把自己限制在 B 样条滤波上。如果不需要对数据做相应的平滑，该方法也可以改成插值型滤波器，例如 Catmull-Rom 样条。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/20_thirdorder_01.jpg" alt="20_thirdorder_01.jpg"><figcaption>图 20-1　三次 B 样条及其导数</figcaption></figure><p>注意，三次 B 样条滤波是标准最近邻采样和线性滤波的自然扩展，后两者分别是零次与一次 B 样条滤波。滤波的阶数与滤波后数据的平滑程度直接相关。当我们想计算导数时，数据的平滑尤其重要。在体绘制中，着色需要用到导数，因此常见的做法是把预计算好的梯度与数据一起存储。这虽然给出了一阶导数的连续近似，却要多用四倍的纹理内存，而体绘制应用中的纹理内存常常是受限的。此外，由于存储开销巨大，这种做法对二阶导数变得不切实际。相比之下，即时做三次 B 样条滤波可以给出连续的一阶与二阶导数，而且没有任何存储开销。</p><h2>20.2 快速递推三次卷积</h2><p>现在我们给出一种优化的卷积和求值方式，它是针对图形硬件的基本性能特征调优的——在图形硬件上，线性纹理滤波由快速专用单元完成。因此，一次线性纹理取数比两次最近邻取数快得多，尽管两种操作访问的纹素值数量相同。求卷积和时，我们希望从这份额外性能中受益。</p><p>关键思路是把公式 1 改写成「每隔一对函数采样之间做一次加权线性插值」之和。这些线性插值随后可以用线性纹理滤波完成，它计算的是凸组合，下面记为</p><p><a id="ch20equ02"></a><strong>公式 2</strong></p><p><a><img alt="0315equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0315equ01.jpg"/></a></p><p>其中 <em>i</em> = ⌊<em>x</em>⌋ 是整数部分，<em></em> = <em>x - i</em> 是 <em>x</em> 的小数部分。基于这样的凸组合，我们可以把一般的线性组合 <em>a</em> x <em>f<sub>i</sub></em> + <em>b</em> x <em>f<sub>i+</sub></em> <sub>1</sub>（<em>a</em>、<em>b</em> 为任意值）改写为</p><p><a id="ch20equ03"></a><strong>公式 3</strong></p><p><a><img alt="0315equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0315equ02.jpg"/></a></p><p>只要满足凸组合性质 0 ≤ <em>b</em>/(<em>a</em> + <em>b</em>) ≤ 1。这样，我们不必在 <em>f<sub>i</sub></em> 与 <em>f<sub>i+</sub></em> <sub>1</sub> 处做两次纹理取数再加一次线性插值，而可以在 <em>i</em> + <em>b</em>/(<em>a</em> + <em>b</em>) 处只做一次取数，然后乘以 (<em>a</em> + <em>b</em>)。</p><p>当 <em>a</em> 与 <em>b</em> 同号且不同时为零时，组合性质恰好成立。三次 B 样条的公式 1 的权重确实满足这一性质，因此我们可以把整个卷积和改写成：</p><p><a id="ch20equ04"></a><strong>公式 4</strong></p><p><a><img alt="0316equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0316equ01.jpg"/></a></p><p>其中引入新函数 <em>g</em> <sub>0</sub>(<em>x</em>)、<em>g</em> <sub>1</sub>(<em>x</em>)、<em>h</em> <sub>0</sub>(<em>x</em>) 和 <em>h</em> <sub>1</sub>(<em>x</em>) 如下：</p><p><a id="ch20equ05"></a><strong>公式 5</strong></p><p><a><img alt="0316equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0316equ02.jpg"/></a></p><p>用这个方案，一维卷积和可以用两次线性纹理取数加片元程序中的一次线性插值来求值，比用四次最近邻取数的直白实现更快。但最重要的是，这个方案在更高维度上效果尤其好；用于二维和三维滤波时，纹理取数次数大幅减少，性能因而高得多。</p><p>三次 B 样条的滤波权重 <em>w<sub>i</sub></em> (<em>x</em>) 在区间 <em>x</em> ∊ [0, 1] 上是周期的：<em>w<sub>i</sub></em> (<em>x</em>) = <em>w<sub>i</sub></em> (<em></em>)，其中 <em></em> = <em>x</em> - ⌊<em>x</em>⌋ 是 <em>x</em> 的小数部分。具体地，</p><p><a id="ch20equ06"></a><strong>公式 6</strong></p><p><a><img alt="0316equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0316equ03.jpg"/></a></p><p>因此，函数 <em>g<sub>i</sub></em> (<em>x</em>) 与 <em>h<sub>i</sub></em> (<em>x</em>) 在区间 <em>x</em> ∊ [0, 1] 上也是周期的，因此可以存入一张一维查找纹理。</p><p>现在我们讨论一些实现细节，包括 (1) 在查找纹理与颜色纹理之间变换纹理坐标，(2) 计算纹理取数结果的加权和。一维三次滤波的片元程序 Cg 代码见代码清单 20-1，示意图见图 20-2。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/20_thirdorder_02.jpg" alt="20_thirdorder_02.jpg"><figcaption>图 20-2　一维纹理的三次滤波</figcaption></figure><h4>示例 20-1. 一维纹理的三次 B 样条滤波</h4><pre><code>float4 bspline_1d_fp(float coord_source
+                     : TEXCOORD0, uniform sampler1D tex_source,
+                       // 源纹理
+                       uniform sampler1D tex_hg,
+                       // 滤波偏移与权重
+                       uniform float e_x,
+                       // 源纹素尺寸
+                       uniform float size_source
+                     // 源纹理尺寸
+                     )
+    : COLOR
+{
+  // 计算滤波纹理坐标，其中 [0,1] 对应单个纹素
+  // （也可以改在顶点程序里做）
+  float coord_hg = coord_source * size_source – 0.5f;
+  // 从滤波纹理中取偏移与权重
+  float3 hg_x = tex1D(tex_hg, coord_hg).xyz;
+  // 确定线性采样坐标
+  float coord_source1 = coord_source + hg_x.x * e_x;
+  float coord_source0 = coord_source - hg_x.y * e_x;
+  // 取两个线性插值后的输入
+  float4 tex_source0 = tex1D(tex_source, coord_source0);
+  float4 tex_source1 = tex1D(tex_source, coord_source1);
+  // 对线性采样加权
+  tex_source0 = lerp(tex_source0, tex_source1, tex_hg_x.z);
+  return tex_source0;
+}</code></pre><p>如前所述，函数 <em>g<sub>i</sub></em> (<em>x</em>) 与 <em>h<sub>i</sub></em> (<em>x</em>) 存在一张查找纹理中（代码清单中名为 <code>tex_hg</code>），以减少片元程序中的运算量。实践中 128 个采样的 16 位纹理就足够了。注意这些函数在输入纹理的采样位置上是周期的。因此我们对纹理坐标施加一个线性变换，并对查找纹理使用 <code>GL_REPEAT</code> 的纹理环绕参数。为清楚起见，代码清单 20-1 把这个线性变换写进了片元程序。不过通常我们会用在顶点着色器中算出的单独纹理坐标。</p><p>从查找纹理取出偏移与权重之后，我们为从源颜色纹理做的两次线性纹理取数计算纹理坐标。注意我们需要用纹理分辨率的倒数来缩放偏移，这个倒数值存在一个常量寄存器着色器参数里。</p><p>程序的其余部分执行两次颜色取数，并计算它们的加权和。注意 B 样条满足单位分解 <em>w<sub>i</sub></em> (<em>x</em>) = 1，两个权重同样满足 <em>g</em> <sub>0</sub>(<em>x</em>) + <em>g</em> <sub>1</sub>(<em>x</em>) = 1。因此这种情况下我们不必在 <em>g</em> <sub>0</sub>(<em>x</em>) 之外再存一份 <em>g</em> <sub>1</sub>(<em>x</em>)，最终加权仍是只用一条 <code>lerp()</code> 指令完成的凸组合。</p><p>对于具有 256 个纹素的一维源纹理，代码清单 20-1 的片元着色器参数应按如下方式初始化：</p><pre><code>e_x = float(1 / 256.0f);
+size_source = float(256.0f);</code></pre><p>参数 <code>e_x</code> 对应单个源纹素在纹理坐标中的大小，它的作用是把从滤波纹理取到的偏移缩放到源纹理的分辨率。参数 <code>size_source</code> 只存储源纹理的大小，用来由源纹理坐标计算滤波纹理坐标，使整张滤波纹理对应源纹理的一个纹素。</p><p>现在把这个三次滤波方法扩展到更高维度，由于张量积 B 样条的可分离性，这一步很直接。实际上我们的优化在更高维度上效果更好。借助双线性或三线性纹理查找，我们可以把 4 项或 8 项求和合并成一次加权凸组合。因此，一个含 64 项的三维三次滤波只需八次三线性纹理取数就能求值。</p><p>多维滤波的偏移函数与权重函数可以用公式 5 对每个维度独立计算。在我们的实现中，这会导致对同一张一维查找纹理的多次取数。最终的权重与偏移随后在片元程序中按如下方式计算</p><p><a id="ch20equ07"></a><strong>公式 7</strong></p><p><a><img alt="0319equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0319equ01.jpg"/></a></p><p>其中索引 <em>k</em> 表示坐标轴，<a href="https://developer.download.nvidia.com/books/gpugems2/ek.jpg" rel="noreferrer noopener"><img alt="ek.jpg" src="https://developer.download.nvidia.com/books/gpugems2/ek.jpg"/></a> 是基向量。代码清单 20-2 给出了一种实现，它一次性算出所有纹理坐标，从而把依赖纹理读取的次数降到最少。</p><h4>示例 20-2. 双三次 B 样条滤波</h4><pre><code>float4 bspline_2d_fp(float2 coord_source
+                     : TEXCOORD0, uniform sampler2D tex_source,
+                       // 源纹理
+                       uniform sampler1D tex_hg,
+                       // 滤波偏移与权重
+                       uniform float2 e_x,
+                       // x 方向的纹素尺寸
+                       uniform float2 e_y,
+                       // y 方向的纹素尺寸
+                       uniform float2 size_source
+                     // 源纹理尺寸
+                     )
+    : COLOR
+{
+  // 计算滤波纹理坐标，其中 [0,1] 对应单个纹素
+  // （也可以改在顶点程序里做）
+  float2 coord_hg = coord_source * size_source - float2(0.5f, 0.5f);
+  // 从滤波纹理中取偏移与权重
+  float3 hg_x = tex1D(tex_hg, coord_hg.x).xyz;
+  float3 hg_y = tex1D(tex_hg, coord_hg.y).xyz;
+  // 确定线性采样坐标
+  float2 coord_source10 = coord_source + hg_x.x * e_x;
+  float2 coord_source00 = coord_source - hg_x.y * e_x;
+  float2 coord_source11 = coord_source10 + hg_y.x * e_y;
+  float2 coord_source01 = coord_source00 + hg_y.x * e_y;
+  coord_source10 = coord_source10 - hg_y.y * e_y;
+  coord_source00 = coord_source00 - hg_y.y * e_y;
+  // 取四个线性插值后的输入
+  float4 tex_source00 = tex2D(tex_source, coord_source00);
+  float4 tex_source10 = tex2D(tex_source, coord_source10);
+  float4 tex_source01 = tex2D(tex_source, coord_source01);
+  float4 tex_source11 = tex2D(tex_source, coord_source11);
+  // 沿 y 方向加权
+  tex_source00 = lerp(tex_source00, tex_source01, hg_y.z);
+  tex_source10 = lerp(tex_source10, tex_source11, hg_y.z);
+  // 沿 x 方向加权
+  tex_source00 = lerp(tex_source00, tex_source10, hg_x.z);
+  return tex_src00;
+}</code></pre><p>对于具有 256 x 128 个纹素的二维源纹理，代码清单 20-2 的片元着色器参数应按如下方式初始化：</p><pre><code>e_x = float2(1 / 256.0f, 0.0f);
+e_y = float2(0.0f, 1 / 128.0f);
+size_source = float2(256.0f, 128.0f);</code></pre><p>源纹素大小以这种特定方式存放在 <code>e_x</code> 和 <code>e_y</code> 参数中，使我们能用最少的指令算出全部四个源样本的坐标，因为这样可以避免对四个样本都在 <em>x</em> 轴上施加偏移，如代码清单 20-2 所示。在三维情况下，同样的做法可以用 14 条乘加指令算出全部八个源坐标。</p><p>三维滤波是代码清单 20-2 的直接扩展。</p><h2>20.3 mipmap</h2><p>对于带 mipmap 的纹理，我们遇到的问题是：与输入纹理分辨率相对应的纹理坐标偏移与缩放操作，无法像代码清单 20-1 和 20-2 那样用片元着色器的 uniform 常量完成。纹理一旦带 mipmap，合适的纹理分辨率就随片元而变（<code>GL_*_MIPMAP_NEAREST</code> 滤波），甚至是在两个相邻纹理分辨率之间做线性插值（<code>GL_*_MIPMAP_LINEAR</code> 滤波）。</p><p>本章只详细讨论 <code>GL_*_MIPMAP_NEAREST</code> 滤波的情形。不过 <code>GL_*_MIPMAP_LINEAR</code> 滤波也能用稍加扩展的方法处理：对两个有贡献的 mipmap 层级都做双三次滤波，再在片元着色器里于两者之间线性插值。</p><p>对我们的滤波方法而言，需要知道给定片元实际使用的 mipmap 层级及相应纹理分辨率，才能得到正确的偏移（<code>e_x, e_y, e_z</code>）与缩放因子（<code>size_source</code>）。然而在当前架构上，片元着色器里无法查询 mipmap 层级。因此我们采用一个变通办法，把 mipmap 信息存进我们称为 <em>meta-mipmap</em> 的东西。meta-mipmap 是一张额外的 mipmap，它在每一层级的所有纹素中存储相同的信息，例如该层级的分辨率。类似的做法可用于在片元着色器中模拟导数指令（Pharr 2004）。</p><p>meta-mipmap 用一张浮点 RGB 纹理，如下所示：</p><pre><code>// 给定 mipmap_level 的每个纹素对应的 RGB 元 mipmap 信息
+metatexel = float3(1 / level_width, 1 / level_height, mipmap_level);</code></pre><p>下面的代码片段说明，代码清单 20-1 和 20-2 中的 <code>size_source</code> 以及 <code>e_x</code>、<code>e_y</code> 缩放与偏移（那里它们是 uniform 参数）如何被替换为按片元正确适配硬件当前片元实际所用 mipmap 层级的版本：</p><pre><code>// 取元 mipmap 信息
+float3 meta = tex2D(tex_meta, coord_source).xyz;
+// 由偏移算出缩放，这样就不必存储它们
+float2 size_source = float2(1.0f / meta.x, 1.0f / meta.y);
+// 滤波纹理坐标
+// 其中 [0,1] 对应源纹理的单个纹素
+// （已经无法在顶点程序中完成）
+float2 coord_hg = coord_source * size_source - 0.5f;
+// 调整邻近采样的偏移
+e_x *= meta.x;
+e_y *= meta.y;</code></pre><p>现在 <code>e_x</code> 和 <code>e_y</code> 初始化为单位向量，而不再预先乘以纹理尺寸：</p><pre><code>e_x = float2(1.0f, 0.0f);
+e_y = float2(0.0f, 1.0f);</code></pre><p>对 <code>GL_*_MIPMAP_NEAREST</code> 滤波，我们不需要 meta-mipmap 的第三个分量（<code>meta.z</code>），它存放 mipmap 层级本身。但要实现 <code>GL_*_MIPMAP_LINEAR</code> 滤波，还需要两个有贡献的 mipmap 层级之间的插值权重。这个权重可以由经硬件插值的 meta-mipmap 第三分量取 <code>frac(meta.z)</code> 得到。</p><p>使用 meta-mipmap 时一个重要考量是它的纹理内存占用，直接使用的话可能相当高。理论上，应用程序使用的每种纹理尺寸与宽高比都需要一张对应的 meta-mipmap，才能取得相应的 mipmap 信息。不过这一内存开销可以大幅降低。</p><p>首先，我们只用一张 meta-mipmap，它与应用中使用的最高纹理分辨率相匹配（称为 <code>meta_baselevel_size</code>）。为了在任意分辨率下都取得正确的 mipmap 信息，我们通过把 <code>GL_TEXTURE_BASE_LEVEL</code> 纹理参数设为当前纹理的分辨率（称为 <code>target_size</code>），在运行时裁掉 meta-mipmap 的高分辨率层级：</p><pre><code>glTexParameter(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL,
+               log2(meta_baselevel_size / target_size));</code></pre><p>其次，如果片元着色器 profile 支持用 <code>ddx()</code> 和 <code>ddy()</code> 函数取得纹理坐标对屏幕坐标的偏导数，那么高度为 1 的 meta-mipmap 确实可以用于所有宽高比与尺寸。这两个函数，加上接受用户给定导数的 <code>tex2D()</code> 变体，使我们即使不知道实际 mipmap 层级，也能在 mipmap 层级选择上模拟出所有宽高比。</p><p>随后用修改过的导数从 meta-mipmap 取纹理：</p><pre><code>// 取出并修改导数
+// 需要 uniform float2 meta_adjust；见下文
+float2 meta_ddx = ddx(coord_source) * meta_adjust;
+float2 meta_ddy = ddy(coord_source) * meta_adjust;
+// 用修改后的导数采样元 mipmap
+float3 meta = tex2D(tex_meta, coord_src, meta_ddx, meta_ddy).xyz;</code></pre><p>必须设置 uniform 参数 <code>meta_adjust</code>，以便把 meta-mipmap 的实际宽高比适配到目标纹理的宽高比，其中 <code>cur_base_size</code> 是 meta-mipmap 当前 <code>GL_TEXTURE_BASE_LEVEL</code> 的实际大小：</p><pre><code>meta_adjust = float2(target_size_x / cur_base_size, target_size_y);</code></pre><p>由于我们提供的修改后导数最终决定硬件使用的 mipmap 层级，我们实际上模拟出了 meta-mipmap 的另一种宽高比，而不需要相应的存储。</p><p>总之，meta-mipmap 的纹理内存占用可以降到<em>单张一维纹理</em>，其长度为应用所用（任一轴上）的最高纹理分辨率。这张单一 meta-mipmap 随后就能用于过滤<em>任意应用纹理</em>：只要相应设置 meta-mipmap 的 <code>GL_TEXTURE_BASE_LEVEL</code> 与 <code>meta_adjust</code> uniform 片元着色器参数。图 20-3 展示了用更高阶纹理滤波处理二维纹理后的质量提升。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/20_thirdorder_03a.jpg" alt="20_thirdorder_03a.jpg"><figcaption>图 20-3 双线性与双三次重建滤波的纹理滤波质量对比</figcaption></figure><h2>20.4 导数重建</h2><p>除了重建纹理贴图中的值，重建它的导数也有很多应用。例如在体渲染中，体数据的梯度常被当作表面法线用于着色。梯度 <strong>g</strong> 是对一个标量场 <em>f</em>（此处为一张三维纹理）取的，由它的一阶偏导数构成：</p><p><a id="ch20equ08"></a><strong>公式 8</strong></p><p><a><img alt="0324equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0324equ01.jpg"/></a></p><p>近似梯度信息最常用的方法是简单的中心差分格式。不过要得到高质量导数，我们也可以用卷积滤波，并套用前面介绍过的方案在 GPU 上快速求值。图 20-4 展示了等值面 Phong 着色时使用高阶梯度带来的质量提升。用滤波重建导数，就是把原始数据与滤波器核的导数做卷积。图 20-1b 和 20-1c（见第 314 页）画出了三次 B 样条的一阶与二阶导数。计算导数与重建函数值非常相似，只是换了一个滤波器核。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/20_thirdorder_4a.jpg" alt="20_thirdorder_4a.jpg"><figcaption>图 20-4 三线性与三维三次重建滤波的着色质量对比</figcaption></figure><p>我们可以把前面概述的快速滤波方案套用到三次 B 样条的导数上，用来重建导数。这里唯一的区别是，现在所有滤波器核权重之和为零而不是一：<em>w<sub>i</sub></em> (<em>x</em>) = 0。与代码清单 20-1 中两个线性输入样本用一次 <code>lerp()</code> 加权相比，现在我们得到第二个权重是第一个的相反数，即 <em>g</em> <sub>1</sub>(<em>x</em>) = -<em>g</em> <sub>0</sub>(<em>x</em>)，这可以写成一次减法再接一次乘法，如代码清单 20-3 所示。</p><h4>示例 20-3. 一维纹理的一阶导数三次 B 样条滤波</h4><pre><code>// ……与代码清单 20-1 相同，未作改动
+// 对线性采样加权
+tex_source0 = (tex_source0 - tex_source1) * hg_x.z;
+return tex_source0;
+}</code></pre><p>要计算更高维的梯度，我们通过张量积得到相应的滤波器核：求导轴方向用一维求导三次 B 样条，其他轴用一维（不求导）三次 B 样条。</p><p>除了一阶偏导数，二阶偏导数也能在 GPU 上非常快地计算。这些二阶导数合起来构成黑塞矩阵 <strong>H</strong>，此处给出三维情形：</p><p><a id="ch20equ09"></a><strong>公式 9</strong></p><p><a><img alt="0325equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0325equ01.jpg"/></a></p><p><strong>H</strong> 中的混合导数（非对角元素）可以用刚才介绍的一阶导数快速滤波方案计算，因为此时一维滤波器核只需推导一次。</p><p>但对 <strong>H</strong> 的对角元素来说，滤波器核自身的导数必须求两次。图 20-1c 画出了三次 B 样条的二阶导数，它是分段线性函数。与这个滤波器的卷积和非常容易求值。代码清单 20-4 展示了用三个线性插值的输入样本怎么做。这种情况下由于滤波器形状简单，不需要滤波纹理。三个输入样本直接按单位间隔取数，用向量 (1, -2, 1) 加权。</p><h4>示例 20-4. 一维纹理的二阶导数三次 B 样条滤波</h4><pre><code>float4 bspline_dd_1d_fp(float coord_source
+                        : TEXCOORD0, uniform sampler1D tex_source,
+                          // 源纹理
+                          uniform float e_x,
+                        // 源纹素尺寸
+                        )
+    : COLOR
+{
+  // 确定额外的线性采样坐标
+  float coord_source1 = coord_source + e_x;
+  float coord_source0 = coord_source - e_x;
+  // 取三个线性插值后的输入
+  float4 tex_source0 = tex1D(tex_source, coord_source0);
+  float4 tex_sourcex = tex1D(tex_source, coord_source);
+  float4 tex_source1 = tex1D(tex_source, coord_source1);
+  // 对线性采样加权
+  tex_source0 = tex_source0 - 2 * tex_sourcex + tex_source1;
+  return tex_source0;
+}</code></pre><p>高质量一阶与二阶导数信息的一个很有用的应用，是由存放在三维纹理中的体数据计算隐式曲面曲率。这里的隐式曲面曲率指等值面的曲率，它很容易在图形硬件上渲染（Westermann and Ertl 1998）。</p><p>隐式曲率信息可以直接由梯度 <strong>g</strong> 和黑塞矩阵 <strong>H</strong> 算出（Kindlmann et al. 2003），用三维三次 B 样条滤波能得到高质量结果。所需的九个分量（<strong>g</strong> 三个，<strong>H</strong> 六个，因对称性）每一个都要做一次单独的三维三次卷积滤波，传统上这极其昂贵。而用本章所述的快速滤波方案，在当前 GPU 上实际上可以实时完成。图 20-5 的图像是随书 CD 中的等值面体渲染演示程序实时生成的。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/20_thirdorder_5a.jpg" alt="20_thirdorder_5a.jpg"><figcaption>图 20-5 用实时最大曲率求值做非真实感等值面渲染</figcaption></figure><h2>20.5 结论</h2><p>本章给出了一种高效的三阶纹理滤波方法，输入纹理取数次数大幅减少。基于「一次线性纹理取数与最近邻纹理取数一样快、或者慢不了多少」这一假设，我们把三次 B 样条这类三阶滤波器核的滤波优化成建立在少量线性纹理取数之上。一个三次输出样本需要 2 个而不是 4 个输入样本，一个双三次输出样本可以由 4 个而不是 16 个输入样本算出，三维三次滤波可以用 8 次而不是 64 次输入纹理取数完成。事实上，相应的片元程序更接近「手写」的线性插值，而不像三次滤波。</p><p>这一方法的另一个优点是与滤波器核相关的所有计算都已预先算好，存在小的一维查找纹理里。这样实际的片元着色器就可以与所用的滤波器核无关（Hadwiger et al. 2001）。例如，我们给出的值与一阶导数重建片元着色器，可以原样用于宽度合适的高斯滤波器。</p><p>建立在（硬件）线性输入样本之上的一个缺点是，要得到高质量结果可能需要输入纹理有更高精度。在当前 GPU 上，8 位纹理的线性插值也以类似的精度执行，这对三维三次滤波不够用，因为一次三线性插值样本包含了 8 个输入样本的贡献。我们的实现用了 16 位纹理，为底层的线性插值提供了足够精度。当前世代的许多 GPU 还支持浮点纹理滤波，精度会更高。</p><p>另一方面，我们把滤波器用于函数（或导数）重建，这在 OpenGL 术语中称为<em>放大滤波</em>。为了让高阶滤波器也能用于纹理<em>缩小</em>，我们说明了如何把它们扩展到带 mipmap 的纹理。这里引入的一个重要组成部分，是降低所需额外纹理信息（我们称为 meta-mipmap）的内存占用。</p><p>最后，我们说明了如何用本方法高质量重建一阶与二阶偏导数，这对体渲染或渲染有符号距离场表示的隐式曲面等场合尤其有用。用这一方法，曲率这类微分表面属性也能实时高质量地计算出来。</p><h2>20.6 参考文献</h2><p><a id="biblio20_01"></a>Bjorke, Kevin. 2004. "High-Quality Filtering."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 391–415. Addison-Wesley。<em>很好地概述了在片元着色器中过程化求值滤波器核来做高质量滤波的各种应用</em>。</p><p><a id="biblio20_02"></a>Hadwiger, Markus, Thomas Theußl, Helwig Hauser, and Eduard Gröller. 2001. "Hardware-Accelerated High-Quality Filtering on PC Hardware."，载 <em>Proceedings of Vision, Modeling, and Visualization 2001</em>，pp. 105–112。<em>把所有滤波器核信息存进纹理，在多趟渲染中求任意卷积和，不需要过程化计算或相关纹理查找。在今天的 GPU 上可以单趟实现</em>。</p><p><a id="biblio20_03"></a>Kindlmann, Gordon, Ross Whitaker, Tolga Tasdizen, and Torsten Möller. 2003. "Curvature-Based Transfer Functions for Direct Volume Rendering: Methods and Applications."，载 <em>Proceedings of IEEE Visualization 2003</em>，pp. 513–520。<em>说明如何由三维三次 B 样条滤波得到的一阶与二阶偏导数直接算出隐式曲面曲率，并给出很漂亮的应用，包括非真实感渲染</em>。</p><p><a id="biblio20_04"></a>Pharr, Matt. 2004. "Fast Filter-Width Estimates with Texture Maps."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 417–424. Addison-Wesley。<em>利用这样一种 mipmap 概念——在某个 mipmap 层级的所有像素中存放该层级自身的信息——来近似</em> <code>ddx()</code> <em>与</em> <code>ddy()</code> <em>片元着色器指令</em>。</p><p><a id="biblio20_05"></a>Westermann, Rüdiger, and Thomas Ertl. 1998. "Efficiently Using Graphics Hardware in Volume Rendering Applications."，载 <em>Proceedings of SIGGRAPH 98</em>，pp. 169–177。<em>说明如何用硬件 alpha 测试与由后向前渲染来渲染体数据的等值面。在当前 GPU 上，改用</em> <code>discard()</code> <em>指令与由前向后渲染，配合 early-z 测试能获得更好的性能</em>。</p><p><em>作者感谢 Markus Gross 与 Katja Bühler 的宝贵贡献，以及 Henning Scharsach 实现的 GPU 光线投射器。第一作者由 Schlumberger Cambridge Research 资助，第二作者由奥地利政府的 Kplus 计划资助。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-20-fast-third-order-texture-filtering" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-20-fast-third-order-texture-filtering</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

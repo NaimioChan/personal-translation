@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 19 章　基于图像的光照 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 19 章　基于图像的光照」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 19 章　基于图像的光照</h1>
+<p><em>Kevin Bjorke<br> NVIDIA</em></p><p>立方体贴图通常用于生成来自被视为无限远的环境的反射。但只需少量着色器运算，我们就能把物体放进一个具有特定尺寸和位置的环境反射中，从而提供质量更高的基于图像的光照（IBL）。</p><h2>19.1 让基于图像的光照局部化</h2><p>立方体贴图反射如今已是实时图形的标准组成部分，也是许多模型外观的关键。然而这类反射有一点违背真实感：立方体贴图的反射看起来总像来自无限远处。这限制了立方体贴图在小型封闭环境中的用处，除非我们愿意承担模型之间相对移动时反复重建立方体贴图的开销。见图 19-1。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-01.jpg" alt="fig19-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-01.jpg" rel="noreferrer noopener">图 19-1</a> 典型的「无限远」反射</figcaption></figure><p>当模型在室内环境中移动时，如果立方体贴图表现得像只在很近的距离上——比如和当前房间一样大——那会很有用。随着模型在那个房间里移动，反射会按模型在房间中的位置相应地变大或变小。这种做法可能非常有力，能让观者切实感到我们搭建的场景是坚固的，在含有窗户、视频监视器和其他可辨认光源的环境里尤其如此。见图 19-2。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-02.jpg" alt="fig19-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-02.jpg" rel="noreferrer noopener">图 19-2</a> 局部化的反射</figcaption></figure><p>幸运的是，只需少量额外的着色器运算就能实现这种局部化的反射。事实上，一些近期游戏的开发者已经用这种做法替换掉了大量局部光照。</p><p>让我们看图 19-3。我们看到一个反射性物体（一副巨大的金色面具）处在相当典型的反射贴图环境中。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-03.jpg" alt="fig19-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-03.jpg" rel="noreferrer noopener">图 19-3</a> 带局部化反射的反射性物体</figcaption></figure><p>现在看 19-4，同一段短动画的另一帧。贴图没有变，但看反射的差异！原先很小的窗户反射现在变大了，并且与物体对齐。事实上，面具略微<em>穿出</em>了窗户表面，贴图窗户百叶的反射也精确对齐。同样，留意那个反射出的画框，它在新图像中非常明显。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-04.jpg" alt="fig19-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-04.jpg" rel="noreferrer noopener">图 19-4</a> 另一位置处的局部化反射</figcaption></figure><p>同时，第一帧中明显的绿色天花板（这张照片立方体贴图拍的是 NVIDIA 一栋建筑的大堂）现在退到了远处，只占反射的一小部分。</p><p>这个反射还可以叠加凹凸贴图，如图 19-5 所示（只添加了凹凸）。同一帧的近景见图 19-6。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-05.jpg" alt="fig19-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-05.jpg" rel="noreferrer noopener">图 19-5</a> 在局部化反射上应用凹凸</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-06.jpg" alt="fig19-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-06.jpg" rel="noreferrer noopener">图 19-6</a> 局部化反射的近景，显示反射的对齐</figcaption></figure><p>不加着色时，几何的极简程度在图 19-7 中一目了然。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-07.jpg" alt="fig19-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-07.jpg" rel="noreferrer noopener">图 19-7</a> 示例场景中的平面着色几何</figcaption></figure><p>图 19-8 的示意图展示了完整的简单场景。大立方体是我们搭建的房间模型（着色稍后说明）。房间体积的三维变换被传给反射物体上的着色器，使我们能直接在像素着色器中生成正确的反射畸变。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-08.jpg" alt="fig19-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-08.jpg" rel="noreferrer noopener">图 19-8</a> 顶视图、侧视图与前视图，显示摄像机、反射性物体和简单的「房间」物体</figcaption></figure><h2>19.2 顶点着色器</h2><p>要为光照建立一个局部化的参照系，我们需要创建新的坐标系。除了眼空间、物体空间等标准坐标空间，我们还需要创建<em>光照空间</em>——相对于立方体贴图本身的位置。这个新坐标空间让我们能相对于立方体贴图的有限尺寸来评估物体位置。</p><p>为简化数学，我们假设立方体贴图的「半径」固定为 1.0，即每一维都从 –1.0 到 1.0 的立方体（立方体形状其实只是为了方便纹理硬件；我们会把它的角度投影到所有三维方向向量构成的球面上）。这个尺寸让动画师和光照/关卡设计师可以相对容易地用 3ds max 的空物体、Maya 的 <code>place3DTexture</code> 节点或类似的「虚拟」物体来摆设立方体贴图的位置与大小。</p><p>在我们的示例中，传给顶点着色器两个 <code>float4x4</code> 变换：光照空间的矩阵（相对于世界坐标）及其逆转置。结合世界变换与视变换，我们就能在光照空间中表达表面坐标。</p><p>我们从 CPU 应用传入逐顶点的法线、切线与副法线数据，以便也能对局部化反射做凹凸贴图。</p><pre><code>// 来自应用程序顶点缓冲的数据
+struct appdata
+{
+  float3 Position : POSITION;
+  float4 UV : TEXCOORD0;
+  float4 Normal : NORMAL;
+  float4 Tangent : TEXCOORD1;
+  float4 Binormal : TEXCOORD2;
+};</code></pre><p>我们传给像素着色器的数据会同时包含世界坐标系与光照坐标系下的值。</p><pre><code>// 由顶点着色器传给像素着色器的数据
+struct vertexOutput
+{
+  float4 HPosition : POSITION;
+  float4 TexCoord : TEXCOORD0;
+  float3 LightingNormal : TEXCOORD1;
+  float3 LightingTangent : TEXCOORD2;
+  float3 LightingBinorm : TEXCOORD3;
+  float3 LightingEyeVec : TEXCOORD4;
+  float3 LightingPos : TEXCOORD5;
+};</code></pre><p>代码清单 19-1 给出顶点着色器。</p><h4>示例 19-1. 生成世界空间与光照空间坐标的顶点着色器</h4><pre><code>vertexOutput reflectVS(appdata IN, uniform float4x4 WorldViewProjXf,
+                       uniform float4x4 WorldITXf, uniform float4x4 WorldXf,
+                       uniform float4x4 ViewITXf, uniform float4x4 LightingXf,
+                       uniform float4x4 LightingITXf)
+{
+  vertexOutput OUT;
+  OUT.TexCoord = IN.UV;
+  float4 Po = float4(IN.Position.xyz, 1.0); // 补齐为 “float4”
+  OUT.HPosition = mul(WorldViewProjXf, Po);
+  float4 Pw = mul(WorldXf, Po); // 世界坐标
+  float3 WorldEyePos = ViewITXf[3].xyz;
+  float4 LightingEyePos = mul(LightingXf, float4(WorldEyePos, 1.0));
+  float4 Pu = mul(LightingXf, Pw);
+  float4 Nw = mul(WorldITXf, IN.Normal);
+  float4 Tw = mul(WorldITXf, IN.Tangent);
+  float4 Bw = mul(WorldITXf, IN.Binormal);
+  OUT.LightingEyeVec = (LightingEyePos - Pu).xyz;
+  OUT.LightingNormal = mul(LightingITXf, Nw).xyz;
+  OUT.LightingTangent = mul(LightingITXf, Tw).xyz;
+  OUT.LightingBinorm = mul(LightingITXf, Bw).xyz;
+  OUT.LightingPos = mul(LightingXf, Pw).xyz;
+  return OUT;
+}</code></pre><p>在这个示例中，点和向量值被变换两次：先到世界空间，再从世界空间到光照空间。如果你的 CPU 应用愿意多做一点工作，也可以预先合并这些矩阵，只用一次乘法就把位置、法线、切线与副法线向量变换好。此处展示的方法用在 CgFX 中：那里的「World」与「WorldIT」变换由 CgFX 解析器自动跟踪并提供，而光照空间的变换由用户自定义的值提供（比如来自 DCC 应用）。</p><h2>19.3 片元着色器</h2><p>已知被着色点的位置及其着色向量相对于光照空间的关系，像素部分就相对直接了。我们取以光照空间表达的反射向量，从表面在光照空间中的位置出发，求解该球面的二次方程，求出它与半径为 1.0、球心位于光照空间原点的球面的交点。</p><p>作为「安全措施」，我们把默认颜色设为红色（<code>float4(1, 0, 0, 0)</code>）：如果某点被着色在球外（因而不可能有反射），该点就会显示为红色，使开发期间的任何错误都显而易见。片元着色器见代码清单 19-2。</p><h4>示例 19-2. 局部化反射的像素着色器</h4><pre><code>float4 reflectPS(vertexOutput IN, uniform samplerCUBE EnvMap,
+                 uniform sampler2D NormalMap, uniform float4 SurfColor,
+                 uniform float Kr,
+                 // 反射强度
+                 uniform float KrMin,
+                 // 典型值：0.05 * Kr
+                 uniform float FresExp,
+                 // 典型值：5.0
+                 uniform float Bumpiness // 凹凸强度
+                 )
+    : COLOR
+{
+  float3 Nu = normalize(IN.LightingNormal);
+  // 做凹凸贴图时，我们会改动 “Nu” 得到 “Nb”
+  float3 Tu = normalize(IN.LightingTangent);
+  float3 Bu = normalize(IN.LightingBinorm);
+  float3 bumps = Bumpiness * (tex2D(NormalMap, IN.TexCoord.xy).xyz - (0.5).xxx);
+  float3 Nb = Nu + (bumps.x * Tu + bumps.y * Bu);
+  Nb = normalize(Nb); // 以用户坐标空间表示
+  float3 Vu = normalize(IN.LightingEyeVec);
+  float vdn = dot(Vu, Nb); // 未做凹凸时则为 “Nu”，见正文
+  // “fres” 会削弱反射的强度
+  // 依据菲涅尔定律
+  float fres = KrMin + (Kr - KrMin) * pow((1.0 - abs(vdn)), FresExp);
+  float3 reflVect = normalize(reflect(Vu, Nb)); // 是的，需要归一化
+  // 现在我们把 “reflVect” 与半径 1.0 的球面求交
+  float b = -2.0 * dot(reflVect, IN.LightingPos);
+  float c = dot(IN.LightingPos, IN.LightingPos) - 1.0;
+  float discrim = b * b - 4.0 * c;
+  bool hasIntersects = false;
+  float4 reflColor = float4(1, 0, 0, 0);
+  if (discrim > 0)
+  {
+    // 取一个非常接近零的小误差值作为 “epsilon”
+    hasIntersects = ((abs(sqrt(discrim) - b) / 2.0) > 0.00001);
+  }
+  if (hasIntersects)
+  {
+    // 确定 reflVect 交于单位球面上的哪一点
+    reflVect = nearT * reflVect - IN.LightingPos;
+    // reflVect.y = -reflVect.y; 可选，见正文
+    // 现在把新的交点位置作为 3D 方向
+    reflColor = fres * texCUBE(EnvMap, reflVect);
+  }
+  float4 result = SurfColor * reflColor;
+  return result;
+}</code></pre><h4>19.3.1 着色器的其他细节</h4><p>我们提供了几个额外的可选项，以增强着色器的真实感。</p><p>第一项增强针对表面颜色：金属表面需要提供该颜色，因为金属的反射会带上金属本身的颜色。对于塑料或水这类电介质材质，可以去掉这一项，或把它设为白色。</p><p>第二组项为反射提供菲涅尔式衰减。纯金属表面可以去掉这些项，但对塑料和其他电介质要获得真实感，它们至关重要。这里的数学用幂函数：如果不需要用户控制菲涅尔近似，可以把衰减编码为一张一维纹理，用 <code>abs(vdn).</code> 索引。</p><p>对于某些模型，你可能会发现按<em>未做凹凸</em>的法线来做菲涅尔衰减效果更好：这有助于压制物体边缘处的高频「闪烁」。那种情况下，计算 <code>vdn</code> 时用 <code>Nu</code> 而不是 <code>Nb</code>。</p><p>对于纯净光滑的金属，菲涅尔衰减为零：直接去掉 <code>fres</code> 的计算，改用 <code>Kr</code>。但现实世界中很少有真正纯净的材质；即使是相当干净的金属表面，通常也能看到反射率略微下降，而脏污表面上这种下降很明显。同样，脏金属的反射往往比「纯净」金属的颜色饱和度更低。请自行判断，在性能需求与复杂度需求之间取得平衡。</p><p>试着调整 <code>FresExp</code> 指数的取值。见图 19-9。这个近似的提出者 Christophe Schlick（1994）指定指数为 5.0，但用较小的值可以营造更有层次、更像漆面的外观。指数取 4.0 时还可以用两次乘法快速算出，而不必调用可能代价高昂的 <code>pow()</code> 函数。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-09.jpg" alt="fig19-09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-09.jpg" rel="noreferrer noopener">图 19-9</a> 菲涅尔衰减项的效果</figcaption></figure><p>代码清单 19-2 的着色器可以选择翻转反射向量的 <em>y</em> 分量。这一可选项是为适应异构的开发环境而加的：为 DirectX 和 OpenGL 创建的立方体贴图可能会混用（这两套 API 的立方体贴图规范在「向上」方向的处理上不同）。例如，一个场景可能在 Maya（OpenGL）中制作，而游戏引擎在 DirectX 中开发。</p><h2>19.4 漫反射 IBL</h2><p>立方体贴图也可以用来确定漫反射光照。Debevec 的 HDRShop 之类的程序可以对立方体贴图光照环境中完整的兰伯特贡献做积分，这样只需把表面法线传给这张预卷积的立方体贴图就能查到漫反射贡献（而在反射光照中，我们要传的是同时基于表面法线和眼睛位置的反射向量）。</p><p>遗憾的是，把漫反射向量局部化，效果不如把反射局部化那样令人满意，因为漫反射光照贴图已经编码了它对该点「可见半球」的理解。这些积分在偏离球心的位置上会不正确。视你的应用而定，这些误差或许可以接受，或许不行。某些情况下，在多张漫反射贴图之间做线性插值也能提供一定程度的局部化。这类贴图往往频率很低。这对简单光照来说是好事，因为误差必须相当大才会被注意到（如果会被注意到的话）。因此，有些应用只靠漫反射与镜面反射立方体贴图就能完成全部光照计算。</p><p>把漫反射光照与镜面反射光照合并进立方体贴图后，你可能会发现有些应用不再需要任何额外的光照信息。</p><h2>19.5 阴影</h2><p>在 IBL 中使用阴影会让事情变复杂，但并不妨碍使用。这里可以应用模板阴影体技术，也可以应用阴影贴图。两种情况下，最好都提供一个小的环境光项（使用模板阴影体时在额外的一遍中施加），以免物体完全隐入黑暗（除非你要的就是这个效果）。</p><p>使用基于图像的光照时，自然会问：<em>阴影从何而来？</em>即使阴影并非完全「有来由」，它们也能作为有力的视觉线索。也就是说，阴影的实际来源未必与光源对应。就 IBL 而言，这几乎必然成立：IBL 的阴影需要匹配大量潜在的光照方向，结果往往是非常软的阴影。而阴影贴图和模板阴影之类的技术，通常会产生边缘硬、或只有轻微柔化的阴影。</p><p>幸运的是，只要阴影来源的方向选得明智，这通常不是问题。观者往往会接受极不自然的阴影，因为阴影在空间与画面构成上的作用，通常比它作为「解释」光照的手段更重要（事实上，大多数电视节目和电影的光照都相当「没有来由」）。给任意 IBL 场景添加阴影时，最稳妥的做法是在立方体贴图中挑最亮的区域作为方向。若做不到，就把阴影朝向你认为最能强化模型立体感的方向。</p><p>动画中的阴影对于把角色和模型与其周围环境联系起来最为关键。角色在地面上的阴影告诉你他是站着、跑着还是跳着，以及他与地面的关系。如果他的脚碰到了自己的阴影，他就站在地上（我们把这用途的阴影叫作<em>接触阴影</em>）。否则他就在空中。</p><p>阴影的这一特性被赛璐珞动画师利用了很多年，它说明在 IBL 场景中<em>只</em>关心接触阴影往往更有利。如果我们只在意角色在地面上的阴影，那么渲染时可以做一个简化假设：阴影不需要按深度评估，只需按颜色。这意味着我们可以只生成一张投影的黑白或全彩阴影，可能还带模糊，然后假设它<em>总是</em>命中访问该阴影贴图的物体。这样就不必做深度比较，还能在有效纹理带宽上获益（因为可以用简单的八位纹理）。</p><p>在这种方案中，角色表面不访问自己的阴影贴图，也就是不自阴影。它们的光照可能完全来自 IBL。玩家仍然能在环境上看到角色的阴影，从而获得阴影的主要好处：角色与三维游戏环境之间牢固的联系。</p><h2>19.6 把局部化立方体贴图用作背景</h2><p>在本章的插图中，我们能看到反射性物体与背景的互动。如果没有背景，这个效果可能几乎察觉不到。</p><p>很多情况下，我们可以从三维几何生成立方体贴图，把这些贴图只应用于该环境中的物体，同时正常渲染环境。另一种做法如图 19-10 所示：把贴图<em>当作</em>环境，投影到更简单的几何上。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig19-10.jpg" alt="fig19-10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig19-10.jpg" rel="noreferrer noopener">图 19-10</a> 显示房间立方体各条边的线条</figcaption></figure><p>对于背景立方体，我们也传入单位立方体房间的同一变换。事实上，在演示场景中我们直接把房间自己的变换传给房间着色器。那些简单几何就只是几何，不需要 UV 映射坐标，甚至不需要表面法线。</p><p>从图 19-10 也能看出，用简单立方体代替完整场景几何有明显的局限！注意左侧「弯折」的天花板。用这种方式做代理几何，通常在摄像机靠近立方体中心时效果最好。合成环境（与照片相对，比如这一张）还可以通过让墙壁、天花板等平面恰好对齐光照空间的边界而受益。</p><pre><code>// 来自应用程序顶点缓冲的数据
+struct appdataB
+{
+  float3 Position : POSITION;
+};</code></pre><p>顶点着色器会传出视线向量和通常必需的裁剪空间位置。</p><pre><code>// 由顶点着色器传给像素着色器的数据
+struct vertexOutputB
+{
+  float4 HPosition : POSITION;
+  float3 UserPos : TEXCOORD0;
+};</code></pre><p>代码清单 19-3 给出顶点着色器本身。</p><h4>示例 19-3. 背景立方体物体的顶点着色器</h4><pre><code>vertexOutput xfBoxVS(appdataB IN, uniform float4x4 WorldViewProj,
+                     uniform float4x4 WorldIT, uniform float4x4 World,
+                     uniform float4x4 ViewIT, uniform float4x4 UserXf)
+{
+  vertexOutputB OUT;
+  float4 Po = float4(IN.Position.xyz, 1.0);
+  OUT.HPosition = mul(WorldViewProj, Po);
+  float4 Pw = mul(World, Po);
+  OUT.UserPos = mul(UserXf, Pw).xyz;
+  return OUT;
+}</code></pre><p>像素着色器只是用片元着色器推算出对立方体贴图的直接纹理查找，外加一个可选的色调颜色。见代码清单 19-4。</p><h4>示例 19-4. 背景立方体物体的像素着色器</h4><pre><code>float4 xfBoxPS(vertexOutput IN, uniform samplerCUBE EnvMap,
+               uniform float4 SurfColor)
+    : COLOR
+{
+  float4 reflColor = SurfColor * texCUBE(EnvMap, -IN.UserPos);
+  return reflColor;
+}</code></pre><p>这个着色器是专门为投影到（可能已变形的）立方体上时表现良好而设计的。改用球体、圆柱体或平整背板等其他简单几何，也同样直接。</p><h2>19.7 结论</h2><p>基于图像的光照为数值密集的光照计算提供了一种复杂但廉价的替代方案。在这种贴图方法上加一点数学，就能得到比「简单」IBL 广泛得多的效果，为我们的三维图像带来更强的场所感。</p><h2>19.8 延伸阅读</h2><p><a id="ch19bib01_01"></a>Schlick, Christophe. 1994. "An Inexpensive BRDF Model for Physically-Based Rendering." <em>Computer Graphics Forum</em> 13(3)，第 233–246 页。<em>本文给出图形业界广泛使用的菲涅尔方程近似——事实上用得如此之广，以致有些程序员误以为这个近似</em>就是<em>菲涅尔方程。</em></p><p><a id="ch19bib01_02"></a><em>Paul Debevec 在以下地址提供了许多有用的 IBL 工具和论文：</em> <strong><a href="http://www.debevec.org" rel="noreferrer noopener">http://www.debevec.org</a></strong></p><p><a id="ch19bib01_03"></a>Ramamoorthi, Ravi, and Pat Hanrahan. 2001. "An Efficient Representation for Irradiance Environment Maps."，载 <em>Proceedings of SIGGRAPH 2001</em>。<em>这篇关于用球谐函数做漫反射卷积的文章可在以下地址获取：</em> <strong><a href="http://graphics.stanford.edu/papers/envmap" rel="noreferrer noopener">http://graphics.stanford.edu/papers/envmap</a></strong></p><p><a id="ch19bib01_04"></a>Apodaca, Anthony A., and Larry Gritz 编。1999. <em>Advanced RenderMan: Creating CGI for Motion Pictures</em>. Morgan Kaufmann. <em>在本书中，Larry Gritz 描述了一个使用 RenderMan 着色语言的类似反射算法。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-19-image-based-lighting" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iii-materials/chapter-19-image-based-lighting</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

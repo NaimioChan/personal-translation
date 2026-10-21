@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 22 章　色彩控制 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 22 章　色彩控制」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 22 章　色彩控制</h1>
+<p><em>Kevin Bjorke<br> NVIDIA</em></p><p>色彩校正是几乎所有印刷与胶片成像应用的一部分。色彩校正可用于把彩色图像从一个色彩空间转换到另一个（比如从 Adobe RGB 到 sRGB）；用于风格化图像（营造褪色胶片、交叉冲洗等错觉或其他风格变化）；用于把不同来源的艺术元素组合起来（比如在不同视频源之间匹配调色板，或匹配不同美术制作的模型）；或者在不改动底层模型与纹理的情况下，为游戏或场景的整片区域赋予整体的连贯性与情绪。</p><p>我们在电视、杂志和电影中看到的大多数影像都经过了非常细致的色彩校正与控制。理解这个过程如何运作，能帮助开发者给实时应用带来同等的视觉丰厚度。</p><h2>22.1 引言</h2><p>在所有形式的色彩校正中，我们都想改变单个像素的颜色。色彩校正一般分两类：逐通道校正，分别改变红、绿、蓝分量；以及颜色混合操作，其中每个输出通道的值可以是同时基于红、绿、蓝分量的某种运算。</p><p>色彩校正的数学可以紧凑、容易地在着色器中描述。同样重要的是，它们可以用计算机美术和程序员广泛使用的常见工具来有效控制。本章我们依靠 Adobe Photoshop 让美术制作控制资源，再通过像素着色器实时施加这些资源。</p><h2>22.2 基于通道的色彩校正</h2><p>Photoshop 提供了若干基于通道的校正工具。「色阶」和「曲线」这类功能都是基于通道的。它们提供了改变图像中每个单独通道强度、或把三个通道当作一个整体来改变的方法。</p><h4>22.2.1 色阶</h4><p>图 22-1 与 22-2 展示了 Photoshop 中「色阶」命令的一个典型用法（此处是增强对比度并整体偏移伽马）。美术可以控制整幅图像的总体对比度、伽马与动态范围，也可以对每个颜色通道独立操作这些属性。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig22-01.jpg" alt="fig22-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig22-01.jpg" rel="noreferrer noopener">图 22-1</a> 用 Photoshop 色阶调整图像伽马与整体动态范围</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig22-02.jpg" alt="fig22-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig22-02.jpg" rel="noreferrer noopener">图 22-2</a> 色阶调整前后</figcaption></figure><p>对每个通道，我们可以套用以下公式：</p><pre><code>outPixel = (pow(((inPixel * 255.0) - inBlack) / (inWhite - inBlack), inGamma) *
+                (outWhite - outBlack) +
+            outBlack) /
+           255.0;</code></pre><p>这里 <code>inBlack</code>、<code>inGamma</code> 与 <code>inWhite</code> 是「输入色阶」的值，<code>outBlack</code> 与 <code>outWhite</code> 是图 22-1 中「输出色阶」框里标明的值。（关于伽马值处理的更多内容，见第 26 章「OpenEXR 图像文件格式」。）</p><p>图 22-2 展示的是对三个颜色通道同等施加的调整，但我们也可以逐通道分别调整。</p><p>对于使用高层着色语言的制作管线，美术或美术总监可以先在 Photoshop 里打开一张游戏截屏或其他图像来源，然后以新建图层的方式施加校正来定义色彩校正。着色器的编写者随后可以在 Photoshop 中打开该图像，从「色阶」对话框中复制校正后的值，粘贴为色彩校正代码的输入。</p><p>实践中，这个公式常常可以简化。1/255 的强度归一化可以省掉：先把 Photoshop 中使用的各项预先除好，再传给着色器。默认的色阶值（比如 0–255 的输出值，或伽马 1.0）可以直接跳过。</p><p>如果色阶分别施加到各个通道，输入可以定义为向量数据，但结果只能部分以向量方式计算，除非所有通道的伽马项相同。若不相同，就需要三个不同的 <code>pow()</code> 函数。</p><h4>22.2.2 曲线</h4><p>Photoshop 的「色阶」工具之所以有用，是因为美术容易理解、着色器程序员容易实现。然而美术常常想要更精确的控制，或更奇特、非线性的效果。Photoshop 的「曲线」工具能对颜色通道做更任意的重映射；它是许多印刷与摄影专业人士首选的色彩校正工具。</p><p>使用「曲线」，颜色通道的输入输出映射可以由任意三次样条定义，也可以手绘。这种灵活性带来了极大的通用性，但也使程序员难以写出单一的代数表达式来定义众多可能的关系。</p><p>图 22-3 与 22-4 展示了广告影像中典型的一种用法。一位平面设计师或美术在「曲线」对话框中用一系列复杂的颜色曲线处理了一张 RGB 图像。此处曲线分两层施加：红、绿、蓝三条曲线由 Photoshop 施加，此外还<em>额外</em>施加了一条对 RGB 同等作用的整体曲线。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig22-03.jpg" alt="fig22-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig22-03.jpg" rel="noreferrer noopener">图 22-3</a> 用 Photoshop 曲线重现交叉冲洗效果</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig22-04a.jpg" alt="fig22-04a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig22-04a.jpg" rel="noreferrer noopener">图 22-4</a> 伪造的交叉冲洗</figcaption></figure><p>此处的结果模拟了化学<em>交叉冲洗</em>的外观——具体说，是用 C41 工艺冲洗 E6 胶片所产生的假色外观。这类处理在印刷、电影和电视中已流行多年。</p><p>虽然我们原则上可以复现 Photoshop 所做的数学，但还有一种容易得多的办法，能用在着色器中得到与这类复杂通道操作完全一致的结果。因为我们知道每个颜色通道的输入值与同一通道的最终输出值之间存在一一映射，所以可以把这些映射表示为一张一维贴图，作为「依赖」纹理来施加。</p><p>为获得最佳效果，应当定义一张 1x256 的纹理贴图，不过更小的贴图往往也能有效使用。在创建贴图之前，美术必须先定义颜色变换，通常是在 Photoshop 中用「曲线」工具对现有静态图像施加调整图层。调整定义好之后，可以保存为 Adobe 的「.acv」曲线文件。</p><p>现在来制作纹理：</p><ol><li>在 Photoshop 中新建一张 1x256 像素的 RGB 图像。</li><li>把前景色和背景色分别设为白色和黑色。</li><li>用渐变工具，从图像最左边的像素到最右边的像素施加一条渐变，左侧为黑、右侧为白。（把这条渐变保存下来作为参考：后面可能会用到。）</li><li>现在把你保存的「.acv」Curves 文件应用到渐变文件上。如果你对每个颜色通道做了不同的调整，原本的灰阶渐变现在就会出现色带。图 22-5 给出一个例子。<figure><img src="https://developer.download.nvidia.com/books/gpugems/fig22-05.jpg" alt="fig22-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig22-05.jpg" rel="noreferrer noopener">图 22-5</a> 灰阶 RGB 与修改后的 RGB 渐变</figcaption></figure></li><li>把这张新的彩色渐变图像按你程序中适合纹理映射的形式保存（比如 DDS 或 Targa 格式）。</li></ol><p>现在我们可以借助这张校正纹理贴图，把下面几行着色器代码施加到输入颜色上，从而任意重现用「曲线」工具所做的任何颜色改动（同样的方法也可以用于「色阶」，如果需要的话）。</p><pre><code>float3 InColor = tex2D(inSampler, IN.UV).xyz;
+float3 OutColor;
+OutColor.r = tex1D(ColorCorrMap, InColor.r).r;
+OutColor.g = tex1D(ColorCorrMap, InColor.g).g;
+OutColor.b = tex1D(ColorCorrMap, InColor.b).b;</code></pre><p>换句话说，我们用每个原始红、绿、蓝像素的灰度值来决定到渐变纹理的何处查找；渐变纹理本身则定义了向复杂的「曲线」调整所指定的新颜色的重映射。见图 22-6。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig22-06.jpg" alt="fig22-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig22-06.jpg" rel="noreferrer noopener">图 22-6</a> 红、绿、蓝重映射的逐通道结果</figcaption></figure><h2>22.3 多通道色彩校正与转换</h2><p>有时我们需要把颜色通道混合在一起，例如调整色相（即在三维色彩空间中旋转）、把一种色彩空间转换到另一种，或把彩色转为灰度。</p><p>为通用起见，可以设想把前面的技术扩展到三维，为任意可能的像素提供一张 256x256x256 的大型三维贴图做完整映射。这样的贴图尺寸对许多现代显卡来说需要太多内存，但并非所有显卡都如此，而且代码少得惊人：</p><pre><code>float3 InColor = tex2D(inSampler, IN.UV).xyz;
+float3 OutColor = tex3D(colorSpaceSampler, inColor);</code></pre><p>如你所见，代码很简单。现实中唯一的限制是缺少用于创建这类 RGB 到 RGB 三维纹理贴图的常见工具。</p><p>幸运的是，大多数色彩空间转换都相当均匀，可以高效地表示为点积和 3x3 矩阵乘法。</p><h4>22.3.1 灰度转换</h4><p>考虑常见的从 RGB 彩色到灰度的转换。有几种做法可选：可以只取一个颜色通道，也可以把三个通道均匀混合，还可以按不同权重混合三个 RGB 通道来得到最终灰度结果。第三种做法——按权重混合——一般被认为最好，并且可以设定为符合典型人眼的敏感度。</p><p>我们可以用一个点积表达这种混合：</p><pre><code>float grayscale = dot(float3(0.222, 0.707, 0.071), inColor);</code></pre><p><code>(0.222, 0.707, 0.071)</code> 这些值分别代表红、绿、蓝的相对比例。这些数字遵循一项名为 ITU Rec 709 的国际工业色彩标准（实际上还有若干替代公式）。注意，用于该转换的 <code>float3</code> 向量的各分量之和为 1.0——这使该转换名义上「能量守恒」，不过事实上你几乎可以赋予任意值，得到各种有趣的不同结果，就像用 Photoshop 的「颜色混合器」工具那样。</p><p>特别要说明的是，像刚才描述的这类标准化转换意味着纯色的亮度可能受到限制：例如明亮的纯蓝色永远不会显示为高于 7% 的深灰。因此出于艺术上的理由，我们常想改变灰度转换的权重，以免重要的颜色被无谓地压暗。</p><p>我们还可以把这种灰度转换的结果用作纹理索引，借助类似上一节所用的颜色查找纹理来创建替代的颜色映射。考虑这个映射：</p><pre><code>float grayscale = dot(float3(0.222, 0.707, 0.071),
+                      inColor); // 把纹理的边缘寻址方式设为 “clamp”
+float3 OutColor = tex1D(ColorCorrMap, grayscale);</code></pre><p>这样使用灰度到颜色渐变的映射，可以做出各种各样的假色与调色印刷效果，既有自然主义的（如双色调或三色调），也有高度风格化的（如机器人视觉，或<em>à la</em> 影片 <em>Predator</em> 那样的红外「热成像」）。</p><h4>22.3.2 色彩空间转换</h4><p>在不同色彩空间之间转换，可以对每个结果颜色通道分别计算一个点积——换句话说，用输入 RGB 值乘以一个 3x3 矩阵。</p><pre><code>float3x3 conversionMatrix;
+// 再加上一些把数值填入该矩阵的代码……
+float3 newColor = mul(conversionMatrix, inColor);</code></pre><p>示例代码展示了按 <code>conversionMatrix</code> 的内容把 <code>inColor</code> 转换为 <code>newColor</code>。许多转换矩阵都是标准化的：例如从 RGB 到 CIE 的转换、从视频 YIQ 信号到 RGB 的转换，或从 Adobe RGB 等色彩标准到 sRGB 等其他标准的转换。「Color Space FAQ」（Bourgin 1994）是了解视频中许多标准转换的好资料。Autiokari 2003 是一个很好的在线来源，收录了大多数常见工业色彩空间（如 Photoshop 色彩配置文件中使用的那些）的矩阵值。（从欠采样信号转换也可以借助纹理硬件——见本书第 24 章「高质量滤波」。）</p><p>当基于 <em>测角反射仪</em> 这类工具的物理测量结果做三维着色时，有时也需要自定义颜色转换。可能需要进行色移，以在原始传感器的颜色敏感度与典型计算机显示器的输出颜色之间做调整。为最大限度忠实复现给定表面在真实世界中的 BRDF，这一最终调整可能至关重要。</p><p>用 DCC 工具试验三维色彩立方体的旋转与缩放很方便。例如，如果你用的是 Cg，可以建一个虚拟的三维节点，并用相应的 Cg 插件把该节点的世界空间矩阵挂到一个像下面这样的 Cg 着色器上：</p><pre><code>float4 colorCubePS(vertexOutput IN, sampler2D ColorTex, float3x3 RGBxform)
+    : COLOR
+{
+  float3 texColor = tex2D(ColorTex, IN.UV);
+  float3 result = mul(RGBxform, texColor);
+  return float4(result, 1.0);
+}</code></pre><p>结果见图 22-7。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig22-07.jpg" alt="fig22-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig22-07.jpg" rel="noreferrer noopener">图 22-7</a> 在 DCC 应用中预览色彩立方体变换</figcaption></figure><p>这项技术让你只需抓住空物体，随意缩放或旋转它，就能尝试不同的效果。除了随机缩放和拖拽带来的「迷幻」效果，还可以试试以下设置来控制饱和度、亮度和色轮旋转：</p><ul><li>整体亮度：围绕 (0, 0, 0) 缩放。</li><li>饱和度：沿对角线向量 (1, 1, 1) 缩放——这样如果色彩立方体完全去饱和，它就退化为过原点和 (1, 1, 1) 的一条直线。</li><li>旋转色彩立方体：绕同一条对角线方向 (1, 1, 1) 旋转。</li><li>改变整体对比度：围绕色彩立方体中的任意点缩放。围绕 (0.5, 0.5, 0.5) 缩放会相对于中灰改变整体对比度；围绕 (1, 1, 1) 缩放会相对于白色改变饱和度。去饱和到任何其他颜色也同样直接。</li></ul><p>任意多个这样的操作都可以串联起来，最好在 CPU 应用里完成，再传给片元着色器。</p><h2>22.4 参考文献</h2><p><a id="ch22bib01_01"></a>Albers, Josef. 1987. <em>The Interaction of Color</em>，修订版。Yale University Press。</p><p><a id="ch22bib02_02"></a>Autiokari, Timo. 2003. "CIE_XYZ and CIE_xyY." 网站文章。<strong><a href="http://www.aim-dtp.net/aim/technology/cie_xyz/cie_xyz.htm" rel="noreferrer noopener">http://www.aim-dtp.net/aim/technology/cie_xyz/cie_xyz.htm</a></strong></p><p><a id="ch22bib03_03"></a>Bourgin, David. 1994. "Color Space FAQ." 网站页面。<strong><a href="http://www.neuro.sfc.keio.ac.jp/~aly/polygon/info/color-space-faq.html" rel="noreferrer noopener">http://www.neuro.sfc.keio.ac.jp/~aly/polygon/info/color-space-faq.html</a></strong></p><p><a id="ch22bib04_04"></a>Fraser, Bruce. 2003. <em>Real World Color Management</em>. Peachpit Press。</p><p><a id="ch22bib05_05"></a>Hummel, Rob. 2002. <em>American Cinematographer Manual</em>，第 8 版。American Society of Cinematographers。</p><p><a id="ch22bib06_06"></a>Margulis, Dan. 2002. <em>Professional Photoshop</em>，第 4 版。Wiley。</p><p><a id="ch22bib07_07"></a>Poynton, Charles. 2003. 网站。<strong><a href="http://www.poynton.com" rel="noreferrer noopener">http://www.poynton.com</a>.</strong> <em>Poynton 的网站上有大量有用的色彩数字信息。Poynton 对如今在用的许多色彩标准都有贡献。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-22-color-controls" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-22-color-controls</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

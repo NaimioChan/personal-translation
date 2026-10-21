@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 19 章　通用的折射模拟 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 19 章　通用的折射模拟」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 19 章　通用折射模拟</h1>
+<p><em>Tiago Sousa</em><br> <em>Crytek</em></p><p>折射，即光从一种折射率的介质进入另一种（例如从空气到水、从空气到玻璃等等）时发生的弯折，要在实时计算机图形中高效实现是件难事。模拟光反射已有许多众所周知的技术（如平面反射贴图和立方体环境贴图），这些技术在多数情况下效果都很好。然而模拟折射的、广为人知且有效的技术就没那么多。本章介绍一种基于扰动纹理坐标的折射做法，这些坐标用于在场景中非折射物体图像的纹理查询。这一技术非常高效，在许多情况下效果很好。这里给出的方法扩展了 <em>Far Cry</em> 中用于渲染水面、热浪以及狙击镜镜头等效果的技术。</p><p>模拟折射有几种做法：有些基于预先计算环境贴图，运行时使用；另一些基于即时计算环境贴图。这些技术的缺点在于纹理内存占用高，还有性能损失，尤其当场景中有许多需要不同环境贴图的折射表面时。</p><p>当前水面折射模拟技术的另一个问题是需要两遍渲染：一遍在裁掉水面以上几何体的情况下生成折射贴图，然后再一遍渲染水面。这种做法性能也可能很差，在复杂的渲染情形下尤其如此。</p><p>本章讨论一种克服这些问题的简单技术。我们先介绍基本技术，它把当前的后缓冲用作折射贴图，然后对纹理坐标加位移来模拟折射的外观。不过这种基本做法可能产生瑕疵，所以我们接着讨论如何从折射贴图中遮掉几何体。最后，我们演示用这一折射模拟技术渲染逼真水面与玻璃的一些通用技巧。图 19-1 给出场景中折射的一个简单例子。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/19_refraction_01a.jpg" alt="19_refraction_01a.jpg"><figcaption>图 19-1　场景中的折射示例</figcaption></figure><h2>19.1 基本技术</h2><p>基本折射技术的第一步是把场景几何体渲染到一张纹理，跳过所有折射网格。这张纹理可用来确定在后续一遍将要渲染的折射物体背后有哪些物体可见。我们把这幅纹理记为 <strong>S</strong>。</p><p>第二步是渲染折射网格，从纹理 <strong>S</strong> 中取值时加一个扰动，以模拟折射的外观。扰动可以用一张法线贴图 <strong>N</strong> 来实现：取法线贴图的红、绿（XY）分量，乘以一个小数值，作为位移加到投影后的纹理坐标上。这种做法在着色器中实现很直接：(1) 取纹理 <strong>N</strong>，(2) 取被一个小数值（如 0.05）缩放后的 XY 分量，(3) 把这个位移值加到 <strong>S</strong> 的投影纹理坐标上。代码清单 19-1 给出演示这一做法的着色器；图 19-2 图解了这三个步骤。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/19_refraction_02a.jpg" alt="19_refraction_02a.jpg"><figcaption>图 19-2　渲染步骤图解</figcaption></figure><h4>示例 19-1. 基本折射技术的着色器</h4><pre><code>half4 main(float2 bumpUV
+           : TEXCOORD0, float4 screenPos
+           : TEXCOORD1, uniform sampler2D tex0, uniform sampler2D tex1,
+             uniform float4 vScale)
+    : COLOR
+{
+  // 取凹凸纹理，把 [0..1] 解包到 [-1..1]
+  half4 bumpTex = 2.0 * tex2D(tex0, bumpUV.xy) - 1.0;
+  // 偏移纹理坐标
+  half2 newUV = (screenPos.xy / screenPos.w) + bumpTex.xy * vScale.xy;
+  // 取折射图
+  return tex2D(tex1, newUV);
+}</code></pre><h2>19.2 折射遮罩</h2><p>上一节给出的基本技术在多种情形下效果尚可，但当折射网格前面有网格、而用于扰动的凹凸尺度又足够大时，它容易产生瑕疵。图 19-3 说明了这个问题：棕色球体明明在茶壶前面而不是后面，却被错误地渲染进了茶壶的折射中。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/19_refraction_03a.jpg" alt="19_refraction_03a.jpg"><figcaption>图 19-3　该技术造成的瑕疵</figcaption></figure><p>这些瑕疵之所以可见，是因为纹理 <strong>S</strong> 中渲染了场景的全部几何体，包括折射网格前面的物体，而我们在每个像素上都不加区分地施加扰动。这就导致场景中物体之间出现折射「泄漏」。一个直接的解决办法是减小所施加的扰动量，直到瑕疵降到可接受的视觉质量。然而很难找到一个在所有情况下都合适的扰动尺度，而且这个办法还有个副作用：它限制了你折射表面的凹凸程度。</p><p>更好的办法是确保我们真的不会把扰动加到错误的像素上。为此，我们在 <strong>S</strong> 纹理的 alpha 通道中为所有折射网格铺一层遮罩，用它保证只有当扰动后的坐标落在屏幕上的折射物体区域内时才使用这些坐标。示例见图 19-4。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/19_refraction_04.jpg" alt="19_refraction_04.jpg"><figcaption>图 19-4　帧缓冲中的 alpha 通道</figcaption></figure><p>要让这一做法生效，我们需要把渲染稍作改动：先把纹理 <strong>S</strong> 的 alpha 通道清为白色，然后只把折射网格以黑色渲染进 <strong>S</strong> 的 alpha 通道。渲染折射网格时，我们利用 <strong>S</strong> 的 alpha 通道里存的额外信息来判断哪些像素要处理。判断方式是检查 alpha 是否为白；如果是白，这种情况下就不加扰动。只有 alpha 为黑时才加扰动。这样，如果扰动本来会把某个像素包含到折射物体之外，我们就改用原始像素，也就是折射物体正后方的几何体。虽然这个结果并不准确——折射实际上可能让并不在物体正后方的物体可见——但它实践效果很好，而且相当高效。代码清单 19-2 给出实现这一做法的着色器，图 19-5 给出结果。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/19_refraction_05a.jpg" alt="19_refraction_05a.jpg"><figcaption>图 19-5　用折射遮罩去除瑕疵</figcaption></figure><h4>示例 19-2. 用折射遮罩避免把折射物体前方物体的像素纳入其中的改进着色器</h4><pre><code>half4 main(float2 bumpUV
+           : TEXCOORD0, float4 screenPos
+           : TEXCOORD1 uniform sampler2D tex0, uniform sampler2D tex1,
+             uniform float4 vScale)
+    : COLOR
+{
+  // 取凹凸纹理
+  half4 bumpTex = 2.0 * tex2D(tex0, bumpUV.xy) - 1.0;
+  // 计算投影纹理坐标
+  half2 vProj = (screenPos.xy / screenPos.w);
+  // 取折射图
+  half4 vRefrA = tex2D(tex1, vProj.xy + bumpTex.xy * vScale.xy);
+  half4 vRefrB = tex2D(tex1, vProj.xy);
+  return vRefrB * vRefrA.w + vRefrA * (1 - vRefrA.w);
+}</code></pre><p>这样一来去除瑕疵就很简单，使这一折射模拟技术可用于任何类型的网格。虽然几乎察觉不到，但仍可能看到一些瑕疵，因为我们是用背景颜色替换了遮挡像素的颜色。</p><h2>19.3 示例</h2><p>用这里的技术可以做出许多有趣的效果。例如所用的法线贴图可以是动画纹理，或者对其坐标施加某种变换。本节介绍几个实用示例。</p><h4>19.3.1 水面模拟</h4><p>模拟折射水面是这一技术特别有效的应用之一，因为现有方法要用额外的一遍来生成折射贴图——重新渲染场景并裁掉水面以上的几何体。用这一技术，我们只须一遍就能渲染水面，因为额外的工作只是把水面渲染进 <strong>S</strong> 纹理的 alpha 通道作为折射遮罩。</p><p>在 <em>Far Cry</em> 中我们用了动画凹凸纹理，效果非常好。不过在后续实验中，我们用多层凹凸贴图来驱动水波动画，再用逐像素的菲涅尔项在反射与折射之间混合，得到了更好的结果。图 19-6 显示水面的渲染步骤。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/19_refraction_06a.jpg" alt="19_refraction_06a.jpg"><figcaption>图 19-6　水面的渲染步骤</figcaption></figure><p>水面模拟的渲染按前几节所述渲染场景完成，其中水面被渲染进后缓冲的 alpha 作为折射遮罩。接着我们需要生成水面反射贴图：把场景经水面平面反射后渲染进反射贴图，并裁掉水面以下的几何体。最后，折射贴图不必再额外渲染一遍，因为我们可以用纹理 <strong>S</strong> 及其 alpha 通道上的折射遮罩。</p><p>主要纹理输入生成之后，我们必须渲染水面本身。这个例子中我们用了四层凹凸。各层凹凸的纹理坐标在顶点着色器中按逐层递增的数值缩放，使水波上混合出良好的低频与高频细节。纹理坐标上还加了一个平移，以模拟水波的运动。代码清单 19-3 与 19-4 给出实现。</p><h4>示例 19-3. 水面渲染的菲涅尔近似计算</h4><pre><code>half Fresnel(half NdotL, half fresnelBias, half fresnelPow)
+{
+  half facing = (1.0 - NdotL);
+  return max(fresnelBias + (1.0 - fresnelBias) * pow(facing, fresnelPow), 0.0);
+}</code></pre><h4>示例 19-4. 折射/反射水面的片元程序</h4><pre><code>half4 main(float3 Eye
+           : TEXCOORD0, float4 Wave0
+           : TEXCOORD1, float2 Wave1
+           : TEXCOORD2, float2 Wave2
+           : TEXCOORD3, float2 Wave3
+           : TEXCOORD4, float4 ScreenPos
+           : TEXCOORD5, uniform sampler2D tex0, uniform sampler2D tex1,
+             uniform sampler2D tex2)
+    : COLOR
+{
+  half3 vEye = normalize(Eye);
+  // 取各层凹凸
+  half3 vBumpTexA = tex2D(tex0, Wave0.xy).xyz;
+  half3 vBumpTexB = tex2D(tex0, Wave1.xy).xyz;
+  half3 vBumpTexC = tex2D(tex0, Wave2.xy).xyz;
+  half3 vBumpTexD = tex2D(tex0, Wave3.xy).xyz;
+  // 对各层凹凸取平均
+  half3 vBumpTex = normalize(
+      2.0 * (vBumpTexA.xyz + vBumpTexB.xyz + vBumpTexC.xyz + vBumpTexD.xyz) -
+      4.0);
+  // 为折射与反射分别应用各自的凹凸缩放
+  half3 vRefrBump = vBumpTex.xyz * half3(0.075, 0.075, 1.0);
+  half3 vReflBump = vBumpTex.xyz * half3(0.02, 0.02, 1.0);
+  // 计算投影坐标
+  half2 vProj = (ScreenPos.xy / ScreenPos.w);
+  half4 vReflection = tex2D(tex2, vProj.xy + vReflBump.xy);
+  half4 vRefrA = tex2D(tex1, vProj.xy + vRefrBump.xy);
+  half4 vRefrB = tex2D(tex1, vProj.xy);
+  // 把遮挡物从折射图中屏蔽掉
+  half4 vRefraction = vRefrB * vRefrA.w + vRefrA * (1 - vRefrA.w);
+  // 计算菲涅尔项
+  half NdotL = max(dot(vEye, vReflBump), 0);
+  half facing = (1.0 - NdotL);
+  half fresnel = Fresnel(NdotL, 0.2, 5.0);
+  // 用距离在折射色与深水色之间做 lerp
+  half fDistScale = saturate(10.0 / Wave0.w);
+  half3 WaterDeepColor =
+      (vRefraction.xyz * fDistScale + (1 - fDistScale) * half3(0, 0.15, 0.115));
+  // 在水色与深水色之间做 lerp
+  half3 WaterColor = half3(0, 0.15, 0.115);
+  half3 waterColor = (WaterColor * facing + WaterDeepColor * (1.0 - facing));
+  half3 cReflect = fresnel * vReflection;
+  // final water = reflection_color * fresnel + water_color
+  return half4(cReflect + waterColor, 1);
+}</code></pre><h4>19.3.2 玻璃模拟</h4><p>玻璃模拟通常用立方体贴图分别做反射与折射，再用菲涅尔项把结果混合。还有些技术更进一步，让折射与波长相关，以模拟色差。这个例子中我们只用纹理 <strong>S</strong> 和一张二维反射贴图来模拟玻璃上的折射与反射。不过这一做法可以扩展，纳入前面提到的那些技术。</p><p>首先照常渲染场景以生成 <strong>S</strong> 纹理（alpha 中含折射遮罩）。然后渲染玻璃表面：用环境凹凸贴图，并按逐像素菲涅尔项与折射贴图混合。玻璃的颜色来自经折射调制的漫反射纹理。图 19-7 显示这一过程的三个步骤。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/19_refraction_07a.jpg" alt="19_refraction_07a.jpg"><figcaption>图 19-7　彩色玻璃的渲染步骤</figcaption></figure><p>只要更换凹凸纹理、漫反射纹理和环境贴图，就能轻易模拟不同类型的玻璃外观，无需改动片元程序本身。图 19-8 给出两个例子，着色器见代码清单 19-5。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/19_refraction_08a.jpg" alt="19_refraction_08a.jpg"><figcaption>图 19-8　不同类型的玻璃</figcaption></figure><h4>示例 19-5. 折射/反射玻璃模拟的着色器</h4><pre><code>half4 main(float2 BaseUV
+           : TEXCOORD0, float4 ScreenPos
+           : TEXCOORD1, float3 Eye
+           : TEXCOORD2, uniform sampler2D tex0, uniform sampler2D tex1,
+             uniform sampler2D tex2, uniform sampler2D tex3)
+    : COLOR
+{
+  half3 vEye = normalize(Eye.xyz);
+  // 取凹凸并应用缩放，然后取漫反射
+  half4 vBumpTex = 2.0 * tex2D(tex1, BaseUV.xy) - 1.0;
+  half3 vBump = normalize(vBumpTex.xyz * half3(0.2, 0.2, 1.0));
+  half4 vDiffuse = tex2D(tex0, BaseUV.xy);
+  // 计算反射向量
+  half LdotN = dot(vBump.xyz, vEye.xyz);
+  half3 vReflect = 2.0 * LdotN * vBump.xyz - vEye;
+  // 用于环境贴图的反射向量坐标
+  half4 vEnvMap = tex2D(tex3, (vReflect.xy + 1.0) * 0.5);
+  // 计算投影坐标并加入扰动
+  half2 vProj = (ScreenPos.xy / ScreenPos.w);
+  half4 vRefrA = tex2D(tex2, vProj.xy + vBump.xy);
+  half4 vRefrB = tex2D(tex2, vProj.xy);
+  // 把遮挡物从折射图中屏蔽掉
+  half4 vFinal = vRefrB * vRefrA.w + vRefrA * (1 - vRefrA.w);
+  // 计算菲涅尔项
+  half fresnel = Fresnel(LdotN, 0.4, 5.0);
+  // 在 1 与漫反射之间做 lerp，得到玻璃的透明度
+  vDiffuse.xyz = saturate(0.1 + vDiffuse.xyz * 0.9);
+  // 最终输出用菲涅尔项混合反射与折射
+  return vDiffuse * vFinal * (1 - fresnel) + vEnvMap * fresnel;
+}</code></pre><h2>19.4 结论</h2><p>本章介绍了一种模拟折射的技术。该技术并非基于物理，但结果视觉质量良好，而且极其高效。这里给出的示例只是能实现的众多效果中的几个。</p><p>这一技术的一个局限是：用于颜色不同的折射表面时，在表面重叠处会得到不正确的结果。只要折射表面颜色相近，视觉效果就是正确的。一种可行的解决办法是把折射网格从后往前排序，并在每次渲染折射网格时更新折射贴图。另一种不太精确的办法是把折射网格从后往前排序，渲染时使用 alpha 混合。</p><p>这一技术也适用于不同档次的硬件：虽然本章没有演示，但该技术很容易扩展，使之能在使用像素着色器 1.1 到 1.4 的低端硬件上工作。</p><h2>19.5 参考文献</h2><p><a id="biblio19_01"></a>Akenine-Möller, Tomas, and Eric Haines. 2002. "Planar Reflections."，载 <em>Real-Time Rendering</em>，第 2 版，第 239–243 页。A K Peters。</p><p><a id="biblio19_02"></a>Everitt, Cass. 2001."Projective Texture Mapping." NVIDIA Corporation。在线获取于 <strong><a href="http://developer.nvidia.com/object/Projective_Texture_Mapping.html" rel="noreferrer noopener">http://developer.nvidia.com/object/Projective_Texture_Mapping.html</a></strong></p><p><a id="biblio19_03"></a>Kilgard, Mark J. 2001."Chromatic Aberration." NVIDIA Corporation。在线获取于 <strong><a href="http://developer.nvidia.com/object/chromatic_aberration.html" rel="noreferrer noopener">http://developer.nvidia.com/object/chromatic_aberration.html</a></strong></p><p><a id="biblio19_04"></a>Oliveira, Gustavo. 2000. "Refractive Texture Mapping, Part One." 载 Gamasutra 网站。在线获取于 <strong><a href="http://www.gamasutra.com/features/20001110/oliveira_01.htm" rel="noreferrer noopener">http://www.gamasutra.com/features/20001110/oliveira_01.htm</a></strong></p><p><a id="biblio19_05"></a>Vlachos, Alex, John Isidoro, and Chris Oat. 2002. "Rippling Reflective and Refractive Water."，载 <em>ShaderX</em>，Wolfgang Engel 编，Wordware 出版。</p><p><a id="biblio19_06"></a>Wloka, Matthias. 2002. "Fresnel Reflection Technical Report." NVIDIA Corporation。</p><p><em>特别感谢 Martin Mittring 与 Carsten Wenzel 就减轻瑕疵提供的想法与讨论，以及 Márcio Martins 为本章演示提供的模型加载器。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-19-generic-refraction-simulation" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-19-generic-refraction-simulation</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

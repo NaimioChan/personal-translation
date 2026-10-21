@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 41 章　延迟滤波：从难处理的数据格式渲染 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 41 章　延迟滤波：从难处理的数据格式渲染」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 41 章　延迟滤波：从困难数据格式渲染</h1>
+<p><em>Joe Kniss</em><br> <em>University of Utah</em></p><p><em>Aaron Lefohn</em><br> <em>University of California, Davis</em></p><p><em>Nathaniel Fout</em><br> <em>加州大学戴维斯分校</em></p><p>本章介绍一套技巧，用于交互式渲染以<em>困难</em>格式存储的二维与三维数据集。这些数据格式在 GPGPU 计算中、以及从压缩数据做体绘制时都很常见。GPGPU 的例子包括用于云与火焰仿真的「扁平三维纹理」，以及用于隐式曲面变形的稀疏格式。这些应用使用复杂的数据格式，是为了优化 GPU 计算的效率，而非渲染的效率。然而，这类非标准、困难的格式不容易融入标准渲染管线，尤其是那些需要纹理滤波的管线。本章介绍延迟滤波，以及从这些复杂的自定义数据格式高效渲染高质量图像所需的其他技巧。</p><h2>41.1 引言</h2><p>从困难数据格式实现经过滤波的交互式渲染，其核心概念是<em>延迟滤波</em>。延迟滤波是一种两遍渲染方法：第一遍把数据的一个子集重建为常规二维纹理，第二遍利用硬件原生的插值能力，为二维或三维数据生成高质量、经过滤波的渲染结果。该算法是增量的，因此渲染三维数据集所需的内存与渲染二维数据大致相当。</p><p>延迟滤波适用于那些用困难或非标准内存布局来模拟或压缩二维、三维效果的 GPGPU 计算，也适用于使用压缩数据格式的体渲染器。相关的 GPGPU 应用包括稀疏计算与扁平三维纹理（见第 33 章「在 GPU 上实现高效的并行数据结构」）。传统上，要对这些数据集做高质量渲染，必须在片元程序里「手工」完成插值，而这又需要重建多个相邻的数据样本。这种做法会产生大量冗余工作。</p><p>延迟滤波最早在 Lefohn 等 2004 中描述。该论文给出了交互式计算并渲染可变形隐式曲面的算法。数据以稀疏瓦片格式表示，延迟滤波是论文所述交互式体绘制管线中的关键组成部分。本章扩展并推广了他们对这项技术的描述。</p><h2>41.2 为何延迟？</h2><p>让我们考察一个简单的场景：设想你要渲染云或爆炸这类体积效果，而三维数据已用矢量量化压缩过（见 Schneider 与 Westermann 2003）。该方案用一个称为<em>键</em>的单一值来压缩数据块。键值用作<em>码本</em>中的索引，使特征相似的数据块共享同一份内存。重建这些数据需要先从键纹理读取，再从码本纹理中相应的纹素读取。设想重建单个纹素需要四条片元程序指令。</p><p>这种做法的一个问题是，你不能简单地开启 GPU 上的线性纹理插值，就指望得到平滑滤波的纹理。相反，线性插值必须以「手工」方式在片元程序中实现。在实践中这代价太高，渲染器往往只能退回到最近邻采样，完全放弃滤波。见图 41-1 右上。所谓「手工」滤波，意味着必须重建 8 个最近的纹素，再做 7 次线性插值（LERP），才能为每个被渲染的片元得到一个三线性滤波后的值。假设原始数据尺寸为 128<sup>3</sup> 个体素，渲染填充 256<sup>2</sup> 的视口（即渲染把数据放大了 2 倍），并且我们对每个体素采样两次。被渲染的片元数为 256 x 256 x 128 x 2，总计约 1600 万个片元。再看每个片元的片元程序指令数：8 x 4（8 个纹素乘以每次重建 4 条指令）+ 8（纹理读取）+ 14（三线性插值；LERP 与 <code>ADD</code>），即每次滤波纹理读取 54 条指令。这样总计就是十亿条片元指令，为的只是这一次简单渲染。可以想见，这会给应用的交互性带来不小的打击。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/41_deferred_01.jpg" alt="41_deferred_01.jpg"><figcaption>图 41-1 矢量量化压缩的三维数据</figcaption></figure><h2>41.3 延迟滤波算法</h2><p>为了应对上例中纹理滤波所需的片元指令激增，我们主张采用两遍渲染方法。这种两遍方法避免了冗余工作（纹理读取与运算），并利用了硬件原生的滤波能力。第一遍按原始分辨率重建数据的一个局部子集，第二遍使用 GPU 的硬件滤波能力渲染重建后的数据。</p><p>在上例中，我们描述了以自定义压缩内存格式存储的三维数据的朴素基于切片的体绘制（见 Ikits 等 2004）。把滤波推迟到另一遍有巨大的好处，但它要求我们换一种方式解决问题。我们不再用任意切片平面渲染体，而是采用轴对齐切片（利用二维纹理）。这种方法沿与视线方向最接近的主轴渲染体切片。与 Rezk 等（2000）一样，我们从两个相邻的二维切片读取，并在片元程序中计算最终的 LERP，从而在体切片之间生成三线性滤波的样本。</p><p>图 41-2 描绘了这一过程。算法如下（注意算法中的步骤 A 与 B 对应图 41-2 中的步骤 A 与 B）：</p><ol type="1"><li>重建第一张体数据切片，<code>i = 1</code>。</li><li>对每个切片，<code>i = 1</code> 到 <code>number of data slices - 1</code> ：<ol type="A"><li>重建切片 <code>i + 1</code>。</li><li>对数据切片 <code>i</code> 与 <code>i + 1</code> 之间的每个采样切片：<ol type="I"><li>从切片 <code>i</code> 与 <code>i + 1</code> 读取重建后的值。</li><li>执行最终的 LERP（用于三线性滤波）。</li><li>对片元作着色与光照。</li></ol></li></ol></li></ol><figure><img src="https://developer.download.nvidia.com/books/gpugems2/41_deferred_02.jpg" alt="41_deferred_02.jpg"><figcaption>图 41-2 用延迟滤波从自定义内存格式渲染</figcaption></figure><p>现在，我们不再为每个渲染的片元重建并滤波数据，而是按原始分辨率重建数据，让 GPU 的纹理引擎完成大部分滤波。节省非常显著：3 条片元指令（2 次纹理读取与 1 次 LERP），而单遍重建加渲染需要 54 条片元指令。自然，多出的一遍会有一些额外开销，其中必须包含重建代价（但每个纹素只付一次）。请务必用<em>渲染到纹理</em>（例如 pbuffer）为切片纹理 <code>i</code> 与 <code>i + 1</code> 避免不必要的纹理拷贝。</p><p>代码清单 41-1 中的函数展示了用延迟滤波读取三线性滤波三维纹理所需的三条指令。注意 <code>axisLerp</code> 变量是个常量。由于我们使用轴对齐切片，我们知道为当前切片渲染的每个片元沿切片轴都具有完全相同的纹理坐标；也就是说，<code>axisLerp</code> 表示切片在当前体素内的位置，在整个切片上恒定（见图 41-2）。</p><h4>示例 41-1. 用延迟滤波读取三线性滤波三维纹理的 Cg 函数</h4><p><em>这段代码用于图 41-2 的步骤 B。</em></p><pre><code>float4 deferredTex3D(float2 texCoord2D, // 切片纹理坐标
+                     const uniform float axisLerp,
+                     // 主轴位置
+                     uniform sampler2D textureI,
+                     // 纹理切片“i”
+                     uniform sampler2D textureJ)
+// 纹理切片“j”
+{
+  float4 texValI = tex2D(textureI, texCoord);
+  float4 texValJ = tex2D(textureJ, texCoord);
+  return lerp(texValI, texValJ, axisLerp);
+}</code></pre><p>当数据集以三维域的二维切片形式存储时，如果首选的切片轴与当初为存储而切片的轴一致，我们就能方便地对其进行体绘制，如图 41-3 的 A 部分所示。当切片轴垂直于存储切片轴时，数据由二维存储布局中的若干行重建，如图 41-3 的 B 部分所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/41_deferred_03.jpg" alt="41_deferred_03.jpg"><figcaption>图 41-3 从自定义二维内存布局重建三维数据</figcaption></figure><p>虽然分离的重建遍与滤波遍会带来一些开销，但总体而言我们在实践中观察到 2 倍到 10 倍的加速。图 41-4 给出了用延迟滤波从压缩体格式渲染的实现的计时。可以看到，在某些情况下延迟滤波甚至比最近邻滤波更快。这是因为当每体素采样多于一次时，最近邻滤波会执行冗余的重建。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/41_deferred_04.jpg" alt="41_deferred_04.jpg"><figcaption>图 41-4 各种滤波方法的比较</figcaption></figure><h2>41.4 为何有效</h2><p>不用延迟滤波而直接重建并滤波自定义数据格式，其主要问题在于：对某个被渲染的片元，往往有许多相邻片元重建出完全相同的值。随着重建代价上升，这种明显低效所带来的负担会大幅增加。</p><p>在可预见的未来，GPU 纹理与滤波引擎的硬连线效率将大大超过「手写」的片元程序三线性滤波。把计算从片元程序上移到合适的内置功能单元，几乎总能带来性能收益。在示例与算法中，我们假定使用三线性插值。不过，即使我们实现更高阶的滤波方案，延迟滤波仍然是很大的收益（见 Hadwiger 等 2001）。随着滤波支撑域增大（即滤波所需的数据样本数增加），重建的冗余（因而代价）也随之增大。<em>延迟滤波保证重建代价每个纹素只付一次。</em></p><p>视内存布局而定，还有其他更微妙的问题会起作用。多维缓存一致性是 GPU 取得出色性能所依赖的重要机制。从分散的内存位置读取多个纹素会造成显著的缓存缺失延迟，从而延长渲染时间。延迟滤波未必能完全避免这种影响，但它确保这类问题每个纹素只发生一次，而不是每个片元八次。</p><h2>41.5 结论：何时延迟</h2><p>需要以困难格式表示体数据的情形有两种。第一种是数据以压缩格式存储在 GPU 上，如前文的例子。第二种是三维数据由 GPU 生成（即动态体）。动态体出现在用 GPGPU 技术做仿真、图像处理或分割/变形的时候。当前的 GPU 内存模型要求我们把动态体数据存成一组二维纹理，或存成「扁平三维纹理」（详见本书第 33 章「在 GPU 上实现高效的并行数据结构」）。渲染这组二维纹理需要一种新的基于二维纹理的体绘制变体，只使用前面描述的<em>单一一组</em>二维切片。延迟滤波使你不再需要担心自己的 GPGPU 计算数据结构是否适合交互式渲染。延迟滤波让这些数据格式中的任何一种都能被交互式渲染。</p><p>延迟滤波在时间与空间上都很高效，因为它几乎消除了重建代价（每个纹素只付一次），并且是增量的（一次只需两张切片）。即使重建代价可以忽略，增加一遍延迟重建也比在片元程序中为每个片元滤波数据更高效。</p><p>延迟滤波的一个缺点是需要把片元程序「拆分」。一般情况下这不成问题，因为纹理读取往往发生在其他计算之前。然而当纹理读取依赖于其他计算时，使用延迟滤波可能需要复杂的多遍划分方案（Chan 等 2002，Foley 等 2004，Riffel 等 2004）。</p><h2>41.6 参考文献</h2><p><a id="biblio41_01"></a>Chan, Eric, Ren Ng, Pradeep Sen, Kekoa Proudfoot, and Pat Hanrahan. 2002. "Efficient Partitioning of Fragment Shaders for Multipass Rendering on Programmable Graphics Hardware."，载 <em>Proceedings of Graphics Hardware 2002</em>，pp. 69–78。<em>本文与 Foley 等 2004、Riffel 等 2004 一起，展示了片元程序多遍划分的自动方法。</em></p><p><a id="biblio41_02"></a>Foley, Tim, Mike Houston, and Pat Hanrahan. 2004. "Efficient Partitioning of Fragment Shaders for Multiple-Output Hardware."，载 <em>Proceedings of Graphics Hardware 2004</em>。</p><p><a id="biblio41_03"></a>Hadwiger, Markus, Thomas Theußl, Helwig Hauser, and Eduard Gröller. 2001. "Hardware-Accelerated High-Quality Filtering on PC Hardware."，载 <em>Proceedings of Vision, Modeling, and Visualization 2001</em>，pp. 105–112。</p><p><a id="biblio41_04"></a>Harris, Mark J. 2004. "Fast Fluid Dynamics Simulation on the GPU."，载 <em>GPU Gems</em>，Randima Fernando 编，第 637–665 页，Addison-Wesley 出版。</p><p><a id="biblio41_05"></a>Ikits, Milan, Joe Kniss, Aaron Lefohn, and Charles Hansen. 2004. "Volume Rendering Techniques."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 667–692，Addison-Wesley 出版。</p><p><a id="biblio41_06"></a>Lefohn, A. E., J. M. Kniss, C. D. Hansen, and R. T. Whitaker. 2004. "A Streaming Narrow-Band Algorithm: Interactive Deformation and Visualization of Level Sets."，载 <em>IEEE Transactions on Visualization and Computer Graphics</em> 10(2)。可在线获取：<strong><a href="http://graphics.idav.ucdavis.edu/~lefohn/work/pubs/" rel="noreferrer noopener">http://graphics.idav.ucdavis.edu/~lefohn/work/pubs/</a></strong> <em>本文描述了一种高效的 GPGPU 算法，用于稀疏的非线性偏微分方程，可实现实时的变形与动画。该算法动态重映射数据块，确保只有必要的活跃数据块参与计算。作者描述了延迟滤波在其渲染管线中如何工作。</em></p><p><a id="biblio41_07"></a>Rezk-Salama, C., K. Engel, M. Bauer, G. Greiner, and T. Ertl. 2000. "Interactive Volume Rendering on Standard PC Graphics Hardware Using Multi-Textures and Multi-Stage Rasterization."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2000</em>，pp. 109–118。<em>这些作者是最早利用可编程图形硬件能力做体绘制的人之一。他们也是最早演示对以二维切片形式存储的三维纹理做三线性插值的人。</em></p><p><a id="biblio41_08"></a>Riffel, Andrew T., Aaron E. Lefohn, Kiril Vidimce, Mark Leone, and John D. Owens. 2004. "Mio: Fast Multipass Partitioning via Priority-Based Instruction Scheduling."，载 <em>Proceedings of Graphics Hardware 2004</em>。</p><p><a id="biblio41_09"></a>Schneider, J., and R. Westermann. 2003. "Compression Domain Volume Rendering."，载 <em>Proceedings of IEEE Visualization 2003</em>，pp. 293–300。<em>本文提出一种用矢量量化压缩体数据（三维）的方法，使压缩可在渲染时用可编程图形硬件解压。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-41-deferred-filtering-rendering-difficult" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-v-image-oriented-computing/chapter-41-deferred-filtering-rendering-difficult</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

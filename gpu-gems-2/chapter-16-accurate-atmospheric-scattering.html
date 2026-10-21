@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 16 章　精确的大气散射 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 16 章　精确的大气散射」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 16 章　精确的空气散射</h1>
+<p><em>Sean O'Neil</em></p><h2>16.1 引言</h2><p>为计算机图形生成真实的空气散射一直是个难题，但它对渲染真实的室外环境至关重要。描述空气散射的方程极为复杂，以至于有整本书专门讨论这个题目。计算机图形模型一般使用简化后的方程，而其中很少有能跑到交互帧率的。本章说明如何只用 GPU，按 Nishita et al. 1993 所述的方法实现实时空气散射算法。图 16-1 给出了本书附赠光盘中散射演示的截图。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/16_atmospheric_01a.jpg" alt="16_atmospheric_01a.jpg"><figcaption>图 16-1 散射演示的截图</figcaption></figure><p>许多空气散射模型假定摄像机总在地面上或离地面很近。这样便容易假定大气在所有高度上密度恒定，从而极大地简化 Nishita et al. 1993 中的散射方程。这些简化方程如何在 GPU 着色器中实现，见 Hoffman and Preetham 2002。该实现产生的散射效果好看，在 DirectX 8.0 着色器上非常快。可惜它并不总能给出很准确的结果，而且用于飞行或太空模拟器时效果不好——这类场景中摄像机可能位于太空中，或远高于地面。</p><p>本章说明如何在 GPU 着色器中实现 Nishita et al. 1993 的完整方程，并以交互帧率运行。这些方程更准确地建模大气，密度随高度增加呈指数衰减。O'Neil 2004 描述了一个类似的算法，运行在 CPU 上，但那个算法太耗 CPU。它基于一张预计算的四通道浮点二维查找表。计算每个顶点的颜色都需要在表中做若干次查找，并在每次查找前后做额外计算。撰写那篇文章时，没有 GPU 能在着色器中一遍完成这类运算。</p><p>本章中，我们在不牺牲画质的前提下取消了查找表，使我们能把整个算法实现于一个 GPU 着色器中。这些着色器足够小、足够快，能在多数支持 DirectX Shader Model 2.0 的 GPU 上实时运行。</p><h2>16.2 求解散射方程</h2><p>散射方程含有嵌套积分，无法解析求解；好在用梯形法则之类的技术对积分做数值计算很容易。以这种方式近似积分，归结为在循环中计算一个加权和。设想图上的一条线段：把线段分成 <em>n</em> 个采样段，在每个采样段的中点求被积函数值。把每个结果乘以采样段长度，再全部相加。采样越多结果越准，但积分计算也越昂贵。</p><p>在我们的情形中，线段是从摄像机穿过大气到某个顶点的一条光线。这个顶点可以是地形的一部分、天空穹顶的一部分、云的一部分，甚至是月球这样太空中物体的一部分。如果光线穿过大气才到达该顶点，就需要计算散射。每条光线都应定义两个点，标出光线开始穿过大气处和停止穿过大气处。我们把这两点称为 <em>A</em> 和 <em>B</em>，见图 16-2。当摄像机在大气内部时，<em>A</em> 是摄像机的位置。当顶点在大气内部时，<em>B</em> 是顶点的位置。任一点位于太空时，我们做一次球面求交，找出光线与外层大气的交点，把交点作为 <em>A</em> 或 <em>B</em>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/16_atmospheric_02.jpg" alt="16_atmospheric_02.jpg"><figcaption>图 16-2 空气散射的几何关系</figcaption></figure><p>现在我们有了从点 <em>A</em> 到点 <em>B</em> 的一条线段，要求近似描述其长度上空气散射的积分。先取五个采样位置，把它们的点命名为 <em>P</em> <sub>1</sub> 到 <em>P</em> <sub>5</sub>。每个点 <em>P</em> <sub>1</sub> 到 <em>P</em> <sub>5</sub> 表示大气中光发生散射的一个点；光从太阳进入大气，在该点散射，然后朝摄像机反射。以点 <em>P</em> <sub>5</sub> 为例。阳光沿直线从太阳直达 <em>P</em> <sub>5</sub>。沿这条线，大气把一部分光从 <em>P</em> <sub>5</sub> 方向上散走。在 <em>P</em> <sub>5</sub>，其中一部分光会直接散射向摄像机。当来自 <em>P</em> <sub>5</sub> 的光传向摄像机时，又有一部分被散射掉。</p><h4>16.2.1 瑞利散射与米氏散射</h4><p>另一个重要细节与如何建模点 <em>P</em> 处的光散射有关。大气中不同的粒子以不同方式散射光。大气中最常见的两种散射是<em>瑞利</em> <em>散射</em>与<em>米氏散射</em>。瑞利散射由空气中的小分子引起，它对较短波长散射得更强（先蓝、再绿、后红）。天空是蓝的，因为蓝光到处反弹，最终从各个方向到达你的眼睛。日落时太阳的光变成黄/橙/红，是因为光在大气中传播很远时，几乎所有的蓝光和大部分绿光在到达你之前就被散射掉了，只剩下偏红的颜色。</p><p>米氏散射由空气中称为气溶胶的较大粒子引起（如尘埃和污染物），它倾向于同等散射所有波长的光。雾霾天里，米氏散射会让天空看起来有点发灰，并让太阳周围出现一大圈白色晕。米氏散射也可用来模拟空气中水滴和冰晶散射的光，以产生彩虹等效果，但这超出了本章范围。（更多信息见 Brewer 2004。）</p><h4>16.2.2 相位函数</h4><p><img alt="0256equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0256equ01.jpg"/></p><p>相位函数根据角度 <em></em>（图 16-2 中两条绿色光线之间的夹角）和影响散射对称性的常数 <em>g</em>，描述有多少光散射向摄像机方向。相位函数有许多不同的版本。这里这个是对 Nishita et al. 1993 中所用 Henyey-Greenstein 函数的改写。</p><p>把 <em>g</em> 设为 0 即可近似瑞利散射，这大大简化方程，并使其对正负角度对称。<em>g</em> 为负值时更多光向前散射，<em>g</em> 为正值时更多光朝光源方向回散射。对米氏气溶胶散射，<em>g</em> 通常设在 -0.75 到 -0.999 之间。绝不要把 <em>g</em> 设为 1 或 -1，那会使方程退化为 0。</p><h4>16.2.3 外散射方程</h4><p><img alt="0256equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0256equ02.jpg"/></p><p>外散射方程就是前面提到的内层积分。积分部分确定「光学深度」，也就是从点 <em>P<sub>a</sub></em> 到点 <em>P<sub>b</sub></em> 的光线上平均大气密度乘以光线长度。这也叫「光学长度」或「光学厚度」。可以把它想成一个基于光线路径上有多少空气粒子的权重因子。方程的其余部分由常数构成，它们决定这些粒子从光线上散射掉多少光。</p><p>为计算这个积分的值，从 <em>P<sub>a</sub></em> 到 <em>P<sub>b</sub></em> 的光线会被分成若干段，在每个采样点求指数项。变量 <em>h</em> 是采样点的高度。在我的实现中，高度经过缩放，0 表示海平面，1 表示大气顶部。理论上大气没有固定顶部，但为了实用，我们必须选定某个高度来渲染天空穹顶。<em>H</em> <sub>0</sub> 是标高，即大气平均密度所在的高度。我的实现取 0.25，所以平均密度位于从地面到天空穹顶 25% 处。</p><p>常数是光的波长（或颜色），<em>K</em>() 是散射常数，它取决于海平面处的大气密度。瑞利散射与米氏散射各有自己的散射常数，也包括标高（<em>H</em> <sub>0</sub>）。两者对波长的依赖方式也不同。瑞利散射常数通常除以 <sup>4</sup>。在多数计算机图形模型中，米氏散射常数不依赖波长，但至少有一种实现把它除以 <sup>0.84</sup>。凡是方程中依赖波长之处，都必须对三个颜色通道分别求解，并对每种散射类型分别求解。</p><h4>16.2.4 内散射方程</h4><p><img alt="0257equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0257equ01.jpg"/></p><p>内散射方程描述由于太阳光散射，有多少光被加到穿过大气的一条光线上。对光线上的每个点 <em>P</em>（从 <em>P<sub>a</sub></em> 到 <em>P<sub>b</sub></em> 之间），<em>PP<sub>c</sub></em> 是从该点指向太阳的光线，<em>PPa</em> 是从采样点指向摄像机的光线。外散射函数决定图 16-2 中两条绿色光线上有多少光被散射掉。剩余的光再按相位函数、散射常数和阳光强度 <em>I<sub>s</sub></em> () 缩放。阳光强度不必依赖波长，但如果你想造一个绕紫色恒星运转的异星世界，就在这里施加颜色。</p><h4>16.2.5 表面散射方程</h4><table><tbody><tr><td><p><em>I'<sub>v</sub></em> () = <em>I<sub>v</sub></em> () + <em>I</em> <sub>e</sub>() x exp (–t (<em>P<sub>a</sub> P<sub>b</sub></em> , ))</p></td></tr></tbody></table><p>要处理从表面（例如行星表面）反射的光的散射，你必须考虑一部分反射光在射向摄像机的途中会被散射掉。此外还有额外的光从大气散射进来。<em>I<sub>e</sub></em> () 是表面发射或反射的光量，它被外散射因子衰减。天空不是一个能反射或发射光的表面，所以渲染天空只需 <em>I<sub>v</sub></em> ()。表面反射或发射多少光取决于具体应用，但对于反射的阳光，你需要考虑阳光打到表面之前发生的外散射（即 <em>I<sub>s</sub></em> () x exp(-<em>t</em>(<em>P<sub>c</sub> P<sub>b</sub></em> ,))），并把它作为确定表面反射多少光时的光的颜色。</p><h2>16.3 让它实时运行</h2><p>来看看如果按上一节所述实现，这些方程会有多慢：内散射方程取五个采样点，每个计算外散射方程的积分也取五个采样点。这样每个顶点要在 5 x (5 + 5) 个采样点上求函数值。我们还有瑞利与米氏两种散射，且必须对三个颜色通道（RGB）各自的波长分别计算。于是大约达到 2 x 3 x 5 x (5 + 5)，即每个顶点 300 次计算。更糟的是，每个积分只用五个采样点时，画质明显受损。O'Neil 2004 对内层积分用了 50 个采样、对外层积分用了 5 个，把计算量推到每个顶点 3,000 次！</p><p>不必再往下算就知道这跑不快。Nishita et al. 1993 用一张预计算的二维查找表把计算量减半，但仍无法实时运行。他们的查找表利用了一个事实：太阳非常远，其光线可视为平行。（这一想法体现在 16.2.4 节的内散射方程中。）这样就能计算一张查找表，存放从太阳到大气中任一点的光线的外散射量。这张表用一个以高度和到太阳夹角为变量的查找表取代了其中一个外散射积分。由于射向摄像机的光线并不平行，摄像机光线的外散射积分仍需在运行时求解。</p><p>在 O'Neil 2004 中，我提出了一张更好的二维查找表，可以同时避开两个外散射积分。第一维 <em>x</em> 取行星上方某一特定高度的采样点，0.0 表示地面，1.0 表示大气顶部。第二维 <em>y</em> 表示竖直角度，0.0 表示正上方，1.0 表示正下方。对表中每个（<em>x</em>, <em>y</em>）对，从高度 <em>x</em> 处的点沿角度 <em>y</em> 向大气顶部发射一条光线。这张查找表有四个通道，两个留给瑞利散射，两个留给米氏散射。每种散射各有一个通道只存该高度处的大气密度，即 exp(-<em>h</em>/<em>H</em> <sub>0</sub>)。另一个通道存刚才所述光线的光学深度。由于查找表是预计算的，我选择用 50 个采样来近似光学深度积分，精度非常好。</p><p>与 Nishita et al. 1993 提出的查找表一样，我们可以从大气中任一采样点得到射向太阳的光线的光学深度。只需采样点的高度（<em>x</em>）和从竖直方向到太阳的夹角（<em>y</em>），在表中查（<em>x</em>, <em>y</em>）即可。这就省去了计算其中一个外散射积分。此外，射向摄像机的光线的光学深度也能用同样方法算出来，对吧？差不多。摄像机在太空时这方法成立，但在大气中时不成立。因为查找表所用的采样光线是从高度 <em>x</em> 处的某点一直射到大气顶部，它们不会在大气中途的某点停下，而摄像机在大气内部时恰恰需要这样。</p><p>好在解法非常简单。我们先从采样点 <em>P</em> 到摄像机做一次查找，得到穿过摄像机到大气的顶部的光线的光学深度。然后对同一条光线做第二次查找，但起点改为摄像机而不是 <em>P</em>。这就得到我们不想要的那部分光线的光学深度，把它从第一次查找的结果中减去即可。图 16-3 中从地面顶点（<em>B</em> <sub>1</sub>）出发的光线给出了这一过程的图示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/16_atmospheric_03.jpg" alt="16_atmospheric_03.jpg"><figcaption>图 16-3 改进后查找表的问题</figcaption></figure><p>只剩一个问题。当顶点位于大气中摄像机上方时，从采样点 <em>P</em> 穿过摄像机的光线可能穿过行星本身。高度变量预期不会变得那么负，这会使查找表中的数值变得极大，损失精度，有时甚至出现浮点溢出。避免这个问题的办法是：当顶点在摄像机上方时，把光线方向反过来。图 16-3 中穿过天空顶点（<em>B</em> <sub>2</sub>）的光线给出了这一过程的图示。</p><p>这样我们就把每个顶点 3,000 次计算减少到接近 2 x 3 x 5 x (1 + 1)，即 60 次（假设眼部光线的外散射积分取五个采样）。在 Athlon 2500+ 上用低效的暴力渲染方法做软件实现，我让这个方法跑到了 50 到 100 帧每秒。</p><h2>16.4 塞进着色器</h2><p>到这一步，我觉得这个算法已经被压缩到极限了，但我知道要把它塞进着色器还得再小一些。我不想让这个算法要求 Shader Model 3.0，所以不可能让顶点着色器使用纹理中的查找表。我决定换个思路，开始从数学上分析查找表的结果。虽然我知道无法把积分方程简化，但我希望通过一个完全不同的方程，把结果模拟得足够接近。</p><h4>16.4.1 消去一个维度</h4><p>我先把查找表的结果画成图。横轴（<em>x</em>）画从 0.0 到 1.0 的高度，纵轴（<em>y</em>）画查找表结果（光学深度）。对从 0 到 1 采样的各个角度，我在图上各画一条线。我立刻注意到，随着 <em>x</em> 从 0 到 1，每条线都指数式下降，但各条线在图上的尺度差别极大。这合理，因为光线角度从正上方转到正下方时，光线长度急剧增加。</p><p>为便于比较各条曲线形状，我决定把它们归一化。我取每条线在 <em>x</em> = 0（即高度 = 0）处的光学深度值，把该线上的所有值都除以它。这就把图上所有线缩放到从（<em>x</em> = 0, <em>y</em> = 1）出发，一路降到（<em>x</em> = 1, <em>y</em> = 0）。令我惊讶的是，几乎所有归一化后的线都正好叠在一起！每条曲线的形状几乎完全相同，而这个曲线正是 exp(-4<em>x</em>)。</p><p>这有一定道理，因为光学深度方程是 exp(-<em>h</em>/<em>H</em> <sub>0</sub>) 的积分。我取 <em>H</em> <sub>0</sub> 为 0.25，所以 exp(-4<em>h</em>) 是一个公因子。不过这仍有点费解：积分内的 <em>h</em> 与积分外的高度 <em>x</em> 并不相同，后者只是光线起点处的高度。积分内的 <em>h</em> 值并非线性变化，它更多取决于光线如何穿过球形空间，而不是起点高度。各条线之间确实有差异，且角度越大差异越大。角度超过 90 度后，差异呈指数式变糟。由于我们不关心远大于 90 度的角度（因为光线会穿过行星），用 exp(-4<em>x</em>) 消去查找表的 <em>x</em> 轴效果很好。</p><h4>16.4.2 消去另一个维度</h4><p>既然查找表的 <em>x</em> 维（高度）由 exp(-4<em>x</em>) 处理，我们需要消去 <em>y</em> 维（角度）。光学深度中唯一没被 exp(-4<em>x</em>) 处理的部分，就是前面所说归一化图上各条线所用的尺度，也就是 <em>x</em> = 0 处的光学深度值。于是我们新建一张图，横轴（<em>x</em>）画从 0 到 1 的角度，纵轴（<em>y</em>）画每个角度的尺度。想不出更好的名字，我就把它叫作<em>尺度函数</em>。</p><p>第一次看尺度函数时，我注意到它从 0.25（标高）开始，沿某种加速曲线上升。想着它可能是指数的，我把各尺度除以标高（使图从 1 开始），再对结果取自然对数。结果又是一条我不认识的加速曲线。我试了多种曲线，但没有一种能在整条曲线上都拟合得好。最后我用图形分析软件为这条曲线找「最佳拟合」方程，它给出一个多项式方程，不好看，但很贴合这些值。</p><p>这个实现有一个明显的缺点：尺度函数依赖标高，以及大气厚度与行星半径之比。这两个值中任一改变，都需要重新计算尺度函数。在本书附赠光盘的演示中，大气厚度（从地面到大气顶部的距离）是行星半径的 2.5%，标高是大气厚度的 25%。只要这两个值不变，行星半径无关紧要。</p><h2>16.5 实现散射着色器</h2><p>问题已在数学上解决，下面看看演示是如何实现的。演示的 C++ 代码相当简单。地面与天空穹顶都用 <code>gluSphere()</code> 渲染。天空穹顶把正面反转，以便渲染球体内部。它用一张简单的矩形地球纹理，让人能看出地面散射如何影响地面的颜色；并用一个简单的辉光纹理公告板渲染月球。没有渲染独立的太阳，但米氏散射在天空穹顶上产生了一团看起来像太阳的辉光（只有透过大气观看时才可见）。</p><p>我在书附光盘中提供了 Cg 与 GLSL 两种着色器实现。地面、天空和太空中的物体各有两套散射着色器，一套用于摄像机在太空时，一套用于摄像机在大气中时（这样可避免着色器中的条件分支）。地面着色器可用于地形，也可用于位于摄像机下方的物体。天空着色器可用于天空穹顶，也可用于位于摄像机上方的物体。太空着色器可用于大气之外的任何物体，例如月球。</p><p>着色器的命名规则是「<em>render_object</em> From <em>camera_position</em>」。所以 SkyFromSpace 着色器用于在摄像机位于太空时渲染天空穹顶。此外还有一个公共着色器，包含各着色器共用的一些常数和辅助函数。我们以 SkyFromSpace 为例。</p><h4>16.5.1 顶点着色器</h4><p>从代码清单 16-1 可以看到，SkyFromSpace.vert 是一个相当复杂的顶点着色器，但借助代码中的注释和这里的说明，希望它足够好懂。<code>Kr</code> 是瑞利散射常数，<code>Km</code> 是米氏散射常数，<code>ESun</code> 是太阳亮度。瑞利散射对不同波长的光散射速率不同，比值为 <code>1/pow(wavelength, 4)</code>。回看图 16-2，<code>v3Start</code> 是前面例子中的点 <em>A</em>，<code>v3Start + fFar</code> * <code>v3Ray</code> 是点 <em>B</em>。变量 <code>v3SamplePoint</code> 随循环每次迭代从 <em>P</em> <sub>1</sub> 变到 <em>P<sub>n</sub></em>。</p><p>变量 <code>fStartOffset</code> 实际上是从点 <em>A</em> 指向摄像机方向的查找表值。这已经在大气外缘了，为什么还需要计算它？因为外缘的密度并非真的为零。密度指数衰减，接近零，但如果我们不计算这个值并把它用作偏移，摄像机进入大气时颜色可能出现可见的「跳变」。</p><p>你可能注意到这个着色器里没有相位函数。相位函数取决于指向光源的角度，而且逐顶点计算会带来剖分瑕疵。为避免这些瑕疵，相位函数在片元着色器中实现。</p><h4>示例 16-1. SkyFromSpace.vert，用于在摄像机位于太空时渲染天空穹顶</h4><pre><code>#include "Common.cg"
+vertout main(float4 gl_Vertex
+             : POSITION, uniform float4x4 gl_ModelViewProjectionMatrix,
+               uniform float3 v3CameraPos,
+               // 相机的当前位置
+               uniform float3 v3LightDir,
+               // 指向光源的方向向量
+               uniform float3 v3InvWavelength, // RGB 三通道的 1 / pow(wavelength, 4)
+               uniform float fCameraHeight,
+               // 相机的当前高度
+               uniform float fCameraHeight2,
+               // fCameraHeight^2
+               uniform float fOuterRadius,
+               // 外层（大气）半径
+               uniform float fOuterRadius2,
+               // fOuterRadius^2
+               uniform float fInnerRadius,
+               // 内层（行星）半径
+               uniform float fInnerRadius2,
+               // fInnerRadius^2
+               uniform float fKrESun,
+               // Kr * ESun
+               uniform float fKmESun,
+               // Km * ESun
+               uniform float fKr4PI,
+               // Kr * 4 * PI
+               uniform float fKm4PI,
+               // Km * 4 * PI
+               uniform float fScale,
+               // 1 / (fOuterRadius - fInnerRadius)
+               uniform float fScaleOverScaleDepth) // fScale / fScaleDepth
+{
+  // 取得从相机到该顶点的射线及其长度（该长度
+  // 即射线穿过大气层的远端点）
+  float3 v3Pos = gl_Vertex.xyz;
+  float3 v3Ray = v3Pos - v3CameraPos;
+  float fFar = length(v3Ray);
+  v3Ray /= fFar;
+  // 计算射线与外层大气最近的交点
+  // （即图 16-3 中的 A 点）
+  float fNear =
+      getNearIntersection(v3CameraPos, v3Ray, fCameraHeight2, fOuterRadius2);
+  // 计算射线在大气层中的起点与终点位置，
+  // 然后计算它的散射偏移
+  float3 v3Start = v3CameraPos + v3Ray * fNear;
+  fFar -= fNear;
+  float fStartAngle = dot(v3Ray, v3Start) / fOuterRadius;
+  float fStartDepth = exp(-fInvScaleDepth);
+  float fStartOffset = fStartDepth * scale(fStartAngle);
+  // 初始化散射循环的变量
+  float fSampleLength = fFar / fSamples;
+  float fScaledLength = fSampleLength * fScale;
+  float3 v3SampleRay = v3Ray * fSampleLength;
+  float3 v3SamplePoint = v3Start + v3SampleRay * 0.5;
+  // 现在遍历各采样点
+  float3 v3FrontColor = float3(0.0, 0.0, 0.0);
+  for (int i = 0; i < nSamples; i++)
+  {
+    float fHeight = length(v3SamplePoint);
+    float fDepth = exp(fScaleOverScaleDepth * (fInnerRadius - fHeight));
+    float fLightAngle = dot(v3LightDir, v3SamplePoint) / fHeight;
+    float fCameraAngle = dot(v3Ray, v3SamplePoint) / fHeight;
+    float fScatter =
+        (fStartOffset + fDepth * (scale(fLightAngle) Ð scale(fCameraAngle)));
+    float3 v3Attenuate = exp(-fScatter * (v3InvWavelength * fKr4PI + fKm4PI));
+    v3FrontColor += v3Attenuate * (fDepth * fScaledLength);
+    v3SamplePoint += v3SampleRay;
+  }
+  // 最后，对 Mie 与 Rayleigh 颜色做缩放
+  vertout OUT;
+  OUT.pos = mul(gl_ModelViewProjectionMatrix, gl_Vertex);
+  OUT.c0.rgb = v3FrontColor * (v3InvWavelength * fKrESun);
+  OUT.c1.rgb = v3FrontColor * fKmESun;
+  OUT.t0 = v3CameraPos - v3Pos;
+  return OUT;
+}</code></pre><h4>16.5.2 片元着色器</h4><p>这个着色器应该不难理解。代码清单 16-2 中没有体现的一点是，我把 <code>getRayleighPhase()</code> 函数里的计算注释掉了。瑞利相位函数使蓝天在 0 度和 180 度最亮、在 90 度最暗。不过我觉得它让天空在 90 度附近显得太暗。理论上这个问题的原因是我们没有实现多次散射。单次散射只计算直接从太阳射来并发生散射的光。从光线路径上散射出去的光就这么消失了。多次散射试图弄清那些光去了哪里，它们常常从另一个角度被重新导向摄像机。这很像辐射度光照，而实时计算它被认为不可行。Nishita et al. 1993 用一个环境光因子把较暗的区域提亮。我觉得干脆完全去掉瑞利相位函数更好看。你可以随意试验，看看自己最喜欢哪种。</p><h4>示例 16-2. SkyFromSpace.frag，用于在摄像机位于太空时渲染天空穹顶</h4><pre><code>#include "Common.cg"
+float4 main(float4 c0
+            : COLOR0, float4 c1
+            : COLOR1, float3 v3Direction
+            : TEXCOORD0, uniform float3 v3LightDirection, uniform float g,
+              uniform float g2)
+    : COLOR
+{
+  float fCos = dot(v3LightDirection, v3Direction) / length(v3Direction);
+  float fCos2 = fCos * fCos;
+  float4 color =
+      getRayleighPhase(fCos2) * c0 + getMiePhase(fCos, fCos2, g, g2) * c1;
+  color.a = color.b;
+  return color;
+}</code></pre><h2>16.6 加入高动态范围渲染</h2><p>没有高动态范围（HDR）渲染，空气散射看起来不太好。因为这些方程很容易生成过亮或过暗的图像。见图 16-4。把图像渲染到浮点缓冲，再用带可调曝光常数的指数曲线把颜色缩放到 0..1 范围内，效果就好得多。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/16_atmospheric_04a.jpg" alt="16_atmospheric_04a.jpg"><figcaption>图 16-4 高动态范围的重要性</figcaption></figure><p>本演示所用的曝光方程非常简单：1.0 – exp(-<em>fExposure</em> x <em>color</em>)。曝光常数的作用类似相机光圈或人眼瞳孔。光太多时，减小曝光常数以少进光。光不足时，增大曝光常数以多进光。若不给曝光常数设合理范围，白天可以看起来像月光，反之亦然。无论如何，各颜色的相对亮度总能保持。</p><p>本演示实现的 HDR 渲染也很简单。创建一个浮点像素格式、启用了渲染到纹理的 OpenGL pbuffer。使用与之前相同的渲染代码，但一切都渲染到 pbuffer 的渲染上下文。之后选择主渲染上下文，渲染一个四边形铺满屏幕。把浮点缓冲作为纹理，用一个简单的指数缩放着色器把颜色缩放到常规的 0–255 范围。曝光常数手动设定，可在演示运行时修改，所用的一些散射常数也可以修改。</p><p>好在现代 GPU 支持浮点渲染目标。alpha 混合等一些关键特性要到 GeForce 6 系列 GPU 才有，所以在较老的 GPU 上无法把天空穹顶与太空中渲染的物体混合。</p><h2>16.7 结论</h2><p>虽然要用所述模型交互式渲染场景需要相当多的简化，但演示看起来相当漂亮，尤其是在 HDR 渲染下。调整系统的参数可以带来很多乐趣；我从没想到，如果大气稍微厚一点，正午时地平线处的天空会是橙色，日落会那么惊人。红色和橙色的天空会产生不同色调的蓝色日落，紫色的天空会产生绿色的日落。我甚至一度调出了能产生彩虹日落的设置。</p><p>无论如何，工作还没做完。这个算法还可以做若干改进：</p><ol><li>做一个不硬编码到特定标高、也不硬编码到大气厚度与行星半径之比的空气密度尺度函数。</li><li>把瑞利散射与米氏散射分开，使它们可以有不同的标高深度。</li><li>提供更好的方法来模拟多次散射，并重新开始使用瑞利相位函数。</li><li>让月光等其他光源的光也能被散射，而不只是阳光。要做出带光晕的月光效果，这是必需的。</li><li>空气散射还会让远处物体看起来比实际更大、更模糊。如果不透过大气观看，月亮在我们眼中会小得多。或许可以在 HDR 遍中用某种基于光学深度的模糊滤波器实现这一点。</li><li>把沿光线取的采样点从线性改为基于高度的指数分布。Nishita et al. 1993 解释了这样做的好处。</li><li>加入其他大气效果，例如云、降水、闪电和彩虹。见 Harris 2001、Brewer 2004 和 Dobashi et al. 2001。</li></ol><h2>16.8 参考文献</h2><p><a id="biblio16_01"></a>Brewer, Clint. 2004. "Rainbows and Fogbows: Adding Natural Phenomena." NVIDIA Corporation. SDK 白皮书。<strong><a href="http://download.nvidia.com/developer/SDK/Individual_Samples/DEMOS/Direct3D9/src/HLSL_RainbowFogbow/docs/RainbowFogbow.pdf" rel="noreferrer noopener">http://download.nvidia.com/developer/SDK/Individual_Samples/DEMOS/Direct3D9/src/HLSL_RainbowFogbow/docs/RainbowFogbow.pdf</a></strong></p><p><a id="biblio16_02"></a>Dobashi, Y., T. Yamamoto, and T. Nishita. 2001. "Efficient Rendering of Lightning Taking into Account Scattering Effects due to Clouds and Atmospheric Particles." 可在线获取：<strong><a href="http://nis-lab.is.s.u-tokyo.ac.jp/~nis/cdrom/pg/pg01_lightning.pdf" rel="noreferrer noopener">http://nis-lab.is.s.u-tokyo.ac.jp/~nis/cdrom/pg/pg01_lightning.pdf</a></strong></p><p><a id="biblio16_03"></a>Harris, Mark J., and Anselmo Lastra. 2001. "Real-Time Cloud Rendering." <em>Eurographics 2001</em> 20(3)，第 76–84 页。<strong><a href="http://www.markmark.net/PDFs/RTClouds_HarrisEG2001.pdf" rel="noreferrer noopener">http://www.markmark.net/PDFs/RTClouds_HarrisEG2001.pdf</a></strong></p><p><a id="biblio16_04"></a>Hoffman, N., and A. J. Preetham. 2002. "Rendering Outdoor Scattering in Real Time." ATI Corporation。可在线获取：<strong><a href="http://www.ati.com/developer/dx9/ATI-LightScattering.pdf" rel="noreferrer noopener">http://www.ati.com/developer/dx9/ATI-LightScattering.pdf</a></strong></p><p><a id="biblio16_05"></a>Nishita, T., T. Sirai, K. Tadamura, and E. Nakamae. 1993. "Display of the Earth Taking into Account Atmospheric Scattering." 载 <em>Proceedings of SIGGRAPH 93</em>，第 175–182 页。<strong><a href="http://nis-lab.is.s.u-tokyo.ac.jp/~nis/cdrom/sig93_nis.pdf" rel="noreferrer noopener">http://nis-lab.is.s.u-tokyo.ac.jp/~nis/cdrom/sig93_nis.pdf</a></strong></p><p><a id="biblio16_06"></a>O'Neil, Sean. 2004. "Real-Time Atmospheric Scattering." GameDev.net. <strong><a href="http://www.gamedev.net/columns/hardcore/atmscattering/" rel="noreferrer noopener">http://www.gamedev.net/columns/hardcore/atmscattering/</a></strong></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-16-accurate-atmospheric-scattering" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-16-accurate-atmospheric-scattering</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

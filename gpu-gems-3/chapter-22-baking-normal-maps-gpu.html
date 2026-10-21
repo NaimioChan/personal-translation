@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 22 章　在 GPU 上烘焙法线贴图 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 22 章　在 GPU 上烘焙法线贴图」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 22 章　在 GPU 上烘焙法线图</h1>
+<p><em>Diogo Teixeira<br> Move Interactive</em></p><p>自法线贴图（Heidrich 与 Seidel 1999）成为现代实时渲染的标准技术以来，它就给美术带来了产能问题：他们要在惯常的时间限制内满足更高视觉标准的要求。不过，使用合适的工具有助于缩短制作时间——以法线贴图烘焙为例，几分钟累加起来可以到几小时，把制作成本推高。然而，制约因素一直是让烘焙时间变得微不足道的算力。</p><p>现代 GPU 是科学计算与可视化的极宝贵资源。但作为美术资产制作的一种可行计算替代方案，它还没有被充分挖掘。有时不必投入额外的硬件资源，制作成本就能大幅降低。本章的目标是证明：过去两年发布的任何中端 Shader Model 3.0 显卡，都能比多数基于 CPU 的工具更快地生成法线贴图。之所以可行，是因为所需的计算类型高度并行且相互独立，因此非常适合流处理器。</p><p>本章先分析法线贴图投影这一传统的基于光线投射的技术，如何能在图形处理器上成功实现。我们也会处理内存限制、抗锯齿等常见问题。</p><h2>22.1 传统实现</h2><p>烘焙法线图的传统算法，是把低多边形网格（<em>工作模型</em>）表面上的点朝高多边形网格（<em>参考模型</em>）的方向投影。为简化起见，我们假定两个网格都已三角化。</p><p>在这个实现中，工作模型需要一组纹理坐标，我们用它把工作模型光栅化到纹理空间。而参考模型不需要纹理坐标。这大概是这个实现最大的优点之一，因为为真正密集的多边形网格构建像样的纹理坐标可能很麻烦。</p><p>此外，工作模型还包含每个顶点上<em>边界笼</em>位置的信息。</p><h4>22.1.1 投影</h4><p>投影的第一步是把工作模型的三角形光栅化到纹理空间，如 <a href="https://developer.download.nvidia.com/books/gpugems3/22fig01.jpg" rel="noreferrer noopener">图 22-1</a> 所示，并用硬件插值器从三角形各角插值出每个像素处的表面位置、切线基与纹理坐标。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig01.jpg" alt="22fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig01.jpg" rel="noreferrer noopener">图 22-1</a> 一个示例模型</figcaption></figure><p>下一步是从插值得到的边界笼位置出发，朝参考模型方向投射一条光线。这可能沿光线方向产生不止一个交点，我们从每个交点导出一个候选法线。然后选出最合适的法线，在我们的情形里就是离边界笼最近的那个。</p><h4>22.1.2 边界笼</h4><p>边界笼（或称<em>投影笼</em>）通常是由工作模型挤出的一个网格。美术可以直观地修改这个笼，以便更精细地控制光线的投射方式，并避开网格某些区域中的麻烦。</p><p>笼面将作为投射到参考模型上的光线的起点。从笼上每个顶点指向工作模型上对应顶点的向量，同样在光栅化过程中插值，并用作光线方向。</p><p>通常笼被建成同时包住参考模型与工作模型。从 <a href="https://developer.download.nvidia.com/books/gpugems3/22fig02.jpg" rel="noreferrer noopener">图 22-2</a> 的示例可以看到，如果按前面描述的方式投射光线，我们可以认为离笼最近的那个交点可用于提取当前像素的法线。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig02.jpg" alt="22fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig02.jpg" rel="noreferrer noopener">图 22-2</a> 一个边界笼</figcaption></figure><h2>22.2 加速结构</h2><p>这个实现严重依赖高多边形网格的光线追踪，如果不使用适当的加速结构，计算量会极大。在 GPU 上做光线追踪算法时，这显然也是个问题（Purcell 等 2002，Christen 2005）。在这种情况下，加速结构的选择不那么简单，因为我们要面对的是一个为高度并行的顶点与片元着色而设计的架构（Lindholm 等 2001）。</p><p>我们需要一种能借助纹理资源很好地映射到 GPU 内存的结构。还要利用工作网格与参考网格在空间上大体一致这一事实（换句话说，它们大致占据同一空间）。</p><h4>22.2.1 均匀网格</h4><p><em>均匀网格</em>如 <a href="https://developer.download.nvidia.com/books/gpugems3/22fig03.jpg" rel="noreferrer noopener">图 22-3</a> 所示，是一种空间剖分方案，把网格划分成大小恒定的体素或单元，见 Fujimoto 与 Iwata 1985。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig03.jpg" alt="22fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig03.jpg" rel="noreferrer noopener">图 22-3</a> 均匀网格的透视图</figcaption></figure><p>迄今为止，GPU 光线追踪方面的大多数文献都用均匀网格做空间剖分，用三维数字微分分析器（3D-DDA）做网格遍历。这种结构能很好地映射到 GPU 内存，遍历算法也足够简单，可以在像素着色器中实现。</p><p>对通用的光线追踪计算来说，均匀网格未必是最好的选择（Havran 2001）。但在我们的具体情形里，它是很好的候选。从 <a href="https://developer.download.nvidia.com/books/gpugems3/22fig04.jpg" rel="noreferrer noopener">图 22-4</a> 可以看到，网格覆盖在两个模型上时，工作模型的表面总是非常靠近参考模型的表面。这种一致性可以用 3D-DDA 遍历算法高效地加以利用。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig04.jpg" alt="22fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig04.jpg" rel="noreferrer noopener">图 22-4</a> 两个模型与叠加的网格</figcaption></figure><h4>22.2.2 三维数字微分分析器</h4><p>3D-DDA 算法由 Amanatides 与 Woo 1987 首次提出，它能在均匀网格中于两个体素之间快速遍历。</p><p>3D-DDA 算法只需少量步数，就能在光线穿行于相邻单元之间时正确引导它。遍历代价与访问的体素数呈线性关系。不过在多数情况下路径很短，从而降低了平均遍历代价。还要注意，体素、因而几何体是按正确顺序访问的，这意味着一个有效交点会遮挡其余单元中的所有交点。<a href="https://developer.download.nvidia.com/books/gpugems3/22fig05.jpg" rel="noreferrer noopener">图 22-5</a> 说明了这一做法。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig05.jpg" alt="22fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig05.jpg" rel="noreferrer noopener">图 22-5</a> 用 3D-DDA 遍历网格单元的光线</figcaption></figure><p>这个算法连同均匀网格方案，是挖掘投影中所涉网格之间空间一致性的关键组成部分。</p><h2>22.3 把数据送入 GPU</h2><p>在多数关于 GPU 光线追踪的文献里，把均匀网格与参考几何数据映射到硬件的方式几乎都一样。本章所用的数据结构主要基于此前 GPU 光线追踪的文献，区别在于使用索引三角形列表以节省显存。数据结构的一种表示见 <a href="https://developer.download.nvidia.com/books/gpugems3/22fig06.jpg" rel="noreferrer noopener">图 22-6</a>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig06.jpg" alt="22fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig06.jpg" rel="noreferrer noopener">图 22-6</a> 映射到 GPU 的数据的直观表示</figcaption></figure><p>均匀网格存为同样大小的三维纹理。每个体素含有一个指针，指向相应网格单元的三角形列表。访问均匀网格时，只需在从三维纹理取数时使用归一化的立方坐标。我们把立方坐标称为零到网格尺寸之间的值。在网格坐标之间转换的辅助函数见代码清单 22-1。</p><p>每个单元的三角形列表存放在单独的二维纹理里。三角形列表上的每一项含有三个指针，分别指向几何纹理中相应的三角形顶点。列表以一个空指针结束。如果第一个指针为空，说明该单元是空的。把二维纹理当作线性数组访问需要一次简单转换，见代码清单 22-2。</p><h4>示例 22-1. 在网格坐标之间转换的辅助函数</h4><pre><code>
+float3 CoordCubicToSpatial(float3 cubic)
+{
+  float3 normCubic = cubic * g_invGridCubicSize;
+  return g_gridSpatialMinPoint + (normCubic * g_gridSpatialSize);
+}
+float3 CoordSpatialToCubicNorm(float3 spatial)
+{
+  return (spatial - g_gridSpatialMinPoint) * g_invGridSpatialSize;
+}</code></pre><h4>示例 22-2. 把线性数组坐标映射为二维纹理坐标的函数</h4><pre><code>
+float2 Coord1Dto2D(float index, float2 invTexSize)
+{
+  float offset = index * invTexSize.x;
+  float x = frac(offset);
+  float y = (offset - x) * invTexSize.y;
+  return float2(x, y);
+}</code></pre><p>参考网格存为一组二维纹理。我们把顶点位置与法线分开存放，因为它们不需要完整的 32 位精度。</p><h4>22.3.1 索引限制</h4><p>为简化起见，我们使用 32 位浮点索引，它给我们 24 位的有效索引范围。这大概够用了，因为每种数据类型我们只用一张纹理，而且面对的是最大纹理尺寸为 4,096 的显卡。</p><p>要构建稳健的实现并支持有数百万三角形的参考网格，我们可以改用打包的 32 位（RGBA）整数格式，突破 24 位索引。这样最多可把网格分散存放在 256 张纹理上，用打包元素中的一个来索引纹理，用其余的元素索引纹理内的数据。不过，在 DirectX 9.0 级别的显卡上直接访问多张纹理，可能要用三维纹理来模拟纹理数组。这种访问方式也可以用在网格纹理中存放的指针上。</p><h4>22.3.2 内存与架构限制</h4><p>用于测试本章方案的基础硬件规格是一块 256 MB 的 Shader Model 3.0 中端 ATI 显卡。这块卡只支持 2 的幂次体积，所以我们能在这块卡上安全分配的最高分辨率体积是 256x256x256。但在处理有数百万多边形的密集参考网格时，我们需要更高分辨率的均匀网格，以降低访问含几何体的单元的代价。有些 NVIDIA 卡已经支持非 2 的幂次体积。</p><p>表 22-1 给出了一个含 70 万三角形的示例参考网格的内存占用统计。注意所用的所有纹理都是 2 的幂次。</p><h4>表 22-1. 示例参考网格的内存占用统计</h4><table><thead><tr><td><p>说明</p></td><td><p>尺寸</p></td><td><p>格式</p></td><td><p>规模</p></td></tr></thead><tbody><tr><td><p><strong>网格纹理</strong></p></td><td><p>256x256x256</p></td><td><p>R32F</p></td><td><p>64 MB</p></td></tr><tr><td><p><strong>三角形列表纹理</strong></p></td><td><p>4096x2048</p></td><td><p>R32F</p></td><td><p>32 MB</p></td></tr><tr><td><p><strong>顶点纹理</strong></p></td><td><p>1024x1024</p></td><td><p>A32B32G32R32F</p></td><td><p>8 MB</p></td></tr><tr><td><p><strong>法线纹理</strong></p></td><td><p>1024x1024</p></td><td><p>A16B16G16R16F</p></td><td><p>4 MB</p></td></tr><tr><td></td><td></td><td><p><strong>总大小：</strong></p></td><td><p><strong>108 MB</strong></p></td></tr></tbody></table><p>尽管顶点纹理与法线纹理只占所需内存的一小部分，它们还能打得更紧，用精度换内存。顶点纹理可以用 16 位浮点纹理格式（例如 A16B16G16R16F）减半，对某些模型来说精度足够。法线也可以用 A8R8G8B8 这类 32 位打包格式存放在低精度纹理中，内存开销同样减半。</p><h2>22.4 实现</h2><p>本章只分析用像素着色器做典型投影的基本实现。这个版本只需对工作模型渲染一遍。不过它有几处与 Shader Model 3.0 硬件上的静态流控制有关的限制，其中每个循环的最大迭代次数不得超过 256。</p><p>后面我们讨论这一限制的可能变通做法，包括涉及多遍与分块渲染的实现。本节末尾还涉及抗锯齿。</p><h4>22.4.1 准备与预处理</h4><p>实现投影的第一步是加载两个网格，并基于高多边形参考模型生成均匀网格。然后把网格与几何数据映射到显存中的纹理，供像素着色器使用。</p><p>不过工作模型应映射到硬件顶点缓冲，并包含切线基，用于把世界空间法线（从参考模型提取）变换到切线空间。每个顶点还需要一个笼位置与一组纹理坐标。</p><p>纹理采样器——包括网格体积、三角形列表与几何纹理——必须在渲染前设置好。采样滤波必须关闭，因为我们用的是整数索引。还应设置钳制寻址。</p><p>代码清单 22-3 展示了着色器开头声明的几个常见数据结构。它们定义了网格单元、轴对齐包围盒、光线与三角形。列表中还有几个访问网格单元的辅助函数，以及几个访问几何纹理数据的函数。</p><p>请注意 <code>RayAABBIntersect()</code> 与 <code>RayTriangleIntersect()</code> 这两个函数未列入清单，但可以在本书附带 DVD 提供的完整着色器中找到。</p><h4>示例 22-3. 常见数据结构</h4><pre><code>
+struct Cell
+{
+  float3 cubicNormPos;
+  // 当前在网格中的立方体坐标
+  float3 cubicPos;
+  // 当前在网格中的空间位置
+  float triListStartIndex;
+  // 指向三角列表起始位置的指针
+};
+struct AABB
+{
+  float3 center;
+  float3 extents;
+};
+struct Ray
+{
+  float3 origin;
+  float3 dir;
+};
+struct Triangle
+{
+  float3 p0;
+  float3 p1;
+  float3 p2;
+};
+bool GetCellAtPoint(out Cell cell, in float3 spatialPos)
+{
+  // 把空间坐标转换为归一化的立方体坐标。
+  cell.cubicNormPos = CoordSpatialToCubicNorm(spatialPos);
+  // 计算未归一化的立方体坐标。
+  cell.cubicPos = cell.cubicNormPos * g_gridCubicSize;
+  // 取网格体积纹理，找到本单元
+  // 三角列表起始处的指针。
+  const float4 coord = float4(cell.cubicNormPos, 0);
+  cell.triListStartIndex = tex3Dlod(gridSampler, coord).r;
+  // 检查我们是否在网格内部。
+  return (cell.cubicNormPos > = 0) & &(cell.cubicNormPos < = 1);
+}
+float3 GetCellMinPoint(in Cell cell)
+{
+  return g_gridSpatialMinPoint + int3(cell.cubicPos) * g_cellSpatialSize;
+}
+float3 GetCellMaxPoint(in Cell cell)
+{
+  return g_gridSpatialMinPoint + (int3(cell.cubicPos) + 1) * g_cellSpatialSize;
+}
+float GetTriangleListIndex(float index)
+{
+  float4 tc = float4(Coord1Dto2D(index, g_invIndexTexSize), 0, 0);
+  return tex2Dlod(indexSampler, tc).x;
+}
+float3 GetVertex(float index)
+{
+  float4 tc = float4(Coord1Dto2D(index, g_invVertexTexSize), 0, 0);
+  return tex2Dlod(vertexSampler, tc).xyz;
+}
+float3 GetNormal(float index)
+{
+  float4 tc = float4(Coord1Dto2D(index, g_invNormalTexSize), 0, 0);
+  return tex2Dlod(normalSampler, tc).xyz;
+}</code></pre><h4>22.4.2 单遍实现</h4><p>在这个版本的算法中，我们只把工作模型渲染一次，直接输出到法线图渲染目标。下面描述像素着色器内所采取的步骤。</p><h4>步骤 1</h4><p>如代码清单 22-4 所示，我们先由顶点着色器送来的插值顶点位置与笼向量，为当前像素建立光线。如果笼落在网格之外，我们可能需要调整光线原点，如 <a href="https://developer.download.nvidia.com/books/gpugems3/22fig07.jpg" rel="noreferrer noopener">图 22-7</a> 所示。做法是让光线与均匀网格的包围盒求交，算出沿光线落在网格内的第一个位置。我们用调整后的光线原点找到开始遍历的单元。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig07.jpg" alt="22fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig07.jpg" rel="noreferrer noopener">图 22-7</a> 笼在某些位置可能落在网格之外</figcaption></figure><h4>示例 22-4. 设置光线</h4><pre><code>
+// 用插值的位置和笼向量设置射线。
+Ray ray;
+ray.dir = -Input.cageDir.xyz;
+ray.origin = Input.position + Input.cageDir.xyz;
+// 检查我们当前是否在网格外部。
+Cell cell;
+if (GetCellAtPoint(cell, ray.origin))
+{ // 计算网格的最小点和最大点。
+  const float3 gridMin = g_gridSpatialMinPoint;
+  const float3 gridMax = g_gridSpatialMinPoint + g_gridSpatialSize;
+  // 计算网格与射线的交点，以求出
+  // 网格边界内的一个起点。
+  float t = 0;
+  RayAABBIntersect(ray, gridMin, gridMax, t);
+  // 调整射线原点，使其从网格内部开始。
+  ray.origin += ray.dir * t;
+  // 找到要开始遍历的第一个单元。
+  GetCellAtPoint(cell, ray.origin);
+}</code></pre><h4>步骤 2</h4><p>下一步是按 Amanatides 与 Woo 1987 所述，计算向量 <code>step</code>、<code>tmax</code> 与 <code>delta</code>，其中 <code>step</code> 指示光线穿过体素边界时当前位置应递增还是递减。向量 <code>tmax</code> 存放光线在各轴上穿过体素边界处的 <code>t</code> 值。<code>Delta</code> 指明沿各方向（以 <code>t</code> 为单位）必须前进多远才能与体素的尺寸相匹配。代码清单 22-5 展示了如何初始化 <code>step</code>、<code>tmax</code> 与 <code>delta</code>。</p><h4>示例 22-5. 为 3D-DDA 做准备</h4><pre><code>
+// 计算 tmax
+float3 cellMin = GetCellMinPoint(cell);
+float3 cellMax = GetCellMaxPoint(cell);
+float3 tmaxNeg = (cellMin - ray.origin) / ray.dir;
+float3 tmaxPos = (cellMax - ray.origin) / ray.dir;
+float3 tmax =
+    (ray.dir < 0) ? tmaxNeg : tmaxPos; // 根据射线方向和单元尺寸
+// 计算遍历步长。
+float3 step = (ray.dir < 0) ? float3(-1, -1, -1) : float3(1, 1, 1);
+float3 tdelta = abs(g_cellSpatialSize / ray.dir);</code></pre><h4>步骤 3</h4><p>现在可以开始遍历网格了。可以看到，遍历代码只需少量指令，还能用向量化的静态分支进一步优化。主循环把网格遍历到下一个单元，嵌套的次级循环则用光线测试当前单元中的所有三角形。见代码清单 22-6 与 22-7。</p><h4>示例 22-6. 包含次级循环的函数</h4><p><em>该函数检查单元中的所有三角形，返回离光线原点（位于笼上）最近的法线。</em></p><pre><code>
+float3 FindNormalAtCell(in Cell cell, in Ray ray)
+{
+  // 准备临时变量：
+  // - last_indices 保存获胜三角形的顶点索引
+  // - last_ret 保存获胜法线的重心坐标
+  float3 indices, ret;
+  float3 last_indices = 0;
+  float3 last_ret = float3(0, 0, FLT_MAX);
+  // 取第一个顶点索引；可能是终止索引 (-1)。
+  float index = cell.triListStartIndex;
+  float nextIndex = GetTriangleIndex(index++);
+  // 循环直到找到终止索引。
+  while (nextIndex > = 0)
+  {
+    // 取剩余的顶点索引。
+    indices.x = nextIndex;
+    indices.y = GetTriangleListIndex(index++);
+    indices.z = GetTriangleListIndex(index++);
+    // 取三角形的顶点位置。
+    tri.p0 = GetVertex(indices.x);
+    tri.p1 = GetVertex(indices.y);
+    tri.p2 = GetVertex(indices.z);
+    if (RayTriangleIntersect(ray, tri, ret) > 0)
+    {
+      // 若更靠近射线原点，则采用当前命中。
+      bool closest = (ret.z < last_ret.z);
+      last_indices = closest ? indices : last_indices;
+      last_ret = closest ? ret : last_ret;
+    }
+    // 取下一个索引；可能是终止索引 (-1)。
+    nextIndex = GetTriangleListIndex(index++);
+  }
+  // 检查我们是否有有效的法线。
+  float3 normal = 0;
+  if (last_indices.x * last_indices.y > 0)
+  {
+    // 从获胜三角形取法线。
+    float3 n0 = GetNormal(last_indices.x);
+    float3 n1 = GetNormal(last_indices.y);
+    float3 n2 = GetNormal(last_indices.z);
+    // 用重心坐标插值法线。
+    float u = last_ret.x;
+    float v = last_ret.y;
+    float t = 1 - (u + v);
+    normal = n0 * t + n1 * u + n2 * v;
+  }
+  return normal;
+}</code></pre><h4>示例 22-7. 像素着色器中的主循环</h4><p><em>遍历网格，搜索一个有效的法线。</em></p><pre><code>
+float3 normal = 0;
+float done = 0;
+while (!done)
+{
+  // 在当前单元中找一个有效法线。
+  normal = FindNormalAtCell(cell, ray);
+  // 用 3D-DDA 沿射线前进到下一个单元。
+  float3 nextCubicPos = cell.cubicPos;
+  if (tmax.x < tmax.y)
+  {
+    if (tmax.x < tmax.z)
+    {
+      nextCubicPos.x += step.x;
+      tmax.x += tdelta.x;
+    }
+    else
+    {
+      nextCubicPos.z += step.z;
+      tmax.z += tdelta.z;
+    }
+  }
+  else
+  {
+    if (tmax.y < tmax.z)
+    {
+      nextCubicPos.y += step.y;
+      tmax.y += tdelta.y;
+    }
+    else
+    {
+      nextCubicPos.z += step.z;
+      tmax.z += tdelta.z;
+    }
+  }
+  // 取当前点所在的单元。
+  bool insideGrid = GetCellAtCubicPos(cell, nextCubicPos);
+  // 满足以下条件时结束遍历：
+  // - 找到有效法线。成功。
+  // - 落到网格之外。失败。
+  done = (dot(normal, normal) > 0) || !insideGrid;
+}</code></pre><h4>步骤 4</h4><p>要完成像素着色器，我们只需把法线转换到工作模型的切线空间，并缩放到 0..255 的范围，以便存入位图，如代码清单 22-8 所示。</p><h4>示例 22-8. 把法线转换到切线空间</h4><pre><code>
+float3 normalTS;
+normalTS.x = dot(normal, Input.binormal);
+normalTS.y = dot(normal, Input.tangent);
+normalTS.z = dot(normal, Input.normal);
+normalTS = normalize(normalTS);
+return float4(normalTS * 0.5 + 0.5, 1);</code></pre><h4>限制</h4><p>如前面所讨论，ps_3_0 中这些循环被限制在 256 次迭代。一种可能的变通做法是用两个嵌套循环替代单个循环，如代码清单 22-9 所示，理论上每对嵌套可达 65,536 次迭代。DirectX 9.0 文档并未涉及这一具体情况，不过它提到最大嵌套循环深度为 4，且像素着色器执行的指令数上限必须至少为 65,536。参考模型足够复杂、网格足够密集时，很容易达到这个上限。如果主机 GPU 存在这样的指令限制，你可能不得不退回到多遍做法（见 22.4.3 节）。</p><h4>示例 22-9. 用两个嵌套循环绕开该限制的示例</h4><pre><code>
+// 主循环的嵌套配对
+while (!done)
+{
+  while (!done)
+  {
+    ...
+        // FindNormalAtCell 函数内部的嵌套配对
+        while (nextIndex > = 0)
+    {
+      while (nextIndex > = 0)
+      {
+        ...
+      }
+    }
+    ...
+  }
+}</code></pre><h4>22.4.3 多遍实现</h4><p>为避免像素着色器中出现四层嵌套循环，我们可以把部分工作挪到 CPU，用多遍完成投影。为此需要把像素着色器拆开。</p><ul><li>第一遍执行与单遍实现所述相同的计算（步骤 1 与 2）。然后我们把关于单元与光线的打包信息、以及变量 <code>step</code>、<code>tmax</code> 与 <code>delta</code> 存到渲染纹理上，供后续遍历各遍访问。</li><li>第二遍及接下来的 <em>N</em> 遍在每个像素处沿网格执行一次遍历步。为避免处理空白区域，这一遍可以用查询来跟踪已渲染的像素，并配合模板缓冲。</li><li>最后一遍把法线图中的所有像素转换到切线空间。</li></ul><h4>限制</h4><p>这个实现唯一也是最明显的限制，是把所有临时变量存进纹理内存所需的内存；不过分块渲染能解决这个问题。</p><h4>分块渲染</h4><p>如 Purcell 等 2002 所述，把渲染拆成小块或瓦片就能克服内存限制。一次渲染一个瓦片并复制到系统内存中的纹理，从而可以复用渲染纹理。瓦片尺寸可按可用资源来定。</p><h4>22.4.4 抗锯齿</h4><p>本章介绍的技术至少可以用两种方式扩展以支持抗锯齿：</p><ul><li>扩展像素着色器，投射更多光线，每条光线的路径偏移不同。结果用作样本，计算无走样的法线。</li><li>多次渲染法线图，每次都抖动工作模型的顶点与笼位置。然后把样本加权累积到渲染目标中。这种方法的代价与遍数呈线性关系。如果一张法线图渲染约需 1 秒，16 样本的抗锯齿法线图大约需要 16 秒。</li></ul><h2>22.5 结果</h2><p>测试样本的参考模型约有 56 万个三角形。而工作模型只有 868 个三角形。<a href="https://developer.download.nvidia.com/books/gpugems3/22fig08.jpg" rel="noreferrer noopener">图 22-8</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/22fig09.jpg" rel="noreferrer noopener">图 22-9</a> 展示了这两个模型。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig08.jpg" alt="22fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig08.jpg" rel="noreferrer noopener">图 22-8</a> 参考模型</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig09.jpg" alt="22fig09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig09.jpg" rel="noreferrer noopener">图 22-9</a> 工作模型</figcaption></figure><p>为投影准备参考模型只需 5.2 秒：3.6 秒加载文件，1.0 秒生成均匀网格，0.6 秒把数据送入 GPU。请记住，实现的 CPU 部分尚未完全优化，而且只用一个核。</p><p>这些计时在一台笔记本上取得：T2400 Core Duo 处理器、1 GB 667 MHz DDR2 内存、5400 转硬盘。图形处理器是带 256 MB 专用显存的 ATI X1600。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/22fig10.jpg" rel="noreferrer noopener">图 22-10</a> 中的图表把本章所述的 GPU 实现与两种流行的基于 CPU 的实现——NVIDIA Melody 与 xNormal——作比较。所有测试所用的边界笼相近，设置都取最简单，不开抗锯齿、填充或扩边。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig10.jpg" alt="22fig10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig10.jpg" rel="noreferrer noopener">图 22-10</a> 性能比较图表</figcaption></figure><p>生成的法线图有轻微的精度问题，可以通过提高像素着色器中算法的数值稳健性来解决。见 <a href="https://developer.download.nvidia.com/books/gpugems3/22fig11.jpg" rel="noreferrer noopener">图 22-11</a>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/22fig11.jpg" alt="22fig11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/22fig11.jpg" rel="noreferrer noopener">图 22-11</a> 生成的法线图及其应用效果</figcaption></figure><p>法线图是渲染在黑色背景上的，仅为说明之用。在中等蓝色（而非黑色）背景上生成法线图，能减轻 mipmap 带来的问题。</p><h4>可能的改进</h4><p>参考网格可以用三角带而非列表存放：这样三角形索引更少，可省下纹理内存。同时减少纹理取数，也能提升像素处理器的性能。</p><p>这个实现中运行在 CPU 上的预处理部分，可以用 Streaming SIMD Extensions 与 OpenMP 优化。</p><h2>22.6 小结</h2><p>稍作修改，这项技术就能用来生成置换贴图，而置换贴图也可用于视差贴图与浮雕贴图。用更复杂的着色器，我们还能生成局部环境光遮蔽图或空腔图。</p><p>这项技术的一个优点是足够快，可以（也值得）把各 mip 层逐一显式渲染，从而改善有 mipmap 区域的着色质量。</p><p>由于这项技术所需的计算特性，它能很好地随多线程架构扩展，而这正是最新一代 GPU 的特点。</p><p>本章表明，图形处理器能非常高效地生成法线图，从而实现快速的高分辨率预览。</p><h2>22.7 参考文献</h2><p>Amanatides, John, and Andrew Woo. 1987. "A Fast Voxel Traversal Algorithm for Ray-tracing."，载 <em>Proceedings of Eurographics '87</em>，第 3–10 页。可在线获取：<a href="http://www.cse.yorku.ca/~amana/research/" rel="noreferrer noopener">http://www.cse.yorku.ca/~amana/research/</a>。</p><p>Christen, Martin. 2005. "Ray Tracing on GPU." University of Applied Sciences Basel 学位论文。可在线获取：<a href="http://www.clockworkcoders.com/oglsl/rt/" rel="noreferrer noopener">http://www.clockworkcoders.com/oglsl/rt/</a>。</p><p>Cohen, Jonathan, Marc Olano, and Dinesh Manocha. 1998. "Appearance-Preserving Simplification."，载 <em>Proceedings of the 25th Annual Conference on Computer Graphics and Interactive Techniques</em>，第 115–122 页。可在线获取：<a href="http://www.cs.unc.edu/~geom/APS/" rel="noreferrer noopener">http://www.cs.unc.edu/~geom/APS/</a>。</p><p>Fujimoto, A., and K. Iwata. 1985. "Accelerated Ray Tracing."，载 <em>Computer Graphics: Visual Technology and Art (Proceedings of Computer Graphics, Tokyo '85)</em>，第 41–65 页。</p><p>Havran, Vlastimil. 2001. "Heuristic Ray Shooting Algorithms." Czech Technical University 博士论文。可在线获取：<a href="http://www.cgg.cvut.cz/~havran/phdthesis.html" rel="noreferrer noopener">http://www.cgg.cvut.cz/~havran/phdthesis.html</a>。</p><p>Heidrich, Wolfgang, and Hans-Peter Seidel. 1999. "Realistic, Hardware-accelerated Shading and Lighting."，载 <em>Proceedings of SIGGRAPH 99</em>，第 171–178 页。可在线获取：<a href="http://www.cs.ubc.ca/~heidrich/Papers/Siggraph.99.pdf" rel="noreferrer noopener">http://www.cs.ubc.ca/~heidrich/Papers/Siggraph.99.pdf</a>。</p><p>Krishnamurthy, Venkat, and Marc Levoy. 1996. "Fitting Smooth Surfaces to Dense Polygon Meshes."，载 <em>Proceedings of the 23rd Annual Conference on Computer Graphics and Interactive Techniques</em>，第 313–324 页。可在线获取：<a href="http://graphics.stanford.edu/papers/surfacefitting/" rel="noreferrer noopener">http://graphics.stanford.edu/papers/surfacefitting/</a>。</p><p>Lindholm, Erik, Mark Kilgard, and Henry Moreton. 2001. "A User Programmable Vertex Engine." 发表于 SIGGRAPH 2001。可在线获取：<a href="http://developer.nvidia.com/object/SIGGRAPH_2001.html" rel="noreferrer noopener">http://developer.nvidia.com/object/SIGGRAPH_2001.html</a>。</p><p>Purcell, Timothy J., Ian Buck, William R. Mark, and Pat Hanrahan. 2002. "Ray Tracing on Programmable Graphics Hardware."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)，第 703–712 页。可在线获取：<a href="http://graphics.stanford.edu/papers/rtongfx/" rel="noreferrer noopener">http://graphics.stanford.edu/papers/rtongfx/</a>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-22-baking-normal-maps-gpu" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-22-baking-normal-maps-gpu</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

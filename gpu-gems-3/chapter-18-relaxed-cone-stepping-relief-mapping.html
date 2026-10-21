@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 18 章　用于浮雕贴图的松弛圆锥步进 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 18 章　用于浮雕贴图的松弛圆锥步进」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 18 章　浮雕贴图的松弛圆锥步进</h1>
+<p><em>Fabio Policarpo<br> Perpetual Entertainment</em></p><p><em>Manuel M. Oliveira<br> Instituto de Informática—UFRGS</em></p><h2>18.1 引言</h2><p>物体表面上的几何细节会大幅改变光与这些表面相互作用的方式。要合成逼真的图像，需要尽可能忠实地仿真这种相互作用，但显式建模所有细小细节往往不切实际。为解决这些问题，最近引入了一种称为<em>浮雕贴图</em>的基于图像的技术，用于为任意多边形模型添加逐片元细节（Policarpo et al. 2005）。该技术后来又扩展到渲染正确轮廓（Oliveira and Policarpo 2005）以及处理非高度场的表面细节（Policarpo and Oliveira 2006）。在它的各种变体中，光线与高度场的求交都用二分搜索完成，用来细化某个线性搜索过程得到的结果。二分搜索收敛极快，但线性搜索（为避免漏掉大结构而必需）容易产生走样，可能漏掉某些薄结构，<a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1a</a> 中这一点很明显。此后人们提出了多种空间跳跃技术来加速光线-高度场求交并尽量减少走样（Donnelly 2005、Dummer 2006、Baboud and Décoret 2006）。<em>圆锥步进贴图</em>（CSM）（Dummer 2006）提供了一个巧妙的方案，既能加速平均情形下的求交计算，又能借助一些预计算数据（圆锥贴图）避免跳过高度场结构。然而由于 CSM 采用保守做法，光线往往在实际表面之前就停下，从而引入不同种类的瑕疵，<a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1b</a> 中对此作了突出显示。对 CSM 作一种扩展，即对每个片元使用四个不同的半径（沿北、南、东、西四个方向），也只能略微减少这些瑕疵的发生。我们把这种做法称为<em>四方向圆锥步进贴图</em>（QDCSM）。其结果见<a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1c</a>，图中也突出了这项技术的瑕疵。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" alt="18fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1</a> 用 256x256 浮雕纹理渲染浮雕贴图表面时，四种不同光线-高度场求交技术的比较</figcaption></figure><p>本章介绍一种用于逐片元置换贴图的新光线-高度场求交策略，它结合了圆锥步进贴图与二分搜索两者的长处。我们把这个新的空间跳跃算法称为<em>松弛圆锥步进</em>（RCS），因为它放宽了 CSM 中用于定义圆锥半径的限制。光线-高度场求交的思路是用激进的空间跳跃方法取代线性搜索，紧接着再做一次二分搜索。CSM 保守地定义圆锥半径，使光线永不穿透表面；RCS 则允许光线至多穿透表面一次。这样圆锥可以宽得多，加速收敛。一旦知道光线已在表面之内，就可以安全地用二分搜索细化交点位置。RCS 与二分搜索结合，渲染质量显著提高，如<a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1d</a> 所示。注意<a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1a</a> 中可见的走样，以及<a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1b</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">18-1c</a> 中可察觉的畸变，都已消除。作为一种空间跳跃技术，RCS 可以与其他细化光线-高度场求交的策略配合使用，例如<em>区间贴图</em>所用的那种（Risser et al. 2005）。</p><h2>18.2 浮雕贴图简述</h2><p>浮雕贴图（Policarpo et al. 2005）通过按映射到多边形模型上的深度与表面法线信息对各个片元着色，来模拟几何表面细节的外观。一张深度贴图<sup><a href="https://developer.download.nvidia.com/books/gpugems3/ch18fn01.html" rel="noreferrer noopener">[1]</a></sup>（缩放到 [0,1] 范围）表示假定位于多边形表面之下的几何细节。深度贴图与法线贴图可以存成一张 RGBA 纹理（每纹素 32 位），称为<em>浮雕纹理</em>（Oliveira et al. 2000）。为了更好的效果，我们建议把深度分量与法线分量分开存进两张不同的纹理。这样纹理压缩效果更好，因为可以使用专门的法线压缩而不受深度贴图压缩的影响，从而得到更高的压缩比与更少的瑕疵。性能也更好，因为在浮雕贴图的迭代过程中只需要深度信息，单通道纹理对缓存更友好（法线信息只在最后做光照时才需要）。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig02.jpg" rel="noreferrer noopener">图 18-2</a> 展示了一张浮雕纹理的法线贴图与深度贴图，其剖面见<a href="https://developer.download.nvidia.com/books/gpugems3/18fig03.jpg" rel="noreferrer noopener">图 18-3</a>。浮雕细节到多边形模型的映射按常规方式完成，即为模型的每个顶点指定一对纹理坐标。渲染时，深度贴图可以动态缩放以取得不同效果，而正确的遮挡通过恰当更新深度缓冲实现。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig02.jpg" alt="18fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig02.jpg" rel="noreferrer noopener">图 18-2</a> 一张浮雕纹理的示例</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig03.jpg" alt="18fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig03.jpg" rel="noreferrer noopener">图 18-3</a> 浮雕渲染</figcaption></figure><p></p><p>浮雕渲染完全在 GPU 上完成，概念上可分为三步。对纹理坐标为（<em>s</em>, <em>t</em>）的每个片元 <em>f</em>，首先把视线方向 <em>V</em> 变换到 <em>f</em> 的切空间。然后求变换后的视线光线与深度贴图的交点 <em>P</em>。设（<em>k</em>, <em>l</em>）为该交点的纹理坐标（见<a href="https://developer.download.nvidia.com/books/gpugems3/18fig03.jpg" rel="noreferrer noopener">图 18-3</a>）。最后用 <em>P</em> 在相机空间中的对应位置，以及存放在（<em>k</em>, <em>l</em>）处的法线，为 <em>f</em> 着色。自阴影可以通过检查光线是否在到达浮雕上任何其他点之前先到达 <em>P</em> 来实现。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig03.jpg" rel="noreferrer noopener">图 18-3</a> 图示了整个流程。浮雕贴图对象与其他场景对象之间的正确遮挡，只需用 <em>P</em> 的 <em>z</em> 坐标（相机空间中、经投影并除以 <em>w</em> 之后）更新 z 缓冲即可实现。更新后的 z 缓冲也支持把阴影贴图（Williams 1978）与浮雕贴图表面结合使用。</p><p>实践中，求交点 <em>P</em> 完全可以只在二维纹理空间中完成。于是设（<em>u</em>, <em>v</em>）为视线光线到达深度 = 1.0 处那一点所对应的二维纹理坐标（<a href="https://developer.download.nvidia.com/books/gpugems3/18fig03.jpg" rel="noreferrer noopener">图 18-3</a>）。我们依据（<em>s</em>, <em>t</em>）、变换后的视线方向以及施加到深度贴图的缩放因子算出（<em>u</em>, <em>v</em>）。然后通过在深度贴图中采样、从（<em>s</em>, <em>t</em>）步进到（<em>u</em>, <em>v</em>），并检查视线光线是否在到达（<em>u</em>, <em>v</em>）之前穿入浮雕（即沿视线的深度是否大于所存深度），来搜索 <em>P</em>。一旦找到视线位于浮雕之下的位置，就用二分搜索细化交点 <em>P</em>。</p><p>二分搜索虽然能迅速收敛到交点，并能利用纹理滤波，但它不能在搜索过程的开头使用，因为它可能漏掉某些大结构。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig04.jpg" rel="noreferrer noopener">图 18-4a</a> 描绘了这种情形：在（<em>s</em>, <em>t</em>）与（<em>u</em>, <em>v</em>）中间的纹理坐标处所存的深度值，大于点 1 处沿视线的深度值，尽管光线其实已经穿入表面。这种情况下二分搜索会错误地收敛到点 <em>Q</em>。为尽量减少这类走样瑕疵，Policarpo 等人（2005）用线性搜索来限制二分搜索的空间。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig04.jpg" rel="noreferrer noopener">图 18-4b</a> 说明了这一点：使用小步长导致找到表面之下的点 3。随后以点 2 与点 3 为输入，用二分搜索细化出所需的交点。然而线性搜索本身在存在薄结构时也容易走样，<a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1a</a> 中可以看到。这促使一些研究者提出使用额外的预处理数据来避免漏掉这类薄结构（Donnelly 2005、Dummer 2006、Baboud and Décoret 2006）。本章介绍的技术受 Dummer 的圆锥步进贴图工作启发，下面简要介绍。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig04.jpg" alt="18fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig04.jpg" rel="noreferrer noopener">图 18-4</a> 二分搜索与线性搜索的对比</figcaption></figure><h2>18.3 圆锥步进贴图</h2><p>Dummer 计算光线与高度场交点的算法借助圆锥贴图来避免漏掉高度场细节（Dummer 2006）。圆锥贴图为深度纹理的每个纹素关联一个圆锥。每个圆锥的角度，是不会让圆锥与高度场相交的最大角度。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig05.jpg" rel="noreferrer noopener">图 18-5</a> 以坐标（<em>s</em>, <em>t</em>）、（<em>a</em>, <em>b</em>）与（<em>c</em>, <em>d</em>）处的三个纹素为例说明了这种情形，它们的圆锥分别以黄色、蓝色与绿色显示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig05.jpg" alt="18fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig05.jpg" rel="noreferrer noopener">图 18-5</a> 圆锥步进贴图</figcaption></figure><p>从片元 <em>f</em> 出发，沿变换后的视线方向，搜索交点按如下方式进行：让光线与（<em>s</em>, <em>t</em>）处所存的圆锥求交，得到纹理坐标为（<em>a</em>, <em>b</em>）的点 1。然后让光线与（<em>a</em>, <em>b</em>）处所存的圆锥求交来推进，得到纹理坐标为（<em>c</em>, <em>d</em>）的点 2。接着让光线与（<em>c</em>, <em>d</em>）处所存的圆锥求交，得到点 3，如此继续。在这个简单例子中，点 3 恰好就是所求的交点。圆锥步进贴图虽然保证永不漏掉光线与高度场的第一个交点，但可能需要过多步才能收敛到实际交点。不过出于性能考虑，通常需要指定最大迭代次数。结果光线往往在实际交点之前停下，这意味着用来采样法线贴图与颜色贴图的返回纹理坐标实际上是不对的。此外，返回交点在相机空间中的三维位置 <em>P</em>' 也不对。这些误差在渲染图像中表现为畸变瑕疵，<a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1b</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">18-1c</a> 中可以看到。</p><h2>18.4 松弛圆锥步进</h2><p>Dummer 提出的圆锥步进贴图（cone step mapping）用基于圆锥贴图的一次搜索，取代了 Policarpo 等人在 2005 年所述的线性搜索与二分搜索两步。把两种方法的长处结合起来——先用圆锥步进贴图的大步跳跃，再用二分搜索保证更好的精度——就能得到更好、更高效的光线-高度场求交算法。由于二分搜索需要一个输入点在浮雕表面之下、另一个点在其上，我们可以放宽「圆锥贴图中的圆锥不得穿透表面」这一约束。在新的算法里，我们反过来强制圆锥在可能时真正与表面相交。思路是让每个圆锥的半径尽可能大，同时遵守下面的约束：<em>视线在圆锥内部行进时，最多只能穿透浮雕一次</em>。我们把由此得到的跳跃算法称为<em>松弛圆锥步进</em>（relaxed cone stepping）。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig07.jpg" rel="noreferrer noopener">图 18-7a</a>（见下一小节）比较了高度场中某个给定片元处，保守圆锥步进（蓝色）与松弛圆锥步进（绿色）所用圆锥的半径。可以看到 RCS 使用的半径大得多，因此该技术能用更少的步数收敛到交点。使用更宽的松弛圆锥省去了线性搜索，也就省去了由它带来的瑕疵。既然光线已穿透表面一次，接着做快速而更准确的二分搜索就是安全的。</p><h4>18.4.1 计算松弛圆锥贴图</h4><p>与 CSM 一样，我们的方法需要为深度贴图的每个纹素分配一个圆锥。每个圆锥用其<em>宽高比</em>表示（比值 <em>w</em>/<em>h</em>，见<a href="https://developer.download.nvidia.com/books/gpugems3/18fig07.jpg" rel="noreferrer noopener">图 18-7c</a>）。由于圆锥比值可以存放在单个纹理通道中，深度贴图与圆锥贴图可以合存于一张亮度-α 纹理。另一种做法是把圆锥贴图存进浮雕纹理的蓝色通道（法线的前两个分量只放在红、绿通道中）。</p><p>对松弛圆锥贴图上的每个参考纹素 <em>t<sub>i</sub></em>，以 <em>t<sub>i</sub></em> 为中心的圆锥 <em>C<sub>i</sub></em> 的角度要设成：任何视线在 <em>C<sub>i</sub></em> 内部行进时，都不会击中高度场超过一次。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig07.jpg" rel="noreferrer noopener">图 18-7b</a> 以绿色显示的圆锥和一组视线说明了这种情形。注意圆锥贴图也可用来加速阴影光线与高度场的求交。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig06.jpg" rel="noreferrer noopener">图 18-6</a> 展示了自阴影的渲染，比较了三种逐片元置换贴图渲染方法的结果：(a) 使用线性搜索的浮雕贴图，(b) 圆锥步进贴图，(c) 使用松弛圆锥步进的浮雕贴图。注意线性搜索 (a) 与 CSM 提前停止 (b) 所造成的阴影瑕疵。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig06.jpg" alt="18fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig06.jpg" rel="noreferrer noopener">图 18-6</a> 用不同方法渲染自阴影</figcaption></figure><p>松弛圆锥允许光线进入浮雕表面，但不允许它离开。我们用代码清单 18-1 中伪代码描述的 <em>O</em>(<em>n</em> <sup>2</sup>) 算法在离线阶段生成松弛圆锥贴图。思路是：对每个源纹素 <code>ti</code>，向每个目的纹素 <code>tj</code> 各投射一条光线，使光线起点为 (<code>ti.texCoord.s</code>, <code>ti.texCoord.t</code>, <code>0.0</code>)，指向 (<code>tj.texCoord.s</code>, <code>tj.texCoord.t</code>, <code>tj.depth</code>)。对每条这样的光线，计算它与高度场的下一次（第二次）交点，并用该交点算出圆锥比值 <code>cone_ratio(i,j)</code>。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig07.jpg" rel="noreferrer noopener">图 18-7c</a> 以一对给定的源纹素与目的纹素 (<code>ti, tj</code>) 说明了这种情形。<em>C<sub>i</sub></em> 的最终比值取对 <em>t<sub>i</sub></em> 算出的所有圆锥比值中的最小值，如<a href="https://developer.download.nvidia.com/books/gpugems3/18fig07.jpg" rel="noreferrer noopener">图 18-7b</a> 所示。把所有纹素都当作源纹素处理完之后，就得到松弛圆锥贴图。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig07.jpg" alt="18fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig07.jpg" rel="noreferrer noopener">图 18-7</a> 计算松弛圆锥贴图</figcaption></figure><h4>示例 18-1. 计算松弛圆锥贴图的伪代码</h4><pre><code> for each
+   reference texel ti do radius_cone_C(i) = 1;
+ source.xyz = (ti.texCoord.s, ti.texCoord.t, 0.0);
+for each
+  destination texel tj do destination.xyz =
+      (tj.texCoord.s, tj.texCoord.t, tj.depth);
+ray.origin = destination;
+ray.direction = destination - source;
+(k, w) = text_cords_next_intersection(tj, ray, depth_map);
+d = depth_stored_at(k, w);
+if ((d - ti.depth) > 0.0)
+  // dst 必须位于 src 上方
+  cone_ratio(i, j) = length(source.xy - destination.xy) / (d - tj.depth);
+if (radius_cone_C(i) > cone_ratio(i, j))
+  radius_cone_C(i) = cone_ratio(i, j);</code></pre><p>注意，在代码清单 18-1 的伪代码以及代码清单 18-2 的实际代码中，我们都把圆锥比值的上限限制在 1.0。这样做是为了用整数纹理存放圆锥贴图。使用浮点纹理虽然可以表示更大的圆锥比值，并可能在大步跳跃上带来收益，但实践中我们观察到，圆锥贴图里通常只有很小一部分纹素能从中受益。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig08.jpg" rel="noreferrer noopener">图 18-8c</a> 所示的松弛圆锥贴图说明了这一点。只有饱和（白色）的纹素才可能具有大于 1.0 的圆锥比值。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig08.jpg" alt="18fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig08.jpg" rel="noreferrer noopener">图 18-8</a> 针对所示深度贴图计算出的几种圆锥贴图的比较</figcaption></figure><p>代码清单 18-2 给出了生成松弛圆锥贴图的着色器。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig08.jpg" rel="noreferrer noopener">图 18-8</a> 针对<a href="https://developer.download.nvidia.com/books/gpugems3/18fig02.jpg" rel="noreferrer noopener">图 18-2</a> 所示浮雕纹理对应的深度贴图，比较了三种不同的圆锥贴图。在<a href="https://developer.download.nvidia.com/books/gpugems3/18fig08.jpg" rel="noreferrer noopener">图 18-8a</a> 中可以看到用单个纹理通道存放的常规圆锥贴图（Dummer 2006）。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig08.jpg" rel="noreferrer noopener">图 18-8b</a> 是四方向圆锥贴图，它把四个主要方向的圆锥比值分别存入不同的纹理通道。注意纹理中不同区域在不同方向上被分配了更宽的圆锥。红色纹素表示朝右更宽的圆锥，绿色纹素表示朝左更宽的圆锥。蓝色纹素表示朝下更宽的圆锥，黑色纹素则朝上更宽。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig08.jpg" rel="noreferrer noopener">图 18-8c</a> 显示对应的松弛圆锥贴图，同样用单个纹理通道存放。可以看到它的纹素比<a href="https://developer.download.nvidia.com/books/gpugems3/18fig08.jpg" rel="noreferrer noopener">图 18-8a</a> 常规圆锥贴图中对应的纹素亮得多，说明它的圆锥更宽。</p><h4>示例 18-2. 生成松弛圆锥贴图的预处理着色器</h4><pre><code>
+float4 depth2relaxedcone(in float2 TexCoord
+                         : TEXCOORD0, in Sampler2D ReliefSampler,
+                           in float3 Offset)
+    : COLOR
+{
+  const int search_steps = 128;
+  float3 src = float3(TexCoord, 0);
+  // 源纹素
+  float3 dst = src + Offset;
+  // 目标纹素
+  dst.z = tex2D(ReliefSampler, dst.xy).w;
+  // 设置 dest 的深度
+  float3 vec = dst - src; // 光线方向
+  vec /= vec.z;
+  // 缩放光线方向，使 vec.z = 1.0
+  vec *= 1.0 - dst.z;
+  // 再次缩放
+  float3 step_fwd = vec / search_steps;
+  // 一次前进步长的长度
+  // 一直搜索到表面之外的新点
+  float3 ray_pos = dst + step_fwd;
+  for (int i = 1; i < search_steps; i++)
+  {
+    float current_depth = tex2D(ReliefSampler, ray_pos.xy).w;
+    if (current_depth < = ray_pos.z)
+      ray_pos += step_fwd;
+  }
+  // 原始纹素深度
+  float src_texel_depth = tex2D(ReliefSampler, TexCoord).w;
+  // 计算圆锥比值
+  float cone_ratio =
+      (ray_pos.z > = src_texel_depth)
+          ? 1.0
+          : length(ray_pos.xy - TexCoord) / (src_texel_depth - ray_pos.z);
+  // 与上一趟的结果取最小值
+  float best_ratio = tex2D(ResultSampler, TexCoord).x;
+  if (cone_ratio > best_ratio)
+    cone_ratio = best_ratio;
+  return float4(cone_ratio, cone_ratio, cone_ratio, cone_ratio);
+}</code></pre><h4>18.4.2 用松弛圆锥贴图渲染</h4><p>要为片元着色，我们让视线在深度纹理中行进并沿其步进，用松弛圆锥贴图做大步跳跃。我们沿光线前进，直到抵达浮雕表面内部的某一点。这一过程与 18.3 节中针对常规圆锥贴图的描述类似。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig09.jpg" rel="noreferrer noopener">图 18-9</a> 展示了如何求变换后的视线与圆锥的交点。首先，我们把表示光线方向的向量除以其 <em>z</em> 分量（<em>ray.direction.z</em>）来做缩放，此后按<a href="https://developer.download.nvidia.com/books/gpugems3/18fig09.jpg" rel="noreferrer noopener">图 18-9</a>，可以写出</p><p><strong>公式 1</strong></p><p><a><img alt="ch18equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/ch18equ01.jpg"/></a></p><p>同理：</p><p><strong>公式 2</strong></p><p><a><img alt="ch18equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/ch18equ02.jpg"/></a></p><p>由公式 1 与公式 2 解出 <em>d</em>，得到：</p><p><strong>公式 3</strong></p><p><a><img alt="ch18equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems3/ch18equ03.jpg"/></a></p><p>由公式 3，交点 <em>I</em> 按下式计算：</p><p><strong>公式 4</strong></p><p><a><img alt="ch18equ04.jpg" src="https://developer.download.nvidia.com/books/gpugems3/ch18equ04.jpg"/></a></p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig09.jpg" alt="18fig09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig09.jpg" rel="noreferrer noopener">图 18-9</a> 求视线与圆锥的交点</figcaption></figure><p>代码清单 18-3 给出了松弛圆锥步进的光线求交函数。出于性能考虑，第一个循环以固定步数遍历松弛圆锥。注意在计算前进距离时使用了 <code>saturate()</code> 函数。这保证了我们会停在第一个视线位于浮雕表面之下的纹素上。该过程结束时，我们假定光线已穿透表面一次，随后开始二分搜索来细化交点坐标。得到这些坐标后，我们按 18.2 节所述为片元着色。</p><h4>示例 18-3. 松弛圆锥的光线求交</h4><pre><code>
+// 用松弛圆锥步进求光线与深度图的交点。
+// 深度值存于 alpha 通道（物体表面处为黑）
+// 松弛圆锥比值存于蓝色通道。
+void ray_intersect_relaxedcone(sampler2D relief_map,
+                               // 松弛圆锥贴图
+                               inout float3 ray_pos,
+                               // 光线位置
+                               inout float3 ray_dir)
+// 光线方向
+{
+  const int cone_steps = 15;
+  const int binary_steps = 6;
+  ray_dir /= ray_dir.z;
+  // 缩放 ray_dir
+  float ray_ratio = length(ray_dir.xy);
+  float3 pos = ray_pos;
+  for (int i = 0; i < cone_steps; i++)
+  {
+    float4 tex = tex2D(relief_map, pos.xy);
+    float cone_ratio = tex.z;
+    float height = saturate(tex.w – pos.z);
+    float d = cone_ratio * height / (ray_ratio + cone_ratio);
+    pos += ray_dir * d;
+  }
+  // 二分搜索的初始范围与初始位置
+  float3 bs_range = 0.5 * ray_dir * pos.z;
+  float3 bs_position = ray_pos + bs_range;
+  for (int i = 0; i < binary_steps; i++)
+  {
+    float4 tex = tex2D(relief_map, bs_position.xy);
+    bs_range *= 0.5;
+    if (bs_position.z < tex.w)
+      // 若在表面之外
+      bs_position += bs_range;
+    // 向前移动
+    else
+      bs_position -= bs_range;
+    // 向后移动
+  }
+}</code></pre><p>设 <em>f</em> 为待着色的片元，<em>K</em> 为视线停止处的点（即在执行二分搜索之前），如<a href="https://developer.download.nvidia.com/books/gpugems3/18fig10.jpg" rel="noreferrer noopener">图 18-10</a> 所示。如果步数太少，光线可能在到达表面之前就停下了。因此，为了避免漏掉哪怕很薄的高度场结构（参见<a href="https://developer.download.nvidia.com/books/gpugems3/18fig04.jpg" rel="noreferrer noopener">图 18-4a</a> 的例子），我们把 <em>K</em> 作为二分搜索的终点。在这种情况下，如果光线没有穿透表面，搜索将收敛到点 <em>K</em>。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig10.jpg" alt="18fig10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig10.jpg" rel="noreferrer noopener">图 18-10</a> 穿过片元的视线及其纹理坐标 ()</figcaption></figure><p>设 (<em>m</em>, <em>n</em>) 为 <em>K</em> 对应的纹理坐标，<em>d<sub>K</sub></em> 为存于 (<em>m</em>, <em>n</em>) 的深度值（见<a href="https://developer.download.nvidia.com/books/gpugems3/18fig10.jpg" rel="noreferrer noopener">图 18-10</a>）。二分搜索随后将沿从点 <em>H</em> 到 <em>K</em> 的线段寻找交点，该线段对应纹理坐标 ((<em>s</em> + <em>m</em>)/2, (<em>t</em>+<em>n</em>)/2) 到 (<em>m</em>, <em>n</em>)，其中 (<em>s</em>, <em>t</em>) 是片元 <em>f</em> 的纹理坐标（<a href="https://developer.download.nvidia.com/books/gpugems3/18fig10.jpg" rel="noreferrer noopener">图 18-10</a>）。沿这条线段，视线深度从 (<em>d<sub>K</sub></em> /2) 线性变化到 <em>d<sub>K</sub></em>。注意，也可以改用 (<em>m</em>, <em>n</em>) 与 (<em>q</em>, <em>r</em>)（点 <em>J</em> 的纹理坐标，即光线上此前访问过的点）作为二分搜索细化的起始范围。但由于我们在松弛圆锥贴图上的步进使用固定迭代次数，保存 (<em>q</em>, <em>r</em>) 需要在代码里加一条条件语句。根据我们的经验，这往往会增加片元着色器使用的寄存器数量。图形硬件的寄存器数量是固定的，它能同时运行的线程数取决于寄存器池能容纳多少。我们用的寄存器越少，同时运行的线程就越多。浮雕贴图中有大量依赖纹理读取，由此产生的延迟会在多线程并行运行时被隐藏。循环里更复杂的代码会增加寄存器用量，从而减少并行线程数，使依赖纹理读取的延迟暴露出来，帧率显著下降。因此，为了让着色器代码更短，我们以 <em>H</em> 和 <em>K</em> 为范围开始二分搜索。注意，二分搜索只迭代两次之后，搜索范围就已不会大于点 <em>J</em> 与 <em>K</em> 所定义的范围。</p><p>应当清楚，使用松弛圆锥贴图仍可能产生一些畸变瑕疵，与常规（保守）圆锥贴图造成的瑕疵相似（<a href="https://developer.download.nvidia.com/books/gpugems3/18fig01.jpg" rel="noreferrer noopener">图 18-1b</a>）。实践中，在相同步数下这些瑕疵往往明显轻微得多，因为用的圆锥更宽。根据我们的经验，对典型高度场而言，15 步松弛圆锥步进似乎就足以避免这类瑕疵。</p><h2>18.5 结论</h2><p>把松弛圆锥步进与二分搜索结合起来计算光线与高度场的交点，能显著减少逐片元置换贴图生成的图像中的瑕疵。更宽的圆锥带来更高效的大步跳跃，二分搜索则保证更高的精度。如果圆锥步进的迭代次数太少，最终图像可能出现与圆锥步进贴图（Dummer 2006）类似的瑕疵。不过在相同迭代次数或纹理访问次数下，我们的技术在实践中往往能给出明显更好的结果。这是一个优势，对新一代 GPU 尤其如此：纹理采样与计算性能虽然都在持续提升，但计算性能的增长速度快于带宽。</p><p>松弛圆锥步进以非常自然的方式与浮雕贴图结合，保留了它的全部原有特性。<a href="https://developer.download.nvidia.com/books/gpugems3/18fig11.jpg" rel="noreferrer noopener">图 18-11</a> 展示了在涉及深度缩放（<a href="https://developer.download.nvidia.com/books/gpugems3/18fig11.jpg" rel="noreferrer noopener">图 18-11b</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/18fig11.jpg" rel="noreferrer noopener">18-11d</a>）和平铺系数变化（<a href="https://developer.download.nvidia.com/books/gpugems3/18fig11.jpg" rel="noreferrer noopener">图 18-11c</a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/18fig11.jpg" rel="noreferrer noopener">18-11d</a>）的渲染中使用 RCS。注意这些效果是通过适当调整视线方向得到的（Policarpo 等 2005），因此不影响圆锥比值。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/18fig11.jpg" alt="18fig11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/18fig11.jpg" rel="noreferrer noopener">图 18-11</a> 显示表观深度与平铺系数变化的图像</figcaption></figure><p>mipmap 可以安全地应用于颜色贴图和法线贴图。遗憾的是，常规的 mipmap 生成方式不应施加于圆锥贴图，因为滤波后的值会导致错误的交点。应当手工计算 mipmap，对每组像素保守地取最小值。或者改用最近邻方式采样圆锥贴图。在这种情况下，从远处观察物体时，正确采样的颜色纹理会掩盖高分辨率圆锥贴图采样所带来的走样瑕疵。因此实践中，不对圆锥贴图施加 mipmap 的唯一代价，就是无法利用更小纹理采样所带来的性能损失。</p><h4>18.5.1 延伸阅读</h4><p>浮雕纹理贴图由 Oliveira 等人在 2000 年提出，采用两遍方法：先做预变形，再做常规纹理贴图。预变形基于深度贴图，在 CPU 上实现，然后把结果纹理送给图形硬件做最终贴图。随着片元处理器的出现，Policarpo 等人（2005）把该技术推广到任意多边形模型，并展示了如何在 GPU 上高效实现。做法是在二维纹理空间中执行光线与高度场的求交。Oliveira 与 Policarpo（2005）还描述了通过在模型每个顶点处拟合二次曲面来渲染曲面轮廓的方法。之后，他们展示了如何以尽量少侵入的方式，在既有应用中渲染浮雕细节（Policarpo 与 Oliveira 2006a）。他们还把该技术推广到把非高度场结构贴到多边形模型上，并引入了一类新的 impostor（Policarpo 与 Oliveira 2006b）。更近一些，Oliveira 与 Brauwers（2007）展示了如何用二维纹理方法求光线与透视投影下生成的深度贴图的交点，以及如何用这些结果实时渲染透过形变物体看到的远处环境的折射。</p><h2>18.6 参考文献</h2><p>Baboud, Lionel, and Xavier Décoret. 2006. "Rendering Geometry with Relief Textures."，载 <em>Proceedings of Graphics Interface 2006</em>。</p><p>Donnelly, William. 2005. "Per-Pixel Displacement Mapping with Distance Functions."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 123–136 页。Addison-Wesley 出版。</p><p>Dummer, Jonathan. 2006. "Cone Step Mapping: An Iterative Ray-Heightfield Intersection Algorithm." 可在以下地址获取：<a href="http://www.lonesock.net/files/ConeStepMapping.pdf" rel="noreferrer noopener">http://www.lonesock.net/files/ConeStepMapping.pdf</a>。</p><p>Oliveira, Manuel M., Gary Bishop, and David McAllister. 2000. "Relief Texture Mapping."，载 <em>Proceedings of SIGGRAPH 2000</em>，第 359–368 页。</p><p>Oliveira, Manuel M., and Fabio Policarpo. 2005. "An Efficient Representation for Surface Details." UFRGS Technical Report RP-351。可在线获取：<a href="http://www.inf.ufrgs.br/~oliveira/pubs_files/Oliveira_Policarpo_RP-351_Jan_2005.pdf" rel="noreferrer noopener">http://www.inf.ufrgs.br/~oliveira/pubs_files/Oliveira_Policarpo_RP-351_Jan_2005.pdf</a>。</p><p>Oliveira, Manuel M., and Maicon Brauwers. 2007. "Real-Time Refraction Through Deformable Objects."，载 <em>Proceedings of the 2007 Symposium on Interactive 3D Graphics and Games</em>，第 89–96 页。</p><p>Policarpo, Fabio, Manuel M. Oliveira, and João Comba. 2005. "Real-Time Relief Mapping on Arbitrary Polygonal Surfaces."，载 <em>Proceedings of the 2005 Symposium on Interactive 3D Graphics and Games</em>，第 155–162 页。</p><p>Policarpo, Fabio, and Manuel M. Oliveira. 2006a. "Rendering Surface Details in Games with Relief Mapping Using a Minimally Invasive Approach."，载 <em>SHADER X4: Advance Rendering Techniques</em>，Wolfgang Engel 编，第 109–119 页。Charles River Media, Inc. 出版。</p><p>Policarpo, Fabio, and Manuel M. Oliveira. 2006b. "Relief Mapping of Non-Height-Field Surface Details."，载 <em>Proceedings of the 2006 Symposium on Interactive 3D Graphics and Games</em>，第 55–62 页。</p><p>Risser, Eric, Musawir Shah, and Sumanta Pattanaik. 2005. "Interval Mapping." University of Central Florida Technical Report。可在线获取：<a href="http://graphics.cs.ucf.edu/IntervalMapping/images/IntervalMapping.pdf" rel="noreferrer noopener">http://graphics.cs.ucf.edu/IntervalMapping/images/IntervalMapping.pdf</a>。</p><p>Williams, Lance. 1978. "Casting Curved Shadows on Curved Surfaces."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 1978)</em> 12(3)，第 270–274 页。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-18-relaxed-cone-stepping-relief-mapping" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-18-relaxed-cone-stepping-relief-mapping</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

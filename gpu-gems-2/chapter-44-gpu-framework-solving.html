@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 44 章　求解线性方程组的 GPU 框架 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 44 章　求解线性方程组的 GPU 框架」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 44 章　用 GPU 求解线性方程组的框架</h1>
+<p><em>Jens Krüger</em><br> <em>Technische Universität München</em></p><p><em>Rüdiger Westermann</em><br> <em>Technische Universität München</em></p><h2>44.1 概述</h2><p>求解偏微分方程（PDE）的数值技术开发是应用数学中的传统课题。这些技术在基于物理的仿真与建模、几何处理与图像滤波中有多种应用，并且在计算机图形中被频繁用于为现实世界现象提供真实的模拟。</p><p>求解 PDE 的基本方法之一是通过离散化把它转化为大型线性方程组。这个方程组随后可以用线性代数运算求解。</p><p>本章给出一个在可编程图形硬件上计算线性代数运算的通用框架。基于 GPU 上向量与矩阵的高效表示，向量-向量与矩阵-向量运算在 DirectX 9 级别的硬件上用片元程序实现。借助这些运算，可以实现代数方程组的隐式求解器，从而在可编程图形硬件上实现稳定的数值仿真。</p><p>我们描述了一个 C++ 类层次结构，便于简单而高效地使用所提出的运算。该库提供求解线性方程组、求线性方程组的最小二乘解，以及向量与矩阵元素上标准运算的例程。我们的系统能处理稠密矩阵、带状矩阵与一般稀疏矩阵。完整的库连同「隐式水面」演示（见本章后面的图 44-9）可在本书配带的 CD 上找到。</p><p>我们用一个具体的 PDE——泊松方程——来展示 GPU 求解器的效率。泊松方程在物理学中特别重要，其解在计算机图形中常用于流体与流动的仿真（如本章后面的图 44-10 所示）。全章中我们会展示多种涉及该 PDE 求解的图形效果。</p><h2>44.2 表示</h2><p>要在 GPU 上求解线性 PDE，我们需要一个线性代数包。基于标量值、向量与矩阵在 GPU 上的高效表示，这样一个包可以实现向量-向量与矩阵-向量这类高性能线性代数运算。本节更详细地描述我们的 GPU 线性代数库中线性代数算子的内部表示。</p><h4>44.2.1 「单浮点」表示</h4><p>除了表示向量与矩阵，该库还需要表示单个标量浮点值。乍看之下，在 GPU 上表示单个浮点值似乎没有必要：这些值直接通过 uniform 程序参数给出即可。然而由于许多运算都会生成并处理单个标量值，我们必须仔细选择如何在 GPU 上表示这类值。一种合理的表示（而且与其他类型的表示配合得很好）是使用单元素纹理。由于 GPU 为纹理数据提供了高效的内存接口，在我们的系统中，单个浮点值存放在 1 x 1 的纹理中。无论 GPU 纹理缓存的实际大小如何，我们都可以放心地假定一个浮点值能放得下。</p><h4>44.2.2 向量</h4><p>由于向量是一维数据结构，我们本可以简单地把向量表示为 GPU 上的一维纹理。考察 GPU 对纹理施加的约束之后，这种表示的缺点很快就显现出来。当前各代 GPU 上的所有纹理在尺寸上都有限制；目前一维纹理的限制是 4096。因此用一维纹理只能表示长度为 4096 的向量，这不足以仿真合理规模的问题。此外，我们常常通过渲染一个覆盖待计算向量区域的图元来算出向量。在近期的 GPU 上，渲染二维带纹理图元远快于渲染产生相同片元数的一维图元。因此我们把一维向量重排为 GPU 上的二维纹理布局，如图 44-1 所示。为进一步缩小内部表示的尺寸，我们把连续的 2x2 元素块打包进一个 RGBA 纹素。在某些 GPU 上，这种布局还能改善纹理访问性能。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_01.jpg" alt="44_linear_01.jpg"><figcaption>图 44-1 在 GPU 上表示一维向量</figcaption></figure><p>现在我们已经有了高效的向量表示，可以进而讨论更复杂的线性代数实体：矩阵。</p><h4>44.2.3 矩阵</h4><p>向量通常被当作<em>满向量</em>处理——即几乎所有元素都非零的向量——而矩阵往往只有少量非零元素，尤其是由 PDE 离散化导出的矩阵。因此我们针对不同类型的矩阵给出不同的表示。先从<em>满矩阵</em>（也称<em>稠密矩阵</em>）的表示开始，这类矩阵中几乎每个值都非零。稍后我们再考察其他<em>稀疏矩阵</em>类型。</p><h4>满矩阵</h4><p>要表示稠密矩阵，我们把矩阵拆成一组列向量，并按前面描述的格式存放每个向量。图 44-2 说明了这一过程。正如后文所示，在这种表示上可以非常高效地执行矩阵-向量运算。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_02.jpg" alt="44_linear_02.jpg"><figcaption>图 44-2 在 GPU 上表示稠密矩阵</figcaption></figure><h4>带状稀疏矩阵</h4><p>在实际应用中，呈现规则非零元素模式的稀疏矩阵常常来自区域离散化。当规则网格上格点的计算涉及相邻格点的固定模板时，就会出现带状矩阵。此时非零元素按对角线模式排列。这类矩阵的一个例子见公式 44-1。</p><p><a id="ch44equ01"></a><strong>公式 44-1 二维波动方程离散化后的带状稀疏矩阵</strong></p><p><a><img alt="0706equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0706equ01.jpg"/></a></p><p>把这类矩阵表示为满矩阵会浪费大量空间，并导致不必要的数值计算，因为在 GPU 上计算时零元素不容易被剔除。因此我们需要针对这类矩阵的特殊表示。由于具有对角结构，这件事变得很简单：我们不再存放矩阵的各列，而是按前述向量格式存放它的各条对角线。注意在这种表示中，<em>偏离中线</em>的对角线会浪费一些空间，并以零填充。如果矩阵有很多非零对角线，因而这样浪费了大量内存，我们可以把两条相对的对角线合并到一个向量中。一个例子见图 44-3。这样做，我们甚至能以对角线格式存放一个满矩阵，而一个字节的纹理空间都不浪费。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_03.jpg" alt="44_linear_03.jpg"><figcaption>图 44-3 在 GPU 上表示带状稀疏矩阵</figcaption></figure><h4>随机稀疏矩阵</h4><p>现在我们仔细看看如何表示非零元素随机散布的矩阵。这种情况下，基于纹理的表示要么导致高度碎片化的纹理、浪费大量空间，要么需要一个复杂的索引方案，从而显著降低矩阵访问运算的性能。对这类矩阵，我们更倾向于基于顶点的表示：对矩阵一行中每四个非零元素一组，我们生成一个顶点。我们这样选择顶点的位置，使其把行索引编码为二维坐标；顶点被渲染到的位置，正好与相应向量元素通过对应二维纹理渲染的位置一致。类似地，我们把列编码为纹理坐标 1 到 4 中的二维索引。矩阵元素存放在每个顶点第一个纹理坐标的 XYZW 分量中。然后我们把整个顶点集合存进 GPU 上的一个顶点缓冲。只要矩阵不被修改，内部表示就不必改变。图 44-4 的左半部分展示了该编码方案（右侧的矩阵-向量乘积在 44.3.3 节说明）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_04.jpg" alt="44_linear_04.jpg"><figcaption>图 44-4 表示随机稀疏矩阵</figcaption></figure><h2>44.3 运算</h2><p>现在我们已经有了标量、向量与矩阵的表示，接下来描述这些表示上的一些基本运算。同样从最简单的情形开始：逐分量的向量-向量运算。</p><h4>44.3.1 向量算术</h4><p>采用所提出的向量表示，一次向量-向量运算就归结为渲染一个双纹理四边形。为说明我们的做法，我们描述向量-向量求和的实现，如图 44-5 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_05.jpg" alt="44_linear_05.jpg"><figcaption>图 44-5 向量-向量加法运算的例子</figcaption></figure><p>首先把视口设置为恰好覆盖与二维目标向量元素数相同的像素，并让目标向量纹理成为当前渲染目标。然后渲染一个覆盖整个视口的四边形。顶点经顶点阶段送入光栅化器，后者为每个向量元素生成一个片元。对每个片元执行一个片元程序。程序从两个操作数向量中取相应元素，把这些值相加，并把结果写入渲染目标。注意结果已经处于合适的格式，可直接用于后续运算。特别地，元素不需要重新排列，RGBA 编码数据的处理是同时完成的。</p><p>向量-向量求和逐分量地作用于输入操作数并输出等长向量，而其他运算则把向量内容归约为单个标量值——例如计算所有向量元素之和。</p><h4>44.3.2 向量归约</h4><p>用 <em>n</em>x<em>n</em> 纹理表示的向量可以在 log(<em>n</em>) 遍内归约为其元素值之和。从原始二维纹理开始，我们在两个方向上都设置为该纹理一半大小的视口。把一个全屏四边形渲染进该视口，一个片元程序从当前源纹理中取四个相邻值。这些值相加后写入渲染纹理目标，后者在下一遍中成为源纹理。我们重复这个过程 log(<em>n</em>) 次，得到所有元素之和，并写入前面描述的单浮点纹理。图 44-6 概述了这一过程。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_06.jpg" alt="44_linear_06.jpg"><figcaption>图 44-6 向量归约运算</figcaption></figure><p>既然我们已经有了处理逐分量运算与归约运算的办法，就具备了处理向量所需的一切。现在我们转向矩阵运算。</p><h4>44.3.3 矩阵-向量乘积</h4><p>计算矩阵-向量乘积的方式取决于矩阵是以向量堆栈格式（用于带状矩阵与满矩阵）存储，还是以顶点格式（用于随机稀疏矩阵）存储。</p><h4>满矩阵与带状稀疏矩阵的矩阵-向量乘积</h4><p>要计算矩阵-向量乘积，我们把计算拆成一系列向量-向量乘积。同样用一个例子来展示这一过程。带状稀疏矩阵-向量乘积与满矩阵-向量乘积的算法相同。本例中我们使用一个含两条非零对角线的矩阵，如图 44-7 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_07.jpg" alt="44_linear_07.jpg"><figcaption>图 44-7 矩阵-向量乘积的设置 · =</figcaption></figure><p>如上一节所述，矩阵 <strong>A</strong> 被编码为存放在两张二维纹理中的两个向量，其中上方的对角线以零填充。向量存为一张二维纹理。我们分两遍计算最终结果。首先把左侧对角线与 <strong>b</strong> 的向量-向量乘积写入 <strong>x</strong>。然后把 <strong>b</strong> 平移两个元素，把平移后的 <strong>b</strong> 与 <strong>A</strong> 第二条对角线的向量-向量乘积加到第一遍的中间结果上，该结果存于 <strong>x</strong>。我们用纹理坐标变换来完成平移，因此不需要任何代价高昂的元素搬移。做完这两次向量-向量乘积，我们就已经完成了！向量 <strong>x</strong> 现在保存矩阵-向量乘积的最终结果，同样不需要进一步处理或重排。</p><p>计算满矩阵-向量乘积所需的唯一改动是省去 <strong>b</strong> 的坐标平移。而随机稀疏矩阵的表示则需要稍有不同的处理。</p><h4>随机稀疏矩阵的矩阵-向量乘积</h4><p>计算这种矩阵-向量乘积的一般做法已经编码进顶点的生成方案中。我们来看看如何由矩阵 <strong>A</strong> 与向量 <strong>b</strong> 算出结果向量 <strong>x</strong>。</p><p><a id="ch44equ02"></a><strong>公式 44-2 矩阵-向量乘积</strong></p><p><a><img alt="0711equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0711equ01.jpg"/></a></p><p>可以看到，行索引 <em>i</em> 影响值 <em>a</em> <sub><em>i, j</em></sub> 的最终位置，而列索引 <em>j</em> 指定向量 <strong>b</strong> 中哪些值要与 <em>a</em> <sub><em>i, j</em></sub> 组合。再看一眼图 44-4 可以发现，对某个矩阵元素而言，列被编码在顶点位置中，而行被编码为纹理坐标。要算出结果向量 <strong>x</strong>，我们只需把顶点作为点渲染进 <strong>x</strong> 的纹理，同时把颜色值与用给定纹理坐标从 <strong>b</strong> 中取来的值相乘。这会自动把值放到目标向量中正确的位置，并从向量 <strong>b</strong> 中取出正确的组合。一如往常，所有点渲染完毕后，矩阵-向量乘积就以正确的格式存放在向量 <strong>x</strong> 的纹理中。</p><p>注意，尽管这个乘积的计算方式与满矩阵或带状稀疏矩阵-向量乘积完全不同，输入与输出向量的类型与前面所用的完全相同。这意味着我们可以在同一个算法中同时使用两种矩阵类型。</p><h4>44.3.4 整合起来</h4><p>现在我们已知道如何实现最基本的线性代数运算，可以把它们组织成一个 C++ 框架。图 44-8 给出了我们库组织方式的简化 UML 图。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_08.jpg" alt="44_linear_08.jpg"><figcaption>图 44-8 线性代数的类集合</figcaption></figure><p>标为绿色的类是接口类，其余类提供内部结构。可以看到，除前面描述的运算外，我们还实现了其他方法，例如数据设置与获取函数（实现为纹理上传与下载），以及用于在 RGBA 编码向量与非编码向量之间来回转换的打包与解包例程。clMemMan 类是一个虚拟内存管理器，它很有用，因为某些计算（例如归约）需要中间纹理。由于 GPU 上的内存空间有限，这些纹理应在向量之间共享。clMemMan 类管理一个供向量与矩阵使用的纹理池。</p><h4>44.3.5 共轭梯度求解器</h4><p>现在我们拥有了一个易于使用的类框架，它完全抽象掉了底层硬件实现，因此可以轻松编写更复杂的算法，例如共轭梯度线性方程组求解器。使用我们的实现，完整的 GPU 共轭梯度类见代码清单 44-1。</p><h4>示例 44-1. 共轭梯度求解器</h4><pre><code>void clCGSolver::solveInit()
+{
+  Matrix->matrixVectorOp(CL_SUB, X, B, R); // R = A * x - b
+  R->multiply(-1);
+  // R = -R
+  R->clone(P);
+  // P = R
+  R->reduceAdd(R, Rho);
+  // rho = sum(R * R);
+}
+void clCGSolver::solveIteration()
+{
+  Matrix->matrixVectorOp(CL_NULL, P, NULL, Q);
+  // Q = Ap;
+  P->reduceAdd(Q, Temp);
+  // temp = sum(P * Q);
+  Rho->div(Temp, Alpha);
+  // alpha = rho/temp;
+  X->addVector(P, X, 1, Alpha);
+  // X = X + alpha * P
+  R->subtractVector(Q, R, 1, Alpha);
+  // R = R - alpha * Q
+  R->reduceAdd(R, NewRho);
+  // newrho = sum(R * R);
+  NewRho->divZ(Rho, Beta);
+  // beta = newrho/rho
+  R->addVector(P, P, 1, Beta);
+  // P = R + beta * P;
+  clFloat *temp;
+  temp = NewRho;
+  NewRho = Rho;
+  Rho = temp;
+  // 交换 rho 与 newrho 两个指针
+}
+void clCGSolver::solve(int maxI)
+{
+  solveInit();
+  for (int i = 0; i < maxI; i++)
+    solveIteration();
+}
+int clCGSolver::solve(float rhoTresh, int maxI)
+{
+  solveInit();
+  Rho->clone(NewRho);
+  for (int i = 0; i < maxI && NewRho.getData() > rhoTresh; i++)
+    solveIteration();
+  return i;
+}</code></pre><p>这段代码展示了我们线性代数框架的目标：抽象掉计算中所有 GPU 特有的细节。现在可以在该框架之上构建更复杂的算法。下一节我们演示它在数值仿真中的用法。</p><h2>44.4 一个偏微分方程示例</h2><p>本节展示如何在 GPU 上数值求解一个特定的线性 PDE——二维波动方程。公式 44-3 所示的二维波动方程描述了振荡薄膜（例如浅水面）的行为。该方程描述薄膜位移 <em>y</em> 随波速 <em>c</em> 变化的动态行为。这里 <em>t</em> 指时间，<em>x</em> 与 <em>z</em> 表示二维空间域。</p><p><a id="ch44equ03"></a><strong>公式 44-3 二维浅水波动方程</strong></p><p><a><img alt="0714equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0714equ01.jpg"/></a></p><p>要数值求解这个 PDE，我们先用中心差分替换偏导数，把它离散为一组有限差分方程。中心差分近似可由泰勒展开导出，见公式 44-4。该式给出了一阶前向、后向与中心差分，以及二阶中心差分。</p><p><a id="ch44equ04"></a><strong>公式 44-4 泰勒展开与中心差分</strong></p><p><a><img alt="0714equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0714equ02.jpg"/></a></p><p>把公式 44-4 的中心差分应用于公式 44-3，得到公式 44-5 所示的差分方程组。</p><p><a id="ch44equ05"></a><strong>公式 44-5 显式离散的二维波动方程</strong></p><p><a><img alt="0715equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0715equ01.jpg"/></a></p><p>公式 44-5 现在可以使用公式 44-6 中的操作数，重写为矩阵-向量运算。</p><p><a id="ch44equ06"></a><strong>公式 44-6 写成矩阵-向量运算的显式离散二维波动方程</strong></p><p><a><img alt="0715equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0715equ02.jpg"/></a></p><p>借助我们的框架，只需执行一次矩阵-向量运算，就能轻松算出 <a href="https://developer.download.nvidia.com/books/gpugems2/y.jpg" rel="noreferrer noopener"><img alt="y.jpg" src="https://developer.download.nvidia.com/books/gpugems2/y.jpg"/></a> 的新值：</p><pre><code>clMatrix->matrixVectorOp(CL_SUB, clCurrent, clLast, clNext);
+clLast->copyVector(clCurrent);
+// 留到下一次迭代使用
+clCurrent->copyVector(clNext);
+// 留到下一次迭代使用
+cluNext->unpack(clNext);
+// 解包以便渲染
+renderHF(cluNext->m_pVectorTexture);
+// 作为高度场渲染</code></pre><p>虽然这种方法非常快，但它只是条件稳定的。如果积分时间步长过大，系统会变得不稳定——这是显式方法众所周知的缺点。因此，我们将采用隐式格式来数值求解波动方程。</p><h4>44.4.1 Crank-Nicholson 格式</h4><p>为了把这种不稳定的波动方程离散格式变成无条件稳定的版本，我们采用 Crank-Nicholson 格式。该格式在空间离散时使用当前时间步与下一时间步的平均值。由此得到公式 44-7 所示的式子。</p><p><a id="ch44equ07"></a><strong>公式 44-7 隐式离散二维波动方程</strong></p><p><a><img alt="0716equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0716equ01.jpg"/></a></p><p>如果把它写成矩阵-向量乘积，得到的就是本章开头公式 44-1 中的那个矩阵。不过现在为 <a href="https://developer.download.nvidia.com/books/gpugems2/y.jpg" rel="noreferrer noopener"><img alt="y.jpg" src="https://developer.download.nvidia.com/books/gpugems2/y.jpg"/></a> 求解需要一个线性方程组求解器。幸运的是，我们已经为这类矩阵开发过求解器：共轭梯度求解器。隐式求解波动方程的程序现在看起来是这样：</p><pre><code>cluRHS->computeRHS(cluLast, cluCurrent); // 生成 c(i, j, t)
+clRHS->repack(cluRHS);
+// 编码进 RGBA
+iSteps = pCGSolver->solve(iMaxSteps);
+// 用 CG 求解
+cluLast->copyVector(cluCurrent);
+// 留到下一次迭代使用
+clNext->unpack(cluCurrent);
+// 解包以便渲染
+renderHF(cluCurrent->m_pVectorTexture);</code></pre><p>可以看到，只多写几行代码——借助线性代数框架——我们就能把一个不稳定的解法变成无条件稳定的版本，从而可以加大仿真步长、提升性能。此外，有些问题根本没法用显式方法求解；没有隐式求解器，某些仿真就无法实现。流体流动的纳维–斯托克斯方程求解中出现的泊松压力方程就是一例。见图 44-9 和图 44-10。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_10.jpg" alt="44_linear_10.jpg"><figcaption>图 44-9 纳维–斯托克斯流体动力学仿真</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/44_linear_09_new.jpg" alt="44_linear_09_new.jpg"><figcaption>图 44-10 在 1024x1024 网格上仿真二维波动方程</figcaption></figure><h2>44.5 结论</h2><p>本章我们描述了一个在图形硬件上实现数值仿真技术的通用框架；我们着重提供设计通用数值计算技术的构件。框架包含我们为向量和矩阵设计的高效内部布局。把矩阵看作一组对角向量或列向量、把向量表示为二维纹理贴图之后，矩阵-向量运算与向量-向量运算相比基于软件的方案可以大幅加速。表 44-1 给出了我们的框架在 NVIDIA GeForce 6800 GT 上的性能，包括框架的基本运算以及使用共轭梯度求解器的完整示例应用。在其他厂商的 GPU 上我们也能达到大致相同的性能，只需在初始化时做一些针对厂商的优化，例如纹理分配顺序。</p><h4>表 44-1. 框架与示例应用的耗时</h4><table><tbody><tr><td><p><em>在 NVIDIA GeForce 6800 GT 上测得</em></p></td></tr><tr><td></td><td><p><strong>分辨率</strong></p></td></tr><tr><td></td><td><p>2048x1024</p></td><td><p>1024x1024</p></td><td><p>1024x512</p></td><td><p>512x512</p></td><td><p>512x256</p></td><td><p>256x256</p></td></tr><tr><td><p>向量归约</p></td><td><p>1.11 ms</p></td><td><p>0.49 ms</p></td><td><p>0.28 ms</p></td><td><p>0.17 ms</p></td><td><p>0.16 ms</p></td><td><p>0.14 ms</p></td></tr><tr><td><p>向量-向量运算</p></td><td><p>0.89 ms</p></td><td><p>0.31 ms</p></td><td><p>0.15 ms</p></td><td><p>0.08 ms</p></td><td><p>0.04 ms</p></td><td><p>0.02 ms</p></td></tr><tr><td><p>二维波动方程演示</p></td><td><p>12 fps</p></td><td><p>27 fps</p></td><td><p>52 fps</p></td><td><p>102 fps</p></td><td><p>185 fps</p></td><td><p>335 fps</p></td></tr></tbody></table><h2>44.6 参考文献</h2><p><a id="biblio44_01"></a>Bolz, J., I. Farmer, E. Grinspun, and P. Schröder. 2003. "Sparse Matrix Solvers on the GPU: Conjugate Gradients and Multigrid."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2003)</em> 22(3)，pp. 917–924。</p><p><a id="biblio44_02"></a>Krüger, Jens, and Rüdiger Westermann. 2003. "Linear Algebra Operators for GPU Implementation of Numerical Algorithms."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2003)</em> 22(3)，pp. 908–916。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-vi-simulation-and-numerical-algorithms/chapter-44-gpu-framework-solving" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-vi-simulation-and-numerical-algorithms/chapter-44-gpu-framework-solving</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

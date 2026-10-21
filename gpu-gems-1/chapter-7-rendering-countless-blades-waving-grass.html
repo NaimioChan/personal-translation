@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 7 章　渲染无数摇曳的草叶 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 7 章　渲染无数摇曳的草叶」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 7 章　渲染无数随风起伏的草叶</h1>
+<p><em>Kurt Pelzer<br> Piranha Bytes</em></p><h2>7.1 引言</h2><p>要以逼真的方式模拟一片田园自然景观，除了细致的树木灌木、复杂的水面与天空穹顶模拟之外，我们还需要高质量的草地效果。我们必须能用它覆盖大片地形，又不能独占 GPU。草看起来应该像自然生长，并随风真实地起伏。</p><p>过去，高质量的草地模拟会被认为对实时应用来说过于复杂。Codecreatures Benchmark（Codecult 于 2002 年发布）否定了这种悲观的论断。见图 7-1。本章介绍基于该基准中草地效果的灵活、适用面广的草地模拟。此外，本书附带材料中收录了我们 Codecreatures Benchmark 应用的一个特别版本，带交互式演示模式。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-01.jpg" alt="fig07-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-01.jpg" rel="noreferrer noopener">图 7-1</a>　Codecreatures Benchmark 应用的截图</figcaption></figure><h2>7.2 概述</h2><p>首先要认识到，对单根草叶做细致建模没有意义，因为较大的草甸所需的多边形数量会高得离谱。以当今可用的图形硬件，满是无边形草的草叶的场景无法实时显示。</p><p>所以我们得构造一个满足下列条件的简单而有用的替代方案：</p><ul><li>必须用很少的多边形表现很多草叶。</li><li>从不同视线方向看，草都必须显得茂密。</li></ul><p>下一节我们构建满足这些条件的草对象。</p><p>此外，我们必须能真实地为草做动画。7.4 节讨论三种不同的动画方法。</p><h2>7.3 草对象的准备</h2><p>正如刚才所说，必须用很少的多边形表现很多草叶。我们先解决这个问题。无论相机位置与方向如何，外观都应像开阔的乡野。所幸解法并不太难。7.3.1 节先把若干草叶组合起来，显示在一张纹理里。但这还不够：使用这张纹理的若干多边形必须以某种方式组合，使各多边形不被察觉（见 7.3.2 节）。当观察者移动时，我们在远处加入或移除草对象，通过混合淡入淡出。这样能保证完整的草地效果具有稳定的视觉质量。</p><h4>7.3.1 草地纹理</h4><p>现在看看如何为我们面对的任务构建纹理。所需的纹理必须把若干草叶聚在一起，否则会留下大片透明区域。做法很简单：在透明 alpha 通道里画出实心的草茎。颜色通道应使用不同深浅的绿色与黄色，以便更好地区分单根草叶。我们还可以表现生长状况好与差的草叶，以表示年龄或成熟度的差异，甚至区分草叶的正面与背面。</p><p>草地纹理的一个具体例子如图 7-2 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-02.jpg" alt="fig07-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-02.jpg" rel="noreferrer noopener">图 7-2</a>　草地纹理示意图</figcaption></figure><h4>7.3.2 草对象</h4><p>本节说明如何把一些贴上上一节所建草地纹理的多边形组合起来，使模拟的草显得茂密，又不突出单个多边形。这项技术还保证各多边形不可见。</p><p>由于用户可以自由地在场景中漫游，像图 7-3 那样的构造不足以产生可信的效果。草多边形若呈线性排列，只要有人垂直于多边形方向观看场景，结构立刻就会被认出。此外这种情况下草会显得很薄。这种排列只应考虑用于自动相机漫游，或无法到达的远处草甸。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-03.jpg" alt="fig07-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-03.jpg" rel="noreferrer noopener">图 7-3</a>　线性排列</figcaption></figure><p>要保证不论当前视线方向都有良好的视觉质量，我们必须让草多边形交叉。使用看起来像星形的配置非常值得。图 7-4 给出「草对象」的两种可能变体，各由三个相交的四边形组成。我们必须关闭背面剔除来渲染这些多边形，使两面都可见。为了得到正确的光照，应让所有顶点的法线向量平行于多边形的竖直边。这保证位于斜坡上的所有草对象光照正确，不会因地形亮度差异而不一致。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-04.jpg" alt="fig07-04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-04.jpg" rel="noreferrer noopener">图 7-4</a>　草对象</figcaption></figure><p>如果我们在很大范围内把这些草对象摆放得相当密集，如图 7-5 所示，运行时按从后到前排序，使用 alpha 混合，并在绘制调用中启用 z 测试与 z 写入，那么就会呈现出自然茂密的草甸印象。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-05.jpg" alt="fig07-05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-05.jpg" rel="noreferrer noopener">图 7-5</a>　一片草地</figcaption></figure><h2>7.4 动画</h2><p>下一步，我们要为整片草甸的草做逼真的动画，草甸由如图 7-5 那样的「草对象」构成。本节介绍三种不同的动画变体，各有优缺点。7.4.1 节给出我们动画方法的总体思路。7.4.2 节中，若干靠得很近的草对象组成的簇以相同方式动画。7.4.3 节中，每个顶点各有自己的平移向量。最后 7.4.4 节试图找到折中之处：每个草对象有各自不同的动画。</p><h4>7.4.1 总体思路</h4><p>为了做出高度逼真的动画，我们使用基于三角函数的计算，尤其是正弦与余弦。这个计算应把要移动的位置（无论是顶点，还是对象或簇的中心）以及当前时间考虑进去。主导风的方向和强度也是因素。我们的每种技术都只移动草对象上部的顶点。在顶点着色器中，通过检查纹理坐标很容易把这些顶点与下部顶点区分开。所有上部顶点在草地纹理中应有相同的 <em>v</em> 坐标：比如零，或接近零的值。顶点着色器代码的框架如代码清单 7-1 所示，三种技术都相同，只有纯动画部分不同。动画代码见后续各节。</p><h4>示例 7-1　顶点着色器中的框架</h4><pre><code>//
+// 顶点着色器里等价的 Cg / HLSL 框架
+// 对应 7.4.2、7.4.3 与 7.4.4 节
+//
+struct VS_INPUT
+{
+  float3 vPosition : POSITION;
+  float3 vNormal : NORMAL;
+  float2 TexCoords : TEXCOORD0;
+  // 7.4.4 节需要这个成员
+  float3 vObjectPosition : TEXCOORD1;
+};
+struct VS_OUTPUT
+{
+  float4 vPosition : POSITION;
+  float4 vDiffuse : COLOR;
+  float2 TexCoords : TEXCOORD0;
+};
+struct VS_TEMP
+{
+  float3 vPosition;
+  float3 vNormal;
+};
+float4x4 mWorldViewProjMatrix;
+float4 vLight;
+float fObjectHeight;
+VS_OUTPUT main(const VS_INPUT v)
+{
+  VS_OUTPUT out;
+  VS_TEMP temp;
+  // 只对上部顶点与法线做动画
+  if (v.TexCoords.y < = 0.1)
+  {
+    // Or:
+    if (v.TexCoords.y >= 0.9)
+    // 动 画（转到世界空间）
+    // 在这里插入 7.4.2、7.4.3 或 7.4.4 的代码
+    // ...
+    // <- 我们各种动画方法的代码放这里
+  }
+  // 输出部分
+  out.vPosition = mul(float4(temp.vPosition, 1), mWorldViewProjMatrix);
+  out.vDiffuse = dot(vLight, temp.vNormal);
+  out.TexCoords = v.TexCoords;
+  return out;
+}</code></pre><h4>7.4.2 按草对象簇做动画</h4><p>下面的方法用于 Codecreatures Benchmark，产生了阵风不断改变强度和方向的逼真外观。这里，上部多边形顶点的位移对一组邻近的草对象统一进行。要产生自然外观的动画，我们应选择不太大的簇尺寸。见图 7-6。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-06.jpg" alt="fig07-06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-06.jpg" rel="noreferrer noopener">图 7-6</a>　按草对象簇做动画</figcaption></figure><p>动画用的平移向量由 CPU 计算，作为常量参数交给顶点着色器。在 CPU 上使用更昂贵的算法，让我们能利用非常复杂的风模拟。由于我们给每个草对象簇各自提供平移向量，就必须为每个簇改变这个常量参数。所以我们不得不频繁打断整片草甸的渲染，为每个簇使用单独的绘制调用。</p><h4>优点</h4><ul><li>复杂的动画计算由基于 CPU 的算法完成。</li><li>不会产生扭曲，因为多边形上部顶点之间的距离保持不变。</li></ul><h4>缺点</h4><ul><li>显示整片草甸需要许多绘制调用。</li><li>由于整个对象簇的所有顶点同步动画，簇可能显得可辨。</li></ul><h4>算法</h4><ol><li>在 CPU 上，用下一个簇的中心位置计算它当前的平移向量。</li><li>把该平移向量设为顶点着色器的常量。</li><li>为该簇执行一次绘制调用。</li><li>在顶点着色器中，把平移向量加到最后部顶点的位置上。见代码清单 7-2。</li></ol><h4>示例 7-2　按草对象簇做动画的代码</h4><pre><code>//
+// 草丛对象簇的动画（7.4.2）
+//
+float3 vClusterTranslation; // 在 CPU 上计算
+VS_OUTPUT main(const VS_INPUT v)
+{
+  // ...
+  // 动 画（转到世界空间）
+  // 这里放 7.4.2 的代码
+  temp.vPosition = v.vPosition + vClusterTranslation;
+  temp.vNormal = normalize(v.vNormal * fObjectHeight + vClusterTranslation);
+  // ...
+}</code></pre><h4>7.4.3 按顶点做动画</h4><p>7.4.2 节所述方法的主要问题之一是性能差，因为绘制调用次数很多，而每次只渲染少量多边形。若能以少得多的绘制调用渲染大片草地，那就更好。不过我们必须把完整的动画计算搬进顶点着色器，才能相对各自位置分别移动每个顶点。见图 7-7。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-07.jpg" alt="fig07-07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-07.jpg" rel="noreferrer noopener">图 7-7</a>　按顶点做动画</figcaption></figure><p>由于每个顶点的平移是单独计算的，草多边形上部顶点之间边的长度不再恒定，如图 7-8 所示。因此由于每根草叶长度与粗细不恒定，可能出现可见的扭曲，但通常这类瑕疵不会太明显。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-08.jpg" alt="fig07-08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-08.jpg" rel="noreferrer noopener">图 7-8</a>　纹理扭曲</figcaption></figure><p>此外，整体效果可能比前一种方法显得更不自然。因为邻近区域内所有顶点的平移非常相似，结果缺少局部混乱，动画十分同质。我们可以在顶点着色器中使用伪随机函数来消除这个缺点，获得更多样的结果。</p><h4>优点</h4><ul><li>显示整片草甸只需少数几次绘制调用，甚至可能只需一次。</li><li>在顶点着色器中改变顶点位置，可以让风的波纹保持连续。</li><li>各簇无法分辨。</li></ul><h4>缺点</h4><ul><li>由于多边形上部顶点之间距离变化，会出现扭曲。</li><li>由于缺少局部混乱，动画可能显得同质。</li><li>动画计算的复杂度受到限制。</li></ul><h4>算法</h4><ol><li>为顶点着色器设置常量，如时间戳以及风的基本强度和方向。</li><li>为整片草甸或大片草地执行一次绘制调用。</li><li>用顶点着色器基于顶点位置计算动画。见代码清单 7-3。</li></ol><h4>示例 7-3　按顶点做动画的代码</h4><pre><code>//
+// 逐顶点的动画（7.4.3）
+//
+float fTimeStamp;
+float3 vWindDirection;
+float fWindStrength;
+VS_OUTPUT main(const VS_INPUT v)
+{
+  // ...
+  // 动 画（转到世界空间）
+  // 这里放 7.4.3 的代码
+  float3 vVertexTranslation =
+      CalcTranslation(v.vPosition, fTimeStamp, vWindDirection, fWindStrength);
+  temp.vPosition = v.vPosition + vVertexTranslation;
+  temp.vNormal = normalize(v.vNormal * fObjectHeight + vVertexTranslation);
+  // ...
+}</code></pre><h4>7.4.4 按草对象做动画</h4><p>为了在 7.4.2 与 7.4.3 节所述方法的基础上提升动画的视觉复杂度，我们把不失真的草地纹理与较少的绘制调用同局部混乱结合起来——从而兼得两种方法的长处。之所以能结合，是因为我们不是按顶点位置、而是按草对象的中心位置计算动画——每个草对象由三个相交的四边形构成（见 7.3.2 节）。由于相邻草对象现在有各自不同的动画，我们就能表现所需的局部混乱，如图 7-9 所示。此外，每个草对象的动画保持不变，避免了水平方向的纹理扭曲。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-09.jpg" alt="fig07-09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-09.jpg" rel="noreferrer noopener">图 7-9</a>　按草对象做动画</figcaption></figure><p>为此，每个顶点必须知道其对象的中心位置，可以是相对其位置的，也可以是世界坐标中的绝对位置。这一信息所需的草对象位置向量必须放进顶点格式（即存进纹理坐标），因为顶点着色器必须读取这个值。</p><h4>优点</h4><ul><li>显示整片草甸只需少数几次绘制调用，甚至可能只需一次。</li><li>不会产生扭曲，因为多边形上部顶点之间的距离保持不变。</li><li>局部差异带来更自然的外观。</li></ul><h4>缺点</h4><ul><li>顶点格式中需要额外数据，因为每个顶点还要包含其草对象的中心位置值。</li><li>为把着色器开销降到最低，动画计算的复杂度受到限制。</li></ul><h4>算法</h4><ol><li>为顶点着色器设置常量，如时间戳以及风的基本强度和方向。</li><li>为整片草甸或大片草地执行一次绘制调用。</li><li>在顶点着色器中，基于草对象的中心位置计算动画。见代码清单 7-4。</li></ol><h4>示例 7-4　按草对象做动画的代码</h4><pre><code>//
+// 逐草丛对象的动画（7.4.4）
+//
+float fTimeStamp;
+float3 vWindDirection;
+float fWindStrength;
+VS_OUTPUT main(const VS_INPUT v)
+{
+  // ...
+  // 动 画（转到世界空间）
+  // 这里放 7.4.4 的代码
+  float3 vObjectTranslation = CalcTranslation(v.vObjectPosition, fTimeStamp,
+                                              vWindDirection, fWindStrength);
+  temp.vPosition = v.vPosition + vObjectTranslation;
+  temp.vNormal = normalize(v.vNormal * fObjectHeight + vObjectTranslation);
+  // ...
+}</code></pre><h2>7.5 结论</h2><p>我们成功构建了逼真的草地模拟，满足三项最重要的要求：</p><ul><li>适用范围广，又不过度压迫性能</li><li>从所有视线方向看外观自然</li><li>基于主导风况的动画（有三种不同变体）</li></ul><p>本书附带的 CD 或网站上可以找到 Codecreatures Benchmark 应用的一个特别版本，提供如图 7-10 所示的交互式演示模式。在应用中，你可以用自由相机漫游并切换渲染状态。欢迎你查看这个应用，看看幕后的东西！</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig07-10.jpg" alt="fig07-10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig07-10.jpg" rel="noreferrer noopener">图 7-10</a>　Codecreatures Benchmark 的截图</figcaption></figure><h2>7.6 延伸阅读</h2><p>如果你想就动画草地的模拟做更多研究，下面这些资源涉及这一主题。</p><p>你可以在这里找到描述用正弦函数对草几何体做过程化动画的顶点着色器的文章：</p><p>NVIDIA Corporation. 2003. "Basic Profile Sample Shaders: Grass."，载 <em>The Cg Toolkit User's Manual.</em>，可在以下网址获取：<strong><a href="http://developer.nvidia.com/object/cg_users_manual.html" rel="noreferrer noopener">http://developer.nvidia.com/object/cg_users_manual.html</a></strong></p><p>Isidoro, J., and D. Card. 2002. "Animated Grass with Pixel and Vertex Shaders."，载 <em>Direct3D ShaderX</em>，W. F. Engel 编，Wordware Publishing 出版。</p><p>下面两个网站上还有别的展示草地效果的演示。这两个演示同样用顶点着色器计算草几何体的摇摆运动：</p><p>NVIDIA 网站：<strong><a href="http://developer.nvidia.com/view.asp?IO=demo_grass" rel="noreferrer noopener">http://developer.nvidia.com/view.asp?IO=demo_grass</a></strong></p><p>ATI 网站：<strong><a href="http://www.ati.com/developer/Samples/Grass.html" rel="noreferrer noopener">http://www.ati.com/developer/Samples/Grass.html</a></strong></p><p><em>我要感谢 Piranha Bytes 与 Codecult 参与 Codecreatures Benchmark 的同事们，尤其是 Horst Dworczak（首席美术），是他提出以基准中所呈现的方式构建并动画草对象；以及 Oliver Hoeller（首席程序员），他协助把完整效果集成进引擎。</em></p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-7-rendering-countless-blades-waving-grass" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-7-rendering-countless-blades-waving-grass</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

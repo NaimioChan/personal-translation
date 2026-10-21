@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 10 章　电影化光照 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 10 章　电影化光照」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 10 章　电影化光照</h1>
+<p><em>Fabio Pellacini<br> Pixar Animation Studios</em></p><p><em>Kiril Vidimce<br> Pixar Animation Studios</em></p><p>本章给出 uberlight 的一个简化实现。uberlight 是一种光照着色器，表达 Ronen Barzel（1997, 1999）所描述的光照模型。该模型的一个超集在 Pixar Animation Studios 经过多年开发，用于制作 Pixar Animation Studios 的 <em>Toy Story</em>、<em>A Bug's Life</em>、<em>Monsters, Inc.</em> 和 <em>Finding Nemo</em> 等影片的 Walt Disney 发行版本。</p><p>我们的 Cg 实现基于 Barzel 最初的做法，以及 Larry Gritz 编写的 RenderMan Shading Language 实现（Barzel 1999）。关于这种光照做法及其在电影制作中的用途，更多细节见 Apodaca and Gritz 1999 与 Birn 2000。</p><h2>10.1 引言</h2><p>光照是计算机电影摄影的重要方面，光与影被用来传达情绪、支撑叙事（Calahan 1999）。尽管真实感仍是计算机生成影像的重要方面，灯光指导却不断违背光的物理规律，以支撑动画电影的艺术表现。在真实片场做这些手脚是件艰巨的任务，往往需要数小时的布置。</p><p>摆脱了真实物理的限制，计算机电影摄影的开发者一直在设计让美术能直观地为场景打光的光照模型。本章呈现的光照模型改编自 Pixar Animation Studios 在过去十年间开发、并用于我们大部分影片制作的模型。见图 10-1、图 10-2 和图 10-3。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig10-01.jpg" alt="fig10-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig10-01.jpg" rel="noreferrer noopener">图 10-1</a>　……中的谷仓灯。</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig10-02.jpg" alt="fig10-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig10-02.jpg" rel="noreferrer noopener">图 10-2</a>　……中花纹片营造的窗户效果。</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig10-03.jpg" alt="fig10-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig10-03.jpg" rel="noreferrer noopener">图 10-3</a>　……中光照传达的情绪。</figcaption></figure><h2>10.2 一种直接光照的照明模型</h2><p>本章给出的着色器只建模照亮场景的光源的塑形与控制，不涉及表面细节如何建模以及光反射行为的复杂之处。（关于有趣的表面行为的一些例子可见 Apodaca and Gritz 1999。）</p><p>总体而言，我们电影制作中所用的照明模型执行两类操作，类似这里所示的伪代码。</p><pre><code>color illuminationModel()
+{
+  Compute the surface characteristic For each light
+  {
+    Evaluate the light source Compute the surface response
+  }
+}</code></pre><p>首先，我们通过各类纹理查找、在网格上插值以及计算过程化图案，求出表面着色信息。然后对照亮该物体的每个光源循环，计算其贡献。做法是先求出光的颜色，再求出表面对该光源照明的响应。</p><p>本章给出一个简单的着色器，只计算单一光源对塑料反射模型的贡献。把它扩展到多光源、更好看表面的更一般解法，留作读者的练习。</p><p>我们的光照模型让美术能控制照明的多个方面：选择、颜色、塑形、阴影和纹理。</p><h4>10.2.1 选择</h4><p>场景中的每个物体都可以有选择地响应每一盏光。这一强大特性让美术在某盏额外的光造成不想要的效果时，把物体上的这盏灯关掉；也让美术能在特定位置添加额外的光以形成想要的效果，而不影响场景其余部分。</p><h4>10.2.2 颜色</h4><p>光源最显眼的属性是描述其发射的颜色和强度。与 OpenGL 固定功能光照类似，我们的实现为环境光、漫反射和镜面反射照明效果提供各自的权重，供美术分别调整。我们光照模型最重要的方面之一，是这些项可以按物体自由改变，让美术用少量灯光为整个场景打光。</p><h4>10.2.3 塑形</h4><p>为了控制场景中被某盏光照亮的区域，现实中的电影摄影师常用聚光灯和矩形灯（称为挡光板）来塑形光的分布。我们的光照模型把这些概念推广，提供两类塑形：</p><ul><li><em>全向光：</em>这种光指定近端与远端两个截断距离（在每个距离以内光以全强度照射），以及这两个边界周围各一个可调的平滑衰减区。</li><li><em>谷仓塑形：</em>谷仓塑形是一种广义截锥体，其横截面是边缘柔和度可调的超椭圆。两个超椭圆各自的宽度与高度可以分别控制，从而覆盖更广的形状范围。采用超椭圆横截面让我们能连续改变光的形状，从圆形到方形（乃至更奇特的星形）。此外，该棱锥可以任意错切，以产生窗户与门洞的效果。棱锥横截面形状的各种变化见图 10-4 和图 10-5。<figure><img src="https://developer.download.nvidia.com/books/gpugems/fig10-04a.jpg" alt="fig10-04a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig10-04a.jpg" rel="noreferrer noopener">图 10-4</a>　挡光板形状</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig10-05a.jpg" alt="fig10-05a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig10-05a.jpg" rel="noreferrer noopener">图 10-5</a>　挡光板边缘尺寸</figcaption></figure></li></ul><h4>10.2.4 阴影</h4><p>阴影是我们光照模型里的一个重要方面；阴影大概也是美术最常作弊的属性。调整阴影既是为了速度，也是为了能控制阴影外观的每一处细节，而这对于确定一部影片的整体情绪极为重要。例如，可以比较黑色电影里浓重的阴影与歌舞片里几乎看不见的阴影。</p><p>与光照强度一样，由美术决定哪些物体投射阴影、哪些物体接收阴影。灯光设计师还可以通过相对光源原点移动阴影位置来作弊。例如，她可以让角色眼中出现明亮的高光，同时确保阴影不穿过角色的脸。</p><h4>暗度</h4><p>直接光照模型最大的问题之一是阴影往往太暗。这是因为环境中自然发生的间接光照大部分从未被计算。为了在模型中模拟现实，我们做出了可调节阴影浓度的光源，办法是让一部分光穿透场景中的物体。在我们的实现中，我们用表面的漫反射贡献给阴影区域着色。我们认为这比使用环境光项更好，因为我们的方法能保留那些让阴影显得可信的漂亮渐变。本章后面会详细讨论这个话题。</p><h4>色调</h4><p>现实世界中，被遮蔽区域的颜色与附近未被遮挡的区域略有不同——例如，留意晴朗阳光下室外阴影那一点偏蓝的色偏。为了模拟这种效果，我们允许美术改变阴影颜色。阴影色调的细微变化，足以决定阴影是好看还是假。实践中，你可以把投射阴影的物体想象成在用阴影颜色（通常是黑色）向接收者「喷涂」。不同阴影颜色的图像见图 10-6。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig10-06a.jpg" alt="fig10-06a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig10-06a.jpg" rel="noreferrer noopener">图 10-6</a> 阴影颜色的变化</figcaption></figure><h4>反射</h4><p>一个重要的注意事项与高光有关。计算阴影区域的表面贡献时，我们只用漫反射响应来获得室外环境那种漂亮的渐变，但我们不希望阴影区域出现高光，因为我们是在作弊模拟漫反射的相互反射。为实现这一点，我们直接在阴影区域关闭镜面反射贡献。这点小调整只是光照如何改变表面反射行为的一个例子。这类调整在电影制作中被广泛使用，以达到我们希望观众喜欢的那种特定效果。</p><h4>阴影贴图</h4><p>在各种实现阴影的技术中，我们的模型使用阴影贴图，因为它简单、灵活——也因为我们在电影里经常用到它。尽管本章的着色器基于这种算法，我们还是鼓励读者去尝试其他阴影算法。着色器真正重要的地方不在于我们如何判断一个像素是否在阴影中，而在于我们如何使用这个信息。</p><h4>阴影模糊</h4><p>我们的实现缺失的最重要一环是阴影模糊。美术常常调整阴影边缘的柔和度，以作弊模拟面光源，或只是为了得到导演想要的那种观感。高效地模糊阴影边缘尤其困难。可用技术有很多，但介绍它们超出本章范围。</p><h4>10.2.5 纹理</h4><p>最后，我们加入了投影纹理支持，以实现各种效果，比如幻灯机，以及来自屏幕外物体的假阴影。这些技巧在电影制作界被称为 <em>cookies</em>；游戏制作中也会用到，但较少。游戏开发者用纹理投影实现形状、着色和阴影效果，电影创作者则倾向于用柔和的 cookie 来丰富视觉细节、添加特效，比如镜头外的投影物或形状古怪的灯光。</p><h4>10.2.6 结果</h4><p>图 10-7 和图 10-8 展示了用 uberlight 照亮 Pixar 短片 <em>Geri's Game</em> 中角色头部的情形。模型表面是平的、塑料质感的，我们没有给它贴任何与材质相关的纹理。对物体使用更简单的表面模型，可以更好地突出只靠光着色器配不同参数所能获得的种种效果。光照与表面建模恰当结合，让这个角色活了起来，正如原作 Pixar 短片那样。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig10-07a.jpg" alt="fig10-07a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig10-07a.jpg" rel="noreferrer noopener">图 10-7</a> 为 Geri 打光</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig10-08a.jpg" alt="fig10-08a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig10-08a.jpg" rel="noreferrer noopener">图 10-8</a> 光照风格</figcaption></figure><h2>10.3 Uberlight 着色器</h2><p>代码清单 10-1 和 10-2 给出 uberlight 着色器的源码，基于 Larry Gritz 在 Barzel 1999 中的版本。</p><h4>示例 10-1. 类 Uberlight 着色器的顶点程序</h4><pre><code>void uberlight_vp(varying float4 Pobject
+                  : POSITION, // 物体空间中的顶点位置
+                    varying float3 Nobject
+                  : NORMAL,
+                    // 物体空间中的顶点法线
+                    varying float3 VertexColor
+                  : COLOR0, // 顶点颜色
+                    uniform float4x4 ModelViewProj,
+                    // ModelViewProj 矩阵
+                    uniform float4x4 ObjectToWorld,
+                    // ObjectToWorld 矩阵
+                    uniform float4x4 ObjectToWorldIT,
+                    // ObjectToWorld 矩阵的
+                    // 逆转置
+                    uniform float4x4 WorldToLight,
+                    // 光照空间
+                    uniform float4x4 WorldToLightIT,
+                    // 光照空间的逆转置，
+                    // 用于变换法线
+                    uniform float4x4
+                        WorldToShadowProj, // 光照空间与用于阴影的
+                    // 投影矩阵拼接在一起，
+                    // 由此定义了
+                    // 阴影空间。
+                    uniform float3 CameraPosInWorld,
+                    // 相机位置
+                    // （世界空间中）
+                    uniform float ShadowBias,
+                    // 阴影偏移
+                    out float4 HPosition
+                  : POSITION,
+                    // 光栅化器位置
+                    out float3 CameraPosInLight
+                  : TEXCOORD0, // 相机位置
+                    // （光照空间中）
+                    out float3 Plight
+                  : TEXCOORD1,
+                    // 插值位置
+                    // （光照空间中）
+                    out float3 Nlight
+                  : TEXCOORD2,
+                    // 插值法线
+                    // （光照空间中）
+                    out float4 ShadowUV
+                  : TEXCOORD3,
+                    // 阴影 UV
+                    out float3 Color
+                  : COLOR0)
+// 表面颜色
+{
+  // 计算光栅化器所需的坐标
+  HPosition = mul(ModelViewProj, Pobject);
+  // 计算世界空间中的位置与法线
+  float4 Pworld = mul(ObjectToWorld, Pobject);
+  float3 Nworld = mul(ObjectToWorldIT, float4(Nobject, 0)).xyz;
+  // 计算该点在光照空间中的位置
+  CameraPosInLight = mul(WorldToLight, float4(CameraPosInWorld, 1)).xyz;
+  Plight = mul(WorldToLight, Pworld).xyz;
+  Nlight = mul(WorldToLightIT, float4(Nworld, 0)).xyz;
+  // 计算阴影与纹理投影所需的 U-V
+  float4 shadowProj = mul(WorldToShadowProj, Pworld);
+  // 把 x、y 重新缩放到 0..1 范围
+  ShadowUV.xy = 0.5 * (shadowProj.xy + shadowProj.ww);
+  // 变换 z 时记得施加偏移
+  ShadowUV.z = 0.5 * (shadowProj.z + shadowProj.w - ShadowBias);
+  ShadowUV.w = shadowProj.w;
+  // 颜色原样传递
+  Color = VertexColor;
+}</code></pre><h4>示例 10-2. 类 Uberlight 着色器的片元程序</h4><pre><code>// SHADER PARAMETERS ================================================
+// 超椭圆参数
+struct SuperellipseShapingParams
+{
+  float width, height;
+  float widthEdge, heightEdge;
+  float round;
+};
+// 距离塑形参数
+struct DistanceShapingParams
+{
+  float near, far;
+  float nearEdge, farEdge;
+};
+// 光照参数
+struct LightParams
+{
+  float3 color;
+  // 光照颜色
+  float3 weights; // 光照权重（环境光、漫反射、镜面反射）
+};
+struct SurfaceParams
+{
+  float3 weights;
+  // 表面权重（环境光、漫反射、镜面反射）
+  float roughness; // 粗糙度
+};
+// BRDF/LIGHT INTERACTION ===========================================
+// 计算光照方向
+float3 computeLightDir(float3 Plight)
+{
+  // 仅聚光灯
+  return -normalize(Plight);
+}
+// lit 的环境光贡献
+float ambient(float3 litResult)
+{
+  return litResult.x;
+} // lit 的漫反射贡献
+float diffuse(float3 litResult) { return litResult.y; }
+// lit 的镜面反射贡献
+float specular(float3 litResult) { return litResult.z; }
+// SUPERELLIPSE =====================================================
+float computeSuperellipseShaping(
+    float3 Plight,
+    // 光照空间中的点
+    bool barnShaping,
+    // 挡光板塑形
+    SuperellipseShapingParams params) // 超椭圆塑形参数
+{
+  if (!barnShaping)
+  {
+    return 1;
+  }
+  else
+  {
+    // 把点投影到 z == 1 平面上
+    float2 Pproj = Plight.xy / Plight.z;
+    // 我们希望只在第一象限内计算超椭圆，
+    // 为简单起见先取到正确的数值
+    float a = params.width;
+    float A = params.width + params.widthEdge;
+    float b = params.height;
+    float B = params.height + params.heightEdge;
+    float2 pos = abs(Pproj);
+    // 在第一象限内计算超椭圆
+    float exp1 = 2.0 / params.round;
+    float exp2 = -params.round / 2.0;
+    float inner =
+        a * b * pow(pow(b * pos.x, exp1) + pow(a * pos.y, exp1), exp2);
+    float outer =
+        A * B * pow(pow(B * pos.x, exp1) + pow(A * pos.y, exp1), exp2);
+    return 1 - smoothstep(inner, outer, 1);
+  }
+} // DISTANCE SHAPING =================================================
+float computeDistanceShaping(
+    float3 Plight,
+    // 光照空间中的点
+    bool barnShaping,
+    // 挡光板塑形
+    DistanceShapingParams params) // 距离塑形参数
+{
+  float depth;
+  if (barnShaping)
+  {
+    depth = -Plight.z;
+  }
+  else
+  {
+    depth = length(Plight.z);
+  }
+  return smoothstep(params.near - params.nearEdge, params.near, depth) *
+         (1 - smoothstep(params.far, params.far + params.farEdge, depth));
+}
+// MAIN =============================================================
+float4 uberlight_fp(float3 CameraPosInLight
+                    : TEXCOORD0, // 光照空间中的相机位置
+                      float3 Plight
+                    : TEXCOORD1,
+                      // 光照空间中的插值位置
+                      float3 Nlight
+                    : TEXCOORD2,
+                      // 光照空间中的插值法线
+                      float4 ShadowUV
+                    : TEXCOORD3, // 阴影 UV
+                      // 表面属性 ------------------------
+                      float3 SurfaceColor
+                    : COLOR0,
+                      // 表面颜色
+                      uniform SurfaceParams Surface, // 其他表面参数
+                      // （权重、粗糙度）
+                      // 光照属性 --------------------------
+                      uniform LightParams Light, // 光照属性
+                      // 塑形 -----------------------------------
+                      // 在挡光板塑形（超椭圆金字塔）
+                      // 与全向塑形之间二选一
+                      uniform bool BarnShaping,
+                      uniform SuperellipseShapingParams SuperellipseShaping,
+                      // 超椭圆
+                      // 塑形
+                      uniform DistanceShapingParams DistanceShaping,
+                      // 距离
+                      // 塑形
+                      // 距离衰减 --------------------------
+                      // cookie 与阴影 -----------------------
+                      uniform sampler2D Shadow,
+                      // 阴影纹理
+                      uniform float3 ShadowColor,
+                      // 阴影颜色
+                      uniform sampler2D Cookie,
+                      // cookie 纹理
+                      uniform float CookieDensity) // cookie 密度
+{
+  // 把向量变换到光照空间 ---------------------
+  // 计算光照空间中的法线（顶点插值后
+  // 再做归一化）
+  float3 N = normalize(Nlight);
+  // 计算光照方向
+  float3 L = computeLightDir(Plight);
+  // 计算视线方向（从该点指向眼睛的向量）
+  float3 V = normalize(CameraPosInLight - Plight);
+  // 计算镜面反射项所需的半角
+  float3 H = normalize(L + V);
+  // 计算纹理投影 —— cookie
+  float3 cookieColor = tex2Dproj(Cookie, ShadowUV).xyz;
+  Light.color = lerp(Light.color, cookieColor, CookieDensity);
+  // COMPUTE THE SHADOW EFFECT ---------------------------
+  // 取阴影量
+  float shadow = tex2Dproj(Shadow, ShadowUV).x;
+  // 修改光照颜色，使其在阴影区域
+  // 与阴影颜色混合
+  float3 mixedLightColor = lerp(ShadowColor, Light.color, shadow);
+  // 计算塑形导致的衰减 --------------
+  float attenuation = 1;
+  // 超椭圆塑形的贡献
+  attenuation *=
+      computeSuperellipseShaping(Plight, BarnShaping, SuperellipseShaping);
+  // 距离塑形的贡献
+  attenuation *= computeDistanceShaping(Plight, BarnShaping, DistanceShaping);
+  // APPLY TO SURFACE ------------------------------------
+  // 这里应替换成其他表面反射模型的
+  // 代码。这段代码计算的是类塑料
+  // 表面的光照。
+  // 光照计算
+  float3 litResult = lit(dot(N, L), dot(N, H), Surface.roughness).xyz;
+  // 乘以表面权重与光照权重
+  litResult *= Surface.weights * Light.weights;
+  // 计算环境光、漫反射与镜面反射的最终颜色。
+  // 环境光项直接使用光照本身的颜色
+  float3 ambientColor = Light.color * SurfaceColor * ambient(litResult);
+  // 漫反射项使用光照颜色
+  // 与阴影中的颜色混合后的结果
+  float3 diffuseColor = mixedLightColor * SurfaceColor * diffuse(litResult);
+  // 镜面反射颜色就是光照颜色乘以镜面反射项，
+  // 因为我们希望无论表面颜色如何都能得到白色高光。
+  // 我们的阴影不会是纯黑的，因此我们希望
+  // 确保高光不会出现在阴影中。
+  float3 specularColor = mixedLightColor * shadow * specular(litResult);
+  // 计算最终的漫反射颜色
+  float3 color = attenuation * (ambientColor + diffuseColor + specularColor);
+  // 计算漫反射颜色
+  return float4(color, 1);
+}</code></pre><h2>10.4 性能考量</h2><h4>10.4.1 速度</h4><p>我们可以很容易地加速 uberlight 着色器：把某些解析计算换成纹理查找。纹理通过对我们想避免的那些计算函数做离散采样生成。只要纹理分辨率足够高（可以根据场景和相机参数重新生成），图像质量仍然可以很好。由于离线渲染领域的制作与质量要求，这类优化很少被采用。</p><h4>10.4.2 开销</h4><p>这个着色器里最昂贵的代码是光源基于形状的衰减计算。我们可以构造一张纹理贴图，对给定的一组 barn 参数求出超椭圆整形，然后用阴影纹理坐标在光照空间中把 barn map 的贡献当作投影纹理来查找。使用 barn map 能大幅减少着色器指令数。此外，它还能让着色速度提高一倍以上（在 NVIDIA 的 Quadro FX 2000 板上测得）。</p><h4>10.4.3 优化</h4><p>当场景中相机和物体都不移动时，我们还可以优化着色器中依赖相机和依赖场景的着色分量（例如基于距离的整形）。这是灯光师调整光照参数、为某个镜头中的一帧打光时的典型使用场景。当美术把超椭圆整形和基于距离的整形都换成两次纹理查找后，修改后的着色器比原来的快三倍以上。</p><p>如果你选择这种做法来优化着色器，可以考虑用高级语言实时生成这些贴图。在我们的专有多遍交互式渲染器中，我们把这类贴图的生成定义为独立的遍。生成之后，遍的结果被缓存并反复复用。只有当影响这些贴图的参数发生变化时，这些遍才被标记为脏、排队重新计算，然后再次缓存。</p><h2>10.5 结论</h2><p>我们的光照模型只是一次简单的尝试，意在提供一套完整的光照控制，覆盖灯光师日常使用的大多数效果。尽管我们的实现已涵盖多种效果，还可以加入更多（而且确实每天都在加），让美术有更大的灵活性和表现力。这类控制的例子见 Barzel 1999。读者可以扩展我们的示例代码来实现这些及其他算法。</p><p>这里介绍的光照控制只覆盖了光源所负责的那部分观感。在开发完整的光照模型时，要注意表面的反射特性同样重要；正是这一属性区分了场景中各材质的外观。</p><h2>10.6 参考文献</h2><p><a id="ch10bib01_01"></a>Apodaca, Anthony A., and Larry Gritz 编. 1999. <em>Advanced RenderMan: Creating CGI for Motion Pictures</em>. Morgan Kaufmann.</p><p><a id="ch10bib01_02"></a>Barzel, Ronen. 1997. "Lighting Controls for Computer Cinematography." <em>Journal of Graphics Tools</em> 2(1), pp. 1–20. 在线地址 <strong><a href="http://www.acm.org/jgt/papers/Barzel97" rel="noreferrer noopener">http://www.acm.org/jgt/papers/Barzel97</a></strong></p><p><a id="ch10bib01_03"></a>Barzel, Ronen. 1999. "Lighting Controls for Computer Cinematography." 载 <em>Advanced RenderMan</em>: <em>Creating CGI for Motion Pictures</em>，Anthony A. Apodaca and Larry Gritz 编，Morgan Kaufmann 出版。本章代码由 Larry Gritz 提供。</p><p><a id="ch10bib01_04"></a>Birn, Jeremy. 2000. <em>Digital Lighting and Rendering</em>. New Riders Publishing.</p><p><a id="ch10bib01_05"></a>Calahan, Sharon. 1999. "Storytelling through Lighting: A Computer Graphics Perspective." 载 <em>Advanced RenderMan</em>: <em>Creating CGI for Motion Pictures</em>，Anthony A. Apodaca and Larry Gritz 编，Morgan Kaufmann 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-10-cinematic-lighting" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-10-cinematic-lighting</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

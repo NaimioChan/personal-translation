@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 章　DirectX 10 混合变形：突破限制 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 3 章　DirectX 10 混合变形：突破限制」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 3 章　DirectX 10 混合形状：突破限制</h1>
+<p><em>Tristan Lorach<br> NVIDIA Corporation</em></p><p>丰富的动画是任何现代游戏的重要方面，而混合形状是驱动这类动画最有效的技术之一。借助 DirectX 10 硬件引入的能力，以往的 GPU 实现可以扩展，以支持灵活得多的混合情形。本章介绍两种策略，用来突破此前 GPU 加速混合形状实现的限制。<a href="https://developer.download.nvidia.com/books/gpugems3/03fig01.jpg" rel="noreferrer noopener">图 3-1</a> 展示了由多个混合形状生成的若干面部表情。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/03fig01.jpg" alt="03fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/03fig01.jpg" rel="noreferrer noopener">图 3-1</a> 这个角色有 50 多个混合形状</figcaption></figure><h2>3.1 引言</h2><p>混合形状是任何数字内容创作（DCC）软件中都有的一种知名且有用的变形器。这些变形器可以在多个不同形状之间对网格做变形，从而实现丰富的动画。正因如此，它们也被称为<em>变形目标</em>（Beeson 2004）。</p><p>混合形状是非常灵活的工具，能实现许多动画可能。较简单的动画序列可以使用一系列姿势，让物体在其中变形过渡。在这样的序列中，任一时刻的几何只在两个目标之间混合。而更复杂的动画可以组合若干个混合形状，产生新的表情。除了面部动画方面的用处，混合形状在多人游戏中还有有趣的潜力。这类游戏大多要求角色可配置，让每个个体在游戏中都有独特的身份。混合形状可以用来把特征合成到网格上，再把网格读回 CPU 高效处理；也可以用来生成动画的各种变体，供运行时处理。</p><p>NVIDIA 以往的演示角色 Dawn、Nalu 和 Luna 就是混合形状用于生成面部表情的例子。在这些演示中交互式地拖动控制表情的滑块，会发现灵活性仍然受限。用户只能选一个基础表情，再用滑块改动该基础表情的一些细节。这些限制源于制作这些演示时 GPU 能力的局限。</p><p>NVIDIA GeForce 8800 之前的 GPU 要求把额外的混合形状数据作为顶点属性发送。属性数量有限，限制了 GPU 能同时处理的混合形状数量。这一限制导致必须做出权衡：要么在 CPU 上处理混合形状（可能成为应用瓶颈），要么在 GPU 上处理混合形状但限制动画的灵活性。</p><p>2002 年制作 Dawn 演示时，顶点属性里只能塞进四个混合形状（Beeson 2004）。在该演示中，其中两个形状用于驱动基础表情的动画，另外两个用于控制眼眨这类正交表情。对两个主要形状，是在两个形状（A 与 B）之间做插值，直到动画权重 100% 偏向 B。此时，A 会被序列中的下一个形状（C）替换。动画随后继续逐步向 C 变形。正交表情也做类似处理，叠加在基础表情之上。</p><p>DirectX 10 让混合形状算法超越了四个输入这一受限集合，达到基本不受限的规模。这显然为更复杂、更有表现力的动画打开了大门。这些改进带来以下可能：</p><ul><li>混合若干表情分量（例如眨眼或假笑）来生成复合表情</li><li>在需要多个分量的不同表情之间做动画，例如从需要七个子表情的惊讶表情过渡到需要五个子表情的恼怒表情。</li><li>把所有动画帧与混合形状静态存储，同时把逐顶点处理限制在感兴趣的分量上。</li></ul><h2>3.2 工作原理</h2><p>从数学上说，混合形状非常简单。一个混合形状就是参考（或中性）姿势与目标姿势之间逐顶点的差值。这一组逐顶点差值可以看作一个由向量构成的网格。这个网格中的差值向量不仅包含顶点位置，还包含表面法线、纹理坐标、切线向量等其他属性。若 <strong>P</strong> 是网格中的一个顶点，则下式给出计算第 <em>i</em> 个姿势下 <strong>P</strong> 的混合形状向量的方法：</p><table><tbody><tr><td><p><strong>P</strong> <em><sub>i</sub></em> = <strong>P</strong> <em><sub>i</sub></em> — <strong>P</strong> <em><sub>neutral</sub></em> ·</p></td></tr></tbody></table><p>生成最终顶点，只需对当前动画的所有混合形状计算加权和：</p><p><img alt="056equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/056equ01.jpg"/></p><h4>3.2.1 DirectX 10 的特性</h4><p>混合形状算法可以利用 DirectX 10 的以下主要特性：</p><ul><li><strong>流输出。</strong>流输出允许顶点着色器处理一批顶点，但把它们写回一个缓冲，而不是继续沿图形管线向下传递成三角形、最终成为像素。这一强大能力让混合形状可以任意数量的处理阶段。</li><li><strong>HLSL 缓冲模板。</strong>它提供对一个未指定大小的数据缓冲的访问，用来存放混合形状数据。</li><li><strong>VertexID。</strong>VertexID 系统值提供了对当前正在处理的网格顶点的便捷引用。这让着色器能取用顶点缓冲中没有的额外混合形状数据。</li></ul><h4>3.2.2 定义网格</h4><p>网格的某些区域不受混合形状驱动的动画影响。作为一项优化，这些区域单独渲染，不做任何混合形状着色。</p><p>例如，按这种做法，我们通过向 GPU 提供以下内容来计算 Dawn 面部的表情：</p><ul><li><strong>一个中性网格。</strong>该网格包含顶点位置、法线、切线与纹理 UV。</li><li><strong>五十四个表情（混合形状）。</strong>这些形状包含需要加到中性网格上以达到每个新表情的差值。我们通常存位置、法线与切线（副法线向量可以在顶点着色器中算出）。不需要存不变化的属性（例如纹理坐标）。</li></ul><p>我们用 Maya 制作混合形状数据，并以一种自定义格式导出最终网格，该格式由一系列块构成，如<a href="https://developer.download.nvidia.com/books/gpugems3/03fig02.jpg" rel="noreferrer noopener">图 3-2</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/03fig02.jpg" alt="03fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/03fig02.jpg" rel="noreferrer noopener">图 3-2</a> 每个混合形状都编码了相对于原始网格的差值信息</figcaption></figure><p>如果把这些块看作 DirectX 10 的槽位，槽 0 会包含基础网格，其交错数据由位置、法线、切线与纹理坐标构成。其余槽位则填入那 54 个混合形状，每个槽含位置差值、法线差值与切线差值。如果所有混合形状同时绑定，每个顶点会有 166 个属性。这显然远远超出 DirectX 10 硬件的限制，但即便是 4 个活动混合形状这样的小子集，也超出了可用的 16 个属性。本章接下来介绍的两种方法为这个问题提供了解决方案。</p><h4>3.2.3 流输出方法</h4><p>突破 DirectX 10 属性数量限制的一条路，是以迭代方式处理网格。每一遍只组合当前活动混合形状的一个子集，于是每一遍只需少量属性。每一遍可以选取一至四个活动混合形状放入槽位。这些混合形状被加到上一遍混合的结果上；对第一遍，则加到基础网格上。虽然这个方法确实需要对数据做多遍处理，但实际上所需的遍数很可能相当少（七遍就足以应用 Dawn 模型可用混合形状总数的一半以上）。</p><p>在我们的情形中，可以一次加入四个混合形状，如<a href="https://developer.download.nvidia.com/books/gpugems3/03fig03.jpg" rel="noreferrer noopener">图 3-3</a> 与代码清单 3-1 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/03fig03.jpg" alt="03fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/03fig03.jpg" rel="noreferrer noopener">图 3-3</a> 一次只使用全部混合形状集合的一个子集</figcaption></figure><h4>示例 3-1. 用于存放网格与混合形状信息的顶点结构</h4><pre><code>struct Face_VSIn
+{
+  float3 pos : position;
+  // 来自槽 0 的中性形状
+  float3 normal : normal;
+  float3 tangent : tangent;
+  float2 tc : texcoord0;
+  float3 bsP0 : bs_position0; // 混合形状 0 来自槽 1
+  float3 bsN0 : bs_normal0;
+  float3 bsT0 : bs_tangent0;
+  .
+  .
+  .
+  [Same for blend shapes 1, 2, and 3 bound to slots 2, 3, and 4]
+};</code></pre><ul><li>第一个槽存放网格属性。</li><li>再加入另外四个槽，在中性表情之上提供四个面部表情。出于效率考虑，我们尽量避免发送空表情。</li></ul><p>单遍能应用的混合形状最大数量，取决于有多个能塞进 16 个可用属性。如果数据经过压缩（例如把归一化向量打包进 32 位，或使用更少的分量），或者数据分量更少（例如没有切线向量），单遍就能容纳更多混合形状。为简单起见，本章的示例在主网格之上最多使用四个混合形状。</p><p>代码清单 3-2 中的着色器演示了单遍如何处理输入数据。</p><p>为了迭代处理数据，算法必须在顶点着色之后把结果输出。为此，新的 DirectX 10 流输出功能允许顶点在顶点着色器执行后写回一个缓冲，并允许该遍（可选地）不渲染几何。把第 <em>n</em> 遍的结果绑定为第（<em>n</em> + 1）遍的基础网格，就能累积所有遍的混合形状效果。为最大化运算效率，算法需要两个缓冲来存放流输出结果。这样着色器就能在两个缓冲之间来回切换：奇数遍用第一个缓冲输出、第二个缓冲输入，偶数遍相反。每一遍之前，需要用一个常量缓冲保存权重（<code>weightBS</code>），并按下一组混合形状更新为正确的权重。以这种方式累积完所有混合形状后，这个输出顶点缓冲就可以当作输入顶点缓冲，用来按常规方式渲染场景。<a href="https://developer.download.nvidia.com/books/gpugems3/03fig04.jpg" rel="noreferrer noopener">图 3-4</a> 展示了这一过程。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/03fig04.jpg" alt="03fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/03fig04.jpg" rel="noreferrer noopener">图 3-4</a> 流输出使多遍混合形状计算成为可能</figcaption></figure><h4>示例 3-2. 基本的混合形状计算</h4><pre><code>Face_VSStreamOut VSFace(Face_VSIn input)
+{
+  Face_VSStreamOut output;
+  output.pos = input.pos + (weightBS[0].xxx * input.bsP0) +
+               (weightBS[1].xxx * input.bsP1) + (weightBS[2].xxx * input.bsP2) +
+               (weightBS[3].xxx * input.bsP3);
+output.normal = [. . . similar equations as for pos . . .]
+output.tangent = [. . . similar equations as for pos . . .]
+output.tc = input.tc;
+return output;
+}</code></pre><p>注意我们从不把数据读回 CPU：一切都在顶点缓冲/流缓冲内。因此，你必须告诉这个缓冲，它既是流式数据的接收者（<code>D3D10_BIND_STREAM_OUTPUT</code>），也是输入装配器的来源（<code>D3D10_BIND_VERTEX_BUFFER</code>）。</p><h4>3.2.4 缓冲模板方法</h4><p>流输出方法要靠 CPU 驱动对活动混合形状的迭代；另一种做法是让 GPU 来执行迭代。DirectX 10 通过两点使之可行：在顶点着色器中提供控制流来管理迭代，以及能把一个缓冲绑定为着色器资源视图以访问数据。该缓冲在 HLSL 中通过一个模板访问，可以用 <code>Load()</code> 方法读取：</p><pre><code>Buffer myBuffer;
+...
+float3 weight = myBuffer.Load(x);</code></pre><p></p><p>在应用中，这个着色器资源视图由任何以 <code>D3D10_BIND_SHADER_RESOURCE</code> 标志创建的缓冲生成。资源创建之后，这样绑定到效果变量上：</p><pre><code>ID3D10EffectShaderResourceVariable *v;
+. . .
+v-&gt;SetResource(myRV);</code></pre><p>用着色器资源存放混合形状数据，这个方法把输入数据集分成两类。基础网格通过输入装配器读取，而混合形状数据全部在着色器中从缓冲的资源视图显式加载。利用从缓冲加载，意味着一次顶点着色器调用就能读入实际上不受限的混合形状数据。</p><p>除了几乎不受限的加载量，缓冲相比其他方案还有别的优势。纹理在单个方向上限制为 8,096 个元素，虽然二维与三维纹理可以把可寻址总量扩展到显存大小之外，但计算行列偏移的额外运算是一种不必要的复杂度。而缓冲在一个简单的一维包装里就支持超过一千六百万个元素。</p><p>用这个方法，我们用这类缓冲把所有混合形状存在一个单一的大缓冲中。如前所述，创建这个缓冲需要特殊绑定 <code>D3D10_BIND_SHADER_RESOURCE</code>，以便创建一维（<code>D3D10_SRV_DIMENSION_BUFFER</code>）着色器资源视图。此外，由于混合形状在运行时完全不被修改，把缓冲声明为不可变（<code>D3D10_USAGE_IMMUTABLE</code>）可确保它以最优方式分配。见代码清单 3-3。</p><p>为寻址混合形状分量，着色器可以利用 DirectX 10 引入的 <code>SV_VertexID</code> 语义。该语义提供当前正在处理的元素编号。把该元素编号与混合形状元素的跨距和间距结合，着色器就能轻松算出 <code>Load()</code> 函数所需的正确偏移，取出相应的混合形状元素。</p><p>显然，着色器必须被限制为只处理当前正在使用的混合形状。做法是再加一对缓冲，存放活动混合形状的索引与权重。这些缓冲中有意义的条目数由变量 <code>numBS</code> 给出。索引缓冲、权重缓冲与 <code>numBS</code> 变量每帧都会更新。为优化这种使用方式，缓冲以 <code>D3D10_USAGE_DYNAMIC</code>（告诉 DirectX 它会被频繁更新）和 <code>D3D10_CPU_ACCESS_WRITE</code>（告诉 DirectX 它会由 CPU 直接更新）声明。代码清单 3-4 展示了该方法中混合形状如何累积。<a href="https://developer.download.nvidia.com/books/gpugems3/03fig05.jpg" rel="noreferrer noopener">图 3-5</a> 展示了这一过程。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/03fig05.jpg" alt="03fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/03fig05.jpg" rel="noreferrer noopener">图 3-5</a> 使用循环把 API 调用次数降为一次</figcaption></figure><h4>示例 3-3. 数据声明与资源创建</h4><pre><code>D3D10_BUFFER_DESC bufferDescMesh = {sizeBytes, D3D10_USAGE_IMMUTABLE,
+                                    D3D10_BIND_SHADER_RESOURCE, 0, 0};
+D3D10_SUBRESOURCE_DATA data;
+data.SysMemPitch = 0;
+data.SysMemSlicePitch = 0;
+data.pSysMem = pVtxBufferData;
+hr = pd3dDevice-&gt;CreateBuffer(&amp;bufferDescMesh, &amp;data, &amp;pVtxResource);
+D3D10_SHADER_RESOURCE_VIEW_DESC SRVDesc;
+ZeroMemory(&amp;SRVDesc, sizeof(SRVDesc));
+SRVDesc.Format = DXGI_FORMAT_R32G32B32_FLOAT;
+SRVDesc.ViewDimension = D3D10_SRV_DIMENSION_BUFFER;
+SRVDesc.Buffer.ElementOffset = 0;
+SRVDesc.Buffer.ElementWidth =
+    numBlendShapes * vertexCount * (vtxBufferStrideBytes / (3 * sizeof(float)));
+hr = pd3dDevice-&gt;CreateShaderResourceView(pVertexResource, &amp;SRVDesc,
+                                          &amp;pVertexView);</code></pre><p>为得到最终的顶点位置，顶点着色器只需</p><ul><li>循环遍历这两个索引与权重数组</li><li>取出索引所指混合形状中对应的顶点属性</li><li>最后把这些贡献加到最终顶点上</li></ul><p>把这个做法与上一个方法相比，可以看到现在整个最终形状的构造都在一次绘制调用中完成：我们不需要靠发送额外的绘制调用来驱动迭代，而是留在顶点着色器里，根据需要处理的混合形状数量在内部循环。</p><h4>示例 3-4. 更灵活的混合形状计算方式</h4><pre><code>for (int i = 0; i &lt; numBS; i++)
+{
+  uint offset = bsPitch * bsOffsets.Load(i);
+  float weight = bsWeights.Load(i);
+  dp = bsVertices.Load(offset + 3 * vertexID + 0);
+  dn = bsVertices.Load(offset + 3 * vertexID + 1);
+  dt = bsVertices.Load(offset + 3 * vertexID + 2);
+  pos += dp * weight;
+  normal += dn * weight;
+  tangent += dt * weight;
+}</code></pre><p>代码清单 3-5 给出了这个顶点着色器的最终示例代码。</p><p>虽然这个方法更高效，但在 DirectX 10 中用缓冲读取顶点数据时有一个限制需要知道：</p><h4>示例 3-5. 代码清单 3-4 中循环前后的初始化代码</h4><pre><code>Head_VSOut VSFaceBufferTemplate(Head_VSIn input, uint vertexID : SV_VertexID)
+{
+  Head_VSOut output;
+  float3 pos = input.pos;
+  float3 normal = input.normal;
+  float3 tangent = input.tangent;
+  float3 dp, dn, dt;
+  for (int i = 0; i &lt; numBS; i++)
+  {
+    uint offset = bsPitch * bsOffsets.Load(i);
+    float weight = bsWeights.Load(i);
+    dp = bsVertices.Load(offset + 3 * vertexID + 0);
+    dn = bsVertices.Load(offset + 3 * vertexID + 1);
+    dt = bsVertices.Load(offset + 3 * vertexID + 2);
+    pos += dp * weight;
+    normal += dn * weight;
+    tangent += dt * weight;
+  }
+}</code></pre><ul><li>在着色器代码中，<code>Buffer&lt;&gt;</code> 模板里不能对数据（顶点属性）使用用户自定义类型。只能用 <code>float</code>、<code>float3</code> 这类基本类型。</li><li>在应用代码中，创建着色器资源视图绑定到缓冲时也面临同样的问题：只有 <code>DXGI_FORMAT enum</code> 里的类型可用。资源视图中无法指定由不同格式构成的复杂输入布局。</li></ul><p>在我们的情形中这完全不是问题，因为混合形状由三个 <code>float3</code> 属性（位置、法线、切线）构成。于是我们只需声明一个 <code>float3</code> 的缓冲，每次跨三步读取。但如果你想读取一组宽度不同的顶点属性——比如纹理坐标用 <code>float2</code>、颜色用 <code>float4</code> 等等——就会有问题。</p><p>最简单的变通办法是把较短的数据补齐。例如一个 <code>float2</code> 的纹理坐标在内存中必须占 <code>float4</code>，着色器只用前两个分量。但这个技巧要求我们准备的数据中带一些「空洞」，不太优雅，也更占内存。更复杂的变通办法是读取一组 <code>float4</code> 值，在着色器中自行重建顶点属性。举例来说，我们或许可以用位置、法线、切线的第三个分量重建出另一个三分量向量。我们没有针对这个问题做过任何测试，因此留待读者自己寻找压缩方案。</p><h2>3.3 运行示例</h2><p>本书附带的示例展示了如何在 Dawn 角色的脸上组合 54 个面部表情。演示启动时动画是开着的。这个动画只是读一组曲线来驱动几个权重。</p><p>我们随意地把这些表情两两一组分成 26 组：你可以用两个滑块改变这 54 个表情的强度。注意，如果动画开着，那些正被动画驱动的滑块可能无法使用。不过可以在动画运行的同时试试那些你能改的滑块（比如第 6 组）：这是如何组合复杂表情的好例子。有一个下拉框可以在两种模式之间切换。最后，还有一些滑块可以改变 Dawn 皮肤的光照。</p><h2>3.4 性能</h2><p>性能随我们使用的表情数量而变化。第一种技术用流输出缓冲，比第二种用缓冲模板与着色器资源视图的做法慢。变慢的主要原因是第一种要按需要的遍数反复把数据流输出：表情越多，通过流缓冲回到 CPU 的次数就越多。在第二种实现中，一切都在顶点着色器内完成，不需要从 GPU 管线中流出任何中间数据。</p><p>随着混合形状增加，两种方法之间的性能差距会扩大，如<a href="https://developer.download.nvidia.com/books/gpugems3/03fig06.jpg" rel="noreferrer noopener">图 3-6</a> 所示。用 6 个混合形状时，第二种方法已经比第一种快 1.34 倍。到 50 个混合形状时，第二种方法快 2.4 倍。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/03fig06.jpg" alt="03fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/03fig06.jpg" rel="noreferrer noopener">图 3-6</a> 不同混合形状数量下的每秒帧率</figcaption></figure><p>虽然第二种实现看起来是更好的选择，但只要你用的混合形状数量合理，第一种仍是一项有意思的技术。</p><p>在某些情况下，保存混合形状组合的最终结果会很有用。例如，可以用混合形状定制一个角色，然后把结果保存下来供游戏后续使用，不必再重新计算。这种操作需要流输出机制，但在特定引擎中集成某一种技术相对另一种有多容易，我们留待读者自行判断。</p><h2>3.5 参考文献</h2><p>Beeson, Curtis. 2004. "Animation in the 'Dawn' Demo."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 63–72，Addison-Wesley 出版。</p><p>Hagland, Torgeir. 2000. "A Fast and Simple Skinning Technique."，载 <em>Game Programming Gems</em>，Mark DeLoura 编，Charles River Media 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-i-geometry/chapter-3-directx-10-blend-shapes-breaking-limits" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-i-geometry/chapter-3-directx-10-blend-shapes-breaking-limits</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 30 章　三维流体的实时仿真与渲染 - GPU Gems 3</title>
+<meta name="description" content="GPU Gems 3 章节「第 30 章　三维流体的实时仿真与渲染」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 30 章　三维流体的实时仿真与渲染</h1>
+<p><em>Keenan Crane<br> University of Illinois at Urbana-Champaign</em></p><p><em>Ignacio Llamas<br> NVIDIA Corporation</em></p><p><em>Sarah Tariq<br> NVIDIA Corporation</em></p><h2>30.1 引言</h2><p>烟、水、火等流体的基于物理的动画，是计算机图形学中最惊艳的视觉效果之一，但由于计算开销巨大，它历来属于高质量离线渲染的领域。本章我们不仅说明如何实时仿真并渲染这些效果（如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig01.jpg" rel="noreferrer noopener">图 30-1</a> 所示），还说明如何把它们无缝整合进实时应用。基于物理的效果已经改变了交互式环境的设计方式。而流体打开的设计可能性世界还要大得多。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig01.jpg" alt="30fig01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig01.jpg" rel="noreferrer noopener">图 30-1</a>　在 GPU 上实时仿真与渲染的水</figcaption></figure><p>过去，美术在实时应用里依靠粒子系统来模拟三维流体效果。粒子系统虽然能做出好看的结果，但无法达到流体仿真的真实外观与行为。实时流体至今仍是难题，不仅因为仿真开销更大，还因为仿真产生的体积数据不容易套进标准的基于光栅化的渲染范式。</p><p>本章详细讲述 NVIDIA GeForce 8 系列发布演示「Smoke in a Box」中实时流体效果所用的技术，并讨论它如何整合进即将推出的游戏 <em>Hellgate: London</em>。</p><p>本章分两部分：</p><ul><li>30.2 节讲仿真，包括烟、水、火以及与实心障碍物的交互，还有性能与内存方面的考量。</li><li>30.3 节讨论如何渲染流体现象，以及如何把流体渲染无缝整合进现有的基于光栅化的框架。</li></ul><h2>30.2 仿真</h2><h4>30.2.1 背景</h4><p>本节全篇假定读者具备通用 GPU（GPGPU）方法的基本知识，即把 GPU 用于常规光栅图形之外的问题。特别推荐读者看 Harris 在 <em>GPU Gems</em> 中关于二维流体仿真的那一章（Harris 2004）。正如那一章所说，实现并调试三维流体求解器绝非易事（即使在传统编程环境里也是如此），扎实理解背后的数学与物理会大有帮助。Bridson 等 2006 在这方面是极好的参考资料。</p><p>好在要对本章的概念获得基本直觉，并不需要深入理解偏微分方程（PDE）。本章出现的所有 PDE 都具有这样的形式</p><p><img alt="0635equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0635equ01.jpg"/></p><p>它表示某个量 <em>x</em> 的变化率由某个函数 <em>f</em> 给出，而该函数又可能依赖于 <em>x</em> 与 <em>t</em>。读者也许会觉得，在<em>前向欧拉积分</em>的离散情形下思考这个关系更容易：</p><table><tbody><tr><td><p><em>x</em> <sup><em>n</em> + 1</sup> = <em>x<sup>n</sup></em> + <em>f</em>(<em>x<sup>n</sup>, t<sup>n</sup></em> )<em>t</em>.</p></td></tr></tbody></table><p>换句话说，<em>x</em> 在下一时间步的值等于 <em>x</em> 的当前值加上当前变化率 <em>f</em> (<em>x<sup>n</sup></em> , <em>t<sup>n</sup></em> ) 乘以时间步长 <em>t</em>。（注意上标用来索引时间步，<em>并不</em>表示乘幂。）但要注意，前向欧拉格式在数值上并非好选择——我们提出它只是为了能<em>思考</em>这些方程。</p><h4>30.2.2 流体运动方程</h4><p>流体的运动通常用其局部<em>速度</em> <strong>u</strong> 表示为位置与时间的函数。在计算机动画中，流体常被建模为<em>无粘</em>（即更像水而不像油）且<em>不可压缩</em>（即体积不随时间变化）。在这些假设下，速度可由<em>动量方程</em>描述：</p><p><img alt="0635equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0635equ02.jpg"/></p><p>并满足<em>不可压缩约束</em>：</p><table><tbody><tr><td><p>∇ · u = 0,</p></td></tr></tbody></table><p>其中 <em>p</em> 是压力，<em></em> 是质量密度，<strong>f</strong> 表示任意外力（例如重力），∇ 是微分算子：</p><p><img alt="0635equ03.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0635equ03.jpg"/></p><p>要在特定情境下定义运动方程，还必须指定<em>边界条件</em>（即流体在实心障碍物或其它流体附近的行为）。</p><p>流体求解器的基本任务是算出 <strong>u</strong> 的数值近似。这个速度场随后可用来驱动烟粒子或液面等视觉现象的动画。</p><h4>30.2.3 求解速度</h4><p>流行的「稳定流体」速度计算方法由 Stam 1999 提出，Harris 2004 给出了该方法在二维流体上的 GPU 实现。本节简要说明如何求解速度，细节请读者参阅所引文献。</p><p>为了数值求解动量方程，我们必须把计算域（即流体流经的空间区域）<em>离散化</em>为计算单元。我们选择<em>欧拉</em>离散，即计算单元在仿真过程中固定在空间中——只有存储在这些单元上的值在变化。具体来说，我们把一个长方体体积细分为立方体单元的规则网格。每个网格单元同时存放标量（如压力、温度等）和矢量（如速度）。这种方案让 GPU 上的实现变得简单，因为网格单元与三维纹理中的体素之间存在直接的映射。<em>拉格朗日</em>方案（即计算单元<em>不</em>固定在空间中的方案），例如光滑粒子流体动力学（Müller 等 2003），在流体动画中也很流行，但其不规则结构使其难以在 GPU 上高效实现。</p><p>由于我们对空间做了离散，方程中的<em>导数</em>也必须离散：<em>有限差分</em>通过对网格上定义的值做线性组合来数值近似导数。与 Harris 2004 一样，为教学上的简洁，我们把所有量都存在单元中心，不过交错排列的 MAC 式网格能得到更稳健的有限差分，也更容易定义边界条件。（细节见 Harlow 与 Welch 1965。）</p><p>在 GPU 实现中，单元属性（速度、压力等）存在若干张三维纹理里。每个仿真步，我们通过在网格上运行计算<em>内核</em>来更新这些值。内核实现为一个像素着色器，在网格的每个单元上执行，把结果写入输出纹理。然而，由于 GPU 是设计来渲染到二维缓冲的，我们必须对三维体积的每一层切片各运行一次内核。</p><p>要在某个网格切片上执行内核，我们光栅化一个尺寸等于该体积宽与高的四边形。在 Direct3D 10 中，我们可以把三维纹理的某个切片指定为渲染目标，从而直接渲染进三维纹理。把切片索引放入绑定到 <code>SV_RenderTargetArrayIndex</code> 语义的变量，就指定了几何着色器输出的图元被光栅化到哪个切片。（细节见 Blythe 2006。）通过遍历切片索引，我们就能在整个网格上执行内核。</p><p>我们不是一次性求解动量方程，而是把它拆成一组可以依次计算的更简单操作：平流、施加外力、压力投影。相应内核的实现细节见 Harris 2004，代码清单 30-1 给出了我们 Direct3D 10 框架中的几个例子。特别值得注意的是例程 <code>PS_ADVECT_VEL</code>：这个内核实现<em>半拉格朗日</em>平流，下一节把它作为更精确平流的基础构件。</p><h4>示例 30-1. 仿真内核</h4><pre><code>
+struct GS_OUTPUT_FLUIDSIM
+{
+  // 当前网格单元的索引（i,j,k，范围 [0,gridSize]）
+   float3 cellIndex : TEXCOORD0;
+  // 当前网格单元及其紧邻单元的
+   // 纹理坐标（x,y,z，范围 [0,1]）
+   float3 CENTERCELL : TEXCOORD1;
+  float3 LEFTCELL   : TEXCOORD2;
+  float3 RIGHTCELL  : TEXCOORD3;
+  float3 BOTTOMCELL : TEXCOORD4;
+  float3 TOPCELL    : TEXCOORD5;
+  float3 DOWNCELL   : TEXCOORD6;
+  float3 UPCELL     : TEXCOORD7;
+  float4 pos        : SV_Position; // 齐次裁剪空间中的
+   // 2D 切片顶点
+   uint RTIndex    : SV_RenderTargetArrayIndex;  // 指定
+   // 目标切片
+};
+float3 cellIndex2TexCoord(float3 index)
+{
+  // 把 [0,gridSize] 范围内的值转换为 [0,1] 范围内的值。
+   return float3(index.x / textureWidth,
+                index.y / textureHeight,
+                (index.z+0.5) / textureDepth);
+}
+float4 PS_ADVECT_VEL(GS_OUTPUT_FLUIDSIM in,
+                     Texture3D velocity) : SV_Target
+{
+  float3 pos = in.cellIndex;
+  float3 cellVelocity = velocity.Sample(samPointClamp,
+                                        in.CENTERCELL).xyz;
+  pos -= timeStep * cellVelocity;
+  pos = cellIndex2TexCoord(pos);
+  return velocity.Sample(samLinear, pos);
+}
+float PS_DIVERGENCE(GS_OUTPUT_FLUIDSIM in,
+                    Texture3D velocity) : SV_Target
+{
+  // 从相邻单元取速度值。
+   float4 fieldL = velocity.Sample(samPointClamp, in.LEFTCELL);
+  float4 fieldR = velocity.Sample(samPointClamp, in.RIGHTCELL);
+  float4 fieldB = velocity.Sample(samPointClamp, in.BOTTOMCELL);
+  float4 fieldT = velocity.Sample(samPointClamp, in.TOPCELL);
+  float4 fieldD = velocity.Sample(samPointClamp, in.DOWNCELL);
+  float4 fieldU = velocity.Sample(samPointClamp, in.UPCELL);
+  // 用中心差分计算速度的散度。
+   float divergence =  0.5 * ((fieldR.x - fieldL.x)+
+                             (fieldT.y - fieldB.y)+
+                             (fieldU.z - fieldD.z));
+  return divergence;
+}
+float PS_JACOBI(GS_OUTPUT_FLUIDSIM in,
+                Texture3D pressure,
+                Texture3D divergence) : SV_Target
+{
+  // 取当前单元处的散度。
+   float dC = divergence.Sample(samPointClamp, in.CENTERCELL);
+  // 从相邻单元取压力值。
+   float pL = pressure.Sample(samPointClamp, in.LEFTCELL);
+  float pR = pressure.Sample(samPointClamp, in.RIGHTCELL);
+  float pB = pressure.Sample(samPointClamp, in.BOTTOMCELL);
+  float pT = pressure.Sample(samPointClamp, in.TOPCELL);
+  float pD = pressure.Sample(samPointClamp, in.DOWNCELL);
+  float pU = pressure.Sample(samPointClamp, in.UPCELL);
+  // 计算中心单元的新压力值。
+   return(pL + pR + pB + pT + pU + pD - dC) / 6.0;
+}
+float4 PS_PROJECT(GS_OUTPUT_FLUIDSIM in,
+                  Texture3D pressure,
+                  Texture3D velocity): SV_Target
+{
+  // 通过取相邻压力值的中心差分，
+   // 计算当前单元处的压力梯度。
+   float pL = pressure.Sample(samPointClamp, in.LEFTCELL);
+  float pR = pressure.Sample(samPointClamp, in.RIGHTCELL);
+  float pB = pressure.Sample(samPointClamp, in.BOTTOMCELL);
+  float pT = pressure.Sample(samPointClamp, in.TOPCELL);
+  float pD = pressure.Sample(samPointClamp, in.DOWNCELL);
+  float pU = pressure.Sample(samPointClamp, in.UPCELL);
+  float3 gradP = 0.5*float3(pR - pL, pT - pB, pU - pD);
+  // 减去压力梯度，把速度投影到
+   // 其无散度分量上。
+   float3 vOld = velocity.Sample(samPointClamp, in.texcoords);
+  float3 vNew = vOld - gradP;
+  return float4(vNew, 0);
+}</code></pre><h4>提升细节</h4><p>Stam 所用的半拉格朗日平流格式对动画很有用，因为它无条件稳定，也就是说较大的时间步不会让仿真「炸掉」。然而它会引入不希望的数值平滑，使水看起来发粘，或让烟损失细节。为获得更高阶的精度，我们使用 MacCormack 格式，它执行两次中间半拉格朗日平流步。给定一个量 <em></em> 与一个平流格式 <em>A</em>（例如 <code>PS_ADVECT_VEL</code> 所实现的那个），用下列操作序列可获得更高阶的精度（取自 Selle 等 2007）：</p><p><img alt="0640equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0640equ01.jpg"/></p><p>这里，<em><sup>n</sup></em> 是要被平流的量，<a href="https://developer.download.nvidia.com/books/gpugems3/phcap.jpg" rel="noreferrer noopener"><img alt="phcap.jpg" src="https://developer.download.nvidia.com/books/gpugems3/phcap.jpg"/></a> 与 <a href="https://developer.download.nvidia.com/books/gpugems3/phcapn.jpg" rel="noreferrer noopener"><img alt="phcapn.jpg" src="https://developer.download.nvidia.com/books/gpugems3/phcapn.jpg"/></a> 是中间量，<sup><em>n</em>+1</sup> 是最终被平流的量。<em>A</em> <em><sup>R</sup></em> 上的上标表示该步的平流是反向的（即时间倒着跑）。</p><p>与标准半拉格朗日格式不同，这个 MacCormack 格式不是无条件稳定的。因此要对结果值 <em></em> <sup><em>n</em>+1</sup> 施加限制器，确保它落在参与初始半拉格朗日平流的取值范围内。在我们的 GPU 求解器里，这意味着必须找到离采样点最近的八个节点，<em>精确地在它们的中心</em>访问相应纹素（以避免取到插值后的值），并把最终值夹到这些节点上的最小值与最大值之间，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig02.jpg" rel="noreferrer noopener">图 30-2</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig02.jpg" alt="30fig02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig02.jpg" rel="noreferrer noopener">图 30-2</a>　二维 MacCormack 平流格式中所用的限制器</figcaption></figure><p>中间半拉格朗日步算完之后，代码清单 30-2 中的像素着色器用 MacCormack 格式完成平流。</p><h4>示例 30-2. MacCormack 平流格式</h4><pre><code>
+float4 PS_ADVECT_MACCORMACK(GS_OUTPUT_FLUIDSIM in,
+                            float timestep) : SV_Target
+{
+  // 沿初始特征线回溯——我们将用这个
+   // 半拉格朗日“粒子”附近的值来钳制
+   // 最终平流得到的值。
+   float3 cellVelocity = velocity.Sample(samPointClamp,
+                                        in.CENTERCELL).xyz;
+float3 npos = in.cellIndex - timestep * cellVelocity;
+// 找到最靠近该“粒子”的单元角点，并计算
+   // 与该位置对应的纹理坐标。
+npos = floor(npos + float3(0.5f, 0.5f, 0.5f));
+npos = cellIndex2TexCoord(npos);
+// 取对插值结果有贡献的节点值。
+   // 纹素中心距离单元角点半个纹素。
+   float3 ht = float3(0.5f / textureWidth,
+                   0.5f / textureHeight,
+                   0.5f / textureDepth);
+float4 nodeValues[8];
+nodeValues[0] = phi_n.Sample(samPointClamp, npos +
+                             float3(-ht.x, -ht.y, -ht.z));
+nodeValues[1] = phi_n.Sample(samPointClamp, npos +
+                             float3(-ht.x, -ht.y, ht.z));
+nodeValues[2] = phi_n.Sample(samPointClamp, npos +
+                             float3(-ht.x, ht.y, -ht.z));
+nodeValues[3] = phi_n.Sample(samPointClamp, npos +
+                             float3(-ht.x, ht.y, ht.z));
+nodeValues[4] = phi_n.Sample(samPointClamp, npos +
+                             float3(ht.x, -ht.y, -ht.z));
+nodeValues[5] = phi_n.Sample(samPointClamp, npos +
+                             float3(ht.x, -ht.y, ht.z));
+nodeValues[6] = phi_n.Sample(samPointClamp, npos +
+                             float3(ht.x, ht.y, -ht.z));
+nodeValues[7] = phi_n.Sample(samPointClamp, npos +
+                             float3(ht.x, ht.y, ht.z));
+// 为结果确定一个有效范围。
+   float4 phiMin = min(min(min(min(min(min(min(
+    nodeValues[0],  nodeValues [1]), nodeValues [2]), nodeValues [3]),
+    nodeValues[4]), nodeValues [5]), nodeValues [6]), nodeValues [7]);
+float4 phiMax = max(max(max(max(max(max(max(
+    nodeValues[0],  nodeValues [1]), nodeValues [2]), nodeValues [3]),
+    nodeValues[4]), nodeValues [5]), nodeValues [6]), nodeValues [7]);
+// 执行最终的平流，把各个中间平流
+   // 步骤的值合并起来。
+   float4 r = phi_n_1_hat.Sample(samLinear, nposTC) +
+           0.5 * (phi_n.Sample(samPointClamp, in.CENTERCELL) -
+                  phi_n_hat.Sample(samPointClamp, in.CENTERCELL));
+// 把结果钳制到所需范围。
+r = max(min(r, phiMax), phiMin);
+return r;
+}
+</code></pre><p>在 GPU 上，要改善视觉细节，使用更高阶的格式往往比单纯提高网格分辨率更好，因为数学运算比带宽便宜得多。<a href="https://developer.download.nvidia.com/books/gpugems3/30fig03.jpg" rel="noreferrer noopener">图 30-3</a> 比较了低分辨率网格上的高阶格式与高分辨率网格上的低阶格式。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig03.jpg" alt="30fig03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig03.jpg" rel="noreferrer noopener">图 30-3</a>　更大并不总是更好！</figcaption></figure><h4>30.2.4 固体-流体交互</h4><p>使用实时仿真（而非预计算动画）的好处之一是流体能与环境交互。<a href="https://developer.download.nvidia.com/books/gpugems3/30fig04.jpg" rel="noreferrer noopener">图 30-4</a> 给出这样一个场景的例子。本节讨论两种让环境作用于流体的简单做法。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig04.jpg" alt="30fig04.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig04.jpg" rel="noreferrer noopener">图 30-4</a>　一只动画石像鬼拍打翅膀把烟推开</figcaption></figure><p>影响速度场的一种基本方式是施加外力。要得到障碍物推开流体的大致效果，我们可以用盒子或球之类的基本形状来近似障碍物，把障碍物的平均速度加到速度场的相应区域。这类简单形状可以用形如 <em>f</em> (<em>x</em>, <em>y</em>, <em>z</em>) ≤ 0 的隐式方程描述，像素着色器可以在每个网格单元上轻松求值。</p><p>虽然我们可以显式加一个速度来近似简单运动，但有些场合需要更多细节。例如在 <em>Hellgate: London</em> 中，我们希望烟从地面裂缝中渗出。按裂缝形状加上一个向上的速度和烟密度，得到的效果很无趣。于是我们改用<a href="https://developer.download.nvidia.com/books/gpugems3/30fig05.jpg" rel="noreferrer noopener">图 30-5</a> 内插图所示的裂缝形状来定义<em>实心障碍物</em>，让烟与它碰撞交互。同样，我们希望烟与动画石像鬼之间有更精细的交互，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig04.jpg" rel="noreferrer noopener">图 30-4</a> 所示。为此我们需要能用动态障碍物影响流体运动（细节见本节后文），而这要求障碍物内部以及其边界处的速度有体积表示（本节后文也会说明）。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig05.jpg" alt="30fig05.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig05.jpg" rel="noreferrer noopener">图 30-5</a>　游戏中烟从地面裂缝升起</figcaption></figure><h4>动态障碍物</h4><p>到此我们假定流体占据仿真网格所定义的整个长方体区域。然而在多数应用里，流体<em>域</em>（即网格中实际被流体占据的区域）要更有意思得多。在 GPU 上处理<em>静态</em>边界的多种方法见 Harris 等 2003、Liu 等 2004、Wu 等 2004 与 Li 等 2005。</p><p>流体域可能随时间变化，以适应环境中的动态障碍物；对水这类液体，随着液体晃荡，域也在不断变化（30.2.7 节会多讲）。本节描述 <em>Hellgate: London</em> 中处理动态障碍物所用的方案。关于动态障碍物的进一步讨论，见 Bridson 等 2006 与 Foster 和 Fedkiw 2001。</p><p>要处理复杂的域，我们必须考虑流体在<em>域边界</em>处的行为。在离散化的流体中，域边界由含流体的单元与不含流体的单元之间的<em>面</em>构成——也就是说，流体单元与固体单元<em>之间</em>的那个面属于边界，而固体单元本身不属于。域边界的一个简单例子是在仿真网格四周放一圈静态屏障，防止流体「逃逸」（没有它，流体看起来就像直接流进了太空）。</p><p>要支持因动态障碍物存在而变化的域边界，我们需要修改部分仿真步骤。在我们的实现里，障碍物用内外体素化表示。此外，我们在与域边界相邻的固体单元里保存障碍物速度的体素化表示。这些信息存在一对三维纹理中，障碍物移动或变形时更新（本节后文会讲到）。</p><p>在固体-流体边界处，我们要施加<em>自由滑移</em>边界条件，即流体与固体在垂直于边界的方向上速度相同：</p><table><tbody><tr><td><p><strong>u · n</strong> = <strong>u</strong> <sub>solid</sub> · <strong>n</strong>.</p></td></tr></tbody></table><p>换句话说，流体不能流进或流出固体，但可以沿其表面自由流动。</p><p>自由滑移边界条件也影响我们求解压力的方式，因为压力的梯度被用于确定最终速度。压力投影的详细讨论见 Bridson 等 2006，但归根到底我们只需确保算出的压力值满足下式：</p><p><img alt="0645equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0645equ02.jpg"/></p><p>其中 <em>t</em> 是时间步长，<em>x</em> 是单元间距，<em>p<sub>i</sub></em> <sub>,</sub> <em><sub>j</sub></em> <sub>,</sub> <em><sub>k</sub></em> 是单元 (<em>i</em>, <em>j</em>, <em>k</em>) 中的压力值，<em>d<sub>i</sub></em> <sub>,</sub> <em><sub>j</sub></em> <sub>,</sub> <em><sub>k</sub></em> 是为该单元算出的离散速度散度，<em>F<sub>i</sub></em> <sub>,</sub> <em><sub>j</sub></em> <sub>,</sub> <em><sub>k</sub></em> 是与单元 (<em>i</em>, <em>j</em>, <em>k</em>) 相邻且含流体的单元的<em>索引</em>集合。（这个方程只是 Harris 2004 中压力-泊松系统 ∇<sup>2</sup> <em>p</em> =∇ · <strong>w</strong> 的离散形式，并遵守了固体边界。）同样重要的是，在固体-流体边界处，<em>d<sub>i</sub></em> <sub>,</sub> <em><sub>j</sub></em> <sub>,</sub> <em><sub>k</sub></em> 要用障碍物速度来计算。</p><p>实践中有一个很简单的技巧来保证这一切发生：每次从相邻单元采样压力时（例如在压力求解与压力投影步中），我们检查该邻居是否含有实心障碍物，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig06.jpg" rel="noreferrer noopener">图 30-6</a> 所示。若含有，就用中心单元的压力值代替该邻居的压力值。换句话说，我们让固体单元对上式的贡献归零。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig06.jpg" alt="30fig06.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig06.jpg" rel="noreferrer noopener">图 30-6</a>　在计算压力的离散拉普拉斯算子时考虑障碍物</figcaption></figure><p>对速度值也可以用类似的技巧：每次采样相邻单元时（例如计算速度散度时），我们先检查它是否含固体。若含，就从体素化结果里查障碍物的速度，用它代替流体速度场中存的值。</p><p>由于我们无法总把压力-泊松系统解到收敛，我们在压力投影之后立刻显式施加自由滑移边界条件。我们还必须修正域边界旁流体单元的压力投影结果。做法是计算障碍物速度在垂直于边界方向上的分量。这个值替换中心单元处流体速度的相应分量，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig07.jpg" rel="noreferrer noopener">图 30-7</a> 所示。由于固体-流体边界与体素面对齐，把速度投影到表面法线上只需选取相应的分量。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig07.jpg" alt="30fig07.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig07.jpg" rel="noreferrer noopener">图 30-7</a>　在压力投影之后施加自由滑移边界条件</figcaption></figure><p>若一个流体单元相对的两个面都是固体-流体边界，我们可以对两侧的速度值取平均。不过只选其中一个面通常也能得到可接受的结果。</p><p>最后，有一点很重要：时间步很大时，量可能在平流过程中「泄漏」穿过边界。为此我们给平流步加了一条额外约束，确保绝不把任何量平流到障碍物内部，从而保证被平流的量（例如烟密度）在实心障碍物内部始终为零（见代码清单 30-3 中的 <code>PS_ADVECT_OBSTACLE</code> 例程）。代码清单 30-3 给出为考虑边界条件而修改过的仿真内核。</p><h4>示例 30-3. 为考虑边界条件而修改的仿真内核</h4><pre><code>
+bool IsSolidCell(float3 cellTexCoords)
+{
+  return obstacles.Sample(samPointClamp, cellTexCoords).r > 0.9;
+}
+float PS_JACOBI_OBSTACLE(GS_OUTPUT_FLUIDSIM in,
+                         Texture3D pressure,
+                         Texture3D divergence) : SV_Target
+{
+  // 取当前单元处的散度和压力。
+   float dC = divergence.Sample(samPointClamp, in.CENTERCELL);
+  float pC = pressure.Sample(samPointClamp, in.CENTERCELL);
+  // 从相邻单元取压力值。
+   float pL = pressure.Sample(samPointClamp, in.LEFTCELL);
+  float pR = pressure.Sample(samPointClamp, in.RIGHTCELL);
+  float pB = pressure.Sample(samPointClamp, in.BOTTOMCELL);
+  float pT = pressure.Sample(samPointClamp, in.TOPCELL);
+  float pD = pressure.Sample(samPointClamp, in.DOWNCELL);
+  float pU = pressure.Sample(samPointClamp, in.UPCELL);
+  // 确保实体单元中的压力被有效忽略。
+   if(IsSolidCell(in.LEFTCELL)) pL = pC;
+  if(IsSolidCell(in.RIGHTCELL)) pR = pC;
+  if(IsSolidCell(in.BOTTOMCELL)) pB = pC;
+  if(IsSolidCell(in.TOPCELL)) pT = pC;
+  if(IsSolidCell(in.DOWNCELL)) pD = pC;
+  if(IsSolidCell(in.UPCELL)) pU = pC;
+  // 计算新的压力值。
+   return(pL + pR + pB + pT + pU + pD - dC) /6.0;
+}
+float4 GetObstacleVelocity(float3 cellTexCoords)
+{
+  return obstaclevelocity.Sample(samPointClamp, cellTexCoords);
+}
+float PS_DIVERGENCE_OBSTACLE(GS_OUTPUT_FLUIDSIM in,
+                             Texture3D velocity) : SV_Target
+{
+  // 从相邻单元取速度值。
+   float4 fieldL = velocity.Sample(samPointClamp, in.LEFTCELL);
+  float4 fieldR = velocity.Sample(samPointClamp, in.RIGHTCELL);
+  float4 fieldB = velocity.Sample(samPointClamp, in.BOTTOMCELL);
+  float4 fieldT = velocity.Sample(samPointClamp, in.TOPCELL);
+  float4 fieldD = velocity.Sample(samPointClamp, in.DOWNCELL);
+  float4 fieldU = velocity.Sample(samPointClamp, in.UPCELL);
+  // 对任何实体单元使用障碍物速度。
+   if(IsBoundaryCell(in.LEFTCELL))
+    fieldL = GetObstacleVelocity(in.LEFTCELL);
+  if(IsBoundaryCell(in.RIGHTCELL))
+    fieldR = GetObstacleVelocity(in.RIGHTCELL);
+  if(IsBoundaryCell(in.BOTTOMCELL))
+   fieldB = GetObstacleVelocity(in.BOTTOMCELL);
+  if(IsBoundaryCell(in.TOPCELL))
+   fieldT = GetObstacleVelocity(in.TOPCELL);
+  if(IsBoundaryCell(in.DOWNCELL))
+   fieldD = GetObstacleVelocity(in.DOWNCELL);
+  if(IsBoundaryCell(in.UPCELL))
+   fieldU = GetObstacleVelocity(in.UPCELL);
+  // 用中心差分计算速度的散度。
+   float divergence =  0.5 * ((fieldR.x - fieldL.x) +
+                             (fieldT.y - fieldB.y) +
+                             (fieldU.z - fieldD.z));
+  return divergence;
+}
+float4 PS_PROJECT_OBSTACLE(GS_OUTPUT_FLUIDSIM in,
+                           Texture3D pressure,
+                           Texture3D velocity): SV_Target
+{
+  // 若该单元是实体单元，就直接使用
+   // 对应的障碍物速度。
+   if(IsBoundaryCell(in.CENTERCELL))
+  {
+    return GetObstacleVelocity(in.CENTERCELL);
+  }
+  // 取当前单元及其相邻单元的压力值。
+   float pC = pressure.Sample(samPointClamp, in.CENTERCELL);
+  float pL = pressure.Sample(samPointClamp, in.LEFTCELL);
+  float pR = pressure.Sample(samPointClamp, in.RIGHTCELL);
+  float pB = pressure.Sample(samPointClamp, in.BOTTOMCELL);
+  float pT = pressure.Sample(samPointClamp, in.TOPCELL);
+  float pD = pressure.Sample(samPointClamp, in.DOWNCELL);
+  float pU = pressure.Sample(samPointClamp, in.UPCELL);
+  // 取相邻实体单元中的障碍物速度。
+   // （注意：若邻居不是实体单元，
+   // 这些值没有意义。）
+   float3 vL = GetObstacleVelocity(in.LEFTCELL);
+  float3 vR = GetObstacleVelocity(in.RIGHTCELL);
+  float3 vB = GetObstacleVelocity(in.BOTTOMCELL);
+  float3 vT = GetObstacleVelocity(in.TOPCELL);
+  float3 vD = GetObstacleVelocity(in.DOWNCELL);
+  float3 vU = GetObstacleVelocity(in.UPCELL);
+  float3 obstV = float3(0,0,0);
+  float3 vMask = float3(1,1,1);
+  // 若相邻单元是实体单元，就忽略其压力
+   // 而使用其速度。
+   if(IsBoundaryCell(in.LEFTCELL)) {
+    pL = pC; obstV.x = vL.x; vMask.x = 0; }
+  if(IsBoundaryCell(in.RIGHTCELL)) {
+    pR = pC; obstV.x = vR.x; vMask.x = 0; }
+  if(IsBoundaryCell(in.BOTTOMCELL)) {
+    pB = pC; obstV.y = vB.y; vMask.y = 0; }
+  if(IsBoundaryCell(in.TOPCELL)) {
+    pT = pC; obstV.y = vT.y; vMask.y = 0; }
+  if(IsBoundaryCell(in.DOWNCELL)) {
+    pD = pC; obstV.z = vD.z; vMask.z = 0; }
+  if(IsBoundaryCell(in.UPCELL)) {
+    pU = pC; obstV.z = vU.z; vMask.z = 0; }
+  // 通过取相邻压力值的中心差分，
+   // 计算当前单元处的压力梯度。
+   float gradP = 0.5*float3(pR - pL, pT - pB, pU - pD);
+  // 减去压力梯度，把速度投影到
+   // 其无散度分量上。
+   float3 vOld = velocity.Sample(samPointClamp, in.texcoords);
+  float3 vNew = vOld - gradP;
+  // 通过把新速度的相应分量替换为
+   // 障碍物速度，来显式施加自由滑移
+   // 边界条件。
+  vNew = (vMask * vNew) + obstV;
+  return vNew;
+}
+bool IsNonEmptyCell(float3 cellTexCoords)
+{
+  return obstacles.Sample(samPointClamp, cellTexCoords, 0).r > 0.0);
+}
+float4 PS_ADVECT_OBSTACLE(GS_OUTPUT_FLUIDSIM in,
+                          Texture3D velocity,
+                          Texture3D color) : SV_Target
+{
+  if(IsNonEmptyCell(in.CENTERCELL))
+  {
+    return 0;
+  }
+  float3 cellVelocity = velocity.Sample(samPointClamp,
+                                        in.CENTERCELL).xyz;
+  float3 pos = in.cellIndex - timeStep*cellVelocity;
+  float3 npos = float3(pos.x / textureWidth,
+                       pos.y / textureHeight,
+                       (pos.z+0.5) / textureDepth);
+  return color.Sample(samLinear, npos);
+}</code></pre><h4>体素化</h4><p>要处理动态固体的边界条件，我们需要一种快速判断给定单元是否含实心障碍物的方法。我们还需要知道障碍物边界旁单元的固体速度。为此我们用两个不同的体素化例程，把实心障碍物<em>体素化</em>成一张「内外」纹理与一张「障碍物速度」纹理，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig08.jpg" rel="noreferrer noopener">图 30-8</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig08.jpg" alt="30fig08.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig08.jpg" rel="noreferrer noopener">图 30-8</a>　实心障碍物被体素化为内外纹理与障碍物速度纹理</figcaption></figure><h4>内外体素化</h4><p>我们获得内外体素化的思路受<em>模板阴影体</em>算法启发。想法很简单：用正交投影把输入的三角网格依次渲染进目标三维纹理的每个切片。远裁剪面设在无穷远，近平面与当前切片的深度一致，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig09.jpg" rel="noreferrer noopener">图 30-9</a> 所示。绘制几何体时，我们使用一个（与切片尺寸相同的）模板缓冲，初始化为零。把模板操作设为背面<em>递增</em>、正面<em>递减</em>（两者都回绕）。结果就是网格内部的任何体素都会得到非零的模板值。最后我们做一个遍，把模板值拷进障碍物纹理。<sup><a href="https://developer.download.nvidia.com/books/gpugems3/ch30fn01.html" rel="noreferrer noopener">[1]</a></sup></p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig09.jpg" alt="30fig09.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig09.jpg" rel="noreferrer noopener">图 30-9</a>　网格的内外体素化</figcaption></figure><p>由此我们得以区分三类单元：内部（模板值非零）、外部（模板值为零）、以及内部但紧邻边界（这些单元由接下来描述的速度体素化算法标记）。注意，由于这个方法依赖每一个正面都有一个对应的背面，它最适合水密的封闭网格。</p><h4>速度体素化</h4><p>第二个体素化算法为每个含有障碍物边界部分的网格单元计算障碍物速度。不过首先我们需要知道障碍物在每个顶点处的速度。计算逐顶点速度的一个简单做法，是把上一帧与当前帧的顶点位置 <strong>p</strong> <sup><em>n</em>-1</sup> 与 <strong>p</strong> <em><sup>n</sup></em> 分别存进顶点缓冲。瞬时速度 <strong>v</strong> <em><sub>i</sub></em>（顶点 <em>i</em> 的速度）可用前向差分近似</p><p><img alt="0652equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0652equ01.jpg"/></p><p>在顶点着色器中完成。</p><p>接下来，我们必须为任何含有表面网格片段的网格单元计算插值后的障碍物速度。与内外体素化一样，网格对网格的每个切片各渲染一次。不过这一次我们必须确定每个三角形与当前切片的交。</p><p>切片与三角形的交可以是一条线段、一个三角形、一个点，或为空。若交是线段，我们用四边形把该线段的「加粗」版本画进切片。这个四边形由原线段的两个端点，以及由这两个端点偏移得到的两个额外点构成，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig10.jpg" rel="noreferrer noopener">图 30-10</a> 所示。偏移距离 <em>w</em> 等于三维纹理某个切片中一个纹素的对角线长度，偏移方向是三角形法线在切片上的投影。用线性插值，我们求出每个端点处的速度值，并把它们赋给四边形相应的顶点。绘制四边形时，这些值会按需要跨网格单元插值。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig10.jpg" alt="30fig10.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig10.jpg" rel="noreferrer noopener">图 30-10</a>　三角形与切片相交于以 与 为端点的线段。</figcaption></figure><p>这些四边形可以用一个作用于网格三角形的几何着色器生成：若交是线段则输出四个顶点，否则输出零个顶点。由于几何着色器不能输出四边形，我们必须改用两个三角形的三角带。要计算三角形与切片的交，我们把三角形的每条边与切片求交。若恰好找到两个边-切片交点，就把相应的交点作为线段的端点。这些点处的速度值通过在相应三角形边上做插值算出。代码清单 30-4 中的几何着色器 <code>GS_GEN_BOUNDARY_VELOCITY</code> 给出了该算法的一个实现。<a href="https://developer.download.nvidia.com/books/gpugems3/30fig12.jpg" rel="noreferrer noopener">图 30-12</a> 给出对<a href="https://developer.download.nvidia.com/books/gpugems3/30fig11.jpg" rel="noreferrer noopener">图 30-11</a> 中的模型做体素化后，体素体积的几个切片。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig11.jpg" alt="30fig11.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig11.jpg" rel="noreferrer noopener">图 30-11</a>　用简化几何体可以加速体素化</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig12.jpg" alt="30fig12.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig12.jpg" rel="noreferrer noopener">图 30-12</a>　对我们的体素化算法应用于 中的模型后所得三维纹理的切片。</figcaption></figure><h4>示例 30-4. 用于速度体素化的几何着色器</h4><pre><code>
+   // GS_GEN_BOUNDARY_VELOCITY:
+   // 输入：
+   //  - 一个三角形（3 个顶点），
+   //  - sliceIdx，
+   //  - sliceZ；
+   // 输出：
+   //  - 2 个三角形（若输入三角形与切片的交集
+   //    是一条线段）
+   //  - 否则 0 个三角形
+   // 这 2 个三角形沿线段构成宽度为 1 个
+   // 体素的四边形。
+[maxvertexcount (4)]
+void GS_GEN_BOUNDARY_VELOCITY(
+  triangle VsGenVelOutput input[3],
+  inout TriangleStream<GsGenVelOutput> triStream)
+{
+  GsGenVelOutput output;
+  output.RTIndex = sliceIdx;
+  float minZ = min(min(input[0].Pos.z, input[1].Pos.z), input[2].Pos.z);
+  float maxZ = max(max(input[0].Pos.z, input[1].Pos.z), input[2].Pos.z);
+  if((sliceZ < minZ) || (sliceZ > maxZ))
+    // 该三角形不与切片相交。
+   return;
+  GsGenVelIntVtx intersections[2];
+  for(int i=0; i<2; i++)
+  {
+    intersections[i].Pos = 0;
+    intersections[i].Velocity = 0;
+  }
+  int idx = 0;
+  if(idx < 2)
+    GetEdgePlaneIntersection(input[0], input[1], sliceZ,
+                             intersections, idx);
+  if(idx < 2)
+    GetEdgePlaneIntersection(input[1], input[2], sliceZ,
+                             intersections, idx);
+  if(idx < 2)
+    GetEdgePlaneIntersection(input[2], input[0], sliceZ,
+                             intersections, idx);
+  if(idx < 2)
+    return;
+  float sqrtOf2 = 1.414; // 一个像素的对角线
+   float2 normal = sqrtOf2 * normalize(
+    cross((input[1].Pos - input[0].Pos),
+          (input[2].Pos - input[0].Pos)).xy);
+  for(int i=0; i<2; i++)
+  {
+    output.Pos = float4(intersections[i].Pos, 0, 1);
+    output.Velocity = intersections[i].Velocity;
+    triStream.Append(output);
+    output.Pos = float4((intersections[i].Pos +
+                        (normal*projSpacePixDim)), 0, 1);
+    output.Velocity = intersections[i].Velocity;
+    triStream.Append(output);
+  }
+  triStream.RestartStrip();
+}
+void GetEdgePlaneIntersection(
+  VsGenVelOutput vA,
+  VsGenVelOutput vB,
+  float sliceZ,
+  inout GsGenVelIntVtx intersections[2],
+  inout int idx)
+{
+  float t = (sliceZ - vA.Pos.z) / (vB.Pos.z - vA.Pos.z);
+  if((t < 0) || (t > 1))
+    // 线-面交点不在这条边的两个端点
+   // （A 和 B）之内
+   return;
+    intersections[idx].Pos = lerp(vA.Pos, vB.Pos, t).xy;
+    intersections[idx].Velocity = lerp(vA.Velocity, vB.Velocity, t);
+    idx++;
+}</code></pre><p></p><h4>优化体素化</h4><p>体素化需要大量绘制调用，但用<em>流输出</em>可以提高效率（见 Blythe 2006）。流输出允许在体素化蒙皮角色这类形变网格时缓存整个变换后顶点的缓冲，而不必为每个切片重新计算这些变换。</p><p>此外，实例化可以用来在单次绘制调用里画出所有切片，而不必为每个切片单独调用一次。这种情况下可以用<em>实例 ID</em> 指定目标切片。</p><p>由于所用仿真网格相对粗糙，为每个障碍物使用低细节层次的网格是个好主意，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig11.jpg" rel="noreferrer noopener">图 30-11</a> 所示。使用简化模型让我们能每帧都做障碍物体素化，性能代价很小。</p><p>最后，若障碍物只经过简单的解析变换（而不是例如复杂的蒙皮操作），体素化可以预先算出，并在访问三维纹理时施加该变换的<em>逆</em>变换。一个简单例子是只做刚性平移与旋转的网格：用来访问内外纹理与障碍物速度纹理的纹理坐标，可以乘以相应变换矩阵的逆，从而取得合适的值。</p><h4>30.2.5 烟</h4><p>速度场虽然描述了流体的运动，但直接可视化时看起来不太像流体。要得到有趣的视觉效果，我们必须跟踪被流体推着走的额外量。例如，我们可以跟踪密度与温度来获得烟的外观（Fedkiw 等 2001）。对每个额外量 <em></em>，我们必须分配一张与网格尺寸相同的额外纹理。这张纹理中值的演化由与速度相同的平流方程控制：</p><p><img alt="0658equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0658equ01.jpg"/></p><p>换句话说，我们可以用演化速度时所用的同一个 MacCormack 平流例程。</p><p>例如，要得到<a href="https://developer.download.nvidia.com/books/gpugems3/30fig04.jpg" rel="noreferrer noopener">图 30-4</a> 中所见的那种效果，我们每帧向一张<em>颜色</em>纹理注入一个三维高斯「溅点」，作为「烟」的来源。这些颜色值没有真实的物理意义，但当它们被流体速度带着穿过整个体积时，会形成好看的旋涡图案。</p><p>要得到更符合物理的外观，我们必须确保热烟上升、冷烟下沉。为此需要跟踪流体温度 <em>T</em>（同样由 <strong>u</strong> 平流）。与颜色不同，温度值会影响流体的动力学。这种影响由<em>浮力</em>描述：</p><p><img alt="0659equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0659equ01.jpg"/></p><p>其中 <em>P</em> 是压力，<em>m</em> 是气体的摩尔质量，<em>g</em> 是重力加速度，<em>R</em> 是通用气体常数。实践中这些物理常数可以整体当成一个值，并通过调整它来获得想要的视觉效果。值 <em>T</em> <sub>0</sub> 是环境或「室温」温度，<em>T</em> 表示随流动被平流的温度值。<strong>z</strong> 是归一化的向上方向矢量。浮力应被视为「外力」，并在速度平流之后立刻加到速度场上。</p><h4>30.2.6 火</h4><p>火与烟差别不大，只是我们必须多存一个量，称为<em>反应坐标</em>，用来追踪气体被点燃后经过的时间。反应坐标为一表示气体刚被点燃，小于零表示燃料已完全耗尽。这些值的演化由下式描述（取自 Nguyen 等 2002）：</p><p><img alt="0659equ02.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0659equ02.jpg"/></p><p>换句话说，反应坐标随流动被平流，并在每个时间步减去一个常量（<em>k</em>）。实践中这个积分是通过把 <em>k</em> 的值传给平流例程（<code>PS_ADVECT_MACCORMACK</code>）完成的，该值被加到平流结果上。（只有在平流反应坐标时这个值才应非零。）反应坐标不影响流体的动力学，但之后会用于渲染（见 30.3 节）。</p><p><a href="https://developer.download.nvidia.com/books/gpugems3/30fig14.jpg" rel="noreferrer noopener">图 30-14</a>（在 30.2.10 节）展示了火的一种可能效果：每帧把球形区域内的反应坐标设为一，在体积底部附近持续生成一团燃料。关于火焰更进阶的处理，见 Nguyen 等 2002。</p><h4>30.2.7 水</h4><p>水的建模方式与前面讨论的流体现象不同。对火或烟，我们关心的是可视化贯穿整个体积的密度；而对水，视觉上有趣的部分是空气与液体之间的<em>界面</em>。</p><p>因此我们需要某种方式来表示这个界面，并跟踪它被流体速度推着走时如何变形。</p><p><em>水平集方法</em>（Sethian 1999）是液面的一种流行表示，也特别适合 GPU 实现，因为它只需要每个网格单元上的一个标量值。在水平集中，每个单元记录从单元中心到水面的<em>最短有符号距离</em> <em></em>。网格中的单元按 <em></em> 的值分类：若 <em></em> &lt; 0，该单元含水；否则含空气。<em></em> 等于零的地方正是水与空气交界处（<em>零集</em>）。由于平流不会保持水平集的距离场性质，常见做法是周期性地<em>重初始化</em>水平集。重初始化确保每个单元确实存的是到零集的最短距离。不过要单纯定义表面并不需要这个性质，对实时动画来说，不做重初始化也能得到不错的结果。本章开头的<a href="https://developer.download.nvidia.com/books/gpugems3/30fig01.jpg" rel="noreferrer noopener">图 30-1</a> 展示了结果质量。</p><p>与颜色、温度等属性一样，水平集被流体平流，但它也影响仿真的动力学。事实上，水平集<em>定义</em>了流体域：在水与空气的简单模型中，我们假定空气对液体的影响可忽略，并<em></em> ≥ 0 的地方都不做仿真。实践中这意味着在求解压力之前把液体外部压力设为零，只在液体单元中修改压力。这也意味着我们不在液体外部施加重力等外力。为确保只处理流体单元，我们在相关着色器中检查水平集纹理的值，若 <em>f</em> 的值高于某个阈值就屏蔽该单元的计算。两个可能更高效的替代方案是：用 z 剔除来排除单元（若 GPU 不支持动态流控制）（Sander 等 2004），以及使用稀疏数据结构（Lefohn 等 2004）。</p><h4>30.2.8 性能考量</h4><p>编写高效求解器的一大因素是带宽。每一帧动画里，求解器要运行大量算术上很简单的内核，内核之间数据必须与纹理内存来回传输。虽然这些内核大多表现出良好的局部性，带宽仍是主要问题：用 32 位浮点纹理存量，性能大约只有 16 位纹理的一半。意外的是，用 16 位存储几乎看不出视觉上的退化，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig13.jpg" rel="noreferrer noopener">图 30-13</a> 所示。注意算术运算仍以 32 位浮点执行，这意味着结果写入目标纹理时会被周期性截断。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig13.jpg" alt="30fig13.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig13.jpg" rel="noreferrer noopener">图 30-13</a>　分别用 16 位（）与 32 位（）浮点纹理存储所仿真的烟</figcaption></figure><p>有些情况下，为减少内存占用或图方便，人们会想把多个单元属性打包进一张纹理，但从内存带宽角度看这并不总是最优。例如假设我们把障碍物的内外信息与速度信息打包进一张 RGBA 纹理。迭代求解压力-泊松方程时，每帧都要多次加载内外值，而与此同时障碍物速度完全用不上。由于把这两张纹理打包在一起，会需要从内存传输四倍的字节数，也需要四倍的缓存空间，因此把障碍物的内外信息单独放在自己的标量纹理里可能更明智。</p><h4>30.2.9 存储</h4><p>表 30-1 给出仿真与渲染流体所需的部分存储量，合计为仿真每单元 41 字节、渲染每像素 20 字节。不过其中大部分存储只在仿真或渲染过程中临时需要，因此可以在多个流体仿真之间共享。<em>Hellgate: London</em> 中，我们把独占纹理（表中第三列）随每个烟的实例保存，而其余纹理（表中最后一列）创建为全局版本，由所有烟的仿真共享。</p><h4>表 30-1. 仿真与渲染流体所需的存储</h4><table><thead><tr><td></td><td><p>总空间</p></td><td><p>独占纹理</p></td><td><p>共享纹理</p></td></tr></thead><tbody><tr><td><p><strong>流体仿真</strong></p></td><td><p>每单元 32 字节</p></td><td><p>每单元 12 字节</p><p>1xRGBA16（速度）</p><p>2xR16（压力与密度）</p></td><td><p>每单元 20 字节</p><p>2xRGBA16（临时）</p><p>2xR16（临时）</p></td></tr><tr><td><p><strong>体素化</strong></p></td><td><p>每单元 9 字节</p></td><td><p>—</p></td><td><p>每单元 9 字节</p><p>1xRGBA16（速度）</p><p>1xR8（内外）</p></td></tr><tr><td><p><strong>渲染</strong></p></td><td><p>每像素 20 字节</p></td><td><p>—</p></td><td><p>离屏渲染目标每像素 20 字节</p><p>1xRGBA32（射线数据）</p><p>1xR32（场景深度）</p></td></tr></tbody></table><h4>30.2.10 数值问题</h4><p>由于实时应用要求极高，我们选择了仍能给出可接受视觉结果的最简单数值格式。但要注意，对高质量动画，更精确的替代方案更可取。</p><p>仿真中最昂贵的部分之一是求解压力-泊松系统 ∇<sup>2</sup> <em>p</em> = ∇ · <strong>u</strong>*。我们用 Jacobi 方法求解该系统，因为它容易在 GPU 上高效实现。不过还有几种合适的求解器已在 GPU 上实现，包括共轭梯度法（Bolz 等 2003）与多重网格法（Goodnight 等 2003）。循环归约是特别有意思的一个选项，因为它是直接法，且能利用带状系统（Kass 等 2006）。选择迭代求解器时，值得考虑的不只是总体收敛速度，还有残差中不同<em>空间频率</em>的收敛速度（Briggs 等 2000）。由于实时应用里可能没有足够时间达到收敛，频率的分布会对解的观感产生一定影响。</p><p>理想情况下我们希望精确求解压力-泊松系统，以满足不可压缩约束并保持流体体积。不过对烟和火这类流体，体积变化并不总会产生令人反感的视觉瑕疵。因此我们可以按可用资源调整求解该系统时的迭代次数。<a href="https://developer.download.nvidia.com/books/gpugems3/30fig14.jpg" rel="noreferrer noopener">图 30-14</a> 比较了用不同 Jacobi 迭代次数时火焰的观感。动态观看时，只用少量迭代会让旋转的涡稍微更「摊平」一些，但整体观感非常相似。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig14.jpg" alt="30fig14.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig14.jpg" rel="noreferrer noopener">图 30-14</a>　压力求解分别用 20 次（）与 1,000 次（）Jacobi 迭代的火仿真</figcaption></figure><p>关于 GPGPU 性能问题更详尽的讨论，见 Pharr 2005。</p><p>另一方面，对液体来说体积变化会立刻显现：流体看起来要么凭空涌出，要么整个消失！即便只是水箱里静置的水，若用于求解压力的迭代次数太少也可能出问题：因为信息无法从箱底传到水面，箱底的压力就无法抵消重力。结果水会缓慢地穿过箱底沉下去，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig15.jpg" rel="noreferrer noopener">图 30-15</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig15.jpg" alt="30fig15.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig15.jpg" rel="noreferrer noopener">图 30-15</a>　未经修正的水仿真</figcaption></figure><p>遗憾的是，在实时应用里并不总能精确求解 <em>p</em>（无论用哪种求解器），因为计算时间受目标帧率与其他并发进程资源需求的约束。在已知液体应趋于静态平衡的简单情形下，我们可以用下列方式操控水平集来强制得到正确行为：</p><p><img alt="0664equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/0664equ01.jpg"/></p><p>这里 <em></em> <sup>∞</sup> 是一个水平集，其零集告诉我们：若让液体静置很长时间，表面<em>应该</em>是什么样子。例如一箱水的平衡水平集就是 <em>f</em> <sup>∞</sup> (<em>x</em>, <em>y</em>, <em>z</em>) = <em>y</em> - <em>h</em>，其中 <em>y</em> 是离箱底的垂直距离，<em>h</em> 是期望的水高。见 <a href="https://developer.download.nvidia.com/books/gpugems3/30fig16.jpg" rel="noreferrer noopener"></a>图 30-16。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig16.jpg" alt="30fig16.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig16.jpg" rel="noreferrer noopener">图 30-16</a>　组合水平集以对抗低收敛速度</figcaption></figure><p>函数 <em>A</em> 是平流算子，参数 <em></em>∊ [0, 1] 控制对平流所得解施加的<em>阻尼</em>量。<em>b</em> 取较大值允许更少的求解迭代，但也降低流体的活泼程度。注意这种阻尼只施加在域中 <em></em> <sup>∞</sup> 为<em>负</em>的区域——这让飞溅在平衡解域之外保持活泼，尽管它可能导致暂时的体积<em>增加</em>。</p><p>然而归根到底，这种对水平集的非物理操控只是一种权宜手段，使用时应审慎考虑。设想一个环境：玩家用碗舀起水，然后把碗放在桌上任意位置——我们事先并不知道平衡水平集应该是什么样，因此无法阻止水从碗底漏下去。</p><h2>30.3 渲染</h2><h4>30.3.1 体绘制</h4><p>仿真的结果是存在三维纹理里的一组值。然而 Direct3D 或 OpenGL 都没有直接显示这张纹理的机制。因此我们用<em>光线步进</em>像素着色器来渲染流体。我们的做法与 Scharsach 2005 所述非常接近。</p><p>流体在场景中的位置由六个四边形确定，它们表示仿真体积的各个面。这些四边形被画进延迟着色缓冲，以确定射线应从何处、以何种方式投射。然后我们让射线穿过体积步进，从三维纹理累积密度来渲染流体，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig17.jpg" rel="noreferrer noopener">图 30-17</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig17.jpg" alt="30fig17.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig17.jpg" rel="noreferrer noopener">图 30-17</a>　光线投射的概念概览</figcaption></figure><h4>体光线投射</h4><p>要投射一条射线，我们需要知道它从何处进入体积、朝哪个方向行进、以及取多少个采样。获得这些值的一种方法是在光线步进着色器里做若干次射线-平面求交。不过预先算出这些值并存入纹理，更容易做正确的合成与裁剪（本节后文会详述），这也是我们这里采用的做法。作为一个预遍，我们生成一张屏幕尺寸的纹理，称为 <em>RayData</em> 纹理，它为每个要渲染的像素编码射线在纹理空间中的进入点，以及射线穿过体积的深度。为得到穿过体积的深度，我们先用一个着色器绘制体积的背面，把从眼到片元位置的距离（在视图空间中）输出到 alpha 通道。然后我们在正面上运行类似的着色器，但用公式 1 启用减性混合。此外，为得到射线的进入点，我们还在 RGB 通道中输出正面所生成的每个片元的纹理空间坐标。</p><p><strong>公式 1</strong></p><p><a><img alt="equ30-1.jpg" src="https://developer.download.nvidia.com/books/gpugems3/equ30-1.jpg"/></a></p><p>要渲染体积，我们用一个光线步进着色器画一个全屏四边形。这个着色器查询 <em>RayData</em> 纹理，找出需要做光线投射的像素，以及这些像素的射线进入点与穿过体积的步进距离。光线步进着色器所用的采样数与步进距离成正比（我们用的步长等于半个体素）。射线方向由从眼到进入点的矢量给出（两者都在纹理空间中）。沿射线每一步，我们从存有仿真值的纹理中采样，并按公式 2 从前到后混合。由于是从前到后混合，若颜色饱和就可以提前终止光线投射（若 <em>FinalColor.a</em> &gt; 0.99 就退出）。关于更基于物理的渲染模型，见 Fedkiw 等 2001。</p><p><strong>公式 2</strong></p><p><a><img alt="equ30-2.jpg" src="https://developer.download.nvidia.com/books/gpugems3/equ30-2.jpg"/></a></p><h4>合成</h4><p>到此所述的光线步进算法有两个问题。第一，即使射线遇到场景中的其它几何体，它们仍会继续穿过体积。见<a href="https://developer.download.nvidia.com/books/gpugems3/30fig18.jpg" rel="noreferrer noopener">图 30-18</a> 右侧的示意。第二，即使体积的某些部分被完全遮挡，射线仍会被追踪，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig18.jpg" rel="noreferrer noopener">图 30-18</a> 左侧所示。不过我们可以修改体积深度的计算方式，使步进只穿过网格中相关的部分。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig18.jpg" alt="30fig18.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig18.jpg" rel="noreferrer noopener">图 30-18</a>　按场景深度裁剪射线以考虑遮挡</figcaption></figure><p>此前我们用体积背面的距离来决定光线步进应在何处终止。要处理与体积相交的障碍物，我们改用<em>背面距离</em>与<em>场景距离</em>（即眼到场景中最近障碍物的距离）中的较小者。场景距离可以通过读取场景深度并反投影回视图空间，求出眼到场景的距离。若在像素着色器中无法把深度缓冲作为纹理读取（Direct3D 10 使用多重采样抗锯齿时就是如此），可以在主场景渲染遍中用多渲染目标算出这个距离；我们采用的就是这种做法。</p><p>要处理场景几何体完全遮挡体积一部分的情形，我们把正面片元的距离与<em>场景距离</em>作比较。若正面距离大于场景距离（即该片元被遮挡），我们在红通道输出一个很大的负值。这样，为 <em>RayData</em> 纹理中相应纹素算出的最终纹理空间位置就会落在体积之外，于是沿相应射线不会取任何采样。</p><h4>裁剪</h4><p>我们还需要修改光线步进算法，以处理相机位于流体体积<em>内部</em>、且相机近平面裁掉了体积部分正面的情形，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig19.jpg" rel="noreferrer noopener">图 30-19</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig19.jpg" alt="30fig19.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig19.jpg" rel="noreferrer noopener">图 30-19</a>　流体体积的一部分可能被近平面裁掉</figcaption></figure><p>在正面被裁掉的区域，我们不知道射线从何处进入体积，而且体积深度的值也是错的。</p><p>要处理这些区域，我们标记出那些渲染了体积背面、却没渲染正面的像素。做法是在把流体体积背面渲染到 <em>RayData</em> 纹理时，往绿通道写入一个负的颜色值。注意在渲染正面或背面之前，<em>RayData</em> 纹理都被清为零。由于我们用 alpha 混合渲染正面时（公式 1）不使用目标颜色的 RGB 值，渲染正面之后绿通道含负颜色的像素，就是那些渲染了流体体积背面却没渲染正面（因裁剪）的像素。在光线投射着色器中，我们把这些被标记像素的位置显式初始化为近平面上相应点的纹理空间位置。我们还修正从 <em>RayData</em> 纹理读到的深度值，减去从眼到近平面上相应点的距离。</p><h4>滤波</h4><p>到此所述的光线步进算法有若干可见瑕疵。其中一种是<em>条带</em>，它来自使用整数个等间距采样。当流体体积内的场景深度值变化剧烈时，这种瑕疵尤其明显，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig20.jpg" rel="noreferrer noopener">图 30-20</a> 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig20.jpg" alt="30fig20.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig20.jpg" rel="noreferrer noopener">图 30-20</a>　处理条带</figcaption></figure><p>为抑制条带，我们比所需多取一个采样，并按 <em>d/sampleWidth</em> 对其在最终颜色中的贡献加权，如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig21.jpg" rel="noreferrer noopener">图 30-21</a> 所示。图中 <em>d</em> 是该片元处的场景距离与射线在最后一个采样处已走过的总距离之差，<em>sampleWidth</em> 是沿射线的典型步长。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig21.jpg" alt="30fig21.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig21.jpg" rel="noreferrer noopener">图 30-21</a>　通过多取一个加权采样来减轻条带</figcaption></figure><p>不过条带通常仍会在某种程度上存在，而且当体积密度或密度到颜色的映射（称为<em>传输函数</em>）出现高频变化时，条带会变得更明显。这个众所周知的问题在 Hadwiger 2004 以及 Sigg 和 Hadwiger 2005 中有讨论。常见解法包括提高采样频率、沿射线方向抖动采样位置，或在采样体积时使用更高阶的滤波器。通常最好把其中几种技术结合起来，以找到性能与质量之间的良好权衡。在 <em>Hellgate: London</em> 中，我们使用了频率为每体素两次的三线性抖动采样。</p><h4>离屏光线步进</h4><p>若仿真网格的分辨率相对屏幕分辨率偏低，以高分辨率做光线投射几乎没有视觉收益。我们改为把流体画进较小的离屏渲染目标，再把结果合成进最终图像。除图像中场景几何体存在尖锐深度不连续的区域（如<a href="https://developer.download.nvidia.com/books/gpugems3/30fig22.jpg" rel="noreferrer noopener">图 30-22</a> 所示）以及相机裁掉流体体积的地方之外，这种做法的效果都不错。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems3/30fig22.jpg" alt="30fig22.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems3/30fig22.jpg" rel="noreferrer noopener">图 30-22</a>　修正低分辨率离屏渲染引入的瑕疵</figcaption></figure><p>这个问题在本书第 23 章 Iain Cantlay 的「高速离屏粒子」中有深入讨论。在 <em>Hellgate: London</em> 中，我们采用与该章类似的做法：大部分烟以低分辨率绘制，但问题区域的像素以屏幕分辨率渲染。我们通过对本节前面算出的 <em>RayData</em> 纹理运行边缘检测滤波来找这些区域。具体来说，我们对该纹理的 alpha 通道（找与体积相交的障碍物边缘）、红通道（找遮挡体积的障碍物边缘）与绿通道（找相机近平面裁切体积处的边缘）分别运行 Sobel 边缘检测滤波。</p><h4>火</h4><p>渲染火与渲染烟类似，只是步进时不混合各值，而是<em>累积</em>由反应坐标 <em>Y</em>（而非烟密度）决定的值（见 30.2.6 节）。具体来说，我们使用一张由美术定义的、把反应坐标映射到颜色的一维纹理，从而得到火的外观。关于火渲染更基于物理的讨论，见 Nguyen 等 2002。</p><p>如有需要，火体积也可以用作光源。最简单的做法是在若干位置对体积采样，把每个采样当作一个点光源。反应坐标与一维颜色纹理可用来确定光的强度与颜色。不过若点采样数不足，这种做法会导致严重闪烁，而且可能抓不住光的整体行为。另一种做法是把反应坐标纹理降采样到极低分辨率，然后把<em>每个</em>体素都当作光源。后一种做法不易闪烁，但抓不住任何高频光照效果（例如火花引起的局部光照）。</p><h4>30.3.2 渲染液体</h4><p>要渲染液面，我们同样步进穿过一个体积，但这次查看的是水平集 <em></em> 的值。我们不在步进时积分各值，而是寻找射线上第一个 <em></em> = 0 的位置。找到该点后，我们像着色任何其它表面片元那样给它着色，用该点处的 ∇<em>f</em> 近似着色法线。对水而言，尤其重要的是不能看到网格分辨率的痕迹，所以我们用三三次插值来滤波这些值。本章开头的<a href="https://developer.download.nvidia.com/books/gpugems3/30fig01.jpg" rel="noreferrer noopener">图 30-1</a> 展示了渲染结果。关于如何在 GPU 上快速求交并滤波水平集这类体积等值面数据，细节见 Sigg 和 Hadwiger 2005 以及 Hadwiger 等 2005。</p><h4>折射</h4><p>对水这类流体，有几种方式可让表面看起来像在折射其后的物体。光线追踪是一种可能，但投射射线开销大，而且可能无法求到与其它场景几何体的交点。我们改用一种近似，能给人折射的印象，实现起来又快又简单。</p><p>首先，我们把流体体积后面的物体渲染进一张背景纹理。</p><p>接着，我们通过步进穿过体积，为每个像素求出与水面的最近射线交点。这产生一对纹理，分别存放命中位置与着色法线；存放命中位置的纹理中，若某像素没有射线-表面交点，其 alpha 值设为零，否则设为一。然后我们用一张使用背景纹理的折射着色器给这些命中点着色。最后加入前景物体，形成最终图像。</p><p>折射的外观是这样得到的：在背景图像中查找被着色点附近的一个像素，把它的值作为折射颜色。这个折射颜色随后照常用于着色方程。更确切地说，这个背景像素是在纹理坐标 <strong>t</strong> 处访问的，该坐标等于被着色像素的位置 <strong>p</strong> 加上一个矢量，该矢量与表面法线 <strong>N</strong> 在图像平面上的投影成正比。换句话说，若 <strong>P</strong> <em><sub>h</sub></em> 与 <strong>P</strong> <em><sub>v</sub></em> 是与视口朝向一致、用于图像平面的一组正交基，则</p><table><tbody><tr><td><p><strong>t</strong> = <strong>p - </strong>(<strong>N · P</strong> <sub>h</sub> <strong>,</strong> <strong>N · P</strong> <sub>v</sub>),</p></td></tr></tbody></table><p>其中 <em></em> &gt; 0 是控制效果强度的标量参数。矢量 <strong>P</strong> <em><sub>v</sub></em> 与 <strong>P</strong> <em><sub>h</sub></em> 定义为</p><p><img alt="672equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems3/672equ01.jpg"/></p><p>其中 <strong>z</strong> 向上，<strong>V</strong> 是视线方向。</p><p>把这一变换施加到纹理坐标上的效果是：表面凸起区域会放大其后的图像，凹陷区域会缩小图像，而（相对观察者）平坦的区域则让光线径直穿过。</p><h2>30.4 结论</h2><p>本章我们希望已说明，基于物理的流体动画是创建交互式环境的有价值工具，并提供了开始开发实用实现所需的一些基本构件。然而这绝非终点：我们略去了流体动画大量可能方向的讨论，包括融化（Carlson 等 2002）、粘弹性流体（Goktekin 等 2004）与多相流（Lossasso 等 2006）。我们也略去了若干有趣数据结构与算法的讨论，例如稀疏水平集（Lefohn 等 2004），它可能显著提升仿真性能；以及基于网格的表面提取（Ziegler 等 2006），它可能让液体渲染更高效。</p><h2>30.5 参考文献</h2><p>Blythe, David. 2006. "The Direct3D 10 System."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2006)</em> 25(3)，第 724–734 页。</p><p>Bolz, J., I. Farmer, E. Grinspun, and P. Schröder. 2003. "Sparse Matrix Solvers on the GPU: Conjugate Gradients and Multigrid.<strong>"</strong>，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2003)</em> 22(3)，第 917–924 页。</p><p>Bridson R., R. Fedkiw, and M. Muller-Fischer. 2006. "Fluid Simulation." SIGGRAPH 2006 课程讲义。载 <em>ACM SIGGRAPH 2006 Courses</em>。</p><p>Briggs, William L., Van Emden Henson, and Steve F. McCormick. 2000. <em>A Multigrid Tutorial</em>. Society for Industrial and Applied Mathematics 出版。</p><p>Carlson, M., P. Mucha, R. Van Horn, and G. Turk. 2002. "Melting and Flowing."，载 <em>Proceedings of the ACM SIGGRAPH/Eurographics Symposium on Computer Animation</em>。</p><p>Fang, S., and H. Chen. 2000. "Hardware Accelerated Voxelization."，载 <em>Computers and Graphics</em> 24(3)，pp. 433–442。</p><p>Fedkiw, R., J. Stam, and H. W. Jensen. 2001. "Visual Simulation of Smoke."，载 <em>Proceedings of SIGGRAPH 2001</em>，pp. 15–22。</p><p>Foster, N., and R. Fedkiw. 2001. "Practical Animation of Liquids."，载 <em>Proceedings of SIGGRAPH 2001</em>。</p><p>Goktekin, T. G., A.W. Bargteil, and J. F. O'Brien. 2004. "A Method for Animating Viscoelastic Fluids."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2004)</em> 23(3)。</p><p>Goodnight, N., C. Woolley, G. Lewin, D. Luebke, and G. Humphreys. 2003. "A Multigrid Solver for Boundary Value Problems Using Programmable Graphics Hardware."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，pp. 102–111。</p><p>Hadwiger, M. 2004. "High-Quality Visualization and Filtering of Textures and Segmented Volume Data on Consumer Graphics Hardware." 博士论文。</p><p>Hadwiger, M., C. Sigg, H. Scharsach, K. Buhler, and M. Gross. 2005. "Real-time Ray-casting and Advanced Shading of Discrete Isosurfaces."，载 <em>Proceedings of Eurographics 2005</em>。</p><p>Harlow, F., and J. Welch. 1965. "Numerical Calculation of Time-Dependent Viscous Incompressible Flow of Fluid with Free Surface." <em>Physics of Fluids</em> 8，第 2182–2189 页。</p><p>Harris, Mark J. 2004. "Fast Fluid Dynamics Simulation on the GPU."，载 <em>GPU Gems</em>，Randima Fernando 编，第 637–665 页，Addison-Wesley 出版。</p><p>Harris, Mark, William Baxter, Thorsten Scheuermann, and Anselmo Lastra. 2003. "Simulation of Cloud Dynamics on Graphics Hardware."，载 <em>Proceedings of the SIGGRAPH/Eurographics Workshop on Graphics Hardware 2003</em>，第 92–101 页。</p><p>Kass, Michael, Aaron Lefohn, and John Owens. 2006. "Interactive Depth of Field Using Simulated Diffusion on a GPU."，技术报告，Pixar Animation Studios。可在线获取：<a href="http://graphics.pixar.com/DepthOfField/paper.pdf" rel="noreferrer noopener">http://graphics.pixar.com/DepthOfField/paper.pdf</a>。</p><p>Krüger, Jens, and Rüdiger Westermann. 2003. "Linear Algebra Operators for GPU Implementation of Numerical Algorithms."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2003)</em> 22(3)，第 908–916 页。</p><p>Lefohn, A. E., J. M. Kniss, C. D. Hansen, and R. T. Whitaker. 2004. "A Streaming Narrow-Band Algorithm: Interactive Deformation and Visualization of Level Sets."，载 <em>IEEE Transactions on Visualization and Computer Graphics</em> 10(2)，第 10 卷第 2 期。</p><p>Li, Wei, Zhe Fan, Xiaoming Wei, and Arie Kaufman. 2005. "Flow Simulation with Complex Boundaries."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 747–764 页，Addison-Wesley 出版。</p><p>Liu, Y., X. Liu, and E. Wu. 2004. "Real-Time 3D Fluid Simulation on GPU with Complex Obstacles."，载 <em>Computer Graphics and Applications</em>。</p><p>Lossasso, F., T. Shinar, A. Selle, and R. Fedkiw. 2006. "Multiple Interacting Liquids."，载 <em>ACM Transactions on Graphics (Proceedings of ACM SIGGRAPH 2006)</em> 25(3)。</p><p>Müller, Matthias, David Charypar, and Markus Gross. 2003. "Particle-Based Fluid Simulation for Interactive Applications."，载 <em>Proceedings of the 2003 ACM SIGGRAPH/Eurographics Symposium on Computer Animation</em>，第 154–159 页。</p><p>Nguyen, D., R. Fedkiw, and H. W. Jensen. 2002. "Physically Based Modeling and Animation of Fire."，载 <em>ACM Transactions on Graphics (Proceedings of SIGGRAPH 2002)</em> 21(3)。</p><p>Pharr, Matt, ed. 2005. "Part IV: General-Purpose Computation on GPUs: A Primer."，载 <em>GPU Gems 2</em>。Addison-Wesley 出版。</p><p>Sander, P. V., N. Tatarchuk, and J. Mitchell. 2004. "Explicit Early-Z Culling for Efficient Fluid Flow Simulation and Rendering." ATI 技术报告。</p><p>Scharsach, H. 2005. "Advanced GPU Raycasting."，载 <em>Proceedings of CESCG 2005</em>。</p><p>Selle, A., R. Fedkiw, B. Kim, Y. Liu, and J. Rossignac. 2007. "An Unconditionally Stable MacCormack Method." <em>Journal of Scientific Computing</em>（审稿中）。可在线获取：<a href="http://graphics.stanford.edu/~fedkiw/papers/stanford2006-09.pdf" rel="noreferrer noopener">http://graphics.stanford.edu/~fedkiw/papers/stanford2006-09.pdf</a>。</p><p>Sethian, J. A. 1999. <em>Level Set Methods and Fast Marching Methods: Evolving Interfaces in Computational Geometry, Fluid Mechanics, Computer Vision, and Materials Science</em>. Cambridge University Press 出版。</p><p>Sigg, Christian, and Markus Hadwiger. 2005. "Fast Third-Order Texture Filtering."，载 <em>GPU Gems 2</em>，Matt Pharr 编，第 307–329 页，Addison-Wesley 出版。</p><p>Stam, Jos. 1999. "Stable Fluids."，载 <em>Proceedings of SIGGRAPH 99</em>，第 121–128 页。</p><p>Wu, E., Y. Liu, and X. Liu. 2004. "An Improved Study of Real-Time Fluid Simulation on GPU."，载 <em>Computer Animation and Virtual Worlds</em> 15(3–4)，第 139–146 页。</p><p>Ziegler, G., A. Trevs, C. Theobalt, and H.-P. Seidel. 2006. "GPU PointList Generation using HistoPyramids."，载 <em>Proceedings of Vision Modeling &amp; Visualization 2006</em>。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-30-real-time-simulation-and-rendering-3d-fluids" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-30-real-time-simulation-and-rendering-3d-fluids</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

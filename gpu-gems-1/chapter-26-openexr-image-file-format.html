@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 26 章　OpenEXR 图像文件格式 - GPU Gems</title>
+<meta name="description" content="GPU Gems 章节「第 26 章　OpenEXR 图像文件格式」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 26 章　OpenEXR 图像文件格式</h1>
+<p><em>Florian Kainz<br> Industrial Light &amp; Magic</em></p><p><em>Rod Bogart<br> Industrial Light &amp; Magic</em></p><p><em>Drew Hess<br> Industrial Light &amp; Magic</em></p><p>在 GPU 上生成的多数图像都是转瞬即逝的，只存在几分之一秒。但偶尔你会做出值得保留的图像。这时最好把它存成一种图像文件格式，既保留 NVIDIA <code>half</code> 类型所能达到的高动态范围，又能存储额外的数据通道。</p><p>本章介绍 OpenEXR 图像文件格式，给出读写 GPU 图像缓冲的示例，并讨论与图像显示相关的问题。</p><h2>26.1 什么是 OpenEXR？</h2><p>OpenEXR 是由 Industrial Light &amp; Magic（ILM）开发的高动态范围图像文件格式，用于计算机成像应用。OpenEXR 网站 <a href="http://www.openexr.org" rel="noreferrer noopener">www.openexr.org</a> 有关于该图像文件格式本身的完整细节。本节概述其中用于存储高动态范围图像的一些关键特性。</p><h4>26.1.1 高动态范围图像</h4><p>计算机显示器和视频投影仪这类数字图像显示设备，动态范围通常约为 500:1。这意味着图像中最亮的像素永远不会比最暗的像素亮 500 倍以上。</p><p>多数图像文件格式的设计都与典型显示器的动态范围相匹配：像素中存储的值从代表「黑」的 0.0 到代表显示器最大强度即「白」的 1.0。为使图像文件尽量小，像素值通常编码为八位或十位整数（分别为 0–255 或 0–1023），恰好足以匹配显示器的精度。</p><p>只要我们只想在显示器上呈现图像，动态范围为 0 到 1 的文件格式就够了。存储比显示器白色更亮的像素没有意义，存储比显示器能重现的精度更高的像素也一样。</p><p>然而，如果我们打算处理图像，或者想把图像用作 3D 渲染的环境贴图，那么图像文件中最好有更多信息。像素应以高于典型八位或十位的精度存储，且像素值的可能范围实质上不应受限。允许存储 0 到 1 范围之外像素值的文件格式称为<em>高动态范围</em>（HDR）格式。通过对 HDR 数据做图像处理、只在显示时量化到更少位数，就能呈现质量最好的图像。</p><p>这里有一个简单的例子，说明为什么高动态范围对图像处理有利（HDR 图像的其他应用见 26.6 节）。</p><p>图 26-1 是一幅动态范围相当高的场景照片。在原始场景中，左侧油灯的火焰比中央小碟子下方的阴影亮约 100,000 倍。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig26-01.jpg" alt="fig26-01.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig26-01.jpg" rel="noreferrer noopener">图 26-1</a> 高动态范围的场景</figcaption></figure><p>这幅图像的曝光方式使某些区域亮于 1.0。在计算机显示器上，这些区域被截断，显示为白色或不自然的高饱和橙色。</p><p>我们也许可以试着把图像调暗来修正白色和橙色区域。然而，如果原图存成了低动态范围的文件格式，例如 JPEG，调暗后会产生相当难看的图像。火焰周围区域变成灰色，如图 26-2。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig26-02.jpg" alt="fig26-02.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig26-02.jpg" rel="noreferrer noopener">图 26-2</a> 调暗后的版本</figcaption></figure><p>如果原图存成了 OpenEXR 这类 HDR 文件格式，保留了明亮的像素值而不是在 1.0 处截断，那么调暗后的图像看起来仍然自然。参见图 26-3。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig26-03.jpg" alt="fig26-03.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig26-03.jpg" rel="noreferrer noopener">图 26-3</a> 调暗后的高动态范围版本</figcaption></figure><h4>26.1.2 一种「half」格式</h4><p>2003 年初，ILM 发布了一种新的 HDR 文件格式，其颜色分量值为 16 位浮点。由于 IEEE 754 浮点规范并未定义 16 位格式，ILM 创建了一种与 NVIDIA 的 16 位格式相匹配的 <code>half</code> 格式。<code>half</code> 类型为高动态范围图像内容提供了极佳的存储结构。该类型在 OpenEXR 格式中得到直接支持。</p><p>16 位即「半精度」浮点格式，是仿照 IEEE 754 单精度和双精度格式设计的。一个半精度数由符号位、5 位指数和 10 位尾数组成。最小和最大的指数值被保留用于表示零、非规格化数、无穷大和 NaN。</p><p>在 OpenEXR 的 C++ 实现中，<code>half</code> 类型的数通常表现得像 C++ 内建的浮点类型 <code>float</code> 与 <code>double</code>。<code>half</code>、<code>float</code> 与 <code>double</code> 类型可以在算术表达式中自由混用。下面举几个例子：</p><pre><code>half a(3.5);
+float b(a + sqrt(a));
+a += b;
+b += a;
+b = a + 7;</code></pre><h4>26.1.3 可表示的数值范围</h4><p><code>half</code> 最明显的好处是仅用 16 位就能表示的数值范围。我们可以存储最大 65504.0、最小 5.96<sup>–8</sup> 的图像值。这是万亿比一的动态范围。需要这个范围的图像极为罕见，但百万比一范围的图像确实存在，因此用 <code>half</code> 表示绰绰有余。</p><p>摄影师用<em>档</em>来度量动态范围，一档是 2 的因子。在五档范围的图像中，最亮区域比最暗区域亮 32 倍。百万比一的范围按摄影术语说是 20 档。</p><h4>26.1.4 颜色分辨率</h4><p><code>half</code> 第二个不那么明显的好处是颜色分辨率。每一档包含 1024 个不同的值。这使得 OpenEXR 对普通动态范围的图像同样出色。在一幅从 1.0 到 0.0039（即 2<sup>–8</sup>）的八档图像中，<code>half</code> 格式每通道可提供 8192 个值，而八位、伽马 2.2 的图像只有 235 个值（21 到 255）。</p><h4>26.1.5 C++ 接口</h4><p>为了让读写 OpenEXR 文件变得容易，ILM 在设计文件格式的同时设计了 C++ 编程接口。OpenEXR 提供三个层次的图像文件访问：(1) 用于读写任意图像通道集合的通用接口；(2) 专用于 RGBA（红、绿、蓝、alpha 通道，或其某个子集）的接口；(3) 支持用 C 语言编写的程序读写 OpenEXR 文件的 C 可调用版本编程接口。</p><p>本章的示例使用 RGBA C++ 接口。</p><h2>26.2 OpenEXR 文件结构</h2><p>一个 OpenEXR 文件由两个主要部分组成：文件头与像素。</p><h4>26.2.1 文件头</h4><p>文件头是一组描述像素的属性列表。属性是任意类型的有名数据项。为了让一个程序写出的 OpenEXR 文件能被其他程序读取，所有 OpenEXR 文件头中都必须包含某些必需的属性。这些属性列于表 26-1。</p><h4>表 26-1. OpenEXR 文件头中的必需属性</h4><table><thead><tr><td><p>名称</p></td><td><p>说明</p></td></tr></thead><tbody><tr><td><p><code>displayWindow</code></p></td><td><p>图像的分辨率 <sup><a href="https://developer.download.nvidia.com/books/gpugems/ch261.html" rel="noreferrer noopener">[1]</a></sup></p></td></tr><tr><td><p><code>dataWindow</code></p></td><td><p>裁剪与偏移</p></td></tr><tr><td><p><code>pixelAspectRatio</code></p></td><td><p>图像以正确宽高比显示时，一个像素的宽度除以高度</p></td></tr><tr><td><p><code>channels</code></p></td><td><p>文件中存储的图像通道的说明</p></td></tr><tr><td><p><code>compression</code></p></td><td><p>施加于文件中所有通道像素数据的压缩方法</p></td></tr><tr><td><p><code>lineOrder</code></p></td><td><p>扫描线在文件中存储的顺序（<em>y</em> 递增或 <em>y</em> 递减）</p></td></tr><tr><td><p><code>screenWindowWidth, screenWindowCenter</code></p></td><td><p>生成该图像所用的透视投影</p></td></tr></tbody></table><p>除必需属性外，程序还可以在文件头中加入可选属性。常常需要用额外数据标注图像以适应特定应用，例如计算历史、颜色配置文件信息，或相机位置与视线方向。这些数据可以作为额外属性打包进图像文件的文件头。</p><h4>26.2.2 像素</h4><p>图像的像素按独立通道存储。使用通用库接口，你可以写 RGBA 以及任意多个附加通道。每个通道可以有不同的数据类型，所以 RGBA 数据可以用 <code>half</code>（16 位），而 z 深度通道可以写成 <code>float</code>（32 位）。</p><h2>26.3 OpenEXR 数据压缩</h2><p>OpenEXR 提供三种不同的数据压缩方法，各有速度与压缩比之间的不同权衡。如表 26-2 所列，三种压缩方案都是无损的；压缩与解压不会改变像素数据。</p><h4>表 26-2. OpenEXR 支持的压缩选项</h4><table><thead><tr><td><p>名称</p></td><td><p>说明</p></td></tr></thead><tbody><tr><td><p>PIZ</p></td><td><p>对像素数据施加小波变换，再对结果做 Huffman 编码。这种方案往往能为照片类图像提供最好的压缩比。压缩与解压速度大致相当。对于带胶片颗粒的照片图像，文件可缩到未压缩大小的 35% 至 55%。</p></td></tr><tr><td><p>ZIP</p></td><td><p>使用开源 zlib 库压缩水平相邻像素之间的差值。ZIP 解压比 PIZ 解压快，但 ZIP 压缩明显更慢。压缩后的照片图像往往是未压缩大小的 45% 至 55%。</p></td></tr><tr><td><p>RLE</p></td><td><p>对水平相邻像素之间的差值做游程编码。这种方法快，对有大片平坦区域的图像效果很好。不过对照片图像，压缩后的文件大小通常是未压缩大小的 60% 至 75%。</p></td></tr></tbody></table><p>也可以选择以未压缩形式存储像素。如果存放在快速文件系统上，未压缩文件的写入和读取可以明显快于压缩文件。</p><h2>26.4 使用 OpenEXR</h2><p>本书的电子材料包含一个简单图像回放程序的完整源码，以及相关的 Cg 着色器代码。</p><p>本节给出代码摘录，演示读取 OpenEXR 图像文件、用 OpenGL 显示图像缓冲、执行一次简单的合成操作，以及把结果写入 OpenEXR 文件。</p><h4>26.4.1 读取与显示 OpenEXR 图像</h4><p>代码清单 26-1 的简单代码把 OpenEXR 文件读入内部图像缓冲。注意 OpenEXR 库使用异常，因此「文件未找到」这类错误在 catch 块中处理。无需显式关闭文件，因为 <code>RgbaInputFile</code> 对象的 C++ 析构函数会关闭它。</p><h4>例 26-1. 读取 OpenEXR 图像文件</h4><pre><code>Imf::Rgba *pixelBuffer;
+try
+{
+  Imf::RgbaInputFile in(fileName);
+  Imath::Box2i win = in.dataWindow();
+  Imath::V2i dim(win.max.x - win.min.x + 1, win.max.y - win.min.y + 1);
+  pixelBuffer = new Imf::Rgba[dim.x * dim.y];
+  int dx = win.min.x;
+  int dy = win.min.y;
+  in.setFrameBuffer(pixelBuffer - dx - dy * dim.x, 1, dim.x);
+  in.readPixels(win.min.y, win.max.y);
+}
+catch (Iex::BaseExc &e)
+{
+  std::cerr < < e.what() < < std::endl;
+  //
+  // 处理异常。
+  //
+}</code></pre><p>缓冲填满后，代码清单 26-2 的代码段把图像绑定到纹理，以便用 Cg 片元着色器显示（详见 26.5 节）。完整程序调用这段显示代码来播放多帧。</p><h4>例 26-2. 把图像绑定到纹理</h4><pre><code>GLenum target = GL_TEXTURE_RECTANGLE_NV;
+glGenTextures(2, imageTexture);
+glBindTexture(target, imageTexture);
+glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+glTexImage2D(target, 0, GL_FLOAT_RGBA16_NV, dim.x, dim.y, 0, GL_RGBA,
+             GL_HALF_FLOAT_NV, pixelBuffer);
+glActiveTextureARB(GL_TEXTURE0_ARB);
+glBindTexture(target, imageTexture);
+glBegin(GL_QUADS);
+glTexCoord2f(0.0, 0.0);
+glVertex2f(0.0, 0.0);
+glTexCoord2f(dim.x, 0.0);
+glVertex2f(dim.x, 0.0);
+glTexCoord2f(dim.x, dim.y);
+glVertex2f(dim.x, dim.y);
+glTexCoord2f(0.0, dim.y);
+glVertex2f(0.0, dim.y);
+glEnd();</code></pre><h4>26.4.2 渲染并写出 OpenEXR 图像</h4><p>GPU 渲染出的图像可以保存为 OpenEXR 文件。我们常常想生成一幅前景图和一幅背景图，之后再合成。代码清单 26-3 的示例用 pbuffer 做一次简单的合成操作，然后把结果写入 OpenEXR 文件。在这段代码片段中，我们把两幅输入图像（它们已经打开）读入分配好的图像缓冲，然后调用合成例程并写出结果。</p><h4>例 26-3. 合成两幅图像并写出 OpenEXR 文件</h4><pre><code>//
+// 读取 A 和 B。
+//
+Imath::V2i dim(dataWinA.max.x - dataWinA.min.x + 1,
+               dataWinA.max.y - dataWinA.min.y + 1);
+int dx = dataWinA.min.x;
+int dy = dataWinA.min.y;
+Imf::Array<Imf::Rgba> imgA(dim.x *dim.y);
+Imf::Array<Imf::Rgba> imgB(dim.x *dim.y);
+inA.setFrameBuffer(imgA - dx - dy * dim.x, 1, dim.x);
+inA.readPixels(dataWinA.min.y, dataWinA.max.y);
+inB.setFrameBuffer(imgB - dx - dy * dim.x, 1, dim.x);
+inB.readPixels(dataWinB.min.y, dataWinB.max.y);
+//
+// 执行合成，用结果覆盖图像 B。
+//
+Comp::over(dim, imgA, imgB, imgB);
+//
+// 写出合成后的图像。
+Imf::RgbaOutputFile outC(outputFilename.c_str(), dpyWinA, dataWinA,
+                         Imf::WRITE_RGBA);
+outC.setFrameBuffer(imgB - dx - dy * dim.x, 1, dim.x);
+outC.writePixels(dim.y);</code></pre><p>对 <code>Comp::over</code> 的调用，实际上就是以执行 <code>over</code> 操作的 Cg 着色器名去调用代码清单 26-4（<code>Comp::comp</code>）所示的例程。<code>over</code> 以及其他各种合成算子的完整细节见 Porter and Duff 1984。<code>GlFloatPbuffer</code> 类（随附材料中提供）隐藏了创建与删除浮点 pbuffer 的机制。注意我们可以用 <code>glReadPixels</code> 从 pbuffer 读出 <code>half</code> 数据，既不损失精度，也不被截断。</p><p>代码清单 26-5 至 26-7 分别是 <code>over</code> 操作以及 <code>in</code>、<code>out</code> 操作的 Cg 着色器。</p><h4>例 26-4. 合成到 Pbuffer 中</h4><pre><code>void Comp::comp(const Imath::V2i &dim, const Imf::Rgba *imageA,
+                const Imf::Rgba *imageB, Imf::Rgba *imageC,
+                const char *cgProgramName)
+{
+  GlFloatPbuffer pbuffer(dim);
+  pbuffer.activate();
+  //
+  // 设置默认的正交视图。
+  //
+  glLoadIdentity();
+  glViewport(0, 0, dim.x, dim.y);
+  glOrtho(0, dim.x, dim.y, 0, -1, 1);
+  //
+  // 创建输入纹理。
+  //
+  GLuint inTex[2];
+  glGenTextures(2, inTex);
+  GLenum target = GL_TEXTURE_RECTANGLE_NV;
+  glActiveTextureARB(GL_TEXTURE0_ARB);
+  glBindTexture(target, inTex[0]);
+  glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexImage2D(target, 0, GL_FLOAT_RGBA16_NV, dim.x, dim.y, 0, GL_RGBA,
+               GL_HALF_FLOAT_NV, imageA);
+  glActiveTextureARB(GL_TEXTURE1_ARB);
+  glBindTexture(target, inTex[1]);
+  glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexImage2D(target, 0, GL_FLOAT_RGBA16_NV, dim.x, dim.y, 0, GL_RGBA,
+               GL_HALF_FLOAT_NV, imageB);
+  //
+  // 编译并加载 Cg 程序。
+  //
+  cgSetErrorCallback(cgErrorCallback);
+  CGcontext cgcontext = cgCreateContext();
+  CGprogram cgprog = cgCreateProgramFromFile(
+      cgcontext, CG_SOURCE, cgProgramName, CG_PROFILE_FP30, 0, 0);
+  cgGLLoadProgram(cgprog);
+  cgGLBindProgram(cgprog);
+  cgGLEnableProfile(CG_PROFILE_FP30);
+  //
+  // 渲染到 pbuffer。
+  //
+  glEnable(GL_FRAGMENT_PROGRAM_NV);
+  glBegin(GL_QUADS);
+  glTexCoord2f(0.0, 0.0);
+  glVertex2f(0.0, 0.0);
+  glTexCoord2f(dim.x, 0.0);
+  glVertex2f(dim.x, 0.0);
+  glTexCoord2f(dim.x, dim.y);
+  glVertex2f(dim.x, dim.y);
+  glTexCoord2f(0.0, dim.y);
+  glVertex2f(0.0, dim.y);
+  glEnd();
+  glDisable(GL_FRAGMENT_PROGRAM_NV);
+  //
+  // 从 pbuffer 中读回像素。
+  //
+  glReadPixels(0, 0, dim.x, dim.y, GL_RGBA, GL_HALF_FLOAT_NV, imageC);
+  checkGlErrors();
+  pbuffer.deactivate();
+}</code></pre><p></p><h4>例 26-5. 用于「Over」操作的 Cg 着色器</h4><pre><code>void over(float2 wpos
+          : WPOS, out half4 c
+          : COLOR, uniform float2 dim, uniform samplerRECT A,
+            uniform samplerRECT B)
+{
+  half4 a = texRECT(A, wpos.xy);
+  half4 b = texRECT(B, wpos.xy);
+  c = a + (1 - a.a) * b;
+}</code></pre><h4>例 26-6. 用于「In」操作的 Cg 着色器</h4><pre><code>void in(float2 wpos
+        : WPOS, out half4 c
+        : COLOR, uniform float2 dim, uniform samplerRECT A,
+          uniform samplerRECT B)
+{
+  half4 a = texRECT(A, wpos.xy);
+  half4 b = texRECT(B, wpos.xy);
+  c = b.a * a;
+}</code></pre><h4>例 26-7. 用于「Out」操作的 Cg 着色器</h4><pre><code>void out(float2 wpos
+         : WPOS, out half4 c
+         : COLOR, uniform float2 dim, uniform samplerRECT A,
+           uniform samplerRECT B)
+{
+  half4 a = texRECT(A, wpos.xy);
+  half4 b = texRECT(B, wpos.xy);
+  c = (1 - b.a) * a;
+}</code></pre><h2>26.5 线性像素值</h2><p>我们倾向于把线性图像存成 OpenEXR 文件。<em>线性</em>一词对不同人有不同含义——对我们而言，如果图像中的值与所表示的场景相对亮度成正比，该图像就处于线性颜色空间。数值加倍，光量就加倍。要让场景变暗一半——也就是暗一档——我们把每个图像值除以二。如后文所述，这会对图像应如何显示产生影响。</p><p>多数图像处理算法都假定图像是线性的。标准合成操作 <code>over</code> 依据 alpha 通道对前景和背景做线性混合。当 alpha 确实是覆盖遮罩时，它表示背景应有百分之多少的光透过来。当图像表示线性光量时，这是正确的。除图像处理外，抗锯齿最好也在线性空间中完成（Blinn 2002）。</p><p>软件渲染通常也在线性空间中进行。既然 GPU 上能做更高质量的渲染，那么在线性空间中做硬件渲染才是正确的。观看图像时，必须做伽马校正。虽然<em>伽马</em>在图形界也有许多含义，我们这里指的是校正<em>显示器伽马</em>。用于图像显示的显示器有相应电路，使显示器的光输出与帧缓冲值呈幂律关系。由于我们假定 OpenEXR 图像是线性的，我们把显示器的伽马告诉显示程序，以便程序在显示时对图像施加反向伽马。</p><p>典型显示器的伽马是 2.2。你可以用亮度计（最好是高质量的）测量它。如果没有亮度计，参见 Berger 2003 中描述的方法。显示白色值 1.0 时，亮度计可能显示 92 nit（1 nit 等于每平方米 1 坎德拉）。作为第二个数据点，我们显示一个灰块。（我们不用黑块，因为黑色区域的光读数可疑；另外我们接下来要做对数运算，而在零处对数是未定义的。）</p><p>假定 0.5 的灰度值给出 20 nit 的亮度。记住，这个 0.5 是帧缓冲中的数字值，在数模转换器之前下游没有任何其他处理。显示器的输出亮度 <em>L</em>(<em>v</em>) 作为输入值 <em>v</em> 的函数，为：</p><blockquote><p>L(v) = L<sub>m</sub> · v<sup></sup>,</p></blockquote><p>其中 <em>v</em> 在 0.0 到 1.0 的范围内，<em>L<sub>m</sub></em> 是显示器的最大输出亮度。由此我们可以推出伽马（<em></em>）：</p><p>要对线性图像数据做伽马校正，我们只需把图像值取显示器伽马的倒数次幂。在代码清单 26-8 的简单片元着色器中演示了这一点。</p><h4>例 26-8. 为显示而对图像做伽马校正</h4><pre><code>struct Out
+{
+  half4 color : COLOR;
+};
+Out main(float2 texCoord
+         : TEXCOORD0, uniform samplerRECT image, uniform float gamma)
+{
+  half4 pixel = h4texRECT(image, texCoord);
+  Out output;
+  output.color = pow(pixel, gamma);
+  return output;
+}</code></pre><p>回放程序让用户改变图像的曝光。伽马校正之前图像是线性的，所以我们只需乘一个常数，把结果传给幂函数。参见代码清单 26-9。</p><h4>例 26-9. 调整图像的曝光</h4><pre><code>Out main(float2 texCoord
+         : TEXCOORD0, uniform samplerRECT image, uniform float gamma,
+           uniform float expMult)
+{
+  half4 pixel = h4texRECT(image, texCoord);
+  pixel.rgb *= expMult;
+  Out output;
+  output.color = pow(pixel, gamma);
+  return output;
+}</code></pre><p>最后，图像可能还需要一些整体色彩校正才能看起来正确。原因可能是审美上的，也可能是希望图像看起来像是在另一种显示设备上呈现的。例如，如果你想让显示器上的图像看起来像胶片，可以在伽马校正之前对胶片行为做一次模拟。数字图像设计者常常不得不用光照技巧来达到正确的观感。我们更愿意在线性空间中做光照与渲染，在显示时再模拟胶片行为。在代码清单 26-10 的基本示例中，我们提供一张三通道查找表，其中包含一条简单的 S 形胶片模拟曲线。</p><p>这个着色器用了一个技巧来实现查找功能。用作查找表的 <code>samplerRECT</code> 类型为每个可能的输入 <code>half</code> 存储一个 <code>half</code>。最简单的编码方式是使用尺寸为 1x66536 的 sampler rect。由于当前 GPU 的限制，这个矩形太大。于是我们改为把查找表折进一张 256x256 纹理，并用 <code>pack_2half</code> 与 <code>unpack_4ubyte</code> 这两个 Cg 标准库函数来索引它。这两个函数接收给定的 <code>half</code> 输入值，把它拆成两次 256x256 查找的两个索引。</p><h4>例 26-10. 用查找表模拟照片胶片的外观</h4><pre><code>half lookup(samplerRECT lut, half h)
+{
+  float f = pack_2half(h.xx);
+  half4 bytes = unpack_4ubyte(f);
+  return h1texRECT(lut, bytes.xy * 256.0);
+}
+Out main(float2 texCoord
+         : TEXCOORD0, uniform samplerRECT image, uniform samplerRECT lutR,
+           uniform samplerRECT lutG, uniform samplerRECT lutB,
+           uniform float gamma, uniform float expMult)
+{
+  half4 c = h4texRECT(image, texCoord) * expMult;
+  c.r = lookup(lutR, c.r);
+  c.g = lookup(lutG, c.g);
+  c.b = lookup(lutB, c.b);
+  Out output;
+  output.color = pow(c, gamma);
+  return output;
+}</code></pre><p>这些例程的完整注释版本，以及绑定各种纹理和显示图像所用的 OpenGL 代码，都随本书附带的 CD 和网站提供。</p><h2>26.6 创建与使用 HDR 图像</h2><p>HDR 图像可以在 GPU 上或软件中合成生成，也可以从真实世界拍摄。高动态范围相机确实存在。例如 Spheron 的 SpheroCam 能拍摄 26 档动态范围的全景图。用普通相机，你可以拍摄多次曝光，并用 Greg Ward 的 PhotoSphere 或 Paul Debevec 的 HDRShop 这类软件合成单幅 HDR 图像。</p><p>3D 场景中的光照可以用高动态范围图像而非独立光源来做全局光照模型。在 Debevec 1998 中，合成物体用 Radiance 软件渲染。在 Ng et al. 2003 中，漫反射表面（含阴影）的逼真渲染在 NVIDIA 硬件上实时完成。两种方法都用环境贴图代替光源；贴图的动态范围必须足够宽，才能在不截断的情况下表示环境中最亮的区域（例如太阳）。</p><p>图像处理也能从更宽的动态范围中受益。例如，景深模糊会把单个像素铺展到大片区域。当某个像素非常亮时，把它铺展开应当得到许多相当亮的像素。但如果一个亮像素（例如镜面高光）在模糊之前已被截断到零到一之间，模糊后的高光就会不自然地变暗。运动模糊也有类似现象。甚至做一次简单的色彩校正都可能需要高动态范围数据，如 26.1.1 节所示。</p><p>图 26-4a 是一幅汽车发动机的高动态范围图像。高光远高于 1.0。对图 26-4b，我们先把它转换成低动态范围的文件格式，像素因此被截断到零到一之间，然后施加景深模糊。在图 26-4c 中，我们对从 OpenEXR 文件读入的全部范围数据做模糊。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems/fig26-04a.jpg" alt="fig26-04a.jpg"><figcaption><a href="https://developer.download.nvidia.com/books/gpugems/fig26-04a.jpg" rel="noreferrer noopener">图 26-4</a> 模糊一幅带极亮高光的图像</figcaption></figure><p>前面几节中，我们假定显示 HDR 图像时高于 1.0 的值会被截断。这可以工作得相当好，事实上本章插图的印刷采用的就是这种方法。不过往往还能做得更好。近年来发表了若干有效技术，可以在不明显改变图像主观外观的前提下压缩动态范围，称为<em>色调映射</em>——例如 Fattal et al. 2002 以及 Durand and Dorsey 2002。另一种思路是未来的显示器可以直接显示 HDR 影像。例如 Seetzen et al. 2003 描述了一台动态范围为 120,000:1 的 HDR 显示器原型。</p><h2>26.7 结论</h2><p>OpenEXR 最初是为 GNU/Linux 和 Irix 发布的，经由开源社区的努力，它被移植到 Mac OS X 和 Windows。OpenEXR 库已在 Industrial Light &amp; Magic 的视觉特效制作环境中得到验证。</p><p>除 NVIDIA 之外，越来越多的厂商在其软件应用中支持 OpenEXR 格式。更多信息请访问 OpenEXR 网站 <a href="http://www.openexr.org" rel="noreferrer noopener">www.openexr.org</a>。</p><h2>26.8 参考文献</h2><p><a id="ch26bib01_01"></a>Berger, Robert W. 2003. "Why Do Images Appear Darker on Some Displays?"，网站文章。<strong><a href="http://www.bberger.net/rwb/gamma.html" rel="noreferrer noopener">http://www.bberger.net/rwb/gamma.html</a></strong></p><p><a id="ch26bib01_02"></a>Blinn, Jim. 2002. <em>Jim Blinn's Corner: Notation, Notation, Notation</em>, pp. 133–146. Morgan Kaufmann 出版。</p><p><a id="ch26bib01_03"></a>Debevec, Paul. 1998. "Rendering Synthetic Objects into Real Scenes."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 98)</em>，pp. 189–198。</p><p><a id="ch26bib01_04"></a>Durand, Frédo, and Julie Dorsey. 2002. "Fast Bilateral Filtering for the Display of High-Dynamic-Range Images."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 2002)</em>，pp. 257–266。</p><p><a id="ch26bib01_05"></a>Fattal, Raanan, Dani Lischinski, and Michael Werman. 2002. "Gradient Domain High Dynamic Range Compression."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 2002)</em>，pp. 249–256。</p><p><a id="ch26bib01_06"></a>Ng, Ren, Ravi Ramamoorthi, and Pat Hanrahan. 2003. "All-Frequency Shadows Using Non-linear Wavelet Lighting Approximation."，载 <em>Computer Graphics (Proceedings of SIGGRAPH 2003)</em>，pp. 376–381。</p><p><a id="ch26bib01_07"></a>Porter, Thomas, and Tom Duff. 1984. "Compositing Digital Images."，载 <em>Computer Graphics</em> 18(3) <em>(Proceedings of SIGGRAPH 84)</em>，pp. 253–259。</p><p><a id="ch26bib01_08"></a>Seetzen, H., W. Stürzlinger, A. Vorozcovs, H. Wilson, I. Ashdown, G. Ward, and L. Whitehead. 2003. "High Dynamic Range Display System."，SIGGRAPH 2003 上的新兴技术演示。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-26-openexr-image-file-format" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-26-openexr-image-file-format</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

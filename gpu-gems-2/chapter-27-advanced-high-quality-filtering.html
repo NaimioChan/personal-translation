@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 27 章　进阶的高质量滤波 - GPU Gems 2</title>
+<meta name="description" content="GPU Gems 2 章节「第 27 章　进阶的高质量滤波」的中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+      <main class="article">
+<h1>第 27 章　高级高质量滤波</h1>
+<p><em>Justin Novosad</em><br> <em>discreet</em></p><p>高级滤波方法已经存在很久了。它们最初主要为分析 MRI 和卫星图像这类科学应用而开发。得益于 GPU 技术近来的进步，这些方法现在可以提供给那些只是想让自己的计算机图形看起来尽可能漂亮的 PC 用户。</p><p>本章总体介绍基于 GPU 的纹理滤波实现问题与解法，重点在纹理插值和抗锯齿问题。我们探讨一系列用于渲染带纹理表面的高质量纹理滤波方法。这些技术可用于图像缩放、变形、去模糊等常见成像任务，也可以只是用来把带纹理的 3D 场景渲染得比图形硬件自带的标准滤波器更好。</p><p>读者应熟悉以下内容：mipmap、抗锯齿、纹理滤波等计算机图形学基础技术；基本的频域图像分析与图像处理；以及微积分。</p><h2>27.1 在 GPU 上实现滤波</h2><p>在 GPU 上实现数字图像滤波最实用、最直接的做法，是在带纹理的多边形上使用像素着色器。这一做法的入门可见 Bjorke 2004。对大多数需要保持图像尺寸不变的图像滤波应用，直接用与输入图像同尺寸、与屏幕对齐的带纹理四边形即可。</p><h4>27.1.1 访问图像样本</h4><p>常见的数字图像滤波方法需要访问输入图像中多个任意像素。通常纹理滤波需要在对应输入图像样本的离散纹素位置上采样。遗憾的是，当前的像素着色语言并不原生支持用整数地址直接访问纹素（Cg 中的 <code>samplerRECT</code> 除外）。纹理查找改用 0 到 1 区间内的实数坐标，从而使查找与纹理分辨率无关——这对大多数纹理映射操作是最优的，但对滤波器不是。因此编写滤波着色器的第一步，是理解如何计算与当前纹理坐标对应的整数样本坐标，以及如何把样本坐标换回常规纹理坐标。下面的公式符合 Direct3D 的纹理映射规范：</p><pre><code>sampleCoord = floor(textureCoord * texSize);
+textureCoord = (sampleCoord + 0.5) / texSize;</code></pre><p>我们给样本坐标加上 0.5，得到对应纹素中心的坐标。虽然用纹素角的坐标也可以，但用中心总能更稳妥地防住舍入误差。变量 <code>texSize</code> 是一个 uniform 值，存放纹理尺寸（不含边界纹素）。</p><p>很多情况下滤波器只需访问紧邻的像素，这时可能不需要做坐标换算。下面这些宏可以在一次算术运算中算出相邻像素的纹理坐标：</p><pre><code>#define TC_XMINUS_YMINUS(coord) (coord - texIncrement.xy)
+#define TC_XPLUS_YPLUS(coord) (coord + texIncrement.xy)
+#define TC_XCENTER_YMINUS(coord) (coord - texIncrement.zy)
+#define TC_XCENTER_YPLUS(coord) (coord + texIncrement.zy)
+#define TC_XMINUS_YCENTER(coord) (coord - texIncrement.xz)
+#define TC_XPLUS_YCENTER(coord) (coord + texIncrement.xz)
+#define TC_XMINUS_YPLUS(coord) (coord - texIncrement.xw)
+#define TC_XPLUS_YMINUS(coord) (coord + texIncrement.xw)</code></pre><p>这里 <code>texIncrement</code> 是一个 uniform 变量，其各分量初始化如下：</p><p><img alt="0419equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0419equ01.jpg"/></p><p>再一个提示：只要纹理查找不做任何类型的滤波，就不必把纹理坐标吸附到最近纹素的中心。这指的是在 OpenGL 中把滤波设为 <code>GL_NEAREST</code>，或在 Direct3D 中设为 <code>D3DTEXF_POINT</code>。这样一来，坐标吸附会在纹理查找时自动完成。</p><h4>27.1.2 卷积滤波</h4><p>Bjorke 2004 和 Rost 2004 中都有一些在着色器里实现卷积滤波的有趣技巧。多数情况下，把卷积系数存进常量或 uniform 效果很好，对常规离散卷积效率很高。不过我们想提倡用纹理来表示亚像素滤波所需的连续卷积核。</p><p>亚像素滤波是实现高质量滤波放大的重要工具。思路很简单：我们要把卷积核精确地放在当前纹理坐标处，而该坐标不一定在纹素中心。此时卷积核必须被看作连续函数 <em>k</em>(<em>s</em>, <em>t</em>)。于是卷积可表示如下：</p><table><tbody><tr><td><p><em>滤波后颜色</em> = <em>k</em>(<em>s – s</em> <sub>0</sub>, <em>t – t</em> <sub>0</sub>)<em>tex</em>(<em>s, t</em>)，</p></td></tr></tbody></table><p>其中求和遍及当前纹素坐标 (<em>s</em> <sub>0</sub>, <em>t</em> <sub>0</sub>) 的邻域，<em>tex</em> 是纹理查找函数。本章用 (<em>i</em>, <em>j</em>) 表示屏幕坐标，用 (<em>s</em>, <em>t</em>) 表示图像坐标与纹理坐标。</p><p>在图像处理中，通常希望所用的滤波器稳态响应为 1，以保持图像的平均强度。因此我们希望卷积核系数之和为 1，如图 27-1 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/27_hqfiltering_01.jpg" alt="27_hqfiltering_01.jpg"><figcaption>图 27-1 单位体积的卷积核</figcaption></figure><p>在连续卷积中，我们希望卷积核在其定义域上的积分为 1。在亚像素滤波的情形下这没那么简单，因为我们是在离散图像上使用连续卷积核。于是卷积核必须被采样。其结果是，卷积核样本之和可能不是常数。解决办法是把结果颜色除以卷积核样本之和，于是得到下面的公式：</p><p><img alt="0420equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0420equ01.jpg"/></p><p>代码清单 27-1 是一个执行亚像素滤波的 HLSL 像素着色器示例。在代码清单 27-1 中，卷积求和放在 RGB 通道里做，卷积核样本求和放在 alpha 通道里做。这个小技巧省下大量 GPU 指令，有助于加速这一过程。如果 alpha 通道也需要处理，卷积核样本求和就得另做。变量 <code>fact</code> 是一个缩放因子，用来把纹理坐标偏移从图像参考系换算到卷积核纹理坐标。<code>fact</code> 的取值应算作图像尺寸除以滤波定义域。我们给滤波查找坐标加上 0.5，因为假定卷积核的原点在 <code>Filter</code> 纹理的中心。</p><p>注意图 27-2 中亚像素高斯如何给出漂亮而平滑的插值。遗憾的是，这种质量的计算开销很高，很可能使片元处理成为渲染管线的瓶颈。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/27_hqfiltering_02a.jpg" alt="27_hqfiltering_02a.jpg"><figcaption>图 27-2 用亚像素高斯滤波做图像放大的结果</figcaption></figure><h4>示例 27-1. 用连续卷积核做离散卷积</h4><pre><code>int2 texSize;
+half2 fact;
+sampler2D Filter;
+sampler2D Image;
+const half pi = 3.141592654;
+half4 ps_main(half4 inTex : TEXCOORD0) : COLOR0
+{
+  half4 color = half4(0, 0, 0, 0);
+  half2 base = floor(inTex * texSize);
+  half2 pos;
+  half2 curCoord;
+  for (pos.x = -3; pos.x &lt; = 3; pos.x++)
+    for (pos.y = -3; pos.y &lt; = 3; pos.y++)
+    {
+      curCoord = (base + pos + 0.5) / texSize;
+      color += half4(tex2D(Image, curCoord).rgb, 1) *
+               tex2D(Filter, (inTex - curCoord) * fact + 0.5).r;
+    }
+  return color / color.a;
+}</code></pre><h4>用 1D 纹理实现旋转不变卷积核</h4><p>在 2D 中表示一个旋转不变的卷积核有很高的冗余度。只需存入卷积核的一个截面，所有必要信息就能编码进一张 1D 纹理。要用这项技术，把代码清单 27-1 中颜色求和那一行换成下面的写法：</p><pre><code>color += half4(tex2D(Image, curCoord).rgb, 1) *
+         tex1D(Filter, length(inTex - curCoord) * fact).r;</code></pre><p>这种做法要求我们在内层循环里加一次开销不小的 <code>length()</code> 函数调用，这很可能拖累着色器的性能，虽然它能省下纹理内存。近来的 GPU 通常配备 128 MB 甚至更多显存，用性能换纹理内存已不太值得，除非我们要处理非常大的卷积核。下一节我们简单讨论这种情况。</p><p>另一种更高效的做法是利用卷积核的可分离性。一个 2D 卷积滤波器若等价于先对图像各行施加 1D 滤波、再对图像各列施加 1D 滤波，就称为可分离的。高斯模糊和盒式滤波都是可分离卷积核的例子。缺点是滤波必须分两遍施加，当卷积核较小时，这可能比常规 2D 卷积更慢。</p><h4>施加非常大的卷积核</h4><p>由于有些 GPU 在着色器中只能执行相对有限的指令数，可能无法一遍就施加较大的卷积核。解决办法是把卷积核细分为若干瓦片，每遍施加一块。代码清单 27-1 中两个循环的范围必须调整到覆盖当前瓦片。所有遍的结果必须通过在渲染目标中累加来相加，渲染目标应是可渲染的浮点纹理（OpenGL 中即 pbuffer）或累积缓冲。卷积着色器不能再做最后那次除以卷积核样本和（alpha 通道）的运算，因为只有所有样本都累加完毕后才能做这次除法。除法必须放在最后的后处理步骤中完成。</p><h2>27.2 数字图像重采样问题</h2><p>本节考察用插值滤波和抗锯齿改善所渲染纹理视觉质量的方法。我们还会给出去除插值纹理中锯齿边缘、恢复锐利边缘的方法。</p><h4>27.2.1 背景</h4><p>数字图像是颜色样本的二维数组。要把数字图像显示在计算机屏幕上，往往必须重采样以匹配屏幕分辨率。图像重采样可表示为下面的公式：</p><table><tbody><tr><td><p><em>P(i, j) = I(f(i, j))，</em></p></td></tr></tbody></table><p>其中 <em>P</em>(<em>i</em>, <em>j</em>) 是视口坐标 (<em>i</em>, <em>j</em>) 处物理像素的颜色；<em>I</em>(<em>u</em>, <em>v</em>) 是坐标 (<em>u</em>, <em>v</em>) 处的图像颜色；函数 <em>f</em> 把屏幕坐标映射到图像坐标（或纹理坐标），使 (<em>u</em>, <em>v</em>) = <em>f</em>(<em>i</em>, <em>j</em>)。我们要讨论的题目是如何用像素着色器求 <em>I</em>(<em>u</em>, <em>v</em>)，以获得高质量的视觉效果。</p><p>函数 <em>f</em>(<em>i</em>, <em>j</em>) 是对软件、操作系统、图形驱动和图形硬件中所发生操作的一种抽象，这些操作最终使屏幕坐标 (<em>i</em>, <em>j</em>) 处的片元被赋予纹理坐标 (<em>u</em>, <em>v</em>)。这些计算在片元处理阶段上游完成，而 <em>I</em>(<em>u</em>, <em>v</em>) 通常在片元处理阶段通过纹理查找求得。</p><p>OpenGL 和 Direct3D 带有若干内建特性，可减少欠采样与过采样造成的瑕疵。当图像被 <em>f</em> 缩小时发生欠采样，可能引起走样瑕疵。当图像被 <em>f</em> 放大时发生过采样，此时需要插值样本值。纹理走样瑕疵可以通过纹理 mipmap 消除，样本插值可以用硬件双线性滤波完成。多数 GPU 还提供更高级的技术，例如三线性滤波和各向异性滤波，它们把样本插值与 mipmap 高效地结合起来。</p><h4>27.2.2 抗锯齿</h4><p>走样是采样定理（也称奈奎斯特规则）未被遵守时出现的现象。采样定理指出，连续信号的采样频率必须大于信号频谱上界的两倍，否则无法从样本完整重建该信号（也就是信息丢失）。发生走样时，信号频谱中超出采样带宽的部分会被折返，从而在重建的信号中产生不良瑕疵（这里的<em>带宽</em>指奈奎斯特规则所允许的频率范围）。频谱走样现象背后的理论超出了本章范围；任何一本好的信号处理教科书都能找到更多相关内容。</p><p>抗锯齿的经典做法是在采样前对信号滤波，消除超出采样带宽的频率成分。这样信号的高频成分仍然无法恢复，但至少低频成分不会被频谱折返污染。其中最著名的方法之一是 mipmap，它提供纹理的预滤波欠采样表示。mipmap 对游戏这类交互式应用很好，但并不理想，因为即使配合三线性或各向异性滤波，它也无法实现最优的信号保真。</p><h4>准最优抗锯齿</h4><p>理想抗锯齿是把样本值算作被采样信号在采样区域上的平均值，即被采样信号在采样区域上的积分除以采样区域面积。就纹理映射而言，被采样信号是离散的，意味着积分可以当作求和来计算。要做这个求和，我们必须设计一种方法，确定哪些纹素属于给定像素的采样区域。</p><p>假定像素在 <em>x</em> 和 <em>y</em> 方向上间距都是 1 个单位，那么 (<em>i</em>, <em>j</em>) 处像素采样区域的屏幕空间角点为 (<em>i</em> - 0.5, <em>j</em> - 0.5)、(<em>i</em> + 0.5, <em>j</em> - 0.5)、(<em>i</em> + 0.5, <em>j</em> + 0.5) 和 (<em>i</em> - 0.5, <em>j</em> + 0.5)。我们要求出采样区域在纹理空间中的映射。这在一般情况下很难求解，所以我们提出一个在假定 <em>f</em>(<em>i</em>, <em>j</em>) 是线性二维向量函数时成立的解法——因此称为<em>准最优抗锯齿</em>。由于我们知道一般情况下 <em>f</em>(<em>i</em>, <em>j</em>) 并非线性，<sup><a href="https://developer.download.nvidia.com/books/gpugems2/ch27fn1.html" rel="noreferrer noopener">[1]</a></sup> 我们用其泰勒级数展开的前两项，对每个像素做局部近似：</p><table><tbody><tr><td><p><em>f(i, j) ≈ [s<sub>0</sub>, t<sub>0</sub>]<sup>r</sup> + J<sub>0</sub>[i–i<sub>0</sub>, j–j<sub>0</sub>]<sup>r</sup>，</em></p></td></tr></tbody></table><p>其中 (<em>i</em> <sub>0</sub>, <em>j</em> <sub>0</sub>) 是当前像素中心的坐标；(<em>s</em> <sub>0</sub>, <em>t</em> <sub>0</sub>) 是 <em>f</em>(<em>i</em> <sub>0</sub>, <em>j</em> <sub>0</sub>) 的取值；<em>J</em> 是纹理坐标的雅可比矩阵；<em>J</em> <sub>0</sub> 是在当前像素中心处求值的雅可比矩阵。</p><p><img alt="0424equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0424equ01.jpg"/></p><p>线性变换有一个已知性质：线性性会被保持；因此正方形采样区域必定映射为纹理空间中的一个四边形。要用像素着色器实现纹理抗锯齿，我们遍历映射后四边形包围盒中的每个纹素，判断它是否落在四边形内。另一种做法是用类似光栅化的沿边行走算法来选取像素。这对覆盖非常大的四边形更高效，但对不具备高级流控制的 GPU（GeForce 6 系列之前的 GPU）来说过于复杂。</p><p>判断一个像素是否属于某个四边形有好几种方法。这里提出的方法是用 <em>f</em> 的逆函数把纹理坐标换回屏幕坐标，在那里做判断要容易得多。见图 27-3。逆函数如下：</p><p><img alt="0425equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0425equ01.jpg"/></p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/27_hqfiltering_03.jpg" alt="27_hqfiltering_03.jpg"><figcaption>图 27-3 判断一个像素是否属于某个四边形</figcaption></figure><p>在像素坐标中，我们只需验证 |<em>i</em>- <em>i</em> <sub>0</sub>| 与 |<em>j</em>- <em>j</em> <sub>0</sub>| 是否都小于 0.5。</p><p>代码清单 27-2 是一个执行抗锯齿纹理映射的基本像素着色器，可在 Pixel Shader 2.0a 目标上运行。</p><p>在这个例子中，我们用内建函数 <code>fwidth</code> 快速算出一个保守的包围盒，无需变换采样区域的角点。这种做法的缺点是生成的包围盒会比需要的略大，导致更多样本被四边形测试丢弃。这个着色器的另一特点是，它把包围盒划分为固定数目的</p><h4>示例 27-2. 准最优抗锯齿像素着色器</h4><pre><code>bool doTest;
+int2 texSize;
+sampler2D Image;
+const int SAMPLES = 5;
+// 应为奇数
+const int START_SAMPLE = -2; // = -(SAMPLES-1)/2
+// 求 2×2 矩阵的逆
+float2x2 inverse(float2x2 M)
+{
+  return float2x2(M[1][1], -M[0][1], -M[1][0], M[0][0]) / determinant(M);
+}
+float4 ps_main(float2 inTex : TEXCOORD0) : COLOR0
+{
+  float2 texWidth = fwidth(inTex);
+  float4 color = float4(0, 0, 0, 0);
+  float2 texStep = texWidth / SAMPLES;
+  float2 pos = START_SAMPLE * texStep;
+  float2x2 J = transpose(float2x2(ddx(inTex), ddy(inTex)));
+  float2x2 Jinv = inverse(J);
+  for (int i = 0; i < SAMPLES; i++, pos.x += texStep.x)
+  {
+    pos.y = START_SAMPLE * texStep.y;
+    for (int j = 0; j < SAMPLES; j++, pos.y += texStep.y)
+    {
+      float2 test = abs(mul(Jinv, pos));
+      if (test.x < 0.5h && test.y < 0.5h)
+        color += float4(tex2D(Image, inTex + pos).rgb, 1);
+    }
+  }
+  return color / (color.a);
+}</code></pre><p>矩形细分块，它们不太可能与纹素一一对应。利用高级流控制，可以让着色器改用尺寸可变、与纹素对齐的采样网格，从而改进它。见图 27-4 与图 27-5。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/27_hqfiltering_04_new.jpg" alt="27_hqfiltering_04_new.jpg"><figcaption>图 27-4 使用准最优抗锯齿的棋盘纹理</figcaption></figure><figure><img src="https://developer.download.nvidia.com/books/gpugems2/27_hqfiltering_05.jpg" alt="27_hqfiltering_05.jpg"><figcaption>图 27-5 不做四边形测试的抗锯齿棋盘纹理</figcaption></figure><p>图 27-5 是在 <code>fwidth</code> 给出的窗口上对纹理采样的结果，这是一种原始形式的各向异性滤波。差别很细微，但细看图像就能看出，准最优抗锯齿的好处是透视纹理映射更清晰。还要注意，抗锯齿只施加于纹理，不施加于多边形，这就解释了为什么带纹理四边形的外边缘仍有锯齿。要平滑多边形边缘，应使用硬件多重采样（即全场景抗锯齿）。</p><h4>27.2.3 图像重建</h4><p>对图像做过采样（放大）时，策略是重建原来的连续信号，再以新的更高分辨率对它重采样。双线性纹理滤波是很快的做法，但得到的图像质量差、发虚。本小节介绍如何实现一些基于信息论的更高级图像重建方法。</p><p>先看香农–奈奎斯特信号重建法，只要信号满足奈奎斯特极限，它就能在理论上完美重建该信号。该方法的理论基础见 Jähne 2002。要在着色器中应用这一方法，只需用下面的公式生成亚像素卷积核，再用代码清单 27-1 的着色器把它施加到纹理上。</p><p><img alt="0427equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0427equ01.jpg"/></p><p>这个卷积核实际上是一个理想低通滤波器，也称为<em>基数正弦</em>，简称 <em>sinc</em>。香农–奈奎斯特重建最简单的解释是：它把重建信号的频谱限制在原采样的带宽内，同时保留被采样信号中存在的所有频率成分。</p><h4>实现</h4><p>香农–奈奎斯特重建所用的卷积核是旋转不变的，因此我们可以把它存成 1D 纹理。但它的冲激响应是无限的，而且衰减得非常慢，如图 27-6 所示。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/27_hqfiltering_06.jpg" alt="27_hqfiltering_06.jpg"><figcaption>图 27-6 = sin()/ 的曲线</figcaption></figure><p>为获得可接受的性能，限制冲激响应的定义域很重要。常见做法是用一个窗函数乘它来衰减，例如高斯窗。所得滤波器的卷积核是紧支撑的，但不再是理想低通滤波器；频响的阶跃变得平缓一些。乘上高斯窗后，冲激响应的积分不再是 1；但没有必要费心去找一个缩放因子来归一化冲激响应，因为着色器会把这一切处理掉。</p><p>我们采用下面这个函数作为卷积核：</p><p><img alt="0429equ01.jpg" src="https://developer.download.nvidia.com/books/gpugems2/0429equ01.jpg"/></p><p>其中 是一个定义域缩放因子，必须与卷积核尺寸成正比。按经验， 应约为卷积核范围的 75%。图 27-7 给出了 取 6 时 <em>k</em> 的一个截面，这适用于定义域为 [-8, 8] 的卷积核。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/27_hqfiltering_07.jpg" alt="27_hqfiltering_07.jpg"><figcaption>图 27-7 = sin()e/ 的曲线</figcaption></figure><p>图 27-8 显示，香农–奈奎斯特重建在自然图像上效果非常好，但在极锐利的边缘附近会产生共振瑕疵，而这类边缘在合成图像中更常见。共振是缺少高频信息的结果，而准确定义重采样图像中的强度阶跃正需要这些信息。处理合成图像时，通常更可取的做法是直接用高斯卷积核。高斯滤波不会产生任何共振瑕疵，但由于其频率截止非常平滑，会削弱图像的高频成分，从而使细节退化。（结果见 27.1.2 节。）</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/27_hqfiltering_08a.jpg" alt="27_hqfiltering_08a.jpg"><figcaption>图 27-8 香农–奈奎斯特图像重建示例</figcaption></figure><h2>27.3 冲击滤波：一种图像去模糊方法</h2><p>图像中缺少高频成分会让观察者更难辨认物体，因为连接视网膜与视神经的神经节细胞对图像的高频成分反应敏锐（见 Hubel 与 Wiesel 获诺贝尔奖的工作 [1979]）。正因如此，大脑的视觉皮层在模糊图像中会缺少辨认物体所需的信息。把模糊图像锐化（从而恢复这些高频成分）能大幅提升其视觉质量。</p><p>许多传统的数字图像锐化滤波器会放大图像中的高频成分，这可能提升视觉质量。本节我们看另一类锐化滤波器，它更适合增强重建后的图像：冲击滤波器，它把纹理插值造成的平滑过渡变为陡峭过渡。冲击滤波背后的数学理论在 Osher 与 Rudin 1990 中有清晰阐述。其基本原理是在相邻像素之间扩散能量。在图像中二阶导数为正的区域，像素颜色沿梯度的反方向扩散，反之亦然。要把图像恰当地锐化，通常需要多遍处理。</p><p>这种方法难以用于带纹理的 3D 场景图像，因为由于深度变化和透视纹理映射，模糊可能是各向异性的、不均匀的。这是个问题，因为冲击滤波算法对图像中模糊的分布一无所知。尽管如此，冲击滤波对许多二维应用仍相当有价值，那些地方的模糊往往是均匀的。代码清单 27-3 是一个简单的像素着色器，它用中心差分估计图像梯度，用五点法确定凸性（二阶导数的符号）。</p><h4>示例 27-3. 冲击滤波像素着色器</h4><pre><code>uniform float shockMagnitude;
+uniform int2 destSize;
+sampler2D Image;
+const float4 ones = float4(1.0, 1.0, 1.0, 1.0);
+float4 ps_main(float4 inTex : TEXCOORD0) : COLOR0
+{
+  float3 inc = float3(1.0 / destSize, 0.0); // 可以做成 uniform
+  float4 curCol = tex2D(Image, inTex);
+  float4 upCol = tex2D(Image, inTex + inc.zy);
+  float4 downCol = tex2D(Image, inTex - inc.zy);
+  float4 rightCol = tex2D(Image, inTex + inc.xz);
+  float4 leftCol = tex2D(Image, inTex - inc.xz);
+  float4 Convexity = 4.0 * curCol - rightCol - leftCol - upCol - downCol;
+  float2 diffusion = float2(dot((rightCol - leftCol) * Convexity, ones),
+                            dot((upCol - downCol) * Convexity, ones));
+  diffusion *= shockMagnitude / (length(diffusion) + 0.00001);
+  curCol +=
+      (diffusion.x > 0 ? diffusion.x * rightCol : -diffusion.x * leftCol) +
+      (diffusion.y > 0 ? diffusion.y * upCol : -diffusion.y * downCol);
+  return curCol / (1 + dot(abs(diffusion), ones.xy));
+}</code></pre><p>图 27-9 右列的图像是用八遍冲击滤波、幅度参数设为 0.05 生成的。</p><figure><img src="https://developer.download.nvidia.com/books/gpugems2/27_hqfiltering_09a.jpg" alt="27_hqfiltering_09a.jpg"><figcaption>图 27-9 冲击滤波</figcaption></figure><p>注意冲击滤波后图像边缘总体上更锐利。得益于陡峭的频谱截止，颗粒状纹理和细节在香农–奈奎斯特重建中保存得更好。不过物体轮廓周围会出现阴影状瑕疵。高斯重建不产生瑕疵，结果也更悦目，但图像中的细节被削弱了。</p><h2>27.4 滤波实现技巧</h2><p>很多情况下着色器需要求值复杂函数。着色器的性能通常与所执行的操作数量密切相关，因此凡是可以预计算的东西都预计算很重要。着色器开发者常常遇到这一限制，于是尽量用 uniform 变量和常量来传入预计算的数据。还有一种常被忽视的策略：把纹理当作查找表，用一次简单的纹理读取代替复杂表达式的求值，从而快速求函数值。</p><p>下面是在设计把纹理用作函数查找表的着色器时可以考虑的一些技巧：</p><ul><li>根据所需精度和函数取值范围，仔细选择纹理格式。</li><li>恰当地缩放函数，使有用的部分落在纹理边界之内。对周期函数，使用纹理坐标 wrap；对带水平渐近线的函数，使用纹理坐标 clamp。</li><li>使用线性纹理滤波，通过插值获得更好的精度。</li><li>仔细设置纹理分辨率，在精度与纹理内存占用之间取得合理折中。</li><li>并非所有 GPU 都允许对浮点纹理使用线性滤波。不具备滤波时，可能需要更高分辨率的纹理才能达到所需精度。</li><li>尽可能用纹理的不同颜色分量同时求多个函数。</li></ul><h2>27.5 高级应用</h2><p>本节给出一些关于如何使用本章前面所述技术的想法。这些建议面向希望扩展所述着色器功能、完成高级图像处理任务的读者。</p><h4>27.5.1 时间变形</h4><p>我们已经看到亚像素卷积滤波可用于图像重建，但也可以把这一方法推广到更高维的信号。把一串图像表示成三维数组、第三维为时间，就可以插值帧，得到流畅的慢动作效果。原始图像序列的各帧可以以 3D 纹理或多张 2D 纹理的形式传给着色器。要对含快速运动物体的序列获得更好的插值，务必使用卷积核非常大的香农–奈奎斯特重建。</p><p>这项技术可以看作简单但质量低的帧混合方法与高质量但复杂的运动估计方法之间一个有趣的折中。</p><h4>27.5.2 去除运动模糊</h4><p>借助信号重建做慢动作时间变形，可能产生相当于快门速度慢于插值帧间隔的运动模糊。这种情况下，可以用一个只沿时间维度扩散的改造冲击滤波器来削弱运动模糊。</p><h4>27.5.3 自适应纹理滤波</h4><p>一个用于高质量渲染带纹理 3D 场景的聪明而多用途的着色器，会把本章介绍的抗锯齿滤波与重建滤波合并到一个着色器中，用缩小/放大判定在两者之间选择。OpenGL 规范在 <a href="http://www.opengl.org" rel="noreferrer noopener">http://www.opengl.org</a> 中给出了如何做这一判定的好例子。</p><h2>27.6 结论</h2><p>本章介绍的技术旨在产出最优质量的 2D 纹理渲染。尽管这些技术很简单，其计算开销通常太大，无法在需要高帧率的全屏电脑游戏和交互式应用的渲染时使用。它们更可能适用于把渲染质量置于速度之上的应用，例如医学与科学成像、照片与胶片编辑、图像合成、视频格式转换、专业 3D 渲染等等。它们也可以用于游戏中与分辨率相关的纹理准备（预处理）。</p><p>由于近来出现了高度可编程的 GPU，这些技术如今在多媒体应用中已经可行。以前大多数图像处理任务只能由 CPU 或高度专用的硬件完成，这使得高级图像滤波方法慢得或贵得无法承受。</p><h2>27.7 参考文献</h2><p><a id="biblio27_01"></a>Aubert, Gilles, and Pierre Kornprobst. 2002. <em>Mathematical Problems in Image Processing</em>，Springer 出版。</p><p><a id="biblio27_02"></a>Bjorke, Kevin. 2004. "High-Quality Filtering."，载 <em>GPU Gems</em>，Randima Fernando 编，pp. 391–415. Addison-Wesley.</p><p><a id="biblio27_03"></a>Hubel, D. H., and T. N. Wiesel. 1979. "Brain Mechanisms of Vision."，载 <em>Scientific American</em> 241(3)，第 150–162 页。</p><p><a id="biblio27_04"></a>Jähne, Bernd. 2002. <em>Digital Image Processing</em>，Springer 出版。</p><p><a id="biblio27_05"></a>Osher, S., and L. Rudin. 1990. "Feature-Oriented Image Enhancement Using Shock Filters."，载 <em>SIAM Journal on Numerical Analysis</em> 27(4)，第 919–940 页。</p><p><a id="biblio27_06"></a>Rost, R. 2004. <em>OpenGL Shading Language</em>，第 16 章，Addison-Wesley 出版。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-27-advanced-high-quality-filtering" rel="noreferrer noopener">developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-27-advanced-high-quality-filtering</a> · 译文更新于 2026-10-21</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
