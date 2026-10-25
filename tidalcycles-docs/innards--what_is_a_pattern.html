@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>什么是 pattern - Tidal Cycles 文档</title>
+<meta name="description" content="什么是 pattern - Tidal Cycles 官方文档中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>什么是 pattern</h1>
+<h2>引言</h2>
+<p>在 <strong>Tidal</strong> 里，pattern 是什么？回答这个问题有很多种方式。一个技术性的定义是：在底层，pattern 是一个从时间到事件的函数。你给 pattern 一个起止时间，它就把在该时间段内（部分或全部）活跃的事件返回给你。事件本身也是一个带有起止时间的值。</p>
+<p>在用 <strong>Tidal</strong> 创作音乐时这些大多被隐藏起来，但让我们凑近看看一个真正简单的 pattern 的内部：</p>
+<pre><code class="language-haskell">"1 2 3"
+</code></pre>
+<p>上面这个看起来像是一个<code>字符串</code>，但 <strong>Tidal</strong> 会悄悄地帮你把它解析成一个 pattern（使用一个隐藏的函数 <code>parseBP_E</code>）。我们可以向那个 pattern 请求值，方法是在 pattern 字符串后面加上 <code>:: Pattern String</code>，把这个字符串 pattern 转换成 Tidal pattern。这相当于告诉 <strong>Tidal</strong> 把这个字符串当作 pattern 来对待，并展示它所看到的东西：</p>
+<pre><code class="language-haskell">"1 2 3" :: Pattern String
+</code></pre>
+<p>如果你运行上面的代码，你应该会在输出缓冲区里看到第一个循环的内容：</p>
+<pre><code class="language-haskell">(0&gt;⅓)|"1"
+(⅓&gt;⅔)|"2"
+(⅔&gt;1)|"3"
+</code></pre>
+<p>由此我们可以看出第一个事件 <code>1</code> 在循环的前三分之一是活跃的，依此类推。</p>
+<p>所以 pattern 是一个从<code>时间窗</code>（也称为<code>arc</code>）到各自带有起止点的值的函数。像 <code>rev</code> 这样的函数因此是一个组合子，它接受这样的函数作为输入，给出一个新函数作为输出（为了让 pattern 反转，输入输出的时序处理已经烘焙在里面了）。</p>
+<h2>pattern 的类型</h2>
+<p>这是基础，让我们来看一些代码。pattern 的核心表示位于 <code>Sound.Tidal.Pattern</code> 模块中。核心表示就在最上面的十来行里。我们逐步过一遍。一些 <strong>Haskell</strong> 知识在这里会有帮助，但即使没有软件开发经验，你也有望抓住要点。</p>
+<pre><code class="language-haskell">-- | Time is rational
+type Time = Rational
+</code></pre>
+<p>上面声明了时间是理性数（有理数）。这意味着 <strong>Tidal</strong> 不把时间表示为整数（整数值）或浮点数，而是表示为两个整数之比。这意味着例如三分之一可以被精确地表示为一比三。音乐当然充满了这样的比值，不这样表示它们会带来许多问题。基本上，这意味着如果你把三个三分之一加起来，就会得到一个整体。这看起来理所当然，但并不是所有系统都能做到！</p>
+<pre><code class="language-haskell">-- | A time arc (start and end)
+type Arc = (Time, Time)
+</code></pre>
+<p>这是 <code>arc</code>（即时间窗）的表示。我们喜欢称之为时间弧（time arc）而不是时间段（time span），因为在 Tidal 里时间的概念是循环的。这里两个时间值就是一个弧的起点和终点。</p>
+<pre><code class="language-haskell">-- | The second arc (the part) should be equal to or fit inside the
+-- first one (the whole that it's a part of).
+type Part = (Arc, Arc)
+</code></pre>
+<p>Tidal 经常需要表示一个 <code>arc</code> 的一部分。它用两个 <code>arc</code> 来做到这一点：第一个表示该部分所属的整体，第二个表示部分本身。两个弧通常是一样的，这仅仅表示我们拥有一个只含单个部分的整体。</p>
+<pre><code class="language-haskell">-- | An event is a value that's active during a timespan
+type Event a = (Part, a)
+</code></pre>
+<p>于是，一个事件由一个部分和一个类型为 a 的值组成。这个 a 可以代表任何类型（但同一个 pattern 里的事件只能是同一类型）。例如，你可以有由词语、数字、颜色，甚至其他 pattern 构成的 pattern……</p>
+<pre><code class="language-haskell">data State = State {arc :: Arc,
+                    controls :: ControlMap
+                   }
+</code></pre>
+<p>从 <code>1.0.0</code> 版本起，<strong>Tidal</strong> pattern 除了随时间推进之外，还能响应不断变化的状态。所以上面这个表示的是 <strong>Tidal</strong> pattern 的全部输入：当前时间窗，以及外部控制器的当前状态（无论是 MIDI 控制器还是其他软件）。有趣的是当前时间（这里的 arc 不是一个时间点，而是一个 <code>arc</code>，即时间窗。这与心理学上"似今"（specious present）具有持续时间的想法相吻合。</p>
+<pre><code class="language-haskell">-- | A function that represents events taking place over time
+type Query a = (State -&gt; [Event a])
+</code></pre>
+<p>这就是我们之前谈到的那个从时间到事件的函数。我们做了一点简化——它是一个从时间窗加上一些额外状态到事件的函数。注意 a 从事件的类型传递到了查询的类型。这再次表明一个特定的 pattern 只能表示同一类型的事件。</p>
+<p>还要注意，返回的是一个事件列表（用方括号表示）。这只是意味着 tidal 支持复调——许多事件可以同时发生。不过请记住每个事件都有自己的 <code>arc</code>；同一个时间窗可能返回两个事件，但它们的起止时间很可能不同，甚至可能完全不重叠。</p>
+<p>也有可能一个事件的弧超出了查询状态中的弧。这正是我们会取回部分弧的一种情况——该部分将是查询的弧与事件弧的交集。</p>
+<pre><code class="language-haskell">-- | Also known as Continuous vs Discrete/Amorphous vs Pulsating etc.
+data Nature = Analog | Digital
+            deriving Eq
+</code></pre>
+<h2>模拟与数字 pattern</h2>
+<p><strong>Tidal</strong> 的一个重要特性是你可以精确地把模拟（连续）pattern 与数字（离散）pattern 组合在一起。例如，把一个离散的音符 pattern 乘以一条连续变化的正弦波会很不错。有一种说法是计算机只能表示数字结构，这多少是个迷思；不过当要把模拟 pattern 和数字 pattern 组合在一起时，能够分辨哪个是哪个确实很有用，因此才有上面这个用于此目的的数据类型。</p>
+<pre><code class="language-haskell">-- | A datatype that's basically a query, plus a hint about whether its events
+-- are Analogue or Digital by nature
+data Pattern a = Pattern {nature :: Nature, query :: Query a}
+</code></pre>
+<p>这里我们终于抵达了 <code>Pattern</code> 数据类型，它简单地说就是由一个或 digital 或 analogue 的 nature，加上一个用于为特定时间窗计算事件的 query 组成。</p>
+<p>唯一还没做的是定义我们之前见过的 <code>ControlMap</code> 类型是什么。它除了用于表示控制器状态之外，还是另一个类型——<code>ControlPattern</code>——定义的一部分，来了：</p>
+<pre><code class="language-haskell">data Value = VS { svalue :: String }
+           | VF { fvalue :: Double }
+           | VI { ivalue :: Int }
+           deriving (Eq,Ord,Typeable,Data)
+
+type ControlMap = Map.Map String Value
+type ControlPattern = Pattern ControlMap
+</code></pre>
+<p><code>ControlMap</code> 简单来说就是一个字典（或 <code>map</code>），用于按名称（用字符串）存储一些值。除了在 State 数据类型中用于外部控制参数值之外，我们还用它来构造 ControlPattern。它们就是 controlmap 的 pattern，用于表示合成器消息的 pattern。例如，<code>sound "bd sn" # speed "2 3"</code> 中的 speed 函数把一个数字 pattern 变成一个 controlmap pattern，sound 把一个词语 pattern 变成一个 controlmap pattern，而 # 把它们组合成一个新的 controlmap pattern。如果有不清楚的地方，欢迎在讨论页留言！</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://tidalcycles.org/docs/innards/what_is_a_pattern" rel="noreferrer noopener">/docs/innards/what_is_a_pattern</a> · 译文更新于 2026-10-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

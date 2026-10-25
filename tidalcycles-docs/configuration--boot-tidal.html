@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>启动文件 - Tidal Cycles 文档</title>
+<meta name="description" content="启动文件 - Tidal Cycles 官方文档中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>启动文件</h1>
+<p>每次启动 Tidal 时，软件都会读取一个通常名为 `BootTidal.hs` 的配置文件。一般来说，这个文件会随你的文本编辑器附带（查一下你正在用的插件）。请把这个文件保存在稳妥的地方，你以后会不时调整它：改选项、加新功能等等。</p>
+<p>有些用户把自定义设置做到了很深的程度：<a href="https://github.com/jarmitage/jarmlib" rel="noreferrer noopener">Jarmlib</a>。可以看看他们的作品，学习如何通过添加新的别名来扩展你的配置文件。</p>
+<p>举一个例子，下面是<a href="https://codeberg.org/uzu/tidal/src/branch/main/BootTidal.hs" rel="noreferrer noopener">上游 Tidal 包</a>所用的 *vanilla* `BootTidal.hs` 文件（如果你用的是更早的版本，你的文件可能长得不一样——见下文）：</p>
+<pre><code class="language-haskell">:set -fno-warn-orphans -Wno-type-defaults -XMultiParamTypeClasses -XOverloadedStrings
+:set prompt ""
+
+-- Import all the boot functions and aliases.
+import Sound.Tidal.Boot
+
+default (Rational, Integer, Double, Pattern String)
+
+-- Create a Tidal Stream with the default settings.
+-- To customize these settings, use 'mkTidalWith' instead
+tidalInst &lt;- mkTidal
+
+-- tidalInst &lt;- mkTidalWith [(superdirtTarget { oLatency = 0.01 }, [superdirtShape])] (defaultConfig {cFrameTimespan = 1/50, cProcessAhead = 1/20})
+
+-- This orphan instance makes the boot aliases work!
+-- It has to go after you define 'tidalInst'.
+instance Tidally where tidal = tidalInst
+
+-- `enableLink` and `disableLink` can be used to toggle synchronisation using the Link protocol.
+-- Uncomment the next line to enable Link on startup.
+-- enableLink
+
+-- You can also add your own aliases in this file. For example:
+-- fastsquizzed pat = fast 2 $ pat # squiz 1.5
+
+:set prompt "tidal&gt; "
+:set prompt-cont ""
+</code></pre>
+<h2>控制延迟</h2>
+<p>有三个与延迟相关的配置值：`cProcessAhead`、`cFrameTimespan` 和 `oLatency`。下面是一份示例配置：</p>
+<pre><code class="language-haskell">tidalInst &lt;- mkTidalWith [(superdirtTarget { oLatency = 0.05 }, [superdirtShape])] (defaultConfig {cFrameTimespan = 1/20, cProcessAhead = 3/10})
+</code></pre>
+<p>如果你运行的是较早版本的 tidal，你的 BootTidal.hs 文件会长得不一样。你仍然可以通过改一行类似这样的代码来配置同样的设置：</p>
+<pre><code class="language-hs">tidal &lt;- startTidal (superdirtTarget {oLatency = 0.05, oAddress = "127.0.0.1", oPort = 57120}) (defaultConfig {cVerbose = True, cFrameTimespan = 1/20, cProcessAhead = 3/10})
+</code></pre>
+<ul>
+<li><strong>Frame timespan（帧时间窗）</strong>：这是 Tidal 计算窗口的时长，以秒计。默认是 `0.05 seconds`，也就是每秒 20 帧的计算速率。如果你发现 Tidal 占用的 CPU 太多，调大帧时间窗多半会有帮助。</li>
+<li><strong>Latency（延迟）</strong>：这个参数让你把目标产生声音所花的时间考虑进去。例如，我们可能需要 SuperDirt 在事件应击响扬声器之前 100 毫秒就调度它。延迟参数调得越高，声音在时间上就出现得越早。默认是 `0.05 seconds`。</li>
+<li><strong>Process Ahead（提前处理量）</strong>：这个参数控制 Tidal 提前多久开始处理事件。当延迟值设得较高时，它可能需要随之调整。如果你在 SuperCollider 里收到迟到（late）的消息，就调这个值。默认是 `0.3 seconds`。</li>
+</ul>
+<h2>SuperDirt 运行在另一台主机上</h2>
+<p>如果你在另一台主机上运行 <strong>SuperDirt</strong>（比如在多人使用的场景里），你需要用与延迟类似的方式来定义它，只是这种情况下的键名是 `oAddress`，给出 IP 地址或主机名。例如，如果你在另一台 IP 地址为 192.168.0.23 的电脑上运行 SuperDirt，你会这样写：</p>
+<pre><code class="language-haskell">tidalInst &lt;- mkTidalWith [(superdirtTarget { oAddress = "192.168.0.23", oPort = 57120 }, [superdirtShape])] (defaultConfig {cCtrlAddr = "0.0.0.0"})
+</code></pre>
+<p>注意 `cCtrlAddr` 也需要像上面那样设成 `0.0.0.0`，否则 Tidal 将无法跨网络发送消息。解释一下：`cCtrlAddr` 控制地址既用于接收也用于发送网络消息（使用 Open Sound Control 协议）。把它设为 `0.0.0.0` 意味着 Tidal 将能在你的电脑所连接的任何网络上收发消息（默认它只与本机上运行的其他程序收发消息，而不跨本地网络或更广的互联网）。</p>
+<p>如果需要修改 `superdirtTarget` 的多项设置，用逗号把它们分开即可：</p>
+<pre><code class="language-haskell">{oAddress = "1.2.3.4", oLatency = 0.04}
+</code></pre>
+<p>注意在 <strong>Emacs</strong>（可能还有其他编辑器）的配置文件里，你需要转义引号。</p>
+<p>你还需要配置 <strong>SuperDirt</strong>，让它接受来自其他主机的消息。例如，像下面这样启动 <strong>Dirt</strong> 就会让它监听所有网络接口上的 OSC 消息：</p>
+<pre><code class="language-haskell">~dirt.start(57120, [0, 0], NetAddr("0.0.0.0"));
+</code></pre>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://tidalcycles.org/docs/configuration/boot-tidal" rel="noreferrer noopener">/docs/configuration/boot-tidal</a> · 译文更新于 2026-10-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

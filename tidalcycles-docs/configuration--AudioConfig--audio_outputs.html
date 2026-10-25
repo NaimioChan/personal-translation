@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音频输出 - Tidal Cycles 文档</title>
+<meta name="description" content="音频输出 - Tidal Cycles 官方文档中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>音频输出</h1>
+<h2>分离的音频通道</h2>
+<p>假设你想做一份多轨录音，让不同的 pattern 同时播放、却分开录制；或者想把某些 pattern 的音频路由到外部效果处理器。这怎么可能做到？Tidal 的音频引擎（在大多数情况下）是 <strong>SuperDirt</strong>，而路由音频通道的关键在于理解如何配置和使用 orbit。你可以把每个 orbit 想象成一个音频输出，它有自己的一组全局效果器（默认是混响和延迟）。</p>
+<p>去看一看 <a href="https://codeberg.org/musikinformatik/SuperDirt" rel="noreferrer noopener">SuperDirt 的文档</a>，特别是示例文件 <a href="https://codeberg.org/musikinformatik/SuperDirt/src/branch/develop/superdirt_startup.scd" rel="noreferrer noopener">superdirt_startup.scd</a>。你会想把其中的设置代码粘贴到 <strong>SuperCollider</strong> 编辑器窗口里。如果你把它存进 <strong>SuperCollider</strong> 的启动文件，那么每次打开 <strong>SuperCollider</strong> 时它都会自动运行——这个文件可以通过菜单找到。</p>
+<p>这段设置代码里你可能想改的大概只有两处。如果你想要六个立体声输出，那总共需要 `12` 个通道，所以要把输出总线通道数设成相应的值，即：</p>
+<pre><code class="language-c">s.options.numOutputBusChannels = 12;
+</code></pre>
+<p>你通过给每个 orbit 一个偏移量，把它们分配到不同的立体声通道上，像这样：</p>
+<pre><code class="language-c">~dirt.start(57120, [0, 2, 4, 6, 8, 10]);
+</code></pre>
+<p>你可能也想顺手改掉这一行里的数字：</p>
+<pre><code class="language-c">~dirt = SuperDirt(2, s);
+</code></pre>
+<p>不过如果你想以立体声方式工作，这个数字应该保持为 2，也就是每个 orbit 的通道数。</p>
+<p>如果你的编辑器插件（因而也包括 <code>BootTidal.hs</code>），那么 `d1` 会自动发送到 orbit 0，`d2` 发送到 orbit 1，依此类推。你也可以用 orbit 控制参数明确指定，例如：</p>
+<pre><code class="language-c">d1 $ sound "bd" # orbit 3
+</code></pre>
+<p>现在你尽可以把音频路由到 DAW 里做效果处理或录音，也可以直接从 <strong>SuperCollider</strong> 把所有通道录成一个多通道文件。</p>
+<h2>多通道声音</h2>
+<p>一般来说我们处理的是立体声，也就是用两只扬声器并在它们之间做<strong>声像</strong>分布。不过有时用四只甚至更多扬声器工作、享受环绕声体验也很不错。多通道声音的设置方式与我们做<a href="#separate-audio-channels" rel="noreferrer noopener">分离的音频输出</a>时类似。分离输出时我们发送的可能是多个立体声输出，而多通道声音通常只发送一个输出，但带多个通道。</p>
+<p>这里是一个在四个通道之间做声像分布的 supercollider 启动文件示例：</p>
+<pre><code class="language-c">(
+s.options.numBuffers = 1024 * 256;
+s.options.memSize = 8192 * 16;
+s.options.maxNodes = 1024 * 32;
+s.options.numOutputBusChannels = 4; // 输出通道总数
+s.options.numInputBusChannels = 2;
+
+s.waitForBoot {
+~dirt = SuperDirt(4, s); // 在四个通道之间声像分布
+~dirt.loadSoundFiles;
+~dirt.start(57120, [0, 0, 0, 0, 0, 0]);
+};
+s.latency = 0.3;
+);
+</code></pre>
+<p>更多细节请看 <strong>SuperDirt</strong> 的文档，特别是示例文件 `superdirt_startup.scd`。</p>
+<p>这一行设定 supercollider 输出的通道数：</p>
+<pre><code class="language-c">s.options.numOutputBusChannels = 4; // 输出通道总数
+</code></pre>
+<p>这一行设定声像分布跨越的通道数。对于多通道声音，它一般与上面的数字相同。</p>
+<pre><code class="language-c">~dirt = SuperDirt(4, s); // 在四个通道之间声像分布
+</code></pre>
+<p>下面这行里的每个 0 代表一个 orbit，一共给我们六个 orbit。你大概想让它们保持为 0，这样每个 orbit 都从第一个通道开始。</p>
+<pre><code class="language-c">~dirt.start(57120, [0, 0, 0, 0, 0, 0]);
+</code></pre>
+<p>就这样！你可以把这段代码保存进你的 supercollider 启动文件（可以通过 supercollider 菜单找到），这样启动 supercollider 时就不必手动运行它了。</p>
+<p>然后要使用它，你可以这样写：</p>
+<pre><code class="language-c">d1 $ sound "bd*16" # pan saw
+</code></pre>
+<p>上面的代码会让底鼓在所有扬声器围成的一圈上轮转播放。如果你有四只扬声器，默认它们位于 `0`、`0.25`、`0.5` 和 `0.75`。因此 `0.125` 会落在头两只扬声器的正中间，而 `0.875` 会落在第一只和最后一只扬声器的正中间。到了 `1`，你又回到了第一只扬声器。</p>
+<p>因为 `0` 和 `1` 是同一只扬声器，jux 函数的效果不太好（它会把原 pattern 放在位置 `0` 播放，把变换后的 pattern 放在声像位置 `1` 播放，而在多通道声音里这俩是同一只扬声器）。作为替代，你可以用 `juxBy 0.5`，或者 `jux'`——后者把一组函数分布到多通道环上。</p>
+<pre><code class="language-c">d1 $ juxBy 0.5 rev $ sound "bd cp sn:2 mt*2" # pan saw
+
+d1 $ jux' [id, rev] $ sound "bd cp sn:2 mt*2" # pan saw
+
+d1 $ jux' [id, rev, fast 2] $ sound "bd cp sn:2 mt*2" # pan saw
+</code></pre>
+<h2>魔改音频</h2>
+<p>去 <a href="https://codeberg.org/musikinformatik/SuperDirt/src/branch/develop/hacks" rel="noreferrer noopener">SuperDirt hacks 文件夹</a>四处看看，发现 orbit 的更多玩法：</p>
+<ul>
+<li>orbit 路由</li>
+<li>声音空间化</li>
+<li>音频循环</li>
+<li>添加全局/局部效果器</li>
+</ul>
+<h2>音频混音与母带处理</h2>
+<h3>StageMaster</h3>
+<p><a href="https://github.com/calumgunn/StageMaster" rel="noreferrer noopener">StageMaster</a> 由 Calum Gunn 制作，是一条轻量级母带处理链，供在 <strong>SuperCollider</strong> 中进行现场编码表演时使用。它为所有输出添加轻度的压缩、均衡和限幅。</p>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://tidalcycles.org/docs/configuration/AudioConfig/audio_outputs" rel="noreferrer noopener">/docs/configuration/AudioConfig/audio_outputs</a> · 译文更新于 2026-10-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

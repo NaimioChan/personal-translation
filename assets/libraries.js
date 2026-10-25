@@ -96,5 +96,9 @@ window.PT_LIBRARIES = [
   { dir: 'nannou-guide', title: 'Nannou Guide',
     desc: 'Nannou Guide 的中文译本。',
     source: 'https://guide.nannou.cc/',
-    updated: '2026-10-21', pages: 30 }
+    updated: '2026-10-21', pages: 30 },
+  { dir: 'tidalcycles-docs', title: 'Tidal Cycles 文档',
+    desc: 'Tidal Cycles 官方文档的中文译本。',
+    source: 'https://tidalcycles.org/docs/',
+    updated: '2026-10-24', pages: 63 }
 ];

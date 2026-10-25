@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>添加合成器 - Tidal Cycles 文档</title>
+<meta name="description" content="添加合成器 - Tidal Cycles 官方文档中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>添加合成器</h1>
+<p>安装 <strong>SuperDirt</strong> 时，你同时也安装了一个由*默认*合成器组成的小型音色库。这些合成器是专门为 <strong>Tidal</strong> 和 <strong>SuperDirt</strong> 制作的。它们听起来确实不错，但总有一天你会想创建自己的合成器。本页将指引你了解为 <strong>SuperDirt</strong> 创建合成器的基本步骤。</p>
+<h2>构建一个简单的合成器</h2>
+<h3>学习 SuperCollider</h3>
+<p>如果你想为 <strong>Tidal Cycles</strong> 构建新的合成器，你还需要学习一些 <strong>SuperCollider</strong> 语言（*SCLang*）的基础知识。网上有许多指南、课程和教程。我个人推荐 <a href="https://www.youtube.com/user/elifieldsteel" rel="noreferrer noopener">Eli Fieldsteel</a> 的 YouTube 频道。它是你能找到的最完整、对新手最友好的教程，从最基础的内容一直讲到给更有进取心的人准备的进阶主题。</p>
+<p>你玩 <strong>Tidal Cycles</strong> 的时候，负责处理音频的是 <strong>SuperCollider</strong> 和 <strong>SuperDirt</strong>。<strong>Tidal</strong> 上一切与音频相关的事情都发生在 <strong>SuperCollider</strong> 那一侧。即便你没打算深入学习音频合成，也请牢记这一架构上的区分。</p>
+<h3>SuperDirt 模板</h3>
+<p>一切从这段样板 `SynthDef` 开始，把它复制粘贴到你的 <strong>SuperCollider</strong> 交互编辑器里：</p>
+<pre><code class="language-c">SynthDef(\test, {
+    | out, sustain=1, freq=440, speed=1, begin=0, end=1, pan, accelerate, offset|
+}).add;
+</code></pre>
+<p>在 <strong>SuperCollider</strong> 中，`SynthDef` 是对将来会被实例化为 `Synth` 节点的东西的定义。别被这些技术行话吓到，它的意思只是：我们要声明一个函数，它就是我们合成器的定义。</p>
+<p>`||` 里面的所有内容是一个参数列表：让我们的合成器工作所需的一组必备参数。你可能认得出一些 <strong>Tidal</strong> 特有的东西，比如 `accelerate` 参数，或者 `begin` 和 `end` 参数。</p>
+<p>我们给合成器起一个 `\name`（名称），这里是（`\test`）。这样 `SuperCollider` 就能随时从它内部的合成器列表里把它取出来。`.add` 方法就是字面上的『添加到服务器』。</p>
+<blockquote><p><strong>提示：</strong>`SynthDef` 可以随时被覆盖。你可以在 <strong>Tidal</strong> 侧播放一个 pattern，同时在现场设计/重编译你的合成器。这是测试合成器是否工作良好的好办法。</p></blockquote>
+<h3>噼噗状态</h3>
+<p>到目前为止一切顺利。我们已经有了一个*空壳*式的合成器。严格说来，我们的合成器是一个音频函数，它活在花括号 `{}` 之间。你们当中也许有人喜欢静默，但我们想要声音。</p>
+<h4>什么是 UGen？</h4>
+<p>我们将通过把 `UGen` 链接在一起来构建合成器。什么是 `UGen`？<strong>SuperCollider</strong> 帮助文件告诉我们：</p>
+<blockquote><p>UGen 表示对信号进行的计算。它们是服务器上合成器定义的基本构件，用来生成或处理音频信号与控制信号</p></blockquote>
+<p>可以把它们想象成『音频砖块』。它们是微小的组件，每一个代表一种功能或对传入信号的一种修改。有些 `UGen` 从零开始创造信号（振荡器、包络），有些修改信号（滤波器、共振器），有些负责分发信号（立体声、高阶声场）。`UGen` 在计算机音乐中无处不在，你也许已经在另一种语言/另一个软件/另一种形态里遇到过它们：Max 的 `~objects`、模块合成里的模块等等。从计算机音乐的黎明期开始，就有一个约定俗成的规矩：`UGen` 按用途有不同的『速率』（rate）：</p>
+<ul>
+<li>`audio rate`（音频速率）：在 <strong>SuperCollider</strong> 里是 `.ar`。音频速率的 `UGen` 会以你当前的音频采样率运行，一般是每秒 `44.1hz`。`.ar` 信号用于可听见的组件（振荡器）。</li>
+<li>`control rate`（控制速率）：在 <strong>SuperCollider</strong> 里是 `.kr`。控制速率用于采样率并不关键的信号（包络和 LFO）。它们一般以 `samplerate/some amount` 的速度运行。</li>
+<li>`initial rate`（初始速率）：在 <strong>SuperCollider</strong> 里是 `.ir`。一种静态的、不可调制的速率。与普通参数相比它对 CPU 更高效。不过嘛，它听起来确实有点像某种变量。</li>
+</ul>
+<h4>基础合成器</h4>
+<p>在下面的例子里，我把让一个基础合成器跑起来所需的一切都安排好了：</p>
+<pre><code class="language-c">SynthDef(\test, {
+    | out, sustain=1, freq=440, speed=1, begin=0, end=1, pan, accelerate, offset|
+    var env    = Line.ar(1, 0, sustain);
+    var osc    = SinOsc.ar(freq);
+    var output = osc * env;
+    OffsetOut.ar(out, Pan2.ar(in: output, pos: pan));
+}).add;
+</code></pre>
+<p>光是这四行就足以做出一个基础合成器。注意我们用 `var blabla = ...` 的语法引入了新变量。我们添加了以下组件：</p>
+<ul>
+<li>`osc`：`SinOsc` 是一个基础的正弦波振荡器，以 `freq` 的速度运行。</li>
+<li>`env`：`Line` 是一条直线发生器，在 `sustain` 秒内从 `1.0` 走到 `0.0`。</li>
+<li>`output`：把 `osc` 乘以 `env`，我们为合成器创造了振幅包络，把连续信号变成了离散的音符。</li>
+<li>`OffsetOut`：音频输出本身。第一个参数是我们要把声音写入的缓冲。如果我们像这里这样不指定 `out`，<strong>SuperCollider</strong> 会把声音导向音频输出。多么方便！后面的参数用来把信号 `output` 传给缓冲。</li>
+<li>`Pan2`：这个 `UGen` 会把我们的单声道信号变成立体声信号。</li>
+</ul>
+<p>你可以用 <strong>Tidal</strong> 运行以下 pattern 来测试它：</p>
+<pre><code class="language-haskell">d1
+  $ cat[
+    note "c ds g bf", note "c ds g bf",
+    note "c f af c6", note "c f af c6"]
+  # s "test"
+</code></pre>
+<h4>释放合成器</h4>
+<p>我们的合成器现在能工作了，但有点不对劲。这个 `synth` 永远不会消亡，也就是说我们播放的每个音符都会慢慢推高内存占用，直到爆音和各种问题看似随机地开始出现。<strong>SuperCollider</strong> 可以用 `DoneAction` 解决这个问题。看看这个更新后的版本：</p>
+<pre><code class="language-c">SynthDef(\test, {
+    | out, sustain=1, freq=440, speed=1, begin=0, end=1, pan, accelerate, offset|
+    var env    = Line.ar(1, 0, sustain, doneAction: Done.freeSelf);
+    var osc    = SinOsc.ar(freq);
+    var output = osc * env;
+    OffsetOut.ar(out, Pan2.ar(in: output, pos: pan));
+}).add;
+</code></pre>
+<p>使用 `doneAction` 是**极其重要**的。现在我们的合成器在播放结束后会释放它占用的所有资源。</p>
+<h3>让合成器适配 SuperDirt</h3>
+<p><strong>SuperDirt</strong> 是 <strong>Tidal</strong> 的音频引擎。如果你想让自己的合成器配合 <strong>SuperDirt</strong> 使用，还有几件事要打理。还记得 `OffsetOut` 那部分吗？我们要改进它，让它与 <strong>Tidal</strong> 兼容。之前我们能听到声音，但那个声音并不是由 <strong>SuperDirt</strong> 本身管理和处理的，而是由 *vanilla* 原生 <strong>SuperCollider</strong> 音频服务器实例处理的。</p>
+<p>看看我们 `Blip-blop` 合成器的新版本：</p>
+<pre><code class="language-c">SynthDef(\test, {
+    | out, sustain=1, freq=440, speed=1, begin=0, end=1, pan, accelerate, offset, volume|
+    var env    = Line.ar(1, 0, sustain, doneAction: Done.freeSelf);
+    var osc    = SinOsc.ar(freq);
+    OffsetOut.ar(out,DirtPan.ar(osc, ~dirt.numChannels, pan, env));
+}).add;
+</code></pre>
+<p>如你所见，我们现在为音频输出使用了专门的对象：`DirtPan`，以及对 `~dirt.numChannels` 的引用。它是我们此前做法的 <strong>SuperDirt</strong> 兼容版：带 `pan` 参数的立体声输出。唯一的区别是……现在它真的能用了。用下面的 <strong>Tidal</strong> pattern 测试这个合成器：</p>
+<pre><code class="language-haskell">d1
+  $ superimpose (fast 2 . (|+ note "12 0 24 -12 0"))
+  $ cat[
+    note "c ds g bf", note "c ds g bf",
+    note "c f af c6", note "c f af c6"]
+  # s "test" # pan (slow 2 $ range "-1" 1 $ sine)
+</code></pre>
+<p>听起来相当不错！你的合成器现在完全兼容 <strong>SuperDirt</strong> 了。</p>
+<p>注意我们改动了几个地方：</p>
+<ul>
+<li>`output`：它没了。我们不再需要它。现在我们把包络直接喂给 `DirtPan`</li>
+<li>`osc` 也直接喂给 `DirtPan`。</li>
+</ul>
+<h2>更复杂的合成</h2>
+<p>本页教会了你为 <strong>SuperDirt</strong> 创建合成器，但它仍然相当基础。再多学一点 <strong>SuperCollider</strong>，你就能打磨自己的想法。看看下面这个 `SynthDef`。让刚才那个 pattern 继续跑着，它听起来很不错：</p>
+<pre><code class="language-haskell">SynthDef(\elegiac, {
+    | out, sustain=1, freq=440, speed=1, begin=0, end=1, pan, accelerate, offset, volume|
+    var env    = Line.ar(1, 0, sustain, doneAction: Done.freeSelf);
+	var osc    = RLPF.ar(in: SawDPW.ar([freq, freq/2]), freq: SinOsc.ar(pan).range(200,2000));
+    OffsetOut.ar(out,DirtPan.ar(osc, ~dirt.numChannels, pan, env))
+}).add;
+</code></pre>
+<h3>使用自定义参数</h3>
+<p>如果你想为自己的 `SynthDef` 创建任何自定义参数，它也必须在 <strong>Tidal</strong> 中被引用。要做到这一点，你需要在 <strong>Tidal</strong> 中创建一个与该参数在 <strong>SuperCollider</strong> 中同名的参数。例如，如果 <strong>SuperCollider</strong> 里的参数是 `| harm, pit, model |`，你就应该把下面的内容添加到你的 <a href="configuration--boot-tidal.html" rel="noreferrer noopener">Tidal 启动文件</a>：</p>
+<pre><code class="language-haskell">let harm = pF "harm"
+let pit = pF "pit"
+let model = pI "model" 
+</code></pre>
+<h3>列出 Tidal 参数</h3>
+<p>在 SuperCollider 中，你可以为任意 SuperDirt SynthDef 生成一份 Tidal 参数列表：</p>
+<pre><code>SuperDirt.postTidalParameters([\imp, \default]);
+SuperDirt.postTidalParameters([\supersaw, \default])
+</code></pre>
+<p>这会生成『imp』或『supersaw』合成器在 Tidal 中注册的准确参数。</p>
+<pre><code>-- | parameters for the SynthDefs: imp, default
+let (begin, begin_p) = pF "begin" (Nothing)
+    (end, end_p) = pF "end" (Nothing)
+    (freq, freq_p) = pF "freq" (Nothing)
+    (span, span_p) = pF "span" (Nothing)
+    (speed, speed_p) = pF "speed" (Nothing)
+</code></pre>
+<h2>故障排除</h2>
+<h3>我能听到『咔哒』声</h3>
+<p>在 <strong>Tidal</strong> 中使用自定义合成器时，你有时会听到『咔哒』声（clicks）。这些咔哒声是音频信号中的断裂/不连续。音频咔哒声在计算机音乐中无处不在，人们想尽一切办法避免和解决这个问题。</p>
+<p>如果你在把玩自定义 <strong>SuperCollider</strong> 合成器时听到了音频咔哒声，可以尝试：</p>
+<ul>
+<li>按 <strong>Tidal 方式</strong>重写你的 `SynthDef`（见上文）。</li>
+<li>调高 pattern 里的 `legato` 值。</li>
+<li>增大 <strong>SuperDirt</strong> 的 `fadeTime` 参数：</li>
+</ul>
+<pre><code class="language-c">~dirt.orbits[3].set(\fadeTime, 0.01);
+~dirt.orbits[4].set(\fadeTime, 0.1);
+</code></pre>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://tidalcycles.org/docs/configuration/adding_synthesizers" rel="noreferrer noopener">/docs/configuration/adding_synthesizers</a> · 译文更新于 2026-10-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
