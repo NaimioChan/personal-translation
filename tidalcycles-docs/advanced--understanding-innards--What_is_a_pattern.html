@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>什么是 pattern - Tidal Cycles 文档</title>
+<meta name="description" content="什么是 pattern - Tidal Cycles 官方文档中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>什么是 pattern</h1>
+<p>在 Tidal 里，pattern 到底*是*什么？回答这个问题有很多种方式。一个技术性的定义是：在底层，pattern 是一个从时间到事件的函数。你给一个 pattern 一个开始和结束时间，它返回在该时间窗内（部分或全部）活跃的事件。事件本身也是一个带有开始和结束时间的值。</p>
+<p>在使用 Tidal 制作音乐时这一点大多被隐藏起来，但让我们仔细看看一个非常简单的 pattern 的内部：</p>
+<pre><code class="language-Haskell">"1 2 3"</code></pre>
+<p>上面看起来可能像一个字符串，但 Tidal 会悄悄地把它解析成一个 pattern（用一个叫 parseBP_E 的隐藏函数）。我们可以请求那个 pattern 给出值，方法是在 pattern 字符串后面追加</p>
+<pre><code class="language-Haskell">:: Pattern String</code></pre>
+<p>，把字符串 pattern 转换成 Tidal pattern。你相当于在告诉 Tidal 把这个字符串当作 pattern 来对待，并给你看它看到了什么：</p>
+<pre><code class="language-Haskell">"1 2 3" :: Pattern String</code></pre>
+<p>如果你运行上面的代码，你应该会在输出缓冲里看到第一个循环的内容：</p>
+<pre><code class="language-Haskell">(0&gt;⅓)|"1"
+(⅓&gt;⅔)|"2"
+(⅔&gt;1)|"3"</code></pre>
+<p>由此我们可以看到第一个事件</p>
+<pre><code class="language-Haskell">1</code></pre>
+<p>在循环的前三分之一是活跃的，以此类推。</p>
+<p>所以 pattern 是一个从时间窗（也叫 <em>arc</em>，弧）到值的函数，每个值都各有一个开始和结束。因此像</p>
+<pre><code class="language-Haskell">rev</code></pre>
+<p>这样的函数是一个组合子（combinator），它接受这样一个函数作为输入，并返回一个新函数作为输出（其中内置了对输入和输出时间的操纵，以便倒转 pattern）。</p>
+<h1>Pattern 类型</h1>
+<p>这是基础，我们来看一些代码。pattern 的核心表示在 <a href="https://github.com/tidalcycles/Tidal/blob/master/src/Sound/Tidal/Pattern.hs" rel="noreferrer noopener">Sound.Tidal.Pattern</a> 模块里。核心表示就在顶部的十来行代码里。我们逐步过一遍。这里有一些 Haskell 知识会有帮助，但即使没有软件开发经验，希望你也可以抓住要点。</p>
+<pre><code class="language-Haskell">-- | 时间是有理数
+type Time = Rational</code></pre>
+<p>上面声明了时间是有理数。这意味着 Tidal 不是把时间表示成整数（整数），也不是浮点数，而是表示成*两个*整数的比。这意味着例如三分之一可以被精确表示，即一比三。音乐里当然充满这样的比值，不把它们表示成这样会带来大量问题…… 基本上，这意味着如果你把三个三分之一加在一起，你会得到一个整体。这看似显而易见，但并非所有系统都这么做！</p>
+<pre><code class="language-Haskell">-- | 一个时间弧（开始和结束）
+type Arc = (Time, Time)</code></pre>
+<p>这是弧（arc），或时间窗的表示。我们喜欢叫它时间弧（time arc）而不是时间段（time span），因为在 Tidal 里时间的概念是循环的。这里两个时间值就是一条弧的开始和结束。</p>
+<pre><code class="language-Haskell">-- | 第二条弧（部分）应当等于或容纳于
+-- 第一条弧（它所属的整体）之内。
+type Part = (Arc, Arc)</code></pre>
+<p>Tidal 常常需要表示一条弧的*一部分*。它用两条弧来做到这一点，第一条表示整体，第二条是部分本身。通常两条弧是相同的，这简单地意味着我们有一个只有一个部分的整体。</p>
+<pre><code class="language-Haskell">-- | 事件是一个在时间窗内活跃的值
+type Event a = (Part, a)</code></pre>
+<p>于是*事件*由一个部分和一个类型为</p>
+<pre><code class="language-Haskell">a</code></pre>
+<p>的值组成。这个</p>
+<pre><code class="language-Haskell">a</code></pre>
+<p>可以代表*任何*类型（但同一个 pattern 里的事件只能是相同类型）。例如你可以有字符串 pattern、数字 pattern、颜色 pattern，甚至其他 嵌套 pattern……</p>
+<pre><code class="language-Haskell">data State = State {arc :: Arc,
+                    controls :: ControlMap
+                   }</code></pre>
+<p>从 1.0.0 版本起，Tidal pattern 除了推进时间之外，还可以响应变化的状态。所以上面表示的是一个 Tidal pattern 的全部输入：当前时间窗，以及外部控制器的当前状态（无论是 MIDI 控制器还是其他软件）。有趣的是，当前时间（即</p>
+<pre><code class="language-Haskell">arc</code></pre>
+<p>）不是一个时间点，而是一条弧，或时间窗。这与心理学上"似现在"（specious present）具有时长的观点相吻合。</p>
+<pre><code class="language-Haskell">-- | 一个表示随时间发生的事件的函数
+type Query a = (State -&gt; [Event a])</code></pre>
+<p>这就是我们之前说的那个从时间到事件的函数。我们稍微简化了一点——它是一个从时间窗加上一些附加状态到事件的函数。注意</p>
+<pre><code class="language-Haskell">a</code></pre>
+<p>从事件的类型一直带到了查询的类型。这再次表明一个特定的 pattern 只能表示相同类型的事件。</p>
+<p>还要注意返回的是一个事件列表（用方括号表示）。这只是意味着 tidal 支持复调——多个事件可以同时发生。但记住每个事件都有自己的弧；两个事件可能为同一个时间窗返回，但它们未必同时开始和结束，甚至可能完全不相交。</p>
+<p>也可能事件的弧会延伸到查询状态中的弧之外。这是我们取回部分弧的一种情形——该部分将是查询的弧与事件弧的交集。</p>
+<pre><code class="language-Haskell">-- | 也叫 Continuous vs Discrete/Amorphous vs Pulsating 等。
+data Nature = Analog | Digital
+            deriving Eq</code></pre>
+<p>Tidal 的一个重要特性是你可以把模拟（连续）pattern 与数字（离散）pattern 准确地组合在一起。例如，把一个离散的音符 pattern 乘上一个连续变化的正弦波会很不错。说计算机只能表示数字结构是个迷思，但在把模拟 pattern 和数字 pattern 组合在一起时，能够区分哪个是哪个是有用的，因此有了上面做这件事的数据类型。</p>
+<pre><code class="language-Haskell">-- | 一个基本上是查询的数据类型，外加一个关于其事件
+-- 天性是 Analogue 还是 Digital 的提示
+data Pattern a = Pattern {nature :: Nature, query :: Query a}</code></pre>
+<p>这里我们终于抵达了</p>
+<pre><code class="language-Haskell">Pattern</code></pre>
+<p>数据类型，它简单地由一个要么数字要么模拟的天性，加上一个为特定时间窗计算事件的查询组成。</p>
+<p>唯一还没做的是定义我们之前见过的</p>
+<pre><code class="language-Haskell">ControlMap</code></pre>
+<p>类型是什么。它除了用于表示控制器状态之外，还是另一个类型</p>
+<pre><code class="language-Haskell">ControlPattern</code></pre>
+<p>定义的一部分，来看：</p>
+<pre><code class="language-Haskell">data Value = VS { svalue :: String }
+           | VF { fvalue :: Double }
+           | VI { ivalue :: Int }
+           deriving (Eq,Ord,Typeable,Data)
+
+type ControlMap = Map.Map String Value
+type ControlPattern = Pattern ControlMap</code></pre>
+<p>一个</p>
+<pre><code class="language-Haskell">ControlMap</code></pre>
+<p>简单地是一个字典（或映射），用于按名字（用字符串）存储一些值。除了在</p>
+<pre><code class="language-Haskell">State</code></pre>
+<p>数据类型里用于外部控制值之外，我们还用它来构造</p>
+<pre><code class="language-Haskell">ControlPattern</code></pre>
+<p>。它们就是控制映射的 pattern，用于表示合成器消息的 pattern。例如</p>
+<pre><code class="language-Haskell">speed</code></pre>
+<p>函数）把一个数字 pattern 变成控制映射的 pattern，</p>
+<pre><code class="language-Haskell">sound "bd sn" # speed "2 3"</code></pre>
+<p>里的</p>
+<pre><code class="language-Haskell">sound</code></pre>
+<p>把一个字符串 pattern 变成控制映射的 pattern，而</p>
+<pre><code class="language-Haskell">#</code></pre>
+<p>把它们组合成一个新的控制映射 pattern。如果有不清楚的地方，欢迎到讨论页评论！</p>
+<img src="https://tidalcycles.org/assets/images/tidalclub-5ce72b34112c6e8388b587d5d5c0de26.png" alt="tidalclub" width="600">
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://tidalcycles.org/docs/advanced/understanding-innards/What_is_a_pattern" rel="noreferrer noopener">/docs/advanced/understanding-innards/What_is_a_pattern</a> · 译文更新于 2026-10-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

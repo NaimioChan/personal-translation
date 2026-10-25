@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OSC - Tidal Cycles 文档</title>
+<meta name="description" content="OSC - Tidal Cycles 官方文档中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>OSC</h1>
+<p><strong>Open Sound Control (OSC)</strong> 是一种标准网络协议，名义上是为音乐设计的，但实际上它只是一种在网络间发送数字和其他数据的便捷方式。众多现场编码及其他系统——包括 DAW（数字音频工作站）、可视化程序和调音台——都兼容 OSC。</p>
+<p>Tidal Cycles 真正且唯一的任务就是发送 由 pattern 决定的 OSC 消息，最常见的是发送给 <strong>SuperDirt</strong> 音频框架。把 <strong>Tidal</strong> 配置成向另一个系统发送 OSC 相当简单直接。它涉及指定消息应发送到哪里（目标），以及所发送 OSC 数据的结构（消息的形状或格式）。</p>
+<h2>详细教程</h2>
+<h3>定义目标</h3>
+<p>首先，定义一个目标：</p>
+<pre><code class="language-c">let target =
+      Target {oName = "visualiser",   -- 目标的友好名称（只用于错误消息）
+              oAddress = "localhost", -- 目标的网络地址，通常为 "localhost"
+              oPort = 5050,           -- 目标监听的网络端口
+              oLatency = 0.2,         -- 额外延迟，用于平滑网络抖动/让内容同步
+              oSchedule = Live,       -- 调度方式 - 见下文
+              oWindow = Nothing,      -- 尚未使用
+              oHandshake = False,     -- SuperDirt 专用
+              oBusPort = Nothing      -- 也是 SuperDirt 专用
+             }</code></pre>
+<p>oSchedule 的调度方式可以是以下之一：</p>
+<ul>
+<li><strong>Live</strong>：让 Tidal 调度消息，使它们在「正确的」时间减去 <code>oLatency</code> 值的时刻发出。这是最简单的方式，在大多数情况下都能工作良好。</li>
+</ul>
+<ul>
+<li><strong>Pre BundleStamp</strong>：把每条 OSC 消息包进一个带束时间戳（bundle timestamp）的 OSC「束」（bundle）里发送。这些束内的消息每帧分批提前发出（按 <code>oLatency</code> 配置值提前）。Tidal 不尝试以「正确」的时机把它们发出，而是期望目标来精确调度它们。这对目标来说工作量更大，但可能比上一种更精确，因为可以避开潜在的网络/处理抖动。</li>
+</ul>
+<ul>
+<li><strong>Pre MessageStamp</strong>：与上面的 <code>BundleStamp</code> 类似，但时间戳被加到 OSC 消息本身中，填入「sec」和「usec」两个整数字段。你必须在你的 osc 格式的参数列表里显式包含它们（后文有示例）。</li>
+</ul>
+<h3>定义 OSC 消息结构</h3>
+<p>接下来，定义 OSC 消息的结构。值得先花一点时间熟悉一下 OSC 规范。Tidal 发送的 OSC 消息有两种组织方式：参数列表，或名值对。</p>
+<p>参数列表方式最常见。它看起来像这样：</p>
+<pre><code class="language-c">let oscplay = OSC "/play" $ ArgList [("s", Nothing),
+                                     ("vowel", Just $ VS "a"),
+                                     ("pan", Just $ VF 0.5),
+                                     ("cut", Just $ VI 1),
+                                     ("intensity", Just $ VI 0)
+                                   ]</code></pre>
+<p>要定义 OSC 结构，你先写 OSC，随后是 OSC「地址 pattern」（address pattern），这里是 <code>"/play"</code>。然后按顺序列出消息参数。每个参数以一个「元组」的形式给出，包含参数名和它的默认值。</p>
+<p>在上面的例子里，第一个名为 <code>"s"</code> 的参数没有默认值，由关键字 <code>Nothing</code> 表示。这意味着如果 pattern 没有给出 s 参数，就不会发送任何 OSC 消息。</p>
+<p>例子里其他参数都有默认值，由关键字 <code>Just</code> 表示，其后是参数的类型和默认值。<code>VS</code> 给出字符串默认值，<code>VF</code> 给出浮点数默认值，<code>VI</code> 给出整数默认值。其他可用类型还有 <code>VB</code>（真/假布尔值，在消息中会被转换为 1 / 0 整数值）和 <code>VX</code>（二进制「blob」）。如果这些带默认值的参数有一个或多个未出现在 pattern 里，消息仍会带着这些默认值发送。</p>
+<p>如果你使用 <strong>Pre MessageStamp</strong>，你需要添加 <code>sec</code> 和 <code>usec</code> 消息参数，它们才会被发送：</p>
+<pre><code class="language-c">let oscplay = OSC "/play" $ ArgList [("s", Nothing),
+                                     ("vowel", Just $ VS "a"),
+                                     ("pan", Just $ VF 0.5),
+                                     ("cut", Just $ VI 1),
+                                     ("intensity", Just $ VI 0),
+                                     ("sec", Just $ VF 0),
+                                     ("usec", Just $ VF 0)
+                                   ]</code></pre>
+<p>除了 <code>sec</code> 和 <code>usec</code>，还有另外三个参数只要存在 Tidal 就总会填入：<code>cps</code>（每秒循环数）、<code>cycle</code>（事件在循环中的起始位置）和 <code>delta</code>（事件以秒计的时长）。如果你想把这类信息发送给目标，也把它们加上：</p>
+<pre><code class="language-c">let oscplay = OSC "/play" $ ArgList [("s", Nothing),
+                                     ("vowel", Just $ VS "a"),
+                                     ("pan", Just $ VF 0.5),
+                                     ("cut", Just $ VI 1),
+                                     ("intensity", Just $ VI 0),
+                                     ("sec", Just $ VF 0),
+                                     ("usec", Just $ VF 0),
+                                     ("cps", Just $ VF 0),
+                                     ("cycle", Just $ VF 0),
+                                     ("delta", Just $ VF 0)
+                                   ]</code></pre>
+<h3>命名参数</h3>
+<p>除了像上面那样给出参数列表，你也可以这样指定命名参数：</p>
+<pre><code class="language-c">let oscplay = OSC "/play" Named {requiredArgs = ["s"]}</code></pre>
+<p>用这样的定义，pattern 中的所有参数都会发送给目标。与参数列表那样在消息中位置固定不同，这些参数将以任意顺序、以名值对的形式出现。也就是说，每个参数前面都会附加一个额外的字符串参数，给出它的名字。如示例所示，这里给出了一个「必需」参数的列表——除非该列表中列出的所有参数都出现在某个 由 pattern 决定的事件中，否则事件不会被发送。</p>
+<h3>定义额外的参数</h3>
+<p>许多参数已经在 <code>Sound.Tidal.Params</code> 中定义，并在 Tidal 会话中可用。如果你想发送尚未定义的参数，可以自己定义。例如上面用到的 'intensity' 就需要像这样定义：</p>
+<pre><code class="language-c">let intensity = pF "intensity"</code></pre>
+<h3>把消息结构映射到目标</h3>
+<p>最后需要定义的，是目标与它所接受的 OSC 消息结构之间的映射。本例中只有一个目标，它只接受一种 OSC 消息，所以很简单：</p>
+<pre><code class="language-c">let oscmap = [(target, [oscplay])]</code></pre>
+<h3>启动流并向其发送 pattern</h3>
+<p>然后你就可以像这样启动一个把 pattern 转换成 OSC 的「流」（stream）：</p>
+<pre><code class="language-c">stream &lt;- startStream defaultConfig oscmap</code></pre>
+<p>并像这样开始发送一个 pattern：</p>
+<pre><code class="language-c">streamReplace stream 1 $ s "hello" # cut 1 # intensity 3</code></pre>
+<h3>快捷方式</h3>
+<p>你可以像这样定义一些快捷方式：</p>
+<pre><code class="language-c">let x1 = streamReplace stream 1
+    x2 = streamReplace stream 2
+    x3 = streamReplace stream 3
+    x4 = streamReplace stream 4</code></pre>
+<p>于是下面这样就能工作了：</p>
+<pre><code class="language-c">x1 $ s "hello" # cut 1 # intensity 3</code></pre>
+<p>这与 <code>d1</code>、<code>d2</code> 等在 <code>BootTidal.hs</code> 中的定义方式非常相似。可以参考默认的 <code>BootTidal.hs</code> 文件（见侧边栏），看看其他 tidal 函数通常是如何定义的。</p>
+<h3>回顾</h3>
+<p>下面把上面所有代码放在一起：</p>
+<pre><code class="language-c">let target =
+      Target {oName = "visualiser",   -- 目标的友好名称（只用于错误消息）
+              oAddress = "localhost", -- 目标的网络地址，通常为 "localhost"
+              oPort = 5050,           -- 目标监听的网络端口
+              oLatency = 0.2,         -- 额外延迟，用于平滑网络抖动/让内容同步
+              oSchedule = Live,       -- 调度方式 - 见下文
+              oWindow = Nothing,      -- 尚未使用
+              oHandshake = False,     -- SuperDirt 专用
+              oBusPort = Nothing      -- 也是 SuperDirt 专用
+             }
+    oscplay = OSC "/play" $ ArgList [("s", Nothing),
+                                     ("vowel", Just $ VS "a"),
+                                     ("pan", Just $ VF 0.5),
+                                     ("volume", Just $ VF 1),
+                                     ("cut", Just $ VI 1),
+                                     ("intensity", Just $ VI 0)
+                                   ]
+    intensity = pF "intensity"
+    oscmap = [(target, [oscplay])]
+
+
+stream &lt;- startStream defaultConfig oscmap
+
+let x1 = streamReplace stream 1
+    x2 = streamReplace stream 2
+    x3 = streamReplace stream 3
+    x4 = streamReplace stream 4</code></pre>
+<h3>多个目标与多条消息</h3>
+<p>可以把多条 OSC 消息写成 pattern并发送给多个目标，且来自同一个「流」。例如，要创建一个流，既发送给上面的目标又发送给 <strong>SuperDirt</strong>，你可以这样做：</p>
+<pre><code class="language-c">let oscmap = [(target, [oscplay]),
+              (superdirtTarget, [superdirtShape])
+             ]
+
+stream &lt;- startStream defaultConfig oscmap
+
+d = streamReplace stream
+
+d 1 $ s "bd"</code></pre>
+<p>上面的 <code>bd</code> 会同时发送给 <code>target</code> 和 <code>superdirtTarget</code>。</p>
+<h3>带多种消息格式的复杂目标</h3>
+<p>有些 OSC 目标更复杂，接受多种 OSC 格式，还在 osc「地址 pattern」中指定数据。我们以 ASCII-Simple-Video-Synth 为例。下面是它的 Tidal 规格说明：</p>
+<pre><code class="language-c">let target = Target {oName = "ascii",
+                     oAddress = "127.0.0.1",
+                     oPort = 5050,
+                     oLatency = 0.2,
+                     oWindow = Nothing,
+                     oSchedule = Live,
+                     oHandshake = False,
+                     oBusPort = Nothing
+                    }
+    formats = [OSC "/{asccolour}/speed"  $ ArgList [("ascspeed", Nothing)],
+               OSC "/{asccolour}/mode"   $ ArgList [("ascmode", Nothing)],
+               OSC "/{asccolour}/offset" $ ArgList [("ascoffset", Nothing)],
+               OSC "/{asccolour}/scale"  $ ArgList [("ascscale", Nothing)],
+               OSC "/shape/sides" $ ArgList [("ascsides", Nothing)],
+               OSC "/shape/size"  $ ArgList [("ascsize", Nothing)],
+               OSC "/shape/xinc"  $ ArgList [("ascxinc", Nothing)],
+               OSC "/shape/yinc"  $ ArgList [("ascyinc", Nothing)]
+              ]
+    ascspeed  = pI "ascspeed"
+    ascmode   = pI "ascmode"
+    ascoffset = pI "ascoffset"
+    ascscale  = pI "ascscale"
+    ascsides  = pI "ascsides"
+    ascsize   = pI "ascsize"
+    ascxinc   = pI "ascxinc"
+    ascyinc   = pI "ascyinc"
+    asccolour = pS "asccolour"
+    oscmap = [(target, formats)]
+
+stream &lt;- startStream defaultConfig oscmap
+
+streamReplace stream 1 $ asccolour "blue green red"
+  # ascspeed "38 15"
+  # ascsides 3
+  # ascoffset 10
+  # ascxinc 10
+  # ascyinc 10
+  # ascmode 0
+  # ascsize 30</code></pre>
+<p>这个软件接受若干地址 pattern，其中一些包含了所寻址的颜色。为了让这个颜色可以用 pattern 表示，它以花括号中的名字给出，即 <code>"{asccolour}"</code>。之后就可以在 Tidal pattern 中用 'ascColour' 参数来给它写 pattern 了。</p>
+<p>当你把多个 OSC 消息格式指派给一个流时，最好确保每个格式至少有一个独一无二的非默认参数。这能保证只有当这些非默认参数在 pattern 中被设置时才发送消息。否则，每个 由 pattern 决定的事件都会发送所有格式。</p>
+<h2>控制器输入</h2>
+<p>Tidal 1.0.0 现在支持外部输入，使用的是 <strong>OSC</strong> 协议。下面是一份让它跑起来的快速指南，包括用一个简单的「桥接器」让 MIDI 输入工作。 </p>
+<h3>配置</h3>
+<p>如果你只是想把 <strong>MIDI</strong> 输入引入 tidal，请看侧边栏的 MIDI 页面。</p>
+<p>安装并配置好 1.0.0 版本后，默认情况下 <strong>Tidal</strong> 会自动通过 <strong>OSC</strong> 网络协议在 localhost（127.0.0.1）的 6010 端口监听外部控制消息。这是可配置的——如果你更希望它监听例如所有网络接口、端口 6060，你可以把配置（<code>BootTidal.hs</code>）改成这样： </p>
+<pre><code class="language-haskell">tidal &lt;- startTidal superdirtTarget (defaultConfig {cCtrlAddr = "0.0.0.0", cCtrlPort = 6060})</code></pre>
+<p>如果你更希望完全关闭对控制消息的监听，改用这个：</p>
+<pre><code class="language-haskell">tidal &lt;- startTidal superdirtTarget (defaultConfig {cCtrlListen = False})</code></pre>
+<p>Tidal 期望的 <strong>OSC</strong> 消息路径为 <code>/ctrl</code>，并带两个值——键和值。键可以是字符串或整数（tidal 会帮你把整数转换为字符串）。值可以是字符串、整数或浮点数。例如 <strong>OSC</strong> 消息 <code>/ctrl sf hello 0.4</code>，是把 <code>hello</code> 控制设为 <code>0.4</code> 的消息。在这个例子里 <code>sf</code> 是 <strong>OSC</strong> 类型标签（typetag）。它规定第一个值是 (s)tring（字符串），第二个值是 (f)loat（浮点数），参见 <a href="http://opensoundcontrol.org/spec-1_0" rel="noreferrer noopener">OSC 规范</a>。 </p>
+<p>然后你就可以在 pattern 中像这样使用这个控制：</p>
+<pre><code class="language-haskell">d1 $ sound "bd" # speed (cF 1 "hello")</code></pre>
+<p><code>cF</code> 用于浮点控制。第二个参数 <code>1</code> 是默认值，用于 tidal 尚未收到该控制的情况。还有用于字符串的 <code>cS</code> 和用于整数的 <code>cI</code>。对于时间值（例如用作 fast/slow 的第一个参数），使用 <code>cT</code>。对于比率，加上 <code>cR</code>。如果你想接收整个 pattern（写成迷你记谱的字符串），使用 <code>cP</code>。</p>
+<h2>调试</h2>
+<p>调试 OSC 的一种方式是使用诸如 <a href="https://www.wireshark.org/" rel="noreferrer noopener">WireShark</a> 的封包嗅探器。你可以在过滤栏里输入 <code>osc</code>，过滤掉 OSC 封包以外的一切。如果你点击一个 <code>OSC network packet</code> 并展开字段，就能看到你的 OSC 消息的格式良好的表示。 </p>
+<h2>OSC SuperDirt API</h2>
+<p>出于好奇：以下就是从 <strong>Tidal Cycles</strong> 发往 <strong>SuperDirt</strong> 的一条 OSC 触发消息的样子，基于 <strong>Tidal</strong> 1.7.x 版本，很可能之后的版本也如此：</p>
+<p>我们考虑这个 pattern：<code>sound "bd" # speed 2</code>。它生成的 OSC 消息是这样的： </p>
+<pre><code class="language-Bundle"> Bundle
+Timetag: Feb 22, 2021 21:54:04.960054397 UTC
+Size: 92 bytes
+Message: /dirt/play ,sfsfsfsisssf
+    Header
+        Path: /dirt/play
+        Format: ,sfsfsfsisssf
+    String: cps
+    Float: 0.4
+    String: cycle
+    Float: 40549
+    String: delta
+    Float: 2.5
+    String: orbit
+    Int32: 0
+    String: s
+    String: bd
+    String: speed
+     Float: 2</code></pre>
+<p>它由单条消息构成，包在一个束里，束提供了事件应被触发的时刻的时间戳。因为 superdirt 的 OSC 目标把 <code>oSchedule</code> 设为 <code>Pre BundleStamp</code>，消息会提前分批发出，由接收方（如 superdirt）负责精确调度它们。</p>
+<p>束内的消息路径为 <code>/dirt/play</code>，包含数量不定的名值对。你可以看到 <code>s bd</code> 和 "speed 2" 这几对，但 Tidal 还添加了若干额外的对：当前 <code>cps</code> 速度、事件在循环中的位置（自 <strong>Tidal</strong> 启动起）、事件的 <code>delta</code>（以秒计的时长），以及 <code>orbit</code> 编号。</p>
+<h2>播放控制器</h2>
+<p><strong>Tidal</strong> <code>1.7.4</code> 增加了通过与控制器输入相同的 OSC 接口与 pattern 交互的能力。默认情况下，它在 localhost（<code>127.0.0.1</code>）的 <code>6010</code> 端口监听 OSC 消息。 </p>
+<p>下一节介绍可用的播放控制函数，随后是一个在 <strong>SuperCollider</strong> 中用 MIDI 控制来控制多个 pattern 的示例。</p>
+<h3> Open Sound Control 函数</h3>
+<h4>静音一个 pattern</h4>
+<p>你可以通过发送路径为 <code>/mute</code> 或 <code>/unmute</code>、带一个指定 pattern 的参数的 OSC 消息，来静音或取消静音一个 pattern。就像在常规 tidal 代码里一样，这个参数可以是数字（对应 <code>d1</code>、<code>d2</code> 等）或字符串（对应命名 pattern）。</p>
+<p>例如 OSC 消息 <code>/mute 3</code> 会静音 <code>d3</code>。</p>
+<h4>独奏一个 pattern</h4>
+<p>你也可以通过发送路径为 <code>/solo</code> 或 <code>/unsolo</code>、带一个指定 pattern 的参数的 OSC 消息，来独奏或取消独奏一个 pattern，该参数同样可以是数字或字符串。</p>
+<p>例如 OSC 消息 <code>/solo 3</code> 会让 <code>d3</code> 独奏。</p>
+<h4>控制所有 pattern</h4>
+<p>你还可以使用 OSC 路径 <code>/muteAll</code>、<code>/unmuteAll</code>、<code>/unsoloAll</code> 以及当然还有 <code>/hush</code> 来控制所有正在播放的 pattern。这些消息都不带参数。</p>
+<h4>MIDI 示例</h4>
+<p>下面是一个完整的 <strong>SuperCollider</strong> 示例，把 <strong>MIDI</strong> 控制器上的按钮映射到 pattern，使按钮发出的音符开/关消息切换 pattern 的静音或触发其他效果。</p>
+<p>这个示例使用 <strong>MIDI</strong> 按钮 <code>C4</code>（MIDI 值 60）、<code>D4</code> 和 <code>E4</code> 来切换 <code>d1</code>、<code>d2</code> 和 <code>d3</code> 的静音。它使用 <code>F4</code>、<code>G4</code> 和 <code>A4</code> 来切换 <code>d1</code>、<code>d2</code> 和 <code>d3</code> 的独奏。它还使用音符 <code>C5</code> 触发 muteAll，音符 <code>D5</code> 触发 unmuteAll。</p>
+<p>编辑代码的第一部分（MIDI 控制器映射）来定义你想用哪些控制器按钮控制 pattern。其余代码应当能与你定义的映射配合工作，不需要编辑，但对改作他用也会有帮助。</p>
+<p>先让 <strong>Tidal</strong>（例如在 <code>Atom</code> 中）和 <strong>SuperDirt</strong> 处于运行状态，然后在 <strong>SuperCollider</strong> 中运行以下代码块：</p>
+<pre><code class="language-c">// 执行下面的代码块，开始 MIDI -&gt; OSC 的映射。
+(
+var mutes, solos, muteAll, unmuteAll, unsoloAll, hush;
+var playbackControl, playbackState;
+var osc;
+
+/* -- MIDI 控制器映射 ---------------------------- */
+// 编辑这一节来配置你的 MIDI 控制器
+
+// "mutes" 和 "solos" 各是一个 MIDI 编号 -&gt; pattern ID 的字典
+
+// 在本例中，C4、D4 和 E4 静音 pattern d1、d2 和 d3
+mutes = Dictionary[
+	60 -&gt; 1,
+	62 -&gt; 2,
+	64 -&gt; 3
+];
+
+// 在本例中，F4、G4 和 A4 独奏 pattern d1、d2 和 d3
+solos = Dictionary[
+	65 -&gt; 1,
+	67 -&gt; 2,
+	69 -&gt; 3
+];
+
+// 这个 MIDI 音符触发 "muteAll"
+// 在本例中，它被设为 C5
+muteAll = 72;
+
+// 这个 MIDI 音符触发 "unmuteAll"
+// 在本例中，它被设为 D5
+unmuteAll = 74;
+
+// 这个 MIDI 音符触发 "unsoloAll"
+// 在本例中，未使用
+unsoloAll = nil;
+
+// 这个 MIDI 音符触发 "hush"
+// 在本例中，未使用
+hush = nil;
+
+/* ------------------------------------------------------- */
+
+playbackState = Dictionary[];
+
+union(mutes.values.asSet, solos.values.asSet).do({
+	arg item;
+	playbackState.put(item, Dictionary[\mute -&gt; false, \solo -&gt; false]);
+});
+
+osc = NetAddr.new("127.0.0.1", 6010);
+
+MIDIClient.init;
+MIDIIn.connectAll;
+
+playbackControl = MIDIFunc.noteOn({ |val, num, chan, src|
+	var patID, patState;
+	if (mutes.at(num) !== nil, {
+		patID = mutes.at(num);
+		patState = playbackState.at(patID);
+		if (patState.trueAt(\mute), {
+			osc.sendMsg("/unmute", patID);
+			patState.put(\mute, false);
+		}, {
+			osc.sendMsg("/mute", patID);
+			patState.put(\mute, true);
+		});
+	});
+
+	if (solos.at(num) !== nil, {
+		patID = solos.at(num);
+		patState = playbackState.at(patID);
+		if (patState.trueAt(\solo), {
+			osc.sendMsg("/unsolo", patID);
+			patState.put(\solo, false);
+		}, {
+			osc.sendMsg("/solo", patID);
+			patState.put(\solo, true);
+		});
+	});
+
+	if (muteAll == num, {
+		osc.sendMsg("/muteAll");
+		playbackState.do({
+			arg patState;
+			patState.put(\mute, true);
+		});
+	});
+
+	if (unmuteAll == num, {
+		osc.sendMsg("/unmuteAll");
+		playbackState.do({
+			arg patState;
+			patState.put(\mute, false);
+		});
+	});
+
+	if (unsoloAll == num, {
+		osc.sendMsg("/unsoloAll");
+		playbackState.do({
+			arg patState;
+			patState.put(\solo, false);
+		});
+	});
+
+	if (hush == num, {
+		osc.sendMsg("/hush");
+	});
+});
+
+if (~stopMidiMuteControl != nil, {
+	~stopMidiMuteControl.value;
+});
+
+~stopMidiMuteControl = {
+	playbackControl.free;
+};
+)
+
+// 执行下面这行来停止它。
+~stopMidiMuteControl.value;</code></pre>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://tidalcycles.org/docs/configuration/MIDIOSC/osc" rel="noreferrer noopener">/docs/configuration/MIDIOSC/osc</a> · 译文更新于 2026-10-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

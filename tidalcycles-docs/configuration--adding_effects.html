@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>添加效果器 - Tidal Cycles 文档</title>
+<meta name="description" content="添加效果器 - Tidal Cycles 官方文档中文译本。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>添加效果器</h1>
+<p>本帮助文件基于 <a href="https://github.com/musikinformatik/SuperDirt/blob/develop/hacks/adding-effects.scd" rel="noreferrer noopener">SuperDirt GitHub</a> 仓库中的一个文件。想了解更多信息请参阅原版文件；如果你改进了工作流程，也欢迎把它添加到本页，帮助其他用户。为 <strong>Tidal</strong> 和 <strong>SuperDirt</strong> 添加新效果器分三步：</p>
+<ol>
+<li>把需要的参数添加到 <strong>Tidal</strong></li>
+<li>在 <strong>SuperDirt</strong> 中添加一个模块定义，这样当参数不是 <code>nil</code> 时就能被找到</li>
+<li>把 <code>SynthDef</code> 添加到 <strong>SuperDirt</strong>，这样它才能发声</li>
+</ol>
+<h2>添加一个频谱延迟</h2>
+<p>我们要给 <strong>SuperDirt</strong> 添加一个奇怪的频谱延迟。这里假设你已经有一个 <strong>SuperDirt</strong> 实例，可以在 <strong>SuperCollider</strong> 交互编辑器中通过 <code>~dirt</code> 访问到它。</p>
+<h3>Tidal 侧</h3>
+<p>我们要添加两个参数：`tsdelay`（float，延迟时间）和 `xsdelay`（int，延迟结构）。运行以下 Tidal 代码（就像运行一个 tidal pattern 那样）：</p>
+<pre><code class="language-haskell">let tsdelay = pF "tsdelay"
+    xsdelay = pI "xsdelay"
+</code></pre>
+<p>如果你想让上面的定义在每次启动 tidal 时都自动可用，就把它们添加进你的 <a href="configuration--boot-tidal.html" rel="noreferrer noopener">BootTidal.hs 启动文件</a>。</p>
+<h3>SuperCollider 侧</h3>
+<p>为 <strong>SuperDirt</strong> 添加一个模块。这会为这些参数添加一个响应器：</p>
+<pre><code class="language-c">(
+~dirt.addModule('spectral-delay', { |dirtEvent|
+	dirtEvent.sendSynth('spectral-delay' ++ ~dirt.numChannels,
+		// 可选
+		// 也可以省略这个参数数组不传，
+		// 但写明它能让发生的事情一目了然
+		[
+			xsdelay: ~xsdelay,
+			tsdelay: ~tsdelay,
+			sustain: ~sustain,
+			out: ~out
+		]
+	)
+}, { ~tsdelay.notNil or: { ~xsdelay.notNil } }); // 只要在两个参数中至少给出了一个，就播放合成器
+)
+</code></pre>
+<p>你可以在 <strong>SuperCollider</strong> 中用这条命令预览效果器的顺序：</p>
+<pre><code class="language-c">~dirt.modules;
+</code></pre>
+<p>如果需要，你可以对效果器重新排序。例如，想让低通滤波器排在延迟之后，就运行下面这行：</p>
+<pre><code class="language-c">~dirt.orderModules(['spectral-delay', 'hpf', 'klm']);
+</code></pre>
+<h3>制作一个 SynthDef</h3>
+<p>最后一步是声明我们的频谱延迟本身，它会声明在一个经典的 <strong>SuperCollider</strong> SynthDef 中：</p>
+<pre><code class="language-c">(
+
+var numChannels =  ~dirt.numChannels;
+
+SynthDef("spectral-delay" ++ numChannels, { |out, tsdelay, xsdelay = 1, sustain|
+
+	var signal, delayTime, delays, freqs, filtered;
+	var size = 16;
+	var maxDelayTime = 0.2;
+
+	signal = In.ar(out, numChannels);
+	delayTime = tsdelay * maxDelayTime;
+	filtered = (1..size).sum { |i|
+		var filterFreq = i.linexp(1, size, 40, 17000);
+		var sig = BPF.ar(signal, filterFreq, 0.005);
+		// 延迟的样式由 xsdelay 按位与决定：
+		DelayN.ar(sig, maxDelayTime, i & xsdelay * (1/size) * delayTime )
+	};
+	signal = signal * 0.2 + (filtered * 4); // 这里控制干湿比例
+	ReplaceOut.ar(out, signal)
+
+}).add;
+)
+</code></pre>
+<h3>最终结果</h3>
+<p>现在你应该可以在 <strong>Tidal</strong> 中写下以下代码：</p>
+<pre><code class="language-haskell">d1 $ sound "can*4" # tsdelay "0 0.25 0.5 0.75 1" # xsdelay "3 124 3 12 62 2"
+</code></pre>
+
+    <footer class="doc-meta">
+      <p>原文：<a href="https://tidalcycles.org/docs/configuration/adding_effects" rel="noreferrer noopener">/docs/configuration/adding_effects</a> · 译文更新于 2026-10-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
