@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>目标模式 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：目标模式">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>目标模式</h1>
+
+<p>给 omp 一个持久目标，让它跨轮次持续工作，并用 token 预算和监督手段加以控制。</p>
+<p>目标模式适用于那些一轮做不完、但有清晰终点的工作：全仓库范围的迁移、持续多轮测试并修复的循环，或者包含多个相互依赖步骤的发布清单。你只需说明一次目标；omp 会不断采取下一个有用的步骤，直到它验证工作已完成、你暂停或放弃该目标，或者预算阻止了进一步的工作。</p>
+<p>从一个有边界、可测试的目标开始：</p>
+<pre><code class="language-text">/goal Migrate the importer to streaming. Update every caller and user-facing documentation, preserve current error behavior, and finish only after the importer tests and typecheck pass.
+/goal budget 200000
+</code></pre>
+<p>状态行会显示目标模式已激活，omp 会在每个有产出的轮次后继续工作，而不是等待下一次提示。请随时待命处理有风险的决策，在工作推进过程中审阅它，并用 <code>/goal show</code> 查看状态与用量。</p>
+<blockquote>
+<p><strong>token 预算是一条安全边界，而不是成功的定义。</strong>预算耗尽时，目标会变成 <code>budget-limited</code>，omp 会把已知的部分收尾。除非目标模式明确报告已完成，否则目标仍未完成。</p>
+</blockquote>
+<h2 id="choose-the-right-kind-of-task">选择合适的任务类型</h2>
+<p>目标模式在以下情况下效果很好：</p>
+<ul>
+<li>期望的最终状态和验证命令是已知的；</li>
+<li>推进过程可能需要大量编辑、工具运行或重试；</li>
+<li>omp 能自行做出例行决策，不必每走一步都询问；以及</li>
+<li>你能事先表达安全边界。</li>
+</ul>
+<p>对于应当在一轮内完成的聚焦改动，使用普通提示词。若你想在动手实现前先审阅方案，请使用<a href="plan.html">计划模式</a>。不要把目标无人值守地用于生产变更、破坏性操作、凭据相关的工作或有歧义的产品决策；请在目标中要求这些操作必须先获确认。</p>
+<p>一个有力的目标会写明交付物、完成的证据，以及禁止的捷径。例如：</p>
+<pre><code class="language-text">/goal Remove the legacy session API and migrate all callers. Keep the public behavior compatible, do not change the database schema, run the focused session tests and typecheck, and report any callers that cannot be migrated safely.
+</code></pre>
+<p>如果终点还不清楚，先让 omp 来访谈你：</p>
+<pre><code class="language-text">/guided-goal I need to make authentication safer before launch
+</code></pre>
+<p><code>/guided-goal [rough objective]</code> 会在普通聊天中提出澄清问题，把你的回答转成具体目标，然后启动目标模式。使用单纯的 <code>/goal</code> 时，省略目标即可打开多行编辑器。</p>
+<h2 id="supervise-an-active-goal">监督进行中的目标</h2>
+<p>在交互式 TUI 中，活动目标会在短暂空闲后自动继续。输入提示词、附加图片或打断，都能让你在下一轮开始前取得控制权。你随时可以用一条普通消息引导工作：</p>
+<pre><code class="language-text">Before continuing, keep the existing wire format and add a regression test for malformed frames.
+</code></pre>
+<p>用这些命令查看和控制当前会话的目标：</p>
+<table><thead><tr><th>命令</th><th>作用</th></tr></thead><tbody><tr><td><code>/goal</code></td><td>为活动或已暂停的目标打开管理菜单。若还没有目标，则打开目标编辑器。</td></tr><tr><td><code>/goal show</code></td><td>显示目标、状态、已用与剩余 token，以及活跃时间。</td></tr><tr><td><code>/goal pause</code></td><td>停止自动续跑，但保留会话中的目标与计量。</td></tr><tr><td><code>/goal resume</code></td><td>恢复已暂停的目标，并安排下一次续跑。</td></tr><tr><td><code>/goal budget &lt;N&gt;</code></td><td>设置一个正整数形式的总 token 预算。已有用量会被保留。</td></tr><tr><td><code>/goal budget off</code></td><td>移除 token 上限。已有用量会被保留。</td></tr><tr><td><code>/goal set &lt;objective&gt;</code></td><td>启动一个目标，或用新目标和全新的计数器替换活动目标。替换同时会清除旧预算。</td></tr><tr><td><code>/goal drop</code></td><td>确认后永久停止当前目标。没有单独的 <code>/goal stop</code> 命令。</td></tr></tbody></table>
+<p>按 <code>Esc</code> 打断当前轮次。被中断的活动目标会保存为暂停状态，所以请检查未完成的工作，只在可以安全继续时才运行 <code>/goal resume</code>。</p>
+<p>已暂停的目标必须先恢复才能更改预算。它也不能被静默覆盖：恢复它并用 <code>/goal set …</code>，或者在开始另一个目标之前先放弃它。</p>
+<h2 id="set-and-interpret-a-budget">设置并解读预算</h2>
+<p>目标模式<strong>默认没有 token 上限</strong>。对于需要监督的工作，应在启动后尽快设置一个：</p>
+<pre><code class="language-text">/goal budget 100000
+</code></pre>
+<p><code>N</code> 是当前目标的总预算，而不是在其剩余额度上追加的数额。更改预算会保留累计用量。该计数包含输入 token、输出 token 和缓存写入 token；缓存读取 token 不计入。一轮可能在计量跟上之前越过确切边界，因此请把这个值当作护栏，而不是精确的硬停止点或支出限额。</p>
+<p>当已用 token 达到上限时：</p>
+<ol>
+<li>状态从 <code>active</code> 变为 <code>budget-limited</code>。</li>
+<li>omp 会发送一个收尾轮次，询问进展、剩余工作和阻碍，而不是开始更多实质工作。</li>
+<li>自动续跑停止，但目标仍附属于该会话。</li>
+</ol>
+<p>在做决定之前先检查状态：</p>
+<pre><code class="language-text">/goal show
+</code></pre>
+<p>如果目标仍值得继续，就设置一个高于所显示用量的新总量，或者移除上限：</p>
+<pre><code class="language-text">/goal budget 250000
+# or
+/goal budget off
+</code></pre>
+<p>这会让受预算限制的目标回到活动工作状态。如果你不想再做更多工作，用 <code>/goal pause</code> 把它保留到以后，或用 <code>/goal drop</code> 结束它。绝不要把 <code>budget-limited</code>、收尾回复、沉默或提供商错误解读为完成。</p>
+<h2 id="what-completion-means">完成意味着什么</h2>
+<p>只有把每一项交付物都与当前仓库状态核对之后，目标模式才会要求 omp 收尾完成。成功时，你会看到 <strong>Goal mode completed</strong>，自动续跑结束，完成记录会把目标和累计用量写入会话历史。</p>
+<p>这比仅仅走到某一轮末尾要更强，但它不能替代你的审阅。请阅读最终证据、检查重要改动，并运行任何需要人工授权的发布或生产检查。如果最终回复列出了剩余工作或阻碍，那么即使回复听起来像是结论，任务也并未完成。</p>
+<h2 id="persistence-and-recovery">持久化与恢复</h2>
+<p>随着工作推进，目标、状态、预算、token 用量和活跃时间都会随会话一起存储。压缩不会丢弃目标。在运行中的 TUI 里切走再切回同一会话，会保留活动目标；从冷启动重新打开已持久化的会话，会把活动目标恢复为<strong>暂停</strong>状态，这样它就不会无人值守地继续。请使用 <code>/goal show</code>，检查工作树，然后运行 <code>/goal resume</code>。</p>
+<p>显式暂停的目标会一直保留在会话中，直到被恢复或被放弃。放弃会移除活动的目标记录，而累计用量仍留在会话日志中。完成会清除活动模式并写入一条完成记录。</p>
+<p>当工作中途意外停止时，请使用这份恢复清单：</p>
+<table><thead><tr><th>你看到的现象</th><th>该怎么做</th></tr></thead><tbody><tr><td>按 <code>Esc</code>、轮次被中断或重新打开会话后显示 <code>paused</code></td><td>检查未完成的改动与日志，然后运行 <code>/goal resume</code>。</td></tr><tr><td><code>budget-limited</code></td><td>运行 <code>/goal show</code>；把总量提高到已用 token 之上，或使用 <code>/goal budget off</code>。</td></tr><tr><td><code>active</code>，但没有自动的下一轮</td><td>提交或清空输入框里等待的草稿/图片。如果上一次续跑没有产生可执行的进展，发送一条普通消息，例如“从最后一次已验证的步骤继续这个目标。”</td></tr><tr><td>反复出现提供商或命令失败</td><td>暂停目标，修复凭据/环境或细化目标，然后恢复。只有在你确实想要全新的计数器时才放弃并重启。</td></tr><tr><td>提示“Exit plan mode first”或“Exit vibe mode first”</td><td>先完成或退出该模式；计划模式、Vibe 模式和目标模式互斥。</td></tr><tr><td>提示“Goal mode is disabled”</td><td>启用 <code>goal.enabled</code>，然后重试 <code>/goal</code>。</td></tr></tbody></table>
+<p>自动续跑目前是交互模式下的行为。循环模式也会接管自动提交，所以当你期望由目标驱动续跑时，不要把 <code>/loop</code> 与目标一起使用。</p>
+<h2 id="configuration">配置</h2>
+<p>无需任何配置：目标模式、其页脚状态和交互式续跑默认启用。可在<strong>设置 → 任务 → 模式</strong>中，或在 <code>~/.omp/agent/config.yml</code> 中更改它们：</p>
+<pre><code class="language-yaml">goal:
+  enabled: true
+  statusInFooter: true
+  continuationModes:
+    - interactive
+</code></pre>
+<table><thead><tr><th>设置</th><th>默认值</th><th>作用</th></tr></thead><tbody><tr><td><code>goal.enabled</code></td><td><code>true</code></td><td>允许 <code>/goal</code> 和 <code>/guided-goal</code> 创建按会话的目标。</td></tr><tr><td><code>goal.statusInFooter</code></td><td><code>true</code></td><td>在状态行中，于目标指示器旁显示目标的 token 用量。</td></tr><tr><td><code>goal.continuationModes</code></td><td><code>[&quot;interactive&quot;]</code></td><td>在交互式 TUI 中启用轮次之间的自动续跑。移除 <code>interactive</code> 即改为需要手动提示。</td></tr></tbody></table>
+<p>从 shell 验证生效的取值：</p>
+<pre><code class="language-bash">omp config get goal.enabled
+omp config get goal.statusInFooter
+omp config get goal.continuationModes
+</code></pre>
+<p>文件优先级与配置命令见<a href="settings.html">设置</a>，完整命令索引见<a href="slash.html">斜杠命令</a>。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/goal" rel="noreferrer noopener">omp.sh/docs/goal</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

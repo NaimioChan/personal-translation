@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>提示词模板 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：提示词模板">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>提示词模板</h1>
+
+<p>把一份 Markdown 提示词变成可供你自己或某个项目复用的斜杠命令。</p>
+<h2 id="create-your-first-template">创建你的第一个模板</h2>
+<p>提示词模板会保存你反复使用的指令，并把它们暴露为一个斜杠命令。可以用它来做一致的审查清单、发布摘要、测试计划，或任何不需要自定义程序逻辑的任务。</p>
+<p>在你想要使用该命令的项目中创建 <code>.omp/prompts/review-change.md</code>：</p>
+<pre><code class="language-md">---
+description: Review one area of this project for correctness
+---
+
+Review the code related to $1.
+
+Focus on: $@[2:].
+
+Report concrete findings first, with file and line references. Then list any
+remaining risks or missing tests. Do not change files.
+</code></pre>
+<p>在该项目中启动一个新的 omp 会话，然后输入：</p>
+<pre><code class="language-text">/review-change authentication &quot;error handling and tests&quot;
+</code></pre>
+<p>文件名会创建 <code>/review-change</code> 命令。omp 把 <code>$1</code> 展开为 <code>authentication</code>，把 <code>$@[2:]</code> 展开为 <code>error handling and tests</code>，并把生成的 Markdown 作为你的消息发送。<code>description</code> 会显示在 <code>/</code> 自动补全中该命令的旁边。</p>
+<p>用 <code>.omp/prompts/</code> 存放与项目共享的提示词。若想让命令在所有项目中可用，把同一个 Markdown 文件保存到 <code>~/.omp/agent/prompts/</code> 下。</p>
+<h2 id="pass-arguments">传递参数</h2>
+<p>参数跟在命令名之后。空格和制表符分隔参数；配对的单引号或双引号会把文本保持在一起，并且引号字符本身会被去掉。</p>
+<pre><code class="language-text">/review-change payments &quot;retry behavior&quot; tests
+</code></pre>
+<table><thead><tr><th>语法</th><th>本例中的值</th></tr></thead><tbody><tr><td><code>$1</code>、<code>$2</code>、…</td><td><code>payments</code>、<code>retry behavior</code>、…</td></tr><tr><td><code>$@</code> 或 <code>$ARGUMENTS</code></td><td><code>payments retry behavior tests</code></td></tr><tr><td><code>$@[2]</code> 或 <code>$@[2:]</code></td><td>从第二个开始的所有参数：<code>retry behavior tests</code></td></tr><tr><td><code>$@[2:1]</code></td><td>从第二个开始的一个参数：<code>retry behavior</code></td></tr></tbody></table>
+<p>索引从 1 开始。缺失的位置参数、越界的切片或非正的切片索引都会展开为空字符串。</p>
+<p>参数解析器没有反斜杠转义语法。如果某个参数包含空格，请用另一种引号把它包起来，而不是试图转义外层引号。空的引号参数会被丢弃。</p>
+<p>如果模板没有任何参数占位符，omp 不会丢弃你提供的文本。它会在空行之后把拼接好的参数追加到提示词末尾：</p>
+<pre><code class="language-md">Summarize the requested part of this project.
+</code></pre>
+<p>调用 <code>/summarize src/auth</code> 会发送该模板，随后跟上 <code>src/auth</code>。</p>
+<h2 id="use-handlebars-interpolation">使用 Handlebars 插值</h2>
+<p>替换 <code>$…</code> 占位符之后，omp 会把结果作为 Handlebars 模板渲染。最有用的值是：</p>
+<table><thead><tr><th>语法</th><th>含义</th></tr></thead><tbody><tr><td><code>{{arg 1}}</code></td><td>第一个解析出的参数；<code>arg</code> 从 1 开始</td></tr><tr><td><code>{{arguments}}</code> 或 <code>{{ARGUMENTS}}</code></td><td>所有解析出的参数，以空格拼接</td></tr><tr><td><code>{{args}}</code></td><td>解析出的参数数组，适合用在块与 helper 中</td></tr><tr><td><code>{{default (arg 1) &quot;current branch&quot;}}</code></td><td>第一个参数缺失时的回退值</td></tr><tr><td><code>{{#if args}}…{{else}}…{{/if}}</code></td><td>根据是否提供了参数决定的条件内容</td></tr></tbody></table>
+<p>例如：</p>
+<pre><code class="language-md">---
+description: Draft a test plan for a feature
+---
+
+Draft a test plan for {{default (arg 1) &quot;the current change&quot;}}.
+{{#if args}}
+Additional context: {{arguments}}
+{{/if}}
+</code></pre>
+<p>Shell 风格的替换先发生，Handlebars 渲染后发生。参数值中包含的 <code>$1</code>、<code>$@</code> 或 <code>$ARGUMENTS</code> 不会被递归替换。使用任一风格行内参数占位符的模板也不会再收到自动追加的参数后缀。</p>
+<p>对于普通的可复用提示词，优先使用 <code>$1</code> 和 <code>$@</code> 形式：它们更短，也让调用方式容易理解。只有在你需要默认值或条件段落时才使用 Handlebars。</p>
+<h2 id="add-a-description">添加描述</h2>
+<p>在 omp 提示词模板的 YAML frontmatter 中，只有 <code>description</code> 有特殊含义：</p>
+<pre><code class="language-md">---
+description: Explain a failing test and propose the smallest fix
+---
+</code></pre>
+<p>把 frontmatter 放在文件开头。如果缺少 <code>description</code>，omp 会在自动补全中使用第一行非空的正文，并截断到 60 个字符。命令名始终来自 Markdown 文件名；frontmatter 中的 <code>name</code> 字段不会重命名它。</p>
+<h2 id="discovery-and-naming">发现与命名</h2>
+<p>在会话启动时，omp 会递归发现以下位置中的 Markdown 文件：</p>
+<table><thead><tr><th>作用域</th><th>目录</th><th>自动补全来源标签</th></tr></thead><tbody><tr><td>用户</td><td><code>~/.omp/agent/prompts/**/*.md</code></td><td><code>(user)</code> 或 <code>(user:subdirectory)</code></td></tr><tr><td>项目</td><td><code>&lt;working-directory&gt;/.omp/prompts/**/*.md</code></td><td><code>(project)</code> 或 <code>(project:subdirectory)</code></td></tr></tbody></table>
+<p>只有最终的文件名会成为命令名。<code>.omp/prompts/frontend/review.md</code> 和 <code>.omp/prompts/backend/review.md</code> 都定义 <code>/review</code>，而不是带命名空间的命令。即使你把文件组织进子目录，也要给每个模板一个唯一的文件名。</p>
+<p>提示词模板是 Markdown 提示词，不是可执行的命令模块。如果某个命令需要运行自定义程序逻辑或显示自己的 UI，请改为构建一个<a href="extension-authoring.html">扩展</a>。</p>
+<h2 id="precedence">优先级</h2>
+<p>omp 先加载用户模板，再加载项目模板，并使用第一个匹配的名称。因此 <code>~/.omp/agent/prompts/review.md</code> 会胜过 <code>.omp/prompts/review.md</code>。这与许多“项目覆盖用户”的配置系统不同，所以使用唯一名称是最安全的选择。</p>
+<p>其他类型的斜杠命令会先于提示词模板解析。同名的内置命令、扩展命令、自定义命令、技能命令或基于文件的斜杠命令会胜出；与之冲突的提示词模板会从自动补全中省略。</p>
+<h2 id="reload-after-editing">编辑后重新加载</h2>
+<p>提示词模板在会话启动时读取。omp 不会监视这些文件，<code>/reload-plugins</code> 也不会重新加载它们。创建、重命名或编辑模板后，请退出并在预期的工作目录中启动一个新的 <code>omp</code> 会话。</p>
+<h2 id="troubleshooting">故障排除</h2>
+<h3 id="the-command-is-missing-from-autocomplete">命令没有出现在自动补全中</h3>
+<ul>
+<li>确认文件以 <code>.md</code> 结尾，并且位于当前工作目录的 <code>.omp/prompts/</code> 下，或你的用户目录的 <code>~/.omp/agent/prompts/</code> 下。</li>
+<li>更改文件后启动一个新会话。</li>
+<li>检查是否有另一个同名文件名的模板。用户模板会胜过项目模板。</li>
+<li>试试更独特的文件名，以防某个内置、技能、扩展、自定义或基于文件的命令已经占用了该名称。</li>
+<li>检查会话日志中是否有提示词模板警告。无效的 YAML frontmatter 或不可读的文件会导致该模板无法加载。</li>
+</ul>
+<h3 id="arguments-expand-unexpectedly">参数展开不符合预期</h3>
+<ul>
+<li>给包含空格的参数加引号：<code>/review-change auth &quot;error handling&quot;</code>。</li>
+<li>不要依赖引号参数内的反斜杠转义；它们会被按字面处理，而不是作为转义机制。</li>
+<li>记住 <code>$@</code> 包含每一个参数，包括 <code>$1</code>。若只要剩余部分，请使用 <code>$@[2:]</code>。</li>
+<li>如果你需要控制参数出现的位置，就添加显式的占位符。没有占位符时，omp 会把它们追加到模板正文之后。</li>
+</ul>
+<h3 id="the-project-template-does-not-override-my-user-template">项目模板没有覆盖我的用户模板</h3>
+<p>这就是当前的优先级规则：用户模板先加载。重命名其中一个文件，或删除用户级的重复项，然后启动一个新会话。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/prompt-templates" rel="noreferrer noopener">omp.sh/docs/prompt-templates</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>代码审查 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：代码审查">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>代码审查</h1>
+
+<p>在合并之前，或在让 omp 动手修改之前，对分支、工作副本、提交或 GitHub 拉取请求做一次专注的只读审查。</p>
+<h2 id="review-before-you-change">先审查，再修改</h2>
+<p>当一处改动已经适合做一次有意识的正确性检查时，就用<code>/review</code>：在打开或合并拉取请求之前、在一次高风险重构之后，或者当已暂存的工作值得再看一眼时。该命令会确定一个具体的 diff，去掉常见的生成噪音，并且只报告有证据支持、由该 diff 引入的问题。</p>
+<p>最短的成功流程是：</p>
+<pre><code class="language-text">You: /review
+omp: Review Mode
+     1. Review against a base branch (PR Style)
+     2. Review uncommitted changes
+     3. Review a specific commit
+     4. Custom review instructions
+You: 2. Review uncommitted changes
+</code></pre>
+<p>还在写的时候就选<strong>未提交的改动</strong>。在 Git 仓库里，这会同时审查已暂存和未暂存的 diff。在 Jujutsu 仓库里，它审查当前的 JJ 工作副本 diff。随后 omp 返回发现项和总体结论；它不会编辑文件。</p>
+<p>审查刻意比<code>review this</code>这类开放式提示词更严格。<code>/review</code>先确定精确的 VCS 或拉取请求范围，再套用一致的发现项契约。一条发现项必须描述该补丁引入的一个可证明、可处理、非预期的问题，并指向发生改动的行。审查会沿着改动过的值跨模块边界追踪到接收它们的处理器，并忽略普通的风格偏好、文档上的吹毛求疵以及本来就存在的缺陷。开放式提示词在你想要更宏观的架构建议、设计批评或直接修改时依然有用，但它的范围和输出取决于你要求什么，而不是这套固定的补丁审查流程。</p>
+<h2 id="choose-the-right-review-mode">选择合适的审查模式</h2>
+<h3 id="compare-the-current-branch-with-a-base-branch">把当前分支与基线分支比较</h3>
+<p>想要本地版的“审查一个拉取请求”，就选<strong>Review against a base branch (PR Style)</strong>：</p>
+<pre><code class="language-text">You: /review
+You: 1. Review against a base branch (PR Style)
+omp: Select base branch to compare against
+You: main
+</code></pre>
+<p>omp 会列出本地和远程的 Git 分支，确定当前分支，并审查从所选基线到当前分支的三点 diff。换句话说，范围从两者的合并基点开始，包含你分支上引入的改动。这通常就是打开 PR 之前最合适的模式。</p>
+<p>如果功能分支里混着无关的工作，请选一个更合适的基线，或者改为审查某个具体提交。这个选择器基于 Git；对当前的 JJ 改动请使用工作副本模式。</p>
+<h3 id="review-staged-and-unstaged-work">审查已暂存与未暂存的工作</h3>
+<p>想在提交前做一次检查，就选<strong>Review uncommitted changes</strong>：</p>
+<pre><code class="language-text">You: /review
+You: 2. Review uncommitted changes
+</code></pre>
+<p>对 Git，omp 会把这两个范围合在一起：</p>
+<ul>
+<li>工作树中未暂存的改动；</li>
+
+<li>索引中已暂存的改动。</li>
+
+</ul>
+<p>对 Jujutsu，omp 会识别出仓库，并改用 JJ 工作副本 diff，而不是 Git status 或 Git diff。无论哪种情况，审查发现项都指向真正改动的文件和行。Git 中新建的未跟踪文件不会出现在 Git diff 里；如果它们属于审查范围，请先添加或暂存。</p>
+<h3 id="review-one-commit">审查单个提交</h3>
+<p>想把一个已完成的工作单元单独拎出来，就选<strong>Review a specific commit</strong>：</p>
+<pre><code class="language-text">You: /review
+You: 3. Review a specific commit
+omp: Select commit to review
+You: a13f62c Fix token refresh race
+</code></pre>
+<p>选择器会显示最近 20 个 Git 提交。omp 审查的是所选提交的补丁，而不是该提交到当前分支之间的全部改动。这在挑选（cherry-pick）某个修复之前，或想从一个更大的分支里分离出可疑提交时很有用。</p>
+<h3 id="review-a-github-pull-request">审查 GitHub 拉取请求</h3>
+<p>当活动对话分支中最近出现过 GitHub PR 链接或<code>pr://</code>引用时，<code>/review</code>会在编号模式上方最多增加三个选项：</p>
+<pre><code class="language-text">You: Please look at https://github.com/acme/widgets/pull/418
+You: /review
+omp: Review Mode
+     Review PR acme/widgets#418 from conversation
+     1. Review against a base branch (PR Style)
+     ...
+You: Review PR acme/widgets#418 from conversation
+</code></pre>
+<p>最近提到的 PR 排在最前，重复的引用会被合并，来自已放弃对话分支的引用不会泄漏到选择器里。</p>
+<p>想要更快、更少歧义的流程，就把 PR 链接直接写在命令行上。这样会绕过选择器：</p>
+<pre><code class="language-text">/review https://github.com/acme/widgets/pull/418
+</code></pre>
+<p>可以在链接后面加上关注点：</p>
+<pre><code class="language-text">/review https://github.com/acme/widgets/pull/418 focus on authorization boundaries
+</code></pre>
+<p>标准 GitHub 链接可以带<code>/files</code>、<code>/commits</code>、查询字符串或锚点。完整限定的内部引用同样可用：</p>
+<pre><code class="language-text">/review pr://acme/widgets/418/diff/all focus on migration safety
+</code></pre>
+<p>审查 PR 时，omp 会拉取该 PR 的 diff，并让审查始终基于拉取到的内容。它不会悄悄替换成本地检出里的文件，因为那些文件可能处于不同的修订版本。议题链接、提交链接、其他主机，以及像<code>pr://418</code>这样不完整的引用都不会被当作 PR 目标；在没有交互界面的情况下，它们只会变成普通的关注点文本。</p>
+<p>PR 审查需要在<code>PATH</code>中提供 GitHub CLI 即<code>gh</code>，并用一个有该仓库读取权限的账号完成认证。必要时运行<code>gh auth login</code>。私有 PR 还需要对该私有仓库的访问权限。即使当前目录不是那个仓库，也可以在链接里提供<code>owner/repository</code>。</p>
+<h3 id="supply-a-custom-focus">提供自定义关注点</h3>
+<p>当标准的工作副本范围合适，但某个特定风险值得额外留意时，就选<strong>Custom review instructions</strong>：</p>
+<pre><code class="language-text">You: /review
+You: 4. Custom review instructions
+omp: Enter custom review instructions
+You: Review the following:
+
+     Trace every new queue state through serialization, restart recovery,
+     and the consumer switch. Ignore naming unless it hides a correctness bug.
+</code></pre>
+<p>如果仓库中存在未提交的 Git 或 JJ 改动，omp 会把这个 diff 纳入，并把你的说明应用到它上面。如果没有可用的工作副本 diff，这些说明本身就成为审查请求，所以请明确写出文件、提交、行为或其他范围。</p>
+<p>你也可以把关注点写在<code>/review</code>后面：</p>
+<pre><code class="language-text">/review focus on cancellation and cleanup
+</code></pre>
+<p>在交互式 TUI 中，这些词会被带入你所选的任何一个标准模式，而单独的自定义说明选项则不再出现。这是在保留常规 VCS 范围的同时强调某个关切点的便捷方式。</p>
+<p>好的关注点文本会指明一个失效边界，而不是索要泛泛的质量评价：</p>
+<pre><code class="language-text">/review focus on backward compatibility of the persisted session format
+/review focus on authorization checks after redirects
+/review focus on partial writes, retries, and idempotency
+</code></pre>
+<h2 id="how-omp-defines-and-scales-the-scope">omp 如何界定与缩放范围</h2>
+<p>审查之前，omp 会把统一 diff 解析成改动文件，并统计新增与删除的行数。它会把常见的信息量低的文件排除在审查范围之外：</p>
+<ul>
+<li>锁文件，例如<code>package-lock.json</code>、<code>Cargo.lock</code>、<code>poetry.lock</code>和<code>flake.lock</code>；</li>
+
+<li>压缩文件、生成文件、快照和 source map；</li>
+
+<li>顶层<code>dist/</code>、<code>build/</code>或<code>out/</code>下的文件，以及 vendor 进来的依赖；</li>
+
+<li>图片、字体、PDF 和常见压缩包。</li>
+
+</ul>
+<p>结果会报告被排除的路径及原因，因此过滤是可见的，而不是悄悄进行。如果所有改动文件都被过滤掉，命令会以<strong>No reviewable files</strong>停止，而不是返回一个误导性的“干净”结论。如果某个文件只是名字看起来像生成产物，而你确实想检查它，那就需要自定义的开放式审查。</p>
+<p>审查的广度随可审查 diff 的规模伸缩。当前的并发启发式规则是：</p>
+<table><thead><tr><th>可审查的改动</th><th>审查广度</th></tr>
+</thead><tbody><tr><td>改动少于 100 行，或至多 2 个文件</td><td>一次专注的审查</td></tr>
+<tr><td>改动少于 500 行</td><td>最多 2 个并行切片</td></tr>
+<tr><td>改动少于 2,000 行</td><td>最多 4 个切片，大约每 3 个文件一个</td></tr>
+<tr><td>改动少于 5,000 行</td><td>最多 8 个切片，大约每 2 个文件一个</td></tr>
+<tr><td>5,000 行及以上</td><td>最多 16 个切片，且绝不超过文件数</td></tr>
+</tbody></table>
+<p>新增和删除的行都会计入。相关的实现文件与测试文件会留在同一个连贯的审查区域里，而不是脱离上下文被单独评判。</p>
+<p>对于至多 20 个可审查文件、50,000 个字符的 diff，完整 diff 会被带入审查。超过任一上限时，omp 会使用每个文件的简短预览，并让审查直接读取分配给它的 diff 片段。这样既减少了提示词噪音，又不缩小预期的文件范围。对于本地审查，必要时还会读取文件周边的上下文。对于 GitHub PR，上下文保持在被拉取的 PR diff 之内，而不会使用本地工作区的文件。</p>
+<p>这些规则让大型审查变得可处理，但并非万无一失。巨大的机械性改动也许仍更适合拆成几个逻辑提交分别审查，而一个很小的鉴权改动也许值得一个非常具体的自定义关注点。</p>
+<h2 id="read-the-result">读懂结果</h2>
+<p>一条发现项包含：</p>
+<ul>
+<li><strong>优先级</strong>——紧急程度与影响，从<code>P0</code>到<code>P3</code>。</li>
+
+<li><strong>置信度</strong>——一个<code>0.0</code>到<code>1.0</code>之间的值，估计所报告的缺陷为真的可能性。</li>
+
+<li><strong>标题与说明</strong>——应当做的那一处具体修改、触发条件，以及影响。</li>
+
+<li><strong>文件与行范围</strong>——与所审查 diff 有重叠的一小段范围。</li>
+
+</ul>
+<table><thead><tr><th>优先级</th><th>含义</th><th>实际应对</th></tr>
+</thead><tbody><tr><td><code>P0</code></td><td>普遍性的发布或运维阻断问题，例如数据损坏或鉴权绕过。</td><td>停止发布并立即调查。</td></tr>
+<tr><td><code>P1</code></td><td>影响较大的缺陷，应在下一个周期修复。</td><td>除非明确接受风险，否则合并前修复。</td></tr>
+<tr><td><code>P2</code></td><td>中等影响的边界情况或正确性问题。</td><td>规划并验证修复；合并时机按你的项目政策决定。</td></tr>
+<tr><td><code>P3</code></td><td>信息性的低影响改进。</td><td>除非它揭示了某项项目要求，否则视为可选。</td></tr>
+</tbody></table>
+<p>置信度不是严重程度。<code>0.55</code>的<code>P0</code>描述的是一场灾难性的指控，但证据不确定；<code>0.98</code>的<code>P2</code>描述的是一个范围更窄、但有强证据支持的问题。采取行动之前，请同时核实触发条件和受影响的路径。</p>
+<p>最终结论为<strong>correct</strong>或<strong>incorrect</strong>，随后附一段简短说明和结论置信度。<strong>Correct</strong>意味着在本审查契约下没有确立任何正确性缺陷或阻断问题；它并不担保风格、文档完整性、各种环境下的性能，也不担保不存在任何可能的缺陷。<strong>Incorrect</strong>意味着审查至少确立了一个实质性的正确性问题。发现项数量也会按优先级汇总；<strong>Findings: none</strong>不能替代你自己针对具体领域的检查。</p>
+<h2 id="turn-findings-into-a-deliberate-follow-up">把发现项变成有意识的后续动作</h2>
+<p><code>/review</code>是只读的。它不会应用建议、修改你的工作树、执行修复，也不会合并 PR。这种分离为你留出了一个决策点。</p>
+<p>对每一条发现项：</p>
+<ol>
+<li>打开被引用的改动行，结合周边代码复现所述的触发条件。</li>
+
+<li>判断该发现项是否成立，以及它的优先级是否符合你的发布政策。</li>
+
+<li>向 omp 提出你想要的确切动作，并引用该发现项，而不是只说“全都修了”。</li>
+
+<li>运行相关的行为验证或针对性测试，如果修复较大，再对产生的补丁审查一遍。</li>
+
+</ol>
+<p>例如：</p>
+<pre><code class="language-text">The P1 finding in src/auth/refresh.ts is valid. Fix the refresh race without
+changing the public token API, run the focused auth test, and show me the result.
+</code></pre>
+<p>或者明确驳回某条发现项：</p>
+<pre><code class="language-text">The P2 finding assumes retries can overlap, but this worker is single-flight by
+contract. Confirm that invariant from the implementation and leave the code unchanged.
+</code></pre>
+<p>这样能让你保持对范围的控制，也避免把一个错误或低置信度的观察自动变成一次编辑。</p>
+<h2 id="headless-use">无界面使用</h2>
+<p>没有交互界面时，<code>/review</code>无法显示模式选择器。直接执行命令会请求对最近的代码改动做一次专注审查，命令末尾的词会成为其关注点：</p>
+<pre><code class="language-sh">omp -p &quot;/review focus on authentication regressions&quot;
+</code></pre>
+<p>当自动化需要一个确定性的远程范围时，请使用明确的 GitHub PR 链接：</p>
+<pre><code class="language-sh">omp -p &quot;/review https://github.com/acme/widgets/pull/418 focus on API compatibility&quot;
+</code></pre>
+<p>明确且有效的 PR 链接在交互式与无界面使用中都会被直接拉取。没有链接时，无界面模式不提供基线分支或提交选择；请让周围的提示词指明预期的近期改动，或者在需要这些选择器时改用交互式 TUI。审查输出仍然是只读的，所以 CI 脚本必须自行决定结论是否、以及如何影响它的退出或合并策略。</p>
+<h2 id="troubleshooting">疑难排查</h2>
+<ul>
+<li><strong>No uncommitted changes found</strong>——Git 工作树和索引是干净的，或者 JJ 工作副本 diff 为空。如果工作已经提交，请改用基线分支或提交模式。</li>
+
+<li><strong>No diff content found</strong>——Git status 察觉到有改动，但已暂存和未暂存的统一 diff 都是空的。常见原因是未跟踪文件；添加或暂存它，然后重新运行<code>/review</code>。</li>
+
+<li><strong>No changes between <em>base</em> and <em>branch</em></strong>——确认所选的基线和当前分支。比较基于合并基点，所以选当前分支或选错远程分支都会得到空 diff。</li>
+
+<li><strong>No git branches found</strong>——在预期的 Git 检出目录内运行 omp，并确认它有分支引用。分离的<code>HEAD</code>也会让面向分支的审查变得混乱；当真实范围是某个提交时，请使用提交模式。</li>
+
+<li><strong>No commits found</strong>——该目录不是可读的 Git 仓库，或者没有任何历史。请按需使用工作副本或自定义模式。</li>
+
+<li><strong>No reviewable files (all changes filtered out)</strong>——每个 diff 路径都命中了噪音规则。这并不等于审查干净；如果那些生成产物或二进制产物确实需要检查，请使用自定义的开放式提示词。</li>
+
+<li><strong>Failed to get diff / Failed to get commit</strong>——检查仓库和所选修订版本是否仍然存在，以及 Git 或 JJ 能否读取它们。解决进行中的 VCS 操作或无效引用后重试。</li>
+
+<li><strong>Failed to fetch PR diff</strong>——确认已安装<code>gh</code>，运行<code>gh auth login</code>，核实该账号能查看仓库和 PR，然后用明确的链接重试。</li>
+
+<li><strong>PR … has no diff content available</strong>——该 PR 可能没有改动，拉取到的 diff 可能不可用，或者 GitHub 没有为其内容提供补丁文本。在把这个当作干净结果之前，先打开该 PR 的 Files changed 视图。</li>
+
+<li><strong>A recent PR is missing from the chooser</strong>——只会提供活动对话分支上最近三个不同的 PR 引用。请把完整链接直接粘贴在<code>/review</code>之后以绕过检测。</li>
+
+<li><strong>The wrong files were reviewed</strong>——取消并重新选择范围。整个功能分支用基线分支模式，当前工作副本用未提交模式，单个提交用提交模式，远程改动用明确的 PR 链接。</li>
+
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/review" rel="noreferrer noopener">omp.sh/docs/review</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

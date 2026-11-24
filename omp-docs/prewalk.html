@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prewalk - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：Prewalk">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>Prewalk</h1>
+
+<p>让一个能力强的模型调查并开始一项改动，然后把同一个会话交给更快或更便宜的模型来完成实现。</p>
+<h2 id="plan-with-strength-implement-with-speed">用力规划，用速度实现</h2>
+<p>Prewalk 是在一个普通 omp 会话内部进行的一次性模型交接。先用你信任的模型开始，由它理解陌生的仓库、识别风险并组织工作。一旦该模型已经列出待办清单并开始修改项目，omp 就会把当前会话切换到更快或更便宜的目标模型上继续实现。</p>
+<p>一个有用的首次运行是：</p>
+<pre><code class="language-sh">omp --model @slow --prewalk-into @smol
+</code></pre>
+<p>然后照常描述完整的结果。对话、仓库上下文、待办事项和改动都留在同一个会话里；prewalk 改变的是做剩余工作的模型，而不是任务本身。</p>
+<p>对于规划困难但执行例行的改动，这可以降低成本并减少延迟。这是一种权衡，而不是免费的质量提升：目标模型仍然必须理解规划者的待办事项、在实现暴露错误假设时随机应变、测试结果并完成收尾清理。当工作需要反复的设计决策、微妙的调试或高风险的编辑时，请全程使用一个能力强的模型。</p>
+<h2 id="enable-it-and-choose-the-target">启用它并选择目标</h2>
+<p>Prewalk 默认关闭。用 <code>--prewalk</code> 为某个新会话武装它：</p>
+<pre><code class="language-sh">omp --prewalk
+</code></pre>
+<p>这会使用分配给 <code>smol</code> 角色的模型。为了让选择可预期，请在 <code>/model</code> 的 <strong>Roles</strong>（角色）下分配该角色，或在 <code>~/.omp/agent/config.yml</code> 中配置它：</p>
+<pre><code class="language-yaml">modelRoles:
+  smol: anthropic/claude-haiku-4-5
+</code></pre>
+<p>要为某一次启动选择不同的目标，请把角色别名或模型选择器传给 <code>--prewalk-into</code>。该标志同时会武装 prewalk，因此不需要再搭配 <code>--prewalk</code>。</p>
+<pre><code class="language-sh">omp --prewalk-into @smol
+omp --prewalk-into openai/gpt-5-mini
+</code></pre>
+<p>当你需要一个稳定的精确选择时，使用完整的 <code>provider/model-id</code>。已配置的角色也可以带有思考强度，而模型选择器也可以包含它，例如 <code>provider/model-id:medium</code>。omp 使用与其他模型控制相同的角色和模型匹配规则来解析目标。</p>
+<p>若要持久选择启用，请设置：</p>
+<pre><code class="language-sh">omp config set prewalk.enabled true
+</code></pre>
+<p>等价的 YAML 是：</p>
+<pre><code class="language-yaml">prewalk:
+  enabled: true
+</code></pre>
+<p>启用该设置后，每个全新会话都会被武装并以 <code>@smol</code> 为目标。用 <code>--prewalk-into &lt;model-or-role&gt;</code> 为某次启动覆盖该目标，或用 <code>--no-prewalk</code> 让某个特定会话保持在其起始模型上：</p>
+<pre><code class="language-sh">omp --no-prewalk
+</code></pre>
+<p><code>--no-prewalk</code> 不能与 <code>--prewalk</code> 或 <code>--prewalk-into</code> 组合使用。持久设置不会自动武装一个被恢复的对话；如果你想在继续某个会话时进行交接，请显式传入 <code>--prewalk</code>。</p>
+<h2 id="recognize-the-handoff">识别这次交接</h2>
+<p>已武装的 prewalk 会让起始模型先调查并确立实现计划。当待办事项就绪时，第一次完成的文件编辑会启动交接。编辑本身由起始模型完成；目标模型接收同一个会话并从那里继续。</p>
+<p>你会看到让生命周期变得明确的提示：</p>
+<ul>
+<li><strong>Armed（已武装）</strong> —— 指出已解析的目标，并说明 omp 正在等待待办清单和第一次编辑或写入。</li>
+<li><strong>Switched（已切换）</strong> —— 指出目标，并报告切换是在第一次编辑或写入之后发生的。</li>
+<li><strong>Nothing to switch（无需切换）</strong> —— 目标模型和思考强度已经与当前会话一致，因此 omp 会解除 prewalk 的武装，而不是执行一次空操作。</li>
+</ul>
+<p>如果模型仍只是在阅读、搜索或讨论方案，交接就会等待。如果待办事项已就绪但尚未改动任何项目文件，它就保持武装状态。在待办事项不可用的配置中，第一次完成的文件编辑可以直接触发交接。</p>
+<p>Prewalk 是一次性的。切换之后它不再处于武装状态，后续编辑也不会再引起模型变化。目标模型会成为当前会话剩余时间里的当前模型，但该切换不会重写你保存的模型角色设置。模型指示器和切换提示会显示当前哪个模型处于活动状态。</p>
+<h2 id="arm-it-in-an-active-session">在活动会话中武装它</h2>
+<p>运行 <code>/prewalk</code> 即可武装一次交接，无需重启，也无需改动 <code>prewalk.enabled</code>：</p>
+<pre><code class="language-text">/prewalk
+</code></pre>
+<p>该命令会解析 <code>@smol</code>、检查它是否可用，并在成功武装时显示目标。它不接受目标参数；如果你需要另一个目标，请在启动 omp 时使用 <code>--prewalk-into</code>。</p>
+<p>如果 prewalk 已处于武装状态，<code>/prewalk</code> 会保留既有目标，而不是替换它。在一次交接发生之后，你可以用常规的模型控制选择另一个当前模型，并再次运行 <code>/prewalk</code> 来创建另一次一次性交接。</p>
+<h2 id="choose-where-to-spend-model-quality">选择把模型质量花在哪里</h2>
+<p>好的 prewalk 目标应当已认证、快速、便宜，并且在任务所需的语言和工具上可靠。把预期的节省与修复糟糕实现的成本相比较：</p>
+<table><thead><tr><th>工作形态</th><th>建议选择</th></tr></thead><tbody><tr><td>大范围调查，随后是重复的调用点更新</td><td>强起始模型，快速目标</td></tr><tr><td>清晰计划，随后是例行测试或机械性编辑</td><td>强起始模型，便宜目标</td></tr><tr><td>对安全敏感的迁移，或带有隐藏不变量的行为</td><td>保持能力强的模型处于活动状态</td></tr><tr><td>每个结果都会改变下一个假设的调试</td><td>通常跳过 prewalk</td></tr><tr><td>小而显眼的编辑</td><td>直接在便宜的模型上开始；prewalk 帮助很小</td></tr></tbody></table>
+<p>更强的规划者应当留下具体、有顺序的待办事项，并以一次有代表性的编辑开头。如果目标模型经常不得不重新发现约束，就改用更强的目标，或者不要交接。</p>
+<h2 id="prewalk-and-subagents">Prewalk 与子代理</h2>
+<p>本页描述的是主会话的交接。任务型子代理是一次独立的委派运行，有自己的上下文和模型选择；武装主会话并不意味着每个子代理都会 prewalk。只有在你使用委派代理、并希望在那些运行内部采用同样的先规划后切换模式时，才需要单独配置子代理的 prewalk。参见<a href="subagents.html">子代理与 Agent Hub</a>。</p>
+<h2 id="troubleshooting">故障排除</h2>
+<ul>
+<li><strong>启动时没有出现已武装的提示</strong> —— 除非 <code>prewalk.enabled</code> 为 <code>true</code>，或启动参数包含 <code>--prewalk</code> 或 <code>--prewalk-into</code>，否则 prewalk 处于关闭状态。被恢复的会话不会从该设置继承自动武装；请显式传入该标志。</li>
+<li><strong><code>Warning: prewalk disabled — model … not found</code></strong> —— 目标角色或选择器未能解析。在 <code>/model</code> 中检查实际生效的 <code>smol</code> 分配，或使用 <code>omp models find &lt;name&gt;</code> 返回的完整选择器。</li>
+<li><strong><code>Warning: prewalk disabled — no API key for …</code></strong> —— 请对目标提供商进行认证，或选择一个提供商已配置好的模型。omp 会在 prewalk 未武装的情况下继续启动。</li>
+<li><strong><code>/prewalk</code> 报告模型或 API 密钥错误</strong> —— <code>/prewalk</code> 始终使用 <code>@smol</code>。修复该角色或其提供商凭据；要使用另一个目标，请用 <code>--prewalk-into</code> 重启。</li>
+<li><strong>已武装但没有切换</strong> —— 让起始模型完成调查、创建它的待办事项并开始第一次项目编辑。只读工作和讨论不会消耗这次交接。</li>
+<li><strong>第一次编辑已发生但没有跟随切换</strong> —— 检查该编辑是否失败、目标是否已经与当前模型和思考强度一致，或可见提示是否说明 prewalk 在解析目标期间被禁用。</li>
+<li><strong><code>/prewalk</code> 说它已为另一个模型武装</strong> —— 既有的那个一次性目标会被保留。让它完成交接，或用期望的 <code>--prewalk-into</code> 目标开始新会话。</li>
+<li><strong>切换后质量下降</strong> —— 选择更强的目标、分配更合适的思考强度，或对设计贯穿整个实现过程的任务使用 <code>--no-prewalk</code>。</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/prewalk" rel="noreferrer noopener">omp.sh/docs/prewalk</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

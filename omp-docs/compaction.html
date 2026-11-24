@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>上下文压缩 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：上下文压缩">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>上下文压缩</h1>
+
+<p>让漫长的omp会话持续有用：让自动上下文维护运行，或使用/compact、/handoff和/shake主动恢复。</p>
+<p>长会话最终会包含模型无法一次考虑的过多文本。omp会在保留最近对话的同时压缩较早的上下文，让工作继续进行。通常无需执行任何操作：自动压缩默认已启用。</p>
+<p>先运行：</p>
+<pre><code class="language-text">/context
+</code></pre>
+<p>这会显示当前模型上下文窗口的使用量，以及自动维护前剩余的空间。除非omp遗漏了重要细节、上下文被庞大输出占满，或你想选择保留哪些内容，否则请继续正常工作。</p>
+<h2 id="what-automatic-compaction-does">自动压缩的作用</h2>
+<p>当上下文接近当前模型的限制时，omp会先移除可以安全省略的过时文件读取、空搜索和其他庞大结果。随后按配置的方法顺序尝试维护。默认顺序是：</p>
+<ol>
+<li>提供商原生的服务器压缩，当前路由支持时使用；</li>
+<li><strong>snapcompact</strong>，将较早历史归档为供支持视觉的模型使用的密集图像；</li>
+<li>结构化的<strong>交接</strong>摘要；</li>
+<li><strong>shake</strong>，移除可恢复的命令、搜索和文件输出的大块内容，不请求摘要；</li>
+<li><strong>soft</strong>压缩，使用模型总结较早的历史。</li>
+</ol>
+<p>不可用或失败的方法会转到下一个方法。因此，默认顺序无需针对具体模型配置，就能同时适用于纯文本模型和支持视觉的模型。</p>
+<p>无论哪种方法成功，当前模型都会保留对话最近部分，并接收较早上下文的紧凑替代内容。较早轮次的确切措辞不再位于模型的实时窗口中，但普通压缩不会删除原始会话记录。</p>
+<p>自动维护可能在以下时机发生：</p>
+<ul>
+<li>成功响应超过阈值之后；</li>
+<li>长轮次涉及许多命令或文件读取时，在模型请求之间；</li>
+<li>上下文溢出或输出不完整的响应之后，并在重试之前；</li>
+<li>空闲时，但仅当明确启用了空闲压缩。</li>
+</ul>
+<p>默认情况下，omp可以在接近阈值前准备摘要，从而缩短可见暂停。阈值维护后，它会自动继续工作。溢出和输出不完整的恢复则会改为重试被中断的工作。</p>
+<h3 id="what-you-see">你会看到什么</h3>
+<p>TUI会显示类似<code>Auto server compaction…</code>、<code>Auto-snapcompact…</code>、<code>Auto-handoff…</code>或<code>Auto-shake…</code>的状态。按<code>Esc</code>可取消。压缩运行期间输入的文本会等待维护完成。</p>
+<p>摘要方法成功后，对话记录会围绕类似<code>soft-compacted</code>、<code>remote-compacted</code>或<code>handed-off</code>的细分隔线重建，通常还会显示类似<code>256K→20K</code>的token缩减量。压缩前的历史默认折叠。按<code>Ctrl+O</code>可在分隔线处展开摘要。</p>
+<p>自动shake则会报告<code>Auto-shake completed</code>，并用简短占位符替换符合条件的大块区域。使用<code>compaction.autoContinue: true</code>（默认值）时，阈值触发的维护会继续进行，无需等待新的提示词。</p>
+<h2 id="choose-a-manual-recovery-path">选择手动恢复路径</h2>
+<p>使用与问题相匹配且破坏性最小的命令：</p>
+<table><thead><tr><th>情况</th><th>命令</th><th>可见结果</th></tr></thead><tbody><tr><td>会话运行正常，但你想获得更多空间，或想强调特定决策</td><td><code>/compact [focus]</code></td><td>较早上下文变成紧凑摘要或归档，出现压缩分隔线，omp等待你的下一条指令。</td></tr><tr><td>下一阶段需要目标、决策、进展和后续步骤的结构化记录</td><td><code>/handoff [focus]</code></td><td>omp显示<code>Generating handoff…</code>，然后用交接文档替换较早的实时上下文，并报告<code>Context handed off and compacted in place</code>。</td></tr><tr><td>大段命令输出、文件内容、生成的代码块、图像或存储的推理挤占了对话空间</td><td>`/shake [elide</td><td>images</td></tr><tr><td>没有任何问题</td><td>不执行操作</td><td>自动维护在配置的阈值处运行。</td></tr></tbody></table>
+<h3 id="compact-the-normal-manual-choice"><code>/compact</code>：通常的手动选择</h3>
+<p>运行<code>/compact</code>，立即使用第一个可用的已配置手动方法进行压缩：</p>
+<pre><code class="language-text">/compact
+</code></pre>
+<p>当较早上下文包含多个主题且其中一个最重要时，添加重点说明：</p>
+<pre><code class="language-text">/compact Preserve the API decisions, unresolved test failure, and exact next steps. Treat benchmark experiments as disposable.
+</code></pre>
+<p>你可以一次性选择方法，而不改变设置：</p>
+<table><thead><tr><th>语法</th><th>适用时机</th></tr></thead><tbody><tr><td><code>/compact soft [focus]</code></td><td>你想要传统的模型生成摘要，也可以指示摘要重点。</td></tr><tr><td><code>/compact remote [focus]</code></td><td>你想在可用时使用提供商原生的OpenAI兼容压缩；不可用时会回退到soft压缩。</td></tr><tr><td><code>/compact snapcompact</code></td><td>你想使用支持视觉的模型进行本地图像归档，且不发起摘要请求。它不接受重点文本。</td></tr></tbody></table>
+<p>即使禁用了自动压缩，手动<code>/compact</code>仍然有效。如果当前正在运行响应，命令会先中止该响应，再进行压缩。操作期间TUI显示<code>Compacting context… (esc to cancel)</code>；成功后，分隔线和减少后的上下文使用量会确认结果。</p>
+<h3 id="handoff-preserve-structured-project-state"><code>/handoff</code>：保留结构化项目状态</h3>
+<p>当通用对话摘要过于松散时使用<code>/handoff</code>，例如从调查转入实现之前，或长任务包含许多决策和依赖关系时：</p>
+<pre><code class="language-text">/handoff Focus on the accepted design, files already changed, verification still needed, and known risks.
+</code></pre>
+<p>虽然名称如此，手动命令目前会<strong>在当前会话中原地压缩</strong>。它不会打开后继会话，默认也不会保存Markdown交接文件。运行<code>/handoff</code>前请等待当前响应完成，或先中止响应。关于交接文档的内容和自动交接行为，请参阅<a href="handoff.html">交接</a>。</p>
+<h3 id="shake-remove-bulk-without-summarizing-the-conversation"><code>/shake</code>：移除大块内容而不总结对话</h3>
+<p><code>/shake</code>默认使用<code>elide</code>：</p>
+<pre><code class="language-text">/shake
+</code></pre>
+<p>它会用简短占位符替换符合条件的命令、搜索和文件读取输出，以及大型围栏代码块或类XML代码块。在可持久化会话中，omp还会尽可能将移除的区域保存为会话工件；占位符包含<code>artifact://…</code>恢复引用。如果之后移除的结果变得重要，请让omp根据该引用恢复指定区域。</p>
+<p>针对特定内容的变体破坏性更强：</p>
+<table><thead><tr><th>命令</th><th>移除内容</th><th>恢复</th></tr></thead><tbody><tr><td><code>/shake elide</code></td><td>符合条件的大型结果和大块内容</td><td>当会话可以持久化工件时，原始区域会保存到工件中。</td></tr><tr><td><code>/shake images</code></td><td>会话中的图像块</td><td>不会创建恢复工件。</td></tr><tr><td><code>/shake thinking</code></td><td>存储的推理块</td><td>不会创建恢复工件。</td></tr></tbody></table>
+<p>只有在图像或推理材料不再需要后，才应移除它们。<code>Nothing to shake</code>、<code>No images found</code>或<code>No thinking blocks found</code>等结果表示成功但未执行任何操作，而不是错误。</p>
+<h2 id="configuration">配置</h2>
+<p>默认值适合大多数用户。你可以通过<code>/settings</code>、<code>omp config set</code>等 shell 命令，或在<code>~/.omp/agent/config.yml</code>中使用YAML来修改它们（现有的<code>config.yaml</code>也会生效）。项目覆盖配置可以放在<code>&lt;project&gt;/.omp/config.yml</code>中。</p>
+<p>例如，以下配置启用空闲维护，同时保留正常的自动行为：</p>
+<pre><code class="language-yaml">compaction:
+  enabled: true
+  idleEnabled: true
+  idleThresholdTokens: 200000
+  idleTimeoutSeconds: 300
+</code></pre>
+<p>从 shell 验证生效值：</p>
+<pre><code class="language-bash">omp config get compaction.enabled
+omp config get compaction.methodOrder
+omp config get compaction.thresholdPercent
+</code></pre>
+<p>在会话中运行<code>/context</code>，验证最终阈值和可用余量。</p>
+<h3 id="settings-reference">设置参考</h3>
+<table><thead><tr><th>设置</th><th>默认值</th><th>作用</th></tr></thead><tbody><tr><td><code>compaction.enabled</code></td><td><code>true</code></td><td>启用自动维护。即使设为false，手动<code>/compact</code>、<code>/handoff</code>和<code>/shake</code>仍可用。</td></tr><tr><td><code>compaction.methodOrder</code></td><td><code>[remote, snapcompact, handoff, shake, soft]</code></td><td>自动回退列表的顺序。支持的值为<code>remote</code>、<code>snapcompact</code>、<code>handoff</code>、<code>shake</code>和<code>soft</code>。</td></tr><tr><td><code>compaction.thresholdTokens</code></td><td><code>-1</code></td><td>大于零时使用固定触发值。它优先于<code>thresholdPercent</code>。</td></tr><tr><td><code>compaction.thresholdPercent</code></td><td><code>-1</code></td><td>大于零时使用百分比触发值。<code>-1</code>使用基于预留量的自动计算。数值会限制在1–99%范围内。</td></tr><tr><td><code>compaction.reserveTokens</code></td><td>未设置</td><td>基于预留量的计算所使用的余量。未设置时，omp通常预留16,384个token或模型窗口的15%中的较大值；较小的窗口则回退到按比例预留。</td></tr><tr><td><code>compaction.keepRecentTokens</code></td><td><code>20000</code></td><td>总结式压缩后按原文保留的最近对话目标数量。</td></tr><tr><td><code>compaction.midTurnEnabled</code></td><td><code>true</code></td><td>允许在涉及许多命令或文件读取的长轮次中，于安全边界执行维护。</td></tr><tr><td><code>compaction.asyncEnabled</code></td><td><code>true</code></td><td>在阈值前不久准备符合条件的摘要，以缩短压缩提交时的暂停。</td></tr><tr><td><code>compaction.autoContinue</code></td><td><code>true</code></td><td>阈值维护在轮次结束后自动继续。脚本化或无头运行需要在此停止时设为false。</td></tr><tr><td><code>compaction.idleEnabled</code></td><td><code>false</code></td><td>启用会话空闲时的维护。</td></tr><tr><td><code>compaction.idleThresholdTokens</code></td><td><code>200000</code></td><td>执行空闲维护所需的最小上下文大小。</td></tr><tr><td><code>compaction.idleTimeoutSeconds</code></td><td><code>300</code></td><td>开始考虑维护前的空闲时间。</td></tr><tr><td><code>compaction.handoffSaveToDisk</code></td><td><code>false</code></td><td>将<strong>自动</strong>交接生成的文档保存到磁盘。它不会让手动<code>/handoff</code>保存文件。</td></tr><tr><td><code>compaction.supersedeReads</code></td><td><code>true</code></td><td>在再次读取同一文件后，条件允许时省略较早的文件内容副本。</td></tr><tr><td><code>compaction.dropUseless</code></td><td><code>true</code></td><td>省略不携带有用上下文的已消耗输出，例如空搜索或超时等待。</td></tr><tr><td><code>compaction.remoteEndpoint</code></td><td>未设置</td><td>使用自定义的OpenAI兼容远程压缩端点。大多数用户应保持未设置。</td></tr><tr><td><code>compaction.remoteStreamingV2Enabled</code></td><td><code>true</code></td><td>在兼容路由上使用流式远程压缩。</td></tr><tr><td><code>compaction.v2RetainedMessageBudget</code></td><td><code>64000</code></td><td>限制流式远程压缩保留的最近消息预算。</td></tr></tbody></table>
+<p><code>display.collapseCompacted</code>是相关的外观设置。它默认为<code>true</code>，会在实时对话记录中隐藏压缩前的历史，同时保留摘要分隔线可见。如果你偏好将完整的存储对话记录直接显示在行内，请设为<code>false</code>。</p>
+<h2 id="troubleshooting">故障排查</h2>
+<h3 id="automatic-compaction-did-not-run">自动压缩没有运行</h3>
+<ol>
+<li>运行<code>/context</code>。维护不会仅仅因为会话感觉很长就运行；估算使用量必须超过解析后的阈值。</li>
+<li>检查<code>omp config get compaction.enabled</code>和<code>omp config get compaction.methodOrder</code>。</li>
+<li>如果你预期会进行空闲维护，请记住<code>compaction.idleEnabled</code>默认为<code>false</code>，且会话必须超过<code>idleThresholdTokens</code>至少<code>idleTimeoutSeconds</code>指定的时长。</li>
+<li>如果某种方法不可用，让回退列表继续执行。例如，纯文本模型无法使用snapcompact，但可以继续使用交接、shake或soft压缩。</li>
+</ol>
+<h3 id="compact-says-the-session-is-too-small-or-already-compacted"><code>/compact</code>提示会话过小或已经压缩</h3>
+<p><code>Nothing to compact (session too small)</code>表示没有足够的较早上下文可供替换。<code>Already compacted</code>表示最新边界之后没有大量新历史。继续工作，稍后再试；无需恢复。</p>
+<h3 id="snapcompact-fails">Snapcompact失败</h3>
+<p>Snapcompact需要支持视觉的当前模型，以及其内置图像字体能够表示的文本。使用<code>/compact soft</code>可获得可预测的文本摘要。当当前提供商支持服务器压缩时，<code>/compact remote</code>也是一种选择。</p>
+<h3 id="context-is-still-too-large">上下文仍然过大</h3>
+<p>运行<code>/context</code>，确认是消息还是庞大的历史结果占据主要空间。对于大型输出，先使用<code>/shake</code>；当对话本身很大时，使用<code>/compact soft</code>。如果问题反复出现，请降低<code>compaction.thresholdPercent</code>、减少<code>compaction.keepRecentTokens</code>，或选择上下文窗口更大的模型，而不要等待溢出。</p>
+<h3 id="an-important-old-detail-is-missing">重要的旧细节缺失</h3>
+<p>在压缩分隔线上按<code>Ctrl+O</code>检查生成的摘要。普通压缩会保留底层会话历史，因此请使用<a href="sessions.html">会话树</a>回到较早位置，或从那里创建分支。以后手动压缩时，请加入明确的重点说明，或使用<code>/handoff</code>获得更结构化的延续。被<code>/shake images</code>或<code>/shake thinking</code>移除的内容不会保存在恢复工件中。</p>
+<h2 id="related">相关内容</h2>
+<ul>
+<li><a href="handoff.html">交接</a>：结构化延续摘要和自动交接行为。</li>
+<li><a href="sessions.html">会话</a>：存储的历史、恢复、分支和会话树。</li>
+<li><a href="settings.html">设置</a>：配置文件、优先级、<code>/settings</code>和<code>omp config</code>。</li>
+<li><a href="memory.html">记忆</a>：跨会话保留的持久事实，与上下文压缩分开。</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/compaction" rel="noreferrer noopener">omp.sh/docs/compaction</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

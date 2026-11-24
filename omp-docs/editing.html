@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>结构化编辑 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：结构化编辑">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>结构化编辑</h1>
+
+<p>在整个项目中安全地改动同一种代码形态，在改动落地前审阅精确的匹配结果，并且不用脆弱的查找替换就能解决合并冲突。</p>
+<p>结构化编辑让 omp 改动语法而不是匹配原始文本。它适用于那些必须在不同空白、注释或格式下依然成立的代码改造，而暂存预览能让意外过宽的匹配在改动落地之前暴露出来。</p>
+<p>最小的有用请求就是一句日常语言：</p>
+<blockquote>
+<p>在 <code>src/**/*.ts</code> 中，把对 <code>legacyWrap</code> 的调用替换为 <code>modernWrap</code>，保留所有参数。先展示拟议的结构化编辑，仅当它改动的确实是调用表达式时才应用。</p>
+</blockquote>
+<p>你只需指定结果、作用域和安全条件。omp 会选择合适的编辑机制并操作它；你不需要自己写模式，也不需要自己调用编辑工具。</p>
+<h2 id="structural-symbol-aware-or-text-editing">结构化编辑、符号感知编辑还是文本编辑？</h2>
+<p>omp 有三种相关的代码修改方式：</p>
+<ul>
+<li><strong>结构化编辑</strong>匹配的是语法形态。即使格式不同，它也能找到同一种函数调用形式，并一致地重写大量实例。适用于 API 迁移、重复的表达式改动、导入形式更新，或删除某一类语句形态。</li>
+<li><strong>符号感知编辑</strong>沿着声明的身份追踪它的引用、作用域、导入与再导出。当你需要重命名一个真正的符号，而不是所有拼写相同的代码时，就要求这种方式。见<a href="code-intelligence.html">代码智能</a>。</li>
+<li><strong>文本或行编辑</strong>最适合小范围、已知位置、散文、配置，或没有可用解析器的代码。见<a href="files.html">处理文件</a>。</li>
+</ul>
+<p>结构化匹配是语法感知的，不是绑定感知的。两个互不相关但都叫 <code>legacyWrap</code> 的函数在它眼里可能完全一样。如果身份很重要，就明确说出来：</p>
+<blockquote>
+<p>重命名 <code>src/session.ts</code> 中导出的 <code>createSession</code> 符号，并更新它真正的引用和导入方。不要重命名同名的无关局部函数。</p>
+</blockquote>
+<p>对于存在同名代码的代码改造，给 omp 足够的上下文来收窄范围：</p>
+<blockquote>
+<p>在 <code>packages/api/src/**/*.ts</code> 中，只迁移从 <code>@acme/legacy</code> 导入的 <code>legacyWrap</code> 调用。不要动测试夹具，也不要动本地声明的函数。如果无法证明导入来源，停下来并说明这一歧义。</p>
+</blockquote>
+<h2 id="requesting-and-reviewing-a-codemod">发起与审阅代码改造</h2>
+<p>一份有力的请求包含：</p>
+<ol>
+<li><strong>作用域</strong>——文件、目录或 glob。</li>
+<li><strong>改动前后的行为</strong>——描述代码形态以及必须保留的部分。</li>
+<li><strong>排除项</strong>——生成的代码、夹具、另一个拼写相同的 API，或任何其他边界。</li>
+<li><strong>决策规则</strong>——当预览满足特定条件时应用，或者只预览然后停下。</li>
+<li><strong>验证</strong>——应用之后 omp 应检查的针对性命令或行为。</li>
+</ol>
+<p>例如：</p>
+<blockquote>
+<p>在 <code>packages/client/src/**/*.ts</code> 中，仅把那些 <code>response</code> 可能缺失的地方的 <code>response.data</code> 直接读取改为可选访问。保留注释和周围的控制流。先预览；如果替换超过 20 处，或者包含该目录之外的任何文件，就拒绝。应用后运行客户端类型检查。</p>
+</blockquote>
+<h3 id="what-the-cards-mean">这些卡片是什么意思</h3>
+<p>结构化重写在写入磁盘之前会先暂存。TUI 会显示受影响的文件、替换数量，以及删除/新增的行数。</p>
+<ul>
+<li><strong>Proposed</strong>（已提议）表示预览已存在，但改动尚未写入。</li>
+<li><strong>Accept</strong>（已接受）表示 omp 接受了提议，并报告实际写入了什么。</li>
+<li><strong>Reject</strong>（已拒绝）表示暂存的提议被丢弃；该提议没有改动任何文件。</li>
+</ul>
+<p>这些标签报告的是状态，不是 shell 命令。用日常语言告诉 omp 你想要什么，比如“仅当所有匹配都位于 <code>src/compat</code> 时才应用”或“拒绝这个提议，并解释那些意外的测试文件匹配”。</p>
+<p>如果要明确分两轮审阅，从这句话开始：</p>
+<blockquote>
+<p>只预览这个代码改造。不要应用它。</p>
+</blockquote>
+<p>omp 会展示提议并丢弃它，而不是留下一个悬而未决的旧操作。审阅完文件和数量之后，带着你的批准条件让 omp 再次运行同一个代码改造。第二轮会针对当前工作树生成一份新的预览。</p>
+<h3 id="review-safely">安全地审阅</h3>
+<p>接受一次大范围重写之前：</p>
+<ul>
+<li>对照你的预期检查替换总数和文件数。</li>
+<li>展开拟议的卡片，从每一种不同的代码形态或包中至少检查一处匹配。</li>
+<li>留意拼写相同但互不相关的符号；必要时改用符号感知重命名。</li>
+<li>收窄路径，而不是接受一个意外的匹配并打算事后修补。</li>
+<li>接受之后，让 omp 检查产生的 diff，并运行最小相关的类型检查或测试。</li>
+<li>审阅时把无关的未提交工作一并看进来。结构化编辑会改到这些文件中匹配到的语法；它不能替代对完整工作树 diff 的检查。</li>
+</ul>
+<h2 id="if-the-preview-becomes-stale">如果预览过期了</h2>
+<p>接受时，omp 会针对当前文件重新执行重写，而不是盲目重放旧的字节。如果在预览与接受之间另一次编辑改变了匹配结果，omp 会把该预览标记为过期并报告新的结果。</p>
+<p>最终结果取决于还有哪些内容仍然匹配：</p>
+<ul>
+<li>如果已不再有任何匹配，则不应用任何替换。</li>
+<li>如果只有部分预览过的位置仍然匹配，这些当前的匹配可能会被应用，之后 omp 会报告接受结果与预览不同。</li>
+<li>如果出现了新的匹配，omp 可能应用比预览所示更多的替换，并标记数量不一致。</li>
+</ul>
+<p>把过期结果当作错误处理，而不是把它当作一次成功的全有或全无事务。检查被报告的文件和当前 diff，然后让 omp 重新读取受影响的代码，并生成一份更窄的新预览。不要反复接受那个旧提议。</p>
+<p>歧义与过期不同：即使语义上只想改一处，结构化匹配器也可能合法地找到多个语法上完全相同的位置。文件列表和替换数量就是警告。应用之前请细化请求，或改用符号感知编辑。</p>
+<h2 id="resolving-merge-conflicts">解决合并冲突</h2>
+<p>你可以要求得到想要的结果，而不是机械地选边：</p>
+<blockquote>
+<p>解决 <code>src/session.ts</code> 中的冲突。保留我们分支的重试行为，以及传入分支的超时校验。展示最终的 diff 并运行会话测试。</p>
+</blockquote>
+<p>当 omp 读取到包含完整 Git 冲突标记的文件时，它会为每个块分配一个会话内引用，例如 <code>conflict://1</code>。你可以在后续消息中粘贴该引用以消除歧义：</p>
+<blockquote>
+<p>对于 <code>conflict://2</code>，合并双方：保留我们的校验，使用他们的错误消息。改动前重新读取周围的函数。</p>
+</blockquote>
+<blockquote>
+<p><code>conflict://1</code> 保留我们的，<code>conflict://3</code> 保留他们的，<code>conflict://4</code> 手动合并，确保两种行为都不丢失。</p>
+</blockquote>
+<p><code>conflict://*</code> 表示当前会话中登记的全部冲突。谨慎使用它，并说明同一套策略是否真的适用于全部冲突：</p>
+<blockquote>
+<p>解决 <code>conflict://*</code>，但要逐块独立检查。不要整体选边；在两者兼容的地方保留双方行为。</p>
+</blockquote>
+<p>只有 omp 读取并登记了标记块之后，引用才会出现。它们是会话内引用，旧会话的 ID 不应复用。如果某个块在登记之后被编辑或解决，omp 会拒绝拼接它已无法定位的标记区域，并要求重新读取。解决一个块不会使其他无关的已登记块失效。</p>
+<p>冲突解决是直接的合并操作，而不是结构化编辑提议。对于高风险合并，先让 omp 说明它打算如何解决，然后再请求编辑并审阅产生的 Git diff。最后搜索是否残留冲突标记并运行相关测试，应当包含在请求中。</p>
+<h2 id="configuration">配置</h2>
+<p>结构化编辑默认启用。打开 <code>/settings</code>，然后进入 <strong>工具 → 可用工具 → AST Edit</strong> 来开启或关闭它。对应的设置项是 <code>astEdit.enabled</code>；如需通过 shell 管理配置：</p>
+<pre><code class="language-sh">omp config set astEdit.enabled true
+omp config set astEdit.enabled false
+</code></pre>
+<p>配置优先级和文件位置见<a href="settings.html">设置</a>。</p>
+<p>一次结构化操作默认最多搜索 1,000 个文件。如果确实是一个更大的仓库需要不同的上限，请在启动 omp 之前设置正整数的 <code>PI_MAX_AST_FILES</code> 环境变量。通常来说，面对上限警告更安全的做法是收窄请求的目录或 glob，而不是提高上限。</p>
+<p>受限的 <code>--tools</code> 列表也可能导致结构化编辑不可用，即使该设置已经启用。这种情况下，请恢复正常的编辑工具，或让 omp 提供一个限定范围的替代方案。</p>
+<h2 id="limitations">限制</h2>
+<ul>
+<li>结构化编辑理解语法，但不理解类型、运行时行为或符号归属。在这些方面重要时，请使用代码智能和验证。</li>
+<li>只有具备受支持解析器的语言才能进行结构化重写。无法干净解析的文件可能会被跳过，并给出解析警告。</li>
+<li>重写必须把可识别的语法映射为替换语法。需要生成数据、控制流分析或多个协同语句的跨文件变换，可能更适合用专门的脚本加上经过审阅的 diff 来处理。</li>
+<li>注释和格式不会妨碍语法匹配，但重写仍可能改变被替换节点周围的格式。请审阅渲染出的 diff。</li>
+<li>过大或过于笼统的请求可能触及文件上限，或产生太多无法安全审阅的合法匹配。请按包或代码形态拆分。</li>
+<li>合并冲突引用只识别完整、格式良好的 Git 标记块。不完整或手工损坏的标记必须作为普通文本检查。</li>
+</ul>
+<h2 id="troubleshooting">故障排查</h2>
+<h3 id="no-replacements-made">“未做任何替换”</h3>
+<p>让 omp 检查一个具体例子，并解释它为何没有匹配。代码可能用了不同的语法，路径可能太窄，或者符号感知编辑才是更合适的操作。在一个有代表性的案例能正确预览之前，不要扩大到整个仓库。</p>
+<h3 id="parse-warnings">解析警告</h3>
+<p>让 omp 找出受影响的文件，并确认它们能按其声明的语言解析。先修复损坏的语法，排除生成的或不支持的文件，或在结构化解析不合适时使用范围严格限定的文本编辑。</p>
+<h3 id="too-many-or-unexpected-matches">匹配太多或出现意外匹配</h3>
+<p>拒绝该提议。在请求中加入导入来源、接收者类型、所在函数、包、文件 glob 或明确的排除项。如果区分点在于符号身份，改用<a href="code-intelligence.html">由 LSP 支持的重命名</a>。</p>
+<h3 id="limit-reached">“已达上限”</h3>
+<p>收窄作用域后重新运行。触及搜索上限时预览是不完整的，因此其中的数量不是整个仓库的总数。</p>
+<h3 id="preview-is-stale">“预览已过期”</h3>
+<p>检查当前的 diff，因为可能已经应用了部分匹配或一组已变化的匹配。然后让 omp 重新读取文件并创建新的预览；只有当新的文件数与替换数符合预期时才接受。</p>
+<h3 id="a-conflict-reference-is-unknown-or-no-longer-present"><code>conflict://</code> 引用未知或已不存在</h3>
+<p>让 omp 再次读取有冲突的文件。这会刷新会话的冲突索引，避免把某个决定应用到一个标记或周围文件已经变化的块上。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/editing" rel="noreferrer noopener">omp.sh/docs/editing</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

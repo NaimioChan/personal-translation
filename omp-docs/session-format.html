@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会话格式 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：会话格式">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>会话格式</h1>
+
+<p>解析、归档、迁移并检查 omp 保存的 JSONL 会话，而不把持久记录与运行时实时状态混为一谈。</p>
+<p>omp 把会话保存为以换行分隔的 JSON（JSONL）：每个物理行一个 JSON 对象。你在审计对话、构建导出器、在机器之间移动会话，或恢复损坏的文件时，都可能遇到它。</p>
+<p>最安全的第一步是只读检查。在 omp 数据目录下找到会话，然后在转换之前先复制 JSONL 文件：</p>
+<pre><code class="language-bash">find ~/.omp/agent/sessions -name &#x27;*.jsonl&#x27; -print
+jq -c . ~/.omp/agent/sessions/&lt;project&gt;/&lt;session&gt;.jsonl
+</code></pre>
+<p>在默认安装中，根目录是 <code>~/.omp/agent/sessions</code>。XDG 或 agent 目录配置可以重定位它。项目目录名属于实现细节；请发现文件，而不是构造它们的路径。常规交互式文件名形如 <code>&lt;filesystem-safe-timestamp&gt;_&lt;session-id&gt;.jsonl</code>。子代理会话则可能出现在父会话的兄弟产物目录之下。</p>
+<p>把活动文件当作日志来对待：不加锁地读取它，容忍最后一行不完整，并在该轮次结束后重试那一行。要做持久归档或迁移时，请关闭拥有该文件的 omp 进程，并把 JSONL 连同 <a href="#portability-and-redaction">可移植性与脱敏</a> 中描述的 blob 存储一起复制。不要在 omp 运行时就地编辑会话。尽管大多数记录都是追加的，omp 在迁移或维护期间可能重写文件，而它的定宽标题记录是有意就地更新的。</p>
+<p>面向用户的恢复、分支和分享流程，参见<a href="sessions.html">会话</a>。</p>
+<h2 id="physical-file-layout">物理文件布局</h2>
+<p>新写入的版本 3 文件通常按此顺序排列：</p>
+<ol>
+<li>一条可选的定宽 <code>title</code> 记录（当前 omp 会写入它）；</li>
+<li>恰好一个 <code>session</code> 头；</li>
+<li>零个或多个树条目。</li>
+</ol>
+<p>每个对象占据一行。空行或格式错误的行不属于该格式。omp 的读取器会跳过格式错误的记录，但一次可写的恢复之后可能重写文件并丢掉它们，因此请修复副本，而不要依赖这种恢复行为。</p>
+<h3 id="mutable-title-record">可变的标题记录</h3>
+<p>物理第一行是 256 个 UTF-8 字节，包含其换行符。填充位于 JSON 字符串内部，因此它仍然是有效的 JSON：
+下面的 <code>pad</code> 值为了可读性已缩短。</p>
+<pre><code class="language-json">{&quot;type&quot;:&quot;title&quot;,&quot;v&quot;:1,&quot;title&quot;:&quot;refactor importer&quot;,&quot;source&quot;:&quot;user&quot;,&quot;updatedAt&quot;:&quot;2026-05-14T10:14:22.000Z&quot;,&quot;pad&quot;:&quot;                                  &quot;}
+</code></pre>
+<table><thead><tr><th>字段</th><th>类型</th><th>含义</th></tr></thead><tbody><tr><td><code>type</code></td><td><code>&quot;title&quot;</code></td><td>物理标题槽的判别符。</td></tr><tr><td><code>v</code></td><td><code>1</code></td><td>标题记录的格式版本，与会话 schema 版本相互独立。</td></tr><tr><td><code>title</code></td><td>string</td><td>当前标题；可以为空，也可能被截断以适配槽位。</td></tr><tr><td><code>source</code></td><td><code>&quot;auto&quot;</code> | <code>&quot;user&quot;</code>?</td><td>由 omp 还是由用户选定。</td></tr><tr><td><code>updatedAt</code></td><td>string</td><td>ISO 8601 更新时间。</td></tr><tr><td><code>pad</code></td><td>string</td><td>用于把记录保持为恰好 256 字节的空格填充。忽略它。</td></tr></tbody></table>
+<p>旧版文件可以直接以 <code>session</code> 头开始。解析器应当同时通过 <code>type: &quot;title&quot;</code> 和 <code>v: 1</code> 识别标题记录，把它从逻辑条目流中移除，并把它的 <code>title</code> 与 <code>source</code> 覆盖到头部元数据上。不要假设第一个物理对象就是头部。</p>
+<h2 id="session-header-version-3">会话头（版本 3）</h2>
+<p>当前逻辑格式版本是 <strong>3</strong>。第一个逻辑对象是：</p>
+<pre><code class="language-json">{&quot;type&quot;:&quot;session&quot;,&quot;version&quot;:3,&quot;id&quot;:&quot;019700f1-1a2b-7c3d-8e4f-aabbccddeeff&quot;,&quot;timestamp&quot;:&quot;2026-05-14T10:12:03.000Z&quot;,&quot;cwd&quot;:&quot;/Users/me/src/api&quot;,&quot;additionalDirectories&quot;:[&quot;/Users/me/src/shared&quot;],&quot;title&quot;:&quot;refactor importer&quot;,&quot;titleSource&quot;:&quot;user&quot;}
+</code></pre>
+<table><thead><tr><th>字段</th><th>类型</th><th>含义</th></tr></thead><tbody><tr><td><code>type</code></td><td><code>&quot;session&quot;</code></td><td>头部判别符。</td></tr><tr><td><code>version</code></td><td>number?</td><td>Schema 版本。缺失表示版本 1；当前写入器会输出 <code>3</code>。</td></tr><tr><td><code>id</code></td><td>string</td><td>会话标识。当前写入器使用 UUIDv7；请把它当作不透明值。</td></tr><tr><td><code>timestamp</code></td><td>string</td><td>ISO 8601 创建时间。</td></tr><tr><td><code>cwd</code></td><td>string</td><td>保存时的绝对主工作目录。</td></tr><tr><td><code>additionalDirectories</code></td><td>string[]?</td><td>多根工作区中的绝对附加根目录。</td></tr><tr><td><code>title</code></td><td>string?</td><td>头部标题，在逻辑上会被已识别的物理标题记录覆盖。</td></tr><tr><td><code>titleSource</code></td><td><code>&quot;auto&quot;</code> | <code>&quot;user&quot;</code>?</td><td>头部标题的来源。</td></tr><tr><td><code>parentSession</code></td><td>string?</td><td>仅表示谱系：完整分叉时为源会话 ID，把分支复制到新文件时为源 JSONL 路径。</td></tr><tr><td><code>previousSessionFiles</code></td><td>string[]?</td><td>成功移动之后记录的先前绝对 JSONL 位置。</td></tr><tr><td><code>providerPromptCacheKey</code></td><td>string?</td><td>不透明的提供商重放/缓存标识。保留它，但不要解释或生成它。</td></tr></tbody></table>
+<p>版本 1 没有 <code>version</code>，并且是线性的。加载它时会分配条目 ID 和父链接。版本 2 已经有树形封装；版本 3 在迁移期间重命名了旧的 <code>hookMessage</code> 角色。omp 会在内存中迁移较旧的文件，并可能在下次可写操作时重写它们。只有在你的集成无法保留未知数据时才拒绝未来版本；否则请保留未知字段和记录。</p>
+<h2 id="tree-entry-envelope-and-branches">树条目封装与分支</h2>
+<p>头部之后的每个逻辑对象都是一个条目，共享以下通用封装：</p>
+<table><thead><tr><th>字段</th><th>类型</th><th>含义</th></tr></thead><tbody><tr><td><code>type</code></td><td>string</td><td>条目判别符。</td></tr><tr><td><code>id</code></td><td>string</td><td>条目标识。通常是 8 个字符的十六进制 ID，但冲突回退和导入数据意味着解析器必须把它当作不透明的非空字符串。</td></tr><tr><td><code>parentId</code></td><td>string | <code>null</code></td><td>此分支上的前一个条目；<code>null</code> 表示一条根路径的起点。</td></tr><tr><td><code>timestamp</code></td><td>string</td><td>ISO 8601 持久化时间。这与消息级时间戳不同，后者是 Unix 毫秒。</td></tr></tbody></table>
+<p>数组顺序是日志顺序，而不是扁平化后的对话。请构建 <code>id → entry</code> 映射，然后构建 <code>parentId → children</code> 映射。分支是从选定的叶子沿 <code>parentId</code> 走到 <code>null</code> 所得到的祖先链，再把结果反转。同一个父节点的多个子节点是兄弟分支。</p>
+<p>文件<strong>不</strong>持久保存单独的活动叶子字段。加载时，omp 最初根据文件顺序中的最后一个逻辑条目推导叶子；交互式树导航只能在内存中选择不同的叶子。下一条追加的条目会以该选中的条目为父，然后成为最后一条记录。因此：</p>
+<ul>
+<li>不要仅凭时间戳推断当前分支；</li>
+<li>不要假设每条记录都属于同一份线性对话记录；</li>
+<li>检测重复 ID、缺失的父节点、自链接和更长的循环；</li>
+<li>往返转换时保留文件顺序，因为它提供了初始叶子。</li>
+</ul>
+<p><code>parentSession</code> 关联的是文件，而 <code>parentId</code> 关联的是一个文件内部的条目。两者都不保证所引用的来源仍然存在。</p>
+<h2 id="message-entries">消息条目</h2>
+<p>消息条目封装一条持久的代理消息：</p>
+<pre><code class="language-jsonl">{&quot;type&quot;:&quot;message&quot;,&quot;id&quot;:&quot;1f9d2a0b&quot;,&quot;parentId&quot;:null,&quot;timestamp&quot;:&quot;2026-05-14T10:12:05.000Z&quot;,&quot;message&quot;:{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:[{&quot;type&quot;:&quot;text&quot;,&quot;text&quot;:&quot;refactor the importer to stream&quot;}],&quot;timestamp&quot;:1778753525000}}
+{&quot;type&quot;:&quot;message&quot;,&quot;id&quot;:&quot;1f9d2b0c&quot;,&quot;parentId&quot;:&quot;1f9d2a0b&quot;,&quot;timestamp&quot;:&quot;2026-05-14T10:12:06.000Z&quot;,&quot;message&quot;:{&quot;role&quot;:&quot;assistant&quot;,&quot;content&quot;:[{&quot;type&quot;:&quot;text&quot;,&quot;text&quot;:&quot;Reading the file first.&quot;},{&quot;type&quot;:&quot;toolCall&quot;,&quot;id&quot;:&quot;toolu_01&quot;,&quot;name&quot;:&quot;read&quot;,&quot;arguments&quot;:{&quot;path&quot;:&quot;src/importer.ts&quot;}}],&quot;api&quot;:&quot;anthropic-messages&quot;,&quot;provider&quot;:&quot;anthropic&quot;,&quot;model&quot;:&quot;claude-opus-4-6&quot;,&quot;usage&quot;:{&quot;input&quot;:1200,&quot;output&quot;:45,&quot;cacheRead&quot;:0,&quot;cacheWrite&quot;:0,&quot;totalTokens&quot;:1245,&quot;cost&quot;:{&quot;input&quot;:0.01,&quot;output&quot;:0.01,&quot;cacheRead&quot;:0,&quot;cacheWrite&quot;:0,&quot;total&quot;:0.02}},&quot;stopReason&quot;:&quot;toolUse&quot;,&quot;timestamp&quot;:1778753526000}}
+{&quot;type&quot;:&quot;message&quot;,&quot;id&quot;:&quot;1f9d2c0d&quot;,&quot;parentId&quot;:&quot;1f9d2b0c&quot;,&quot;timestamp&quot;:&quot;2026-05-14T10:12:07.000Z&quot;,&quot;message&quot;:{&quot;role&quot;:&quot;toolResult&quot;,&quot;toolCallId&quot;:&quot;toolu_01&quot;,&quot;toolName&quot;:&quot;read&quot;,&quot;content&quot;:[{&quot;type&quot;:&quot;text&quot;,&quot;text&quot;:&quot;file contents&quot;}],&quot;isError&quot;:false,&quot;timestamp&quot;:1778753527000}}
+</code></pre>
+<h3 id="message-roles">消息角色</h3>
+<table><thead><tr><th>角色</th><th>必需的结构</th><th>常见的可选持久数据</th></tr></thead><tbody><tr><td><code>user</code></td><td><code>content: string | (text | image)[]</code>、<code>timestamp: number</code></td><td><code>synthetic</code>、<code>steering</code>、<code>attribution</code>、不透明的 <code>providerPayload</code></td></tr><tr><td><code>developer</code></td><td>与 user 相同的 content 和 timestamp 结构</td><td><code>attribution</code>、不透明的 <code>providerPayload</code></td></tr><tr><td><code>assistant</code></td><td><code>content: block[]</code>、<code>api</code>、<code>provider</code>、<code>model</code>、<code>usage</code>、<code>stopReason</code>、<code>timestamp: number</code></td><td>响应/错误 ID 与详情、持续时间/TTFT、上下文快照、重试恢复、被禁用的特性、不透明的 <code>providerPayload</code></td></tr><tr><td><code>toolResult</code></td><td><code>toolCallId</code>、<code>toolName</code>、<code>content: (text | image)[]</code>、<code>isError</code>、<code>timestamp: number</code></td><td><code>details</code>、<code>attribution</code>、<code>prunedAt</code>、<code>useless</code>、提供商元数据</td></tr></tbody></table>
+<p>当前的 <code>stopReason</code> 取值是 <code>stop</code>、<code>length</code>、<code>toolUse</code>、<code>error</code> 和 <code>aborted</code>。assistant 的 <code>usage</code>、错误元数据、提供商负载、签名和工具 <code>details</code> 会随提供商和工具而演进。保留未知键；只需要对话记录的消费者可以忽略它们。</p>
+<h3 id="content-blocks">内容块</h3>
+<table><thead><tr><th><code>type</code></th><th>使用位置</th><th>核心字段</th></tr></thead><tbody><tr><td><code>text</code></td><td>user、developer、assistant、工具结果</td><td><code>text: string</code>；可选的不透明 <code>textSignature</code></td></tr><tr><td><code>image</code></td><td>user、developer、assistant、工具结果</td><td><code>data: string</code>、<code>mimeType: string</code>；可选的 <code>detail</code>、提供商文件引用或 URL</td></tr><tr><td><code>thinking</code></td><td>assistant</td><td><code>thinking: string</code>；可选的不透明 <code>thinkingSignature</code> 和 <code>itemId</code></td></tr><tr><td><code>redactedThinking</code></td><td>assistant</td><td>不透明的 <code>data: string</code></td></tr><tr><td><code>toolCall</code></td><td>assistant</td><td><code>id: string</code>、<code>name: string</code>、<code>arguments: object</code>；可选的签名、意图、原始/提供商元数据</td></tr><tr><td><code>fallback</code></td><td>assistant</td><td>提供商专属的 <code>{ from: { model }, to: { model } }</code> 边界</td></tr><tr><td><code>anthropicServerTool</code></td><td>assistant</td><td>不透明、提供商原生的 <code>block</code>，为重放而保留</td></tr></tbody></table>
+<p>通过 <code>message.toolCallId === block.id</code> 把 <code>toolResult</code> 消息与 <code>toolCall</code> 块配对；在分支路径上，仅凭相邻关系是不够的。一个悬空的调用可能是一次实时调用、一个被中断的轮次，或一个其结果只存在于兄弟分支上的调用。</p>
+<p>消息内容可能包含密钥、源码文本、命令输出、图像、签名推理和提供商重放负载。它不是经过脱敏的对话记录。</p>
+<h2 id="non-message-entry-types">非消息条目类型</h2>
+<p>以下所有类型都包含通用树封装。</p>
+<table><thead><tr><th>类型</th><th>持久负载与解读</th></tr></thead><tbody><tr><td><code>thinking_level_change</code></td><td><code>thinkingLevel?: string | null</code>、<code>configured?: string | null</code>。所选路径上的最新取值会影响后续轮次。</td></tr><tr><td><code>model_change</code></td><td><code>model: &quot;provider/model&quot;</code>、可选的 <code>role</code>、可选的 <code>resolvedModelIsFallback</code>。role 默认为 <code>default</code>；<code>fallback</code> 是临时的重试角色。</td></tr><tr><td><code>service_tier_change</code></td><td><code>serviceTier: object | null</code>。保留提供商家族的映射；不要假设只有一个标量层级。</td></tr><tr><td><code>mode_change</code></td><td><code>mode: string</code>（<code>none</code> 表示退出某个模式），可选的模式专属 <code>data</code>。</td></tr><tr><td><code>compaction</code></td><td><code>summary</code>、<code>firstKeptEntryId</code>、<code>tokensBefore</code>；可选的 <code>shortSummary</code>、<code>tokensAfter</code>、<code>method</code>、重放标记、<code>details</code>、<code>preserveData</code>、<code>fromExtension</code>、<code>warning</code>。它记录一次上下文重写；它不会删除较旧的日志条目。</td></tr><tr><td><code>branch_summary</code></td><td><code>fromId</code>、<code>summary</code>；可选的 <code>details</code>、<code>fromExtension</code>。它概括一条被放弃的路径，而它本身是新路径上的一个子节点。</td></tr><tr><td><code>reset_boundary</code></td><td>无负载。<code>/clear</code> 用它作为重建实时上下文的持久边界，而完整的持久化历史仍可供对话记录导出使用。</td></tr><tr><td><code>label</code></td><td><code>targetId</code>、<code>label?: string</code>。非空标签设置/替换目标标签；缺失标签则移除它。按文件顺序解析标签。</td></tr><tr><td><code>title_change</code></td><td><code>title</code>、可选的 <code>previousTitle</code>、<code>source: &quot;auto&quot; | &quot;user&quot;</code>、可选的 <code>trigger</code>。仅追加的审计历史；物理标题记录以高效方式提供当前标题。</td></tr><tr><td><code>ttsr_injection</code></td><td><code>injectedRules: string[]</code>。所选路径上的持久规则记录。</td></tr><tr><td><code>credential_pin</code></td><td><code>provider</code>、<code>hash</code>。这是一个用于重放亲和性的化名凭据/作用域摘要——不是密钥，也并非匿名。</td></tr><tr><td><code>session_init</code></td><td>子代理重放/调试元数据：<code>systemPrompt</code>、<code>task</code>、<code>tools</code>，以及可选的代理/模型、schema、工具限制、spawn、读取摘要和顾问字段。它可能包含高度敏感的提示词和任务。</td></tr></tbody></table>
+<p>有些条目会影响重建的模型上下文（<code>message</code>、压缩与分支摘要、重置、模式/模型/思考变化）；其他则是元数据。这种行为是运行时策略，并不承诺每个持久对象都会原样出现在可见的对话记录中。</p>
+<h2 id="extension-owned-entries">扩展拥有的条目</h2>
+<p>扩展有两种公开的持久化形态：</p>
+<pre><code class="language-jsonl">{&quot;type&quot;:&quot;custom&quot;,&quot;id&quot;:&quot;a1b2c3d4&quot;,&quot;parentId&quot;:&quot;1f9d2c0d&quot;,&quot;timestamp&quot;:&quot;2026-05-14T10:12:08.000Z&quot;,&quot;customType&quot;:&quot;com.example.review-state&quot;,&quot;data&quot;:{&quot;approved&quot;:true}}
+{&quot;type&quot;:&quot;custom_message&quot;,&quot;id&quot;:&quot;b2c3d4e5&quot;,&quot;parentId&quot;:&quot;a1b2c3d4&quot;,&quot;timestamp&quot;:&quot;2026-05-14T10:12:09.000Z&quot;,&quot;customType&quot;:&quot;com.example.policy&quot;,&quot;content&quot;:&quot;Use the approved migration plan.&quot;,&quot;display&quot;:true,&quot;details&quot;:{&quot;policyVersion&quot;:2},&quot;attribution&quot;:&quot;agent&quot;}
+</code></pre>
+<ul>
+<li><code>custom</code> 含有 <code>customType: string</code> 和可选的 JSON <code>data</code>。它持久保存扩展状态，不进入模型上下文。</li>
+<li><code>custom_message</code> 含有 <code>customType</code>、<code>content: string | (text | image)[]</code>、<code>display: boolean</code>、可选的 JSON <code>details</code>，以及可选的 <code>attribution: &quot;user&quot; | &quot;agent&quot;</code>。它确实参与模型上下文；<code>display</code> 控制 TUI 是否渲染它。</li>
+</ul>
+<p>请为 <code>customType</code> 加命名空间（例如使用反向域名），在 <code>data</code> 或 <code>details</code> 内部为负载加版本，并容忍你不理解的版本。第三方解析器应当保留未知条目类型，而不是把当前的内置列表当作穷举。</p>
+<h2 id="persistence-limits-and-sidecar-blobs">持久化限制与附属 blob</h2>
+<p>JSONL 是持久的重放日志，并不总是运行时对象的逐字节转储：</p>
+<ul>
+<li>大多数超过 500,000 个字符的字符串会被截断，并附上一条持久化提示；</li>
+<li>签名/加密/提供商原生的重放块在截断会破坏重放时会保持完整；</li>
+<li>瞬态的 <code>jsonlEvents</code> 数据会被剥离；</li>
+<li>足够大的图像负载会从 <code>image.data</code>（以及某些嵌套图像字段）外置为 <code>blob:sha256:&lt;64-lowercase-hex&gt;</code> 引用。</li>
+</ul>
+<p>Blob 字节存放在 omp blob 存储中，通常为 <code>~/.omp/agent/blobs/&lt;sha256&gt;</code>。哈希基于原始二进制字节。因此，一份独立的 JSONL 副本即使能正确解析，也可能是不完整的。请保留整个 blob 存储，或复制每一个被引用的无扩展名哈希文件。遇到格式错误的 blob 引用时应当拒绝，而不是把它的后缀当作路径来解释。</p>
+<h2 id="portability-and-redaction">可移植性与脱敏</h2>
+<p>要做一次忠实的迁移：</p>
+<ol>
+<li>停止或分离正在写该会话的进程；</li>
+<li>复制 JSONL，不改变记录顺序或不透明字段；</li>
+<li>复制被引用的 blob；</li>
+<li>决定 <code>cwd</code>、<code>additionalDirectories</code>、<code>parentSession</code> 和 <code>previousSessionFiles</code> 中的绝对路径是否需要重映射；</li>
+<li>从新位置打开副本，并在删除来源之前核实其树结构。</li>
+</ol>
+<p>文件名中的会话 ID 通常与 <code>header.id</code> 一致，但导入器应当做校验，而不是仅凭文件名推导身份。<code>parentSession</code> 和先前文件路径属于来源信息，移动之后可能仍是过期的。</p>
+<p>在分享之前，请假设以下所有位置都可能存在敏感数据：</p>
+<ul>
+<li>user/developer 消息、工具参数、工具结果和 custom 条目；</li>
+<li>assistant 的思考、被脱敏/加密的块、提供商负载和错误文本；</li>
+<li><code>session_init</code> 的系统提示词和任务；</li>
+<li>绝对路径和标题；</li>
+<li>图像 blob 和提供商原生的文件/响应标识符；</li>
+<li><code>credential_pin.hash</code>，当它的输入可被猜出时是可关联的。</li>
+</ul>
+<p>脱敏可能使签名推理、加密的重放历史、工具调用/结果配对、压缩引用或 blob 哈希失效。在不需要重放时，导出一份刻意有损的对话记录。如果重放很重要，就在副本上做结构性脱敏：保留 ID 和父链接，在适当处整对移除敏感的块，并预期提供商的缓存/重放元数据将变得不可用。</p>
+<h2 id="validation-and-troubleshooting">校验与故障排除</h2>
+<p>实用的校验器应当报告以下问题，而不是悄悄修复：</p>
+<ol>
+<li>每个非空的物理行都是一个 JSON 对象；</li>
+<li>可选的首个对象是有效的 <code>title</code> v1 记录；</li>
+<li>第一个逻辑对象是 <code>type: &quot;session&quot;</code>，且 <code>id</code> 为字符串；</li>
+<li>版本受支持（缺失即旧版 v1；当前为 3）；</li>
+<li>之后的每个对象都有字符串 <code>type</code>、字符串 <code>id</code>、字符串 <code>timestamp</code>，以及为字符串或 <code>null</code> 的 <code>parentId</code>；</li>
+<li>条目 ID 唯一，且每个非空父节点都能解析；</li>
+<li>父节点遍历能够终止且没有循环；</li>
+<li>被引用的 <code>firstKeptEntryId</code>、<code>targetId</code> 和工具调用 ID 在其语义要求之处能够解析；</li>
+<li>每个规范 blob 引用都有对应的哈希文件；</li>
+<li>最后一个逻辑记录被记为默认的恢复叶子。</li>
+</ol>
+<p>有用的只读检查：</p>
+<pre><code class="language-bash"># Parse every physical record and show its discriminator.
+jq -r &#x27;.type&#x27; session.jsonl
+
+# Keep file order while inspecting tree links.
+jq -c &#x27;select(.id and has(&quot;parentId&quot;)) | {type,id,parentId,timestamp}&#x27; session.jsonl
+
+# List external blob references conservatively.
+grep -o &#x27;blob:sha256:[a-f0-9]\{64\}&#x27; session.jsonl | sort -u
+</code></pre>
+<p>如果 jq 只在活动会话的最后一行失败，请等待写入者并重试。如果 omp 报告存在格式错误的记录，请保留原始文件、定位出错的物理行，并修复一份副本。如果会话打开在非预期的分支上，请检查最后一个逻辑条目及其祖先链。如果迁移后图像缺失，请恢复被引用的 blob 哈希。如果较旧的文件在恢复之后发生变化，那可能是正常的版本/标题槽迁移，而不是 JSONL 严格只追加的证据。</p>
+<h2 id="persisted-data-versus-runtime-state">持久数据与运行时状态</h2>
+<p>会持久保存且可重建的：</p>
+<ul>
+<li>头部/工作区元数据和文件谱系；</li>
+<li>有序的条目树、消息、标签、重置边界、摘要和扩展记录；</li>
+<li>每个分支上记录的模型、模式、思考、层级、凭据亲和性、用量和提供商重放元数据；</li>
+<li>由最后一个逻辑记录隐含的默认叶子。</li>
+</ul>
+<p>不作为稳定文件格式状态表示的：</p>
+<ul>
+<li>尚未引发追加的、交互式选中的叶子；</li>
+<li>进行中的流式增量、待执行的工具执行状态、队列、锁和打开的写入句柄；</li>
+<li>实际生成的模型上下文或可见的 TUI 对话记录（两者都按当前运行时策略重建）；</li>
+<li>实时的认证密钥、提供商连接、扩展代码、工具实现和当前配置；</li>
+<li>不透明提供商元数据在另一个账户、提供商或 omp 版本下仍然可用的保证。</li>
+</ul>
+<p>集成应当解析持久的树和声明的负载、保留它们不理解的内容，并避免把保存的文件当作一个序列化的会话管理器进程。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/session-format" rel="noreferrer noopener">omp.sh/docs/session-format</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

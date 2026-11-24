@@ -100,5 +100,9 @@ window.PT_LIBRARIES = [
   { dir: 'tidalcycles-docs', title: 'Tidal Cycles 文档',
     desc: 'Tidal Cycles 官方文档的中文译本。',
     source: 'https://tidalcycles.org/docs/',
-    updated: '2026-10-24', pages: 63 }
+    updated: '2026-10-24', pages: 63 },
+  { dir: 'omp-docs', title: 'Oh My Pi 官方文档',
+    desc: 'Oh My Pi 官方文档的中文译本。',
+    source: 'https://omp.sh/docs',
+    updated: '2026-11-24', pages: 56 }
 ];

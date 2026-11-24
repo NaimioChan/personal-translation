@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>编写子代理 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：编写子代理">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>编写子代理</h1>
+
+<p>在一个 Markdown 文件中定义一个命名的专家，只给它需要的工具，然后让 omp 按名称使用它。</p>
+<p>当你反复进行同一种委派时，自定义子代理很有用：审查一个 API、检查迁移、研究某个依赖，或进行一种范围严格限定的改动。为这类工作一次性起一个稳定的名字并写好指令，之后每当需求再次出现，就让 omp 使用这个专家。</p>
+<h2 id="create-the-smallest-useful-agent">创建最小的可用代理</h2>
+<p>要做一个项目专属、只读的 API 审查者，请创建 <code>.omp/agents/api-reviewer.md</code>：</p>
+<pre><code class="language-md">---
+name: api-reviewer
+description: Review API changes for compatibility, missing tests, and contract drift.
+tools: [read, grep, glob]
+---
+
+Review the assigned API change.
+
+Check exported types, HTTP behavior, tests, and documented contracts. Report only concrete findings with file and line references. Do not edit files.
+</code></pre>
+<p>只有 <code>name</code> 和 <code>description</code> 是必需的。Markdown 正文是该代理的持久指令。这个示例授予了一套显式的只读工具，而不是继承当前会话可用的所有工具。</p>
+<p>保存文件，打开 <code>/agents</code>，按 <kbd>Ctrl</kbd>+<kbd>R</kbd>。搜索 <code>api-reviewer</code>，确认详情面板显示了预期的文件路径。如果它处于禁用状态，按 <kbd>Space</kbd> 启用它。</p>
+<p>然后用自然语言提出请求，并使用确切的名称：</p>
+<pre><code class="language-text">Use the api-reviewer subagent to review the current branch. Keep it read-only and report actionable findings.
+</code></pre>
+<p>你不需要特殊的请求格式。点名代理是选中它最清晰的方式；它的 <code>description</code> 也会告诉 omp 这个专家何时适用。</p>
+<h2 id="choose-where-it-lives">选择存放位置</h2>
+<table><thead><tr><th>作用域</th><th>位置</th><th>用途</th></tr></thead><tbody><tr><td>项目</td><td><code>&lt;project&gt;/.omp/agents/&lt;name&gt;.md</code></td><td>应随项目一起走的仓库专属约定。omp 会从当前目录向上查找，并使用最近的 <code>.omp/agents</code> 目录。</td></tr><tr><td>用户</td><td><code>~/.omp/agent/agents/&lt;name&gt;.md</code></td><td>跨项目可用的个人专家。使用命名配置文件时，请用 <code>~/.omp/profiles/&lt;profile&gt;/agent/agents/</code>。</td></tr><tr><td>OMP 扩展</td><td><code>&lt;extension-root&gt;/agents/&lt;name&gt;.md</code></td><td>随 OMP 扩展包一起分发的代理。</td></tr><tr><td>Claude 插件市场插件</td><td><code>&lt;plugin-root&gt;/agents/&lt;name&gt;.md</code></td><td>由已启用的 Claude 插件市场插件提供的代理。</td></tr></tbody></table>
+<p>对于给定的 <code>name</code>，第一个定义胜出：</p>
+<ol>
+<li>最近的项目 <code>.omp/agents</code> 目录</li>
+<li>当前用户的代理目录</li>
+<li>OMP 扩展根，按其配置来源排序：命令行扩展、项目扩展、用户扩展，然后是已安装的 npm/link 插件</li>
+<li>Claude 插件市场插件，项目作用域先于用户作用域</li>
+<li>omp 自带的代理</li>
+</ol>
+<p>名称按精确匹配，并且区分大小写。优先使用小写 kebab-case 名称。在同一个目录内，文件按文件名顺序考虑，因此不要保留两个 <code>name</code> 相同的定义。项目或用户定义可以通过复用名称有意替换插件或自带代理；<code>/agents</code> 会显示哪个文件胜出。</p>
+<p>直接的 <code>.claude/agents</code>、<code>.codex/agents</code> 以及类似的跨工具目录不会被扫描。它们的 frontmatter 契约与 omp 的不通用。</p>
+<h2 id="write-effective-instructions">编写有效的指令</h2>
+<p>让正文专注于这个可复用角色。说明：</p>
+<ul>
+<li>该代理负责什么、绝不能做什么</li>
+<li>它应遵循的检查或工作流</li>
+<li>它的回答中应包含哪些证据</li>
+<li>它是否可以编辑文件</li>
+<li>在任何任务中都成立的项目边界</li>
+</ul>
+<p>把会变化的工作放进请求，而不是定义中。例如，把“审查 API 兼容性”留在文件里，把“审查本分支上的分页改动”放进提示词。避免把通用的项目指令复制进每个代理；正常的项目上下文仍然生效。</p>
+<p><code>description</code> 是选择提示，不是第二份系统提示词。使用具体的动词、主题与边界：“Review database migrations for unsafe locks and rollback gaps”比“A helpful database expert.”更有用。</p>
+<h2 id="grant-tools-safely">安全地授予工具</h2>
+<p>显式的 <code>tools</code> 列表是一条能力边界。从能完成任务的最小集合开始：</p>
+<ul>
+<li>调查通常需要 <code>read</code>、<code>grep</code> 和 <code>glob</code></li>
+<li>当语义代码导航有用时添加 <code>lsp</code></li>
+<li>只有该代理需要修改文件时才添加 <code>edit</code> 或 <code>write</code></li>
+<li>只有必须运行命令时才添加 <code>bash</code>；shell 访问同样可以修改工作区</li>
+<li>只有当外部访问属于该角色的一部分时，才添加 <code>web_search</code>、<code>browser</code>、<code>github</code> 或插件/MCP 工具</li>
+<li>只有该专家必须进一步委派时才添加 <code>task</code>，同时也要限制 <code>spawns</code></li>
+</ul>
+<p>省略 <code>tools</code> 时，代理会继承父会话可用的工具。这对通用工作代理很方便，但对审查者来说通常太宽。omp 会自动添加代理所需的私有完成能力；不要自己添加它。</p>
+<p>隔离是按单次委派选择的，而不是在代理 frontmatter 中设定。当代理将要做出有风险或独立的改动时，请显式请求它：</p>
+<pre><code class="language-text">Use the migration-fixer subagent in an isolated worktree to fix the failing migration test.
+</code></pre>
+<p>隔离需要一个受支持的 Git 检出以及已配置的任务隔离。它隔离的是文件系统改动；它不会让网络、shell 或凭据访问变得无害，因此请保持工具授予范围狭窄。</p>
+<h2 id="frontmatter-reference">frontmatter 参考</h2>
+<p>frontmatter 键可以使用 camelCase 或 kebab-case。以下是当前公开的字段：</p>
+<table><thead><tr><th>字段</th><th>含义</th></tr></thead><tbody><tr><td><code>name</code></td><td><strong>必需。</strong>用于选择该代理的精确、区分大小写的标识符。</td></tr><tr><td><code>description</code></td><td><strong>必需。</strong>简短说明该代理应在何时被使用。</td></tr><tr><td><code>tools</code></td><td>允许的工具名，可为 CSV 字符串或 YAML 列表。省略则继承当前会话的工具。</td></tr><tr><td><code>model</code></td><td>一个模型选择器、一个 CSV 字符串，或一个按顺序尝试的 YAML 列表。它可以是具体选择器（如 <code>openai/gpt-5-mini</code>），也可以是角色别名（如 <code>&quot;@review&quot;</code>）。省略则使用正常的继承选择。</td></tr><tr><td><code>thinking-level</code></td><td><code>inherit</code>、<code>off</code>、<code>auto</code>、<code>minimal</code>、<code>low</code>、<code>medium</code>、<code>high</code>、<code>xhigh</code> 或 <code>max</code>。较旧的 <code>thinking</code> 键也被接受。实际支持取决于模型。</td></tr><tr><td><code>spawns</code></td><td>该代理可以委派给的代理名，为 CSV 字符串或列表；<code>*</code> 允许任何已发现的代理。省略表示不允许。为兼容性，授予 <code>task</code> 工具但不设置此字段意味着 <code>*</code>，因此请显式设置此字段。</td></tr><tr><td><code>autoload-skills</code></td><td>在第一次任务之前要加载的技能名，为 CSV 或列表。未知名称会被忽略。</td></tr><tr><td><code>read-summarize</code></td><td>当 <code>read</code> 必须返回逐字代码而不是结构化摘要时设为 <code>false</code>。通常保持启用。</td></tr><tr><td><code>output</code></td><td>用于结构化结果的 JSON Schema。适合普通散文式报告时省略。</td></tr><tr><td><code>blocking</code></td><td>当调用方应等待该代理（即使已启用异步委派）时设为 <code>true</code>。通常省略。</td></tr><tr><td><code>prewalk</code></td><td><code>true</code> 会在第一次编辑或写入时把工作交给处于 <code>smol</code> 角色的模型；模型选择器或角色别名可以选择另一个目标。当你希望更强的模型先检查或规划、再由更便宜的模型实现时使用它。</td></tr><tr><td><code>advisor</code></td><td><code>true</code> 使用配置的 <code>advisor</code> 模型角色；模型选择器或角色别名可以指定某个顾问。子代理在其他情况下运行时没有顾问。</td></tr></tbody></table>
+<p>没有单独的 <code>role</code> 字段。把角色别名放进 <code>model</code>，然后在你的用户或项目配置中映射该别名。这样代理指令保持稳定，同时让每个环境选择具体的模型：</p>
+<pre><code class="language-md">---
+name: api-reviewer
+description: Review API changes for compatibility, missing tests, and contract drift.
+tools: [read, grep, glob]
+model: &quot;@review&quot;
+thinking-level: high
+---
+
+Review the assigned API change and report concrete findings with file and line references.
+</code></pre>
+<pre><code class="language-yaml"># ~/.omp/agent/config.yml, or the active profile&#x27;s config.yml
+modelRoles:
+  review: openai/gpt-5.4
+</code></pre>
+<p>你可以在 <code>/models</code> 的角色视图中分配或更改自定义模型角色。<code>/agents</code> 中心也让你可以覆盖某个已发现代理的模型、prewalk 目标或顾问，而无需编辑共享定义；这些按代理的设置优先于它的 frontmatter。</p>
+<h2 id="reload-and-maintain-definitions">重新加载与维护定义</h2>
+<p>每次委派在开始前都会重新读取代理定义，因此保存的编辑会在下一次使用时生效。<code>/agents</code> 界面有自己的显示快照；在添加、重命名或编辑文件后，请在那里按 <kbd>Ctrl</kbd>+<kbd>R</kbd>。</p>
+<p>对于由扩展或插件提供的代理，在安装或更改该包后运行 <code>/reload-plugins</code>，以便 omp 重新加载整个插件面。普通的项目与用户 Markdown 编辑不需要重启 omp。</p>
+<p>把项目代理当作代码对待：审查改动、保持描述准确、删除过时的重复文件。如果你想要 omp 自带定义的可编辑副本作为起点，运行 <code>omp agents unpack --project</code>，或用 <code>omp agents unpack</code> 获取用户作用域；只定制你打算覆盖的文件。</p>
+<h2 id="troubleshooting">故障排除</h2>
+<p><strong>代理没有出现在 <code>/agents</code> 中。</strong>按 <kbd>Ctrl</kbd>+<kbd>R</kbd>，检查文件是否以 <code>.md</code> 结尾，并确认它直接位于某个 <code>agents</code> 目录中。核实 frontmatter 的 <code>name</code> 和 <code>description</code> 都有非空字符串值。无效的 YAML 或缺失必需字段会跳过该文件，而发现流程会继续。</p>
+<p><strong>胜出的是错误定义。</strong>在 <code>/agents</code> 中查看来源路径，然后检查优先级更高的项目或用户目录中是否存在完全相同的 <code>name</code>。在 monorepo 中要记住，最近的 <code>.omp/agents</code> 目录才是项目来源。</p>
+<p><strong>omp 没有选择该代理。</strong>用确切的名称请求它。改进 <code>description</code>，写清任务、主题以及把它与其他代理区分开的边界。同时也在 <code>/agents</code> 中确认该代理已启用。</p>
+<p><strong>请求的模型无法解析。</strong>打开 <code>/models</code>，确认具体模型或角色别名已配置并已认证。若需要回退行为，在 <code>model</code> 下列出多个选择器。</p>
+<p><strong>某个工具不可用。</strong>把它的确切注册名添加到 <code>tools</code>，或者，只有当继承完整的父工具集是有意为之的时候，才移除显式列表。插件提供的工具还要求该插件已启用并重新加载。</p>
+<p><strong>编辑似乎被忽略了。</strong>实际的委派会读取最新定义，但 <code>/agents</code> 清单可能仍显示之前的快照。重新加载该中心。对于扩展或插件包，还要使用 <code>/reload-plugins</code>。</p>
+<h2 id="related">相关</h2>
+<ul>
+<li><a href="subagents.html">子代理与 Agent Hub</a> — 委派工作并观察运行中的代理。</li>
+<li><a href="agents-and-roles.html">代理与模型角色</a> — 判断该改变行为、路由还是底层模型。</li>
+<li><a href="skills.html">技能</a> — 代理可以自动加载的可复用操作手册。</li>
+<li><a href="plugins.html">插件</a> — 把代理与其他能力一起打包并分发。</li>
+<li><a href="settings.html">设置</a> — 配置模型角色与任务隔离。</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/subagent-authoring" rel="noreferrer noopener">omp.sh/docs/subagent-authoring</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

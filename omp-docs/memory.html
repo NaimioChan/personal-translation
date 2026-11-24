@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记忆 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：记忆">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>记忆</h1>
+
+<p>把持久的偏好、决策与项目知识带入后续会话。记忆默认关闭；选择一个本地或远程后端，控制其作用域，并检查或清理它贡献的内容。</p>
+<p>记忆让 omp 继续工作，而无需你重述持久事实，例如仓库约定、架构决策和审查偏好。它与<a href="compaction.html">上下文压缩</a>不同：压缩缩短单个会话，而记忆可以影响未来的会话。</p>
+<p>记忆<strong>默认关闭</strong>。如果你需要它，打开 <code>/settings</code>，选择 <strong>记忆</strong> 标签页，然后选择一个后端。可以先从 <code>mnemopi</code> 开始，它把可搜索的记忆存储在本机上；<code>local</code> 用于自动生成项目摘要；如果你已经运行 Hindsight 服务，则用 <code>hindsight</code>。</p>
+<h2 id="choose-a-backend">选择后端</h2>
+<table><thead><tr><th>后端</th><th>适用场景</th><th>存储与默认作用域</th><th>重要取舍</th></tr></thead><tbody><tr><td><code>off</code>（默认）</td><td>你不想要跨会话的知识。</td><td>没有记忆存储。</td><td>现有的会话对话记录不受影响；关闭记忆不会删除它们。</td></tr><tr><td><code>local</code></td><td>你希望 omp 定期把过去已持久化的会话提炼为项目指引。</td><td>本机上的生成文件，按工作目录隔离。</td><td>它是一条批量摘要流水线，不是可搜索的存储。你无法审查或遗忘单条结构化事实。</td></tr><tr><td><code>mnemopi</code></td><td>你想要由提示词驱动的记住、回忆与遗忘行为，且不需要记忆服务器。</td><td>本地 SQLite 数据库；默认 <code>per-project</code>。</td><td>数据库在本地，但默认的 <code>smol</code> LLM 模式可能把抽取工作发送给你配置的模型提供商。</td></tr><tr><td><code>hindsight</code></td><td>你想要远程记忆库、共享基础设施，或 Hindsight 的合成与心智模型。</td><td>你自己的 Hindsight 服务器；默认 <code>per-project-tagged</code>。</td><td>自动留存默认开启，因此对话文本会离开本机。</td></tr></tbody></table>
+<p>从 shell 进行的最小持久化配置是：</p>
+<pre><code class="language-bash"># Pick exactly one
+omp config set memory.backend local
+omp config set memory.backend mnemopi
+omp config set memory.backend hindsight
+
+# Confirm the effective setting
+omp config get memory.backend
+</code></pre>
+<p><code>/settings</code> 会写入全局配置，并在保存时切换当前生效的后端。通过 shell 或 YAML 所做的更改对新的 omp 进程生效。若只想对一个仓库生效，把相同的键放进 <code>&lt;repo&gt;/.omp/config.yml</code>；项目设置会覆盖全局文件。路径与优先级见<a href="settings.html">设置</a>。</p>
+<h2 id="privacy-scope-and-defaults">隐私、作用域与默认值</h2>
+<p>启用记忆会改变哪些内容得以持久化，并且取决于所选后端，还会决定哪些内容可能跨越网络边界。</p>
+<ul>
+<li><strong>关闭意味着不做记忆处理。</strong>它不会禁用普通的会话持久化。记忆相关命令也不会擦除 <code>~/.omp/agent/sessions/</code> 下的文件；请通过<a href="sessions.html">会话</a>单独管理这些文件。</li>
+<li><strong>Local 在本地存储生成的产物</strong>，默认位于 <code>~/.omp/agent/memories/&lt;encoded-project&gt;/</code> 下。它的抽取与合并流程使用你配置的模型角色，因此过去的会话文本仍可能被发送给该模型提供商。生成的输出会过滤常见的 token 与密钥模式，但不要有意让 omp 记住密钥。</li>
+<li><strong>Mnemopi 把它的 SQLite 记忆库存储在本地</strong>，默认位于 <code>~/.omp/agent/memories/mnemopi/</code> 下。本地嵌入可能会下载并运行一个嵌入模型。其默认的 <code>llmMode: smol</code> 使用你配置的在线 <code>tiny</code>/<code>smol</code> 模型进行 LLM 支持的抽取；如果你不希望有任何 LLM 参与的记忆处理，请使用 <code>llmMode: none</code>。</li>
+<li><strong>Hindsight 把持久记忆存储在配置的服务器上。</strong>在 <code>autoRetain: true</code>（默认值）下，omp 每三个用户轮次以及会话边界时发送用户与助手文本。它会省略工具调用、工具结果和思考块。回忆与合成查询也会发往该服务器。</li>
+<li><strong>关闭某个后端不会删除它的存储。</strong>这使切换是可逆的，但当目标是彻底移除时，你必须单独清理或删除数据。</li>
+</ul>
+<p>在积累敏感数据之前先选择作用域：</p>
+<table><thead><tr><th>作用域</th><th>Mnemopi</th><th>Hindsight</th></tr></thead><tbody><tr><td><code>global</code></td><td>一个本地记忆库在所有项目中可见。</td><td>一个远程记忆库在所有项目中可见。</td></tr><tr><td><code>per-project</code></td><td>一个由绝对工作目录派生的隔离记忆库。这是默认值。</td><td>每个仓库名（在 Git 之外则是 cwd 名）对应一个隔离记忆库。同一仓库的链接工作树共享主检出的名称。</td></tr><tr><td><code>per-project-tagged</code></td><td>写入项目记忆库；回忆时会把它与共享的全局记忆库合并。</td><td>把带项目标记的数据写入一个共享记忆库；回忆时把该项目的带标记记忆与未标记的全局记忆合并。这是默认值。</td></tr></tbody></table>
+<p>对于客户项目或其他严格边界，优先使用 <code>per-project</code>。<code>per-project-tagged</code> 很方便，但它会有意让未标记的全局知识与项目知识一起可见。</p>
+<h2 id="use-memory-in-conversation">在对话中使用记忆</h2>
+<p>启用 Mnemopi 或 Hindsight 后，使用普通的提示词即可。你不需要了解 omp 是如何执行记忆操作的。</p>
+<pre><code class="language-text">Remember that this repository uses pnpm and Node 22.
+</code></pre>
+<pre><code class="language-text">Before changing authentication, recall why we rejected session cookies.
+</code></pre>
+<pre><code class="language-text">What durable preferences have you learned about how I review pull requests?
+</code></pre>
+<p>Mnemopi 还可以编辑、遗忘或作废一条可编辑的记忆：</p>
+<pre><code class="language-text">Forget the memory that says releases happen on Fridays; that policy was retired.
+</code></pre>
+<pre><code class="language-text">Update the stored release convention to say that releases happen after CI is green.
+</code></pre>
+<p>当描述可能匹配多条记录时，先让 omp 显示候选记忆再修改。Mnemopi 抽取出的事实表行是只读的；提示词应指明一条可编辑的记忆，或者在需要彻底移除时清空该作用域内的记忆库。Hindsight 不通过 omp 暴露单条记录的编辑能力；请使用 Hindsight 服务的 UI 做记录级审查或删除。</p>
+<p>本地后端的工作方式不同。它会自动摘要符合条件的已持久化会话，并在启动时注入一个静态的<strong>记忆指引</strong>块。像“记住这个”这样的请求并不保证产生一次单独写入。它最好的用法是让反复出现的项目知识从已完成的工作中自然浮现。</p>
+<p>回忆出或摘要出的记忆是背景上下文，不是指令。当它与你冲突时，当前提示词和当前仓库状态优先。</p>
+<h2 id="what-you-can-inspect-and-control">你可以检查和控制的内容</h2>
+<p>在会话中运行这些斜杠命令：</p>
+<table><thead><tr><th>命令</th><th>可见结果</th></tr></thead><tbody><tr><td><code>/memory</code> 或 <code>/memory view</code></td><td>打开当前注入的记忆载荷。出现空警告意味着后端已关闭、不可用，或尚未回忆/生成任何内容。</td></tr><tr><td><code>/memory stats</code></td><td>在当前后端支持时显示后端统计信息。</td></tr><tr><td><code>/memory diagnose</code></td><td>在支持时显示后端特有的诊断信息。</td></tr><tr><td><code>/memory enqueue</code></td><td>请求当前后端执行更强的维护/留存动作；具体细节因后端而异，见下文。</td></tr><tr><td><code>/memory clear</code></td><td>清理当前后端能够清理的内容。Hindsight 是一个重要的例外：远程记忆库不会被删除。</td></tr></tbody></table>
+<p><code>/memory reset</code> 是 <code>clear</code> 的别名；<code>/memory rebuild</code> 是 <code>enqueue</code> 的别名。</p>
+<h3 id="what-enqueue-and-clear-mean">enqueue 与 clear 的含义</h3>
+<table><thead><tr><th>后端</th><th><code>/memory enqueue</code></th><th><code>/memory clear</code></th></tr></thead><tbody><tr><td>Local</td><td>标记在下次启动时执行合并工作。它不会立刻重建指引面板。</td><td>移除本项目生成的产物，并重置本地流水线共享的抽取/合并索引。它不会删除会话对话记录。</td></tr><tr><td>Mnemopi</td><td>强制留存当前会话，清空待处理的抽取任务，并合并符合条件的工作记忆。新行要通过 Mnemopi 的年龄门槛后才会被提升（默认工作记忆生命周期为 24 小时，年龄门槛为 12 小时）。</td><td>删除当前作用域的 SQLite 数据库以及 WAL/SHM 附属文件，然后重新启动一个空的后端。</td></tr><tr><td>Hindsight</td><td>冲刷排队的写入，并强制留存当前会话。</td><td>冲刷待处理的写入，然后只清空本会话的本地回忆状态。它<strong>不会</strong>删除服务器端的记忆或记忆库；请用 Hindsight UI 完成该操作。</td></tr></tbody></table>
+<h3 id="review-local-generated-files">检查本地生成的文件</h3>
+<p>本地后端把可读的生成产物保存在 <code>~/.omp/agent/memories/&lt;encoded-project&gt;/</code> 之下：</p>
+<ul>
+<li><code>memory_summary.md</code> — 由 <code>/memory view</code> 展示并在启动时注入的精简指引</li>
+<li><code>MEMORY.md</code> — 更长的合并后项目记忆</li>
+<li><code>learned.md</code> — 启用可选的自动学习后显式捕获的经验</li>
+<li><code>skills/</code> — 生成的过程性操作手册</li>
+</ul>
+<p>这些是生成的文件，而不是会话历史的来源。编辑它们不是一种持久的工作方式，因为后续的合并可能替换它们。请改为清理过期的输出，并排队一次重建。</p>
+<h3 id="manage-hindsight-mental-models">管理 Hindsight 心智模型</h3>
+<p>Hindsight 心智模型是经过整理的摘要，例如用户偏好、项目约定和项目决策。它们默认启用并自动播种。在交互式 TUI 中，使用：</p>
+<table><thead><tr><th>命令</th><th>效果</th></tr></thead><tbody><tr><td><code>/memory mm list</code></td><td>列出当前记忆库中的模型。</td></tr><tr><td><code>/memory mm show &lt;id&gt;</code></td><td>显示一个模型。</td></tr><tr><td><code>/memory mm refresh [id]</code></td><td>刷新一个模型；未提供 id 时刷新所有自动刷新的模型。</td></tr><tr><td><code>/memory mm history &lt;id&gt;</code></td><td>以 diff 形式显示该模型的修订历史。</td></tr><tr><td><code>/memory mm seed</code></td><td>创建任何缺失的内置模型。</td></tr><tr><td><code>/memory mm delete &lt;id&gt;</code></td><td>删除一个心智模型。这不会删除它的来源记忆。</td></tr><tr><td><code>/memory mm reload</code></td><td>重新加载当前会话使用的心智模型块。</td></tr></tbody></table>
+<p>心智模型命令仅限 TUI，并且需要当前启用的后端是 Hindsight。它们不是 Mnemopi 的控制项。</p>
+<h2 id="configure-the-local-backend">配置 local 后端</h2>
+<p><code>~/.omp/agent/config.yml</code> 中最小的全局 YAML：</p>
+<pre><code class="language-yaml">memory:
+  backend: local
+</code></pre>
+<p>该流水线在 omp 启动时于后台开始运行。它会跳过子代理以及未被持久化的会话。默认情况下，它忽略最近 12 小时内仍活跃的会话和早于 30 天的会话，因此刚启用的后端一开始可能显示空载荷。按会话的抽取使用 <code>default</code> 模型角色；合并使用 <code>smol</code> 及其回退。</p>
+<table><thead><tr><th>设置</th><th>默认值</th><th>用途</th></tr></thead><tbody><tr><td><code>memories.maxRolloutAgeDays</code></td><td><code>30</code></td><td>忽略早于该天数的会话。</td></tr><tr><td><code>memories.minRolloutIdleHours</code></td><td><code>12</code></td><td>忽略在此时长内仍有活动的会话。</td></tr><tr><td><code>memories.maxRolloutsPerStartup</code></td><td><code>64</code></td><td>一次启动最多处理的会话数。</td></tr><tr><td><code>memories.threadScanLimit</code></td><td><code>300</code></td><td>最多扫描的近期会话记录数。</td></tr><tr><td><code>memories.maxRawMemoriesForGlobal</code></td><td><code>200</code></td><td>传给合并步骤的已抽取会话记忆上限。</td></tr><tr><td><code>memories.stage1Concurrency</code></td><td><code>8</code></td><td>并发的按会话抽取任务数。</td></tr><tr><td><code>memories.stage1LeaseSeconds</code></td><td><code>120</code></td><td>抽取任务租约。</td></tr><tr><td><code>memories.stage1RetryDelaySeconds</code></td><td><code>120</code></td><td>抽取失败后重试前的延迟。</td></tr><tr><td><code>memories.phase2LeaseSeconds</code></td><td><code>180</code></td><td>合并任务租约。</td></tr><tr><td><code>memories.phase2RetryDelaySeconds</code></td><td><code>180</code></td><td>合并失败后重试前的延迟。</td></tr><tr><td><code>memories.phase2HeartbeatSeconds</code></td><td><code>30</code></td><td>合并租约的心跳间隔。</td></tr><tr><td><code>memories.rolloutPayloadPercent</code></td><td><code>0.7</code></td><td>会话载荷可用的模型上下文预算比例。</td></tr><tr><td><code>memories.phase1InputTokenLimit</code></td><td><code>4000</code></td><td>按会话抽取的输入上限。</td></tr><tr><td><code>memories.fallbackTokenLimit</code></td><td><code>16000</code></td><td>当模型没有声明有限的上下文窗口时使用的回退预算。</td></tr><tr><td><code>memories.summaryInjectionTokenLimit</code></td><td><code>5000</code></td><td>启动时注入的摘要与已捕获经验共用的大致上限。</td></tr></tbody></table>
+<p>可选的 <code>autolearn.enabled: true</code> 让 omp 把显式的经验捕获到 <code>learned.md</code>；它是实验性的，默认关闭。<code>autolearn.autoContinue</code> 默认也是 false，它控制 omp 在停止后是否运行一个私有的捕获轮次。</p>
+<h2 id="configure-mnemopi">配置 Mnemopi</h2>
+<p>默认值已足以支撑一个项目隔离的本地记忆库：</p>
+<pre><code class="language-yaml">memory:
+  backend: mnemopi
+</code></pre>
+<p>一套偏向隐私、只用 FTS 并避免 LLM 抽取的配置是：</p>
+<pre><code class="language-yaml">memory:
+  backend: mnemopi
+mnemopi:
+  scoping: per-project
+  noEmbeddings: true
+  llmMode: none
+</code></pre>
+<h3 id="storage-scope-and-automation">存储、作用域与自动化</h3>
+<table><thead><tr><th>设置</th><th>默认值</th><th>用途</th></tr></thead><tbody><tr><td><code>mnemopi.dbPath</code></td><td>代理记忆目录</td><td>可选的 SQLite 路径。</td></tr><tr><td><code>mnemopi.bank</code></td><td>未设置（<code>default</code>）</td><td>共享记忆库的基础名称；项目作用域由此派生出项目记忆库。</td></tr><tr><td><code>mnemopi.scoping</code></td><td><code>per-project</code></td><td><code>global</code>、<code>per-project</code> 或 <code>per-project-tagged</code>。</td></tr><tr><td><code>mnemopi.autoRecall</code></td><td><code>true</code></td><td>在会话的第一轮次中执行回忆。</td></tr><tr><td><code>mnemopi.autoRetain</code></td><td><code>true</code></td><td>自动留存已完成的对话轮次。</td></tr><tr><td><code>mnemopi.retainEveryNTurns</code></td><td><code>4</code></td><td>自动写入之间最少的用户轮次数。</td></tr><tr><td><code>mnemopi.recallLimit</code></td><td><code>8</code></td><td>回忆上下文中包含的记忆上限。</td></tr><tr><td><code>mnemopi.recallContextTurns</code></td><td><code>3</code></td><td>回忆查询中包含的先前以用户为界的轮次数。</td></tr><tr><td><code>mnemopi.recallMaxQueryChars</code></td><td><code>4000</code></td><td>组合后的回忆查询最大长度。</td></tr><tr><td><code>mnemopi.injectionTokenLimit</code></td><td><code>5000</code></td><td>记忆上下文的大致预算。</td></tr></tbody></table>
+<h3 id="retrieval-embeddings-and-llm-processing">检索、嵌入与 LLM 处理</h3>
+<table><thead><tr><th>设置</th><th>默认值</th><th>用途</th></tr></thead><tbody><tr><td><code>mnemopi.polyphonicRecall</code></td><td><code>false</code></td><td>结合向量、图、事实与时间维度进行回忆。</td></tr><tr><td><code>mnemopi.enhancedRecall</code></td><td><code>false</code></td><td>缓存重复与相似的回忆查询。</td></tr><tr><td><code>mnemopi.proactiveLinking</code></td><td><code>false</code></td><td>把新记忆链接到相关的图实体与记忆。</td></tr><tr><td><code>mnemopi.noEmbeddings</code></td><td><code>false</code></td><td>只使用确定性的全文搜索。</td></tr><tr><td><code>mnemopi.embeddingVariant</code></td><td><code>en</code></td><td>本地模型族：<code>en</code> 或 <code>multilingual</code>。更改它会在下次可写启动时重建嵌入。</td></tr><tr><td><code>mnemopi.embeddingModel</code></td><td>变体默认值</td><td>显式的嵌入模型 id；会覆盖变体。</td></tr><tr><td><code>mnemopi.embeddingApiUrl</code></td><td>环境变量/默认值</td><td>可选的 OpenAI 兼容嵌入端点。</td></tr><tr><td><code>mnemopi.embeddingApiKey</code></td><td>环境变量/默认值</td><td>该嵌入端点的凭据。</td></tr><tr><td><code>mnemopi.llmMode</code></td><td><code>smol</code></td><td><code>smol</code> 使用配置的 <code>tiny</code>/<code>smol</code> 角色，<code>remote</code> 使用下面的端点，<code>none</code> 禁用 LLM 调用。</td></tr><tr><td><code>mnemopi.llmBaseUrl</code></td><td>环境变量/默认值</td><td>用于 <code>remote</code> 模式的 OpenAI 兼容 LLM 端点。</td></tr><tr><td><code>mnemopi.llmApiKey</code></td><td>环境变量/默认值</td><td>远程 LLM 的凭据。</td></tr><tr><td><code>mnemopi.llmModel</code></td><td>环境变量/默认值</td><td>远程 LLM 模型 id。</td></tr><tr><td><code>mnemopi.debug</code></td><td><code>false</code></td><td>启用后端调试日志。</td></tr></tbody></table>
+<h2 id="configure-hindsight">配置 Hindsight</h2>
+<p>先运行一个可访问的 <a href="https://hindsight.vectorize.io/">Hindsight</a> 服务器。内置 URL 是 <code>http://localhost:8888</code>，因此本地无需认证的服务器只需要：</p>
+<pre><code class="language-yaml">memory:
+  backend: hindsight
+</code></pre>
+<p>对于 Hindsight Cloud 或需要认证的部署：</p>
+<pre><code class="language-yaml">memory:
+  backend: hindsight
+hindsight:
+  apiUrl: https://api.hindsight.vectorize.io
+  scoping: per-project
+</code></pre>
+<p>尽可能把 token 放在文件之外：</p>
+<pre><code class="language-bash">export HINDSIGHT_API_TOKEN=&#x27;replace-me&#x27;
+omp
+</code></pre>
+<p><code>HINDSIGHT_*</code> 环境变量会覆盖同名的 <code>hindsight.*</code> 设置。覆盖变量的名称与解析规则见<a href="env.html">环境变量</a>。</p>
+<h3 id="connection-banks-and-retention">连接、记忆库与留存</h3>
+<table><thead><tr><th>设置</th><th>默认值</th><th>用途</th></tr></thead><tbody><tr><td><code>hindsight.apiUrl</code></td><td><code><a href="http://localhost:8888">http://localhost:8888</a></code></td><td>云端或自托管服务器的 URL。</td></tr><tr><td><code>hindsight.apiToken</code></td><td>未设置</td><td>用于需要认证的服务器的 Bearer token。</td></tr><tr><td><code>hindsight.bankId</code></td><td><code>omp</code></td><td>记忆库的基础 id。在 <code>per-project</code> 模式下会追加项目名。</td></tr><tr><td><code>hindsight.bankIdPrefix</code></td><td>未设置</td><td>可选的前缀，添加在记忆库基础 id 之前。</td></tr><tr><td><code>hindsight.scoping</code></td><td><code>per-project-tagged</code></td><td><code>global</code>、<code>per-project</code> 或 <code>per-project-tagged</code>。</td></tr><tr><td><code>hindsight.bankMission</code></td><td>未设置</td><td>omp 创建记忆库时可选应用的使命描述。</td></tr><tr><td><code>hindsight.retainMission</code></td><td>未设置</td><td>可选的留存指令。</td></tr><tr><td><code>hindsight.autoRecall</code></td><td><code>true</code></td><td>在第一个模型轮次之前执行回忆。</td></tr><tr><td><code>hindsight.autoRetain</code></td><td><code>true</code></td><td>按节奏并在会话边界留存对话记录文本。若只想由提示词驱动写入，请设为 false。</td></tr><tr><td><code>hindsight.retainMode</code></td><td><code>full-session</code></td><td><code>full-session</code> 会 upsert 一份会话文档；<code>last-turn</code> 存储以轮次为界的块。</td></tr><tr><td><code>hindsight.retainEveryNTurns</code></td><td><code>3</code></td><td>自动留存之间的用户轮次数。</td></tr><tr><td><code>hindsight.retainOverlapTurns</code></td><td><code>2</code></td><td>在 <code>last-turn</code> 模式下留存块之间的重叠。</td></tr><tr><td><code>hindsight.retainContext</code></td><td><code>omp</code></td><td>随留存数据发送的上下文标签。</td></tr></tbody></table>
+<h3 id="recall-mental-models-and-timeouts">回忆、心智模型与超时</h3>
+<table><thead><tr><th>设置</th><th>默认值</th><th>用途</th></tr></thead><tbody><tr><td><code>hindsight.recallBudget</code></td><td><code>mid</code></td><td>回忆力度：<code>low</code>、<code>mid</code> 或 <code>high</code>。</td></tr><tr><td><code>hindsight.recallMaxTokens</code></td><td><code>1024</code></td><td>回忆的 token 上限。</td></tr><tr><td><code>hindsight.recallContextTurns</code></td><td><code>1</code></td><td>回忆查询中包含的先前以用户为界的轮次数。</td></tr><tr><td><code>hindsight.recallMaxQueryChars</code></td><td><code>800</code></td><td>回忆查询的最大长度。</td></tr><tr><td><code>hindsight.recallTypes</code></td><td><code>[&quot;world&quot;, &quot;experience&quot;]</code></td><td>可参与回忆的 Hindsight 记忆类型。</td></tr><tr><td><code>hindsight.mentalModelsEnabled</code></td><td><code>true</code></td><td>把整理好的心智模型加载进新会话。</td></tr><tr><td><code>hindsight.mentalModelAutoSeed</code></td><td><code>true</code></td><td>在启动时创建缺失的内置用户偏好、项目约定与项目决策模型。</td></tr><tr><td><code>hindsight.mentalModelRefreshIntervalMs</code></td><td><code>300000</code></td><td>符合条件的心智模型的刷新间隔。</td></tr><tr><td><code>hindsight.mentalModelMaxRenderChars</code></td><td><code>16000</code></td><td>渲染出的心智模型文本上限。</td></tr><tr><td><code>hindsight.requestTimeoutMs</code></td><td><code>30000</code></td><td>默认请求截止时间。</td></tr><tr><td><code>hindsight.recallTimeoutMs</code></td><td><code>30000</code></td><td>回忆截止时间。</td></tr><tr><td><code>hindsight.retainTimeoutMs</code></td><td><code>60000</code></td><td>留存截止时间。</td></tr><tr><td><code>hindsight.reflectTimeoutMs</code></td><td><code>120000</code></td><td>合成截止时间。</td></tr><tr><td><code>hindsight.debug</code></td><td><code>false</code></td><td>启用请求与后端的调试日志。</td></tr></tbody></table>
+<h2 id="troubleshooting">故障排除</h2>
+<p><strong><code>/memory view</code> 在启用本地记忆后为空。</strong>本地记忆只处理已持久化的主会话，默认跳过最近 12 小时内仍活跃的会话，并且只在启动时执行维护。在存在符合条件的会话之后，运行 <code>/memory enqueue</code>，正常退出，然后再次启动 omp。同时确认 <code>default</code> 与 <code>smol</code> 模型角色拥有可用的凭据。</p>
+<p><strong>Mnemopi 已启用，但既不记住也不回忆。</strong>运行 <code>/memory diagnose</code> 和 <code>/memory stats</code>。启动是尽力而为的：数据库、嵌入模型或 LLM 初始化失败时，编码会话仍然可用，但记忆功能处于失效状态。可以尝试 <code>mnemopi.noEmbeddings: true</code> 来隔离嵌入问题，用 <code>mnemopi.llmMode: none</code> 来隔离 LLM 配置。</p>
+<p><strong>Hindsight 已启用，但什么都没出现。</strong>确认实际生效的后端与端点：</p>
+<pre><code class="language-bash">omp config get memory.backend
+omp config get hindsight.apiUrl
+</code></pre>
+<p>然后运行 <code>/memory diagnose</code>。检查服务器是否可访问，以及 <code>HINDSIGHT_API_TOKEN</code> 或 <code>hindsight.apiToken</code> 是否有效。请求失败不会中止编码会话；需要后端日志时启用 <code>hindsight.debug</code>。</p>
+<p><strong>一个项目看到了另一个项目的知识。</strong>检查 <code>mnemopi.scoping</code> 或 <code>hindsight.scoping</code>。要隔离就切换到 <code>per-project</code>，然后单独清理旧的本地记忆库，或单独移除旧的 Hindsight 记忆库/数据；更改作用域不会抹去先前存储的知识。</p>
+<p><strong>记忆已经过时。</strong>让 omp 对照当前仓库核实它。对于 Mnemopi 的某条事实，要求更新或遗忘它。对于本地摘要，使用 <code>/memory clear</code>，随后运行 <code>/memory enqueue</code> 并在之后重启。对于 Hindsight，在 Hindsight 中移除或更正远程记录；<code>/memory clear</code> 只清空当前会话的本地回忆状态。</p>
+<p>会话内的上下文管理见<a href="compaction.html">上下文压缩</a>，配置位置、项目覆盖与优先级见<a href="settings.html">设置</a>。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/memory" rel="noreferrer noopener">omp.sh/docs/memory</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

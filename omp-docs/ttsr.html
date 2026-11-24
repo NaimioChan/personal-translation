@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>时间旅行流规则 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：时间旅行流规则">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>时间旅行流规则</h1>
+
+<p>在 omp 生成某个特定错误的过程中拦住它，注入纠正，让代理在错误生效之前重试。</p>
+<p><strong>时间旅行流规则（TTSR）</strong>是面向代理实时输出中可识别错误的一道护栏：编辑里出现的禁用 API、不安全的 shell 片段，或散文里反复出现的某个说法。规则匹配时，omp 可以中断该响应，显示触发了哪条规则，提供该规则的 Markdown 指令，并在带着纠正内容的情况下重新开始生成。</p>
+<p>适用于以下指导的规则用 TTSR：</p>
+<ul>
+<li>只在特定模式出现时才重要；</li>
+<li>足够具体，能可靠地检测；以及</li>
+<li>在建议的工具调用运行<em>之前</em>最有用。</li>
+</ul>
+<p>当指令范围狭窄或很少相关时，这比<a href="context-files.html">常驻上下文</a>更好。对于代理在每项任务中都必须始终考虑的约定，常驻上下文更合适，因为 TTSR 是反应式的：在条件出现之前它帮不上忙。</p>
+<h2 id="create-the-smallest-useful-rule">创建最小的有用规则</h2>
+<p>在项目根目录创建 <code>.omp/rules/no-box-leak.md</code>：</p>
+<pre><code class="language-md">---
+description: Prevent permanent Box::leak allocations in Rust edits
+condition: &#x27;Box::leak\(&#x27;
+scope:
+  - &#x27;tool:edit(*.rs)&#x27;
+  - &#x27;tool:write(*.rs)&#x27;
+---
+
+Do not introduce `Box::leak` in production Rust code. Keep ownership explicit;
+prefer `Arc&lt;str&gt;`, `Cow&lt;&#x27;static, str&gt;`, or a true process-lifetime singleton,
+then continue with the option that fits this code.
+</code></pre>
+<p>文件名会成为规则名 <code>no-box-leak</code>。frontmatter 说明<em>何时、何处</em>作出反应；Markdown 正文说明<em>为什么，以及应该改做什么</em>。正文保持简短、可执行——只有当规则触发时，模型才会收到它。</p>
+<p>把规则保存在以下原生位置之一：</p>
+<table><thead><tr><th>位置</th><th>用途</th></tr></thead><tbody><tr><td><code>&lt;project&gt;/.omp/rules/&lt;name&gt;.md</code> 或 <code>.mdc</code></td><td>项目规则；通常随仓库一起提交。</td></tr><tr><td><code>~/.omp/agent/rules/&lt;name&gt;.md</code> 或 <code>.mdc</code></td><td>适用于所有项目的个人规则。该目录跟随当前配置文件和 <code>PI_CODING_AGENT_DIR</code>。</td></tr></tbody></table>
+<p>项目规则和用户规则在会话启动时被发现。添加或修改文件后，请启动新会话。</p>
+<h2 id="test-inspect-and-enable-it">测试、检查并启用它</h2>
+<p>在依赖自动发现之前，先单独测试规则文件：</p>
+<pre><code class="language-bash">omp ttsr test \
+  --rule .omp/rules/no-box-leak.md \
+  --source tool --tool edit --path src/lib.rs \
+  &#x27;let value = Box::leak(Box::new(input));&#x27;
+</code></pre>
+<p>报告中应在触发的规则下列出 <code>no-box-leak</code>。来源、工具和候选路径都很重要：它们复现了 <code>scope</code> 和 <code>globs</code> 所使用的上下文。其他有用的检查：</p>
+<pre><code class="language-bash"># Show every active TTSR rule, its conditions, scope, and source file.
+omp ttsr list
+
+# Explain both matching and non-matching rules for a sample.
+omp ttsr test --verbose --source tool --tool edit --path src/lib.rs \
+  &#x27;let value = Box::leak(Box::new(input));&#x27;
+
+# Look for existing files that would match the rule.
+omp ttsr scan --rule .omp/rules/no-box-leak.md src/
+</code></pre>
+<p><code>omp ttsr test src/lib.rs</code> 也可以：可识别的源文件扩展名意味着工具/编辑上下文。诊断路径或作用域不匹配时，请使用显式标志。脚本化可使用 <code>--json</code>，<code>--file -</code> 则从标准输入读取样本。</p>
+<p>TTSR 默认启用。要显式启用并查看实际生效的值：</p>
+<pre><code class="language-bash">omp config set ttsr.enabled true
+omp config get ttsr.enabled
+</code></pre>
+<p><code>omp config set</code> 写入当前配置文件的全局 <code>~/.omp/agent/config.yml</code>。若只想为项目覆盖，请改为编辑 <code>&lt;project&gt;/.omp/config.yml</code>。在 omp 内部，<code>/extensions</code> 是查看已发现规则及其来源路径的另一种方式。</p>
+<h2 id="what-firing-looks-like">触发时的表现</h2>
+<p>在默认的 <code>interruptMode: always</code> 下，匹配的响应会立即停止。TUI 显示 <strong>Injecting rule: no-box-leak</strong> 通知，部分尝试默认被丢弃，代理使用规则正文生成替代响应。匹配的编辑或写入会在那次不完整的调用执行之前被停止。</p>
+<p>这是一次中断并重试，而不是文本替换：规则应当说明安全的替代方案，而不是试图自行重写代码。把触发条件放得足够窄，可以让重试发生在早期且成本低廉。</p>
+<p>若只想要针对某个工具的柔和提醒，可在规则上设置 <code>interruptMode: never</code>。omp 会让匹配的工具执行完毕，并把提醒放在该工具结果旁边，供代理下一步参考。对于散文，<code>never</code> 会让响应完成，然后附上纠正。只有在允许匹配动作执行完毕是安全的情况下才使用它。</p>
+<h2 id="matching-and-scope">匹配与作用域</h2>
+<p><code>condition</code> 是 JavaScript 正则表达式。它会针对每个被监视输出面的累积内容求值，因此可以跨流式分块匹配。对于 <code>edit</code> 和 <code>write</code>，omp 匹配的是正在引入的源内容，而不是序列化后的命令语法。其他工具则匹配其流式参数。</p>
+<p>优先使用最小的独特模式：</p>
+<pre><code class="language-yaml">condition: &#x27;Box::leak\(&#x27;
+</code></pre>
+<p>避免像 <code>leak</code> 这样宽泛的模式，它还会命中讨论、日志和不相关的标识符。YAML 单引号能让正则反斜杠最易读。支持开头的 <code>(?i)</code>、<code>(?m)</code> 和 <code>(?s)</code> 标志；其余请使用 JavaScript 正则表达式语法。</p>
+<p>规则可以为 <code>condition</code> 提供字符串或列表。多个正则条件是“或”的关系：任意一个都能触发。<code>astCondition</code> 用 ast-grep 模式提供同样的“或”行为。如果两种都存在，在通过作用域和路径检查后，任一种都可以触发。</p>
+<p>没有 <code>scope</code> 时，规则监视助手散文和每个工具的参数，但不监视思考过程。显式作用域会替换该默认值。支持的 token 有：</p>
+<table><thead><tr><th>作用域 token</th><th>监视内容</th></tr></thead><tbody><tr><td><code>text</code></td><td>助手散文。</td></tr><tr><td><code>thinking</code></td><td>提供商会暴露时的模型思考流。</td></tr><tr><td><code>tool</code> 或 <code>toolcall</code></td><td>每个工具。</td></tr><tr><td><code>tool:&lt;name&gt;</code></td><td>单个工具，例如 <code>tool:bash</code>。也接受裸工具名，例如 <code>bash</code>。</td></tr><tr><td><code>tool:&lt;name&gt;(&lt;glob&gt;)</code></td><td>仅当候选路径匹配时的单个工具，例如 <code>tool:edit(src/**/*.ts)</code>。</td></tr></tbody></table>
+<p>逗号分隔的字符串和 YAML 列表都可接受。组合多个作用域时优先使用 YAML 列表。路径 glob 匹配规范化后的路径和基本文件名。顶层的 <code>globs</code> 字段是所有作用域之上的额外路径检查；至少有一个候选路径必须匹配它。</p>
+<p>当格式化或标识符名称让正则过于脆弱时，AST 匹配很有用：</p>
+<pre><code class="language-md">---
+description: Reject TypeScript any assertions
+astCondition:
+  - &#x27;$VALUE as any&#x27;
+scope:
+  - &#x27;tool:edit(*.ts)&#x27;
+  - &#x27;tool:write(*.ts)&#x27;
+---
+
+Preserve the real type. Narrow or model it instead of asserting `any`.
+</code></pre>
+<p><code>astCondition</code> 只对具有可识别文件扩展名的、带源码的编辑/写入内容生效。它检查该调用引入的内容，而不是文件中其他地方未改动的代码。用 <code>--source tool</code> 和 <code>--path</code> 测试它。</p>
+<h2 id="repeats-cooldowns-and-precedence">重复、冷却与优先级</h2>
+<p>默认情况下，每条规则在每个会话中触发一次。该已触发状态随会话保存，因此恢复会话时不会意外重新武装它。要在冷却后允许再次注入，请配置全局重复策略：</p>
+<pre><code class="language-bash">omp config set ttsr.repeatMode after-gap
+omp config set ttsr.repeatGap 10
+</code></pre>
+<p>间隔按已完成的轮次计数，而不是秒数或流式片段。所有 TTSR 规则都使用这套全局重复策略。</p>
+<p>优先级是可预期的：</p>
+<ol>
+<li><code>ttsr.disabledRules</code> 中列出的规则会被移除。</li>
+<li>项目原生规则胜过文件名派生名相同的用户原生规则；更一般地说，某个名称下最先被发现的规则胜出。</li>
+<li>带有 <code>condition</code> 或 <code>astCondition</code> 的有效规则就是 TTSR 规则，即使它还写着 <code>alwaysApply: true</code>；它也不会再作为常驻上下文注入。</li>
+<li>规则的 <code>interruptMode</code> 覆盖全局 <code>ttsr.interruptMode</code>。</li>
+<li>如果多条符合条件的规则匹配同一输出，omp 可以注入所有不同的匹配项。只要任一匹配规则要求中断，响应就会被中断。</li>
+</ol>
+<p>使用唯一且有描述性的文件名，避免意外遮蔽。用 <code>omp ttsr list</code> 确认实际生效的来源。</p>
+<h2 id="complete-rule-frontmatter">完整的规则 frontmatter</h2>
+<p>除 TTSR 规则至少需要一个可用的 <code>condition</code> 或 <code>astCondition</code> 之外，所有字段都是可选的。标为“list”的字符串字段也接受单个字符串。</p>
+<table><thead><tr><th>字段</th><th>类型</th><th>含义</th></tr></thead><tbody><tr><td><code>description</code></td><td>string</td><td>规则检查时显示的人类可读摘要。推荐填写。</td></tr><tr><td><code>condition</code></td><td>string 或 string 列表</td><td>JavaScript 正则备选项。也接受旧版拼写 <code>ttsr_trigger</code>，但新规则请使用 <code>condition</code>。</td></tr><tr><td><code>astCondition</code></td><td>string 或 string 列表</td><td>针对编辑/写入源内容的 ast-grep 模式备选项。</td></tr><tr><td><code>scope</code></td><td>string 或 string 列表</td><td>输出面以及可选的工具/路径过滤。省略则为 <code>text</code> 加所有工具，不含思考。</td></tr><tr><td><code>globs</code></td><td>string 或 string 列表</td><td>额外的候选路径检查。它不会替换 <code>scope</code>。</td></tr><tr><td><code>interruptMode</code></td><td><code>always</code>、<code>prose-only</code>、<code>tool-only</code> 或 <code>never</code></td><td>按规则覆盖哪些匹配输出面会立即中止。</td></tr><tr><td><code>alwaysApply</code></td><td>boolean</td><td>通用规则元数据。有效的 TTSR 条件优先，因此同时设置它们并不会让正文变成常驻。</td></tr><tr><td>为保持兼容，形如文件 glob 的 <code>condition</code> 值（例如 <code>*.rs</code>）会被视为简写：在该 glob 上以全匹配条件监视 <code>edit</code> 和 <code>write</code>。优先使用显式正则加 <code>scope</code>；这样触发条件的意图和测试上下文都更清楚。</td><td></td><td></td></tr></tbody></table>
+<p>frontmatter 之后的 Markdown 就是注入的指令。规则名和来源路径来自发现过程；不要把它们写进 frontmatter。</p>
+<p>完整的全局 TTSR 配置是：</p>
+<pre><code class="language-yaml">ttsr:
+  enabled: true
+  contextMode: discard       # discard | keep
+  interruptMode: always      # always | prose-only | tool-only | never
+  repeatMode: once           # once | after-gap
+  repeatGap: 10              # completed turns
+  builtinRules: true
+  disabledRules: []          # filename-derived rule names
+</code></pre>
+<p><code>contextMode: keep</code> 会在重试前保留部分响应；<code>discard</code> 会移除它，对大多数护栏更安全。<code>builtinRules: false</code> 只禁用 omp 内置的 TTSR 规则，不影响你自己的文件。要禁用某条规则而不删除它：</p>
+<pre><code class="language-bash">omp config set ttsr.disabledRules &#x27;[&quot;no-box-leak&quot;]&#x27;
+</code></pre>
+<p>修改 TTSR 配置后请启动新会话，以便规则发现和会话状态没有歧义。</p>
+<h2 id="safety-and-performance">安全与性能</h2>
+<ul>
+<li>把危险动作规则限定到相关工具和文件类型。监视所有散文和工具会增加误报和匹配开销。</li>
+<li>在不安全片段完成之前中断。TTSR 匹配无法撤销已经结束的工具调用。</li>
+<li>保持正则线性且具体。避免像 <code>(.*)+</code> 这样的嵌套、有歧义的重复，随着输出增长它可能变得非常昂贵。</li>
+<li>结构性代码规则优先使用 <code>astCondition</code>，但要用工具和扩展名加以约束；结构匹配的开销高于简单正则。</li>
+<li>不要在规则正文中放密钥。规则触发时正文会发送给所选模型，并可能保留在会话中。</li>
+<li>启用宽泛的仓库级规则前，先运行 <code>omp ttsr scan</code>。请审查匹配结果，而不是把每一处文本出现都当作违规。</li>
+<li>只有在允许匹配的工具动作执行是可以接受的情况下，才使用 <code>interruptMode: never</code>。</li>
+</ul>
+<h2 id="troubleshooting">故障排查</h2>
+<h3 id="omp-ttsr-list-does-not-show-the-rule"><code>omp ttsr list</code> 没有显示该规则</h3>
+<ul>
+<li>确认文件是 <code>.omp/rules/</code> 或当前配置文件 <code>rules/</code> 目录中的 <code>.md</code> 或 <code>.mdc</code>。</li>
+<li>确保 frontmatter 从第一行开始、有结束的 <code>---</code>，并且包含非空的 <code>condition</code> 或 <code>astCondition</code>。</li>
+<li>检查 <code>omp config get ttsr.enabled</code>、<code>omp config get ttsr.disabledRules</code> 和 <code>omp config get ttsr.builtinRules</code>。</li>
+<li>查找另一条文件名派生名相同的已发现规则。</li>
+<li>编辑文件后启动新会话。</li>
+</ul>
+<h3 id="the-isolated-test-does-not-trigger">隔离测试没有触发</h3>
+<p>用 <code>--verbose</code> 运行，并精确复现实时上下文：</p>
+<pre><code class="language-bash">omp ttsr test --verbose --rule .omp/rules/no-box-leak.md \
+  --source tool --tool edit --path src/lib.rs &#x27;Box::leak(&#x27;
+</code></pre>
+<p>检查正则转义、工具名、<code>scope</code>、顶层 <code>globs</code> 和路径扩展名。缺少 <code>--source tool</code> 和文件扩展名的 AST 规则无法推断语言。无效的正则和 AST 模式会被忽略，而不会阻止会话启动。</p>
+<h3 id="the-test-triggers-but-a-live-session-does-not">测试会触发，但实时会话不会</h3>
+<p>会话可能加载了之前的文件，规则可能已在 <code>repeatMode: once</code> 下触发过，或实时动作使用了不同的工具/路径输出面。启动新会话，用 <code>omp ttsr list</code> 检查，并用相同的 <code>--source</code>、<code>--tool</code> 和 <code>--path</code> 测试。</p>
+<h3 id="the-rule-fires-too-often">规则触发过于频繁</h3>
+<p>收窄 <code>condition</code>，添加工具/路径 <code>scope</code>，或添加 <code>globs</code>。修订期间可用 <code>ttsr.disabledRules</code> 作为即时关闭开关。不要通过让正文变得含糊来解决误报——触发条件应当能识别出违规。</p>
+<h3 id="the-partial-response-remains-visible">部分响应仍然可见</h3>
+<p>检查 <code>omp config get ttsr.contextMode</code>。要获得干净的重试，请把它设回 <code>discard</code>。同时检查该输出面所用的规则或全局 <code>interruptMode</code> 是否为 <code>never</code>；不中断的匹配会有意允许当前响应或工具执行完毕。</p>
+<h2 id="related">相关</h2>
+<ul>
+<li><a href="context-files.html">上下文文件</a> — 属于每条提示词的指导。</li>
+<li><a href="hooks.html">钩子</a> — 围绕工具执行的确定性拦截。</li>
+<li><a href="skills.html">技能</a> — 为任务按需选择的行动手册。</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/ttsr" rel="noreferrer noopener">omp.sh/docs/ttsr</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>安全扫描 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：安全扫描">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>安全扫描</h1>
+
+<p>在后台执行一次明确限定范围、只读的安全审查，然后检查、验证、比较并导出其发现结果。</p>
+<h2 id="decide-what-you-want-reviewed">决定要审查的内容</h2>
+<p>当你想对仓库、敏感目录、未提交的工作树，或两个 Git 修订版本之间的变更进行以漏洞为重点的审查时，请使用 omp 原生安全扫描。它适用于发布前、身份验证或授权变更后、解析器和网络边界附近，或对高风险 diff 进行第二轮检查。它会寻找可信的攻击者可控路径及具体影响；它不是一般的风格审查、合规证书，也不能证明不存在漏洞。</p>
+<p>安全扫描默认关闭，因为启用它可能会将仓库内容发送给当前模型背后的提供商，发起额外的模型请求，消耗配额，并生成可能包含敏感源代码细节的报告。仅为获准这样处理的仓库和提供商启用它。</p>
+<p>最安全的首次运行方式是先制定范围狭窄且明确的计划，再单独启动：</p>
+<pre><code class="language-text">/security plan --path src/auth --exclude src/auth/fixtures --knowledge-base SECURITY.md
+/security scan secplan_…
+</code></pre>
+<p>第一条命令会检查并冻结范围，但不会开始模型审查。读取返回的计划 ID 和指纹，然后将该确切计划 ID 传给第二条命令。对于整个仓库的审查，<code>/security scan</code> 是单命令快捷方式：它会执行预检并立即启动。</p>
+<p>你也可以用自然语言向 omp 提问，例如：“规划一次 OMP 原生的 <code>src/auth</code> 安全审查，排除生成的 fixtures，并在启动前停止。”当你需要确定性的计划、操作或扫描 ID 时，优先使用斜杠命令。</p>
+<h2 id="enable-it-and-sign-in">启用并登录</h2>
+<p>打开 <code>/settings</code>，进入 <strong>Tools → Available Tools → Security</strong>，然后将其启用。对于脚本化配置或下次启动时配置：</p>
+<pre><code class="language-sh">omp config set security.enabled true
+</code></pre>
+<p>对应的 <code>~/.omp/agent/config.yml</code> 条目是：</p>
+<pre><code class="language-yaml">security:
+  enabled: true
+</code></pre>
+<p>原生预检还要求满足以下全部条件：</p>
+<ul>
+<li>在 Git 仓库内运行 omp；</li>
+<li>使用 <code>/model</code> 选择当前模型；</li>
+<li>为该模型的提供商保存 <strong>OAuth</strong> 登录信息。</li>
+</ul>
+<p>来自环境、<code>models.yml</code>、<code>--api-key</code> 或通过登录流程保存的 API 密钥，不足以进行原生扫描。请选择支持 OAuth 的提供商路径，并使用 <code>/login &lt;provider&gt;</code>。例如，ChatGPT 订阅模型使用 <code>openai-codex</code>，而不是基于 API 密钥的 <code>openai</code> 路径。</p>
+<p>当当前提供商存在多个 OAuth 账户时，请在规划前选择目标账户：</p>
+<pre><code class="language-text">/session pin
+/session pin 2
+</code></pre>
+<p>第一条命令列出当前提供商的账户；第二条命令将显示的账户编号固定到此会话。安全预检随后会固定底层持久凭据行及其账户或工作区身份。对于已经知道持久凭据 ID 的自动化流程，也可以使用 <code>--credential ID</code> 计划选项；它不是 <code>/session pin</code> 中显示的位置编号。</p>
+<h2 id="choose-one-target">选择一个目标</h2>
+<p>所有 <code>--path</code> 和 <code>--exclude</code> 值都相对于 Git 仓库根目录，即使 omp 是从子目录启动的也是如此。需要指定多个路径时，可以重复任一选项。路径必须存在并解析到仓库内部；排除项优先于包含项。</p>
+<table><thead><tr><th>意图</th><th>命令</th><th>审查内容</th></tr></thead><tbody><tr><td>仓库快照</td><td><code>/security plan</code></td><td>整个当前仓库。这是默认模式。</td></tr><tr><td>一个或多个路径</td><td><code>/security plan --path src/auth --path src/session</code></td><td>仅指定的文件或目录，减去排除项。此模式至少需要一个 <code>--path</code>。</td></tr><tr><td>修订版本范围</td><td><code>/security plan --diff origin/main HEAD</code></td><td>解析后的基准到头部 Git diff，并针对解析后的头部执行临时分离工作树审查。</td></tr><tr><td>工作树</td><td><code>/security plan --working-tree</code></td><td>将当前工作树记录为工作树审查，包括范围内已跟踪和未跟踪的内容。这不是仅审查变更区块的 diff。</td></tr></tbody></table>
+<p>只能选择仓库、修订版本 diff 或工作树意图中的一种。<code>--path</code> 和 <code>--exclude</code> 可以缩小 diff 或工作树扫描的范围：</p>
+<pre><code class="language-text">/security plan --diff v2.4.0 HEAD --path packages/server --exclude packages/server/generated
+/security plan --working-tree --path src --exclude dist
+</code></pre>
+<p>仓库、路径和工作树计划会对范围内已跟踪及未跟踪文件的内容、可执行位、符号链接目标和当前 <code>HEAD</code>（或尚未创建提交的仓库状态）计算指纹。引用计划会将两个名称解析为提交 ID，并对其树 diff 计算指纹。因此，删除或更改文件会使旧计划过期，而不会悄悄改变其含义。</p>
+<p><code>--path</code> 和 <code>--exclude</code> 是审查和发布范围，而不是保密沙箱。原生审查者可以检查周围的仓库代码以验证控制流，引用审查也会接收 diff 上下文。不要从包含所选提供商无权处理的材料的工作树启动扫描。</p>
+<h2 id="add-guidance-and-choose-an-output-directory">添加指导并选择输出目录</h2>
+<p>重复使用 <code>--knowledge-base FILE</code>，将安全策略、威胁模型或架构说明固定到计划中。每个文件都从仓库根目录解析，并通过其规范路径、大小和 SHA-256 摘要固定。更改其中任何一项都需要新计划。也应将这些文件视为发送给提供商的扫描输入。</p>
+<p>不使用 <code>--output</code> 时，omp 会在此项目的安全状态中分配唯一的私有目录。若要将初始结果包写入其他位置，请选择扫描仓库外的空目录：</p>
+<pre><code class="language-text">/security plan --path src/auth --output /tmp/acme-auth-review
+</code></pre>
+<p>输出目录必须有已存在的父目录，具有规范的非符号链接身份，并且不能位于仓库内。除非明确允许归档，否则会拒绝非空目标：</p>
+<pre><code class="language-text">/security plan --output /tmp/acme-review --archive-existing
+</code></pre>
+<p>扫描启动时，omp 会将现有目录重命名为相邻的 <code>.archive-&lt;scan-id&gt;</code> 路径，并创建新的目标目录。在 POSIX 系统上，生成的目录会强化为 <code>0700</code>，文件会强化为 <code>0600</code>。</p>
+<h2 id="what-preflight-freezes">预检会冻结的内容</h2>
+<p><code>/security plan</code> 会持久化不可变计划，并返回其 ID 和指纹。它会固定：</p>
+<ul>
+<li>规范仓库根目录、目标类型、规范化的包含/排除范围以及目标快照；</li>
+<li>引用扫描的解析后基准提交和头部提交；</li>
+<li>当前提供商、模型、思考强度、确切 OAuth 凭据以及记录的账户/工作区身份；</li>
+<li>每个知识库文件的身份；</li>
+<li>输出和归档策略；</li>
+<li>相关安全设置和版本化的原生审查工作流。</li>
+</ul>
+<p>只使用其 ID 启动现有计划：</p>
+<pre><code class="language-text">/security scan secplan_…
+</code></pre>
+<p>启动时会重新计算指纹。如果代码、引用、范围输入、知识库、输出状态、设置或内置工作流发生变化，omp 会以计划过期错误拒绝启动。请再次运行 <code>/security plan</code>；不要尝试重用旧 ID。即使主会话后来更改模型，预检时选择的模型和账户仍会保持固定。</p>
+<h2 id="follow-the-background-scan">跟踪后台扫描</h2>
+<p>成功启动后会立即打印扫描 ID（<code>secscan_…</code>）和操作 ID。审查会作为可见的后台任务继续运行，因此主会话无需静默等待。进度依次经过：</p>
+<pre><code class="language-text">queued → preparing → reviewing → publishing → completed
+</code></pre>
+<p>任务还会报告面向用户的里程碑，例如准备扫描、由安全工作者执行审查，以及发布发现数量。使用以下命令检查所有已知操作或某个确切操作：</p>
+<pre><code class="language-text">/security status
+/security status &lt;operation-id&gt;
+</code></pre>
+<p>操作快照包含其阶段、时间戳、计划和扫描 ID、当前发现数量，以及可用的会话文件或错误。其他终止阶段包括 <code>partial</code>、<code>cancelled</code> 和 <code>failed</code>。</p>
+<p>使用以下命令取消原生后台工作：</p>
+<pre><code class="language-text">/security cancel &lt;operation-id&gt;
+</code></pre>
+<p>取消是协作式的。成功的请求表示已请求停止，并不表示清理已经完成；请持续检查状态，直到它变为 <code>cancelled</code>。已完成或处于其他终止阶段的操作无法取消。</p>
+<p>原生扫描会话仅限于只读仓库搜索、只读代码智能和捆绑的安全审查工作者。扩展、MCP 服务器、代理间聊天、shell 执行、模型回退和账户轮换在扫描期间均被禁用。它不会编辑被审查的源代码树。</p>
+<h2 id="inspect-findings-and-artifacts">检查发现和工件</h2>
+<p>结果按项目存储，不会在不同仓库之间全局混合。请从以下命令开始：</p>
+<pre><code class="language-text">/security scans
+/security show &lt;scan-id&gt;
+/security show security://scans/&lt;scan-id&gt;/findings
+/security show security://scans/&lt;scan-id&gt;/findings/&lt;finding-id&gt;
+</code></pre>
+<p><code>security://</code> 命名空间不可变且只读。<code>/security show</code> 可以呈现以下项目资源：</p>
+<table><thead><tr><th>资源</th><th>内容</th></tr></thead><tbody><tr><td><code>security://scans/&lt;scan-id&gt;/manifest</code></td><td>公开扫描清单和不可变计划。</td></tr><tr><td><code>security://scans/&lt;scan-id&gt;/findings</code></td><td>发现 ID、严重性、标题和规则。</td></tr><tr><td><code>security://scans/&lt;scan-id&gt;/findings/&lt;finding-id&gt;</code></td><td>位置、证据、修复建议和操作员处置。</td></tr><tr><td><code>security://scans/&lt;scan-id&gt;/coverage</code></td><td>已审查表面、排除项、延期工作、开放问题和完整性。</td></tr><tr><td><code>security://scans/&lt;scan-id&gt;/report</code></td><td>发布完成后的 Markdown 审查报告。</td></tr><tr><td><code>security://scans/&lt;scan-id&gt;/sarif</code></td><td>可用时提供的 SARIF 2.1 结果。</td></tr><tr><td><code>security://scans/&lt;scan-id&gt;/provenance</code></td><td>已删减的生成者和运行来源信息。</td></tr></tbody></table>
+<p>已完成的原生输出目录包含 <code>scan.json</code>、<code>findings.json</code>、<code>report.md</code>、<code>results.sarif</code> 和已删减的 <code>provenance.json</code>。规范项目存储仍是实时记录。后续验证或处置变更会更新该记录及其 SARIF，而不会更新原始 Markdown 叙述或已经写入的外部输出目录；需要最新工件时请再次导出。</p>
+<h2 id="validate-and-disposition-findings">验证并处置发现</h2>
+<p>验证和处置回答的是不同问题：</p>
+<ul>
+<li><strong>验证</strong>询问技术主张是否可复现且与安全相关。<code>/security validate</code> 会要求当前 omp 会话检查所引用的源代码而不修改它，然后记录带有摘要和任何支持证据的 <code>validated</code>、<code>rejected</code>、<code>partial</code> 或 <code>error</code>。发现初始状态为 <code>unvalidated</code>。</li>
+<li><strong>处置</strong>记录你的处理决定：<code>open</code>、<code>false_positive</code>、<code>accepted_risk</code>、<code>fixed</code> 或 <code>wont_fix</code>。</li>
+</ul>
+<p>可以使用扫描/发现对，或确切的发现 URI 进行验证：</p>
+<pre><code class="language-text">/security validate &lt;scan-id&gt; &lt;finding-id&gt;
+/security validate security://scans/&lt;scan-id&gt;/findings/&lt;finding-id&gt;
+</code></pre>
+<p>将结果视为模型辅助验证，而不是自动批准。在接受重大结论前，请阅读所引用的代码和证据。</p>
+<p>单独记录操作员决定：</p>
+<pre><code class="language-text">/security disposition &lt;scan-id&gt; &lt;finding-id&gt; false_positive &quot;Input cannot cross the authenticated boundary&quot;
+/security disposition &lt;scan-id&gt; &lt;finding-id&gt; accepted_risk &quot;Mitigated by the isolated deployment profile&quot;
+/security disposition &lt;scan-id&gt; &lt;finding-id&gt; fixed &quot;Patched and covered by the archive traversal regression test&quot;
+/security disposition &lt;scan-id&gt; &lt;finding-id&gt; open
+</code></pre>
+<p>每个非 <code>open</code> 处置都需要理由。将发现恢复为 <code>open</code> 会清除其先前的理由。</p>
+<h2 id="compare-import-and-export">比较、导入和导出</h2>
+<p>修复后，在等效范围上再次运行扫描并比较其沿袭关系：</p>
+<pre><code class="language-text">/security compare &lt;before-scan-id&gt; &lt;after-scan-id&gt;
+</code></pre>
+<p>结果会统计未改变、引入和已解决的发现，并标识其匹配 ID。后一次扫描必须为 <code>completed</code>；部分完成、已取消或失败的扫描不能证明先前的发现已经解决。在将结果作为发布门禁前，请同时比较覆盖范围和数量。</p>
+<p>将 SARIF 文件或 Codex Security 结果包目录导入当前项目的规范存储：</p>
+<pre><code class="language-text">/security import artifacts/results.sarif
+/security import /tmp/codex-security-bundle
+</code></pre>
+<p>导入的路径和发现会根据当前仓库进行验证。使用 <code>/security scans</code> 列出新分配的扫描 ID。</p>
+<p>将当前规范状态导出为 JSON 包、SARIF 或 Markdown 报告：</p>
+<pre><code class="language-text">/security export &lt;scan-id&gt; --output artifacts/security-bundle.json --format bundle
+/security export &lt;scan-id&gt; --output artifacts/results.sarif --format sarif
+/security export &lt;scan-id&gt; --output artifacts/security-report.md --format report
+</code></pre>
+<p><code>bundle</code> 是默认格式。当前导入命令接受 SARIF 文件和 Codex Security 结果包目录；它不会重新导入 omp 的单文件规范 JSON 导出。当扫描没有对应工件时，报告或 SARIF 导出会明确失败。导出的文件在 POSIX 上使用私有文件权限，但 omp 不会强化已有的父目录；请自行选择并保护目标位置。</p>
+<h2 id="native-review-versus-codex-security-cloud">原生审查与 Codex Security 云端服务</h2>
+<p>这是两个独立的产品，绝不会相互回退。</p>
+<table><thead><tr><th></th><th>Omp 原生</th><th>Codex Security 云端服务</th></tr></thead><tbody><tr><td>执行</td><td>受限的后台 omp 会话审查本地 Git 工作树或分离的引用目标。</td><td>ChatGPT 的 Codex Security 控制平面扫描其配置的仓库和环境。</td></tr><tr><td>身份验证</td><td>当前模型提供商的 OAuth，在预检时固定。</td><td>一个 <code>openai-codex</code> ChatGPT OAuth 账户。这不是公开的 OpenAI API。</td></tr><tr><td>范围</td><td>来自 <code>/security plan</code> 或 <code>/security scan</code> 的仓库/路径/引用/工作树选项。</td><td>在云服务中配置的仓库、环境和回溯范围。</td></tr><tr><td>计费和配额</td><td>请求计入所选模型/提供商账户。</td><td>启动扫描会消耗账户单独的 Codex Security 云端扫描额度。</td></tr><tr><td>本地结果</td><td>直接发布到 omp 的项目存储。</td><td>只有在明确拉取并导入后才会变为本地结果。</td></tr></tbody></table>
+<p>云端控制是明确的：</p>
+<pre><code class="language-text">/security cloud scans
+/security cloud start --repo-id &lt;repository-id&gt; --repo-url https://github.com/owner/repo --environment &lt;environment-id&gt; --lookback 30
+/security cloud status &lt;configuration-id&gt;
+/security cloud pull &lt;configuration-id&gt;
+</code></pre>
+<p>使用 <code>--lookback all</code> 可进行无限回溯。只有在需要明确选择已知的 <code>openai-codex</code> 凭据时，才向云端命令添加 <code>--credential &lt;durable-id&gt;</code>。<code>/security cloud scans</code> 会列出所选账户可见的配置，包括仓库和环境 ID、状态、进度，以及服务报告的剩余额度。</p>
+<p>云端拉取会获取带归属信息的发现，将其转换为 omp 的规范格式，生成报告和 SARIF，并存储一个已完成的导入扫描。除非当前 Git 项目具有 <code>origin</code>，且其规范化仓库身份与云端配置 URL 匹配，否则它会失败关闭。由于云端发现 API 不提供覆盖范围凭据，导入的云端覆盖范围会标记为 <code>unknown</code>。原生 <code>/security cancel</code> 不会取消云端工作；目前没有 <code>/security cloud cancel</code> 命令。</p>
+<h2 id="privacy-credentials-and-recovery">隐私、凭据和恢复</h2>
+<ul>
+<li><strong>提供商边界：</strong>原生审查会将提示词和检查过的仓库材料发送给当前模型的提供商。云端命令会将仓库配置发送给 ChatGPT 的 Codex Security 服务，由该服务执行远程扫描。请选择获准处理该仓库的账户和服务。</li>
+<li><strong>凭据边界：</strong>计划存储一条 OAuth 行的引用及记录的身份，而不是轮换使用同级账户的许可。刷新会继续使用该行。如果凭据消失、身份改变、超过刷新期限，或固定的模型不可用，扫描会失败而不会回退。请登录或固定目标账户，选择可用模型，并创建新计划。</li>
+<li><strong>工件边界：</strong>发现、报告、SARIF、覆盖范围和来源信息可能暴露路径、存在漏洞的流程及修复细节。默认状态和生成文件会使用严格的 POSIX 模式，但这不能替代加密存储、谨慎备份和访问控制。关闭功能不会删除已存储的扫描或导出文件。</li>
+<li><strong>重启：</strong>进程重启无法恢复正在运行的原生审查。恢复时，omp 会将持久化的 <code>planned</code> 或 <code>running</code> 扫描记录标记为 <code>failed</code> 并附带中断错误，同时清理临时的引用 diff 工作树。检查 <code>/security status</code> 或 <code>/security scans</code>，然后创建并启动新计划。</li>
+<li><strong>部分发布或发布失败：</strong>未完成规范发布的扫描会处于 <code>partial</code>；取消和执行错误会作为各自的终止记录存储。这类扫描可能没有报告或 SARIF。检查状态错误，修复身份验证、模型或输出条件，然后重新运行，不要将其作为解决证明进行比较。</li>
+<li><strong>已完成但缺少外部文件：</strong>即使后续输出刷新失败，规范结果也可能已经安全地存储在项目中。使用 <code>/security show</code> 检查，并使用 <code>/security export</code> 写入新副本。</li>
+</ul>
+<p><code>security.enabled</code> 是当前唯一持久化的安全设置。目标、知识库、模型/账户选择和输出策略都属于计划。若不再希望使用 <code>/security</code> 和 <code>security://</code>，请在 <code>/settings</code> 中再次禁用该功能，或运行 <code>omp config set security.enabled false</code>；禁用可用性会保留现有数据。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/security" rel="noreferrer noopener">omp.sh/docs/security</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
