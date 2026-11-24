@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>上下文文件 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：上下文文件">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>上下文文件</h1>
+
+<p>用 AGENTS.md 给 omp 持久化的项目指令，然后只在你需要时叠加全局、粘性或系统级的指导。</p>
+<h2 id="give-omp-the-project-rules-once">把项目规则一次性告诉 omp</h2>
+<p>在仓库根目录放一个 <code>AGENTS.md</code>。omp 会自动加载它并在整个会话中应用，这样你就不必在每条提示词里重复构建命令、约定或安全边界。</p>
+<pre><code class="language-md"># Project instructions
+
+## Build and test
+- Install dependencies with `bun install`.
+- Run unit tests with `bun test`.
+- Run the app with `bun run dev`.
+
+## Conventions
+- Keep public API changes backward compatible.
+- Never edit generated files under `src/generated/`.
+- Before finishing, run the narrowest test that covers the change.
+</code></pre>
+<p>在仓库内的任意位置启动 omp，然后正常提问：</p>
+<pre><code class="language-text">Fix the failing invoice test and follow the repository instructions.
+</code></pre>
+<p>对于应当指导该目录树中大多数工作的事实和约束，使用 <code>AGENTS.md</code>。让它保持简短具体：每一条加载的指令都会消耗上下文。</p>
+<h2 id="supported-files">支持的文件</h2>
+<p>所有指令文件都是纯 Markdown。它们不需要 frontmatter 或配置项。</p>
+<h3 id="native-omp-files">omp 原生文件</h3>
+<table><thead><tr><th>文件</th><th>推荐的项目位置</th><th>用户级位置</th><th>行为</th></tr></thead><tbody><tr><td><code>AGENTS.md</code></td><td><code>&lt;repo&gt;/AGENTS.md</code></td><td><code>~/.omp/agent/AGENTS.md</code></td><td>常规的常驻指令。独立的项目文件会跨目录层级组合。</td></tr><tr><td><code>AGENTS.md</code></td><td><code>&lt;repo&gt;/.omp/AGENTS.md</code></td><td><code>~/.omp/agent/AGENTS.md</code></td><td>omp 专属的替代位置。在给定目录层级上，它优先于兼容的上下文文件提供商。</td></tr><tr><td><code>RULES.md</code></td><td><code>&lt;repo&gt;/.omp/RULES.md</code></td><td><code>~/.omp/agent/RULES.md</code></td><td>粘性、始终应用的规则。用户文件和项目文件可以同时生效。</td></tr><tr><td><code>APPEND_SYSTEM.md</code></td><td><code>&lt;launch-directory&gt;/.omp/APPEND_SYSTEM.md</code></td><td><code>~/.omp/agent/APPEND_SYSTEM.md</code></td><td>向 omp 的内置系统指令追加文本。优先使用它，而不是替换内置指令。</td></tr><tr><td><code>SYSTEM.md</code></td><td><code>&lt;launch-directory&gt;/.omp/SYSTEM.md</code></td><td><code>~/.omp/agent/SYSTEM.md</code></td><td>替换 omp 的内置指令正文。项目作用域优先于用户作用域。只用于刻意打造的不同代理人格。</td></tr></tbody></table>
+<p><code>~/.omp/agent/</code> 是默认的用户级目录。使用命名配置文件时，等价目录是 <code>~/.omp/profiles/&lt;profile&gt;/agent/</code>。自定义的 omp 配置根会以同样方式改变前缀。</p>
+<p>对于 <code>SYSTEM.md</code> 和 <code>APPEND_SYSTEM.md</code>，最可预期的做法是从包含 <code>.omp/</code> 的目录启动 omp。它们的 CLI 直接搜索会按以下顺序先检查项目文件：</p>
+<ol>
+<li><code>&lt;launch-directory&gt;/.omp/</code></li>
+<li><code>&lt;launch-directory&gt;/.claude/</code></li>
+<li><code>&lt;launch-directory&gt;/.codex/</code></li>
+<li><code>&lt;launch-directory&gt;/.gemini/</code></li>
+</ol>
+<p>如果都不存在，omp 会按同样顺序检查相应的用户目录：当前 omp 配置文件的 <code>agent/</code> 目录、当前 Claude 配置目录、<code>~/.codex/</code>，然后是 <code>~/.gemini/</code>。它使用第一个匹配的文件名。只有在直接搜索什么都没找到时，已启用的发现提供商才能提供额外的 <code>SYSTEM.md</code> 位置；<code>APPEND_SYSTEM.md</code> 只使用直接搜索。</p>
+<p><code>--system-prompt</code> 和 <code>--append-system-prompt</code> 优先于被发现的文件；两者都既可以接受字面文本，也可以接受可读的文件路径。</p>
+<p><code>SYSTEM.md</code> 会移除内置的行为与工具使用指导，但 omp 仍会围绕它提供项目上下文、规则和环境信息。<code>APPEND_SYSTEM.md</code> 保留内置指导，因此是更安全的默认选择。</p>
+<h3 id="compatible-context-files">兼容的上下文文件</h3>
+<p>omp 可以复用来自其它代理生态的指令文件。它们是上下文文件来源，而非额外格式：其内容仍然是 Markdown。</p>
+<table><thead><tr><th>提供商 ID</th><th>项目来源</th><th>用户级来源</th><th>项目发现方式</th></tr></thead><tbody><tr><td><code>native</code></td><td>最近的 <code>.omp/AGENTS.md</code></td><td>当前 omp 配置文件的 <code>AGENTS.md</code></td><td>向上走到仓库根目录，并使用最近的 <code>.omp</code> 配置目录。</td></tr><tr><td><code>claude</code></td><td><code>.claude/CLAUDE.md</code></td><td>当前 Claude 配置目录中的 <code>CLAUDE.md</code></td><td>仅启动目录。</td></tr><tr><td><code>agents</code></td><td><code>.agent/AGENTS.md</code> 或 <code>.agents/AGENTS.md</code></td><td><code>~/.agent/AGENTS.md</code> 或 <code>~/.agents/AGENTS.md</code></td><td>从启动目录走到仓库根目录。同一层级上 <code>.agent</code> 优先于 <code>.agents</code>。</td></tr><tr><td><code>codex</code></td><td>—</td><td><code>~/.codex/AGENTS.md</code></td><td>仅用户级。</td></tr><tr><td><code>gemini</code></td><td><code>.gemini/GEMINI.md</code></td><td><code>~/.gemini/GEMINI.md</code></td><td>仅启动目录。</td></tr><tr><td><code>opencode</code></td><td>—</td><td><code>~/.config/opencode/AGENTS.md</code></td><td>仅用户级。</td></tr><tr><td><code>github</code></td><td><code>.github/copilot-instructions.md</code></td><td><code>~/.copilot/copilot-instructions.md</code></td><td>仅启动目录。<code>COPILOT_HOME</code> 可以重定位用户来源。</td></tr><tr><td><code>agents-md</code></td><td><code>AGENTS.md</code></td><td>—</td><td>从启动目录向上走。</td></tr></tbody></table>
+<p><code>COPILOT_CUSTOM_INSTRUCTIONS_DIRS</code> 也可以用逗号分隔的目录列表来指定哪些目录的 <code>AGENTS.md</code> 被视为用户级的 GitHub Copilot 上下文。</p>
+<p>Cursor 规则、Cline 规则、<code>*.instructions.md</code> 以及类似的路径专属规则文件是作为<strong>规则</strong>被发现的，而不是作为通用上下文文件。它们在 <code>/extensions</code> 中单独出现，并按其自身的条件生效。</p>
+<h2 id="discovery-and-scope">发现与作用域</h2>
+<p>omp 从会话的工作目录解析上下文。</p>
+<p>对于推荐的独立 <code>AGENTS.md</code> 布局，它会向上走并加载每一个适用的文件。在嵌套于你主目录之下的仓库中，扫描可能越过 Git 根目录以拾取工作区指令，但会在把 <code>~/AGENTS.md</code> 当作项目上下文之前停下。在该情况之外，仓库根就是边界。</p>
+<p>例如，在 <code>repo/packages/api</code> 中启动 omp 可能加载：</p>
+<pre><code class="language-text">~/.omp/agent/AGENTS.md       user-wide
+~/work/AGENTS.md             enclosing workspace
+~/work/repo/AGENTS.md        repository
+~/work/repo/packages/api/AGENTS.md
+</code></pre>
+<p>文件按从最宽泛到最局部的方式呈现，因此最近的项目指令拥有最终的、最具体的位置。这让 monorepo 布局变得有用：</p>
+<ul>
+<li>把共享的命令和策略放在仓库根目录；</li>
+<li>把包专属的命令放在嵌套的 <code>AGENTS.md</code> 中；</li>
+<li>避免把根文件复制到每个包中。</li>
+</ul>
+<p>改动会在 omp 重建新会话时被拾取。编辑指令文件之后，请使用 <code>/new</code> 或重启 omp，再依赖新的文本。</p>
+<h3 id="what-wins-at-the-same-scope">同一作用域下谁胜出</h3>
+<p>对每个用户级作用域和每个项目目录深度，只有一个上下文文件提供商能存活。提供商优先级为：</p>
+<ol>
+<li><code>native</code></li>
+<li><code>claude</code></li>
+<li><code>agents</code>，然后是 <code>codex</code></li>
+<li><code>gemini</code></li>
+<li><code>opencode</code></li>
+<li><code>github</code></li>
+<li><code>agents-md</code></li>
+</ol>
+<p>这意味着 <code>&lt;repo&gt;/.omp/AGENTS.md</code> 会在同一仓库层级上遮蔽 <code>&lt;repo&gt;/AGENTS.md</code>；它们不会被拼接。除非这种遮蔽是有意的，否则不要同时创建两者。位于不同祖先层级的独立 <code>AGENTS.md</code> 文件具有不同的作用域，因此会正常组合。</p>
+<p>用户级上下文遵循相同的提供商优先级，并且最多贡献一个通用上下文文件。<code>RULES.md</code> 是单独的：用户级规则和最近项目的 <code>.omp/RULES.md</code> 在存在时都会加载。对于 <code>SYSTEM.md</code> 和 <code>APPEND_SYSTEM.md</code>，只选择一个被发现文件，项目作用域优先于用户作用域，且 omp 的 <code>.omp</code> 位置优先于兼容的配置目录。</p>
+<h2 id="import-shared-instructions">导入共享指令</h2>
+<p>使用 <code>@path</code> 标记来包含另一个文件，而无需复制它：</p>
+<pre><code class="language-md"># Project instructions
+
+@docs/agent/testing.md
+@docs/agent/style.md
+</code></pre>
+<p>导入行为是可预期的：</p>
+<ul>
+<li>相对路径从包含该导入的文件解析，而不是从 omp 的工作目录解析；</li>
+<li><code>~/...</code> 从你的主目录解析，绝对路径也被接受；</li>
+<li><code>@</code> 必须位于行首或跟在空白之后，因此电子邮件地址和 <code>git@github.com</code> 不会被处理；</li>
+<li>行内代码或围栏代码块中的导入会作为示例保留，而不会被展开；</li>
+<li>嵌套导入最多跟随五层；</li>
+<li>循环会被阻止，不可读的导入会以其原始的 <code>@path</code> 标记形式保持可见。</li>
+</ul>
+<p>导入的文本会插入到标记所在的位置。用导入来处理小的共享策略，而不是大型生成的文档。</p>
+<h2 id="verify-what-loaded">核实加载了什么</h2>
+<ol>
+<li>从你打算工作的目录启动 omp。</li>
+<li>在交互式会话中输入 <code>/extensions</code>。</li>
+<li>选择相关的提供商标签页并检查 <strong>Context Files</strong>（上下文文件）。仪表盘会显示来源路径、它是否已启用，以及是否有更高优先级的文件遮蔽了它。</li>
+<li>改动文件后，使用 <code>/new</code> 或重启 omp，重新打开 <code>/extensions</code>，并确认预期的路径处于活动状态。</li>
+</ol>
+<p>你也可以问：</p>
+<pre><code class="language-text">Summarize the repository instructions that apply to this task and name their source files.
+</code></pre>
+<p><code>/extensions</code> 仪表盘是权威检查；摘要则有助于确认指令本身是否清楚。</p>
+<h2 id="troubleshooting">故障排除</h2>
+<h3 id="the-file-does-not-appear">文件没有出现</h3>
+<ul>
+<li>检查确切的大小写：受支持的文件名在区分大小写的文件系统上是区分大小写的。</li>
+<li>确认 omp 是从预期的目录启动的。标为“仅启动目录”的提供商不会走到父级仓库。</li>
+<li>确保该文件是可读的 Markdown，然后开始新会话。</li>
+<li>对于 <code>.omp/AGENTS.md</code> 和 <code>.omp/RULES.md</code>，先检查最近的 <code>.omp</code> 目录。更近的项目配置目录会定义原生项目作用域。</li>
+<li>如果启用了命名配置文件，请检查它专属的 <code>agent/</code> 目录，而不是默认的 <code>~/.omp/agent/</code>。</li>
+</ul>
+<h3 id="the-file-appears-as-shadowed">文件显示为被遮蔽</h3>
+<p>某个更高优先级的提供商在同一作用域提供了上下文文件。检查器会列出两个来源。删除重复项、把确实更窄的指令移到嵌套目录，或从 <code>/extensions</code> 中禁用不需要的提供商。</p>
+<p>提供商切换通过 <code>disabledProviders</code> 设置持久保留。常见 ID 列在上表中；例如禁用 <code>agents-md</code> 会停止对独立 <code>AGENTS.md</code> 的发现，同时保留 <code>.omp/AGENTS.md</code> 可用。</p>
+<h3 id="sticky-rules-are-missing">粘性规则缺失</h3>
+<p><code>RULES.md</code> 必须位于当前用户的 <code>agent/</code> 目录，或最近的项目的 <code>.omp/</code> 目录中。<code>--no-rules</code> 标志会在该次运行中禁用 <code>RULES.md</code> 以及所有其他被发现的规则。</p>
+<h3 id="an-import-remains-as-path">导入保持为 <code>@path</code></h3>
+<p>相对于导入它的文件解析该路径，检查文件权限，并确保该标记位于行内代码或围栏代码之外。循环或超过五层递归的链路也会使导入不被展开。</p>
+<p>提示词和规则相关标志见<a href="cli.html">命令行参考</a>，<a href="settings.html">设置</a>中的 <code>disabledProviders</code>，以及 <code>/extensions</code> 中已发现的条件规则文件。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/context-files" rel="noreferrer noopener">omp.sh/docs/context-files</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

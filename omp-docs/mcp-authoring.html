@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>编写 MCP 服务器 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：编写 MCP 服务器">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>编写 MCP 服务器</h1>
+
+<p>构建一个基于标准的工具服务器，把它接到 omp 上，并端到端验证握手与工具调用。</p>
+<h2 id="build-once-use-it-from-many-clients">构建一次，供众多客户端使用</h2>
+<p>MCP 服务器把某个 API、本地服务或工作流变成 omp 可以发现并使用的工具。当这个集成还需要与其他 MCP 客户端配合工作时，请选择 MCP。如果只是给 omp 用，<a href="custom-tools.html">自定义工具</a>通常更轻。</p>
+<p>最快的路径是本地 <strong>stdio</strong> 服务器。官方 SDK 会处理 JSON-RPC 分帧、版本协商和初始化序列，因此你的代码可以专注于工具 schema 与行为。</p>
+<h2 id="build-a-minimal-stdio-server">构建一个最小的 stdio 服务器</h2>
+<p>在你的项目里安装当前的 TypeScript 服务器 SDK 和 Zod：</p>
+<pre><code class="language-bash">npm install @modelcontextprotocol/server zod
+</code></pre>
+<p>把下面的内容保存为<code>mcp/hello-server.mjs</code>：</p>
+<pre><code class="language-js">import { McpServer } from &quot;@modelcontextprotocol/server&quot;;
+import { StdioServerTransport } from &quot;@modelcontextprotocol/server/stdio&quot;;
+import * as z from &quot;zod/v4&quot;;
+
+const server = new McpServer({
+  name: &quot;hello&quot;,
+  version: &quot;1.0.0&quot;,
+});
+
+server.registerTool(
+  &quot;greet&quot;,
+  {
+    description: &quot;Greet one person by name.&quot;,
+    inputSchema: z.object({
+      name: z.string().min(1).describe(&quot;The person&#x27;s name&quot;),
+    }),
+  },
+  async ({ name }) =&gt; ({
+    content: [{ type: &quot;text&quot;, text: `Hello, ${name}!` }],
+  }),
+);
+
+await server.connect(new StdioServerTransport());
+</code></pre>
+<p>不要在 stdio 服务器里把日志打到 stdout。stdout 承载的是按换行分隔的 MCP 消息；一行调试输出就可能破坏连接。请把诊断信息写到 stderr。</p>
+<h3 id="connect-it-to-omp">把它接到 omp 上</h3>
+<p>在<code>.omp/mcp.json</code>添加一份项目配置：</p>
+<pre><code class="language-json">{
+  &quot;$schema&quot;: &quot;https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json&quot;,
+  &quot;mcpServers&quot;: {
+    &quot;hello&quot;: {
+      &quot;type&quot;: &quot;stdio&quot;,
+      &quot;command&quot;: &quot;node&quot;,
+      &quot;args&quot;: [&quot;./mcp/hello-server.mjs&quot;]
+    }
+  }
+}
+</code></pre>
+<p>在那个项目里启动 omp，然后运行：</p>
+<pre><code class="language-text">/mcp reload
+/mcp test hello
+</code></pre>
+<p><code>/mcp test hello</code>会建立一次临时连接，完成初始化，调用<code>tools/list</code>，并报告服务器身份与发现的工具名。它<strong>不会</strong>调用任何工具。用一次正常请求来检验处理器：</p>
+<blockquote>
+<p>用 hello 服务器向 Ada 问好。</p>
+</blockquote>
+<p>你应该看到<code>Hello, Ada!</code>。除非服务器配置里设置了<code>cwd</code>，否则子进程在 omp 项目目录下启动，所以上面那些相对的<code>args</code>是从项目根目录解析的。</p>
+<h2 id="choose-a-transport">选择传输方式</h2>
+<table><thead><tr><th>传输方式</th><th>适用于</th><th>服务端契约</th><th>omp 配置</th></tr></thead><tbody><tr><td><strong>stdio</strong></td><td>为单次 omp 会话启动的本地服务器</td><td>从 stdin 读取 JSON-RPC，向 stdout 写出按换行分隔的 JSON-RPC，并让诊断信息远离 stdout</td><td>省略<code>type</code>或使用<code>&quot;type&quot;: &quot;stdio&quot;</code>；设置<code>command</code>，可选<code>args</code>、<code>env</code>和<code>cwd</code></td></tr>
+<tr><td><strong>Streamable HTTP</strong></td><td>常驻守护进程或托管共享服务</td><td>通过 HTTP POST 接受 MCP JSON-RPC；按 MCP 传输规范的要求支持 JSON 或 SSE 响应</td><td>使用<code>&quot;type&quot;: &quot;http&quot;</code>和<code>url</code>；<code>headers</code>与 OAuth 可选</td></tr>
+<tr><td><strong>旧版 HTTP+SSE</strong></td><td>已有的、为 2024-11-05 传输方式构建的服务器</td><td>打开一条 SSE 流，其中公布 JSON-RPC POST 端点</td><td>使用<code>&quot;type&quot;: &quot;sse&quot;</code>和<code>url</code>；新服务器不要选这个</td></tr>
+</tbody></table>
+<p><code>type</code>缺省时默认是 stdio。因此一个没有<code>&quot;type&quot;: &quot;http&quot;</code>的远程条目会被当作 stdio，并因为没有<code>command</code>而失败。</p>
+<h3 id="publish-the-same-tool-over-streamable-http">通过 Streamable HTTP 发布同一个工具</h3>
+<p>当前 SDK 可以同时服务当前客户端和 2025 年代的客户端。要做一个小的 Node 托管端点，请安装它的 Node 适配器：</p>
+<pre><code class="language-bash">npm install @modelcontextprotocol/node
+</code></pre>
+<p>一个最小的回环服务器看起来是这样：</p>
+<pre><code class="language-js">import { createServer } from &quot;node:http&quot;;
+import {
+  localhostHostValidation,
+  localhostOriginValidation,
+  toNodeHandler,
+} from &quot;@modelcontextprotocol/node&quot;;
+import { createMcpHandler, McpServer } from &quot;@modelcontextprotocol/server&quot;;
+import * as z from &quot;zod/v4&quot;;
+
+const handler = createMcpHandler(() =&gt; {
+  const server = new McpServer({ name: &quot;hello-http&quot;, version: &quot;1.0.0&quot; });
+  server.registerTool(
+    &quot;greet&quot;,
+    {
+      description: &quot;Greet one person by name.&quot;,
+      inputSchema: z.object({ name: z.string().min(1) }),
+    },
+    async ({ name }) =&gt; ({
+      content: [{ type: &quot;text&quot;, text: `Hello, ${name}!` }],
+    }),
+  );
+  return server;
+});
+
+const nodeHandler = toNodeHandler(handler);
+const validateHost = localhostHostValidation();
+const validateOrigin = localhostOriginValidation();
+
+createServer((request, response) =&gt; {
+  if (!validateHost(request, response) || !validateOrigin(request, response)) return;
+  void nodeHandler(request, response);
+}).listen(3000, &quot;127.0.0.1&quot;);
+</code></pre>
+<p>配置这个正在运行的端点：</p>
+<pre><code class="language-json">{
+  &quot;mcpServers&quot;: {
+    &quot;hello-http&quot;: {
+      &quot;type&quot;: &quot;http&quot;,
+      &quot;url&quot;: &quot;http://127.0.0.1:3000/mcp&quot;
+    }
+  }
+}
+</code></pre>
+<p>面向公网部署时，请校验<code>Host</code>和<code>Origin</code>，在派发给 MCP 处理器之前完成认证，使用 TLS，并且只把已核实的身份传给工具代码。处理器不会替你认证请求。omp 的 header 与 OAuth 配置见 SDK 的<a href="https://ts.sdk.modelcontextprotocol.io/v2/serving/http.html">HTTP 服务指南</a>以及<a href="mcp.html">MCP</a>。</p>
+<h2 id="public-protocol-contract">公开协议契约</h2>
+<p>强烈建议使用 MCP SDK。如果你要自己实现线上协议，以下是 omp 依赖的互操作要点：</p>
+<table><thead><tr><th>阶段</th><th>服务器必须做什么</th></tr></thead><tbody><tr><td><code>initialize</code></td><td>接受 JSON-RPC 2.0 请求。omp 目前提供 MCP 协议修订版<code>2025-11-25</code>。用协商后的<code>protocolVersion</code>、<code>serverInfo</code>和<code>capabilities</code>回复。</td></tr>
+<tr><td><code>notifications/initialized</code></td><td>在期待后续会话流量之前先接受该通知。通知没有请求 ID，也不会收到响应。</td></tr>
+<tr><td><code>tools/list</code></td><td>当声明了<code>capabilities.tools</code>时，返回<code>{ &quot;tools&quot;: [...] }</code>。如果结果里有<code>nextCursor</code>，omp 会一直跟进，直到加载完所有页。</td></tr>
+<tr><td><code>tools/call</code></td><td>接受<code>{ &quot;name&quot;: string, &quot;arguments&quot;?: object }</code>并返回工具结果。每个 JSON-RPC 请求 ID 都要原样回显；有效的 ID 可以是数字或字符串。</td></tr>
+<tr><td>服务器发起的请求</td><td>omp 会应答<code>ping</code>和<code>roots/list</code>。<code>roots/list</code>把当前项目以<code>file:</code> URI 返回。除非客户端已经声明，否则不要假定它支持其他服务器到客户端的方法。</td></tr>
+<tr><td>工具变更</td><td>如果工具会变化，请声明<code>tools.listChanged</code>，并在初始化之后发送<code>notifications/tools/list_changed</code>。omp 随后会重新加载该服务器的工具列表，而无需重启会话。</td></tr>
+</tbody></table>
+<p>对于 Streamable HTTP，如果你签发了<code>Mcp-Session-Id</code>就要保留它，并在初始化之后的请求上接受<code>MCP-Protocol-Version: 2025-11-25</code>。请支持公开 MCP 传输规范所定义的 HTTP 方法、状态码、媒体类型和可选的 SSE 通道。官方 SDK 会处理这些细节。</p>
+<p>omp 默认发送数字形式的 JSON-RPC 请求 ID。服务器应当同时接受 JSON-RPC 允许的两种形式；只要求某一种会降低与其他客户端的兼容性。</p>
+<h2 id="define-tools-that-travel-well">定义便于跨客户端使用的工具</h2>
+<p>一个列出的工具需要有稳定的<code>name</code>、具体的<code>description</code>，以及顶层为 JSON Schema 对象的<code>inputSchema</code>。使用上面提到的 SDK 时，Zod 这样的 Standard Schema 库会替你生成该 schema。</p>
+<p>好的 schema 能帮助客户端选择工具并构造有效参数：</p>
+<ul>
+<li>描述用户可见的动作以及何时适用。</li>
+
+<li>使用明确的属性描述、边界、枚举和<code>required</code>字段。</li>
+
+<li>让可选字段真正可选；不要要求客户端发送空占位值。</li>
+
+<li>在处理器里再次校验权限和输入。schema 是指导与校验，不是授权。</li>
+
+<li>一旦用户开始依赖这些名字，就保持它们稳定。</li>
+
+</ul>
+<p>omp 会按服务器给发现的工具加命名空间，把名字转为小写，把<code>[a-z_]</code>之外的字符替换为下划线，并在需要时把挂载名截到 64 个字符并附上稳定哈希后缀。归一化后相同的不同原始名会发生冲突；omp 会保留一个确定性的胜出者。请优先使用简短、互不相同的小写名字，例如<code>search_issues</code>或<code>create_invoice</code>。用户是用自然语言提出这项能力，而不是敲出挂载名。</p>
+<h2 id="return-results-and-errors">返回结果与错误</h2>
+<p>每次成功的调用都应返回<code>content</code>。文本是最通用的内容类型：</p>
+<pre><code class="language-js">return {
+  content: [{ type: &quot;text&quot;, text: &quot;Created invoice INV-1042.&quot; }],
+};
+</code></pre>
+<p>omp 也接受 MCP 图片内容（<code>data</code>为 base64，外加<code>mimeType</code>）以及内嵌资源内容。如果你还返回<code>structuredContent</code>，请在<code>content</code>里也给出有用的文本表示；不要让人类可读的结果依赖于结构化输出的支持。</p>
+<p>对于可预期的、用户可自行纠正的失败，使用<code>isError: true</code>。这样失败会附着在该工具调用上，并给模型提供可据以行动的信息：</p>
+<pre><code class="language-js">return {
+  content: [{ type: &quot;text&quot;, text: &quot;Customer C-17 does not exist.&quot; }],
+  isError: true,
+};
+</code></pre>
+<p>抛出异常或返回 JSON-RPC 错误响应，只留给协议违规、依赖不可用和意外的服务器故障。omp 会把可预期的<code>isError</code>结果显示为工具错误；传输层与 JSON-RPC 失败则表现为 MCP 错误。两种形式都不要包含密钥、token 或私有堆栈跟踪。</p>
+<p>对于受保护的 HTTP 工具，可以随错误在<code>_meta[&quot;mcp/www_authenticate&quot;]</code>中返回一个基于标准的授权质询。omp 能识别这个公开的 MCP 质询，并在服务器配置了 OAuth 时，于重试之前重新完成授权。</p>
+<h2 id="debugging-loop">调试循环</h2>
+<ol>
+<li>
+<p><strong>独立测试服务器。</strong>对 stdio 示例，先运行<code>node --check mcp/hello-server.mjs</code>，然后使用官方检查器：</p>
+<pre><code class="language-bash">npx @modelcontextprotocol/inspector node ./mcp/hello-server.mjs
+</code></pre>
+<p>确认<code>greet</code>出现，并用<code>{ &quot;name&quot;: &quot;Ada&quot; }</code>调用它。</p>
+</li>
+
+<li>
+<p><strong>重新加载发现。</strong>编辑<code>.omp/mcp.json</code>之后，运行<code>/mcp reload</code>，再用<code>/mcp list</code>确认服务器名和来源文件。</p>
+</li>
+
+<li>
+<p><strong>测试发现与 schema。</strong>运行<code>/mcp test hello</code>。它验证初始化和<code>tools/list</code>，但不验证处理器本身。</p>
+</li>
+
+<li>
+<p><strong>测试真实的用户路径。</strong>让 omp 执行该动作，然后检查返回的内容。对动态服务器，<code>/mcp notifications</code>有助于确认列表变更通知。</p>
+</li>
+
+<li>
+<p><strong>只重启发生变化的部分。</strong>改动本地服务器代码后用<code>/mcp reconnect hello</code>。改动发现或配置后用<code>/mcp reload</code>。</p>
+</li>
+
+</ol>
+<table><thead><tr><th>现象</th><th>检查</th></tr></thead><tbody><tr><td><code>ENOENT</code>或找不到命令</td><td>核实<code>command</code>、相对项目的路径、可执行权限和<code>cwd</code>。</td></tr>
+<tr><td>测试挂起或超时</td><td>确保服务器应答<code>initialize</code>，然后接受<code>notifications/initialized</code>和<code>tools/list</code>。默认请求超时是 30 秒；先解决卡住的问题，再考虑调大<code>timeout</code>。</td></tr>
+<tr><td>JSON 无效或立即断开</td><td>去掉所有 stdout 日志/横幅。检查每个 stdio 帧都是一个完整的 JSON-RPC 对象后跟一个换行。</td></tr>
+<tr><td>测试能连上但真实调用失败</td><td><code>/mcp test</code>不调用工具。用 Inspector 复现，并对领域性失败返回可据以行动的<code>isError</code>结果。</td></tr>
+<tr><td>工具变更没有出现</td><td>重连重启后的 stdio 进程，或者声明<code>tools.listChanged</code>并发送<code>notifications/tools/list_changed</code>。</td></tr>
+<tr><td>HTTP 401 或 403</td><td>核实服务端的 token 校验以及客户端的 header/OAuth 配置；托管的 OAuth 可用<code>/mcp reauth &lt;name&gt;</code>。</td></tr>
+<tr><td>服务器列出了工具，但工具缺失</td><td>检查是否存在归一化名称冲突、无效的顶层输入 schema，或有另一个同名服务器定义把它遮蔽了。</td></tr>
+</tbody></table>
+<h2 id="ship-checklist">发布清单</h2>
+<ul>
+<li>服务器与 omp 协商<code>2025-11-25</code>，并且在初始化完成前不发送会话流量。</li>
+
+<li>stdio 的 stdout 只包含协议帧；托管的 HTTP 具备 TLS、认证以及 Host/Origin 校验。</li>
+
+<li><code>tools/list</code>返回稳定的名字、描述、对象型输入 schema，并正确返回每个分页游标。</li>
+
+<li>每条<code>tools/call</code>路径都返回有用的<code>content</code>；可预期的失败返回<code>isError: true</code>。</li>
+
+<li>Inspector 能列出并调用每个工具，<code>/mcp test &lt;name&gt;</code>报告的清单与之相同。</li>
+
+<li>在 omp 中用自然语言发起一次请求，能成功走到真实的处理器。</li>
+
+</ul>
+<h2 id="related">相关内容</h2>
+<ul>
+<li><a href="mcp.html">MCP</a>——配置位置、发现、传输方式、凭据和生命周期命令。</li>
+
+<li><a href="custom-tools.html">自定义工具</a>——不需要跨客户端兼容时的 omp 专用方案。</li>
+
+<li><a href="plugins.html">插件</a>——把 MCP 配置与技能、命令、钩子一起打包。</li>
+
+<li><a href="https://modelcontextprotocol.io/specification/2025-11-25">MCP 规范</a>——公开的协议与传输契约。</li>
+
+<li><a href="https://ts.sdk.modelcontextprotocol.io/v2/">MCP TypeScript SDK</a>——当前的服务器 API 与示例。</li>
+
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/mcp-authoring" rel="noreferrer noopener">omp.sh/docs/mcp-authoring</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

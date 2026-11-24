@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>自定义模型与提供商 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：自定义模型与提供商">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>自定义模型与提供商</h1>
+
+<p>把 omp 连接到本地服务器、兼容 OpenAI 的网关，或内置目录中不存在的模型。</p>
+<h2 id="connect-a-model-omp-does-not-already-know">连接 omp 尚不认识的模型</h2>
+<p>当你的模型运行在私有 URL、公司网关之后，或使用 omp 未列出的 id 时，请使用自定义提供商。你可以自行声明确切的模型，也可以让 omp 发现服务器暴露的模型。</p>
+<p>对于本地推理，你通常<strong>不</strong>需要这个文件。omp 会自动查找 <code>http://127.0.0.1:11434</code> 上的 Ollama、<code>http://127.0.0.1:8080</code> 上的 llama.cpp，以及 <code>http://127.0.0.1:1234/v1</code> 上的 LM Studio。启动服务器并打开 <code>/model</code>；如果它的模型已经在那里，选一个即可，无需再做别的。</p>
+<p>否则，创建 <code>~/.omp/agent/models.yml</code>。对于一个实现了 OpenAI Chat Completions 的免认证服务器，这是最小的有效配置：</p>
+<pre><code class="language-yaml">providers:
+  local-openai:
+    baseUrl: http://127.0.0.1:8000/v1
+    api: openai-completions
+    auth: none
+    models:
+      - id: Qwen/Qwen2.5-Coder-32B-Instruct
+</code></pre>
+<p>提供商 id <code>local-openai</code> 由你自选。模型的 <code>id</code> 必须是服务器接受的确切 id。如果服务器实现的是 <code>/v1/responses</code> 而不是 <code>/v1/chat/completions</code>，请改用 <code>openai-responses</code>。</p>
+<p>对于新声明的模型，省略的元数据默认采用：以 id 作为显示名称、仅文本输入、无可配置的推理、128,000 token 的上下文窗口、16,384 token 的输出上限，以及零成本。这些默认值使最小条目可用，但当实际情况不同时，你应当设置真实的限制和能力。</p>
+<h2 id="verify-and-select-it">验证并选择它</h2>
+<p>先让 omp 加载该文件并只列出你的提供商：</p>
+<pre><code class="language-bash">omp models local-openai
+</code></pre>
+<p>有效且可用的模型会出现在 <code>local-openai</code> 之下，并显示其上下文、输出、思考和图像能力。若出现 YAML 或 schema 问题，则会打印 <code>models.yml validation failed</code> 以及出错的字段。</p>
+<p>然后使用精确的选择器测试该端点：</p>
+<pre><code class="language-bash">omp -p --model local-openai/Qwen/Qwen2.5-Coder-32B-Instruct &quot;Reply with only OK&quot;
+</code></pre>
+<p>当多个提供商暴露相同的模型 id 时，精确的 <code>provider/model-id</code> 选择器可以避免歧义。要把它设为常规交互模型，请启动 <code>omp</code>，输入 <code>/model</code>，找到该提供商和模型，并将其分配给 <strong>Default</strong>。模型中心在打开时会重新加载 <code>models.yml</code>，并保存角色分配。<code>/switch</code>（或 <kbd>Alt</kbd>+<kbd>P</kbd>）只切换当前会话。</p>
+<p>参见<a href="roles.html">模型角色</a>，了解如何把同一模型分配给 <code>smol</code>、<code>slow</code>、<code>plan</code> 或其他角色。</p>
+<h2 id="add-authentication">添加认证</h2>
+<p>对于远程的兼容 OpenAI 服务，把 <code>apiKey</code> 指向一个环境变量：</p>
+<pre><code class="language-yaml">providers:
+  myco:
+    baseUrl: https://llm.internal.example/v1
+    apiKey: MYCO_LLM_API_KEY
+    api: openai-responses
+    models:
+      - id: myco-large
+        name: MyCo Large
+        reasoning: true
+        input: [text, image]
+        contextWindow: 200000
+        maxTokens: 32000
+        cost:
+          input: 3
+          output: 15
+          cacheRead: 0.3
+          cacheWrite: 3.75
+</code></pre>
+<pre><code class="language-bash">export MYCO_LLM_API_KEY=&#x27;…&#x27;
+omp models myco
+</code></pre>
+<p><code>apiKey</code> 的解析过程是刻意设计的，但值得了解：</p>
+<ol>
+<li>以 <code>!</code> 开头的值是一条 shell 命令；其去掉首尾空白的 stdout 即为密钥。</li>
+<li>否则，omp 会查找同名环境变量。</li>
+<li>如果该变量不存在，omp 会把配置的文本当作字面密钥使用。</li>
+</ol>
+<p>例如，<code>apiKey: &quot;!op read op://team/llm/key&quot;</code> 从 1Password 读取。请求头的值遵循相同规则。请优先使用环境变量或密钥管理器命令，而不是提交字面凭据。内置提供商认证参见<a href="env.html">环境变量</a>和<a href="providers.html">模型提供商</a>。</p>
+<p><code>auth</code> 默认为 <code>apiKey</code>。仅对真正免认证的端点使用 <code>auth: none</code>。<code>auth: oauth</code> 只有在 omp 或扩展已经提供该提供商的 OAuth 支持时才有效；<code>models.yml</code> 无法定义新的 OAuth 流程。</p>
+<p>仅当网关明确需要把 <code>Authorization: Bearer &lt;resolved-apiKey&gt;</code> 作为普通请求头注入时，才设置 <code>authHeader: true</code>。标准提供商客户端已经应用其常规认证方案。</p>
+<h2 id="discover-a-serverx27s-model-list">发现服务器的模型列表</h2>
+<p>如果兼容 OpenAI 的服务器暴露了 <code>GET /v1/models</code>，发现机制可以免去手工维护 <code>models</code> 列表：</p>
+<pre><code class="language-yaml">providers:
+  lab:
+    baseUrl: http://127.0.0.1:8000/v1
+    api: openai-completions
+    auth: none
+    discovery:
+      type: openai-models-list
+</code></pre>
+<p>运行 <code>omp models refresh lab</code> 可强制在线刷新并只显示匹配的模型。普通启动在缓存目录仍然新鲜时会使用缓存。</p>
+<p><code>discovery.type</code> 接受：</p>
+<table><thead><tr><th>类型</th><th>用于</th></tr></thead><tbody><tr><td><code>ollama</code></td><td>Ollama 原生的 <code>/api/tags</code> 和 <code>/api/show</code> 端点。</td></tr><tr><td><code>llama.cpp</code></td><td>llama.cpp 原生的模型和属性端点。</td></tr><tr><td><code>lm-studio</code></td><td>LM Studio 兼容 OpenAI 的模型列表和元数据。</td></tr><tr><td><code>openai-models-list</code></td><td>通用的兼容 OpenAI 的 <code>GET /v1/models</code> 端点。</td></tr><tr><td><code>litellm</code></td><td>LiteLLM 网关；使用其更丰富的元数据路由，并回退到 <code>/v1/models</code>。</td></tr><tr><td><code>proxy</code></td><td>混合的 OpenAI/Anthropic 代理，其模型行会声明 <code>supported_endpoint_types</code>。</td></tr></tbody></table>
+<p>除 <code>proxy</code> 外，发现机制都要求提供商级别的 <code>api</code>。<code>proxy</code> 会从模型声明的端点类型推导其 API，仅把提供商级别的 <code>api</code> 作为回退。可选的 <code>discovery.timeoutMs</code> 必须是正数毫秒值。</p>
+<p>不要把一个通用的兼容 OpenAI 服务器标记为 <code>ollama</code>：Ollama 发现机制期望的是 Ollama 的原生端点。请改用 <code>openai-models-list</code>。</p>
+<h2 id="override-a-built-in-provider">覆盖内置提供商</h2>
+<p>不带 <code>models</code> 的提供商条目会修改已有的提供商，而不是替换其目录。这对于公司网关或修正元数据很有用：</p>
+<pre><code class="language-yaml">providers:
+  openai:
+    baseUrl: https://gateway.internal.example/v1
+    apiKey: COMPANY_OPENAI_KEY
+    headers:
+      X-Team: coding
+    modelOverrides:
+      gpt-5.4:
+        contextWindow: 400000
+</code></pre>
+<p>提供商的 <code>headers</code>、<code>compat</code> 和 <code>remoteCompaction</code> 是基线。模型请求头会替换同名的提供商请求头，而 <code>modelOverrides</code> 会修补某一个内置或已发现的模型。如果自定义 <code>models</code> 条目使用了与现有模型相同的提供商和 id，则自定义定义会替换该模型的传输配置。</p>
+<h2 id="file-and-provider-reference">文件与提供商参考</h2>
+<p>默认路径是 <code>~/.omp/agent/models.yml</code>；当 <code>.yml</code> 文件不存在时使用 <code>~/.omp/agent/models.yaml</code>。如果两个 YAML 文件都不存在，而旧版的 <code>models.json</code> 存在，omp 会把它迁移为 <code>models.yml</code>。根对象只接受 <code>providers</code>。</p>
+<p><code>providers</code> 下的每个键都会成为选择器的提供商部分。</p>
+<table><thead><tr><th>提供商字段</th><th>含义</th></tr></thead><tbody><tr><td><code>baseUrl</code></td><td>端点根地址。当 <code>models</code> 非空时为必填。必须是非空字符串。</td></tr><tr><td><code>api</code></td><td>声明或发现的模型的默认 API。也可以改为在每个已声明模型上设置。</td></tr><tr><td><code>apiKey</code></td><td>环境变量名、<code>!command</code> 或字面凭据。对已声明模型为必填，除非 <code>auth</code> 为 <code>none</code> 或 <code>oauth</code>。</td></tr><tr><td><code>auth</code></td><td><code>apiKey</code>（默认）、<code>none</code> 或 <code>oauth</code>。</td></tr><tr><td><code>headers</code></td><td>字符串到字符串的请求头。值支持环境变量和 <code>!command</code> 解析。</td></tr><tr><td><code>authHeader</code></td><td>为 true 时，从 <code>apiKey</code> 添加 Bearer <code>Authorization</code> 请求头。</td></tr><tr><td><code>models</code></td><td>此提供商拥有的完整模型定义。</td></tr><tr><td><code>discovery</code></td><td>实时目录配置：<code>type</code> 加上可选的正式 <code>timeoutMs</code>。</td></tr><tr><td><code>modelOverrides</code></td><td>从模型 id 到稀疏元数据补丁的映射。</td></tr><tr><td><code>compat</code></td><td>高级请求/响应兼容性覆盖；通常省略它，改用 omp 的自动检测。</td></tr><tr><td><code>disableStrictTools</code></td><td>为会拒绝严格工具 schema 标记的端点（常见于兼容 Anthropic 的代理）禁用这些标记。</td></tr><tr><td><code>remoteCompaction</code></td><td>提供商级别的远程压缩配置。模型上的值会合并在其上。</td></tr><tr><td><code>guardrailIdentifier</code></td><td>Amazon Bedrock 护栏 id 或 ARN。</td></tr><tr><td><code>guardrailVersion</code></td><td>Bedrock 护栏版本；设置护栏时默认为 <code>DRAFT</code>。</td></tr><tr><td><code>guardrailTrace</code></td><td>Bedrock 跟踪模式：<code>enabled</code>、<code>disabled</code> 或 <code>enabled_full</code>。</td></tr><tr><td><code>transport</code></td><td>仅 <code>pi-native</code>；经由兼容的 <code>omp auth-gateway</code> 路由。要求该网关作为 <code>baseUrl</code>，其 bearer 作为 <code>apiKey</code>。</td></tr></tbody></table>
+<p>没有模型的提供商仍然必须做点事情：至少设置一个可用的覆盖项，例如 <code>baseUrl</code>、<code>headers</code>、<code>apiKey</code>、<code>auth: none</code>、<code>compat</code>、<code>disableStrictTools</code>、<code>guardrailIdentifier</code>、<code>remoteCompaction</code>、<code>modelOverrides</code> 或 <code>discovery</code>。</p>
+<h3 id="api-values">API 取值</h3>
+<table><thead><tr><th><code>api</code> 取值</th><th>端点族</th></tr></thead><tbody><tr><td><code>openai-completions</code></td><td>兼容 OpenAI 的 Chat Completions。</td></tr><tr><td><code>openai-responses</code></td><td>兼容 OpenAI 的 Responses API。</td></tr><tr><td><code>openai-codex-responses</code></td><td>Codex 风格变体的 Responses API。</td></tr><tr><td><code>azure-openai-responses</code></td><td>托管在 Azure 上的 Responses API。</td></tr><tr><td><code>anthropic-messages</code></td><td>Anthropic Messages API。</td></tr><tr><td><code>bedrock-converse-stream</code></td><td>Amazon Bedrock Converse 流式。</td></tr><tr><td><code>google-generative-ai</code></td><td>Gemini 公共 API。</td></tr><tr><td><code>google-gemini-cli</code></td><td>兼容 Gemini CLI 的 API。</td></tr><tr><td><code>google-vertex</code></td><td>经由 Vertex AI 的 Gemini。</td></tr></tbody></table>
+<p>这些是内置于 omp 的传输方式。线协议不同的端点需要扩展，而不是在 <code>models.yml</code> 中换一个字符串。</p>
+<h2 id="model-field-reference">模型字段参考</h2>
+<table><thead><tr><th>模型字段</th><th>含义</th></tr></thead><tbody><tr><td><code>id</code></td><td>必填，非空的上游模型 id。</td></tr><tr><td><code>name</code></td><td>选择器标签；默认为 <code>id</code>。</td></tr><tr><td><code>api</code></td><td>为此模型覆盖提供商的 <code>api</code>。</td></tr><tr><td><code>baseUrl</code></td><td>为此模型覆盖提供商的 <code>baseUrl</code>。</td></tr><tr><td><code>reasoning</code></td><td>将该模型标记为具备推理能力。必须为 true，<code>thinking</code> 控制界面才会应用。</td></tr><tr><td><code>thinking</code></td><td>显式的思考强度控制；见下文。省略它则让已知的模型身份和兼容性决定控制项。</td></tr><tr><td><code>input</code></td><td>支持的输入：<code>[text]</code> 或 <code>[text, image]</code>。</td></tr><tr><td><code>imageInputDecoder</code></td><td>仅 <code>stb</code>；为无法自行解码 WebP 的本地后端转换 WebP 输入。</td></tr><tr><td><code>tokenizer</code></td><td>可选的本地 token 估算器：<code>claude-v3</code>、<code>claude-v47</code>、<code>claude-v5</code>、<code>claude-v5-sonnet</code>、<code>qwen3</code>、<code>deepseek-v3</code>、<code>kimi-k2</code> 或 <code>glm5</code>。</td></tr><tr><td><code>supportsTools</code></td><td>端点是否支持工具调用。</td></tr><tr><td><code>cost</code></td><td>每百万 token 的费率。完整定义需要 <code>input</code>、<code>output</code>、<code>cacheRead</code> 和 <code>cacheWrite</code>。</td></tr><tr><td><code>premiumMultiplier</code></td><td>应用于所报告模型成本的乘数。</td></tr><tr><td><code>contextWindow</code></td><td>上下文计量和溢出处理所用的正数总上下文 token 上限。</td></tr><tr><td><code>maxTokens</code></td><td>正数最大输出 token 数。</td></tr><tr><td><code>omitMaxOutputTokens</code></td><td>为 true 时省略请求中的最大输出 token 字段。</td></tr><tr><td><code>headers</code></td><td>按模型的请求头，合并在提供商请求头之上。值支持环境变量名和 <code>!command</code>。</td></tr><tr><td><code>compat</code></td><td>按模型的兼容性覆盖，合并在提供商 <code>compat</code> 之上。</td></tr><tr><td><code>contextPromotionTarget</code></td><td>在压缩之前、发生上下文溢出错误后要切换到的模型 id 或 <code>provider/model-id</code>。</td></tr><tr><td><code>compactionModel</code></td><td>压缩时优先使用的模型选择器。</td></tr><tr><td><code>remoteCompaction</code></td><td>按模型的远程压缩设置。</td></tr></tbody></table>
+<p><code>modelOverrides</code> 接受除 <code>id</code>、<code>api</code> 和 <code>baseUrl</code> 之外的相同元数据字段。它的 <code>cost</code> 对象可以是部分的，而完整模型定义的 <code>cost</code> 必须包含全部四项费率。</p>
+<h3 id="thinking-fields">思考字段</h3>
+<p>新的显式 <code>thinking</code> 块使用这种形状：</p>
+<pre><code class="language-yaml">reasoning: true
+thinking:
+  mode: effort
+  efforts: [low, medium, high]
+  defaultLevel: medium
+</code></pre>
+<table><thead><tr><th>字段</th><th>含义</th></tr></thead><tbody><tr><td><code>mode</code></td><td>必填：<code>effort</code>、<code>budget</code>、<code>google-level</code>、<code>anthropic-adaptive</code> 或 <code>anthropic-budget-effort</code>。</td></tr><tr><td><code>efforts</code></td><td>新配置必填：<code>minimal</code>、<code>low</code>、<code>medium</code>、<code>high</code>、<code>xhigh</code>、<code>max</code> 的一个有序非空子集。</td></tr><tr><td><code>defaultLevel</code></td><td>从受支持的强度集合中选取的默认值。</td></tr><tr><td><code>effortMap</code></td><td>从这些强度名称到提供商专用字符串的可选映射。</td></tr><tr><td><code>supportsDisplay</code></td><td>提供商是否接受思考显示偏好。</td></tr></tbody></table>
+<p>旧版的 <code>levels</code>，或 <code>minLevel</code> 与 <code>maxLevel</code> 这一对字段，仍会被接受并规范化为 <code>efforts</code>；新文件请优先使用 <code>efforts</code>。</p>
+<h3 id="remote-compaction-fields">远程压缩字段</h3>
+<p><code>remoteCompaction</code> 可以出现在提供商、模型或覆盖层级。它接受 <code>enabled</code>、<code>api</code>、<code>endpoint</code>、<code>model</code>、<code>v2StreamingEnabled</code>、<code>v2Endpoint</code> 和 <code>streamingEndpoint</code>。端点和模型字符串必须非空。除非你的提供商提供兼容的服务端压缩端点，否则请省略这个块。</p>
+<h2 id="advanced-compatibility-fields">高级兼容性字段</h2>
+<p>大多数兼容 OpenAI 的服务无需 <code>compat</code> 即可工作。只有在要匹配有文档记录的端点行为，或解决具体的请求错误时，才设置这些字段。每个字段都是可选的；提供商的值构成基线，模型的值合并在其上。</p>
+<p><strong>请求与流式：</strong><code>supportsStore</code>、<code>supportsDeveloperRole</code>、<code>supportsMultipleSystemMessages</code>、<code>maxTokensField</code>（<code>max_completion_tokens</code> 或 <code>max_tokens</code>）、<code>supportsUsageInStreaming</code>、<code>supportsToolChoice</code>、<code>supportsForcedToolChoice</code>、<code>alwaysSendMaxTokens</code>、<code>strictResponsesPairing</code>、<code>streamIdleTimeoutMs</code>、<code>cacheControlFormat</code>（<code>anthropic</code>）、<code>supportsLongPromptCacheRetention</code>、<code>supportsImageDetailOriginal</code> 和 <code>extraBody</code>。</p>
+<p><strong>推理：</strong><code>supportsReasoningEffort</code>、<code>supportsReasoningParams</code>、<code>reasoningEffortMap</code>、<code>thinkingFormat</code>（<code>openai</code>、<code>openrouter</code>、<code>zai</code>、<code>qwen</code> 或 <code>qwen-chat-template</code>）、<code>qwenTemplateReasoningEffort</code>、<code>reasoningContentField</code>（<code>reasoning_content</code>、<code>reasoning</code> 或 <code>reasoning_text</code>）、<code>requiresReasoningContentForToolCalls</code>、<code>allowsSyntheticReasoningContentForToolCalls</code>、<code>requiresAssistantContentForToolCalls</code>、<code>disableReasoningOnForcedToolChoice</code>、<code>disableReasoningOnToolChoice</code> 和 <code>whenThinking</code>。<code>whenThinking</code> 包含另一个部分兼容性块，仅在思考活动时应用。</p>
+<p><strong>工具与消息历史：</strong><code>requiresToolResultName</code>、<code>requiresMistralToolIds</code>、<code>requiresAssistantAfterToolResult</code>、<code>requiresThinkingAsText</code>、<code>supportsStrictMode</code>、<code>toolStrictMode</code>（<code>all_strict</code> 或 <code>none</code>）和 <code>requiresToolResultId</code>。</p>
+<p><strong>流式与兼容 Anthropic 的行为：</strong><code>streamMarkupHealingPattern</code>（<code>kimi</code>、<code>dsml</code>、<code>qwen</code> 或 <code>thinking</code>）、<code>supportsEagerToolInputStreaming</code>、<code>allowAnthropicHeaderOverrides</code> 和 <code>replayUnsignedThinking</code>。</p>
+<p><strong>网关路由：</strong><code>openRouterRouting</code> 和 <code>vercelGatewayRouting</code>，二者各带可选的 <code>only</code> 和 <code>order</code> 字符串列表。</p>
+<p><strong>Bedrock 提示词缓存：</strong><code>promptCacheMode</code>（<code>none</code>、<code>automatic</code> 或 <code>explicit</code>）、<code>promptCacheMinimumTokens</code>、<code>promptCacheMaximumCheckpoints</code> 和 <code>supportsLongPromptCacheRetention</code>。</p>
+<h2 id="troubleshooting">疑难排查</h2>
+<h3 id="the-provider-does-not-appear">提供商没有出现</h3>
+<p>运行 <code>omp models &lt;provider-id&gt;</code>。一个无效的自定义条目会让该文件中的自定义提供商在本次运行中全部禁用，而内置提供商仍然可用。请先检查这些规则：</p>
+<ul>
+<li>带 <code>models</code> 的提供商需要 <code>baseUrl</code>。</li>
+<li>它需要 <code>apiKey</code>，除非 <code>auth</code> 为 <code>none</code> 或已受支持的 <code>oauth</code>。</li>
+<li>它需要提供商级别的 <code>api</code>，或在每个模型上都有 <code>api</code>。</li>
+<li><code>id</code> 必须非空；提供的 <code>contextWindow</code> 和 <code>maxTokens</code> 必须为正数。</li>
+<li>根键是 <code>providers</code>；<code>modelRoles</code> 和 <code>modelProviderOrder</code> 这类设置属于 <code>config.yml</code>，而不是 <code>models.yml</code>。</li>
+</ul>
+<h3 id="the-model-appears-but-requests-return-401-or-403">模型出现了，但请求返回 401 或 403</h3>
+<p>确认 <code>apiKey</code> 指定的环境变量已在启动 omp 的 shell 中导出。请记住，变量名缺失时会回退为字面 token，因此即使该变量不存在，<code>apiKey: MYCO_LLM_API_KEY</code> 仍可能加载成功。检查该服务期望的是其常规 SDK 认证头，还是显式的 Bearer 头；只有后者需要 <code>authHeader: true</code>。</p>
+<h3 id="requests-return-404-or-unsupported-endpoint">请求返回 404 或“不支持的端点”</h3>
+<p>把 API 族和 URL 一起检查。<code>openai-completions</code> 需要 Chat Completions，而 <code>openai-responses</code> 需要 Responses。通用的兼容 OpenAI 的基地址通常以 <code>/v1</code> 结尾；llama.cpp 的发现机制接受其原生根地址，并自行规范化模型请求 URL。</p>
+<h3 id="discovery-returns-no-models">发现机制没有返回任何模型</h3>
+<p>确认服务器正在运行，然后运行 <code>omp models refresh &lt;provider-id&gt;</code>。仅对原生 Ollama 端点使用 <code>ollama</code>，对通用的 <code>/v1/models</code> 服务使用 <code>openai-models-list</code>。如果服务器是远程的或响应较慢，请设置更大的正数 <code>discovery.timeoutMs</code>。</p>
+<h3 id="tool-calls-or-reasoning-fail-with-a-400">工具调用或推理以 400 失败</h3>
+<p>对于会拒绝严格工具 schema 的兼容 Anthropic 的代理，设置 <code>disableStrictTools: true</code>。对于兼容 OpenAI 的方言不匹配，只更改服务错误中提到的相关 <code>compat</code> 字段；大范围照搬的兼容性块可能会禁用端点实际支持的功能。</p>
+<h3 id="context-or-usage-numbers-look-wrong">上下文或用量数字看起来不对</h3>
+<p>被发现端点并不总是报告可靠的元数据。请显式声明该模型，或添加一个 <code>modelOverrides</code> 条目，填入真实的 <code>contextWindow</code>、<code>maxTokens</code>、<code>input</code>、<code>reasoning</code> 和 <code>cost</code> 值。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/custom-models" rel="noreferrer noopener">omp.sh/docs/custom-models</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

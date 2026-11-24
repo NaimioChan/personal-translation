@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工具审批 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：工具审批">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>工具审批</h1>
+
+<p>选择哪些能力立即运行、哪些会停下来等待确认、哪些永不运行。</p>
+<h2 id="pick-a-policy">选一种策略</h2>
+<p>工具审批保护的是这样一条边界：模型提议某个动作，而 omp 用你账户的权限去执行它。审批对变更操作、命令执行、浏览器或桌面控制以及委派出去的工作最有用。它们并不能让模型输出变得可信，也不会把被允许的命令放进沙箱。</p>
+<p>内置默认值是 <strong><code>yolo</code></strong>。对于交互式编码会话，更安全的起点是 <strong><code>write</code></strong>：</p>
+<pre><code class="language-yaml"># ~/.omp/agent/config.yml
+tools:
+  approvalMode: write
+</code></pre>
+<p>你也可以选择<strong>工具审批</strong>，入口在 <code>/settings</code> 中。模式名称描述的是无需提示即可运行的最高能力层级：</p>
+<table><thead><tr><th>模式</th><th>立即运行</th><th>会提示</th></tr></thead><tbody><tr><td><code>always-ask</code></td><td>只读调用</td><td>工作区/会话写入以及可执行动作</td></tr><tr><td><code>write</code></td><td>只读调用与工作区/会话写入</td><td><code>bash</code>、<code>eval</code>、浏览器控制和 <code>task</code> 等可执行动作</td></tr><tr><td><code>yolo</code></td><td>读、写和可执行调用</td><td>仅按层级判定时，什么都不提示</td></tr></tbody></table>
+<p>尽管名字如此，<code>always-ask</code> 并不会为普通读取而询问。未知或格式错误的声明式自定义工具会被当作可执行层级处理，即保守层级。MCP 服务器工具通常是写入层级。</p>
+<p>为一次性会话使用启动标志；它会覆盖配置且不保存：</p>
+<pre><code class="language-sh">omp --approval-mode always-ask
+omp --approval-mode write &quot;fix the failing test&quot;
+omp --approval-mode yolo &quot;apply the reviewed migration&quot;
+
+# Aliases that force yolo for this process
+omp --auto-approve &quot;run the release script&quot;
+omp --yolo &quot;run the release script&quot;
+</code></pre>
+<h2 id="recommended-setups">推荐配置</h2>
+<h3 id="interactive-work">交互式工作</h3>
+<p>当你希望常规的读取和编辑顺畅进行，但仍想审查命令和其他范围较广的执行时，使用 <code>write</code>。当你希望每一次变更都必须跨过人工边界时，使用 <code>always-ask</code>。</p>
+<pre><code class="language-yaml">tools:
+  approvalMode: write
+  approval:
+    eval: prompt
+    computer: prompt
+</code></pre>
+<h3 id="unattended-automation">无人值守的自动化</h3>
+<p>在没有挂载交互式审批 UI 时，提示无法被回答。请使用显式的 <code>yolo</code> 模式，然后对任务不应使用的能力设为拒绝或提示。在真正无头的场景中，优先使用 <code>deny</code>：<code>prompt</code> 策略会让调用失败，而不是永远等待。</p>
+<pre><code class="language-yaml"># ci-approvals.yml
+tools:
+  approvalMode: yolo
+  approval:
+    computer: deny
+    browser: deny
+    eval: deny
+</code></pre>
+<pre><code class="language-sh">omp --config ./ci-approvals.yml --print &quot;update generated files and report the diff&quot;
+</code></pre>
+<p>请把这当作权限设计，而不只是抑制提示。请在不那么宽裕的账户或容器中运行自动化，并只授予它需要的工具。</p>
+<h3 id="acp-clients">ACP 客户端</h3>
+<p>ACP 使用相同的全局、项目、叠加层和运行时设置。审批请求由 ACP 客户端呈现：文件系统与 shell 能力在可用时使用客户端的权限请求，而其他 omp 提示在受支持时使用表单征询。拒绝、取消，或某个必需的提示不受支持，都会终止该调用。</p>
+<p>schema 的默认值是 <code>yolo</code>，但一个其他方面都取默认值的 ACP 会话，仍然会为 <code>bash</code>、<code>edit</code>、<code>delete</code> 和 <code>move</code> 保留客户端权限闸门。如果客户端本就打算无人值守运行，请显式选择加入：</p>
+<pre><code class="language-sh">omp acp --approval-mode yolo
+# equivalent:
+omp acp --yolo
+</code></pre>
+<p>显式配置的 <code>tools.approvalMode: yolo</code> 也会跳过该 ACP 闸门，除非某个按工具的策略指定了 <code>prompt</code> 或 <code>deny</code>。ACP 在 <code>session/new</code>、<code>session/load</code> 或 <code>session/resume</code> 中没有按会话的审批字段；请启动一个独立的 <code>omp acp</code> 进程，或给它一个会话专属的 <code>--config</code> 叠加层。客户端设置见<a href="acp.html">ACP</a>。</p>
+<h2 id="override-individual-capabilities">覆盖单个能力</h2>
+<p><code>tools.approval</code> 是一个以工具名或挂载能力名称为键的映射。每个取值是：</p>
+<ul>
+<li><code>allow</code> — 跳过该模式的层级提示直接运行，除非更强的工具策略另有要求；</li>
+<li><code>prompt</code> — 在交互式会话中询问，除非更强的工具策略已经决定了该调用；</li>
+<li><code>deny</code> — 在执行前阻止；它总是胜过 allow/prompt 决定。</li>
+</ul>
+<p>覆盖在所有模式下都生效，因此它们既能放宽 <code>always-ask</code>，也能收紧 <code>yolo</code>：</p>
+<pre><code class="language-yaml">tools:
+  approvalMode: write
+  approval:
+    bash: prompt
+    read: allow
+    eval: deny
+    computer: deny
+    mcp__filesystem__delete: deny
+</code></pre>
+<p>请使用待处理/已完成调用中显示的确切工具名，或<a href="tools.html">工具索引</a>中的名称。对于挂载的 <code>xd://</code> 能力，会先检查它自己的策略；如果不存在，则以外层 <code>write</code> 策略作为回退。非法的策略字符串会被忽略，所以只使用 <code>allow</code>、<code>prompt</code> 或 <code>deny</code>，并用下面的命令审计生效的 YAML：</p>
+<pre><code class="language-sh">omp config get tools.approvalMode
+omp config get tools.approval
+</code></pre>
+<p>对于针对具体命令的 shell 规则，请使用有序的 <code>bash.patterns</code>；第一条匹配的规则生效。<code>deny</code> 和 <code>prompt</code> 规则可以命中复合命令中匹配的某个片段，而 <code>allow</code> 必须匹配完整的、非复合的命令。</p>
+<pre><code class="language-yaml">tools:
+  approvalMode: yolo
+  approval:
+    eval: deny       # bash rules do not cover a shell spawned through eval
+
+bash:
+  patterns:
+    - match: &quot;git status*&quot;
+      approval: allow
+    - match: &quot;rm -rf *&quot;
+      approval: deny
+    - match: &quot;*deploy*&quot;
+      approval: prompt
+</code></pre>
+<p><code>bash.patterns</code> 规则只管 <code>bash</code> 工具。如果 <code>eval</code> 可能启动 shell，请像上面那样单独为 <code>eval</code> 设置闸门。</p>
+<h2 id="what-an-approval-prompt-means">审批提示意味着什么</h2>
+<p>提示是根据真正将要执行的调用构建的，也就是在任何扩展修改其输入之后。它提供<strong>批准</strong>和<strong>拒绝</strong>，并显示：</p>
+<ul>
+<li><code>Allow tool: &lt;name&gt;</code>；</li>
+<li>相关时的 MCP 来源；</li>
+<li>提供时的策略或安全原因；</li>
+<li>工具特有的细节，例如命令、路径、代码、浏览器动作或子代理分配。</li>
+</ul>
+<p>过长的细节在显示时会被截断。请阅读目标、作用域和取值，而不是仅凭工具名就批准。审批只针对那一次调用；它并不构成后续调用具有相同参数的长期承诺。</p>
+<h2 id="how-omp-reaches-a-decision">omp 如何做出决定</h2>
+<p>对每次调用，omp 先向工具询问其能力层级和任何依赖参数的政策，然后与你的配置结合：</p>
+<ol>
+<li>工具声明的 <code>deny</code> 胜出。</li>
+<li>其次是你按能力设置的 <code>deny</code> 胜出。</li>
+<li>工具声明的安全策略可以显式允许或提示。在非 yolo 模式下，安全覆盖会触发提示，除非工具显式允许。</li>
+<li>当更强的工具策略没有决定该调用时，你有效的 <code>allow</code> 或 <code>prompt</code> 生效。</li>
+<li>否则，模式会将该调用的 <code>read</code>、<code>write</code> 或 <code>exec</code> 层级与上面的模式表比较。</li>
+</ol>
+<p>在 <code>yolo</code> 下，工具自身的安全覆盖不会单独触发提示，但工具显式声明的 <code>prompt</code>、你的 <code>prompt</code>、任一种 <code>deny</code>，以及提供商安全检查仍然生效。这一区别解释了为什么对同一工具的两次调用行为可能不同：参数可能选中了不同的层级或策略。
+例如，<code>bash</code> 能识别一小类关键形态，例如对绝对路径的递归删除、先远程获取再执行、关闭主机，以及写入敏感的账户文件。该内置检查在非 yolo 模式下会强制提示，但它只是一个裸覆盖，所以 <code>yolo</code> 会跳过它。要让某条边界在 <code>yolo</code> 下也绝对生效，请配置 <code>bash.patterns</code> 的 <code>deny</code> 或按工具的 <code>deny</code>；在需要交互式审查的地方使用 <code>prompt</code>。</p>
+<p>工具与扩展的执行约束独立于模式计算。扩展可以阻止一次调用，工具可以拒绝不安全或非法的输入，操作系统或提供商可以不授予权限，运行时错误也可以中止一个已获批准的动作。工具作者可以声明这些边界；见<a href="custom-tools.html#optional-behavior">自定义工具</a>。</p>
+<h2 id="computer-and-provider-safety">电脑控制与提供商安全</h2>
+<p><code>computer</code> 能力默认禁用。启用后，声明 <code>read_only: true</code> 的调用属于读取层级；会修改的、缺失的或格式错误的声明属于可执行层级。它的审批提示会标记只读调用并显示提交的代码。声明只是选择闸门——它并不能静态地证明任意代码无害。</p>
+<p>源自提供商的电脑控制调用还可能带有待处理的安全检查。这些检查<strong>始终需要交互式确认</strong>，即使在 <code>yolo</code> 下、在设置 <code>computer: allow</code> 时，或在批准了外层挂载能力的分派之后也是如此。提示会列出提供商的检查代码、消息和经过清理的数据。没有交互式 UI 时，omp 会失败关闭。</p>
+<p>即使已经批准，重要的现实世界动作仍可能在风险点停下来要求确认，除非你的直接请求已经授权了确切的目标、作用域和取值。网页或桌面上的文本不可信，无法授予该授权。<code>yolo</code> 移除的是 omp 的常规层级提示；它不会覆盖提供商检查、工具或扩展的拒绝、直接用户授权规则、操作系统权限或服务端防护。</p>
+<h2 id="headless-sessions-and-subagents">无头会话与子代理</h2>
+<p>无头会话无法满足必需的 omp 提示。该调用会以 <code>requires approval but no interactive UI available</code> 失败；提供商安全检查会报告它们自己的失败关闭错误。请更改模式、添加范围很窄的 <code>allow</code>，或通过交互式 UI 运行——不要仅仅为了掩盖错误而添加宽泛的权限。</p>
+<p>子代理同样是无头的。它们把普通层级判定当作 <code>yolo</code> 来执行，因为对父级 <code>task</code> 调用的批准就是它们的授权边界。你的 <code>tools.approval</code> 映射仍会被继承：<code>deny</code> 会阻止，<code>allow</code> 会运行，而 <code>prompt</code> 无法被回答，因此会拒绝该子代理调用。在批准父任务之前，请审阅它的分配和隔离选择。</p>
+<h2 id="precedence-and-auditing">优先级与审计</h2>
+<p>从最强到最弱的配置层，审批设置的解析顺序是：</p>
+<ol>
+<li>运行时标志（<code>--approval-mode</code>、<code>--auto-approve</code>、<code>--yolo</code>）；</li>
+<li>较晚的 <code>--config</code> 叠加层，然后是比较早的叠加层；</li>
+<li>项目配置（<code>.omp/config.yml</code> 优先于旧式 <code>.omp/settings.json</code>）；</li>
+<li>全局 <code>~/.omp/agent/config.yml</code>；</li>
+<li>内置默认值。</li>
+</ol>
+<p>映射会深度合并，因此项目可以添加一条 <code>tools.approval</code> 条目而不抹掉无关的全局条目。像 <code>bash.patterns</code> 这样的数组会被更高层整体替换。所有配置位置见<a href="settings.html">设置</a>。</p>
+<p>要审计意外结果：</p>
+<ol>
+<li>在同一个工作目录中运行 <code>omp config get tools.approvalMode</code> 和 <code>omp config get tools.approval</code>。</li>
+<li>检查启动标志和每个 <code>--config</code> 文件；运行时标志优先，较晚的叠加层优先。</li>
+<li>匹配确切的工具/能力名称，并检查提示或错误中的任何 <code>Reason:</code>。</li>
+<li>对于 <code>bash</code>，检查第一条匹配的 <code>bash.patterns</code> 规则；然后确认该动作是否实际改用了 <code>eval</code>。</li>
+<li>判断结果来自用户策略、工具/扩展策略、ACP 权限、提供商安全检查，还是缺少交互式 UI。</li>
+</ol>
+<p>如果某次调用在 <code>always-ask</code> 或 <code>write</code> 下意外提示，它的参数可能把它提升到了 <code>write</code> 或 <code>exec</code>，或者有显式的提示/安全覆盖在生效。如果某次调用在 <code>yolo</code> 下意外运行，请记住层级提示是被有意跳过的；请添加 <code>tools.approval.&lt;name&gt;: prompt</code> 或 <code>deny</code>。如果某次调用在所有模式下都被拒绝，只有在合适时才移除或更改那条确切的用户 <code>deny</code>——<code>yolo</code> 无法击败权威的工具或提供商边界。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/approvals" rel="noreferrer noopener">omp.sh/docs/approvals</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

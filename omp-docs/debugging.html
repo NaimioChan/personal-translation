@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>调试 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：调试">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>调试</h1>
+
+<p>让 omp 暂停一个真实的程序，检查它的实时状态，并解释它为什么与源码所暗示的行为不同。</p>
+<h2 id="debug-a-program-with-omp">用 omp 调试程序</h2>
+<p>当答案取决于运行时状态时使用调试器：某个值意外变化、某个分支只对一种输入成立、某个进程挂起，或多个线程相互干扰。omp 会说 Debug Adapter Protocol（DAP），因此它可以通过语言相关的调试适配器来启动或附加到程序、暂停它、检查栈帧与变量、单步执行并求值表达式。</p>
+<p>最小的可用流程是：</p>
+<ol>
+<li>为该语言安装适配器，并让其可执行文件对 omp 可用。</li>
+<li>在项目目录中启动 <code>omp</code>。</li>
+<li>用日常语言描述程序、停止点和你的问题。</li>
+</ol>
+<p>例如，用 <code>uv add --dev debugpy</code> 安装 debugpy 之后：</p>
+<pre><code class="language-text">Debug etl/transform.py with sample.csv. Break on line 58 when i == 3,
+inspect the locals and running total, and explain where the bad value enters.
+</code></pre>
+<p>omp 会根据 <code>.py</code> 目标和 Python 项目标记选择 debugpy，启动脚本并驱动已暂停的进程。你不需要把请求翻译成 DAP 操作，也不需要自己管理栈帧标识符。</p>
+<p>对于只需要读取定义、引用或类型的问题，请改用<a href="code-intelligence.html">代码智能</a>。调试会执行或附加到真实代码，并可能改变目标的状态。</p>
+<h2 id="what-works-automatically">哪些是自动完成的</h2>
+<p>调试器支持默认启用。可以在 shell 中确认该设置：</p>
+<pre><code class="language-sh">omp config get debug.enabled
+</code></pre>
+<p>对于启动操作，omp 只考虑已安装的适配器，然后用目标的文件扩展名和附近的项目标记（例如 <code>pyproject.toml</code>、<code>go.mod</code>、<code>Cargo.toml</code>、<code>package.json</code> 和 <code>CMakeLists.txt</code>）对它们排序。对于没有扩展名的原生可执行文件，它优先选择 GDB，然后是 LLDB。请求中点名的适配器会覆盖自动选择。</p>
+<p>大多数内置启动配置会停在程序入口。这让 omp 有机会在继续执行之前安装你要求的断点。Go 还可以把包目录作为目标；其他适配器通常需要文件或可执行文件路径。</p>
+<p>附加比启动更难自我描述。当可能存在歧义时，请指明适配器，并提供进程 ID 或目标暴露的主机与端口。</p>
+<h2 id="install-an-adapter">安装适配器</h2>
+<p>至少安装一个适合目标的适配器。omp 内置了以下常见选项的配置；适配器本身是独立的程序。</p>
+<table><thead><tr><th>目标</th><th>内置适配器名称</th><th>omp 的期望</th></tr></thead><tbody><tr><td>C、C++、Rust</td><td><code>gdb</code></td><td>支持 DAP 的 GDB 构建，并以 <code>gdb</code> 可用</td></tr><tr><td>C、C++、Objective-C、Swift、Rust、Zig</td><td><code>lldb-dap</code></td><td><code>PATH</code> 上的 <code>lldb-dap</code></td></tr><tr><td>C、C++、Rust、Zig</td><td><code>codelldb</code></td><td><code>PATH</code> 上的 <code>codelldb</code></td></tr><tr><td>Python</td><td><code>debugpy</code></td><td><code>PATH</code> 上的 <code>python</code>，并在该解释器中执行 <code>uv add --dev debugpy</code></td></tr><tr><td>Go</td><td><code>dlv</code></td><td>执行 <code>go install github.com/go-delve/delve/cmd/dlv@latest</code>，并把 <code>$GOBIN</code>（或 <code>~/go/bin</code>）加入 <code>PATH</code></td></tr><tr><td>Ruby</td><td><code>rdbg</code></td><td>执行 <code>gem install debug</code>，并把 <code>rdbg</code> 加入 <code>PATH</code></td></tr><tr><td>Node 上的 JavaScript 与 TypeScript</td><td><code>js-debug-adapter</code></td><td>vscode-js-debug 的 <code>dapDebugServer.js</code>；见下文</td></tr><tr><td>.NET</td><td><code>netcoredbg</code></td><td><code>PATH</code> 上的 <code>netcoredbg</code></td></tr><tr><td>Kotlin</td><td><code>kotlin-debug-adapter</code></td><td><code>PATH</code> 上的 <code>kotlin-debug-adapter</code></td></tr><tr><td>PHP</td><td><code>php-debug-adapter</code></td><td><code>PATH</code> 上的 <code>php-debug-adapter</code></td></tr><tr><td>Bash</td><td><code>bash-debug-adapter</code></td><td><code>PATH</code> 上的 <code>bash-debug-adapter</code>、<code>bash</code> 和 <code>bashdb</code></td></tr><tr><td>Dart / Flutter</td><td><code>dart-debug-adapter</code> / <code>flutter-debug-adapter</code></td><td>Dart SDK 的 <code>dart debug_adapter</code> 命令</td></tr><tr><td>Elixir</td><td><code>elixir-ls-debugger</code></td><td><code>PATH</code> 上的 <code>elixir-ls-debugger</code></td></tr></tbody></table>
+<p>对于表中没有给出命令的适配器，安装方式因平台而异。安装完成后，请确认启动 omp 的进程能够解析它，例如：</p>
+<pre><code class="language-sh">command -v dlv
+command -v lldb-dap
+</code></pre>
+<h3 id="javascript-and-typescript">JavaScript 与 TypeScript</h3>
+<p><code>js-debug-adapter</code> 是 omp 的适配器名称，<strong>不是 npm 包</strong>。不要运行 <code>npm install -g js-debug-adapter</code>。</p>
+<p>下载 <code>js-debug-dap-*.tar.gz</code> 归档（来自 <a href="https://github.com/microsoft/vscode-js-debug/releases">vscode-js-debug releases</a>），并解压到服务器位于此处的位置：</p>
+<pre><code class="language-text">~/.local/opt/js-debug/src/dapDebugServer.js
+</code></pre>
+<p>该路径会被自动发现。Neovim Mason 的安装也会在 <code>$XDG_DATA_HOME/nvim/mason/packages/js-debug-adapter/js-debug/src/dapDebugServer.js</code>（通常在 <code>~/.local/share</code> 下）被发现。对于任何其他位置，请在启动 omp 之前导出该路径：</p>
+<pre><code class="language-sh">export JS_DEBUG_DAP_SERVER=/absolute/path/to/js-debug/src/dapDebugServer.js
+omp
+</code></pre>
+<p>可用时 omp 用 <code>node</code> 运行该服务器，否则使用它的 Bun 宿主。</p>
+<h2 id="configure-an-adapter">配置适配器</h2>
+<p>你通常不需要 DAP 配置文件。当适配器安装在 <code>PATH</code> 之外、其内置默认值与项目不匹配，或者你要添加 omp 尚不认识的适配器时，才需要添加一个。</p>
+<p>项目特定配置使用 <code>.omp/dap.json</code>，个人默认值使用 <code>~/.omp/agent/dap.json</code>。omp 启动目录下的 <code>dap.json</code> 优先级高于 <code>.omp/dap.json</code>。等价的 <code>.dap.json</code>、<code>dap.yaml</code>、<code>.dap.yaml</code>、<code>dap.yml</code> 和 <code>.dap.yml</code> 名称也被接受。所有适用文件中的适配器映射会被合并；工作区文件覆盖用户与插件的默认值。</p>
+<h3 id="override-a-built-in-adapter">覆盖内置适配器</h3>
+<p>覆盖项会与内置条目合并，所以只需写明要改的部分。下面这个项目级文件让 omp 使用项目的 Python 环境，同时保留 debugpy 的文件扩展名和根标记：</p>
+<pre><code class="language-json">{
+  &quot;adapters&quot;: {
+    &quot;debugpy&quot;: {
+      &quot;command&quot;: &quot;.venv/bin/python&quot;,
+      &quot;launchDefaults&quot;: {
+        &quot;justMyCode&quot;: true,
+        &quot;stopOnEntry&quot;: true
+      }
+    }
+  }
+}
+</code></pre>
+<p>像 <code>.venv/bin/python</code> 这样的相对命令会从调试工作目录解析。在 Windows 上，请使用适合该环境的解释器路径。</p>
+<h3 id="add-a-custom-adapter">添加自定义适配器</h3>
+<p>自定义适配器需要一个命令，以及足够的匹配信息以供自动选择：</p>
+<pre><code class="language-json">{
+  &quot;adapters&quot;: {
+    &quot;acme-jvm&quot;: {
+      &quot;command&quot;: &quot;./tools/acme-debug-adapter&quot;,
+      &quot;args&quot;: [&quot;--stdio&quot;],
+      &quot;languages&quot;: [&quot;java&quot;, &quot;kotlin&quot;],
+      &quot;fileTypes&quot;: [&quot;.java&quot;, &quot;.kt&quot;, &quot;.kts&quot;],
+      &quot;rootMarkers&quot;: [&quot;pom.xml&quot;, &quot;build.gradle&quot;, &quot;build.gradle.kts&quot;],
+      &quot;launchDefaults&quot;: {
+        &quot;request&quot;: &quot;launch&quot;,
+        &quot;stopOnEntry&quot;: true,
+        &quot;projectRoot&quot;: &quot;.&quot;
+      },
+      &quot;attachDefaults&quot;: {
+        &quot;request&quot;: &quot;attach&quot;,
+        &quot;host&quot;: &quot;127.0.0.1&quot;
+      }
+    }
+  }
+}
+</code></pre>
+<p><code>launchDefaults</code> 和 <code>attachDefaults</code> 是适配器特定的 DAP 参数。它们适合放置无法从提示词推断的设置，例如 JVM 主类、source map、<code>justMyCode</code> 或适配器特定的附加模式。运行时，你请求中的程序路径、工作目录、程序参数、PID、主机和端口优先于这些默认值。</p>
+<h2 id="ask-omp-to-launch-or-attach">让 omp 启动或附加</h2>
+<p>给 omp 具体的路径，并描述你想要的证据。启动目标是路径，不是 shell 命令；如有必要，请先让 omp 构建该目标。</p>
+<pre><code class="language-text">Launch build/server with --config test/fixtures/dev.toml. Stop in parseConfig,
+then show me the arguments and the first caller that supplied an empty path.
+</code></pre>
+<pre><code class="language-text">Debug the Go package in ./cmd/worker. Break when retryCount reaches 5 and
+compare the current job with the previous stack frame.
+</code></pre>
+<pre><code class="language-text">Use lldb-dap to launch ./build/repro with arguments --seed 417. Stop at main,
+then continue until decode_packet and inspect the packet header.
+</code></pre>
+<p>要附加到本地进程，请提供它的 PID：</p>
+<pre><code class="language-text">Attach lldb-dap to PID 48120. Pause it, show all threads, and identify which
+thread is holding the process in shutdown.
+</code></pre>
+<p>对于调试服务器，请同时提供端点和适配器：</p>
+<pre><code class="language-text">Use debugpy to attach to 127.0.0.1:5678. When the request handler is reached,
+inspect request.user and explain why authorization fails.
+</code></pre>
+<p>一个 omp 会话中只能有一个根调试会话处于活动状态。在启动或附加到其他目标之前，请让 omp 结束当前的调试会话。</p>
+<h2 id="what-you-see-while-stopped">暂停时你能看到什么</h2>
+<p>调试活动在对话记录中以 <code>Debug</code> 块显示。成功启动或附加后，该块会标明所选的适配器、状态、工作目录和程序。当执行暂停时，它还会显示停止原因、当前栈帧和源码位置，例如：</p>
+<pre><code class="language-text">Adapter: debugpy
+Status: stopped
+Stop reason: breakpoint
+Frame: transform_row
+Location: /workspace/etl/transform.py:58:9
+</code></pre>
+<p>之后 omp 可以在单步或继续之前检查栈、线程、作用域、局部变量、嵌套值、目标输出和受支持的表达式。如果目标在请求超时内没有暂停，对话记录会说明它仍在运行；这不会被报告为崩溃。请让 omp 暂停它，或设置一个可达的断点并继续。</p>
+<p>被暂停的进程确实处于暂停状态。在继续或终止之前，它可能停止处理请求或持有锁。在某些适配器中，表达式求值也可能调用代码或改变状态，所以当这一区别很重要时，请说“只检查，不求值表达式”。</p>
+<h2 id="troubleshooting">故障排查</h2>
+<h3 id="debugging-is-unavailable">调试不可用</h3>
+<p>检查该功能开关，必要时启用它：</p>
+<pre><code class="language-sh">omp config get debug.enabled
+omp config set debug.enabled true
+</code></pre>
+<p>更改启用的工具后，请启动一个新的 omp 会话。</p>
+<h3 id="omp-says-the-adapter-is-unavailable">omp 提示适配器不可用</h3>
+<p>在启动 omp 的同一个 shell 中验证该可执行文件。如果它安装在别处，请在启动 omp 前更新 <code>PATH</code>，或在 <code>dap.json</code> 中设置绝对 <code>command</code>。对于 debugpy，模块不存在时 <code>python</code> 也可能存在；请这样验证：</p>
+<pre><code class="language-sh">python -m debugpy --version
+</code></pre>
+<p>对于 JavaScript，请验证 <code>JS_DEBUG_DAP_SERVER</code> 或某个自动的 <code>dapDebugServer.js</code> 位置，而不是去找 <code>js-debug-adapter</code> 可执行文件。</p>
+<h3 id="the-wrong-adapter-is-selected">选错了适配器</h3>
+<p>在请求中点名适配器。若要长期修复，请在项目 DAP 配置中更正它的 <code>fileTypes</code> 和 <code>rootMarkers</code>。文件扩展名应包含前导点，并按小写匹配。</p>
+<h3 id="the-target-path-is-rejected">目标路径被拒绝</h3>
+<p>请传入源文件或可执行文件路径，而不是把命令和标志写在一个字符串里。把程序参数单独放进请求中。目录目标需要适配器支持 <code>acceptsDirectoryProgram: true</code>；内置的 Delve 配置为 Go 包启用了这一点。</p>
+<h3 id="a-breakpoint-is-pending-or-never-hit">断点处于待定状态或从未命中</h3>
+<p>检查源码路径和行号是否属于目标实际加载的代码。用调试符号重新构建编译后的代码，如果单步行为误导请关闭优化，并验证生成的 JavaScript 的 source map 设置。条件表达式必须使用目标语言，并得到该适配器的支持。</p>
+<h3 id="attach-fails">附加失败</h3>
+<p>确认 PID 仍然存活，或主机与端口可达。然后明确点名预期的适配器。某些适配器需要额外字段，例如进程选择器或模式；请把这些适配器特定的值放进 <code>attachDefaults</code>。</p>
+<h3 id="omp-reports-another-active-session">omp 报告存在另一个活动会话</h3>
+<p>让它终止现有的调试会话，然后重试。启动或附加失败会被自动清理，但运行中或已暂停的会话会一直处于活动状态，直到调试工作结束。</p>
+<h2 id="dap-adapter-configuration-reference">DAP 适配器配置参考</h2>
+<table><thead><tr><th>字段</th><th style="text-align:right">必需</th><th>含义</th></tr></thead><tbody><tr><td><code>command</code></td><td style="text-align:right">是</td><td>可执行文件名称或路径。相对路径从调试工作目录解析。</td></tr><tr><td><code>args</code></td><td style="text-align:right">否</td><td>传给适配器进程的参数，而不是传给被调试程序的参数。</td></tr><tr><td><code>languages</code></td><td style="text-align:right">否</td><td>与该适配器关联的语言元数据。</td></tr><tr><td><code>fileTypes</code></td><td style="text-align:right">否</td><td>用于启动选择的小写扩展名，包含前导点。</td></tr><tr><td><code>rootMarkers</code></td><td style="text-align:right">否</td><td>用于识别并排序匹配项目的文件或目录。</td></tr><tr><td><code>launchDefaults</code></td><td style="text-align:right">否</td><td>适配器特定的参数，会在每次启动时于所请求的程序、工作目录和程序参数之前合并进去。</td></tr><tr><td><code>attachDefaults</code></td><td style="text-align:right">否</td><td>适配器特定的参数，会在每次附加时于所请求的 PID、主机和端口之前合并进去。对于进程启动时已经附加的适配器，可以使用 <code>skipAttachRequest: true</code>。</td></tr><tr><td><code>connectMode</code></td><td style="text-align:right">否</td><td>默认为 <code>stdio</code>；Delve 风格的适配器用 <code>socket</code>；本地 DAP 服务器用 <code>tcp</code>。在 <code>tcp</code> 模式下，<code>args</code> 中的 <code>${port}</code> 会被替换为分配的端口。</td></tr><tr><td><code>acceptsDirectoryProgram</code></td><td style="text-align:right">否</td><td>当适配器可以启动包或项目目录而不是文件时，设为 <code>true</code>。</td></tr></tbody></table>
+<p>外层的 <code>adapters</code> 对象是可选的：配置文件也可以直接包含适配器映射。没有可用 <code>command</code> 的无效新条目会被忽略；无效的部分覆盖不会抹掉它本要修改的内置适配器。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/debugging" rel="noreferrer noopener">omp.sh/docs/debugging</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

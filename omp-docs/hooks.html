@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>钩子 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：钩子">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>钩子</h1>
+
+<p>在 omp 会话中定义明确的时机运行可信的 TypeScript：阻止高风险操作、转换上下文或工具结果，并对生命周期事件做出反应。</p>
+<h2 id="start-with-a-force-push-guard">从一个 force-push 防护开始</h2>
+<p>钩子让你在 omp 每次工作时都应用一套本地策略：在危险命令运行前拦住它、在输出到达模型前做脱敏、给某个轮次添加上下文，或者记录会话活动。钩子是一个可信的 TypeScript 或 JavaScript 模块，它订阅公开事件。</p>
+<p>下面这个项目钩子会阻止<code>git push --force</code>，同时仍然允许<code>--force-with-lease</code>：</p>
+<pre><code class="language-ts">// .omp/hooks/pre/force-push.ts
+import {
+  isToolCallEventType,
+  type ExtensionAPI,
+} from &quot;@oh-my-pi/pi-coding-agent&quot;;
+
+const FORCE_PUSH = /\bgit\s+push\b[^\n]*(?:--force(?:\s|$)|(?:^|\s)-f(?:\s|$))/;
+
+export default function forcePushGuard(pi: ExtensionAPI) {
+  pi.on(&quot;session_start&quot;, (_event, ctx) =&gt; {
+    if (ctx.hasUI) ctx.ui.notify(&quot;Force-push guard active&quot;, &quot;info&quot;);
+  });
+
+  pi.on(&quot;tool_call&quot;, (event) =&gt; {
+    if (!isToolCallEventType(&quot;bash&quot;, event)) return;
+    if (!FORCE_PUSH.test(event.input.command)) return;
+
+    return {
+      block: true,
+      reason: &quot;Blocked git push --force; use --force-with-lease after reviewing the remote branch.&quot;,
+    };
+  });
+}
+</code></pre>
+<p>创建该目录、保存文件，然后从那个项目里启动一个新的<code>omp</code>会话。启动通知说明处理器已经运行。打开<code>/extensions</code>可以看到解析出的文件及其源码。</p>
+<p>想在安装之前测试一个散装文件，就显式传入它：</p>
+<pre><code class="language-sh">omp --hook /absolute/path/to/force-push.ts
+</code></pre>
+<p>然后问：</p>
+<blockquote>
+<p>在这个一次性仓库里运行<code>git push --force</code>。</p>
+</blockquote>
+<p>该命令绝不能运行。omp 会把钩子给出的原因显示为工具错误，代理可以选择更安全的下一步。测试策略时请使用一次性仓库，以防钩子本身有错误。</p>
+<blockquote>
+<p>钩子以你的用户身份执行，可以检查提示词、工具输入、结果、凭据元数据和会话状态。只加载你信任的代码。</p>
+</blockquote>
+<h2 id="install-a-loose-hook">安装散装钩子</h2>
+<p>omp 会自动发现以下目录中的<code>.ts</code>和<code>.js</code>文件（仅限直接子文件）：</p>
+<table><thead><tr><th>作用域</th><th>目录</th></tr></thead><tbody><tr><td>当前项目</td><td>会话工作目录下的<code>.omp/hooks/pre/</code>和<code>.omp/hooks/post/</code></td></tr>
+<tr><td>当前用户配置</td><td>命名配置使用<code>~/.omp/profiles/&lt;name&gt;/agent/hooks/pre/</code>与<code>post/</code>；默认配置使用<code>~/.omp/agent/hooks/pre/</code>与<code>post/</code></td></tr>
+</tbody></table>
+<p>发现不是递归的。像<code>.omp/hooks/pre/team/guard.ts</code>这样的文件会被忽略。添加或修改钩子之后，请启动一个新会话。</p>
+<p><code>pre</code>和<code>post</code>是组织与发现用的命名空间；它们不会自动选择某个事件或工具。<code>pre/</code>里的文件可以订阅任何事件，而像<code>bash.ts</code>这样的文件名也不会自动过滤调用。事件注册和任何<code>toolName</code>检查都要在代码里完成。按惯例，把拦截与输入转换放在<code>pre/</code>，把观察者或结果转换放在<code>post/</code>。</p>
+<p>只想在单次会话中加载，可用<code>--hook &lt;path&gt;</code>或<code>--extension &lt;path&gt;</code>；这两个标志喂给同一套模块加载面。相对路径从会话工作目录解析。要让某个显式钩子长期启用，把它的绝对路径加到<code>~/.omp/agent/config.yml</code>的<code>extensions</code>中：</p>
+<pre><code class="language-yaml">extensions:
+  - /absolute/path/to/force-push.ts
+</code></pre>
+<p>用交互式的<code>/extensions</code>，或从 shell 运行<code>omp -p &#x27;/extensions&#x27;</code>来检查生效的集合。</p>
+<h2 id="the-module-contract">模块契约</h2>
+<p>当前的钩子模块默认导出一个同步或异步工厂，它接收<code>ExtensionAPI</code>。在工厂加载期间注册处理器：</p>
+<pre><code class="language-ts">import type { ExtensionAPI } from &quot;@oh-my-pi/pi-coding-agent&quot;;
+
+export default function myHook(pi: ExtensionAPI) {
+  pi.on(&quot;turn_end&quot;, async (event, ctx) =&gt; {
+    pi.logger.debug(&quot;turn completed&quot;, {
+      cwd: ctx.cwd,
+      turn: event.turnIndex,
+    });
+  });
+}
+</code></pre>
+<p>处理器接收<code>(event, ctx)</code>。<code>event</code>是下面各表中的类型化载荷。常用且有用的上下文成员有：</p>
+<table><thead><tr><th>成员</th><th>含义</th></tr></thead><tbody><tr><td><code>ctx.cwd</code></td><td>当前会话工作目录。</td></tr>
+<tr><td><code>ctx.mode</code></td><td><code>&quot;tui&quot;</code>、<code>&quot;rpc&quot;</code>、<code>&quot;json&quot;</code>或<code>&quot;print&quot;</code>。</td></tr>
+<tr><td><code>ctx.hasUI</code>、<code>ctx.ui</code></td><td>是否有交互界面，以及通知、提问、状态、小组件等 UI 方法。交互式调用前要用<code>hasUI</code>或<code>mode === &quot;tui&quot;</code>做判断。</td></tr>
+<tr><td><code>ctx.model</code>、<code>ctx.models</code></td><td>当前模型，以及只读的模型查询接口。</td></tr>
+<tr><td><code>ctx.sessionManager</code></td><td>只读的会话访问。受支持的写入请使用<code>pi.sendMessage()</code>或<code>pi.appendEntry()</code>。</td></tr>
+<tr><td><code>ctx.isIdle()</code>、<code>ctx.hasPendingMessages()</code>、<code>ctx.abort()</code></td><td>当前运行状态与取消控制。</td></tr>
+<tr><td><code>ctx.getContextUsage()</code>、<code>ctx.getSystemPrompt()</code></td><td>当前上下文用量与生效的系统提示词各行。</td></tr>
+<tr><td><code>ctx.setTimeout()</code>、<code>ctx.setInterval()</code>、<code>ctx.clearTimer()</code></td><td>由会话持有的定时器，其错误会被兜住，并会在关闭时清除。</td></tr>
+</tbody></table>
+<p>请使用导出的 TypeScript 类型，而不要把自己的钩子里嵌套载荷类型抄一遍。尤其是工具输入和详情属于可辨识联合；<code>isToolCallEventType(&quot;bash&quot;, event)</code>可以安全地收窄内置工具的类型。</p>
+<h2 id="events-that-can-change-behavior">可以改变行为的事件</h2>
+<p>载荷列除<code>type</code>外还列出公开的顶层字段。裸返回表示行为不变。</p>
+<table><thead><tr><th>事件</th><th>载荷</th><th>处理器返回值与合并行为</th></tr></thead><tbody><tr><td><code>resources_discover</code></td><td><code>cwd</code>、<code>reason: &quot;startup&quot; | &quot;reload&quot;</code></td><td><code>{ skillPaths?, promptPaths?, themePaths? }</code>。每个处理器返回的路径都会累积。</td></tr>
+<tr><td><code>input</code></td><td><code>text</code>、<code>images?</code>、<code>source: &quot;interactive&quot; | &quot;rpc&quot; | &quot;extension&quot;</code></td><td><code>{ text?, images?, handled? }</code>。转换会串联；<code>handled: true</code>会停止正常的输入处理以及后续处理器。</td></tr>
+<tr><td><code>user_bash</code></td><td><code>command</code>、<code>excludeFromContext</code>、<code>cwd</code></td><td>返回<code>{ result }</code>可替换执行。第一个返回结果的处理器胜出。它观察的是用户输入的<code>!</code>/<code>!!</code>命令，而不是模型发起的工具调用。</td></tr>
+<tr><td><code>user_python</code></td><td><code>code</code>、<code>excludeFromContext</code>、<code>cwd</code></td><td>返回<code>{ result }</code>可替换执行。第一个返回结果的处理器胜出。它观察的是用户输入的<code>$</code>/<code>$$</code>代码。</td></tr>
+<tr><td><code>tool_call</code></td><td><code>toolName</code>、<code>toolCallId</code>、类型化的<code>input</code></td><td><code>{ block?, reason?, input? }</code>。第一个 block 会停止派发。否则最后一个返回的结果胜出；所有处理器看到的都是原始事件输入。对模型发起的调用所做的<code>input</code>替换会重新校验，并成为 omp 显示、审批、持久化和实际执行的内容。被阻止的调用会忽略它，<code>computer</code>调用也不会应用它。</td></tr>
+<tr><td><code>tool_result</code></td><td><code>toolName</code>、<code>toolCallId</code>、<code>input</code>、<code>content</code>、<code>details</code>、<code>isError</code></td><td><code>{ content?, details?, isError? }</code>。改动逐字段串联，后面的处理器能看到前面的改动。钩子可以改写成功或失败的输出，也可以改变最终的错误状态。</td></tr>
+<tr><td><code>context</code></td><td>即将发送给模型的<code>messages</code></td><td><code>{ messages }</code>。替换会串联。这只改变那一次模型调用，不改变已存储的会话消息。</td></tr>
+<tr><td><code>before_provider_request</code></td><td>不透明的<code>payload</code></td><td>直接返回替换后的提供商载荷。替换会串联。这是一个进阶的提供商专属接缝；载荷格式有误会破坏请求。</td></tr>
+<tr><td><code>before_agent_start</code></td><td><code>prompt</code>、<code>images?</code>、当前的<code>systemPrompt</code>各行</td><td><code>{ message?, systemPrompt? }</code>。每个返回的消息都会被加入；系统提示词的替换会串联。自定义消息会被持久化，并按它的<code>display</code>字段可见。</td></tr>
+<tr><td><code>session_before_switch</code></td><td><code>reason: &quot;new&quot; | &quot;resume&quot; | &quot;fork&quot;</code>、<code>targetSessionFile?</code></td><td><code>{ cancel: true }</code>会阻止切换。第一个取消胜出。</td></tr>
+<tr><td><code>session_before_branch</code></td><td><code>entryId</code></td><td><code>{ cancel?, skipConversationRestore? }</code>。第一个取消胜出；否则应用最新返回的结果。</td></tr>
+<tr><td><code>session_before_compact</code></td><td><code>preparation</code>、<code>branchEntries</code>、<code>customInstructions?</code>、<code>signal</code></td><td><code>{ cancel?, compaction? }</code>。取消，或提供一个完整的自定义压缩结果；第一个取消胜出，否则应用最新结果。</td></tr>
+<tr><td><code>session.compacting</code></td><td><code>sessionId</code>、<code>messages</code></td><td><code>{ context?, prompt?, preserveData? }</code>。最新返回的结果会替换先前结果。用它来自定义常规压缩，而不必构造完整的压缩结果。</td></tr>
+<tr><td><code>session_before_tree</code></td><td><code>preparation</code>、<code>signal</code></td><td><code>{ cancel?, summary? }</code>。第一个取消胜出；否则应用最新结果。只有在<code>preparation.userWantsSummary</code>为真时才会使用自定义摘要。</td></tr>
+<tr><td><code>session_stop</code></td><td><code>messages</code>、<code>turn_id</code>、<code>last_assistant_message?</code>、<code>session_id</code>、<code>session_file?</code>、<code>stop_hook_active</code>、<code>signal</code></td><td><code>{ continue: true, additionalContext }</code>或<code>{ decision: &quot;block&quot;, reason }</code>请求一次对模型可见的继续。第一个带非空 context/reason 的可执行继续胜出。</td></tr>
+</tbody></table>
+<h3 id="tool-interception-details">工具拦截细节</h3>
+<p><code>tool_call</code>是执行前的策略接缝。它的<code>event.input</code>是用于检查的规范化视图；而处理器返回的<code>input</code>必须是工具将要执行的完整原始参数对象。不要把规范化的、仅供判断用的字段抄进替换值。如果你只需要拒绝某个操作，返回<code>block</code>即可，不要改写输入。</p>
+<p>修订后的调用仍然会经过正常的工具 schema 与审批策略。因此用户批准的是实际将要运行的参数。钩子是对 omp 审批设置的补充，而不是绕过它。</p>
+<p><code>tool_result</code>在成功和失败的执行之后都会运行。文本块和图片块位于<code>content</code>；工具专属元数据位于<code>details</code>。请优先返回新的内容对象，而不是就地修改事件。</p>
+<h2 id="notification-events">通知类事件</h2>
+<p>这些事件的返回值会被忽略。载荷仍然是类型化的，因此钩子可以记录日志、更新 UI、持久化自己的状态，或入队一条受支持的消息。</p>
+<h3 id="session-and-agent-lifecycle">会话与代理生命周期</h3>
+<table><thead><tr><th>事件</th><th>载荷与时机</th></tr></thead><tbody><tr><td><code>session_start</code></td><td>无附加字段；初始会话加载。</td></tr>
+<tr><td><code>session_switch</code></td><td><code>reason</code>、<code>previousSessionFile</code>；在新的、恢复的或分叉的会话成为活动会话之后。</td></tr>
+<tr><td><code>session_branch</code></td><td><code>previousSessionFile</code>；分支之后。</td></tr>
+<tr><td><code>session_compact</code></td><td><code>compactionEntry</code>、<code>fromExtension</code>；压缩之后。</td></tr>
+<tr><td><code>session_tree</code></td><td><code>newLeafId</code>、<code>oldLeafId</code>、<code>summaryEntry?</code>、<code>fromExtension?</code>；树导航之后。</td></tr>
+<tr><td><code>session_shutdown</code></td><td>无附加字段；进程关闭。只用于简短的清理工作。</td></tr>
+<tr><td><code>agent_start</code></td><td>无附加字段；代理循环开始时，每个提交的提示词触发一次。</td></tr>
+<tr><td><code>agent_end</code></td><td><code>messages</code>、<code>willContinue?</code>；循环结束。<code>willContinue</code>表示已经安排了自动继续。</td></tr>
+<tr><td><code>turn_start</code></td><td><code>turnIndex</code>、<code>timestamp</code>；一个模型/工具轮次的开始。</td></tr>
+<tr><td><code>turn_end</code></td><td><code>turnIndex</code>、最终的<code>message</code>、<code>toolResults</code>；一个轮次的结束。</td></tr>
+<tr><td><code>message_start</code></td><td><code>message</code>；一条用户、助手或工具结果消息开始。</td></tr>
+<tr><td><code>message_update</code></td><td>当前的<code>message</code>、<code>assistantMessageEvent</code>；助手流式更新。这可能非常高频。</td></tr>
+<tr><td><code>message_end</code></td><td>分离的<code>message</code>快照；仅作通知。修改它不会改写模型或会话上下文。</td></tr>
+</tbody></table>
+<h3 id="tool-execution-and-approvals">工具执行与审批</h3>
+<table><thead><tr><th>事件</th><th>载荷与时机</th></tr></thead><tbody><tr><td><code>tool_execution_start</code></td><td><code>toolCallId</code>、<code>toolName</code>、<code>args</code>、<code>intent?</code>；调用前处理之后开始执行。</td></tr>
+<tr><td><code>tool_execution_update</code></td><td><code>toolCallId</code>、<code>toolName</code>、<code>args</code>、<code>partialResult</code>；流式进度。这可能非常高频。</td></tr>
+<tr><td><code>tool_execution_end</code></td><td><code>toolCallId</code>、<code>toolName</code>、<code>result</code>、<code>isError</code>；执行完成。要改写模型收到的内容，请使用<code>tool_result</code>，而不是这个事件。</td></tr>
+<tr><td><code>tool_approval_requested</code></td><td><code>sessionId</code>、<code>toolCallId</code>、<code>toolName</code>、<code>reason?</code>、<code>approvalMode</code>；omp 即将请求审批。</td></tr>
+<tr><td><code>tool_approval_resolved</code></td><td><code>sessionId</code>、<code>toolCallId</code>、<code>toolName</code>、<code>approved</code>、<code>reason?</code>；审批已被接受或拒绝。</td></tr>
+</tbody></table>
+<h3 id="maintenance-retry-and-integrations">维护、重试与集成</h3>
+<table><thead><tr><th>事件</th><th>载荷与时机</th></tr></thead><tbody><tr><td><code>auto_compaction_start</code></td><td><code>reason</code>、<code>action</code>；自动压缩开始。</td></tr>
+<tr><td><code>auto_compaction_end</code></td><td><code>action</code>、<code>result</code>、<code>aborted</code>、<code>willRetry</code>、<code>errorMessage?</code>、<code>skipped?</code>；自动压缩结束。</td></tr>
+<tr><td><code>auto_retry_start</code></td><td><code>attempt</code>、<code>maxAttempts</code>、<code>delayMs</code>、<code>errorMessage</code>、<code>errorId?</code>；一次重试等待开始。</td></tr>
+<tr><td><code>auto_retry_end</code></td><td><code>success</code>、<code>attempt</code>、<code>finalError?</code>、<code>retryErrors?</code>；重试序列结束。</td></tr>
+<tr><td><code>retry_fallback_applied</code></td><td><code>from</code>、<code>to</code>、<code>role</code>；重试切换了模型/提供商。</td></tr>
+<tr><td><code>retry_fallback_succeeded</code></td><td><code>model</code>、<code>role</code>；请求在回退模型上成功。</td></tr>
+<tr><td><code>ttsr_triggered</code></td><td>匹配到的<code>rules</code>；生成被某条 TTSR 规则中断。</td></tr>
+<tr><td><code>todo_reminder</code></td><td><code>todos</code>、<code>attempt</code>、<code>maxAttempts</code>；未完成待办提醒逻辑运行过。</td></tr>
+<tr><td><code>goal_updated</code></td><td><code>goal</code>或<code>null</code>、<code>state?</code>；目标模式状态发生变化。</td></tr>
+<tr><td><code>credential_disabled</code></td><td><code>provider</code>、<code>disabledCause</code>；omp 自动软禁用了某个失效凭据。用户主动移除或凭据去重时不会发出。</td></tr>
+<tr><td><code>mcp_notification</code></td><td>配置中的原始<code>server</code>名、JSON-RPC <code>method</code>、不透明的<code>params</code>；在 omp 处理完已知 MCP 通知之后发出，服务器专属方法也会发出。</td></tr>
+<tr><td><code>after_provider_response</code></td><td><code>status</code>、<code>headers</code>、<code>requestId?</code>、<code>metadata?</code>；在流式响应体被消费之前即可获得响应元数据。此事件中没有响应体。</td></tr>
+</tbody></table>
+<h2 id="ordering-timeouts-and-errors">顺序、超时与错误</h2>
+<p>在单个模块内，处理器按注册顺序运行。除<code>session_shutdown</code>外，事件处理器逐个等待完成。跨模块时，处理器遵循解析出的加载顺序，但目录枚举与能力去重并不是公开的优先级机制。不要用<code>00-</code>、<code>99-</code>这类文件名前缀在钩子文件之间建立正确性依赖；请把相互依赖的处理器合并到一个模块里。</p>
+<p>重复发现的钩子键可能会遮蔽优先级更低的提供商的钩子。在包里请使用有辨识度的文件名。显式列出的路径会按其解析后的绝对路径去重，因此同一个模块不会被有意加载两次。</p>
+<p>大多数处理器有 30 秒的活跃工作预算。<code>tool_call</code>使用可配置的<code>extensionHandlers.toolCallTimeoutMs</code>设置，默认同样是 30 秒：</p>
+<pre><code class="language-yaml">extensionHandlers:
+  toolCallTimeoutMs: 10000
+</code></pre>
+<p><code>tool_call</code>抛异常或超时会失败关闭：omp 阻止该调用，并报告是哪个扩展失败或超时。其他事件的异常和超时会被报告为扩展错误，该处理器不贡献结果，后续处理器继续运行。<code>session_shutdown</code>处理器并发运行，预算两秒，因此清理不会把进程拖住。</p>
+<p>加载阶段出现语法/导入错误、工厂抛出异常，或缺少默认工厂，都会导致该模块无法加载；omp 会继续加载其他模块。用<code>/extensions</code>定位缺失的路径，然后用<code>--log-level debug</code>重启以查看加载错误。</p>
+<h2 id="package-and-share-hooks">打包与分享钩子</h2>
+<p>要做一个可复用的纯钩子包，请保留惯例目录，并把钩子声明为包入口。这样直接按目录加载可以工作，已安装插件的发现过程也能找到<code>hooks/</code>这个面：</p>
+<pre><code class="language-text">force-push-guard/
+  package.json
+  hooks/
+    pre/
+      force-push.ts
+</code></pre>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;@acme/force-push-guard&quot;,
+  &quot;version&quot;: &quot;1.0.0&quot;,
+  &quot;omp&quot;: {
+    &quot;extensions&quot;: [&quot;./hooks/pre/force-push.ts&quot;]
+  }
+}
+</code></pre>
+<p>发布之前先测试该目录：</p>
+<pre><code class="language-sh">omp --hook ./force-push-guard
+</code></pre>
+<p>日常本地使用，可以把它作为插件安装：</p>
+<pre><code class="language-sh">omp install ./force-push-guard
+# Project scope instead of user scope:
+omp install -l ./force-push-guard
+</code></pre>
+<p><code>omp install</code>接受本地路径、npm 包、Git 仓库和插件市场条目。包的导入必须能从已安装的包解析到，且每个运行时文件都必须包含在发布产物中。密钥和与机器相关的策略请放在用户或项目配置里，而不是提交进公开包。</p>
+<p>多入口包见<a href="extension-authoring.html">编写扩展</a>；安装、作用域、更新与发布见<a href="plugins.html">插件</a>。</p>
+<h2 id="troubleshooting">疑难排查</h2>
+<table><thead><tr><th>现象</th><th>检查</th></tr></thead><tbody><tr><td>钩子没有出现在<code>/extensions</code>中</td><td>文件必须是<code>hooks/pre</code>或<code>hooks/post</code>的直接<code>.ts</code>或<code>.js</code>子文件，或者被显式传入。项目发现使用会话的工作目录；用户发现使用活动配置。</td></tr>
+<tr><td>钩子出现了，但某个处理器从不运行</td><td>目录和文件名不会选择事件。确认精确的<code>pi.on(&quot;event_name&quot;, ...)</code>注册以及任何<code>toolName</code>过滤。</td></tr>
+<tr><td>启动时报告扩展无效</td><td>导出一个默认工厂函数，并修复它的导入/语法错误。用<code>--log-level debug</code>运行以看到失败的路径。</td></tr>
+<tr><td>在 print 或 RPC 模式下 UI 调用消失</td><td>在提问或渲染之前检查<code>ctx.hasUI</code>或<code>ctx.mode</code>。无界面模式请使用日志或持久化状态。</td></tr>
+<tr><td>某个工具被扩展失败阻止</td><td>某个<code>tool_call</code>处理器抛出异常或超出超时。请修好钩子，而不是先调高超时；拦截按设计就是失败关闭的。</td></tr>
+<tr><td>两个钩子意见不一致</td><td>把依赖顺序的逻辑放进同一个模块。对独立模块请记住：第一个 block 胜出，结果/上下文转换按上文所述串联，许多会话结果事件使用最新返回的结果。</td></tr>
+</tbody></table>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/hooks" rel="noreferrer noopener">omp.sh/docs/hooks</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

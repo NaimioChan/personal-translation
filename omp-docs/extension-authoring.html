@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>编写扩展 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：编写扩展">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>编写扩展</h1>
+
+<p>构建一个 TypeScript 或 JavaScript 包，用它添加工具、斜杠命令、事件行为以及其他 omp 能力，然后在本地加载它，或作为插件分发。</p>
+<h2 id="build-your-first-extension">构建你的第一个扩展</h2>
+<p>扩展是一个 TypeScript 或 JavaScript 模块，omp 会把它加载进会话进程。当某项能力需要可执行行为时就用它：模型可以使用的工具、面向用户的斜杠命令、围绕工具调用的策略、自定义 UI，或者提供商集成。</p>
+<p>可分发的扩展包还可以捆绑声明式能力，例如技能、提示词模板、规则、钩子、自定义工具和 MCP 服务器配置。扩展工厂与这些同级文件夹会一起被发现，所以用户只需安装一个包。</p>
+<p>从两个文件开始。omp 直接运行 TypeScript，因此构建步骤是可选的。</p>
+<pre><code class="language-text">hello-extension/
+├── package.json
+└── src/
+    └── index.ts
+</code></pre>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;hello-extension&quot;,
+  &quot;version&quot;: &quot;1.0.0&quot;,
+  &quot;type&quot;: &quot;module&quot;,
+  &quot;files&quot;: [&quot;src&quot;],
+  &quot;omp&quot;: {
+    &quot;extensions&quot;: [&quot;./src/index.ts&quot;]
+  }
+}
+</code></pre>
+<p><code>omp.extensions</code> 是一个数组，每个条目都相对于包的根目录。已安装插件的条目可以是 <code>.ts</code>、<code>.js</code>、<code>.mjs</code> 或 <code>.cjs</code>。较旧的 <code>pi.extensions</code> 字段仍然兼容，但新包应使用 <code>omp.extensions</code>。</p>
+<p>把 omp 的包安装为开发依赖，以获得当前的 TypeScript 类型和编辑器补全：</p>
+<pre><code class="language-bash">cd hello-extension
+bun add --dev @oh-my-pi/pi-coding-agent
+</code></pre>
+<p>现在创建 <code>src/index.ts</code>：</p>
+<pre><code class="language-ts">import type { ExtensionAPI } from &quot;@oh-my-pi/pi-coding-agent&quot;;
+
+export default function helloExtension(pi: ExtensionAPI) {
+  const z = pi.zod;
+
+  pi.on(&quot;session_start&quot;, (_event, ctx) =&gt; {
+    ctx.ui.notify(&quot;hello-extension loaded&quot;, &quot;info&quot;);
+  });
+
+  pi.registerCommand(&quot;hello&quot;, {
+    description: &quot;Greet someone&quot;,
+    handler: async (args, ctx) =&gt; {
+      const name = args.trim() || &quot;there&quot;;
+      ctx.ui.notify(`Hello, ${name}!`, &quot;info&quot;);
+    },
+  });
+
+  pi.registerTool({
+    name: &quot;greet_person&quot;,
+    label: &quot;Greet Person&quot;,
+    description: &quot;Create a short greeting for a person&quot;,
+    parameters: z.object({
+      name: z.string().describe(&quot;Person to greet&quot;),
+    }),
+    approval: &quot;read&quot;,
+    async execute(_toolCallId, params) {
+      return {
+        content: [{ type: &quot;text&quot;, text: `Hello, ${params.name}!` }],
+        details: { name: params.name },
+      };
+    },
+  });
+}
+</code></pre>
+<p>默认导出就是公开的工厂契约：</p>
+<pre><code class="language-ts">export type ExtensionFactory = (
+  pi: ExtensionAPI,
+) =&gt; void | Promise&lt;void&gt;;
+</code></pre>
+<p>在工厂内部注册命令、工具、处理器、渲染器、标志和提供商。像 <code>pi.sendMessage()</code> 这样的运行时操作在工厂加载期间不可用；请稍后从事件处理器、命令处理器或工具执行中调用它们。</p>
+<h2 id="load-and-test-it">加载并测试它</h2>
+<p>在包含 <code>hello-extension</code> 的目录中，启动一个一次性开发会话：</p>
+<pre><code class="language-bash">omp --extension ./hello-extension
+# -e is the short form
+</code></pre>
+<p>在 TUI 中：</p>
+<ol>
+<li><code>hello-extension loaded</code> 通知确认工厂已运行。</li>
+<li>输入 <code>/hello Ada</code> 测试面向用户的命令。</li>
+<li>输入 <strong>“Use the greeting tool to greet Ada.”</strong>，通过普通提示词试用该工具。</li>
+<li>打开 <code>/extensions</code> 查看发现到的能力条目及其启用状态。</li>
+</ol>
+<p>扩展工厂在会话启动时初始化。修改 <code>src/index.ts</code> 后，请退出并启动新会话以加载新代码。</p>
+<h3 id="keep-it-enabled-while-developing">在开发期间保持启用</h3>
+<p>把该包链接进你的用户插件集合：</p>
+<pre><code class="language-bash">omp plugin link ./hello-extension
+# Equivalent for a local path:
+omp install ./hello-extension
+</code></pre>
+<p>本地安装是一个符号链接，所以下次 omp 启动时改动就在那里；它不会热重载正在运行的扩展工厂。用 <code>omp plugin list</code> 确认链接，用 <code>omp plugin doctor</code> 检查已安装插件的健康状况。</p>
+<p>对于不想安装的包，改为把它的绝对路径加入用户配置：</p>
+<pre><code class="language-yaml"># ~/.omp/agent/config.yml
+extensions:
+  - /absolute/path/to/hello-extension
+</code></pre>
+<p>配置中的相对路径是从 omp 启动的目录解析的，而不是从配置文件所在目录。项目专属配置应放在 <code>&lt;project&gt;/.omp/config.yml</code>。松散模块也可以直接放进 <code>&lt;project&gt;/.omp/extensions/</code> 或 <code>~/.omp/agent/extensions/</code>；自动目录扫描会发现 <code>.ts</code> 和 <code>.js</code> 文件，以及一层 <code>index.ts</code> 或 <code>index.js</code> 子目录。</p>
+<h2 id="bundle-more-capabilities">捆绑更多能力</h2>
+<p>通过 <code>--extension</code>、<code>extensions:</code> 或插件管理器加载的包根目录，可以包含这些约定路径：</p>
+<pre><code class="language-text">hello-extension/
+├── package.json
+├── src/index.ts
+├── skills/release-notes/SKILL.md
+├── commands/release.md
+├── rules/commit-policy.md
+├── prompts/review.md
+├── hooks/
+│   ├── pre/block-dangerous.ts
+│   └── post/audit.ts
+├── tools/
+│   └── changelog/index.ts
+└── .mcp.json
+</code></pre>
+<table><thead><tr><th>路径</th><th>omp 会发现什么</th></tr></thead><tbody><tr><td><code>skills/&lt;name&gt;/SKILL.md</code></td><td>按需加载的技能</td></tr><tr><td><code>commands/*.md</code></td><td>用户斜杠命令</td></tr><tr><td><code>rules/*.{md,mdc}</code></td><td>项目或工作流规则</td></tr><tr><td><code>prompts/*.md</code></td><td>提示词模板</td></tr><tr><td><code>hooks/pre/*</code>, <code>hooks/post/*</code></td><td>工具调用前与调用后的钩子</td></tr><tr><td><code>tools/*</code></td><td>以受支持的脚本、Markdown、JSON、TS 或 JS 格式编写的自定义工具</td></tr><tr><td><code>.mcp.json</code> 或 <code>mcp.json</code></td><td>MCP 服务器定义</td></tr></tbody></table>
+<p>这些文件夹无需在 <code>package.json</code> 中声明任何字段。发布时请把它们加入包的 <code>files</code> 列表。各文件格式见<a href="skills.html">技能</a>、<a href="hooks.html">钩子</a>、<a href="custom-tools.html">自定义工具</a>和 <a href="mcp.html">MCP</a>。</p>
+<p>一个包可以暴露多个运行时工厂：</p>
+<pre><code class="language-json">{
+  &quot;omp&quot;: {
+    &quot;extensions&quot;: [&quot;./src/policy.ts&quot;, &quot;./src/tools.ts&quot;]
+  }
+}
+</code></pre>
+<p>只有当它们确实彼此独立时才使用多个条目。单个工厂就能注册全部公开扩展接口。</p>
+<h2 id="package-and-distribute-it">打包并分发</h2>
+<p>扩展运行时拥有与 omp 相同的文件系统、网络、环境和进程权限。它们不在沙箱中。请保持包可审计、避免不必要的依赖，并告知用户它需要哪些外部访问。</p>
+<h3 id="publish-to-npm">发布到 npm</h3>
+<p>确保 <code>files</code> 包含每个工厂和捆绑的能力目录，然后在发布前检查 tarball：</p>
+<pre><code class="language-bash">npm pack --dry-run
+npm publish
+</code></pre>
+<p>用户按 npm 名称安装已发布的包：</p>
+<pre><code class="language-bash">omp install @acme/hello-extension
+</code></pre>
+<p>包管理器会安装其依赖，并从已发布的 <code>package.json</code> 中读取 <code>omp.extensions</code>。安装或升级扩展模块后，请启动新的 omp 会话。</p>
+<h3 id="install-from-git">从 Git 安装</h3>
+<p>公开仓库无需插件市场即可安装：</p>
+<pre><code class="language-bash">omp install github:acme/hello-extension#v1.0.0
+</code></pre>
+<p>为获得可复现的安装，请使用不可变的标签或提交。</p>
+<h3 id="publish-through-a-marketplace">通过插件市场发布</h3>
+<p>插件市场是一个包含 <code>.omp-plugin/marketplace.json</code> 的 Git 仓库。<code>.claude-plugin/marketplace.json</code> 是兼容 Claude Code 的回退位置。一个最小仓库可以把扩展放在 <code>plugins/hello-extension/</code>，并使用这样的目录清单：</p>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;acme-extensions&quot;,
+  &quot;owner&quot;: { &quot;name&quot;: &quot;Acme&quot; },
+  &quot;plugins&quot;: [
+    {
+      &quot;name&quot;: &quot;hello-extension&quot;,
+      &quot;description&quot;: &quot;A greeting command and tool&quot;,
+      &quot;version&quot;: &quot;1.0.0&quot;,
+      &quot;source&quot;: &quot;./plugins/hello-extension&quot;,
+      &quot;category&quot;: &quot;productivity&quot;
+    }
+  ]
+}
+</code></pre>
+<p>推送仓库后，用户运行：</p>
+<pre><code class="language-bash">omp plugin marketplace add acme/omp-extensions
+omp plugin install hello-extension@acme-extensions
+</code></pre>
+<p>发布更新时，请给仓库打标签，按需更新目录清单中的版本与源固定信息，并让用户先运行 <code>omp plugin marketplace update</code>，再运行 <code>omp plugin upgrade hello-extension@acme-extensions</code>。目录清单的源格式、固定方式、作用域与更新行为见<a href="marketplace.html">插件市场</a>，安装与功能管理见<a href="plugins.html">插件</a>。</p>
+<h2 id="public-extension-interfaces">公开扩展接口</h2>
+<p>已安装的 <code>@oh-my-pi/pi-coding-agent</code> 的 TypeScript 声明是签名规范的权威参考。从包根导入公开类型：</p>
+<pre><code class="language-ts">import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ExtensionCommandContext,
+  ExtensionFactory,
+  ToolDefinition,
+} from &quot;@oh-my-pi/pi-coding-agent&quot;;
+</code></pre>
+<h3 id="extensionapi"><code>ExtensionAPI</code></h3>
+<table><thead><tr><th>接口面</th><th>公开成员</th></tr></thead><tbody><tr><td>Schema 与宿主访问</td><td><code>zod</code>, <code>arktype</code>, <code>typebox</code>, <code>logger</code>, <code>pi</code></td></tr><tr><td>事件</td><td><code>on(event, handler)</code>、共享的 <code>events</code> 总线</td></tr><tr><td>注册</td><td><code>registerTool</code>, <code>registerCommand</code>, <code>registerShortcut</code>, <code>registerFlag</code>, <code>registerMessageRenderer</code>, <code>registerAssistantThinkingRenderer</code>, <code>registerComposerShape</code></td></tr><tr><td>提供商集成</td><td><code>registerProvider</code>, <code>unregisterProvider</code></td></tr><tr><td>宿主文件系统回退</td><td><code>registerFileWriteFallback</code>, <code>registerFileDeleteFallback</code></td></tr><tr><td>消息与执行</td><td><code>sendMessage</code>, <code>sendUserMessage</code>, <code>appendEntry</code>, <code>exec</code></td></tr><tr><td>工具与命令</td><td><code>getActiveTools</code>, <code>getAllTools</code>, <code>setActiveTools</code>, <code>getCommands</code></td></tr><tr><td>会话选择</td><td><code>setModel</code>, <code>getThinkingLevel</code>, <code>setThinkingLevel</code>, <code>getServiceTiers</code>, <code>setServiceTier</code>, <code>getSessionName</code>, <code>setSessionName</code></td></tr><tr><td>元数据与标志</td><td><code>setLabel</code>, <code>getFlag</code></td></tr></tbody></table>
+<p>新的工具 schema 请使用 <code>pi.zod</code> 或 <code>pi.arktype</code>。<code>pi.typebox</code> 是为了兼容旧扩展而存在。</p>
+<h3 id="commands-shortcuts-and-flags">命令、快捷键与标志</h3>
+<pre><code class="language-ts">pi.registerCommand(&quot;deploy&quot;, {
+  description: &quot;Deploy the current project&quot;,
+  getArgumentCompletions: (prefix) =&gt; [
+    { value: &quot;staging&quot;, label: &quot;staging&quot; },
+    { value: &quot;production&quot;, label: &quot;production&quot; },
+  ].filter((item) =&gt; item.value.startsWith(prefix)),
+  handler: async (args, ctx) =&gt; {
+    // args is the text after /deploy
+  },
+});
+
+pi.registerShortcut(&quot;ctrl+shift+d&quot;, {
+  description: &quot;Open deployment controls&quot;,
+  handler: async (ctx) =&gt; {
+    ctx.ui.notify(&quot;Deployment controls&quot;, &quot;info&quot;);
+  },
+});
+
+pi.registerFlag(&quot;deployment-target&quot;, {
+  description: &quot;Default deployment target&quot;,
+  type: &quot;string&quot;,
+  default: &quot;staging&quot;,
+});
+</code></pre>
+<p>命令名不得与内置斜杠命令冲突。快捷键使用<a href="keybindings.html">快捷键</a>中描述的同一套 ID；保留的终端组合键和核心组合键无法被替换。用 <code>pi.getFlag(&quot;deployment-target&quot;)</code> 读取已注册的标志。</p>
+<h3 id="tools">工具</h3>
+<p>一个 <code>ToolDefinition</code> 需要 <code>name</code>、<code>label</code>、<code>description</code>、<code>parameters</code>，以及一个异步的 <code>execute</code> 函数。完整的可选接口面如下：</p>
+<table><thead><tr><th>字段</th><th>用途</th></tr></thead><tbody><tr><td><code>hidden</code></td><td>除非显式选中，否则排除该工具</td></tr><tr><td><code>defaultInactive</code></td><td>注册它但初始不激活</td></tr><tr><td><code>loadMode</code></td><td>默认是 <code>&quot;discoverable&quot;</code>；用 <code>&quot;essential&quot;</code> 让它保持在顶层</td></tr><tr><td><code>approval</code></td><td><code>&quot;read&quot;</code>、<code>&quot;write&quot;</code> 或 <code>&quot;exec&quot;</code>；默认为 <code>&quot;exec&quot;</code></td></tr><tr><td><code>deferrable</code></td><td>允许需要确认或丢弃的分阶段改动</td></tr><tr><td><code>strict</code></td><td>选择加入或退出提供商的结构化输出语法</td></tr><tr><td><code>onSession</code></td><td>在启动、切换、分叉、树导航或关闭时初始化或清理状态</td></tr><tr><td><code>renderCall</code>, <code>renderResult</code></td><td>为自定义呈现提供 TUI 组件</td></tr><tr><td><code>mcpServerName</code>, <code>mcpToolName</code></td><td>当该工具包装 MCP 时添加发现元数据</td></tr></tbody></table>
+<p><code>execute(toolCallId, params, signal, onUpdate, ctx)</code> 返回一个代理工具结果，其中包含 <code>content</code> 数组和可选的带类型 <code>details</code>。请尊重 <code>signal</code> 以支持取消，并用 <code>onUpdate</code> 汇报有意义的流式进度。</p>
+<h3 id="runtime-and-command-contexts">运行时与命令上下文</h3>
+<p>每个事件处理器和工具都会收到 <code>ExtensionContext</code>。命令处理器会收到更大的 <code>ExtensionCommandContext</code>。</p>
+<table><thead><tr><th><code>ExtensionContext</code> 成员</th><th>用途</th></tr></thead><tbody><tr><td><code>cwd</code>, <code>mode</code>, <code>hasUI</code>, <code>ui</code></td><td>当前目录与用户界面接口面</td></tr><tr><td><code>model</code>, <code>models</code>, <code>modelRegistry</code></td><td>当前模型，以及只读的模型发现/解析</td></tr><tr><td><code>sessionManager</code></td><td>只读的会话访问</td></tr><tr><td><code>getContextUsage()</code>, <code>getAsyncJobSnapshot()</code></td><td>当前上下文与后台任务快照</td></tr><tr><td><code>isIdle()</code>, <code>hasPendingMessages()</code>, <code>abort()</code>, <code>shutdown()</code></td><td>会话状态与生命周期控制</td></tr><tr><td><code>compact()</code>, <code>getSystemPrompt()</code></td><td>上下文操作</td></tr><tr><td><code>memory</code></td><td>已配置的结构化记忆运行时（如果可用）</td></tr><tr><td><code>setInterval</code>, <code>setTimeout</code>, <code>clearTimer</code></td><td>受管理的后台回调</td></tr><tr><td><code>invokeTool</code></td><td>替换同一个内置工具时，委托给原生实现</td></tr><tr><td><code>localProtocolOptions</code></td><td>调用会话的本地协议映射（如果存在）</td></tr><tr><td><code>isProjectTrusted()</code></td><td>兼容性检查；omp 目前信任已加载的项目输入</td></tr></tbody></table>
+<p>命令处理器还会额外收到 <code>waitForIdle()</code>、<code>newSession()</code>、<code>switchSession()</code>、<code>branch()</code>、<code>navigateTree()</code> 和 <code>reload()</code>。</p>
+<p><code>ctx.ui</code> 包含通知、选择/确认/输入对话框、编辑器访问、状态与小组件、页眉/页脚控制、主题、自定义 TUI 组件，以及自动补全注册。在依赖仅交互式可用的行为之前，请检查 <code>ctx.hasUI</code> 或 <code>ctx.mode === &quot;tui&quot;</code>；print 和 RPC 会话没有交互式终端。</p>
+<p>请使用 <code>ctx.setInterval()</code> 和 <code>ctx.setTimeout()</code>，而不是裸定时器。受管理的回调会捕获抛出的错误、不会让进程保持存活，并在会话关闭时被清除。</p>
+<h3 id="events">事件</h3>
+<p>用 <code>pi.on(name, handler)</code> 订阅。事件对象与允许的返回值会由事件名推断出来。</p>
+<table><thead><tr><th>分组</th><th>事件名</th></tr></thead><tbody><tr><td>资源发现</td><td><code>resources_discover</code></td></tr><tr><td>会话生命周期</td><td><code>session_start</code>, <code>session_before_switch</code>, <code>session_switch</code>, <code>session_before_branch</code>, <code>session_branch</code>, <code>session_before_compact</code>, <code>session.compacting</code>, <code>session_compact</code>, <code>session_before_tree</code>, <code>session_tree</code>, <code>session_shutdown</code></td></tr><tr><td>提示词与提供商</td><td><code>input</code>, <code>before_agent_start</code>, <code>before_provider_request</code>, <code>after_provider_response</code>, <code>context</code></td></tr><tr><td>代理与消息</td><td><code>agent_start</code>, <code>agent_end</code>, <code>session_stop</code>, <code>turn_start</code>, <code>turn_end</code>, <code>message_start</code>, <code>message_update</code>, <code>message_end</code></td></tr><tr><td>工具生命周期</td><td><code>tool_call</code>, <code>tool_result</code>, <code>tool_execution_start</code>, <code>tool_execution_update</code>, <code>tool_execution_end</code>, <code>tool_approval_requested</code>, <code>tool_approval_resolved</code></td></tr><tr><td>用户命令与 MCP</td><td><code>user_bash</code>, <code>user_python</code>, <code>mcp_notification</code></td></tr><tr><td>压缩与重试</td><td><code>auto_compaction_start</code>, <code>auto_compaction_end</code>, <code>auto_retry_start</code>, <code>auto_retry_end</code>, <code>retry_fallback_applied</code>, <code>retry_fallback_succeeded</code>, <code>ttsr_triggered</code></td></tr><tr><td>会话服务</td><td><code>todo_reminder</code>, <code>goal_updated</code>, <code>credential_disabled</code></td></tr></tbody></table>
+<p>前置事件可以取消或替换其文档中说明的操作，<code>tool_call</code> 可以阻止一次调用，<code>tool_result</code> 可以替换其结果。请让 TypeScript 来约束确切的返回形状，而不是返回本属于其他事件的字段。</p>
+<h2 id="troubleshooting">故障排查</h2>
+<h3 id="the-package-does-not-load">包没有加载</h3>
+<ul>
+<li>确认每个 <code>omp.extensions</code> 路径都存在，且相对于 <code>package.json</code>。</li>
+<li>确认入口默认导出的是一个函数，而不是一个已经创建好的对象。</li>
+<li>运行 <code>omp --extension /absolute/path/to/package</code>，以排除配置与工作目录的歧义。</li>
+<li>查看 <code>/extensions</code> 以及 <code>~/.omp/logs/</code> 下的结构化日志，了解该能力的发现状态。运行时工厂的导入错误会在 <code>~/.omp/logs/</code> 下的结构化日志中包含失败的路径。</li>
+<li>如果扩展导入了运行时依赖，请在加载它之前运行包管理器，并在 <code>dependencies</code> 中声明这些依赖，而不只是写在 <code>devDependencies</code> 里。</li>
+</ul>
+<p>一个扩展失败不会阻止其他扩展路径加载。</p>
+<h3 id="it-loads-but-a-capability-is-missing">它能加载，但某项能力缺失</h3>
+<ul>
+<li>更改扩展工厂或安装包之后，重启 omp。</li>
+<li>确保捆绑的文件夹位于包根目录、与 <code>package.json</code> 同级，并且已包含在发布的 tarball 中。</li>
+<li>对于有变化的技能、斜杠命令和 MCP 服务器，使用 <code>/reload-plugins</code>。工具、钩子和扩展模块需要新会话。</li>
+<li>检查该项是否在 <code>/extensions</code> 中被禁用，或是否被配置中的 <code>disabledExtensions</code> 禁用。运行时工厂的 ID 是 <code>extension-module:&lt;filename&gt;</code>；<code>index.ts</code> 条目使用其父目录名。</li>
+</ul>
+<h3 id="it-crashes-or-behaves-differently-outside-the-tui">在 TUI 之外它崩溃或行为不同</h3>
+<p>扩展在进程内运行且没有沙箱。请捕获你自己分离的 promise 中的失败，使用受管理的上下文定时器，遵守中止信号，并在 <code>session_shutdown</code> 时释放资源。用 <code>ctx.mode === &quot;tui&quot;</code> 保护自定义终端 UI，并在扩展也必须能在 print、RPC 或 ACP 会话中工作时提供非交互行为。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/extension-authoring" rel="noreferrer noopener">omp.sh/docs/extension-authoring</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

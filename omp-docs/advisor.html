@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>顾问模型 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：顾问模型">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>顾问模型</h1>
+
+<p>添加一个可选的审查模型，观察 omp 的工作、捕捉有风险的错误，并在代价变得高昂之前引导主代理。</p>
+<h2 id="add-a-second-set-of-eyes">多一双眼睛</h2>
+<p>顾问是一个独立的模型，在会话展开的过程中审查主代理的工作。当主代理仍有机会纠正方向时，它可以指出被遗漏的需求、有风险的 API、薄弱的验证或不必要的复杂度。对于耗时或影响重大的改动、不熟悉的仓库、对安全敏感的工作，或任何独立审查比最高速度更有价值的时候，都可以使用一个顾问。</p>
+<p>代价是真实存在的：顾问会发出自己的模型请求、使用自己的上下文，并单独计费。更大的模型也许能发现更细微的问题，但花费更高；多个顾问会让这种开销成倍增加。审查通常在后台进行，但一条重要的提示可能引发更多主代理工作，而可选的追赶设置会增加延迟。对于例行修改，关掉它，或者选择一个快速、便宜的审查者。</p>
+<p>最小的持久化配置是 <a href="settings.html"><code>~/.omp/agent/config.yml</code></a> 中的两个条目：</p>
+<pre><code class="language-yaml">modelRoles:
+  advisor: anthropic/claude-sonnet-4-5:medium
+
+advisor:
+  enabled: true
+</code></pre>
+<p>使用你所用安装中可用的任意模型选择器。编辑文件后重启 omp 或开始新会话，然后检查它：</p>
+<pre><code class="language-text">/advisor status
+</code></pre>
+<p>在没有 <code>WATCHDOG.yml</code> 名册的情况下，omp 会使用 <code>modelRoles.advisor</code> 创建一个默认顾问。如果该角色无法解析为一个可用且已认证的模型，功能虽已配置却无法运行。</p>
+<h2 id="what-happens-during-a-session">会话期间会发生什么</h2>
+<p>顾问会跟随新的用户提示词、主代理的响应、推理和工具活动。它的默认工具让它能读取和搜索项目，因此它可以核实各种说法，而不只是审查文字。它不批准主代理的操作，它的建议也不会自动正确：主代理被要求把每条提示与你的请求对照权衡，而不是盲目服从。</p>
+<p>被接受的提示会以三种严重度之一显式出现在会话中：</p>
+<table><thead><tr><th>严重度</th><th>含义</th><th>omp 的做法</th></tr></thead><tbody><tr><td><code>nit</code></td><td>清理、简化，或低风险的边缘情况。</td><td>在安全的边界处添加一条不打断工作的旁注。</td></tr><tr><td><code>concern</code></td><td>实质性的风险、被遗漏的约束，或很可能错误的方向。</td><td>可以引导仍在进行的工作；答案完成之后才到达的迟到提示会保持可见，供下一轮次查看。</td></tr><tr><td><code>blocker</code></td><td>继续下去很可能白费工作或产生损坏的结果。</td><td>可以中断正在进行的工作，并且即使在名义上已完成的答案之后也能触发后续处理。</td></tr></tbody></table>
+<p>只有 blocker 可以中断尚未完成的审查。重复的或没有内容的提示会被抑制，而在一次中断之后，omp 通常会先给主代理若干个轮次，才允许顾问再次中断。如果你刻意停止了代理，顾问提示会保持可见，而不会意外地重新启动它。在计划模式下，提示还会展示给你考虑，而不是自动引导计划。</p>
+<p>把一条提示视为有依据的审查，而不是新的用户指令。如果主代理拒绝了有用的建议，在你的下一个提示词中引用那条可见的提示。如果顾问在制造噪音，就在本次会话中关掉它，或在 <code>WATCHDOG.md</code> 中收窄它的关注重点。</p>
+<h2 id="inspect-and-control-it">检查与控制它</h2>
+<table><thead><tr><th>命令</th><th>结果</th></tr></thead><tbody><tr><td><code>/advisor</code></td><td>为本次会话切换所有已配置的顾问。</td></tr><tr><td><code>/advisor on</code></td><td>为本次会话启用或重建它们。这不会保存 <code>advisor.enabled</code>。</td></tr><tr><td><code>/advisor off</code></td><td>为本次会话停止它们。这不会改动你的配置文件。</td></tr><tr><td><code>/advisor status</code></td><td>显示每个顾问的状态、模型、上下文用量、token 用量和费用。</td></tr><tr><td><code>/advisor dump</code></td><td>把精简的顾问对话记录复制到剪贴板。</td></tr><tr><td><code>/advisor dump raw</code></td><td>复制完整的诊断转储，包括指令、思考和工具活动。请把它当作敏感数据处理。</td></tr><tr><td><code>/advisor configure</code></td><td>打开用于项目级或用户级 <code>WATCHDOG.yml</code> 的交互式编辑器。仅 TUI。</td></tr></tbody></table>
+<p>单独使用 <code>/advisor</code> 是切换开关，不是状态命令。会话内的切换是临时的；当你希望这个选择持久保留时，请编辑 <a href="settings.html"><code>config.yml</code></a>。</p>
+<h2 id="give-the-reviewer-project-specific-priorities">给审查者设定项目专属的优先事项</h2>
+<p>把只给审查者看的指导放进 <code>WATCHDOG.md</code>。这里最适合放架构边界、危险 API、反复出现的失败模式，以及你在宣布改动完成之前期望看到的证据。它能引导顾问，又不会把同样的材料加进主代理的常规上下文。</p>
+<pre><code class="language-markdown"># Review priorities
+
+Especially watch for:
+
+- Writes that bypass the durable queue in `src/jobs/`.
+- User-controlled text rendered without escaping.
+- Schema changes without a backwards-compatible rollout.
+- Claims of success that are not supported by a focused runtime check.
+</code></pre>
+<p>让它足够具体，能改变一次审查决定。像“写出好代码”这样的笼统要求只会增加成本，几乎不带来信号。</p>
+<p>omp 会加载这条路径上所有可读的 <code>WATCHDOG.md</code>：</p>
+<ol>
+<li>当前用户的 agent 目录，通常为 <code>~/.omp/agent/WATCHDOG.md</code>；</li>
+<li>当前目录中的 <code>WATCHDOG.md</code> 与 <code>.omp/WATCHDOG.md</code>；</li>
+<li>每个父目录中的这两个相同位置，直到 Git 根目录；若没有 Git 根目录，则直到你的主目录。</li>
+</ol>
+<p>用户文件是宽泛的指导。项目文件从外层目录向当前目录依次应用，因此越窄的指导越突出。这些文件是累加的，而不是由最近的一个替换掉其余文件。你也可以在看门狗文件中放一行诸如 <code>@review/security.md</code> 的内容来导入另一个文件；相对路径相对于导入它的文件解析，而行内代码或围栏代码块中的导入保持字面形式。</p>
+<h2 id="configure-several-specialist-advisors">配置多个专职顾问</h2>
+<p>当一个审查者不够时，使用 <code>WATCHDOG.yml</code> 或 <code>WATCHDOG.yaml</code>。该文件声明一份名册；一旦发现任何名册条目，这份名册就会取代单一默认顾问的安排。</p>
+<pre><code class="language-yaml">instructions: |
+  Prefer fixes that preserve public APIs and keep tests focused.
+
+advisors:
+  - name: Architecture
+    enabled: true
+    model: anthropic/claude-sonnet-4-5:medium
+    tools: [read, grep, glob]
+    instructions: |
+      Watch module boundaries, dependency direction, and public API growth.
+
+  - name: Security
+    enabled: true
+    model: openai/gpt-5.5:high
+    tools: [read, grep, glob]
+    instructions: |
+      Trace untrusted input through authentication, storage, and rendering.
+
+  - name: Release
+    enabled: false
+    tools: []
+    instructions: |
+      Check migrations, compatibility, and rollback instructions.
+</code></pre>
+<table><thead><tr><th>字段</th><th>用途</th></tr></thead><tbody><tr><td>顶层 <code>instructions</code></td><td>来自所有已发现名册文件、添加到每个顾问的共享指导。</td></tr><tr><td><code>name</code></td><td>必需的显示名称。名称也用于在优先级判断中标识条目；标点和空格会被规范化为 slug。</td></tr><tr><td><code>enabled</code></td><td>每个顾问的开关。默认为 <code>true</code>；<code>false</code> 会让该条目以暂停状态保持可见。</td></tr><tr><td><code>model</code></td><td>可选的模型选择器和思考强度。省略时，该条目使用 <code>modelRoles.advisor</code>。</td></tr><tr><td><code>tools</code></td><td>可选的内置工具。省略时给出 <code>read</code>、<code>grep</code> 和 <code>glob</code>；<code>[]</code> 表示不提供任何调查类工具。</td></tr><tr><td><code>instructions</code></td><td>该顾问的专长方向。它支持与 <code>WATCHDOG.md</code> 相同的 <code>@</code> 导入。</td></tr></tbody></table>
+<p>名册文件使用与 <code>WATCHDOG.md</code> 相同的用户、祖先、当前目录和 <code>.omp/</code> 发现位置。所有被发现的文件都会参与。共享的顶层指令会累加；当两个条目规范化后同名时，更具体的项目条目会替换祖先或用户条目。避免在同一目录层级上重复定义同名条目，也不要同时保留 <code>.yml</code> 和 <code>.yaml</code> 两个变体——那会让结果更难推理。无效的 YAML 或无效的 schema 会被记录日志并跳过该文件，而不会破坏主会话。</p>
+<h3 id="tool-grants-are-a-security-boundary">工具授权是一道安全边界</h3>
+<p>默认的 <code>read</code>/<code>grep</code>/<code>glob</code> 授权适合审查工作。名册可以授予其他内置工具，包括 <code>edit</code>、<code>write</code>、<code>bash</code>、<code>eval</code> 或 <code>browser</code>。这些授权可以改动文件、运行命令，或通过另一个服务发送数据。正常的审批和按工具策略仍然适用，但宽松的审批模式可能拦不住一次错误操作。只把有变更能力或联网的工具授予你信任的模型，并且只在该专职顾问确实需要时授予。</p>
+<p>未知的工具名会被丢弃并给出警告。改动名册后请检查 <code>/advisor status</code> 和日志，而不要假设拼错的工具已经授予成功。</p>
+<h2 id="cost-latency-and-supervision-settings">成本、延迟与监督设置</h2>
+<p>这些可选设置应放在 <a href="settings.html"><code>config.yml</code></a> 中：</p>
+<pre><code class="language-yaml">advisor:
+  enabled: true
+  syncBacklog: &quot;1&quot;
+  immuneTurns: 3
+
+tier:
+  advisor: none
+</code></pre>
+<table><thead><tr><th>设置</th><th>默认值</th><th>用途</th></tr></thead><tbody><tr><td><code>advisor.syncBacklog</code></td><td><code>off</code></td><td><code>off</code> 从不为审查追赶而等待。<code>&quot;1&quot;</code>、<code>&quot;3&quot;</code> 或 <code>&quot;5&quot;</code> 会在审查落后相应轮次数时最多暂停主代理 30 秒；<code>&quot;1&quot;</code> 最接近同步审查。在 YAML 中给数值加引号，因为它们是枚举字符串。</td></tr><tr><td><code>advisor.immuneTurns</code></td><td><code>3</code></td><td>中断之后的主代理轮次数，在此期间后续的 concern 和 blocker 会变成不打断的旁注。使用 <code>0</code> 获得最大程度的监督，或用更大的值减少反复打断。</td></tr><tr><td><code>tier.advisor</code></td><td><code>none</code></td><td>顾问请求的服务层级。<code>inherit</code> 跟随主模型当前提供商家族的层级；具体层级只在提供商支持它们的地方生效。</td></tr></tbody></table>
+<p>即使启用了追赶，顾问出问题也不会永久卡住主代理：追赶等待是有上限的，并在失败时释放。</p>
+<h2 id="one-off-and-headless-runs">一次性与无头运行</h2>
+<p>在不改动持久设置的情况下，为一个 print 模式进程启用审查：</p>
+<pre><code class="language-sh">omp -p --advisor &quot;Audit this migration plan and report the safest rollout.&quot;
+</code></pre>
+<p><code>--advisor</code> 为该进程启用已配置的默认顾问或名册；它仍然需要可解析的顾问模型和提供商凭据。print 模式会在销毁前等待最终审查，因此迟到的提示不会被悄悄丢失，这可能使命令比普通的 <code>-p</code> 运行结束得更晚。在自动化中有选择地使用它，并把额外的模型成本和更长的完成时间都考虑进去。其他启动标志见 <a href="cli.html">命令行参考</a>。</p>
+<h2 id="privacy-and-safety">隐私与安全</h2>
+<p>启用顾问会把会话材料发送给顾问模型所在的提供商。这包括你的提示词、主代理的输出与推理，以及相关的工具结果；调查类工具可能暴露它们读取的任何文件。会话托管的密钥在发往提供商的顾问消息之前会被混淆，但这不能替代挑选一个允许处理该仓库的提供商和模型。多提供商名册可能把同一份项目上下文发送给多家厂商。</p>
+<p>顾问的轮次和用量会随所属会话一起记录，因此费用报告和事后检查都能工作。<code>/advisor dump raw</code> 包含比精简转储多得多的细节；在把它粘贴到 issue 或聊天之前先审阅它。关掉顾问会停止新的审查，但不会删除已经记录的会话产物。</p>
+<p>omp 会在顾问输出能够派发工具或引导主代理之前拒绝不安全的输出。这是纵深防御，而不是授予宽泛工具的理由：保持最小权限的名册、保留正常的审批策略，并亲自检查任何提议的高影响改动。</p>
+<h2 id="troubleshooting">故障排除</h2>
+<ul>
+<li><strong>“Advisor setting is enabled, but no model is assigned” / <code>no model</code></strong> —— 设置 <code>modelRoles.advisor</code>，或给每个启用的名册条目添加有效的 <code>model</code>。用 <code>/model</code> 和 <code>/login</code> 确认提供商已安装并已认证，然后先运行 <code>/advisor off</code>，再运行 <code>/advisor on</code>。</li>
+<li><strong>某个顾问显示 <code>paused</code></strong> —— 它的名册条目是 <code>enabled: false</code>，或者该子系统在本次会话中已关闭。在 <code>WATCHDOG.yml</code>（或通过 <code>/advisor configure</code>）中启用该条目，然后运行 <code>/advisor on</code>。</li>
+<li><strong>某个顾问显示 <code>quota exhausted</code></strong> —— 在回退恢复无法继续之后，它的提供商/账户达到了用量上限。修复凭据、配额或模型选择，然后把顾问关掉再打开、重新加载配置，或开始新会话。</li>
+<li><strong>某个顾问显示 <code>error</code></strong> —— 反复或永久性的请求失败使该审查者停止，以便主代理能继续。检查提供商/模型可用性和日志，然后用 <code>/advisor off</code> 和 <code>/advisor on</code> 重建它。</li>
+<li><strong>名册中某个成员失败而其他成员仍在运行</strong> —— 各条目彼此独立。修复该成员的模型或启用状态；其余成员可以继续审查。</li>
+<li><strong>对 <code>WATCHDOG.yml</code> 的改动没有生效</strong> —— 检查文件名和 YAML 结构，确认 omp 运行在你预期的项目树中，然后在手动编辑文件后重启 omp。通过 <code>/advisor configure</code> 保存的改动会立即生效。格式错误的文件会被跳过并在日志中报告。</li>
+<li><strong>审查太贵或太打扰</strong> —— 选择更便宜的模型、缩减名册、保持 <code>syncBacklog: off</code>、提高 <code>immuneTurns</code>、收窄看门狗指令，或在例行工作中使用 <code>/advisor off</code>。</li>
+<li><strong>一条迟到的 concern 没有重新启动代理</strong> —— 在答案完成之后、在你刻意中断之后，以及在计划模式下，这是预期行为。当你用新的提示词或继续快捷键继续时，那条可见的提示会被包含进去。</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/advisor" rel="noreferrer noopener">omp.sh/docs/advisor</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

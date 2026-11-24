@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>自定义工具 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：自定义工具">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>自定义工具</h1>
+
+<p>给 omp 一个带类型的、项目专属的动作，然后像使用任何内置能力一样，在普通提示词中使用它。</p>
+<h2 id="add-an-action-that-omp-does-not-have">添加一个 omp 没有的动作</h2>
+<p>自定义工具是一个小的 TypeScript 或 JavaScript 模块，让 omp 能够调用你控制的代码。它适用于项目专属的工作，例如查询内部服务、检查某个领域不变量，或执行一项范围谨慎界定的操作。</p>
+<p>从项目工具开始，这样它的源码可以随仓库一起被审查。创建 <code>.omp/tools/hello/index.ts</code>，从项目里重启 omp，然后让它使用该工具。如果该能力已经存在于某个独立服务中，或需要被多个客户端共享，请改用 <a href="mcp.html">MCP 服务器</a>。</p>
+<blockquote>
+<p><strong>自定义工具是受信任的代码。</strong>omp 会导入发现的工具模块，并以你用户账户的权限运行它们。在不熟悉的仓库中打开 omp 之前，请审查项目本地的 <code>.omp/tools</code> 代码。</p>
+</blockquote>
+<h2 id="create-the-smallest-tool">创建最小的工具</h2>
+<p>在项目根目录执行：</p>
+<pre><code class="language-bash">mkdir -p .omp/tools/hello
+</code></pre>
+<p>创建 <code>.omp/tools/hello/index.ts</code>：</p>
+<pre><code class="language-ts">import type { CustomToolFactory } from &quot;@oh-my-pi/pi-coding-agent&quot;;
+
+const factory: CustomToolFactory = pi =&gt; ({
+  name: &quot;hello&quot;,
+  label: &quot;Hello&quot;,
+  description: &quot;Greet a person by name&quot;,
+  parameters: pi.zod.object({
+    name: pi.zod.string().describe(&quot;The person to greet&quot;),
+  }),
+
+  async execute(_toolCallId, params) {
+    return {
+      content: [{ type: &quot;text&quot;, text: `Hello, ${params.name}!` }],
+      details: { greeted: params.name },
+    };
+  },
+});
+
+export default factory;
+</code></pre>
+<p>这个示例不需要安装任何 schema 包。omp 会把 schema 构建器作为 <code>pi</code> 注入工厂。</p>
+<h3 id="load-and-test-it">加载并测试它</h3>
+<p>工具发现发生在会话启动时。退出任何正在运行的会话，然后从项目根目录再次启动 omp：</p>
+<pre><code class="language-bash">omp
+</code></pre>
+<p>输入 <code>/tools</code>，确认 <code>hello</code> 已被列出。然后提示：</p>
+<pre><code class="language-text">Use the hello tool to greet Ada.
+</code></pre>
+<p>你应该会看到一个 <strong>Hello</strong> 工具卡片，以及包含 <code>Hello, Ada!</code> 的最终结果。若想做一次性的检查，启动一个新进程：</p>
+<pre><code class="language-bash">omp -p &#x27;Use the hello tool to greet Ada.&#x27;
+</code></pre>
+<p>你只需编写工厂及其 <code>execute</code> 函数；你<strong>不</strong>调用 <code>execute</code>，也不输入 JSON 工具请求。模型会根据你的自然语言请求选择工具，构造与 <code>parameters</code> 匹配的参数，omp 在运行你的代码之前会校验这些参数。精确的 <code>description</code>、字段描述和收窄的 schema 会让这一选择更可靠。</p>
+<h2 id="choose-where-it-loads">选择加载位置</h2>
+<table><thead><tr><th>作用域</th><th>推荐路径</th><th>适用场景</th></tr></thead><tbody><tr><td>项目</td><td><code>.omp/tools/&lt;name&gt;/index.ts</code></td><td>该工具属于一个仓库，并应随它一起被审查。</td></tr><tr><td>用户</td><td><code>&lt;active-config-dir&gt;/tools/&lt;name&gt;/index.ts</code></td><td>你希望该工具在当前 omp 配置文件的每个项目中可用。运行 <code>omp config path</code> 打印当前配置目录；默认是 <code>~/.omp/agent</code>。</td></tr></tbody></table>
+<p>omp 原生目录也接受扁平的 <code>.ts</code> 和 <code>.js</code> 文件，例如 <code>.omp/tools/hello.ts</code>。当工具有配套文件时，使用带 <code>index.ts</code> 的命名子目录更合适。为了兼容性，omp 还会在用户和项目的 <code>.claude/tools</code> 与 <code>.codex/tools</code> 目录中发现扁平的 <code>.ts</code> 与 <code>.js</code> 工具。</p>
+<p>被发现的 <code>.md</code> 或 <code>.json</code> 文件是元数据，不是可执行的工具模块。可执行模块必须导出一个工厂函数；默认导出是上面所示受支持且无歧义的形式。</p>
+<h2 id="factory-and-definition-api">工厂与定义 API</h2>
+<p>从 <code>@oh-my-pi/pi-coding-agent</code> 导入 <code>CustomToolFactory</code>。一个工厂可以返回一个工具、一个工具数组，或它们之一的 promise。返回的每个工具名在内置工具和所有其他已加载的自定义工具之间必须唯一。</p>
+<h3 id="required-fields">必需字段</h3>
+<table><thead><tr><th>字段</th><th>作者契约</th></tr></thead><tbody><tr><td><code>name</code></td><td>用于标识该工具的注册名。不要复用内置工具或其他自定义工具的名称。</td></tr><tr><td><code>label</code></td><td>在 TUI 中显示的人类可读名称。</td></tr><tr><td><code>description</code></td><td>简短、具体的指引，帮助模型判断该工具何时适用。</td></tr><tr><td><code>parameters</code></td><td>可接受参数的 schema。omp 由此推导 <code>params</code> 的 TypeScript 类型，并在 <code>execute</code> 之前校验调用。</td></tr><tr><td><code>execute</code></td><td>返回 <code>AgentToolResult</code> 的异步实现。</td></tr></tbody></table>
+<h3 id="optional-behavior">可选行为</h3>
+<table><thead><tr><th>字段</th><th>作用</th></tr></thead><tbody><tr><td><code>strict</code></td><td>为该工具请求严格的 schema 处理。</td></tr><tr><td><code>hidden</code></td><td>让该工具保持禁用，除非被显式选中。</td></tr><tr><td><code>loadMode</code></td><td><code>&quot;discoverable&quot;</code> 让 schema 不进入始终存在的工具集；<code>&quot;essential&quot;</code> 让它保持顶层。自定义工具默认是 <code>&quot;discoverable&quot;</code>。</td></tr><tr><td><code>approval</code></td><td>声明能力层级：<code>&quot;read&quot;</code>、<code>&quot;write&quot;</code> 或 <code>&quot;exec&quot;</code>；它也可以是决策对象或解析后参数的函数。省略 approval 会被当作 <code>&quot;exec&quot;</code>。</td></tr><tr><td><code>onSession</code></td><td>接收用于初始化、状态变化和清理的生命周期事件。</td></tr><tr><td><code>renderCall</code></td><td>替换该调用默认的 TUI 渲染。</td></tr><tr><td><code>renderResult</code></td><td>替换部分结果与最终结果默认的 TUI 渲染。</td></tr></tbody></table>
+<p><code>renderCall(args, options, theme)</code> 与 <code>renderResult(result, options, theme)</code> 返回来自 <code>@oh-my-pi/pi-tui</code> 的 <code>Component</code>。它们的 <code>options</code> 包含 <code>expanded</code> 与 <code>isPartial</code>；部分渲染还可以收到 <code>spinnerFrame</code>。渲染器影响的是人看到的内容，而不是模型收到的内容。</p>
+<h2 id="parameter-schemas">参数 schema</h2>
+<p>工厂宿主提供三个公开的 schema 构建器：</p>
+<table><thead><tr><th>构建器</th><th>说明</th></tr></thead><tbody><tr><td><code>pi.zod</code></td><td>入门示例中使用的、与 Zod 兼容的构建器。</td></tr><tr><td><code>pi.arktype</code></td><td>原生的 omptype/ArkType 构建器。</td></tr><tr><td><code>pi.typebox</code></td><td>为基于旧 TypeBox 风格 API 编写的工具提供的兼容层。新工具请优先使用当前的构建器。</td></tr></tbody></table>
+<p>在操作允许的范围内尽量保持 schema 小巧。为有限的动作使用枚举，为含义不显然的字段写描述，并在省略具有安全含义时把默认值放进 schema。</p>
+<pre><code class="language-ts">parameters: pi.zod.object({
+  action: pi.zod.enum([&quot;check&quot;, &quot;summarize&quot;]),
+  path: pi.zod.string().describe(&quot;Repository-relative file path&quot;),
+  limit: pi.zod.number().int().positive().optional().default(20),
+}),
+</code></pre>
+<h2 id="execution-progress-and-cancellation">执行、进度与取消</h2>
+<p>完整的执行签名是：</p>
+<pre><code class="language-ts">async execute(toolCallId, params, onUpdate, ctx, signal) {
+  // ...
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>用途</th></tr></thead><tbody><tr><td><code>toolCallId</code></td><td>关联本次调用的日志或 UI 状态。</td></tr><tr><td><code>params</code></td><td>已校验、带 schema 类型的参数。</td></tr><tr><td><code>onUpdate</code></td><td>可选回调，用于向用户展示部分进度。模型收到的是最终返回的 <code>content</code>，而不是这些进度更新。</td></tr><tr><td><code>ctx</code></td><td>供高级的会话感知工具使用的 <code>CustomToolContext</code>。普通工具应优先使用稳定的工厂宿主 API，避免依赖会话内部结构。</td></tr><tr><td><code>signal</code></td><td>可选的 <code>AbortSignal</code>。在长时间运行的工作中检查它，并把它转发给可取消的操作。</td></tr></tbody></table>
+<p>工厂宿主把会话工作目录暴露为 <code>pi.cwd</code>，把可感知取消的进程 helper 暴露为 <code>pi.exec(command, args, options?)</code>：</p>
+<pre><code class="language-ts">async execute(_id, params, onUpdate, _ctx, signal) {
+  onUpdate?.({
+    content: [{ type: &quot;text&quot;, text: `Checking ${params.path}…` }],
+  });
+
+  const result = await pi.exec(&quot;git&quot;, [&quot;status&quot;, &quot;--short&quot;, &quot;--&quot;, params.path], {
+    cwd: pi.cwd,
+    signal,
+  });
+
+  if (result.code !== 0) {
+    throw new Error(result.stderr || &quot;git status failed&quot;);
+  }
+
+  return { content: [{ type: &quot;text&quot;, text: result.stdout || &quot;No changes&quot; }] };
+}
+</code></pre>
+<p>交互式 UI 方法只在 <code>pi.hasUI</code> 为 true 时通过 <code>pi.ui</code> 提供。Print、RPC 和其他无头模式不提供交互式 UI，因此每一个打算在这些模式下使用的工具都必须有一条非交互路径。</p>
+<h2 id="results-and-errors">结果与错误</h2>
+<p>返回一个 <code>AgentToolResult</code>：</p>
+<pre><code class="language-ts">return {
+  content: [
+    { type: &quot;text&quot;, text: &quot;Check complete.&quot; },
+    { type: &quot;image&quot;, mimeType: &quot;image/png&quot;, data: pngBase64 },
+  ],
+  details: { checked: 12 },
+  isError: false,
+};
+</code></pre>
+<ul>
+<li><code>content</code> 是必需的。它包含文本和/或 base64 图片块，是模型在下一步可以使用的结果。</li>
+<li><code>details</code> 是可选的、用于 UI 渲染、日志与历史的结构化状态。它不会替代用户可读的 <code>content</code>。</li>
+<li><code>isError: true</code> 标记一个预期的、非抛出式失败，同时保留结构化结果。</li>
+</ul>
+<p>对于阻止操作产生有用结果的失败，请抛出 <code>Error</code>。omp 会把抛出或被拒绝的错误转换为给模型的失败工具结果，并向用户显示该失败。当你的工具故意捕获某个领域失败、并且自己能够返回清晰的结构化说明时，使用 <code>isError: true</code>。绝不要把失败隐藏在看起来成功的内容背后。</p>
+<p>把 <code>signal</code> 转发给 <code>pi.exec</code> 和其他可取消的 API。这样用户的停止操作就能取消子进程工作，而不是让它继续运行。</p>
+<h2 id="session-lifecycle">会话生命周期</h2>
+<p>只有当工具拥有必须跟随会话变化的资源或状态时，才添加 <code>onSession(event, ctx)</code>。它可以是同步的，也可以是异步的。</p>
+<pre><code class="language-ts">onSession(event) {
+  if (event.reason === &quot;shutdown&quot;) {
+    // Close resources created by this factory.
+  }
+},
+</code></pre>
+<p><code>event</code> 是一个可辨识联合。当前的原因有：</p>
+<table><thead><tr><th>原因</th><th>发生时机</th></tr></thead><tbody><tr><td><code>start</code>、<code>switch</code>、<code>branch</code>、<code>tree</code>、<code>shutdown</code></td><td>会话创建、导航与拆除。这些事件携带 <code>previousSessionFile</code>；它在 switch/branch 时有值，其他情况下可能为 undefined。</td></tr><tr><td><code>auto_compaction_start</code>、<code>auto_compaction_end</code></td><td>自动上下文压缩之前与之后。</td></tr><tr><td><code>auto_retry_start</code>、<code>auto_retry_end</code></td><td>自动重试处理之前与之后。</td></tr><tr><td><code>ttsr_triggered</code></td><td>运行时规则触发时。</td></tr><tr><td><code>todo_reminder</code></td><td>发出 todo 提醒时。</td></tr></tbody></table>
+<p>生命周期错误会以警告形式记录，不会使会话崩溃。保持清理操作幂等；如果持久状态必须在进程重启后存活，就把它放在内存闭包之外。</p>
+<h2 id="troubleshooting">故障排除</h2>
+<h3 id="tools-does-not-list-the-tool"><code>/tools</code> 没有列出该工具</h3>
+<ol>
+<li>重启 omp；直接的自定义工具目录在会话启动时被扫描。</li>
+<li>确认项目会话是从包含 <code>.omp/tools</code> 的目录启动的。</li>
+<li>确认该模块是 <code>.ts</code> 或 <code>.js</code> 文件，并且默认导出一个函数。</li>
+<li>检查工厂返回的对象是否包含 <code>name</code>、<code>description</code>、<code>parameters</code> 和 <code>execute</code>。</li>
+<li>在 <code>~/.omp/logs/</code> 下今天的日志中查找 <code>Custom tool load failed</code>。</li>
+</ol>
+<h3 id="the-module-loads-but-this-tool-is-missing">模块加载了，但这个工具缺失</h3>
+<p>它的 <code>name</code> 很可能与某个内置工具或先前加载的工具冲突。冲突会被拒绝；没有覆盖标志。重命名该工具并重启 omp。</p>
+<h3 id="the-model-does-not-choose-it">模型不选择它</h3>
+<p>让工具的 <code>description</code> 明确说明何时应该使用它，为含义不清的参数写描述，并把宽泛的字符串收窄为枚举或受约束的 schema。测试期间，在自然语言提示词中明确写出工具名。只有当工具必须在每次请求中保持顶层时才使用 <code>loadMode: &quot;essential&quot;</code>；否则保持可发现的默认值。</p>
+<h3 id="it-works-interactively-but-fails-in-print-or-rpc-mode">交互模式下可用，但在 print 或 RPC 模式下失败</h3>
+<p>实现很可能假设了 TUI 环境。用 <code>pi.hasUI</code> 保护对 <code>pi.ui</code> 的调用，并提供无头行为，或返回一个清晰的错误，说明该操作需要交互式会话。</p>
+<h2 id="related">相关</h2>
+<ul>
+<li><a href="mcp.html">MCP</a> — 暴露由外部进程提供的工具。</li>
+<li><a href="extension-authoring.html">编写扩展</a> — 把工具与命令、事件行为打包在一起。</li>
+<li><a href="hooks.html">钩子</a> — 观察或修改已有的工具调用，而不是添加新能力。</li>
+<li><a href="plugins.html">插件</a> — 把工具与其他 omp 定制一起分发。</li>
+</ul>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/custom-tools" rel="noreferrer noopener">omp.sh/docs/custom-tools</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>

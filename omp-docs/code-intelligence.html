@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="anthropic" data-font="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>代码智能 - omp 官方文档</title>
+<meta name="description" content="omp 官方文档的中文译本：代码智能">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23FAF9F5'/%3E%3Crect x='2.75' y='1.75' width='10.5' height='12.5' fill='none' stroke='%23D97757' stroke-width='1.5'/%3E%3Cpath d='M5.25 5.25h5.5M5.25 8h5.5M5.25 10.75h3' stroke='%23D97757' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../assets/theme.css">
+<script src="../assets/settings.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../index.html">非茗的翻译文档库</a>
+  <span class="topbar-spacer"></span>
+  <button class="btn toc-btn" type="button" aria-expanded="false" aria-controls="pt-sidebar">目录</button>
+  <span id="settings-slot"></span>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="pt-sidebar"></aside>
+
+  <main class="article">
+    <h1>代码智能</h1>
+
+<p>借助你项目已在使用的语言服务器，为 omp 提供符号感知的导航、重命名、修复和诊断能力。</p>
+<h2 id="make-code-changes-with-semantic-context">带着语义上下文做代码改动</h2>
+<p>代码智能让 omp 能向语言服务器询问：某个符号是什么意思、它在哪里定义、哪些代码引用了它，以及哪些修复是有效的。这比把源代码当作纯文本处理更安全：语义重命名可以区分两个同名的变量，并跨文件更新导入与再导出。</p>
+<p>通常你只需安装对应语言的语言服务器，从项目根目录启动 <code>omp</code>，然后说明你想要的结果：</p>
+<pre><code class="language-text">Rename `issueToken` to `mintToken` across the project. Preview the language-server changes before applying them.
+</code></pre>
+<p>omp 还能查找定义与实现、查看推断类型、列出引用、报告诊断、应用服务器提供的修复，并在更新导入的同时重命名文件。对于不以符号为中心的、基于语法的改动，请改用<a href="editing.html">结构化编辑</a>。</p>
+<h2 id="what-works-automatically">自动生效的部分</h2>
+<p>LSP 支持默认启用。omp 会检查内置的服务器定义，并且只在以下两条同时成立时才选用某个服务器：</p>
+<ol>
+<li>在你启动 omp 的目录中直接存在匹配的项目标记，例如 <code>package.json</code>、<code>Cargo.toml</code> 或 <code>go.mod</code>。</li>
+<li>该服务器可执行文件存在于受支持的项目本地 bin 目录中，或位于 <code>PATH</code> 上。</li>
+</ol>
+<p>项目本地的可执行文件优先。这包括 <code>node_modules/.bin</code>、Python 虚拟环境的 bin 目录、Ruby binstub，以及 Go 项目中的项目 <code>bin</code> 目录等位置。</p>
+<p>发现过程不会向上遍历父目录，通配标记也只检查启动目录。请在包含该标记的仓库或包根目录启动 omp。</p>
+<p>默认情况下，检测到的服务器是<strong>惰性</strong>的：欢迎面板会把它们列为可用，但 omp 会等到代码智能操作或对匹配文件的编辑确实需要某个服务器时才启动它。当守护进程代理可用时，同一项目的多个 omp 会话会共享服务器；如果共享不可用，omp 会退回到使用私有服务器。</p>
+<p>在交互模式下，运行 <code>/session</code> 可以查看检测到的服务器名称、文件类型和启动状态：</p>
+<table><thead><tr><th>状态</th><th>含义</th></tr></thead><tbody><tr><td><code>available</code></td><td>已检测到，首次使用时即可启动。</td></tr><tr><td><code>connecting</code></td><td>正在主动启动。</td></tr><tr><td><code>ready</code></td><td>主动启动已完成。</td></tr><tr><td><code>error</code></td><td>启动失败；在有可用信息时该行会包含失败原因。</td></tr></tbody></table>
+<h2 id="ask-in-natural-language">用自然语言提问</h2>
+<p>描述你想要的结果，并在能消除歧义时把 omp 指向某个符号或文件。你永远不需要提供协议位置或 LSP 请求细节。</p>
+<table><thead><tr><th>目的</th><th>示例请求</th></tr></thead><tbody><tr><td>理解某个符号</td><td><code>Explain the inferred type of result in src/parser.ts and show me its definition.</code></td></tr><tr><td>查找影响面</td><td><code>Find every reference to PaymentGateway.authorize, including implementations, before changing it.</code></td></tr><tr><td>安全地重命名</td><td><code>Rename issueToken to mintToken across the project using code intelligence. Preview first.</code></td></tr><tr><td>移动模块</td><td><code>Move src/auth/token.ts to src/security/token.ts and update imports through the language server.</code></td></tr><tr><td>诊断文件</td><td><code>Ask the language server why src/server.ts is failing and explain the diagnostics.</code></td></tr><tr><td>应用修复</td><td><code>Use the server&#x27;s quick fix for the missing import in src/routes.ts, then check diagnostics again.</code></td></tr><tr><td>查看契约</td><td><code>Find every implementation of StorageAdapter and summarize how they differ.</code></td></tr></tbody></table>
+<p>当某个名字在一行中出现多次时，用文字描述具体是哪一处，例如：“第 88 行第二次调用 <code>parse</code> 的地方。”omp 会解析出确切的源码位置。</p>
+<h2 id="what-you-see">你会看到什么</h2>
+<p>导航请求会返回源码位置、签名、类型或文档，omp 可以在回复中加以解释。引用搜索会给出全项目范围的影响清单。诊断包含服务器的严重级别、消息和位置。</p>
+<p>对于重命名，当你想在改动发生前检查将要修改的文件时，可以要求先预览。应用时，omp 会显示常规的已改动文件与 diff 输出。语义重命名可能作为一次由服务器计算的工作区改动而更新多个文件；如果服务器没有返回有效的重命名，omp 不会自行编造语义编辑。</p>
+<p>语言服务器无法可靠地发现动态字符串查找、散文式注释、工作区之外生成的代码，或者不在该服务器工作区内的另一个包中的使用方。在大范围改动之后，除了检查诊断，还应让 omp 运行项目的编译器和针对性测试。</p>
+<h2 id="configure-or-override-a-server">配置或覆盖服务器</h2>
+<p>当内置服务器的标记与可执行文件都能被发现时，无需配置文件。先在项目中或 <code>PATH</code> 上安装该服务器，然后从项目根目录重启 omp。</p>
+<p>使用 <code>&lt;project&gt;/.omp/lsp.json</code> 做项目级覆盖。例如，内置定义按服务器名称合并，所以下面的配置只更改 <code>gopls</code> 的设置：</p>
+<pre><code class="language-json">{
+  &quot;servers&quot;: {
+    &quot;gopls&quot;: {
+      &quot;settings&quot;: {
+        &quot;gopls&quot;: {
+          &quot;gofumpt&quot;: false,
+          &quot;staticcheck&quot;: false
+        }
+      }
+    }
+  }
+}
+</code></pre>
+<p>像 <code>settings</code>、<code>initOptions</code>、<code>capabilities</code> 和 <code>workspaceReadyTimings</code> 这类对象值字段会整体替换该字段，而不是深度合并。请把你想保留的每个值都写进被覆盖的对象里。</p>
+<p>要添加 omp 未定义的服务器，请提供其命令、处理的扩展名和项目标记：</p>
+<pre><code class="language-yaml"># &lt;project&gt;/.omp/lsp.yaml
+servers:
+  my-language-server:
+    command: my-language-server
+    args: [&quot;--stdio&quot;]
+    fileTypes: [&quot;.xyz&quot;]
+    languageId: xyz
+    rootMarkers: [&quot;.xyz-project&quot;]
+</code></pre>
+<p>命令可以是从项目本地 bin 目录或 <code>PATH</code> 解析到的二进制名称，也可以是绝对路径。缺少 <code>command</code>、<code>fileTypes</code> 或 <code>rootMarkers</code> 的新服务器会被忽略并给出警告。</p>
+<p>要为某个项目禁用某一个内置服务器，同时保留其他服务器可用：</p>
+<pre><code class="language-json">{
+  &quot;servers&quot;: {
+    &quot;eslint&quot;: {
+      &quot;disabled&quot;: true
+    }
+  }
+}
+</code></pre>
+<p>编辑 LSP 配置后，启动一个新的 omp 会话能得到最清晰的验证。查看欢迎面板或 <code>/session</code>，然后询问：</p>
+<pre><code class="language-text">Confirm which language server handles src/main.ts and check that file for diagnostics.
+</code></pre>
+<p>如果你在已有会话中安装了缺失的可执行文件，可以让 omp 重新加载所有语言服务器并重新读取它们的配置。</p>
+<h2 id="choose-where-configuration-lives">选择配置放在哪里</h2>
+<p>omp 会读取名为 <code>lsp</code> 或 <code>.lsp</code> 的 JSON、YAML 和 YML 文件。各来源按优先级从低到高合并：</p>
+<table><thead><tr><th>优先级</th><th>位置</th></tr></thead><tbody><tr><td>最低</td><td><code>~/lsp.*</code> 和 <code>~/.lsp.*</code></td></tr><tr><td></td><td>已安装插件提供的 LSP 配置</td></tr><tr><td></td><td>用户配置目录，包括当前活动的 omp 代理目录，以及受支持的 Claude、Codex 和 Gemini 目录</td></tr><tr><td></td><td>启动目录的配置目录，例如 <code>&lt;cwd&gt;/.omp</code>、<code>&lt;cwd&gt;/.claude</code>、<code>&lt;cwd&gt;/.codex</code> 和 <code>&lt;cwd&gt;/.gemini</code></td></tr><tr><td>最高</td><td><code>&lt;cwd&gt;/lsp.*</code> 和 <code>&lt;cwd&gt;/.lsp.*</code></td></tr></tbody></table>
+<p>对于 omp 自己的配置，优先使用：</p>
+<ul>
+<li>项目：<code>&lt;project&gt;/.omp/lsp.json</code></li>
+<li>用户：默认配置档使用 <code>~/.omp/agent/lsp.json</code>，或使用当前活动配置档的代理目录</li>
+</ul>
+<p>在同一位置内，优先级依次为 <code>lsp.json</code>、<code>.lsp.json</code>、<code>lsp.yaml</code>、<code>.lsp.yaml</code>、<code>lsp.yml</code>，最后是 <code>.lsp.yml</code>。服务器条目按名称浅合并。覆盖中未提及的服务器会保留其内置定义，omp 仍会按 <code>disabled</code>、根标记和可执行文件可用性过滤合并后的集合。</p>
+<p>顶层的 <code>servers</code> 包装是可选的，但不要混用带包装与扁平的服务器条目。下面两种写法等价：</p>
+<pre><code class="language-json">{
+  &quot;servers&quot;: {
+    &quot;eslint&quot;: { &quot;disabled&quot;: true }
+  },
+  &quot;idleTimeoutMs&quot;: 300000
+}
+</code></pre>
+<pre><code class="language-yaml">eslint:
+  disabled: true
+idleTimeoutMs: 300000
+</code></pre>
+<p><code>idleTimeoutMs</code> 省略、为零或为负值时，空闲关闭功能保持禁用。</p>
+<h2 id="lsp-settings">LSP 设置</h2>
+<p>打开 <code>/settings</code>，然后在<strong>文件 → LSP</strong>分组中交互式更改这些项。持久设置也可以写入用户级 <code>~/.omp/agent/config.yml</code> 或项目级 <code>.omp/config.yml</code>；配置档与优先级见<a href="settings.html">设置</a>。</p>
+<table><thead><tr><th>设置</th><th style="text-align:right">默认值</th><th>作用</th></tr></thead><tbody><tr><td><code>lsp.enabled</code></td><td style="text-align:right"><code>true</code></td><td>启用符号智能、LSP 格式化和 LSP 诊断。</td></tr><tr><td><code>lsp.lazy</code></td><td style="text-align:right"><code>true</code></td><td>仅当匹配的文件操作需要时才启动服务器。设为 <code>false</code> 可在交互式启动时于后台预热已检测到的服务器。</td></tr><tr><td><code>lsp.shared</code></td><td style="text-align:right"><code>true</code></td><td>通过守护进程代理为每个项目共享一个服务器，并在不可用时回退到私有服务器。</td></tr><tr><td><code>lsp.formatOnWrite</code></td><td style="text-align:right"><code>false</code></td><td>在 omp 写入匹配的代码后对其进行格式化。</td></tr><tr><td><code>lsp.diagnosticsOnWrite</code></td><td style="text-align:right"><code>true</code></td><td>在写入文件后返回诊断。</td></tr><tr><td><code>lsp.diagnosticsOnEdit</code></td><td style="text-align:right"><code>false</code></td><td>在增量编辑后也返回诊断。</td></tr><tr><td><code>lsp.diagnosticsDeduplicate</code></td><td style="text-align:right"><code>true</code></td><td>抑制已经为某文件显示过、且没有变化的诊断。</td></tr></tbody></table>
+<p>如需在一次性会话中禁用所有由 LSP 支撑的行为，请这样启动：</p>
+<pre><code class="language-sh">omp --no-lsp
+</code></pre>
+<h2 id="server-configuration-reference">服务器配置参考</h2>
+<p>对内置服务器的部分覆盖可以省略继承来的字段。新服务器则需要下面列出的三个必填字段。</p>
+<table><thead><tr><th>字段</th><th>类型</th><th style="text-align:right">新服务器是否必填</th><th>用途</th></tr></thead><tbody><tr><td><code>command</code></td><td>string</td><td style="text-align:right">是</td><td>可执行文件名称或绝对路径。</td></tr><tr><td><code>fileTypes</code></td><td>string[]</td><td style="text-align:right">是</td><td>该服务器处理的扩展名，包含前导点号。</td></tr><tr><td><code>rootMarkers</code></td><td>string[]</td><td style="text-align:right">是</td><td>用于判定启动目录属于匹配项目的文件或目录；支持单层通配。</td></tr><tr><td><code>args</code></td><td>string[]</td><td style="text-align:right">否</td><td>传给服务器进程的命令行参数。</td></tr><tr><td><code>languageId</code></td><td>string</td><td style="text-align:right">否</td><td>为打开的文件发送的语言标识符；省略时由路径推断。</td></tr><tr><td><code>initOptions</code></td><td>object</td><td style="text-align:right">否</td><td>服务器特有的初始化选项。</td></tr><tr><td><code>settings</code></td><td>object</td><td style="text-align:right">否</td><td>服务器特有的工作区设置。</td></tr><tr><td><code>disabled</code></td><td>boolean</td><td style="text-align:right">否</td><td>为 <code>true</code> 时排除该服务器。</td></tr><tr><td><code>warmupTimeoutMs</code></td><td>number</td><td style="text-align:right">否</td><td>每个服务器的主动启动超时，单位毫秒。</td></tr><tr><td><code>isLinter</code></td><td>boolean</td><td style="text-align:right">否</td><td>标记该服务器仅用于诊断/格式化，不用于类型智能。</td></tr><tr><td><code>capabilities</code></td><td>object</td><td style="text-align:right">否</td><td>启用受支持的可选集成：<code>flycheck</code>、<code>ssr</code>、<code>expandMacro</code>、<code>runnables</code> 和 <code>relatedTests</code>。这些目前用于 rust-analyzer。</td></tr><tr><td><code>workspaceReadyTimings</code></td><td>object</td><td style="text-align:right">否</td><td>进阶的 rust-analyzer 时间参数覆盖：<code>timeoutMs</code>、<code>pollMs</code>、<code>settleMs</code> 和 <code>statusRequestTimeoutMs</code>。</td></tr></tbody></table>
+<h2 id="troubleshooting">故障排查</h2>
+<h3 id="no-server-appears-in-the-welcome-panel-or-session">欢迎面板或 <code>/session</code> 中没有出现任何服务器</h3>
+<ul>
+<li>从包含预期根标记的目录启动 omp；发现过程不会搜索父目录。</li>
+<li>确认该二进制已安装在 omp 能解析到的位置。例如运行 <code>command -v rust-analyzer</code>，或检查项目的本地 bin 目录。</li>
+<li>检查自定义服务器的 <code>command</code>、<code>fileTypes</code> 和 <code>rootMarkers</code> 字段是否非空。</li>
+<li>检查配置文件名与语法。无法读取或非法的 JSON/YAML 会被忽略，以便其他来源继续加载。</li>
+<li>如果安装了多个 Python 或 JavaScript 服务器，请禁用不需要的那些，使服务器选择没有歧义。</li>
+</ul>
+<h3 id="a-server-is-available-but-nothing-has-started">服务器显示 <code>available</code>，但什么都没启动</h3>
+<p>在 <code>lsp.lazy: true</code> 时这是正常的。对匹配的文件请求定义、引用、重命名或诊断。如果你希望在交互式会话打开时就在后台启动，请设置 <code>lsp.lazy: false</code>。</p>
+<h3 id="startup-fails-or-diagnostics-stay-empty">启动失败或诊断始终为空</h3>
+<p>让 omp 报告它选用了哪个服务器、重新加载它，并显示启动错误。在 omp 之外验证所配置的命令和参数。同时确认文件扩展名在 <code>fileTypes</code> 中，且该文件属于服务器根标记所描述的项目。</p>
+<p>标记为 <code>isLinter</code> 的服务器可以提供格式化、诊断和修复，但不提供定义、引用或语义重命名。编译器和测试输出也可能捕获 LSP 不会报告的工作区或构建系统错误。</p>
+<h3 id="a-rename-is-refused-or-misses-text">重命名被拒绝或漏掉了某些文本</h3>
+<p>内置定义、外部声明、生成的文件以及仅以字符串形式出现的属性名可能无法重命名。先让 omp 显示引用，然后对非语义出现位置使用针对性编辑或结构化编辑。跨项目重命名之后，务必审阅 diff 并运行相关的编译器或测试。</p>
+    <footer class="doc-meta">
+      <p>原文：<a href="https://omp.sh/docs/code-intelligence" rel="noreferrer noopener">omp.sh/docs/code-intelligence</a> · 译文更新于 2026-11-24</p>
+    </footer>
+
+    <div class="page-nav" id="pt-page-nav"></div>
+  </main>
+</div>
+
+<script src="nav.js"></script>
+<script src="../assets/doc.js"></script>
+</body>
+</html>
